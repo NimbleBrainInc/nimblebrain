@@ -86,7 +86,12 @@ a property of the connector, not of the definition.
 Write the prompt as if the user typed it:
 - Be specific about what to check and how to summarize
 - Include output expectations
-- Reference tools by name if the task needs specific capabilities
+- Describe the capability ("find the issues opened this week"), not a tool's
+  name. A connector tool's name changes with how the connector is installed (a personal
+  connection carries `my_`) and with the connector, and a prompt naming a tool that is gone
+  ends the run quietly instead of failing it
+- Put the tools the task needs in `allowedTools`, as `<connector>__*` globs. A run whose
+  declared tools are unreachable is refused and recorded as a failure that names them
 
 Tasks can chain multiple tools across different apps in a single run.
 For example: "Run the pipeline report, generate a PDF, and add a TODO" will

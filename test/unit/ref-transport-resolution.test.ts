@@ -2,11 +2,8 @@
  * What a persisted `ConnectorRef` resolves to at start: which transport config, and
  * whether it earns the in-cluster plain-HTTP exception.
  *
- * Both properties are pinned here because both were defects. The transport map
- * is what lets a pre-seam Composio ref authenticate from a declared credential;
- * the `fleetInternal` derivation is a security control that this PR narrowed
- * after `auth.type === "provider"` stopped meaning "operator-vetted catalog
- * entry". Reverting either leaves every other suite green.
+ * The `fleetInternal` derivation is a security control: `auth.type === "provider"`
+ * does not mean "operator-vetted catalog entry", so only the `minted` rail earns it.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -22,30 +19,14 @@ function ref(transport: UrlRef["transport"]): UrlRef {
   return { url: "https://composio.test/mcp", serverName: "gmail", transport } as UrlRef;
 }
 
-const LEGACY_VALUE = "${COMPOSIO_API_KEY}";
-
-describe("transport: legacy Composio refs map forward", () => {
-  it("rewrites the pre-seam env-template auth to name the provider", () => {
-    const { transportConfig } = resolveRefTransport(
-      ref({
-        type: "streamable-http",
-        auth: { type: "header", name: "x-api-key", value: LEGACY_VALUE },
-      }),
-    );
-    expect(transportConfig?.auth).toEqual({
-      type: "provider",
-      provider: "composio",
-      config: {},
-    });
-  });
-
-  it("leaves a post-seam ref and an unrelated ref alone", () => {
-    const post = ref({
+describe("transport: the persisted config, as written", () => {
+  it("passes every shape through unchanged", () => {
+    const provider = ref({
       type: "streamable-http",
       auth: { type: "provider", provider: "composio", config: {} },
     });
     const bearer = ref({ type: "streamable-http", auth: { type: "bearer", token: "t" } });
-    expect(resolveRefTransport(post).transportConfig).toBe(post.transport);
+    expect(resolveRefTransport(provider).transportConfig).toBe(provider.transport);
     expect(resolveRefTransport(bearer).transportConfig).toBe(bearer.transport);
   });
 });
@@ -75,16 +56,6 @@ describe("fleetInternal: only the minted rail earns the in-cluster exception", (
     expect(() =>
       validateConnectorUrl(IN_CLUSTER, { allowInsecure: false, fleetInternal }),
     ).toThrow();
-  });
-
-  it("denies it to a legacy Composio ref, which maps to composio provider auth", () => {
-    const { fleetInternal } = resolveRefTransport(
-      ref({
-        type: "streamable-http",
-        auth: { type: "header", name: "x-api-key", value: LEGACY_VALUE },
-      }),
-    );
-    expect(fleetInternal).toBe(false);
   });
 
   it("denies it to every non-provider shape", () => {

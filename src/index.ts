@@ -36,7 +36,7 @@ export type {
   StoredMessage,
 } from "./conversation/index.ts";
 // Conversation
-export { InMemoryConversationStore, JsonlConversationStore } from "./conversation/index.ts";
+export { InMemoryConversationStore } from "./conversation/index.ts";
 export type {
   EngineConfig,
   EngineEvent,

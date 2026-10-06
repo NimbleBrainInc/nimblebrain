@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
+import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { StoredMessage } from "../../src/conversation/types.ts";
 
 function tempDir(): string {
@@ -30,11 +30,11 @@ function assistantMsg(text: string, metadata: StoredMessage["metadata"]): Stored
 
 describe("Conversation full lifecycle (store-level)", () => {
   let dir: string;
-  let store: JsonlConversationStore;
+  let store: EventSourcedConversationStore;
 
   beforeEach(() => {
     dir = tempDir();
-    store = new JsonlConversationStore(dir);
+    store = new EventSourcedConversationStore({ dir });
   });
 
   afterEach(() => {
@@ -123,84 +123,5 @@ describe("Conversation full lifecycle (store-level)", () => {
     const afterDeleteList = await store.list();
     expect(afterDeleteList.totalCount).toBe(1);
     expect(afterDeleteList.conversations[0]!.id).toBe(forked!.id);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 2. Backward compatibility: old-format JSONL → append → verify migration
-// ---------------------------------------------------------------------------
-
-describe("Backward compatibility: old-format JSONL → append", () => {
-  let dir: string;
-
-  beforeEach(() => {
-    dir = tempDir();
-  });
-
-  afterEach(() => {
-    if (existsSync(dir)) rmSync(dir, { recursive: true });
-  });
-
-  it("loads old-format JSONL, appends new messages, and derives tokens correctly", async () => {
-    // Write an old-format file (only id + createdAt + the now-required
-    // ownerId, no other enriched fields). Stage 1 requires ownerId on
-    // every conversation; the migration script stamps it on pre-Stage-1
-    // data.
-    const id = "conv_1e9ac400000000b1";
-    const createdAt = "2024-06-15T10:00:00.000Z";
-    const metaLine = JSON.stringify({ id, createdAt, ownerId: "user_test" });
-    const oldUserMsg = JSON.stringify({
-      role: "user",
-      content: "old question about budgets",
-      timestamp: createdAt,
-    });
-    const oldAssistantMsg = JSON.stringify({
-      role: "assistant",
-      content: "Here is the budget breakdown.",
-      timestamp: createdAt,
-    });
-    writeFileSync(join(dir, `${id}.jsonl`), `${metaLine}\n${oldUserMsg}\n${oldAssistantMsg}\n`);
-
-    const store = new JsonlConversationStore(dir);
-    const loaded = await store.load(id);
-
-    expect(loaded).not.toBeNull();
-    expect(loaded!.updatedAt).toBe(createdAt);
-    expect(loaded!.title).toBeNull();
-    expect(loaded!.lastModel).toBeNull();
-
-    // Append a new assistant message with usage data
-    await store.append(
-      loaded!,
-      assistantMsg("Updated budget analysis...", {
-        usage: { inputTokens: 350, outputTokens: 120 },
-        model: "claude-sonnet-4-5-20250929",
-      }),
-    );
-
-    expect(loaded!.lastModel).toBe("claude-sonnet-4-5-20250929");
-
-    // Derived totals via the list summary (read time, from messages).
-    const summary = (await store.list()).conversations.find((c) => c.id === id);
-    expect(summary).toBeDefined();
-    expect(summary!.totalInputTokens).toBe(350);
-    expect(summary!.totalOutputTokens).toBe(120);
-    // Cost is derivable; we don't pin the exact value here (rate
-    // changes shouldn't break this integration test).
-    expect(summary!.totalCostUsd).toBeGreaterThan(0);
-
-    // Verify history includes old + new messages
-    const history = await store.history(loaded!);
-    expect(history).toHaveLength(3);
-    // The legacy line keeps the string content it was written with; the type
-    // describes what the runtime writes now.
-    expect(history[0]!.content as unknown).toBe("old question about budgets");
-    expect(history[2]!.content).toEqual([{ type: "text", text: "Updated budget analysis..." }]);
-
-    // Reload from disk to verify persistence
-    const store2 = new JsonlConversationStore(dir);
-    const reloadedSummary = (await store2.list()).conversations.find((c) => c.id === id);
-    expect(reloadedSummary!.totalInputTokens).toBe(350);
-    expect(reloadedSummary!.totalOutputTokens).toBe(120);
   });
 });

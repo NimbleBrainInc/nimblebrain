@@ -181,7 +181,6 @@ describe("composioUserId", () => {
   });
 
   test("namespaces a user owner with a `user:` segment (no tenant)", () => {
-    process.env.NB_TENANT_ID = undefined;
     expect(composioUserId({ type: "user", userId: "usr_alice" })).toBe("user:usr_alice");
   });
 

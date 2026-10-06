@@ -98,6 +98,28 @@ export class WorkspaceMembershipRevokedError extends Error {
 }
 
 /**
+ * Thrown when an unattended run's `allowedTools` names tools that nothing the
+ * run can reach matches: their connector is missing, disconnected, or not
+ * running. The owner declared those tools as the run's job, so the run cannot
+ * do it, and it is refused before its first model call. The stable `code` lets
+ * the tasks scheduler record the run as a **failure**, which a run that never
+ * attempted the tool would otherwise not be (it ends normally and reads
+ * Succeeded).
+ */
+export class DeclaredToolsUnavailableError extends Error {
+  readonly code = "declared_tools_unavailable";
+  constructor(public readonly tools: readonly string[]) {
+    super(
+      `Declared tool${tools.length === 1 ? "" : "s"} unavailable: ${tools.join(", ")}. ` +
+        `Nothing this run can reach matches ${tools.length === 1 ? "it" : "them"}: the ` +
+        `connector is missing, disconnected, or not running in this workspace, so the run ` +
+        `did not start.`,
+    );
+    this.name = "DeclaredToolsUnavailableError";
+  }
+}
+
+/**
  * Thrown when a conversation file on disk fails the Stage 1 invariant
  * check at load time — specifically, a pre-migration file that lacks
  * `ownerId`. The store can't synthesize an owner safely and the chat

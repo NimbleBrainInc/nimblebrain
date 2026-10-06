@@ -10,6 +10,7 @@ import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 import { ArtifactPanel } from "./ArtifactPanel";
 import { ChatChrome } from "./ChatChrome";
+import { HelpMenu } from "./HelpMenu";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
 import { NoticeViewport } from "./notices";
 import { ReleaseUpdateBanner } from "./ReleaseUpdateBanner";
@@ -40,7 +41,8 @@ interface ShellLayoutProps {
  *      switches to another.
  *   3. That workspace's views (`WorkspaceNav`) — the whole nav body. There is
  *      no global core-nav row, because those views are workspace-scoped.
- *   4. Account (`UserMenu`) — who you are, at the foot.
+ *   4. Help (`HelpMenu`), pinned under the views as the nav's last row.
+ *   5. Account (`UserMenu`) — who you are, at the foot, below a divider.
  */
 // Chat panel transition timings — kept in lockstep with `ChatChrome` so
 // the main content's marginRight slides in sync with the panel itself.
@@ -224,6 +226,8 @@ function SidebarBody({
       <div className="flex-1 overflow-y-auto pb-2 sidebar-scroll sidebar-nav-fade">
         <WorkspaceNav collapsed={collapsed} />
       </div>
+
+      <HelpMenu collapsed={collapsed} />
 
       {tray}
 

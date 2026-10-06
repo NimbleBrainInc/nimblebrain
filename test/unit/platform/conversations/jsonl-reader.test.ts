@@ -6,6 +6,7 @@ import {
   readConversation,
   readConversationHeader,
 } from "../../../../src/platform/conversations/jsonl-reader.ts";
+import { conversationEventLines, type FixtureTurn } from "../../../helpers/conversation-events.ts";
 
 const TMP_DIR = join(import.meta.dir, ".tmp-jsonl-reader");
 
@@ -63,7 +64,7 @@ describe("readConversation", () => {
       { role: "user", content: "Thanks!", timestamp: "2025-01-01T00:05:00.000Z" },
     ];
 
-    const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
+    const lines = [JSON.stringify(meta), ...conversationEventLines(messages as FixtureTurn[])];
     const path = writeTmpFile("conv_abc123.jsonl", lines);
 
     const result = await readConversation(path);
@@ -79,14 +80,22 @@ describe("readConversation", () => {
     expect(result!.preview).toBe("Hello there");
   });
 
-  test("applies defaults for old format (only id + createdAt)", async () => {
+  test("applies defaults for a minimal header (only id + createdAt)", async () => {
     const meta = { id: "conv_old001", createdAt: "2024-06-15T12:00:00.000Z" };
-    const msg = { role: "user", content: "Old message", timestamp: "2024-06-15T12:01:00.000Z" };
-    const path = writeTmpFile("conv_old001.jsonl", [JSON.stringify(meta), JSON.stringify(msg)]);
+    const msg: FixtureTurn = {
+      role: "user",
+      content: "Old message",
+      timestamp: "2024-06-15T12:01:00.000Z",
+    };
+    const path = writeTmpFile("conv_old001.jsonl", [
+      JSON.stringify(meta),
+      ...conversationEventLines([msg]),
+    ]);
 
     const result = await readConversation(path);
     expect(result).not.toBeNull();
-    expect(result!.meta.updatedAt).toBe("2024-06-15T12:00:00.000Z"); // defaults to createdAt
+    // updatedAt is the last event's timestamp.
+    expect(result!.meta.updatedAt).toBe("2024-06-15T12:01:00.000Z");
     expect(result!.meta.title).toBeNull();
     expect(result!.meta.totalInputTokens).toBe(0);
     expect(result!.meta.totalOutputTokens).toBe(0);
@@ -98,14 +107,13 @@ describe("readConversation", () => {
 
   test("skips malformed lines and parses the rest", async () => {
     const meta = { id: "conv_bad001", createdAt: "2025-02-01T00:00:00.000Z" };
-    const msg1 = { role: "user", content: "First", timestamp: "2025-02-01T00:01:00.000Z" };
-    const msg3 = { role: "assistant", content: "Response", timestamp: "2025-02-01T00:03:00.000Z" };
-    const lines = [
-      JSON.stringify(meta),
-      JSON.stringify(msg1),
-      "this is not valid json {{{",
-      JSON.stringify(msg3),
-    ];
+    const [first] = conversationEventLines([
+      { role: "user", content: "First", timestamp: "2025-02-01T00:01:00.000Z" },
+    ]);
+    const response = conversationEventLines([
+      { role: "assistant", content: "Response", timestamp: "2025-02-01T00:03:00.000Z" },
+    ]);
+    const lines = [JSON.stringify(meta), first!, "this is not valid json {{{", ...response];
     const path = writeTmpFile("conv_bad001.jsonl", lines);
 
     const result = await readConversation(path);
@@ -154,12 +162,16 @@ describe("readConversation", () => {
 
   test("preview is empty string when no user message exists", async () => {
     const meta = { id: "conv_nouser", createdAt: "2025-04-01T00:00:00.000Z" };
-    const msg = {
-      role: "assistant",
-      content: "I started talking first",
-      timestamp: "2025-04-01T00:01:00.000Z",
-    };
-    const path = writeTmpFile("conv_nouser.jsonl", [JSON.stringify(meta), JSON.stringify(msg)]);
+    const path = writeTmpFile("conv_nouser.jsonl", [
+      JSON.stringify(meta),
+      ...conversationEventLines([
+        {
+          role: "assistant",
+          content: "I started talking first",
+          timestamp: "2025-04-01T00:01:00.000Z",
+        },
+      ]),
+    ]);
 
     const result = await readConversation(path);
     expect(result).not.toBeNull();
@@ -952,29 +964,6 @@ describe("readConversation (event format)", () => {
     const result = await readConversation(path);
     expect(result!.messages[0]!.stopReason).toBe("error");
   });
-
-  test("does not confuse 'type:text' inside blocks with event lines (format detection)", async () => {
-    // A legacy-format file whose messages contain blocks-like structures.
-    // The format detector must not misfire on "type":"text" substring.
-    const meta = {
-      id: "conv_ambig",
-      createdAt: "2025-01-01T00:00:00.000Z",
-    };
-    const msg = {
-      role: "user",
-      content: "just text",
-      timestamp: "2025-01-01T00:00:01.000Z",
-      // Contains "type":"text" as substring, but this is a message, not an event.
-      blocks: [{ type: "text", text: "just text" }],
-    };
-    const path = writeTmpFile("conv_ambig.jsonl", [JSON.stringify(meta), JSON.stringify(msg)]);
-
-    const result = await readConversation(path);
-    expect(result).not.toBeNull();
-    // Should be parsed via the legacy path, not the event reducer.
-    expect(result!.messages).toHaveLength(1);
-    expect(result!.messages[0]!.content).toBe("just text");
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -998,7 +987,7 @@ describe("readConversationHeader", () => {
       { role: "assistant", content: "Reply", timestamp: "2025-01-01T00:02:00.000Z" },
       { role: "user", content: "Follow up", timestamp: "2025-01-01T00:03:00.000Z" },
     ];
-    const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
+    const lines = [JSON.stringify(meta), ...conversationEventLines(messages as FixtureTurn[])];
     const path = writeTmpFile("conv_hdr001.jsonl", lines);
 
     const result = await readConversationHeader(path);
@@ -1037,8 +1026,13 @@ describe("readConversationHeader", () => {
 
   test("skips malformed message lines in count", async () => {
     const meta = { id: "conv_badhdr", createdAt: "2025-01-01T00:00:00.000Z" };
-    const msg = { role: "user", content: "Valid", timestamp: "2025-01-01T00:01:00.000Z" };
-    const lines = [JSON.stringify(meta), JSON.stringify(msg), "broken json {{"];
+    const lines = [
+      JSON.stringify(meta),
+      ...conversationEventLines([
+        { role: "user", content: "Valid", timestamp: "2025-01-01T00:01:00.000Z" },
+      ]),
+      "broken json {{",
+    ];
     const path = writeTmpFile("conv_badhdr.jsonl", lines);
 
     const result = await readConversationHeader(path);

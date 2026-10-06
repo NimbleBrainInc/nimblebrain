@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConversationIndex } from "../../../../src/platform/conversations/index-cache.ts";
+import { conversationEventLines, type FixtureTurn } from "../../../helpers/conversation-events.ts";
 
 const TMP_DIR = join(import.meta.dir, ".tmp-index-cache");
 /** The workspace a fixture lives under when its spec names none. */
@@ -58,10 +59,10 @@ function writeConvFile(spec: ConvSpec): string {
     }
   }
 
-  const lines = [JSON.stringify(meta)];
-  for (const msg of messages) {
-    lines.push(JSON.stringify(msg));
-  }
+  const lines = [
+    JSON.stringify(meta),
+    ...conversationEventLines(messages as unknown as FixtureTurn[]),
+  ];
 
   const filename = `conv_${spec.id}.jsonl`;
   // The index takes an entry's workspace from its DIRECTORY, so a fixture lives
@@ -488,7 +489,8 @@ describe("list sorting", () => {
       createdAt: "2025-01-01T00:00:00.000Z",
       updatedAt: "2025-03-01T00:00:00.000Z",
       title: "Old but recently updated",
-      messages: [{ role: "user", content: "msg", timestamp: "2025-01-01T00:01:00.000Z" }],
+      // updatedAt is derived from the last event, so the message carries it.
+      messages: [{ role: "user", content: "msg", timestamp: "2025-03-01T00:00:00.000Z" }],
     });
 
     // Created second, updated in the middle
@@ -506,7 +508,7 @@ describe("list sorting", () => {
       createdAt: "2025-03-01T00:00:00.000Z",
       updatedAt: "2025-01-15T00:00:00.000Z",
       title: "New but stale",
-      messages: [{ role: "user", content: "msg", timestamp: "2025-03-01T00:01:00.000Z" }],
+      messages: [{ role: "user", content: "msg", timestamp: "2025-01-15T00:00:00.000Z" }],
     });
 
     const index = new ConversationIndex();
@@ -527,7 +529,7 @@ describe("list sorting", () => {
       createdAt: "2025-01-01T00:00:00.000Z",
       updatedAt: "2025-03-01T00:00:00.000Z",
       title: "A",
-      messages: [{ role: "user", content: "a", timestamp: "2025-01-01T00:01:00.000Z" }],
+      messages: [{ role: "user", content: "a", timestamp: "2025-03-01T00:00:00.000Z" }],
     });
     writeConvFile({
       id: "def2",

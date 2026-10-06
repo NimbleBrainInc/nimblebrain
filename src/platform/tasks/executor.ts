@@ -659,7 +659,10 @@ function mapResultToRun(
   //      part of the work did not happen, though the rest may have.
   //
   // All three are attempted-call signals: a required tool the model never tries
-  // at all still produces nothing to catch here. None reads the final answer,
+  // at all still produces nothing to catch here. A tool the task declares in
+  // `allowedTools` is checked before the run starts instead: one nothing
+  // reachable matches refuses the run (`DeclaredToolsUnavailableError`). One the
+  // prompt only describes is left to the judge's criteria. None reads the final answer,
   // which is the model's account of the run and says "done" in exactly the
   // runs these exist to catch.
   //

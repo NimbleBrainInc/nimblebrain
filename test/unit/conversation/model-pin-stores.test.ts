@@ -4,8 +4,8 @@
  * runtime happens to be typed to.
  *
  * The runtime only ever constructs `EventSourcedConversationStore`, so a store
- * that dropped the option would fail silently and invisibly. Both other stores
- * are exported from the package index, and both already honor `workspaceId`
+ * that dropped the option would fail silently and invisibly. The in-memory
+ * store is exported from the package index and already honors `workspaceId`
  * through the identical spread; this keeps the two options symmetric.
  */
 
@@ -15,7 +15,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
-import { JsonlConversationStore } from "../../../src/conversation/jsonl-store.ts";
 import { InMemoryConversationStore } from "../../../src/conversation/memory-store.ts";
 import type { ConversationStore } from "../../../src/conversation/types.ts";
 
@@ -34,7 +33,6 @@ afterAll(() => {
 
 const stores: Array<[string, () => ConversationStore]> = [
   ["EventSourcedConversationStore", () => new EventSourcedConversationStore({ dir: tempDir() })],
-  ["JsonlConversationStore", () => new JsonlConversationStore(tempDir())],
   ["InMemoryConversationStore", () => new InMemoryConversationStore()],
 ];
 

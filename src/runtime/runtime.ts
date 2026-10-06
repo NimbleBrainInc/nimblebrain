@@ -252,7 +252,7 @@ import {
 } from "../tools/server-notifications.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
 import { createSystemTools } from "../tools/system-tools.ts";
-import { isToolAllowedForRun } from "../tools/tool-pattern.ts";
+import { isToolAllowedForRun, unmatchedAllowedTools } from "../tools/tool-pattern.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { toToolSchema } from "../tools/types.ts";
 import { resolveRates } from "../usage/cost.ts";
@@ -269,6 +269,7 @@ import {
   ConversationAccessDeniedError,
   ConversationNotFoundError,
   ConversationWorkspaceAccessDeniedError,
+  DeclaredToolsUnavailableError,
   ModelNotAllowedError,
   RunInProgressError,
   WorkspaceMembershipRevokedError,
@@ -1928,6 +1929,9 @@ export class Runtime {
     const allTools = runAllowedTools
       ? listedTools.filter((t) => isToolAllowedForRun(t.name, runAllowedTools))
       : listedTools;
+    if (runAllowedTools?.length) {
+      await this.assertDeclaredToolsReachable(spec.workspaceId, identity.id, runAllowedTools);
+    }
 
     // ── The skill pools ─────────────────────────────────────────────────────
     // Per-run skill pool. The boot-time `this.skillMatcher` only ever scans
@@ -2170,6 +2174,26 @@ export class Runtime {
     if (!briefingWsId) return { workWorkspace, activeWorkspace: null };
     if (briefingWsId === spec.workspaceId) return { workWorkspace, activeWorkspace: workWorkspace };
     return { workWorkspace, activeWorkspace: await this._workspaceStore.get(briefingWsId) };
+  }
+
+  /**
+   * Refuse an unattended run whose `allowedTools` names tools nothing it can
+   * reach matches. The owner declared those tools as the run's job; left to
+   * run, it ends normally without ever trying one and reads Succeeded. Checked
+   * against the router's set (`listToolsForWorkspace`), not `listRunTools`,
+   * which leaves out granted personal connectors.
+   */
+  private async assertDeclaredToolsReachable(
+    wsId: string,
+    identityId: string,
+    allowedTools: string[],
+  ): Promise<void> {
+    const reachable = await this.listToolsForWorkspace(wsId, identityId);
+    const unavailable = unmatchedAllowedTools(
+      allowedTools,
+      reachable.map((t) => t.name),
+    );
+    if (unavailable.length > 0) throw new DeclaredToolsUnavailableError(unavailable);
   }
 
   /**

@@ -10,7 +10,6 @@ import type {
   ConversationListResult,
   ConversationSummary,
   ListOptions,
-  StoredMessage,
 } from "./types.ts";
 
 interface ConversationMetadata {
@@ -180,22 +179,6 @@ export function canAccess(
 }
 
 /**
- * Detect whether a JSONL file uses the event-sourced format.
- * Checks line 1 metadata for `format: "events"`, or line 2 for a `type` field (events)
- * vs a `role` field (legacy messages).
- */
-function isEventFormat(meta: Record<string, unknown>, secondLine?: string): boolean {
-  if (meta.format === "events") return true;
-  if (!secondLine) return false;
-  try {
-    const parsed = JSON.parse(secondLine) as Record<string, unknown>;
-    return "type" in parsed && !("role" in parsed);
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Heuristic check: did parseFileHeader bail because the file is
  * structurally OK but lacks `ownerId`? Used by `populate` to count
  * ownerless skips so operators see a "you have N pre-migration files"
@@ -255,17 +238,14 @@ function emptyMetrics(): DerivedMetrics {
 }
 
 /**
- * Fold each line after line 1 into a metrics accumulator, skipping any
+ * Fold each event line after line 1 into a metrics accumulator, skipping any
  * line that fails to parse or apply (malformed).
  */
-function scanLines(
-  lines: string[],
-  apply: (metrics: DerivedMetrics, line: string) => void,
-): DerivedMetrics {
+function scanLines(lines: string[]): DerivedMetrics {
   const metrics = emptyMetrics();
   for (let i = 1; i < lines.length; i++) {
     try {
-      apply(metrics, lines[i]!);
+      applyEventLine(metrics, lines[i]!);
     } catch {
       // Skip malformed lines
     }
@@ -294,28 +274,8 @@ function applyEventLine(metrics: DerivedMetrics, line: string): void {
 }
 
 /**
- * Fold one legacy (message-format) line into the running metrics. Every
- * parseable line counts; assistant messages with usage add to totals so the
- * summary is consistent with the event-format path. Messages without usage
- * contribute zero.
- */
-function applyMessageLine(metrics: DerivedMetrics, line: string): void {
-  const msg = JSON.parse(line) as StoredMessage;
-  metrics.messageCount++;
-  if (!metrics.preview && msg.role === "user") {
-    metrics.preview = previewTextOf(msg.content);
-  }
-  if (msg.role === "assistant" && msg.metadata?.usage && msg.metadata.model) {
-    metrics.inputTokens += msg.metadata.usage.inputTokens;
-    metrics.outputTokens += msg.metadata.usage.outputTokens;
-    metrics.costUsd += estimateCost(msg.metadata.model, msg.metadata.usage);
-  }
-}
-
-/**
  * Parse a JSONL file's content to extract a ConversationSummary and access metadata.
- * Reads line 1 for metadata and scans for the first user message as preview.
- * Supports both legacy (StoredMessage) and event-sourced formats.
+ * Reads line 1 for metadata and folds the events after it.
  */
 export function parseFileHeader(
   content: string,
@@ -326,17 +286,8 @@ export function parseFileHeader(
   const meta = JSON.parse(lines[0]!) as ConversationMetadata;
   if (!meta.id) return null;
 
-  const eventFormat = isEventFormat(
-    meta as unknown as Record<string, unknown>,
-    lines[1] as string | undefined,
-  );
-
-  // Totals are always derived — from events for event-sourced files, from
-  // each assistant message's metadata.usage for legacy files. Legacy line-1
-  // metadata totals are intentionally ignored, so old conversations show
-  // zero totals if their events don't carry usage. (See PR removing stored
-  // totals.)
-  const metrics = scanLines(lines, eventFormat ? applyEventLine : applyMessageLine);
+  // Totals are always derived from events; line-1 totals are never read.
+  const metrics = scanLines(lines);
 
   // Stage 1 invariant: every conversation has an ownerId. A file
   // without one is pre-migration data — load() already throws when

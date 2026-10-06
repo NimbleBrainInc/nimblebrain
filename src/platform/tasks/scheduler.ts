@@ -521,6 +521,14 @@ function classifyRunFailure(err: unknown): {
   if ((err as { code?: string })?.code === "workspace_membership_revoked") {
     return { status: "skipped", suffix: "skip", error: errorMsg, transient: false };
   }
+  // A tool in the task's `allowedTools` matches nothing the run can reach
+  // (`DeclaredToolsUnavailableError`, thrown before the first model call). A
+  // FAILURE, never skipped: it feeds consecutiveErrors so a connector that
+  // stays gone backs the task off and disables it, saying why. Not transient:
+  // a retry minutes later meets the same missing connector.
+  if ((err as { code?: string })?.code === "declared_tools_unavailable") {
+    return { status: "failure", suffix: "err", error: errorMsg, transient: false };
+  }
   if (errorMsg.includes("timed out")) {
     return {
       status: "timeout",

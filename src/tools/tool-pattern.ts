@@ -86,3 +86,19 @@ export function isToolAllowedForRun(toolName: string, allowedTools: string[]): b
   if (RUN_DISCOVERY_TOOLS.has(bareToolName(toolName))) return true;
   return allowedTools.some((pattern) => toolNameMatchesPattern(toolName, pattern));
 }
+
+/**
+ * The `allowedTools` entries that match none of `toolNames`, in list order. An
+ * entry naming a discovery tool always matches, since a run reaches those
+ * whatever its list says.
+ */
+export function unmatchedAllowedTools(
+  allowedTools: readonly string[],
+  toolNames: readonly string[],
+): string[] {
+  return allowedTools.filter(
+    (pattern) =>
+      !RUN_DISCOVERY_TOOLS.has(bareToolName(pattern)) &&
+      !toolNames.some((name) => toolNameMatchesPattern(name, pattern)),
+  );
+}

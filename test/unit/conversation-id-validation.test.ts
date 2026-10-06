@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
 import type { ConversationStore } from "../../src/conversation/types.ts";
 
 function storeTests(name: string, makeStore: () => ConversationStore) {
@@ -57,13 +56,7 @@ function tempDir(prefix: string): string {
   return dir;
 }
 
-const jsonlDir = tempDir("jsonl");
 const esDir = tempDir("es");
-
-storeTests(
-  "JsonlConversationStore conversation id validation",
-  () => new JsonlConversationStore(join(jsonlDir, `run-${++counter}`)),
-);
 
 storeTests(
   "EventSourcedConversationStore conversation id validation",

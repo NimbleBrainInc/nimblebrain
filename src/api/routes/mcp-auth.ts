@@ -15,6 +15,7 @@ import { log } from "../../observability/log.ts";
 import {
   type FlowOwner,
   peekFlowOwner,
+  refuseFlow,
   resolveWithCode,
   takeScopeFallback,
 } from "../../tools/oauth-flow-registry.ts";
@@ -176,9 +177,10 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // flow. Returns minimal HTML in either branch so the user sees a clean
   // confirmation / error page.
   //
-  // Every terminal outcome is logged exactly once, here — see
-  // {@link logCallbackOutcome} for why the handler owns that rather than
-  // the helpers it calls.
+  // Every terminal outcome is logged exactly once, here or in
+  // {@link answerProviderRefusal}, which settles a refused flow — see
+  // {@link logCallbackOutcome} for why they own that rather than the
+  // helpers they call.
   app.get("/v1/mcp-auth/callback", (c) => {
     // Belt-and-suspenders: an intermediate proxy caching the success page
     // (with `?code=...` in the URL) in a shared cache space is a classic
@@ -190,19 +192,13 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
     const params = readCallbackParams(c);
     if (isCallbackFailure(params)) {
-      const fallback = retryWithoutIdentityScopes(c);
-      if (fallback === null) return refuse(params);
-      if (isCallbackFailure(fallback)) return refuse(fallback);
-      logCallbackOutcome("scope_fallback", { flow: flowId(fallback.state) });
-      return c.redirect(fallback.authorizationUrl, 302);
+      if (params.outcome !== "provider_error") return refuse(params);
+      return answerProviderRefusal(c, params);
     }
     const { code, wireState } = params;
 
-    const state = recoverInnerState(c, wireState);
+    const state = sessionFlow(c, wireState);
     if (isCallbackFailure(state)) return refuse(state);
-
-    const mismatch = verifyStateCookie(c, state);
-    if (mismatch) return refuse(mismatch, { flow: flowId(state) });
 
     // Recover the flow's owner *before* resolving (which deletes the registry
     // entry), so we can land the user back on the right page — a workspace
@@ -482,25 +478,60 @@ function readCallbackParams(
 }
 
 /**
- * Answer an `invalid_scope` refusal by sending the browser to the flow's
- * fallback: the same authorize request without the identity scopes the
- * provider added (`openid`, `email`), which a server may advertise and still
- * refuse to this client. Same state and PKCE challenge, so the same cookie and
- * pending flow carry on, and the fallback is taken once, so a second refusal
- * ends the flow. The state is checked like a code's before anything is taken.
- * Returns null when there is no fallback to take.
+ * Answer a callback the authorization server refused (`?error=`).
+ *
+ * The session that began the flow settles it: an `invalid_scope` refusal is
+ * retried once on the flow's fallback, and any other refusal, or a refusal of
+ * the fallback, ends the flow. Ending it is what frees the connector: its
+ * start waits on the flow, so a flow left pending holds the connection in
+ * "connecting", and a personal connector's Connect at 409, until the TTL.
+ *
+ * The state is checked like a code's before anything is taken or ended, so a
+ * callback without the session's state cookie settles nothing.
  */
-function retryWithoutIdentityScopes(
-  c: Context<AppEnv>,
-): { authorizationUrl: string; state: string } | CallbackFailure | null {
+function answerProviderRefusal(c: Context<AppEnv>, refusal: CallbackFailure): Response {
+  const error = c.req.query("error") ?? "";
   const wireState = c.req.query("state");
-  if (c.req.query("error") !== "invalid_scope" || !wireState) return null;
+  const flow = wireState ? sessionFlow(c, wireState) : null;
+  if (flow === null || isCallbackFailure(flow)) {
+    // Which check failed is the diagnosis only where the callback asked for
+    // something (the fallback); otherwise the provider's refusal is.
+    return refuse(flow !== null && error === "invalid_scope" ? flow : refusal);
+  }
 
+  const retry = error === "invalid_scope" ? retryWithoutIdentityScopes(flow) : null;
+  if (retry && !isCallbackFailure(retry)) {
+    logCallbackOutcome("scope_fallback", { flow: flowId(flow) });
+    return c.redirect(retry.authorizationUrl, 302);
+  }
+  const flowEnded = refuseFlow(flow, error);
+  return refuse(retry ?? refusal, { flow: flowId(flow), flowEnded });
+}
+
+/**
+ * The flow a callback's state names, once the state cookie binds it to this
+ * session; otherwise the check that refused it.
+ */
+function sessionFlow(c: Context<AppEnv>, wireState: string): string | CallbackFailure {
   const state = recoverInnerState(c, wireState);
   if (isCallbackFailure(state)) return state;
   const mismatch = verifyStateCookie(c, state);
   if (mismatch) return { ...mismatch, fields: { ...mismatch.fields, flow: flowId(state) } };
+  return state;
+}
 
+/**
+ * The retry for an `invalid_scope` refusal: the flow's fallback, the same
+ * authorize request without the identity scopes the provider added (`openid`,
+ * `email`), which a server may advertise and still refuse to this client. Same
+ * state and PKCE challenge, so the same cookie and pending flow carry on, and
+ * the fallback is taken once, so a second refusal ends the flow. Returns null
+ * when there is no fallback to take, and the failure when the one taken could
+ * not be sent.
+ */
+function retryWithoutIdentityScopes(
+  state: string,
+): { authorizationUrl: string; state: string } | CallbackFailure | null {
   const url = takeScopeFallback(state);
   if (!url) return null;
   const prepared = prepareAuthorization(url, "callback", flowId(state));

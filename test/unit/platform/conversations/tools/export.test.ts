@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { ConversationIndex } from "../../../../../src/platform/conversations/index-cache.ts";
 import type { DisplayMessage } from "../../../../../src/platform/conversations/jsonl-reader.ts";
 import { handleExport } from "../../../../../src/platform/conversations/tools/export.ts";
+import {
+  conversationEventLines,
+  type FixtureTurn,
+} from "../../../../helpers/conversation-events.ts";
 
 /** The workspaces root the index walks. */
 const ROOT = join(import.meta.dir, ".tmp-export");
@@ -69,7 +73,10 @@ async function setupConversation(
 ): Promise<void> {
   const id = meta.id as string;
   const fname = filename ?? `${id}.jsonl`;
-  const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
+  const lines = [
+    JSON.stringify(meta),
+    ...conversationEventLines(messages as unknown as FixtureTurn[]),
+  ];
   writeTmpFile(fname, lines);
   await index.build(ROOT);
 }
@@ -87,8 +94,7 @@ describe("handleExport — markdown", () => {
     expect(result.content).toContain("# Conversation: Export Test Conversation");
     expect(result.content).toContain("**Created:** 2025-06-01T10:00:00.000Z");
     expect(result.content).toContain("**Messages:** 4");
-    // Sum of per-message usage across the two assistant turns: 800 in / 600 out.
-    // (Was 1200/800 when the connector honored line-1 totals; now derived from messages.)
+    // Sum of per-turn usage across the two assistant turns: 800 in / 600 out.
     expect(result.content).toContain("**Tokens:** 800 in / 600 out");
     expect(result.content).toContain("## User");
     expect(result.content).toContain("## Assistant");

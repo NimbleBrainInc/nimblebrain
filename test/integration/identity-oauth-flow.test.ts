@@ -10,7 +10,12 @@ import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { requireCredentialStore } from "../../src/tools/credential-store.ts";
 import { mcpOAuthKey } from "../../src/tools/mcp-oauth-records.ts";
-import { _clearAll, peekFlowOwner } from "../../src/tools/oauth-flow-registry.ts";
+import {
+  _clearAll,
+  peekFlowOwner,
+  refuseFlow,
+  resolveWithCode,
+} from "../../src/tools/oauth-flow-registry.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -27,8 +32,8 @@ import {
  *
  * Asserts the identity-specific behavior: the connector resolves from the store,
  * the flow is registered under a `{kind:"user"}` owner (so the callback lands on
- * `/profile/connectors`), and the OAuth client is registered under the user's
- * identity credential root (`users/<id>/credentials/mcp-oauth/…`) — outside any
+ * `/profile/connectors`), and the OAuth client is registered at the user's
+ * credential scope (`mcp-oauth.<server>.client` at `user` scope) — outside any
  * workspace.
  */
 
@@ -252,6 +257,49 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
     _clearAll();
     const later = await retryConnect(lifecycle, workDir);
     expect(later.authorizationUrl).toContain("/authorize");
+  }, 20_000);
+
+  it("a refused sign-in frees the connector at once — Connect is not busy until the flow's TTL (#1433)", async () => {
+    const { authorizationUrl } = await lifecycle.startIdentityAuth(SERVER, USER_ID, {
+      workDir,
+      allowInsecureRemotes: true,
+    });
+    const state = new URL(authorizationUrl as string).searchParams.get("state") as string;
+
+    // The authorization server sent the browser back with `error=access_denied`,
+    // and the callback route ended the flow.
+    expect(refuseFlow(state, "access_denied")).toBe(true);
+
+    // The parked start settles within moments, not the flow's 15 minutes: the
+    // gate frees and the half-started source leaves the user's registry.
+    const again = await retryConnect(lifecycle, workDir, 2_000);
+    expect(again.authorizationUrl).toContain("/authorize");
+    expect(new URL(again.authorizationUrl).searchParams.get("state")).not.toBe(state);
+  }, 20_000);
+
+  it("removing the connector mid-sign-in ends its flow — a re-add connects, and a late callback finds nothing (#1433)", async () => {
+    const { authorizationUrl } = await lifecycle.startIdentityAuth(SERVER, USER_ID, {
+      workDir,
+      allowInsecureRemotes: true,
+    });
+    const state = new URL(authorizationUrl as string).searchParams.get("state") as string;
+
+    await lifecycle.uninstallIdentityConnector(USER_ID, SERVER, { workDir });
+
+    // The flow went with its source: the browser coming back with a code now
+    // cannot finish the sign-in of a connector that is no longer installed.
+    expect(resolveWithCode(state, "late-code")).toBe(false);
+    expect(lifecycle.isIdentityConnectorRunning(USER_ID, SERVER)).toBe(false);
+    expect(await clientRecordStored()).toBe(false);
+
+    // Installing it again and connecting does not wait out the old flow.
+    await new IdentityConnectorStore({ workDir }).add(USER_ID, {
+      url: `${mock.base}/mcp`,
+      serverName: SERVER,
+      ui: null,
+    });
+    const again = await retryConnect(lifecycle, workDir, 2_000);
+    expect(again.authorizationUrl).toContain("/authorize");
   }, 20_000);
 
   it("a concurrent dispatch lazy-start joins the interactive flow — no parallel source", async () => {

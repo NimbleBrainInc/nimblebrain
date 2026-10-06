@@ -60,6 +60,8 @@ export interface CommandRunContext {
   toggleSidebar: () => void;
   toggleTheme: () => void;
   openKeyboardShortcuts: () => void;
+  /** Open a URL off the app, in a new tab. */
+  openExternal: (url: string) => void;
   logout: () => void;
   /** Close the palette. Most `run`s call this last. */
   closePalette: () => void;

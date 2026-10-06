@@ -1,7 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { afterAll, describe, expect, it } from "bun:test";
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { resolveWithCode } from "../../src/tools/oauth-flow-registry.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
@@ -15,13 +12,11 @@ import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider
 const CALLBACK = "http://localhost:27247/v1/mcp-auth/callback";
 
 function makeProvider(
-  workDir: string,
   overrides: { serverName?: string; callbackUrl?: string; allowInsecureRemotes?: boolean } = {},
 ): WorkspaceOAuthProvider {
   return new WorkspaceOAuthProvider({
     owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
     serverName: overrides.serverName ?? "test-srv",
-    workDir,
     callbackUrl: overrides.callbackUrl ?? CALLBACK,
     // Most tests target localhost:<random> via Bun.serve, which validateConnectorUrl
     // blocks by default. Each test opts in explicitly; the "SSRF block" test
@@ -35,11 +30,6 @@ function makeProvider(
 }
 
 describe("WorkspaceOAuthProvider — authorize redirect probe (headless)", () => {
-  let workDir: string;
-  beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-integ-"));
-  });
-
   it("authorize endpoint 302 to our callback with code resolves pending flow", async () => {
     const mockAuthServer = Bun.serve({
       port: 0,
@@ -55,7 +45,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (headless)", () =>
     });
     try {
       const authUrl = new URL(`http://localhost:${mockAuthServer.port}/authorize`);
-      const p = makeProvider(workDir);
+      const p = makeProvider();
       const state = p.state();
       authUrl.searchParams.set("state", state);
       authUrl.searchParams.set("redirect_uri", CALLBACK);
@@ -95,7 +85,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (headless)", () =>
     });
     try {
       const authUrl = new URL(`http://localhost:${mockAuthServer.port}/authorize`);
-      const p = makeProvider(workDir);
+      const p = makeProvider();
       const state = p.state();
       authUrl.searchParams.set("state", state);
       authUrl.searchParams.set("redirect_uri", CALLBACK);
@@ -130,7 +120,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (headless)", () =>
     });
     try {
       // Configured callback has a trailing slash.
-      const p = makeProvider(workDir, {
+      const p = makeProvider({
         callbackUrl: "http://LOCALHOST:27247/v1/mcp-auth/callback/",
       });
       const state = p.state();
@@ -147,11 +137,6 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (headless)", () =>
 });
 
 describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", () => {
-  let workDir: string;
-  beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-integ-"));
-  });
-
   it("302 to a non-self-target login page registers flow + fires callback + throws UnauthorizedError", async () => {
     // The login page is a SECOND loopback mock on its own port — a genuinely
     // non-self target (the callback lives on :27247) that the probe will
@@ -185,7 +170,6 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
       const p = new WorkspaceOAuthProvider({
         owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "test-srv",
-        workDir,
         callbackUrl: CALLBACK,
         allowInsecureRemotes: true,
         headlessAuthProbe: true,
@@ -232,7 +216,6 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
       const p = new WorkspaceOAuthProvider({
         owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "test-srv",
-        workDir,
         callbackUrl: CALLBACK,
         allowInsecureRemotes: true,
         headlessAuthProbe: true,
@@ -255,11 +238,6 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
 });
 
 describe("WorkspaceOAuthProvider — SSRF defense", () => {
-  let workDir: string;
-  beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-integ-"));
-  });
-
   it("blocks a loopback authorize URL when allowInsecureRemotes is false", async () => {
     // Mock server that would gladly 302-to-metadata if reached — we should
     // never reach it because validateConnectorUrl blocks the initial hop.
@@ -274,7 +252,7 @@ describe("WorkspaceOAuthProvider — SSRF defense", () => {
     });
     try {
       const authUrl = new URL(`http://localhost:${mockAuthServer.port}/authorize`);
-      const p = makeProvider(workDir, { allowInsecureRemotes: false });
+      const p = makeProvider({ allowInsecureRemotes: false });
       p.state();
       const pending = p.awaitPendingFlow();
       const pendingSettled = pending.catch((err) => err);
@@ -308,7 +286,7 @@ describe("WorkspaceOAuthProvider — SSRF defense", () => {
     });
     try {
       const authUrl = new URL(`http://localhost:${mockAuthServer.port}/authorize`);
-      const p = makeProvider(workDir, { allowInsecureRemotes: true });
+      const p = makeProvider({ allowInsecureRemotes: true });
       p.state();
       const pending = p.awaitPendingFlow();
       const pendingSettled = pending.catch((err) => err);

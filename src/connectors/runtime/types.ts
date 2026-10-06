@@ -200,8 +200,7 @@ export type ConnectorRef = {
    * a per-install session URL, so a url→catalog lookup misses and the stamped
    * id is the only way back to the entry), and `providerRef` is
    * `ManagedSession.providerRef` verbatim — opaque provider-scoped coordinates
-   * the kernel never reads. Read it through `brokeredRef()`
-   * (`./brokered.ts`), which also maps the legacy per-vendor blocks forward.
+   * the kernel never reads. Read it through `brokeredRef()` (`./brokered.ts`).
    */
   brokered?: BrokeredRef;
 };

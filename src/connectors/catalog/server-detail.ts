@@ -297,6 +297,13 @@ export interface NimbleBrainConnectorMeta {
    * flag is the operator's opt-in, the auth check is the hard gate.
    */
   personal?: boolean;
+  /**
+   * How to ask the connected service which account it is signed in as, for a
+   * service whose sign-in names none: `{ tool, arguments?, field }`. Read
+   * through `parseAccountLookup` (`account-lookup.ts`), which has the shape
+   * and why the catalog is where it is declared.
+   */
+  account?: unknown;
 }
 
 /** The canonical wire format. Upstream `ServerDetail`. */

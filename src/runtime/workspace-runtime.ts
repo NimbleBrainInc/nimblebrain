@@ -187,7 +187,7 @@ async function urlConnectorHasBootAuth(
   return (
     brokeredConnectionPresent(managedConnectors, connector, wsId, workDir) ??
     (connectorHasStaticAuth(connector) ||
-      (await hasMcpOAuthTokens(workDir, { type: "workspace", wsId }, serverName)))
+      (await hasMcpOAuthTokens({ type: "workspace", wsId }, serverName)))
   );
 }
 

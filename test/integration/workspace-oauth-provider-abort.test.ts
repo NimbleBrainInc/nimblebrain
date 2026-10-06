@@ -45,7 +45,6 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
       const provider = new WorkspaceOAuthProvider({
         owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "abort-test",
-        workDir,
         callbackUrl: CALLBACK,
         allowInsecureRemotes: true,
         // The abort threads into the redirect-probe fetch, which only runs
@@ -89,7 +88,6 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
       const provider = new WorkspaceOAuthProvider({
         owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "no-abort",
-        workDir,
         callbackUrl: CALLBACK,
         allowInsecureRemotes: true,
         headlessAuthProbe: true,

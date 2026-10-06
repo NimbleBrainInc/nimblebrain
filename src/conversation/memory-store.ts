@@ -17,8 +17,7 @@ import type {
 
 /**
  * Derive cumulative usage + cost from a flat list of stored messages.
- * Used by the legacy (non-event-sourced) stores when building a
- * ConversationSummary. Cost is computed at read time from the catalog;
+ * Used by the in-memory store when building a ConversationSummary. Cost is computed at read time from the catalog;
  * never stored.
  */
 function deriveSummaryTotals(messages: StoredMessage[]): {

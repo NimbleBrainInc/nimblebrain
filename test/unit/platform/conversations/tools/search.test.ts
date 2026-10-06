@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConversationIndex } from "../../../../../src/platform/conversations/index-cache.ts";
 import { handleSearch } from "../../../../../src/platform/conversations/tools/search.ts";
+import {
+  conversationEventLines,
+  type FixtureTurn,
+} from "../../../../helpers/conversation-events.ts";
 
 /**
  * Fixtures live under the real workspace layout, because the index takes an
@@ -51,7 +55,9 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
 
   const lines = [
     meta,
-    ...messages.map((m) => JSON.stringify({ ...m, timestamp: m.timestamp ?? createdAt })),
+    ...conversationEventLines(
+      messages.map((m) => ({ ...m, timestamp: m.timestamp ?? createdAt })) as FixtureTurn[],
+    ),
   ];
   const wsDir = join(dir, "ws_00859aff6f095b0e", "conversations", "usr_test");
   mkdirSync(wsDir, { recursive: true });

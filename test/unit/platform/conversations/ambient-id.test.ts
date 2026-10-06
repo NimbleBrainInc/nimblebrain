@@ -21,6 +21,7 @@ import { createConversationsSource } from "../../../../src/platform/conversation
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { conversationEventLines } from "../../../helpers/conversation-events.ts";
 
 const OWNER_ID = "usr_test";
 const WS_ID = "ws_0017179cea048c8e";
@@ -58,11 +59,9 @@ function writeConversation(id: string, title: string, message: string): void {
   };
   const lines = [
     JSON.stringify(meta),
-    JSON.stringify({
-      role: "user",
-      content: message,
-      timestamp: "2026-01-01T00:01:00.000Z",
-    }),
+    ...conversationEventLines([
+      { role: "user", content: message, timestamp: "2026-01-01T00:01:00.000Z" },
+    ]),
   ];
   writeFileSync(join(dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 }
@@ -107,21 +106,26 @@ function writeAutoTitledConversation(id: string, autoTitle: string, message: str
   writeFileSync(join(dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 }
 
-/**
- * The title a READER projects, which is the only one that reaches a user.
- * `storedTitle` reads line 1 — the one place a shadowed write does land — so
- * it cannot tell a real rename from one every reader ignores.
- */
+/** The title a READER projects, which is the only one that reaches a user. */
 async function projectedTitle(id: string): Promise<string | null> {
   const result = await inChat("get", { id, expand: "metadata" });
   const { metadata } = parseFirst(result) as { metadata: { title: string | null } };
   return metadata.title;
 }
 
-function storedTitle(id: string): string {
+/**
+ * The title on disk as every reader resolves it: the last `metadata.title`
+ * event, falling back to line 1 when there is none.
+ */
+function storedTitle(id: string): string | null {
   const path = join(workDir, "workspaces", WS_ID, "conversations", OWNER_ID, `${id}.jsonl`);
-  const line = readFileSync(path, "utf-8").split("\n")[0]!;
-  return (JSON.parse(line) as { title: string }).title;
+  const lines = readFileSync(path, "utf-8").split("\n").filter(Boolean);
+  let title = (JSON.parse(lines[0]!) as { title: string | null }).title;
+  for (const line of lines.slice(1)) {
+    const e = JSON.parse(line) as { type?: string; title?: string | null };
+    if (e.type === "metadata.title") title = e.title ?? null;
+  }
+  return title;
 }
 
 function makeRuntime(): Runtime {
@@ -323,22 +327,6 @@ describe("a rename reaches the channel readers project from", () => {
       title: string;
     };
     expect(echoed.title).toBe(await projectedTitle(AUTO_ID));
-  });
-
-  test("renaming a legacy conversation keeps its messages", async () => {
-    // A legacy file has no events, and the reader picks its parser by asking
-    // whether any line looks like one. Appending a `metadata.title` event to
-    // one flips it onto the event reducer, which finds no messages — so the
-    // rename would empty the conversation. Line 1 is its only title channel.
-    const result = await inChat("update", { id: OTHER_ID, title: "Renamed Legacy" });
-    expect(result.isError).toBe(false);
-
-    expect(await projectedTitle(OTHER_ID)).toBe("Renamed Legacy");
-
-    const full = parseFirst(await inChat("get", { id: OTHER_ID, expand: "full" })) as {
-      messages: unknown[];
-    };
-    expect(full.messages.length).toBeGreaterThan(0);
   });
 });
 
