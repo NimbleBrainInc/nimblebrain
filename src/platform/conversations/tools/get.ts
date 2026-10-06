@@ -101,8 +101,7 @@ export async function handleGet(
     lastModel: conversation.meta.lastModel,
     // The model the conversation is bound to for its life. Surfaced so a client
     // can show which model an open conversation runs on — a model-slot change
-    // does not move it, so the configured default is not the answer. Absent on
-    // records predating the binding, which resolve from current config.
+    // does not move it, so the configured default is not the answer.
     model: conversation.meta.model,
     ...(conversation.meta.ownerId ? { ownerId: conversation.meta.ownerId } : {}),
     // The workspace the conversation is sealed to. Surfaced so a client that

@@ -11,6 +11,11 @@
 - **The message-per-line reader.** Conversation files are read as event logs
   only; `looksLikeEventLine` is gone. `fork` writes the new conversation as
   events, and `update` always appends a `metadata.title` event.
+- **Readers for historic event shapes.** A header with no `model` is not
+  read, so `ConversationMetadata.model` is always present; `llm.response`
+  `usage` and `tool.done` `output` are read as required, and a `skills.loaded`
+  entry with no `name` is dropped (`skillNameFromId` is gone). `fork` stamps a
+  `finishReason` on every `llm.response` it writes.
 
 ### Changed
 
