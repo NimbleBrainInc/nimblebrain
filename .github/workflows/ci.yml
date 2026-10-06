@@ -78,12 +78,11 @@ jobs:
   # is no proof, since it skips the tests (see the top of this file).
   # On a pull_request or merge_group this job is skipped.
   verified-on-pr:
-    name: Already verified on its PR?
+    name: Already verified in the merge queue?
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
-      pull-requests: read
       actions: read
     outputs:
       verified: ${{ steps.prior.outputs.verified }}
@@ -310,7 +309,7 @@ jobs:
   # tags): same ECR repos, same `:<short-sha>` tag — a `v*` release just adds
   # the version tag and GHCR/`:latest` on top. Gating on every check above
   # means an image only exists in ECR if its tree passed them (here, or on the
-  # PR run verified-on-pr matched), which closes the "deployed a tag that was
+  # merge-queue run verified-on-pr matched), which closes the "deployed a tag that was
   # never pushed" hole.
   #
   # The ECR repos are immutable: a `<sha>` tag is written once. Both steps pass
