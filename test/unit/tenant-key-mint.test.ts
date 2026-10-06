@@ -404,7 +404,7 @@ describe("createMintingFetch", () => {
   });
 });
 
-describe("resolveAuthorizerTokenUrl (issuer/endpoint decoupling)", () => {
+describe("resolveAuthorizerTokenUrl", () => {
   const ENV = ["NB_FLEET_AUTHORIZER_TOKEN_URL", "NB_FLEET_AUTHORIZER_ISSUER"] as const;
   function withEnv(
     vals: Partial<Record<(typeof ENV)[number], string | undefined>>,
@@ -426,65 +426,27 @@ describe("resolveAuthorizerTokenUrl (issuer/endpoint decoupling)", () => {
     }
   }
 
-  it("uses an explicit tokenUrl verbatim, ignoring the issuer (location != identity)", () => {
-    // The whole point: a moved endpoint never disturbs the `iss` identity.
-    expect(
-      resolveAuthorizerTokenUrl({
-        tokenUrl: "http://mcp-authorizer.auth.svc/token",
-        issuer: "http://mcp-authorizer.mcp-shared.svc",
-      }),
-    ).toBe("http://mcp-authorizer.auth.svc/token");
-  });
-
-  it("derives `${issuer}/token` when no explicit tokenUrl (legacy fallback)", () => {
-    expect(resolveAuthorizerTokenUrl({ issuer: "http://mcp-authorizer.mcp-shared.svc" })).toBe(
-      "http://mcp-authorizer.mcp-shared.svc/token",
+  it("reads NB_FLEET_AUTHORIZER_TOKEN_URL", () => {
+    withEnv({ NB_FLEET_AUTHORIZER_TOKEN_URL: "http://mcp-authorizer.auth.svc/token" }, () =>
+      expect(resolveAuthorizerTokenUrl()).toBe("http://mcp-authorizer.auth.svc/token"),
     );
   });
 
-  it("prefers NB_FLEET_AUTHORIZER_TOKEN_URL over the issuer-derived endpoint", () => {
-    withEnv(
-      {
-        NB_FLEET_AUTHORIZER_TOKEN_URL: "http://mcp-authorizer.auth.svc/token",
-        NB_FLEET_AUTHORIZER_ISSUER: "http://mcp-authorizer.mcp-shared.svc",
-      },
-      () => expect(resolveAuthorizerTokenUrl()).toBe("http://mcp-authorizer.auth.svc/token"),
-    );
-  });
-
-  it("falls back to `${NB_FLEET_AUTHORIZER_ISSUER}/token` when the token-url var is unset", () => {
+  it("derives nothing from NB_FLEET_AUTHORIZER_ISSUER", () => {
     withEnv(
       {
         NB_FLEET_AUTHORIZER_TOKEN_URL: undefined,
         NB_FLEET_AUTHORIZER_ISSUER: "http://mcp-authorizer.mcp-shared.svc",
       },
-      () => expect(resolveAuthorizerTokenUrl()).toBe("http://mcp-authorizer.mcp-shared.svc/token"),
-    );
-  });
-
-  it("returns undefined when neither is configured", () => {
-    withEnv(
-      { NB_FLEET_AUTHORIZER_TOKEN_URL: undefined, NB_FLEET_AUTHORIZER_ISSUER: undefined },
       () => expect(resolveAuthorizerTokenUrl()).toBeUndefined(),
     );
   });
 
-  it("per-connection config wins over global env (a pinned authorizer is never silently redirected)", () => {
-    withEnv(
-      {
-        NB_FLEET_AUTHORIZER_TOKEN_URL: "http://global-authorizer.svc/token",
-        NB_FLEET_AUTHORIZER_ISSUER: "http://global-authorizer.svc",
-      },
-      () => {
-        // A connection pinned via config.issuer must beat the global TOKEN_URL env...
-        expect(resolveAuthorizerTokenUrl({ issuer: "http://pinned.example" })).toBe(
-          "http://pinned.example/token",
-        );
-        // ...and an explicit config.tokenUrl likewise.
-        expect(resolveAuthorizerTokenUrl({ tokenUrl: "http://pinned.example/token" })).toBe(
-          "http://pinned.example/token",
-        );
-      },
+  it("a per-connection tokenUrl wins over the global env (a pinned authorizer is never redirected)", () => {
+    withEnv({ NB_FLEET_AUTHORIZER_TOKEN_URL: "http://global-authorizer.svc/token" }, () =>
+      expect(resolveAuthorizerTokenUrl("http://pinned.example/token")).toBe(
+        "http://pinned.example/token",
+      ),
     );
   });
 });

@@ -5,7 +5,7 @@ description: Match the platform's look and feel using injected CSS variables.
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The NimbleBrain platform injects CSS custom properties into every app iframe so your UI can match the host shell — including dark mode — without shipping your own color palette. The tokens follow the [MCP ext-apps specification](https://apps.extensions.modelcontextprotocol.io/api/), with a small set of NimbleBrain-specific extensions prefixed `--nb-`.
+The NimbleBrain platform injects CSS custom properties into every app iframe so your UI can match the host shell — including dark mode — without shipping your own color palette. The tokens follow the [MCP ext-apps specification](https://apps.extensions.modelcontextprotocol.io/api/), with a small set of NimbleBrain-specific extensions prefixed `--nb-`. Read the spec key wherever one exists: it is the one every MCP Apps host can send, so the same CSS themes your app in Claude and ChatGPT too.
 
 ## How it works
 
@@ -28,7 +28,7 @@ body {
 
 button {
   background: var(--color-text-accent);
-  color: var(--nb-color-accent-foreground);
+  color: var(--color-text-inverse);
   border-radius: var(--border-radius-md);
 }
 
@@ -111,10 +111,10 @@ window.parent.postMessage({
 
 The rule, rather than a list you would have to keep checking: **only keys in the ext-apps spec's own variable enum cross the boundary.** Two families of what the host injects are not in it, so neither refreshes:
 
-- the `--nb-*` extension tokens, which have no spec equivalent by definition, and
+- the `--nb-*` extension tokens (most repeat a spec key's value, and the spec key is the one that refreshes), and
 - NimbleBrain's additions to spec-shaped families — `--color-text-accent`, and the `3xs`, `2xs` and `base` steps of the type scale (the spec enum carries only `xs`, `sm`, `md` and `lg`).
 
-Drive any surface that must flip between light and dark from the spec tokens that *do* cross: `--color-background-*`, `--color-text-primary` / `-secondary` / `-tertiary`, `--color-border-*`, and `--color-ring-*`. Do **not** key light/dark styling off `--color-text-accent` — it is injected at load but never updates on a toggle.
+Drive any surface that must flip between light and dark from the spec tokens that *do* cross: `--color-background-*`, `--color-text-*` other than `-accent`, `--color-border-*`, and `--color-ring-*`. Do **not** key light/dark styling off `--color-text-accent` — it is injected at load but never updates on a toggle.
 </Aside>
 
 ## Token reference
@@ -132,6 +132,11 @@ The platform injects the following tokens into every iframe. Those in the ext-ap
 | `--color-text-secondary` | Captions, metadata, placeholders |
 | `--color-text-tertiary` | De-emphasized text |
 | `--color-text-accent` | Links, primary buttons, AI accents (load-only — does not refresh on toggle) |
+| `--color-text-inverse` | Text on a filled accent or danger background |
+| `--color-text-danger` | Errors, destructive actions |
+| `--color-text-success` | Success indicators |
+| `--color-text-warning` | Warning indicators |
+| `--color-background-info` | Info background |
 | `--color-border-primary` | Borders, dividers |
 | `--color-border-secondary` | Secondary borders |
 | `--color-ring-primary` | Focus rings |
@@ -182,19 +187,26 @@ These tables list the tokens, not their values. The values are whatever the host
 
 ### NimbleBrain extensions (`--nb-*`)
 
-These have no ext-apps spec equivalent. They are injected into the iframe's `<style>` block at load but do **not** cross the protocol boundary, so they will not refresh on a live theme toggle (see the caveat above).
+They are injected into the iframe's `<style>` block at load but do **not** cross the protocol boundary, so they will not refresh on a live theme toggle (see the caveat above), and no other host sends them.
+
+Two have no ext-apps spec equivalent:
 
 | Token | Use for |
 |-------|---------|
-| `--nb-color-accent-foreground` | Text on accent backgrounds |
-| `--nb-color-danger` | Errors, destructive actions |
-| `--nb-color-danger-foreground` | Text on danger backgrounds |
-| `--nb-color-success` | Success indicators |
-| `--nb-color-warning` | Warning indicators |
 | `--nb-color-processing` | In-progress / processing state |
 | `--nb-color-processing-light` | Processing background |
-| `--nb-color-info-light` | Info background |
-| `--nb-font-heading` | Heading font |
+
+The rest carry the same value as a spec key, for apps written before the host sent it. Read the spec key instead:
+
+| Token | Same value as |
+|-------|---------|
+| `--nb-color-accent-foreground` | `--color-text-inverse` |
+| `--nb-color-danger` | `--color-text-danger` |
+| `--nb-color-danger-foreground` | `--color-text-inverse` |
+| `--nb-color-success` | `--color-text-success` |
+| `--nb-color-warning` | `--color-text-warning` |
+| `--nb-color-info-light` | `--color-background-info` |
+| `--nb-font-heading` | `--font-sans` |
 
 <Aside type="note">
 The host injects font *names*, not font *files*. A `srcdoc` iframe is its own document and inherits no `@font-face` from the shell, so unless your app loads the face itself the value resolves to the fallback stack. Design against the fallback and treat the brand face as an enhancement — or load it in your own app.

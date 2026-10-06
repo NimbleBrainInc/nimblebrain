@@ -78,7 +78,6 @@ let workosKey: TestKeyPair;
 const BASE_CONFIG: WorkosAuth = {
   adapter: "workos",
   clientId: "client_test_orgscope",
-  redirectUri: "http://localhost/callback",
   organizationId: CONFIGURED_ORG,
   apiKey: "sk_test_fake_orgscope",
   // No authkitDomain → the WorkOS User Management branch (with the org_id gate)

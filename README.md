@@ -617,7 +617,7 @@ All default to `true`. What `false` does depends on the flag: most withhold a to
 | `catalogSearch` | Catalog search | `nb__search` stays; `scope: "catalog"` returns an error |
 | `fileContext` | File upload, serving, and context extraction | The file endpoints refuse (404, or 415 on a multipart upload) |
 | `userManagement` | Create, update, and delete users | `nb__manage_users` is not registered |
-| `workspaceManagement` | Workspaces, members, sharing | `nb__manage_workspaces` is not registered |
+| `workspaceManagement` | Workspaces and members | `nb__manage_workspaces` is not registered |
 | `compaction` | Folding the oldest turns of a long conversation into a summary at run start | Full history replays every turn (event-sourced stores only) |
 
 **Enforcement.** For the flags that withhold a tool, three layers: (1) the tool is not built into its source at startup, so it reaches no tool list and no dispatcher; (2) `POST /v1/workspaces/:wsId/tools/call` returns `403 feature_disabled`; (3) MCP `tools/list` filters it and `tools/call` returns an error. `toolDiscovery`, `catalogSearch`, and `fileContext` are enforced inside the handler instead — the tool or endpoint is present and refuses. `compaction` gates no call path at all. Tools outside the table (`nb__status`, the read-only platform surfaces, `nb__search` itself) are never gated.

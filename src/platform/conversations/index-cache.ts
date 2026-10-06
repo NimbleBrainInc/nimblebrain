@@ -13,6 +13,13 @@
  * name one, which is the difference between re-reading a file and re-reading
  * the corpus on every message.
  *
+ * **A header re-read resumes where the last one stopped.** Each file's scan is
+ * kept with its byte offset, so re-reading a conversation that grew costs the
+ * appended events, not the whole file. A turn appends after every model call
+ * and tool call, and the list is refreshed while it runs, so on a long
+ * conversation the difference is a whole-file parse on the event loop per
+ * refresh. A file that was replaced, rewritten or truncated is read in full.
+ *
  * A watcher cannot supply either signal: the index spans the recursive
  * workspace layout and a root `fs.watch` can't see writes nested under each
  * workspace's own `conversations/<ownerId>/` partition.
@@ -20,7 +27,12 @@
  * Types are defined locally — no imports from the runtime codebase.
  */
 
-import { listConversationFiles, readConversationHeader } from "./jsonl-reader.ts";
+import {
+  type HeaderScan,
+  headerOfScan,
+  listConversationFiles,
+  scanConversationHeader,
+} from "./jsonl-reader.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -115,6 +127,8 @@ export interface ListResult {
 
 export class ConversationIndex {
   private entries: Map<string, IndexEntry> = new Map();
+  /** Each indexed file's header scan, keyed by path, so a re-read resumes from it. */
+  private scans: Map<string, HeaderScan> = new Map();
   private dir: string | null = null;
   /**
    * The in-flight mutation — a full `build()` or an incremental apply — so
@@ -133,13 +147,17 @@ export class ConversationIndex {
   /** Set when the change could not name a conversation; the next read rebuilds in full. */
   private dirty = false;
 
-  /** Build index by scanning all .jsonl files in dir. Reads only headers (line 1 + preview). */
+  /** Build the index from every conversation file under `dir`, the workspaces root. */
   async build(dir: string): Promise<void> {
     this.dir = dir;
     this.entries.clear();
+    // A rebuild keeps the scans of files still present: each is checked
+    // against its file before it is resumed, and a file that is gone drops out.
+    const prior = this.scans;
+    this.scans = new Map();
 
     for (const { filePath, wsId } of listConversationFiles(dir)) {
-      await this.indexFile(filePath, wsId);
+      await this.indexFile(filePath, wsId, prior.get(filePath));
     }
   }
 
@@ -302,9 +320,18 @@ export class ConversationIndex {
    * unreadable file is simply absent); an incremental apply acts on it, because
    * nothing else will drop the entry.
    */
-  private async indexFile(filePath: string, wsId: string): Promise<boolean> {
-    const header = await readConversationHeader(filePath);
-    if (!header) return false;
+  private async indexFile(
+    filePath: string,
+    wsId: string,
+    prior = this.scans.get(filePath),
+  ): Promise<boolean> {
+    const scan = await scanConversationHeader(filePath, prior);
+    if (!scan) {
+      this.scans.delete(filePath);
+      return false;
+    }
+    this.scans.set(filePath, scan);
+    const header = headerOfScan(scan);
 
     const entry: IndexEntry = {
       id: header.meta.id,

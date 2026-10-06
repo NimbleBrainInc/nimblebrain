@@ -101,7 +101,6 @@ function workosProvider(config: Partial<WorkosAuth>): WorkosIdentityProvider {
     {
       adapter: "workos",
       clientId: ENV_CLIENT_ID,
-      redirectUri: "http://localhost/callback",
       organizationId: "org_test",
       apiKey: "sk_test_fake",
       authkitDomain: AUTHKIT_DOMAIN,

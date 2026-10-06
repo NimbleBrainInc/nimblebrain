@@ -60,7 +60,7 @@ NimbleBrain doesn't just run MCP servers — it **composes** them:
 | **Connectors (Apps)** | Remote MCP servers a workspace connects to by URL, discovered through the connectors catalog |
 | **Skills** | Markdown files that compose the system prompt and scope tool access per task |
 | **`/mcp/<workspaceId>` Endpoint** | Exposes a workspace as a Streamable HTTP MCP server for external clients |
-| **System Tools** | Built-in tools for discovery (`nb__search`/`nb__status`) and platform management (`manage_connectors`, `manage_workspaces`, `manage_users`) |
+| **System Tools** | Built-in agent tools for discovery (`nb__search`/`nb__status`), plus app-only administration tools the settings pages call (`nb__manage_connectors`, `nb__manage_workspaces`, `nb__manage_users`) |
 
 ## Who is it for?
 

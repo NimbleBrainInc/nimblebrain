@@ -35,7 +35,6 @@ import { readJson } from "../../helpers/http.ts";
 const BASE_CONFIG: WorkosAuth = {
   adapter: "workos",
   clientId: "client_test_refresh",
-  redirectUri: "http://localhost/callback",
   organizationId: "org_test_refresh",
   apiKey: "sk_test_fake_refresh",
 };

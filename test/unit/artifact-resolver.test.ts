@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { readArtifactDataPlaneConfigFromEnv } from "../../src/host-resources/artifacts/data-plane-read-client.ts";
 import {
   ArtifactNotFoundError,
   ArtifactReadClient,
+  ArtifactReadError,
   ArtifactResolver,
   isArtifactUri,
   uriToArtifactId,
@@ -500,5 +502,28 @@ describe("ArtifactReadClient.list — discovery as the viewing user", () => {
 
     await client.list(WS_A, { limit: -3 });
     expect(urls.at(-1)).not.toContain("limit=");
+  });
+});
+
+describe("readArtifactDataPlaneConfigFromEnv", () => {
+  const BASE = "http://artifacts.example";
+
+  it("reads the token endpoint from NB_FLEET_AUTHORIZER_TOKEN_URL", () => {
+    expect(
+      readArtifactDataPlaneConfigFromEnv({
+        NB_ARTIFACTS_DATA_PLANE_URL: BASE,
+        NB_FLEET_AUTHORIZER_TOKEN_URL: "http://authorizer.example/token",
+      }),
+    ).toEqual({ baseUrl: BASE, tokenUrl: "http://authorizer.example/token" });
+  });
+
+  it("derives nothing from NB_FLEET_AUTHORIZER_ISSUER", () => {
+    const read = () =>
+      readArtifactDataPlaneConfigFromEnv({
+        NB_ARTIFACTS_DATA_PLANE_URL: BASE,
+        NB_FLEET_AUTHORIZER_ISSUER: "http://authorizer.example",
+      });
+    expect(read).toThrow(ArtifactReadError);
+    expect(read).toThrow("NB_FLEET_AUTHORIZER_TOKEN_URL is not set");
   });
 });

@@ -5142,9 +5142,8 @@ export class Runtime {
 
   /**
    * Tenant-level default preferences from the deployed runtime config
-   * (`config.preferences` with `config.home` as a legacy fallback for
-   * displayName/timezone). These are the values an operator sets via Helm
-   * values; per-user identity preferences override them at request time.
+   * (`config.preferences`, with `config.home.timezone` as the timezone
+   * fallback). Per-user identity preferences override them at request time.
    */
   getTenantDefaultPreferences(): {
     displayName?: string;
@@ -5155,9 +5154,7 @@ export class Runtime {
     const prefs = this.config.preferences ?? {};
     const home = this.config.home ?? {};
     return {
-      ...((prefs.displayName ?? home.userName)
-        ? { displayName: prefs.displayName ?? home.userName }
-        : {}),
+      ...(prefs.displayName ? { displayName: prefs.displayName } : {}),
       ...((prefs.timezone ?? home.timezone) ? { timezone: prefs.timezone ?? home.timezone } : {}),
       ...(prefs.locale ? { locale: prefs.locale } : {}),
       ...(prefs.theme ? { theme: prefs.theme } : {}),

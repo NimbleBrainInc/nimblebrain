@@ -371,6 +371,12 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
           () => {
             setView("list");
             setEditingId(null);
+            // The open row shows, and Edit seeds the form from, this detail.
+            // The write result carries no body, so re-read it; dropping the
+            // old one first keeps a quick second Edit from seeding the form
+            // with the pre-save body and saving it back.
+            setDetail(null);
+            void fetchDetail(editingId);
           },
         );
       } else {
@@ -401,7 +407,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
         );
       }
     },
-    [editingId, createLockedScope, runMutation],
+    [editingId, createLockedScope, runMutation, fetchDetail],
   );
 
   const startCreate = useCallback(() => {

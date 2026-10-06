@@ -66,11 +66,7 @@ Every member can see who else is in a workspace. Workspace admins and org admins
 
 Apps and connectors are installed at the workspace level. When a connector is installed in a workspace, only members of that workspace can use its tools.
 
-```
-Install @nimblebraininc/tasks in this workspace
-```
-
-The agent installs the connector and registers its tools in the workspace's tool registry. Other workspaces are unaffected.
+A workspace admin installs a connector from the workspace's connectors catalog (**Settings → Connectors**). Its tools join that workspace's tool registry; other workspaces are unaffected. The agent can search the catalog with `nb__search` and suggest a connector, but it cannot install one.
 
 ## Deleting a workspace
 

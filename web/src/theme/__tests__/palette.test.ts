@@ -96,6 +96,47 @@ describe("getSpecThemeTokens — protocol boundary", () => {
   });
 });
 
+/**
+ * Every colour and font the host sends as `--nb-*` also goes out under its MCP
+ * Apps spec key, because the spec key is the only one that crosses the protocol
+ * and the only one another host (Claude, ChatGPT) can send. An app reading the
+ * spec key then gets the same value here as it would from the extension.
+ *
+ * A total partition: each `--nb-*` key either names its spec twin or is listed
+ * as having none, so a new extension has to take one side.
+ */
+const SPEC_TWIN: Record<string, string> = {
+  "--nb-color-danger": "--color-text-danger",
+  "--nb-color-success": "--color-text-success",
+  "--nb-color-warning": "--color-text-warning",
+  "--nb-color-info-light": "--color-background-info",
+  "--nb-color-accent-foreground": "--color-text-inverse",
+  "--nb-color-danger-foreground": "--color-text-inverse",
+  "--nb-font-heading": "--font-sans",
+};
+const NO_SPEC_EQUIVALENT = new Set(["--nb-color-processing", "--nb-color-processing-light"]);
+
+describe("every --nb-* colour and font has its spec key on the wire", () => {
+  for (const mode of ["light", "dark"] as const) {
+    const map = paletteToExtAppsTokens(mode);
+    const wire = getSpecThemeTokens(mode);
+
+    test(`${mode}: each --nb-* key names a spec twin or has none`, () => {
+      const unclassified = Object.keys(map).filter(
+        (k) => k.startsWith("--nb-") && !(k in SPEC_TWIN) && !NO_SPEC_EQUIVALENT.has(k),
+      );
+      expect(unclassified).toEqual([]);
+    });
+
+    for (const [nb, spec] of Object.entries(SPEC_TWIN)) {
+      test(`${mode}: ${spec} crosses the wire with the value of ${nb}`, () => {
+        expect(map[nb]).toBeDefined();
+        expect(wire[spec]).toBe(map[nb] as string);
+      });
+    }
+  }
+});
+
 describe("paletteToRootCss — shell :root/.dark match current values", () => {
   const css = paletteToRootCss();
   const darkAt = css.indexOf(".dark {");

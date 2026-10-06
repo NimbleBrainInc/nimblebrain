@@ -26,7 +26,6 @@ let userStore: UserStore;
 const BASE_CONFIG: WorkosAuth = {
   adapter: "workos",
   clientId: "client_test",
-  redirectUri: "http://localhost/callback",
   organizationId: "org_test123",
   apiKey: "sk_test_fake",
 };

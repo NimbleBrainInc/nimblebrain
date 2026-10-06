@@ -182,29 +182,16 @@ export function readTenantIdentityFromEnv(env: NodeJS.ProcessEnv = process.env):
 }
 
 /**
- * Resolve the authorizer's token endpoint (the POST target) — decoupled from the
- * `iss` identity. An explicit `tokenUrl` wins (a per-connection override, or
- * `NB_FLEET_AUTHORIZER_TOKEN_URL`); otherwise it is derived from the legacy,
- * identity-overloaded issuer as `${issuer}/token` for backward-compat. Because the
- * mint never inspects `iss` (only verifiers do), the endpoint can move
- * (namespace/cluster) with ZERO token-contract change — set the new var and the
- * POST target moves while `iss` stays put. Returns `undefined` when neither is
- * configured; the caller decides whether that is an error.
+ * Resolve the authorizer's token endpoint (the POST target), which is separate
+ * from the `iss` identity. A per-connection `tokenUrl` wins over the global
+ * `NB_FLEET_AUTHORIZER_TOKEN_URL`, so a connection pinned to its own authorizer
+ * is never redirected to the global one. The mint never inspects `iss` (only
+ * verifiers do), so the endpoint can move (namespace/cluster) with no
+ * token-contract change. Nothing is derived from the issuer. Returns `undefined`
+ * when neither is set; the caller decides whether that is an error.
  */
-export function resolveAuthorizerTokenUrl(
-  opts: { tokenUrl?: string; issuer?: string } = {},
-): string | undefined {
-  // Per-connection config (opts) is more specific than global env, so it wins
-  // OUTRIGHT — a connection pinned to its own authorizer via `config.issuer` /
-  // `config.tokenUrl` is never silently redirected to the global endpoint once
-  // Item 2 sets NB_FLEET_AUTHORIZER_TOKEN_URL. Within each tier, an explicit
-  // endpoint beats the issuer-derived one.
-  if (opts.tokenUrl) return opts.tokenUrl;
-  if (opts.issuer) return new URL("/token", opts.issuer).toString();
-  const envTokenUrl = process.env.NB_FLEET_AUTHORIZER_TOKEN_URL;
-  if (envTokenUrl) return envTokenUrl;
-  const envIssuer = process.env.NB_FLEET_AUTHORIZER_ISSUER;
-  return envIssuer ? new URL("/token", envIssuer).toString() : undefined;
+export function resolveAuthorizerTokenUrl(tokenUrl?: string): string | undefined {
+  return tokenUrl || process.env.NB_FLEET_AUTHORIZER_TOKEN_URL || undefined;
 }
 
 export interface MintServiceTokenOptions {

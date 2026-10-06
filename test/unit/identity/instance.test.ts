@@ -45,7 +45,6 @@ describe("loadInstanceConfig", () => {
       auth: {
         adapter: "workos",
         clientId: "client_123",
-        redirectUri: "http://localhost:3000/v1/auth/callback",
         organizationId: "org_789",
       },
       orgId: "org-789",
@@ -57,18 +56,18 @@ describe("loadInstanceConfig", () => {
     expect(result).toEqual(config);
   });
 
-  test("loads workos auth with redirectUri omitted (provider derives it)", async () => {
-    // Post-WORKOS_REDIRECT_URI world: instance.json may carry no redirectUri;
-    // the provider fills it from publicOrigin(). Loading must succeed and leave
-    // the field absent (not throw, not default to a string).
-    const config = {
-      auth: {
-        adapter: "workos",
-        clientId: "client_123",
-        organizationId: "org_789",
-      },
-    };
-    await writeFile(join(workDir, "instance.json"), JSON.stringify(config));
+  test("ignores a redirectUri in instance.json (the provider derives it)", async () => {
+    await writeFile(
+      join(workDir, "instance.json"),
+      JSON.stringify({
+        auth: {
+          adapter: "workos",
+          clientId: "client_123",
+          redirectUri: "https://other.example.com/v1/auth/callback",
+          organizationId: "org_789",
+        },
+      }),
+    );
 
     const result = await loadInstanceConfig(workDir);
     expect(result?.auth).toEqual({
@@ -76,17 +75,6 @@ describe("loadInstanceConfig", () => {
       clientId: "client_123",
       organizationId: "org_789",
     });
-    expect((result?.auth as { redirectUri?: string } | undefined)?.redirectUri).toBeUndefined();
-  });
-
-  test("rejects workos auth with a non-string redirectUri", async () => {
-    await writeFile(
-      join(workDir, "instance.json"),
-      JSON.stringify({ auth: { adapter: "workos", clientId: "client_123", redirectUri: 42 } }),
-    );
-    await expect(loadInstanceConfig(workDir)).rejects.toThrow(
-      "workos auth 'redirectUri' must be a string",
-    );
   });
 
   test("rejects workos auth with an empty or whitespace organizationId", async () => {
@@ -115,7 +103,6 @@ describe("loadInstanceConfig", () => {
       auth: {
         adapter: "workos",
         clientId: "client_123",
-        redirectUri: "http://localhost:3000/v1/auth/callback",
         organizationId: "org_789",
         adminRoleSlugs: ["org-admin", "owner"],
       },
@@ -133,7 +120,6 @@ describe("loadInstanceConfig", () => {
         auth: {
           adapter: "workos",
           clientId: "client_123",
-          redirectUri: "http://localhost:3000/v1/auth/callback",
           adminRoleSlugs: [],
         },
       }),
