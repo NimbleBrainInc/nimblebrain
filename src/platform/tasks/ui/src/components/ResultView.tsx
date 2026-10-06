@@ -615,7 +615,8 @@ export function ResultScreen({
         }
         actions={
           <>
-            {state.status === "open" && name && (
+            {/* Cancel names the task, which reaches only its own run, never a batch item's: a batch is stopped from its page. */}
+            {state.status === "open" && name && !run?.batchId && (
               <button
                 type="button"
                 className="btn btn-danger"

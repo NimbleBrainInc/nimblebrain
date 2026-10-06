@@ -1006,8 +1006,6 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Tas
 const DEFAULT_UPCOMING_DAYS = 7;
 /** More fires than this in the window and a schedule is one `frequent` row, not one row per fire. */
 const FREQUENT_THRESHOLD = 24;
-/** Most cron fires counted in a window; past it the count is reported as capped. */
-const FIRE_COUNT_CAP = 50_000;
 const HOUR_MS = 3_600_000;
 const STATS_DEFAULT_DAYS = 30;
 /** A `before` later than any run, so a page read walks the archive months. */
@@ -1084,9 +1082,8 @@ function addWindowFires(
       ...base,
       scheduleType: type,
       count: fires.count,
-      ...(fires.capped ? { countCapped: true } : {}),
       first: fires.first,
-      last: fires.last,
+      ...(fires.capped ? { countCapped: true } : { last: fires.last }),
     });
   } else {
     for (const at of fires.listed) scheduled.push({ ...base, scheduleType: type, at });
@@ -1098,6 +1095,7 @@ interface WindowFires {
   first: string;
   last: string;
   count: number;
+  /** Counting stopped once the schedule was known to be frequent: `count` is a floor and `last` the last fire counted. */
   capped: boolean;
   /** The fires, while there are at most `FREQUENT_THRESHOLD` of them. */
   listed: string[];
@@ -1106,8 +1104,10 @@ interface WindowFires {
 /**
  * Count a timed task's fires from its stored `nextRunAt` (it carries any
  * backoff) to `windowEnd`. Null when it has no next fire (no `nextRunAt`, or a
- * retired once). An interval is counted arithmetically; a cron is stepped up
- * to `FIRE_COUNT_CAP`.
+ * retired once). An interval is counted arithmetically. A cron is stepped only
+ * until it is known to be frequent (`FREQUENT_THRESHOLD` + 1 fires), since each
+ * step of a minute-scale cron costs the event loop real time and the panel
+ * polls this.
  */
 function windowFires(task: Task, windowEnd: number, defaultTimezone: string): WindowFires | null {
   const schedule = task.schedule;
@@ -1141,7 +1141,7 @@ function windowFires(task: Task, windowEnd: number, defaultTimezone: string): Wi
   return { first: firstIso, last: firstIso, count: 1, capped: false, listed: [firstIso] };
 }
 
-/** A cron's fires from `first` to `windowEnd`, stepped and counted up to the cap. */
+/** A cron's fires from `first` to `windowEnd`, stepped until there are more than `FREQUENT_THRESHOLD`. */
 function cronWindowFires(
   expression: string,
   timezone: string,
@@ -1160,13 +1160,13 @@ function cronWindowFires(
     return { first: firstIso, last: firstIso, count, capped: false, listed };
   }
   let next = cron.nextRun(first);
-  while (next && next.getTime() <= windowEnd && count < FIRE_COUNT_CAP) {
+  while (next && next.getTime() <= windowEnd && count <= FREQUENT_THRESHOLD) {
     count++;
     last = next;
     if (listed.length < FREQUENT_THRESHOLD) listed.push(next.toISOString());
     next = cron.nextRun(next);
   }
-  const capped = count >= FIRE_COUNT_CAP && !!next && next.getTime() <= windowEnd;
+  const capped = count > FREQUENT_THRESHOLD && !!next && next.getTime() <= windowEnd;
   return {
     first: firstIso,
     last: last.toISOString(),
