@@ -100,31 +100,6 @@ export interface UsageLedgerEntry {
    * to a stored run.
    */
   taskRunId?: string;
-  /**
-   * @deprecated Legacy read-only. Held whichever id correlated the work — a
-   * conversation for chat, a task run for a task — discriminated by
-   * `origin`. No longer written; `conversationId` / `taskRunId` carry those
-   * two facts under their own names, and `runId` adds the per-turn grain the
-   * single field could not express.
-   *
-   * Readers must keep honouring it until every retained record predating the
-   * split has aged out (see `retentionMonths`, default 24). `aggregate.ts`
-   * normalizes it; nothing else should read it.
-   */
-  sessionId?: string;
-  /**
-   * @deprecated Legacy read-only. Set on records written while the runtime
-   * could spawn a sub-agent from inside a turn: `delegated` marked such a
-   * call and `parentRunId` named the top-level run it belonged to. Neither is
-   * written any more — a run starts one way, and its calls carry `runId`.
-   *
-   * `aggregate.ts` still reads `parentRunId` so a retained record from that
-   * era rolls onto the turn that spawned it (see `retentionMonths`, default
-   * 24). Nothing else should read either field.
-   */
-  delegated?: boolean;
-  /** @deprecated Legacy read-only. See {@link delegated}. */
-  parentRunId?: string;
   /** Resolved unit prices. Absent when the catalog did not know the model. */
   rates?: UsageRates;
 }

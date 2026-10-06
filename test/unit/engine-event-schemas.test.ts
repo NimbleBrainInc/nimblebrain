@@ -31,6 +31,7 @@ describe("event schemas — accept representative payloads", () => {
       skills: [
         {
           id: "/data/skills/foo.md",
+          name: "foo",
           layer: 3 as const,
           scope: "workspace" as const,
           version: "1.0.0",
@@ -152,6 +153,7 @@ describe("event schemas — reject malformed payloads", () => {
       skills: [
         {
           id: "/data/skills/foo.md",
+          name: "foo",
           layer: 3 as const,
           scope: "workspace" as const,
           version: "1.0.0",

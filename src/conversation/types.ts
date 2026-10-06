@@ -84,7 +84,7 @@ export interface CreateConversationOptions {
   ownerId: string;
   /** The model to bind the conversation to. Must already be resolved and
    *  provider-qualified — see `Conversation.model`. */
-  model?: string;
+  model: string;
   metadata?: Record<string, unknown>;
   /** Create with a specific id instead of a generated one. Used by the
    *  detached-turn path so the conversation id is known to the caller before
@@ -204,11 +204,8 @@ export interface Conversation {
    * Distinct from `lastModel`, which is derived from `llm.response` events and
    * describes what the last turn *did* run on. This field is the decision;
    * that one is the observation.
-   *
-   * Optional only for legacy records predating the binding — absent means
-   * "unpinned", and those resolve from current config exactly as before.
    */
-  model?: string;
+  model: string;
   lastModel: string | null;
   /** User who owns this conversation. The single authorization principal. */
   ownerId: string;
@@ -388,12 +385,8 @@ export interface LlmResponseEvent {
   /** Token usage for this single LLM call (canonical AI SDK V4 shape). */
   usage: TokenUsage;
   llmMs: number;
-  /**
-   * Per-call finish reason from the provider (AI SDK V4 unified value).
-   * Optional for backward-compat with conversations recorded before this
-   * field existed.
-   */
-  finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
+  /** Per-call finish reason from the provider (AI SDK V4 unified value). */
+  finishReason: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
   /**
    * The provider's own stop reason for this call (AI SDK V4
    * `finishReason.raw`, e.g. Anthropic `end_turn`), or `NO_FINISH_PART_RAW`
@@ -426,7 +419,7 @@ export interface ToolDoneEvent {
    * Full tool output text (audience-filtered). Always persisted — it drives
    * the UI/display and the conversation record.
    */
-  output?: string;
+  output: string;
   /**
    * Bounded text the MODEL saw on the live turn, present only when it differs
    * from `output` (i.e. the result exceeded the model-context bound). History

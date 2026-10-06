@@ -219,9 +219,13 @@ interface EventLine {
   type?: string;
   ts?: string;
   content?: unknown;
-  usage?: TokenUsage;
-  model?: string;
   title?: string | null;
+}
+
+/** The fields an `llm.response` line always carries (see `LlmResponseEvent`). */
+interface LlmResponseLine {
+  usage: TokenUsage;
+  model: string;
 }
 
 /** Zero-valued metrics accumulator. */
@@ -264,10 +268,11 @@ function applyEventLine(metrics: DerivedMetrics, line: string): void {
     }
   } else if (event.type === "run.done") {
     metrics.messageCount++;
-  } else if (event.type === "llm.response" && event.usage && event.model) {
-    metrics.inputTokens += event.usage.inputTokens;
-    metrics.outputTokens += event.usage.outputTokens;
-    metrics.costUsd += estimateCost(event.model, event.usage);
+  } else if (event.type === "llm.response") {
+    const { usage, model } = event as EventLine & LlmResponseLine;
+    metrics.inputTokens += usage.inputTokens;
+    metrics.outputTokens += usage.outputTokens;
+    metrics.costUsd += estimateCost(model, usage);
   } else if (event.type === "metadata.title") {
     metrics.title = event.title;
   }

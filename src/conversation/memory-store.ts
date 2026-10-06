@@ -89,7 +89,7 @@ export class InMemoryConversationStore implements ConversationStore {
       title: null,
       lastModel: null,
       ownerId: options.ownerId,
-      ...(options.model ? { model: options.model } : {}),
+      model: options.model,
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
     };
     this.conversations.set(id, conversation);
@@ -216,6 +216,8 @@ export class InMemoryConversationStore implements ConversationStore {
 
     const newConv = await this.create({
       ownerId: source.ownerId,
+      // A fork continues the source conversation, so it inherits the binding.
+      model: source.model,
       ...(source.workspaceId ? { workspaceId: source.workspaceId } : {}),
     });
 

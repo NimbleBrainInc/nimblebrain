@@ -136,7 +136,7 @@ function parseConversationHeader(raw: Record<string, unknown>): Conversation {
     title: (raw.title as string | null) ?? null,
     lastModel: (raw.lastModel as string | null) ?? null,
     ownerId: raw.ownerId as string,
-    ...(raw.model ? { model: raw.model as string } : {}),
+    model: raw.model as string,
     ...(raw.format ? { format: raw.format as "events" } : {}),
     ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
     ...(raw.visibility ? { visibility: raw.visibility as "private" | "shared" } : {}),
@@ -186,6 +186,18 @@ function forkUserEventLine(msg: StoredMessage): string {
 }
 
 /**
+ * The finish reason for an `llm.response` synthesized from a stored assistant
+ * message: the one its metadata recorded, else what its content implies — a
+ * message carrying tool calls ended to run them, anything else ended normally.
+ * Synthetic writers go through this so no `llm.response` is written without one.
+ */
+function synthesizedFinishReason(msg: StoredMessage): LlmResponseEvent["finishReason"] {
+  if (msg.metadata?.finishReason) return msg.metadata.finishReason;
+  const content = Array.isArray(msg.content) ? msg.content : [];
+  return content.some((c) => c.type === "tool-call") ? "tool-calls" : "stop";
+}
+
+/**
  * Serialize a forked assistant turn as run.start/llm.response/run.done event
  * lines. Each assistant turn must be wrapped in a synthetic run span — without
  * it, reconstructMessages drops the turn (assistant messages are only emitted
@@ -203,6 +215,7 @@ function forkAssistantEventLines(msg: StoredMessage, runId: string): string[] {
       content: msg.content,
       usage: msg.metadata?.usage ?? { inputTokens: 0, outputTokens: 0 },
       llmMs: msg.metadata?.llmMs ?? 0,
+      finishReason: synthesizedFinishReason(msg),
     }),
     JSON.stringify({
       ts: msg.timestamp,
@@ -460,7 +473,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       lastModel: null,
       ownerId: options.ownerId,
       format: "events",
-      ...(options.model ? { model: options.model } : {}),
+      model: options.model,
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options.metadata ? { metadata: options.metadata } : {}),
     };
@@ -487,6 +500,11 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       // `422 conversation_corrupted` (with the migration command in
       // the message) instead of bubbling as 500.
       throw new ConversationCorruptedError(id, "missing_owner");
+    }
+    if (typeof raw.model !== "string" || raw.model.length === 0) {
+      // Every conversation is bound to a model at create. A header without
+      // one predates the binding and was not converted before this release.
+      throw new ConversationCorruptedError(id, "missing_model");
     }
     const conversation = parseConversationHeader(raw);
 
@@ -547,6 +565,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
           outputTokens: 0,
         },
         llmMs: message.metadata.llmMs ?? 0,
+        finishReason: synthesizedFinishReason(message),
       };
       const runDone: ConversationEvent = {
         ts: message.timestamp,
@@ -677,7 +696,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       // A fork continues the source conversation, so it inherits the binding.
       // Re-resolving here would silently move the copy onto the current
       // default and replay the source's history to a different provider.
-      ...(source.model ? { model: source.model } : {}),
+      model: source.model,
       ...(source.workspaceId ? { workspaceId: source.workspaceId } : {}),
     });
 

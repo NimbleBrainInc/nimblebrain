@@ -254,8 +254,8 @@ export interface ConversationMetadata {
   totalInputTokens: number;
   totalOutputTokens: number;
   lastModel: string | null;
-  /** The model the conversation is bound to; absent on records predating the binding. */
-  model?: string;
+  /** The model the conversation is bound to. */
+  model: string;
   ownerId?: string;
   /** The workspace the conversation is sealed to; absent when the record carries no stamp. */
   workspaceId?: string;

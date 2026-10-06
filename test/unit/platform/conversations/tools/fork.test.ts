@@ -27,6 +27,7 @@ const SOURCE_ID = "conv_source00000001";
 
 function makeMeta(overrides: Record<string, unknown> = {}) {
   return {
+    model: "anthropic:claude-sonnet-4-6",
     id: SOURCE_ID,
     createdAt: "2025-01-01T00:00:00.000Z",
     updatedAt: "2025-01-01T00:05:00.000Z",
@@ -167,19 +168,6 @@ describe("handleFork", () => {
     const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
     const newConv = await readConversation(newFilePath);
     expect(newConv!.meta.model).toBe(model);
-  });
-
-  test("fork of an unpinned source stays unpinned", async () => {
-    // Absence is what marks a record as pre-binding; a fork must not invent
-    // a binding the source never had.
-    writeSourceConversation();
-    const index = await buildIndex();
-
-    const result = await handleFork({ id: SOURCE_ID }, index);
-
-    const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
-    const newConv = await readConversation(newFilePath);
-    expect(newConv!.meta.model).toBeUndefined();
   });
 
   // ---------------------------------------------------------------------------

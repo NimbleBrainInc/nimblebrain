@@ -42,7 +42,11 @@ function workspaceStore(
 
 test("a conversation born in workspace A is unreachable through workspace B's store", async () => {
   const storeA = workspaceStore("ws_003eba8844413cd9", "usr_alice");
-  const conv = await storeA.create({ ownerId: "usr_alice", workspaceId: "ws_003eba8844413cd9" });
+  const conv = await storeA.create({
+    model: "anthropic:claude-sonnet-4-6",
+    ownerId: "usr_alice",
+    workspaceId: "ws_003eba8844413cd9",
+  });
 
   // Same workspace, same owner → loads.
   expect(await storeA.load(conv.id)).not.toBeNull();
@@ -57,6 +61,7 @@ test("two owners in the same workspace are physically partitioned", async () => 
   const alice = workspaceStore("ws_003eba8844413cd9", "usr_alice");
   const bob = workspaceStore("ws_003eba8844413cd9", "usr_bob");
   const aliceConv = await alice.create({
+    model: "anthropic:claude-sonnet-4-6",
     ownerId: "usr_alice",
     workspaceId: "ws_003eba8844413cd9",
   });
@@ -71,7 +76,11 @@ test("onMutate fires on create, append, and delete (cache invalidation hook)", a
     mutations += 1;
   });
 
-  const conv = await store.create({ ownerId: "usr_alice", workspaceId: "ws_003eba8844413cd9" });
+  const conv = await store.create({
+    model: "anthropic:claude-sonnet-4-6",
+    ownerId: "usr_alice",
+    workspaceId: "ws_003eba8844413cd9",
+  });
   expect(mutations).toBe(1);
 
   // An append changes the conversation's summary, so it must invalidate the
@@ -89,6 +98,10 @@ test("onMutate fires on create, append, and delete (cache invalidation hook)", a
 
 test("the conversation records its bound workspace as workspaceId", async () => {
   const store = workspaceStore("ws_003eba8844413cd9", "usr_alice");
-  const conv = await store.create({ ownerId: "usr_alice", workspaceId: "ws_003eba8844413cd9" });
+  const conv = await store.create({
+    model: "anthropic:claude-sonnet-4-6",
+    ownerId: "usr_alice",
+    workspaceId: "ws_003eba8844413cd9",
+  });
   expect(conv.workspaceId).toBe("ws_003eba8844413cd9");
 });

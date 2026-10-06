@@ -18,7 +18,7 @@ describe("Event-sourced integration", () => {
     const store = new EventSourcedConversationStore({ ...dirs });
 
     // Create conversation
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     expect(conv.format).toBe("events");
 
     // Append user message
@@ -87,8 +87,14 @@ describe("Event-sourced integration", () => {
     const normalStore = new EventSourcedConversationStore({ ...normalDirs, logLevel: "normal" });
     const debugStore = new EventSourcedConversationStore({ ...debugDirs, logLevel: "debug" });
 
-    const normalConv = await normalStore.create({ ownerId: "user_test" });
-    const debugConv = await debugStore.create({ ownerId: "user_test" });
+    const normalConv = await normalStore.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: "user_test",
+    });
+    const debugConv = await debugStore.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: "user_test",
+    });
 
     const runStart = engineEvent(
       "run.start",

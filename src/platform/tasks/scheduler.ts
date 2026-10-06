@@ -30,6 +30,7 @@ import {
   appendRun,
   loadAllTasks,
   loadTask,
+  readRuns,
   saveIdempotencyKey,
   saveRunResult,
   saveRunTicket,
@@ -45,6 +46,7 @@ import {
   ONCE_RAN_REASON,
   type RunAssessment,
   type RunTicket,
+  type ScheduledRunInFlight,
   type Task,
   type TaskRun,
   type TaskRunResult,
@@ -62,6 +64,16 @@ const BACKOFF_DELAYS = [30_000, 60_000, 300_000, 900_000, 3_600_000] as const;
 
 /** Auto-disable after this many consecutive failures. */
 export const MAX_CONSECUTIVE_ERRORS = 10;
+
+/**
+ * The record of a scheduled run the runtime stopped under (see
+ * `settleInterruptedRuns`). It says the run was not repeated, since what it
+ * already did may need checking by hand.
+ */
+export const INTERRUPTED_RUN_ERROR =
+  "The runtime stopped while this run was in flight, so it did not finish. It was not " +
+  "started again, because it may already have done part of its work; the task runs " +
+  "next at its next scheduled time.";
 
 /** Why a Run now or event run is refused once `stop()` has run: no slot frees and nothing drains the queue. */
 const STOPPED_REASON = "the scheduler is stopped";
@@ -870,6 +882,14 @@ export function countsAsEventFire(run: TaskRun): boolean {
   return run.trigger === "event" && run.status !== "skipped";
 }
 
+/** How `updateAfterRun` treats the run's dispatch id and record. */
+interface UpdateAfterRunOptions {
+  /** The id the run was dispatched under; a `scheduledRunInFlight` naming it is cleared. */
+  dispatchRunId?: string;
+  /** False when the run's record is already in the index. */
+  appendRecord?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Scheduler
 // ---------------------------------------------------------------------------
@@ -896,6 +916,12 @@ export class Scheduler {
    * process that stopped before the run ended (see `settleLostRun`).
    */
   private readonly openRuns: Map<string, { key: string; ended: Promise<TaskRun> }> = new Map();
+  /**
+   * Ids of the scheduled runs this process has marked in flight and not yet
+   * recorded. `stop()` leaves them, since an aborted run records itself after
+   * it, so `settleInterruptedRuns` never settles a run this process carries.
+   */
+  private readonly scheduledInFlight = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   /**
@@ -970,9 +996,83 @@ export class Scheduler {
     if (this.running) return;
     this.running = true;
     this.definitions = this.loadAll();
+    this.settleInterruptedRuns();
     this.retireOncesMissedWhileDown();
     this.seedNextRunAt();
     this.armTimer();
+  }
+
+  /**
+   * At start, record every scheduled run the last process stopped under (its
+   * task still carries `scheduledRunInFlight`) and advance its schedule, so
+   * the occurrence is not run again from the beginning: the run may already
+   * have sent a message or written somewhere. The record is a failure, as
+   * `settleLostRun` records a requested run lost in flight. Runs before
+   * `retireOncesMissedWhileDown`, since an interrupted once did fire and is
+   * retired as `ran`, not judged missed.
+   */
+  private settleInterruptedRuns(): void {
+    const now = new Date().toISOString();
+    for (const auto of [...this.definitions.values()]) {
+      const inFlight = auto.scheduledRunInFlight;
+      // A run this process dispatched is still being recorded (a `start()`
+      // after `stop()` on one scheduler), and its own record clears the mark.
+      if (!inFlight || this.scheduledInFlight.has(inFlight.runId)) continue;
+      const { workspaceId: wsId, ownerId } = auto;
+      if (!wsId || !ownerId) continue;
+      // Inside the try with the write: one task's unreadable run index must
+      // not throw out of `start()`, or the mark it leaves fails every boot.
+      try {
+        // A stop between the record's append and the task's save leaves the
+        // record in the index: settle the task from it rather than append another.
+        const recorded = readRuns(this.config.workDir, wsId, ownerId, auto.id).find(
+          (r) => r.id === inFlight.runId,
+        );
+        const run: TaskRun = recorded ?? {
+          id: inFlight.runId,
+          taskId: auto.id,
+          startedAt: inFlight.startedAt,
+          completedAt: now,
+          status: "failure",
+          inputTokens: 0,
+          outputTokens: 0,
+          toolCalls: 0,
+          iterations: 0,
+          error: INTERRUPTED_RUN_ERROR,
+          trigger: "scheduled",
+        };
+        this.updateAfterRun(auto, run, "scheduled", inFlight.onceAt, {
+          appendRecord: recorded === undefined,
+        });
+        this.runRecorded(auto);
+      } catch (err) {
+        log.warn("[tasks] could not record a scheduled run interrupted by a stop", {
+          taskId: auto.id,
+          workspaceId: auto.workspaceId,
+          runId: inFlight.runId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  /**
+   * Mark a scheduled run in flight on its task's file before it starts, so a
+   * process that stops under it leaves the run for `settleInterruptedRuns`
+   * to record rather than an overdue `nextRunAt` the next process fires again.
+   * Re-reads the file, as `updateAfterRun` does, to keep concurrent edits.
+   */
+  private markScheduledRunInFlight(auto: Task, inFlight: ScheduledRunInFlight): void {
+    const { workspaceId: wsId, ownerId } = auto;
+    if (!wsId || !ownerId) return;
+    const fresh = loadTask(this.config.workDir, wsId, ownerId, auto.id);
+    if (!fresh) return;
+    fresh.workspaceId = wsId;
+    fresh.ownerId = ownerId;
+    fresh.scheduledRunInFlight = inFlight;
+    saveTask(this.config.workDir, wsId, ownerId, fresh);
+    this.scheduledInFlight.add(inFlight.runId);
+    this.definitions.set(Scheduler.keyOf(fresh), fresh);
   }
 
   /**
@@ -1884,6 +1984,7 @@ export class Scheduler {
       // the run ends; this covers an executor that never reached it.
       this.activeRuns.delete(key);
       this.activeInfo.delete(key);
+      this.scheduledInFlight.delete(runId);
       lease.release();
     }
     // After the slot is free and the task is no longer running, so a retry
@@ -2023,6 +2124,15 @@ export class Scheduler {
       trigger,
     });
     try {
+      // Inside the try: a mark that cannot be written fails the run, which is
+      // recorded and advances `nextRunAt`, rather than leaving it due.
+      if (trigger === "scheduled") {
+        this.markScheduledRunInFlight(auto, {
+          runId,
+          startedAt,
+          ...(firedOnceAt !== undefined ? { onceAt: firedOnceAt } : {}),
+        });
+      }
       batch?.onStarted?.();
       const executed = await this.executor(
         auto,
@@ -2036,7 +2146,7 @@ export class Scheduler {
       const run = requested ? withRequest(executed.run, requested) : executed.run;
       const result =
         requested && executed.result ? { ...executed.result, runId: run.id } : executed.result;
-      this.updateAfterRun(auto, run, trigger, firedOnceAt);
+      this.updateAfterRun(auto, run, trigger, firedOnceAt, { dispatchRunId: runId });
       // Persist the full deliverable sidecar alongside the run summary. Present
       // for both the scheduled and manual (runNow) paths; null only when the
       // executor had no clean data (it rejected instead — see the catch below).
@@ -2061,7 +2171,7 @@ export class Scheduler {
         trigger,
       };
       const failedRun = requested ? withRequest(failed, requested) : failed;
-      this.updateAfterRun(auto, failedRun, trigger, firedOnceAt);
+      this.updateAfterRun(auto, failedRun, trigger, firedOnceAt, { dispatchRunId: runId });
       ticket(failedRun);
       this.runRecorded(auto);
       return { run: failedRun, result: null };
@@ -2089,12 +2199,18 @@ export class Scheduler {
    * dispatch; defaults to the dispatched task's). The once is retired
    * only while the stored schedule still names that `at`: one edited during
    * the run is a new occurrence and stays armed.
+   *
+   * `dispatchRunId` is the id the run was dispatched under (defaults to the
+   * record's); a `scheduledRunInFlight` naming it is cleared by this write.
+   * `appendRecord: false` updates the task for a run whose record is already
+   * in the index.
    */
   updateAfterRun(
     task: Task,
     run: TaskRun,
     trigger?: TaskRunTrigger,
     firedOnceAt: string | undefined = task.schedule?.at,
+    { dispatchRunId = run.id, appendRecord = true }: UpdateAfterRunOptions = {},
   ): void {
     const wsId = task.workspaceId;
     const ownerId = task.ownerId;
@@ -2112,6 +2228,11 @@ export class Scheduler {
     auto.ownerId = ownerId;
 
     const now = Date.now();
+
+    // This run is recorded by the same write that advances `nextRunAt`, so it
+    // is no longer in flight. Another run's mark (a batch or Run now beside a
+    // scheduled run) is left for that run.
+    if (auto.scheduledRunInFlight?.runId === dispatchRunId) delete auto.scheduledRunInFlight;
 
     auto.lastRunAt = run.completedAt ?? run.startedAt;
     auto.lastRunStatus = resolveLastRunStatus(run.status);
@@ -2140,8 +2261,10 @@ export class Scheduler {
 
     // Persist the run summary + the updated definition, then sync the single
     // in-memory entry so the timer sees the new nextRunAt without re-scanning.
-    appendRun(this.config.workDir, wsId, ownerId, task.id, run);
-    taskRunsTotal.inc({ status: run.status });
+    if (appendRecord) {
+      appendRun(this.config.workDir, wsId, ownerId, task.id, run);
+      taskRunsTotal.inc({ status: run.status });
+    }
     saveTask(this.config.workDir, wsId, ownerId, auto);
     this.definitions.set(Scheduler.keyOf(auto), auto);
   }
