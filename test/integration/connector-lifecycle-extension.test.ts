@@ -23,7 +23,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { ToolCallResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
@@ -52,6 +52,7 @@ import {
   serveModernLifecycleServer,
   startLifecycleSource,
 } from "../helpers/lifecycle-server.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ADMIN_WS = "ws_003eba8844413cd9";
@@ -202,7 +203,7 @@ afterAll(async () => {
 });
 
 async function mcpClient(wsId: string): Promise<Client> {
-  const client = new Client({ name: "lifecycle-extension-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "lifecycle-extension-test", version: "1.0.0" });
   await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${wsId}`)));
   return client;
 }

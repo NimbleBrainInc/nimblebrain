@@ -34,6 +34,7 @@ import type {
 } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { IdentityStores } from "../../src/runtime/types.ts";
+import { buildMcpRequest } from "../../web/src/mcp-bridge-client.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_IDENTITY, TestAuthAdapter } from "../helpers/test-auth-adapter.ts";
 
@@ -174,17 +175,11 @@ async function startConversation(): Promise<string> {
   return (await readJson<ChatStartResponse>(res)).conversationId;
 }
 
-const MCP_INITIALIZE = {
-  jsonrpc: "2.0",
-  id: 1,
-  method: "initialize",
-  params: {
-    protocolVersion: "2025-06-18",
-    capabilities: {},
-    clientInfo: { name: "cross-site-writes-test", version: "1.0.0" },
-  },
-};
-const MCP_ACCEPT = { Accept: "application/json, text/event-stream" };
+/** A 2026-07-28 `server/discover`, the request an MCP client opens with. */
+const MCP_DISCOVER = buildMcpRequest("1", "server/discover", {});
+// `post` sets its own Content-Type; a second, lower-case one would join it.
+const { "content-type": _contentType, ...MCP_HEADERS } = MCP_DISCOVER.headers;
+const MCP_BODY: unknown = JSON.parse(MCP_DISCOVER.body);
 
 /**
  * The routes outside `/v1/workspaces/` a cookie authenticates or that set one,
@@ -238,7 +233,7 @@ const GUARDED: Array<{
   },
   {
     name: "POST /mcp/:wsId",
-    send: (headers) => post(`/mcp/${wsId}`, { ...MCP_ACCEPT, ...headers }, MCP_INITIALIZE),
+    send: (headers) => post(`/mcp/${wsId}`, { ...MCP_HEADERS, ...headers }, MCP_BODY),
     admitted: async (res) => {
       expect(res.status).toBe(200);
     },
@@ -300,9 +295,8 @@ describe("server callers send no Sec-Fetch-Site and are unaffected", () => {
   });
 
   it("an MCP client at /mcp/<wsId>", async () => {
-    const res = await post(`/mcp/${wsId}`, { ...bearer, ...MCP_ACCEPT }, MCP_INITIALIZE);
+    const res = await post(`/mcp/${wsId}`, { ...bearer, ...MCP_HEADERS }, MCP_BODY);
     expect(res.status).toBe(200);
-    expect(res.headers.get("mcp-session-id")).toBeTruthy();
   });
 });
 

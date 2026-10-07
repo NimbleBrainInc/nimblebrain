@@ -23,7 +23,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import type { AdminToolCallPayload } from "../../src/engine/schemas/events.ts";
@@ -39,6 +39,7 @@ import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts"
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
 import { type FixtureCall, marked, startLifecycleSource } from "../helpers/lifecycle-server.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ADMIN_WS = "ws_003eba8844413cd9";
@@ -186,7 +187,7 @@ function resetCalls(): void {
 }
 
 async function mcpClient(wsId: string): Promise<Client> {
-  const client = new Client({ name: "admin-tools-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "admin-tools-test", version: "1.0.0" });
   await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${wsId}`)));
   return client;
 }

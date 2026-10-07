@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Run the MCP conformance suite against `/mcp/<wsId>`, once per protocol
+ * Run the MCP conformance suite against `/mcp/<wsId>`, for each protocol
  * version the endpoint serves, with the suite's reference server installed in
  * the workspace as the connector under test.
  *
@@ -22,7 +22,7 @@ const SUITE_VERSION = process.env.MCP_CONFORMANCE_SUITE || "0.2.0-alpha.12";
 /** The suite repo's commit the reference server comes from, matched to the suite version. */
 const REFERENCE_COMMIT = "c37eec888e1c6ff140af79987a40008548b7cc5f";
 /** The protocol versions `/mcp/<wsId>` serves. */
-const SPEC_VERSIONS = ["2025-11-25", "2026-07-28"] as const;
+const SPEC_VERSIONS = ["2026-07-28"] as const;
 
 const ROOT = join(import.meta.dir, "..", "..");
 const HERE = import.meta.dir;

@@ -15,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { serverNotificationsRelayedTotal } from "../../src/api/metrics.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
@@ -24,6 +24,7 @@ import type { FilesCreateOutput } from "../../src/platform/schemas/files.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const LIST_CHANGED = "notifications/resources/list_changed";
@@ -79,7 +80,7 @@ async function createMcpClient(): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
     new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
   );
-  const client = new Client({ name: "app-iframe", version: "1.0.0" });
+  const client = newMcpClient({ name: "app-iframe", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }

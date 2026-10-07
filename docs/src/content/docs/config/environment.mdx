@@ -60,13 +60,6 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 |----------|----------|---------|-------------|
 | `NB_CURATED_CATALOG_DIR` | No | in-image example | The connector catalog — a directory of `ServerDetail` YAML/JSON files (the intended use, hence the name), or a single such file. Every `*.yaml`/`*.yml`/`*.json` in it is read in sorted filename order and re-read on each lookup, so editing a mounted ConfigMap takes effect without a restart. Replaces `src/connectors/catalog/curated/` wholesale. This is where `auth: static` and brokered (`composio`, `smithery`) entries belong; the in-image example is DCR-only. See [Connectors Catalog](/config/connectors-catalog/). |
 
-### MCP sessions
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `MCP_MAX_SESSIONS` | No | `100` | Max concurrent live MCP sessions on `/mcp` per process. A well-formed initialize at capacity evicts the least-recently-used session and is admitted — it is never a 4xx. Non-positive / non-integer values are rejected with a warning and the default is used. |
-| `MCP_SESSION_TTL_SECONDS` | No | `28800` (8 h) | MCP session inactivity TTL in seconds. Each request resets the clock — actively-used sessions never expire. **Highest priority**, overriding [`sessionStore.ttlSeconds`](/config/nimblebrain-json/#sessionstore) in `nimblebrain.json`. Non-positive / non-integer values fall back to the default. |
-
 ### Secrets
 
 | Variable | Required | Default | Description |
@@ -218,7 +211,6 @@ When the same setting can be configured in multiple places, this is the resoluti
 |---------|---------|----------|-------------|---------|
 | Working directory | `NB_WORK_DIR` (beats all) | `--workdir` | `workDir` | `~/.nimblebrain` |
 | Port | `PORT` (beats `--port`) | `--port` | `http.port` | `27247` |
-| MCP session TTL | `MCP_SESSION_TTL_SECONDS` (beats all) | — | `sessionStore.ttlSeconds` | `28800` |
 | Public origin | `NB_PUBLIC_ORIGIN` | — | derived from host facts | `http://localhost:27247` |
 | Anthropic key | `ANTHROPIC_API_KEY` | — | `providers.anthropic.apiKey` | — |
 | Telemetry | `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK` | — | `telemetry.enabled` | Enabled |

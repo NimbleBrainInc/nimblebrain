@@ -149,6 +149,7 @@
 
 ### Breaking
 
+- **`/mcp/<wsId>` speaks MCP 2026-07-28 only.** Each request is served on its own, with no `initialize` and no `Mcp-Session-Id`; a 2025-era client gets `-32022` naming the supported version. The `sessionStore` config key and the `MCP_SESSION_TTL_SECONDS` / `MCP_MAX_SESSIONS` env vars go with the sessions (a config that keeps `sessionStore` starts with a warning). The runtime still connects to a 2025-only connector. See [ADR-0048](adr/0048-mcp-serves-2026-07-28-only.md).
 - **With `NB_FLEET_AUTHORIZER_ISSUER` set, the runtime refuses to start without a valid `NB_TENANT_ID` and `NB_MCP_AUTHORIZER_TENANT_KEY`.** It no longer sends a fleet token request without a tenant assertion, which an authorizer that requires one refuses anyway. Provision the key before upgrading.
 - **A WorkOS instance with an empty `organizationId` refuses to start.** A blank or whitespace-only value in `instance.json` is a startup error. Omitting the field still runs without an organization, which admits every user in the AuthKit environment ([#1153](https://github.com/NimbleBrainInc/nimblebrain/issues/1153)).
 - **The host no longer sends a `--nb-*` theme key that has a spec twin.** An app reads the status colours, the info ground and on-fill text from `--color-text-danger`, `--color-text-success`, `--color-text-warning`, `--color-background-info` and `--color-text-inverse`, as `@nimblebrain/synapse` 0.30.0 does; `--nb-color-processing`, `--nb-color-processing-light` and `--nb-font-heading` remain. [Theming](https://docs.nimblebrain.ai/apps/theming/).

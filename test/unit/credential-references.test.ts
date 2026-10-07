@@ -218,7 +218,7 @@ describe("instance config references", () => {
       // @ts-expect-error — a literal-union field takes no reference
       { thinking: ref },
       // @ts-expect-error — a nested literal-union field takes no reference
-      { sessionStore: { type: ref } },
+      { logging: { level: ref } },
       // @ts-expect-error — `workDir` is read before the credential store exists
       { workDir: ref },
     ];

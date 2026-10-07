@@ -18,7 +18,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from "bu
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
@@ -27,6 +27,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
@@ -89,7 +90,7 @@ async function createMcpClient(): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
     new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
   );
-  const client = new Client({ name: "app-iframe", version: "1.0.0" });
+  const client = newMcpClient({ name: "app-iframe", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }

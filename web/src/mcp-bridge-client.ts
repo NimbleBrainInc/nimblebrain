@@ -1,13 +1,12 @@
 // ---------------------------------------------------------------------------
 // MCP Bridge Client — one JSON-RPC request at a time to the active workspace's
-// `/mcp/<wsId>`, on the 2026-07-28 leg
+// `/mcp/<wsId>`, on MCP 2026-07-28
 //
 // The iframe bridge sends every request it forwards for an app (`tools/call`,
 // `resources/read`, `resources/list`, `resources/templates/list`, `tasks/get`,
 // `tasks/cancel`) through `sendMcpRequest`. Each request carries the 2026-07-28
-// `_meta` envelope (protocol version, client info, client capabilities), which
-// is what routes it to the 2026 leg of `/mcp/<wsId>`. That leg is stateless:
-// there is no handshake and no session, so nothing here is cached between
+// `_meta` envelope (protocol version, client info, client capabilities), the
+// only revision `/mcp/<wsId>` serves. It is stateless: there is no handshake and no session, so nothing here is cached between
 // requests, and a workspace switch or a logout needs no teardown. The URL is
 // read from the active workspace and the credentials from the auth state on
 // every request.
@@ -24,7 +23,7 @@ import type { JSONRPCErrorResponse } from "@modelcontextprotocol/client";
 import { fetchWithRefresh, getActiveWorkspaceId, getAuthToken } from "./api/client";
 import { TASKS_EXTENSION_ID } from "./bridge/host-capabilities";
 
-/** The protocol revision whose `_meta` envelope routes a request to the 2026 leg. */
+/** The protocol revision `/mcp/<wsId>` serves, named in every request's `_meta` envelope. */
 export const MCP_PROTOCOL_VERSION = "2026-07-28";
 
 /**
@@ -70,7 +69,7 @@ export interface McpRequestOptions {
 let nextId = 0;
 
 /**
- * Send one request to the active workspace's `/mcp/<wsId>` on the 2026 leg and
+ * Send one request to the active workspace's `/mcp/<wsId>` and
  * resolve with its answer.
  *
  * Resolves `{ result }` or `{ error }` for every JSON-RPC answer, the server's
@@ -167,7 +166,7 @@ export function buildMcpRequest(
 /**
  * The answer in a `/mcp` response: a JSON body, or the JSON-RPC response among
  * the events of an SSE body. A JSON-RPC error is answered whatever the HTTP
- * status (the 2026 leg answers a header mismatch `400` with one); a response
+ * status (`/mcp` answers a header mismatch `400` with one); a response
  * that carries none rejects with its status.
  */
 export async function readMcpAnswer(response: Response): Promise<McpAnswer> {

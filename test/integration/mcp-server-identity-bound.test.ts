@@ -1,5 +1,3 @@
-import type { JsonRpcErrorBody } from "../../src/api/schemas/responses.ts";
-import { readJson } from "../helpers/http.ts";
 /**
  * Integration tests for the `/mcp/<wsId>` workspace wall.
  *
@@ -23,7 +21,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
@@ -31,8 +29,10 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
+import { buildMcpRequest } from "../../web/src/mcp-bridge-client.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 // ── In-process counter source ─────────────────────────────────────
@@ -227,19 +227,9 @@ function mcpUrl(workspace: string): URL {
 
 async function createMcpClient(workspace: string): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(mcpUrl(workspace));
-  const client = new Client({ name: "mcp-identity-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "mcp-identity-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
-}
-
-/** Initialize at `workspace` and return the raw session id the server allocated. */
-async function openSession(workspace: string): Promise<{ client: Client; sessionId: string }> {
-  const transport = new StreamableHTTPClientTransport(mcpUrl(workspace));
-  const client = new Client({ name: "mcp-identity-test", version: "1.0.0" });
-  await client.connect(transport);
-  const sessionId = transport.sessionId;
-  if (!sessionId) throw new Error("server allocated no session id");
-  return { client, sessionId };
 }
 
 /** Invoke a tool and capture the JSON-RPC error code + `data.reason`, if any. */
@@ -259,10 +249,14 @@ async function callExpectingError(
 // ── Bare /mcp → refused ───────────────────────────────────────────
 
 describe("bare /mcp", () => {
-  it("is refused: an MCP client cannot initialize without naming a workspace", async () => {
+  it("is refused: an MCP client cannot connect without naming a workspace", async () => {
     const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`));
-    const client = new Client({ name: "mcp-identity-test", version: "1.0.0" });
-    await expect(client.connect(transport)).rejects.toThrow(/MCP endpoint is per workspace/);
+    const client = newMcpClient({ name: "mcp-identity-test", version: "1.0.0" });
+    await expect(client.connect(transport)).rejects.toThrow();
+    const { headers, body } = buildMcpRequest("1", "server/discover", {});
+    const res = await fetch(`${baseUrl}/mcp`, { method: "POST", headers, body });
+    expect(res.status).toBe(404);
+    expect(await res.text()).toMatch(/MCP endpoint is per workspace/);
   });
 });
 
@@ -377,40 +371,6 @@ describe("/mcp/<wsId> for a member (walled to that workspace)", () => {
       expect(code).toBe(-32602);
       // The other workspace's tool never ran.
       expect(personalSource.callCount()).toBe(0);
-    } finally {
-      await client.close();
-    }
-  });
-
-  it("SECURITY: a session opened at one workspace's URL is refused at another's", async () => {
-    // Both workspaces are the caller's own. The session is still bound to the
-    // URL it was opened at, and presenting it elsewhere looks exactly like an
-    // unknown session id.
-    personalSource.reset();
-    const { client, sessionId } = await openSession(SHARED_WS_ID);
-    try {
-      const res = await fetch(mcpUrl(personalWsId()), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-          "mcp-session-id": sessionId,
-          "mcp-protocol-version": "2025-06-18",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 7,
-          method: "tools/call",
-          params: { name: personalToolName(), arguments: { echo: "x" } },
-        }),
-      });
-      expect(res.status).toBe(404);
-      const body = await readJson<JsonRpcErrorBody>(res);
-      expect(body.error.data.reason).toBe("not_found");
-      expect(personalSource.callCount()).toBe(0);
-
-      // The session itself is untouched at its own URL.
-      expect((await client.listTools()).tools.map((t) => t.name)).toContain(sharedToolName());
     } finally {
       await client.close();
     }

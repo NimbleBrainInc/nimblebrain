@@ -23,7 +23,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
@@ -45,6 +45,7 @@ import {
   startFakeConnectorServer,
 } from "../helpers/fake-connector-server.ts";
 import { type FixtureCall, marked, startLifecycleSource } from "../helpers/lifecycle-server.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ADMIN_WS = "ws_003eba8844413cd9";
@@ -191,7 +192,7 @@ afterAll(async () => {
 });
 
 async function mcpClient(wsId: string): Promise<Client> {
-  const client = new Client({ name: "lifecycle-host-only-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "lifecycle-host-only-test", version: "1.0.0" });
   await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${wsId}`)));
   return client;
 }

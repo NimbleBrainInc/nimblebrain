@@ -7,7 +7,7 @@ import { Aside, Steps } from '@astrojs/starlight/components';
 
 NimbleBrain can act as a tool server for external apps that speak the MCP protocol, like Claude, Claude Code, Cursor, or VS Code. Point a client at a workspace's MCP URL, and every tool from every app installed in that workspace becomes available inside the client, without switching to the web UI.
 
-Each workspace has its own endpoint, `/mcp/<workspaceId>`. For the protocol-level reference (methods, sessions, OAuth discovery, the audience rule), see [The MCP Endpoint](/connect/mcp-endpoint).
+Each workspace has its own endpoint, `/mcp/<workspaceId>`. For the protocol-level reference (methods, protocol revision, OAuth discovery, the audience rule), see [The MCP Endpoint](/connect/mcp-endpoint).
 
 ## What you need
 
@@ -71,7 +71,7 @@ Open **Cursor Settings → MCP → Add Server**, choose the HTTP/URL-based serve
 
 ## Other MCP clients
 
-Any client that implements Streamable HTTP transport and OAuth 2.0 with resource indicators (RFC 9728 discovery, RFC 8707 `resource`) can connect. See [The MCP Endpoint](/connect/mcp-endpoint) for the protocol-level reference, including the discovery endpoints and the manual OAuth flow.
+Any client that speaks MCP `2026-07-28` over Streamable HTTP and implements OAuth 2.0 with resource indicators (RFC 9728 discovery, RFC 8707 `resource`) can connect. See [The MCP Endpoint](/connect/mcp-endpoint) for the protocol-level reference, including the discovery endpoints and the manual OAuth flow.
 
 ## What's exposed
 

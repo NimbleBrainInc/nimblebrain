@@ -1083,8 +1083,8 @@ function uploadError(err: unknown): { code: number; message: string; data?: Requ
 }
 
 // ---------------------------------------------------------------------------
-// MCP transport helpers — every request an app makes of its server goes to the
-// 2026-07-28 leg of `/mcp/<wsId>` through `sendMcpRequest`.
+// MCP transport helpers — every request an app makes of its server goes to
+// `/mcp/<wsId>` through `sendMcpRequest`.
 //
 // Rules:
 //   - What reaches `/mcp` is built here from the fields the method needs, plus

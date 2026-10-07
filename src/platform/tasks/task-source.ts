@@ -1,7 +1,6 @@
 /**
  * The tasks source's task surface (`IdentityTaskSource`): how a remote
- * client runs `tasks__run` as a task on the 2026-07-28 leg of `/mcp`
- * (the tasks extension), and how `tasks/get` and `tasks/cancel` read and
+ * client runs `tasks__run` as a task at `/mcp` (the tasks extension), and how `tasks/get` and `tasks/cancel` read and
  * cancel the run.
  *
  * Over the wire a run is a task, and the task id is the run id (ADR-0045). The

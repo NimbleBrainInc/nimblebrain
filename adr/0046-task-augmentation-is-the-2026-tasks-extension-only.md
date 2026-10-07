@@ -1,6 +1,6 @@
 # 0046. Task augmentation is the 2026-07-28 tasks extension, and nothing else
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0048
 - Date: 2026-10-03
 - Serves: orchestrate remote MCP
 
@@ -53,6 +53,8 @@ offered to apps.**
   task store. A 2025 client's tool call runs to completion and answers a
   `CallToolResult`, whatever `params` it carries. A client that needs a
   long-running call speaks 2026-07-28.
+- *Amended by ADR-0048:* `/mcp/<wsId>` no longer has a 2025 leg. A 2025-era
+  request is refused, so the inbound rule above applies to nothing.
 - **App to host.** Synapse's task API speaks the extension's shape, and the
   bridge forwards it to the 2026 leg. The bridge serves no 2025 task method.
 - **Outbound.** On a 2025 connection the runtime never attaches a task. A tool
