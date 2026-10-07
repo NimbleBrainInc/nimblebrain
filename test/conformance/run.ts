@@ -9,8 +9,6 @@
  * it fails, or when one inside it passes, so the baseline only shrinks.
  *
  * Usage: bun run test:conformance
- * `MCP_CONFORMANCE_SUITE=<version>` runs another suite version (the scheduled
- * job runs the newest, to show what the next pin would change).
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -18,7 +16,7 @@ import { join } from "node:path";
 import { startGateway } from "./gateway.ts";
 
 /** The suite version a run checks against, pinned. */
-const SUITE_VERSION = process.env.MCP_CONFORMANCE_SUITE || "0.2.0-alpha.12";
+const SUITE_VERSION = "0.2.0-alpha.12";
 /** The suite repo's commit the reference server comes from, matched to the suite version. */
 const REFERENCE_COMMIT = "c37eec888e1c6ff140af79987a40008548b7cc5f";
 /** The protocol versions `/mcp/<wsId>` serves. */
