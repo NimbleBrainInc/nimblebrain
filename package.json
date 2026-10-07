@@ -52,6 +52,7 @@
     "docs:build": "cd docs && bun run build",
     "test:unit": "bun test --no-env-file test/unit/",
     "test:integration": "bun test --no-env-file test/integration/",
+    "test:conformance": "bun --no-env-file test/conformance/run.ts",
     "test": "bun run test:unit && bun run test:integration",
     "test:web": "cd web && bun test",
     "test:platform-apps": "for ui in src/platform/*/ui; do if [ -f \"$ui/package.json\" ] && [ -n \"$(find \"$ui/src\" \\( -name '*.test.ts' -o -name '*.test.tsx' \\) -print -quit 2>/dev/null)\" ]; then (cd \"$ui\" && bun test) || exit 1; fi; done",

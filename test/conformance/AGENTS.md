@@ -1,0 +1,12 @@
+# MCP conformance
+
+Scope: `bun run test:conformance`, the official MCP conformance suite (`@modelcontextprotocol/conformance`) run against `/mcp/<wsId>`.
+
+- **What it measures: what a connector's features look like to a client outside NimbleBrain.** `gateway.ts` installs the suite's reference server (which implements every feature) in a workspace as a remote connector, and the suite tests `/mcp/<wsId>`. A failure is something the gateway loses between connector and client.
+- **The front door maps tool names, nothing else.** The gateway names a connector's tools `<source>__<tool>`, a legitimate choice for a gateway; the suite calls the reference server's bare names. Never widen the mapping to paper over a failure.
+- **One run per protocol version `/mcp` serves** (`SPEC_VERSIONS` in `run.ts`), each with `--suite all`: the suite marks a protocol version it has not finalized as pending, and `/mcp` serves it already.
+- **Baselines only shrink.** `expected-failures/<version>.yml` lists the scenarios known to fail, each under a comment saying why. The run fails on a failure outside the baseline and on a baseline entry that passes. The PR that fixes a gap removes its entries; a PR that adds one is a regression unless its comment names a reason outside the gateway (for example, a scenario the reference server cannot run either).
+- **The suite counts SHOULD-level warnings as failures.** A warning-only scenario belongs in the baseline with its reason, like any other.
+- **The suite version and the reference server move together.** `SUITE_VERSION` and `REFERENCE_COMMIT` in `run.ts` come from the same release of the suite repo; the reference server is fetched at that commit into `.cache/mcp-conformance/`, not copied here. Before moving the pin, run `MCP_CONFORMANCE_SUITE=<version> bun run test:conformance` (or the workflow's `suite` input) and update the baselines in the same PR.
+- **It is not part of `verify` or `ci.yml`.** `.github/workflows/mcp-conformance.yml` runs it on ready PRs that touch the MCP door, the connector client, routing, the SDK, or this directory; weekly on main; and by hand. It is not a required check, because a path-filtered workflow reports nothing on other PRs. Run it locally when you change how `/mcp` serves a request; a full run takes seconds once the reference server is cached.
+- **The gateway runs in the runner's process,** so the suite is spawned asynchronously. A blocking spawn starves the gateway and every scenario times out.

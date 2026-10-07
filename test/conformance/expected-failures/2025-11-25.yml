@@ -1,0 +1,27 @@
+# Scenarios /mcp/<wsId> fails on protocol 2025-11-25, each with why. A scenario
+# here that passes fails the run, so remove it in the PR that fixes it.
+server:
+  # A connector's log and progress notifications do not reach the client.
+  - logging-set-level
+  - tools-call-with-logging
+  - tools-call-with-progress
+  # A connector's sampling and elicitation requests are answered by the runtime
+  # ("Method not found"), not relayed to the client.
+  - tools-call-sampling
+  - tools-call-elicitation
+  - elicitation-sep1034-defaults
+  - elicitation-sep1330-enums
+  # Prompts, completions and resource subscriptions are not served.
+  - prompts-list
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
+  - completion-complete
+  - resources-subscribe
+  - resources-unsubscribe
+  # A POST's SSE stream carries no priming event and no retry field, so a
+  # client cannot resume it (SHOULD).
+  - server-sse-polling
+  # A request with an invalid Host or Origin header is served, not refused.
+  - dns-rebinding-protection
