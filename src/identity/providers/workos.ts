@@ -1,6 +1,7 @@
 import { WorkOS } from "@workos-inc/node";
 import { publicOrigin } from "../../oauth/public-origin.ts";
 import { log } from "../../observability/log.ts";
+import { type ConfiguredOwners, configuredOwners } from "../configured-owners.ts";
 import type { WorkosAuth } from "../instance.ts";
 import {
   type AuthorizationServer,
@@ -182,6 +183,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private authkitDomain: string | undefined;
   private adminRoleSlugs: Set<string>;
   private adminRoleSlugForWrite: string;
+  private owners: ConfiguredOwners;
   /** Client IDs whose AuthKit tokens are first-party; empty means none are. */
   private firstPartyClientIds: ReadonlySet<string>;
   private userStore: UserStore | null;
@@ -233,6 +235,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     // The slug written when `manage_users` makes someone an admin: the first
     // one the operator names, so it is a role their WorkOS environment has.
     this.adminRoleSlugForWrite = [...this.adminRoleSlugs][0] ?? "admin";
+    this.owners = configuredOwners(config.owners);
     this.firstPartyClientIds = new Set(
       (config.firstPartyClientIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0),
     );
@@ -517,6 +520,10 @@ export class WorkosIdentityProvider implements IdentityProvider {
     this.userCache.delete(userId);
   }
 
+  isConfiguredOwner(user: Pick<User, "id" | "email">): boolean {
+    return this.owners.has(user.email);
+  }
+
   // ── Private helpers ────────────────────────────────────────────
 
   /**
@@ -676,13 +683,15 @@ export class WorkosIdentityProvider implements IdentityProvider {
     const existing = await this.userStore.get(workosUserId);
     if (existing) {
       // `owner` is an app-internal elevation, not a WorkOS-derived role:
-      // `resolveOrgRole` only ever yields "admin"/"member", and only the
-      // guarded `manage_users` path may create or remove an owner. So a
-      // login-time sync must never DOWNGRADE a local owner to a lesser
-      // WorkOS-derived role — otherwise a WorkOS membership change would
-      // silently strip owners and defeat the last-owner invariant (the
-      // sync path bypasses that guard). admin/member still track WorkOS.
-      const effectiveRole: OrgRole = existing.orgRole === "owner" ? "owner" : data.orgRole;
+      // `resolveOrgRole` only ever yields "admin"/"member"; an owner comes
+      // from `auth.owners` or from an owner through the guarded
+      // `manage_users` path. So a login-time sync must never DOWNGRADE a
+      // local owner to a lesser WorkOS-derived role — otherwise a WorkOS
+      // membership change would silently strip owners and defeat the
+      // last-owner invariant (the sync path bypasses that guard), and it
+      // makes a listed owner one. admin/member still track WorkOS.
+      const effectiveRole: OrgRole =
+        existing.orgRole === "owner" || this.owners.has(data.email) ? "owner" : data.orgRole;
       // Update identity fields from WorkOS, preserve preferences
       if (
         existing.email !== data.email ||
@@ -705,7 +714,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
         id: workosUserId,
         email: data.email,
         displayName: data.displayName,
-        orgRole: data.orgRole,
+        orgRole: this.owners.has(data.email) ? "owner" : data.orgRole,
       });
       return { preferences: user.preferences, orgRole: user.orgRole };
     } catch {
@@ -713,7 +722,8 @@ export class WorkosIdentityProvider implements IdentityProvider {
       // create. Preserve the raced record's owner the same way the existing
       // branch does, so a concurrent login can't strip it either.
       const raced = await this.userStore.get(workosUserId);
-      const racedRole: OrgRole = raced?.orgRole === "owner" ? "owner" : data.orgRole;
+      const racedRole: OrgRole =
+        raced?.orgRole === "owner" || this.owners.has(data.email) ? "owner" : data.orgRole;
       return { preferences: raced?.preferences ?? {}, orgRole: racedRole };
     }
   }
@@ -728,8 +738,8 @@ export class WorkosIdentityProvider implements IdentityProvider {
    *   - any other slug → "member" (logged, so a custom admin slug that should
    *     have matched is diagnosable instead of silently downgraded)
    *
-   * This NEVER returns "owner": `owner` is an app-internal elevation managed
-   * via `manage_users` and preserved across login by `syncLocalProfile`, not a
+   * This NEVER returns "owner": `owner` is an app-internal elevation from
+   * `auth.owners` or `manage_users`, applied by `syncLocalProfile`, not a
    * WorkOS-derived role. A WorkOS owner-slug role therefore grants app `admin`.
    *
    * Returns null if the user has no org membership — a security signal that the

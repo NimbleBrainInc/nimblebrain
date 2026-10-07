@@ -159,6 +159,34 @@ describe("loadInstanceConfig", () => {
     );
   });
 
+  test("loads owners on oidc and workos auth", async () => {
+    for (const auth of [
+      {
+        adapter: "oidc" as const,
+        issuer: "https://auth.example.com",
+        clientId: "c",
+        allowedDomains: ["example.com"],
+        owners: ["boss@example.com"],
+      },
+      { adapter: "workos" as const, clientId: "client_123", owners: ["boss@example.com"] },
+    ]) {
+      await writeFile(join(workDir, "instance.json"), JSON.stringify({ auth }));
+      expect(await loadInstanceConfig(workDir)).toEqual({ auth });
+    }
+  });
+
+  test("rejects owners that are not email addresses", async () => {
+    for (const owners of ["boss@example.com", ["boss"], [" boss@example.com"], [42]]) {
+      await writeFile(
+        join(workDir, "instance.json"),
+        JSON.stringify({ auth: { adapter: "workos", clientId: "client_123", owners } }),
+      );
+      await expect(loadInstanceConfig(workDir)).rejects.toThrow(
+        "'owners' must be an array of email addresses",
+      );
+    }
+  });
+
   test("loads workos auth with firstPartyClientIds, an empty list included", async () => {
     for (const firstPartyClientIds of [["client_test_channels"], []]) {
       const config: InstanceConfig = {

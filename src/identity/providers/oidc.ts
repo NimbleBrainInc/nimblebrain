@@ -1,4 +1,5 @@
 import { log } from "../../observability/log.ts";
+import { type ConfiguredOwners, configuredOwners } from "../configured-owners.ts";
 import type { OidcAuth } from "../instance.ts";
 import {
   type CreateUserInput,
@@ -139,6 +140,9 @@ export class OidcIdentityProvider implements IdentityProvider {
     managedUsers: false,
     // Verifies tokens minted elsewhere; this runtime is not the issuer.
     authorizationServer: false,
+    // Sign-in falls back to finding a user by email (below), so an editable
+    // email would let an admin point someone else's sign-in at a record.
+    providerOwnedUserFields: ["email"],
   };
 
   private issuer: string;
@@ -146,6 +150,7 @@ export class OidcIdentityProvider implements IdentityProvider {
   private allowedDomains: string[];
   private jwksUri: string | undefined;
   private userStore: UserStore;
+  private owners: ConfiguredOwners;
 
   private jwksCache: CachedJwks | null = null;
   private discoveryCache: OidcDiscovery | null = null;
@@ -162,6 +167,7 @@ export class OidcIdentityProvider implements IdentityProvider {
     this.allowedDomains = config.allowedDomains.map((d) => d.toLowerCase());
     this.jwksUri = config.jwksUri;
     this.userStore = userStore;
+    this.owners = configuredOwners(config.owners);
   }
 
   /**
@@ -217,6 +223,11 @@ export class OidcIdentityProvider implements IdentityProvider {
     // is retained as a tombstone; access resumes only after an admin restores it.
     if (user.deletedAt) return null;
 
+    // `auth.owners` decides who is an owner, whatever the record says.
+    if (user.orgRole !== "owner" && this.owners.has(user.email)) {
+      user = (await this.userStore.update(user.id, { orgRole: "owner" })) ?? user;
+    }
+
     return { ...toIdentity(user), grant: FIRST_PARTY_GRANT };
   }
 
@@ -235,6 +246,10 @@ export class OidcIdentityProvider implements IdentityProvider {
 
   async deleteUser(userId: string): Promise<boolean> {
     return this.userStore.delete(userId);
+  }
+
+  isConfiguredOwner(user: Pick<User, "id" | "email">): boolean {
+    return this.owners.has(user.email);
   }
 
   // ── Private helpers ────────────────────────────────────────────

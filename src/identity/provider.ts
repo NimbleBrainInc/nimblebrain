@@ -230,6 +230,14 @@ export interface IdentityProvider {
 
   /** Invalidate cached identity for a user (e.g., after preferences change). */
   invalidateUser?(userId: string): void;
+
+  /**
+   * Whether the instance's own config makes this user an owner (`auth.owners`,
+   * or the dev adapter's built-in owner). Such an owner is restored to owner
+   * on every sign-in, so `manage_users` refuses to demote or deactivate them.
+   * Absent means no user is.
+   */
+  isConfiguredOwner?(user: Pick<User, "id" | "email">): boolean;
 }
 
 // ── Factory ────────────────────────────────────────────────────────

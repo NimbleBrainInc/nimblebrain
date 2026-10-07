@@ -28,7 +28,14 @@ interface User {
   createdAt?: string;
   /** Set when the user is deactivated (soft-deleted). Such users keep their record but cannot sign in. */
   deletedAt?: string;
+  /** Set when the instance config makes the user an owner (`auth.owners`); they can't be demoted or deactivated here. */
+  configuredOwner?: boolean;
 }
+
+// Reasons a control is disabled, mirroring the server's refusals (`user-tools.ts`).
+const OWNER_ONLY = "Only an owner can change an owner";
+const CONFIGURED_OWNER =
+  "An owner by this instance's configuration (auth.owners). Change it there.";
 
 function formatDate(iso?: string): string {
   if (!iso) return "—";
@@ -54,6 +61,7 @@ function UserRowAction({
   isBusy,
   isDeactivated,
   isEditing,
+  viewerIsOwner,
   onEdit,
   onDelete,
   onRestore,
@@ -63,17 +71,20 @@ function UserRowAction({
   isBusy: boolean;
   isDeactivated: boolean;
   isEditing: boolean;
+  viewerIsOwner: boolean;
   onEdit: (userId: string) => void;
   onDelete: (userId: string, displayName: string) => void;
   onRestore: (userId: string) => void;
 }) {
+  // The server lets only an owner edit, deactivate, or restore an owner.
+  const ownerLocked = user.orgRole === "owner" && !viewerIsOwner;
   if (isDeactivated) {
     return (
       <Button
         size="sm"
         variant="ghost"
-        disabled={isBusy}
-        title={`Restore ${user.displayName}`}
+        disabled={isBusy || ownerLocked}
+        title={ownerLocked ? OWNER_ONLY : `Restore ${user.displayName}`}
         onClick={() => onRestore(user.id)}
         className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
       >
@@ -86,7 +97,14 @@ function UserRowAction({
       <Button
         size="sm"
         variant="ghost"
-        title={isEditing ? `Close editor for ${user.displayName}` : `Edit ${user.displayName}`}
+        disabled={ownerLocked}
+        title={
+          ownerLocked
+            ? OWNER_ONLY
+            : isEditing
+              ? `Close editor for ${user.displayName}`
+              : `Edit ${user.displayName}`
+        }
         aria-expanded={isEditing}
         onClick={() => onEdit(user.id)}
         className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
@@ -96,8 +114,16 @@ function UserRowAction({
       <Button
         size="sm"
         variant="ghost"
-        disabled={isSelf || isBusy}
-        title={isSelf ? "Cannot deactivate yourself" : `Deactivate ${user.displayName}`}
+        disabled={isSelf || isBusy || ownerLocked || Boolean(user.configuredOwner)}
+        title={
+          isSelf
+            ? "Cannot deactivate yourself"
+            : ownerLocked
+              ? OWNER_ONLY
+              : user.configuredOwner
+                ? CONFIGURED_OWNER
+                : `Deactivate ${user.displayName}`
+        }
         onClick={() => onDelete(user.id, user.displayName)}
         className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
       >
@@ -113,6 +139,7 @@ function UserRow({
   isSelf,
   isBusy,
   isEditing,
+  viewerIsOwner,
   onEdit,
   onDelete,
   onRestore,
@@ -121,6 +148,7 @@ function UserRow({
   isSelf: boolean;
   isBusy: boolean;
   isEditing: boolean;
+  viewerIsOwner: boolean;
   onEdit: (userId: string) => void;
   onDelete: (userId: string, displayName: string) => void;
   onRestore: (userId: string) => void;
@@ -148,6 +176,7 @@ function UserRow({
           isBusy={isBusy}
           isDeactivated={isDeactivated}
           isEditing={isEditing}
+          viewerIsOwner={viewerIsOwner}
           onEdit={onEdit}
           onDelete={onDelete}
           onRestore={onRestore}
@@ -167,6 +196,7 @@ function UsersTable({
   busyId,
   editingId,
   providerOwnedFields,
+  viewerIsOwner,
   onEdit,
   onSaved,
   onDelete,
@@ -177,6 +207,7 @@ function UsersTable({
   busyId: string | null;
   editingId: string | null;
   providerOwnedFields: readonly string[];
+  viewerIsOwner: boolean;
   onEdit: (userId: string) => void;
   onSaved: () => void;
   onDelete: (userId: string, displayName: string) => void;
@@ -197,7 +228,8 @@ function UsersTable({
       </TableHeader>
       <TableBody>
         {users.map((u) => {
-          const isEditing = editingId === u.id && !u.deletedAt;
+          const isEditing =
+            editingId === u.id && !u.deletedAt && (u.orgRole !== "owner" || viewerIsOwner);
           return (
             <Fragment key={u.id}>
               <UserRow
@@ -205,6 +237,7 @@ function UsersTable({
                 isSelf={u.id === currentUserId}
                 isBusy={busyId === u.id}
                 isEditing={isEditing}
+                viewerIsOwner={viewerIsOwner}
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onRestore={onRestore}
@@ -216,6 +249,8 @@ function UsersTable({
                       user={u}
                       isSelf={u.id === currentUserId}
                       isLastOwner={u.orgRole === "owner" && activeOwners <= 1}
+                      isConfiguredOwner={Boolean(u.configuredOwner)}
+                      viewerIsOwner={viewerIsOwner}
                       providerOwnedFields={providerOwnedFields}
                       onSaved={onSaved}
                     />
@@ -233,6 +268,7 @@ function UsersTable({
 export function UsersTab() {
   const session = useSession();
   const currentUserId = session?.user?.id;
+  const viewerIsOwner = session?.user?.orgRole === "owner";
 
   const [users, setUsers] = useState<User[]>([]);
   const [providerOwnedFields, setProviderOwnedFields] = useState<string[]>([]);
@@ -442,6 +478,7 @@ export function UsersTab() {
           busyId={busyId}
           editingId={editingId}
           providerOwnedFields={providerOwnedFields}
+          viewerIsOwner={viewerIsOwner}
           onEdit={toggleEdit}
           onSaved={refreshAfterEdit}
           onDelete={handleDelete}

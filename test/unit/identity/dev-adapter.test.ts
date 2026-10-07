@@ -40,6 +40,12 @@ describe("DevIdentityProvider", () => {
     );
   });
 
+  test("the built-in developer is the configured owner, and no one else is", () => {
+    const adapter = new DevIdentityProvider(workDir, userStore);
+    expect(adapter.isConfiguredOwner({ id: "usr_default", email: "dev@localhost" })).toBe(true);
+    expect(adapter.isConfiguredOwner({ id: "usr_other", email: "dev@localhost" })).toBe(false);
+  });
+
   describe("verifyRequest", () => {
     test("returns default UserIdentity for any request", async () => {
       const adapter = new DevIdentityProvider(workDir, userStore);

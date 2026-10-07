@@ -74,6 +74,11 @@ export class DevIdentityProvider implements IdentityProvider {
     return this.userStore.delete(userId);
   }
 
+  /** The built-in developer is the owner every request runs as. */
+  isConfiguredOwner(user: Pick<User, "id" | "email">): boolean {
+    return user.id === DEV_IDENTITY.id;
+  }
+
   // ── Private ───────────────────────────────────────────────────
 
   /**

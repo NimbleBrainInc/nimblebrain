@@ -246,6 +246,8 @@ describe("nb__manage_users", () => {
     });
 
     test("cannot downgrade the last owner to member", async () => {
+      currentIdentity = { ...currentIdentity!, orgRole: "owner" };
+      tool = createManageUsersTool(makeCtx());
       // Create an owner
       const createResult = await tool.handler({
         action: "create",
@@ -266,6 +268,8 @@ describe("nb__manage_users", () => {
     });
 
     test("can downgrade owner when another owner exists", async () => {
+      currentIdentity = { ...currentIdentity!, orgRole: "owner" };
+      tool = createManageUsersTool(makeCtx());
       // Create two owners
       const r1 = await tool.handler({
         action: "create",
@@ -294,6 +298,8 @@ describe("nb__manage_users", () => {
     });
 
     test("a deactivated owner does not count toward the last-owner guard", async () => {
+      currentIdentity = { ...currentIdentity!, orgRole: "owner" };
+      tool = createManageUsersTool(makeCtx());
       // Two owners; deactivate one so only one ACTIVE owner remains.
       const r1 = await tool.handler({
         action: "create",
@@ -493,6 +499,118 @@ describe("nb__manage_users", () => {
     });
   });
 
+  describe("owner rules", () => {
+    const asOwner = () => {
+      currentIdentity = { ...currentIdentity!, orgRole: "owner" };
+      tool = createManageUsersTool(makeCtx());
+    };
+    async function seed(email: string, orgRole: "owner" | "admin" | "member") {
+      return (await userStore.create({ email, displayName: email.split("@")[0]!, orgRole })).id;
+    }
+
+    test("an admin can't create an owner; an owner can", async () => {
+      const res = await tool.handler({
+        action: "create",
+        email: "ow@example.com",
+        displayName: "Ow",
+        orgRole: "owner",
+      });
+      expect(res.isError).toBe(true);
+      expect(resultText(res)).toContain("Only an owner can");
+      expect(await userStore.getByEmail("ow@example.com")).toBeNull();
+
+      asOwner();
+      const ok = await tool.handler({
+        action: "create",
+        email: "ow@example.com",
+        displayName: "Ow",
+        orgRole: "owner",
+      });
+      expect(ok.isError).toBe(false);
+    });
+
+    test("an admin can't make someone an owner", async () => {
+      const id = await seed("bo@example.com", "member");
+      const res = await tool.handler({ action: "update", userId: id, orgRole: "owner" });
+      expect(res.isError).toBe(true);
+      expect(resultText(res)).toContain("Only an owner can");
+      expect((await userStore.get(id))?.orgRole).toBe("member");
+    });
+
+    test("an admin can't demote, rename, deactivate, or restore an owner", async () => {
+      await seed("o1@example.com", "owner");
+      const id = await seed("o2@example.com", "owner");
+
+      for (const args of [
+        { action: "update", userId: id, orgRole: "member" },
+        { action: "update", userId: id, displayName: "Renamed" },
+        { action: "delete", userId: id },
+      ]) {
+        const res = await tool.handler(args);
+        expect(res.isError).toBe(true);
+        expect(resultText(res)).toContain("Only an owner can");
+      }
+      const user = await userStore.get(id);
+      expect(user?.orgRole).toBe("owner");
+      expect(user?.displayName).toBe("o2");
+      expect(user?.deletedAt).toBeUndefined();
+
+      await userStore.softDelete(id);
+      const restore = await tool.handler({ action: "restore", userId: id });
+      expect(restore.isError).toBe(true);
+      expect((await userStore.get(id))?.deletedAt).toBeTruthy();
+    });
+
+    test("an owner can make someone an owner and demote another owner", async () => {
+      asOwner();
+      await seed("o1@example.com", "owner");
+      const bo = await seed("bo@example.com", "member");
+
+      expect((await tool.handler({ action: "update", userId: bo, orgRole: "owner" })).isError).toBe(
+        false,
+      );
+      expect((await tool.handler({ action: "update", userId: bo, orgRole: "admin" })).isError).toBe(
+        false,
+      );
+      expect((await userStore.get(bo))?.orgRole).toBe("admin");
+    });
+
+    test("an admin still manages admins and members", async () => {
+      const al = await seed("al@example.com", "admin");
+      const res = await tool.handler({ action: "update", userId: al, orgRole: "member" });
+      expect(res.isError).toBe(false);
+    });
+
+    test("an owner named in config can't be demoted or deactivated, even by an owner", async () => {
+      asOwner();
+      provider = {
+        ...createMockProvider(userStore),
+        isConfiguredOwner: (u) => u.email === "cfg@example.com",
+      };
+      tool = createManageUsersTool(makeCtx());
+      await seed("o1@example.com", "owner");
+      const cfg = await seed("cfg@example.com", "owner");
+
+      const demote = await tool.handler({ action: "update", userId: cfg, orgRole: "admin" });
+      expect(demote.isError).toBe(true);
+      expect(resultText(demote)).toContain("auth.owners");
+
+      const del = await tool.handler({ action: "delete", userId: cfg });
+      expect(del.isError).toBe(true);
+      expect(resultText(del)).toContain("auth.owners");
+
+      // Their name is still an owner's to change.
+      const rename = await tool.handler({ action: "update", userId: cfg, displayName: "Cfg" });
+      expect(rename.isError).toBe(false);
+
+      const list = parseResult(await tool.handler({ action: "list" })) as {
+        users: Array<{ email: string; configuredOwner?: boolean }>;
+      };
+      expect(list.users.find((u) => u.email === "cfg@example.com")?.configuredOwner).toBe(true);
+      expect(list.users.find((u) => u.email === "o1@example.com")?.configuredOwner).toBeUndefined();
+    });
+  });
+
   describe("delete (soft)", () => {
     test("deactivates user but retains the record as a tombstone", async () => {
       const createResult = await tool.handler({
@@ -573,6 +691,8 @@ describe("nb__manage_users", () => {
     });
 
     test("cannot delete the last owner", async () => {
+      currentIdentity = { ...currentIdentity!, orgRole: "owner" };
+      tool = createManageUsersTool(makeCtx());
       const createResult = await tool.handler({
         action: "create",
         email: "owner@example.com",

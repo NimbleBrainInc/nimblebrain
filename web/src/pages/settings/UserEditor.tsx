@@ -31,20 +31,27 @@ const ALL_UNDO: Record<UserEditField, { undo: true }> = {
  * (`useAutosaveForm`) through `manage_users`' `update` action.
  *
  * What a control disables mirrors what the server refuses (`user-tools.ts`):
- * your own role, the last active owner's role, and any field the identity
- * provider owns. The server re-checks every save, and its refusal shows on the
+ * your own role, the last active owner's role, an owner the instance config
+ * names, the Owner choice for a viewer who is not an owner, and any field the
+ * identity provider owns. The server re-checks every save, and its refusal shows on the
  * field. A change that takes away admin rights asks first, as deactivation does.
  */
 export function UserEditor({
   user,
   isSelf,
   isLastOwner,
+  isConfiguredOwner,
+  viewerIsOwner,
   providerOwnedFields,
   onSaved,
 }: {
   user: EditableUser;
   isSelf: boolean;
   isLastOwner: boolean;
+  /** The instance config makes this user an owner (`auth.owners`), so the config, not this page, sets their role. */
+  isConfiguredOwner: boolean;
+  /** Only an owner may make someone an owner. */
+  viewerIsOwner: boolean;
   providerOwnedFields: readonly string[];
   /** Called after any field saves, so the list can re-read. */
   onSaved: () => void;
@@ -78,12 +85,16 @@ export function UserEditor({
   );
 
   const emailOwned = providerOwnedFields.includes("email");
-  const roleLocked = isSelf || isLastOwner;
+  const roleLocked = isSelf || isConfiguredOwner || isLastOwner;
   const roleHint = isSelf
     ? "You can't change your own role. Ask another admin or owner."
-    : isLastOwner
-      ? "The last owner keeps the owner role. Make someone else an owner first."
-      : undefined;
+    : isConfiguredOwner
+      ? "An owner by this instance's configuration (auth.owners). Change it there."
+      : isLastOwner
+        ? "The last owner keeps the owner role. Make someone else an owner first."
+        : viewerIsOwner
+          ? undefined
+          : "Only an owner can make someone an owner.";
 
   const onRoleChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const next = e.target.value as OrgRole;
@@ -141,7 +152,7 @@ export function UserEditor({
           onChange={onRoleChange}
         >
           {ORG_ROLE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
+            <option key={o.value} value={o.value} disabled={o.value === "owner" && !viewerIsOwner}>
               {o.label}
             </option>
           ))}

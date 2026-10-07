@@ -41,7 +41,8 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
         "issuer": "https://auth.example.com",
         "clientId": "nimblebrain-app",
         "allowedDomains": ["example.com", "acme.com"],
-        "jwksUri": "https://auth.example.com/.well-known/jwks.json"
+        "jwksUri": "https://auth.example.com/.well-known/jwks.json",
+        "owners": ["founder@example.com"]
       },
       "orgName": "Acme",
       "orgId": "org_acme"
@@ -60,7 +61,8 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
         "apiKey": "sk_live_...",
         "authkitDomain": "myapp",
         "adminRoleSlugs": ["org-admin"],
-        "firstPartyClientIds": ["client_01DEF..."]
+        "firstPartyClientIds": ["client_01DEF..."],
+        "owners": ["founder@example.com"]
       },
       "orgName": "Acme",
       "orgId": "org_acme"
@@ -89,6 +91,7 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
 | `clientId` | `string` | Yes | OAuth client id registered with the provider. |
 | `allowedDomains` | `string[]` | Yes | Email domains permitted to sign in. A verified identity whose domain isn't listed is rejected. |
 | `jwksUri` | `string` | No | JWKS endpoint override. Discovered from the issuer's `.well-known` when omitted. |
+| `owners` | `string[]` | No | Emails of the org's owners. A listed user is an owner on every sign-in (matched case-insensitively), and cannot be demoted or deactivated from the Users page; remove them here first. Since only an owner can make another, this is where the first owner comes from. Each entry must be an email address. See [Owners from `instance.json`](/using/users/#owners-from-instancejson). |
 
 ## WorkOS adapter (`auth.adapter: "workos"`)
 
@@ -101,6 +104,7 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
 | `authkitDomain` | `string` | No | AuthKit subdomain for MCP OAuth (e.g. `"myapp"` → `myapp.authkit.app`). When set, `/mcp/<workspaceId>` accepts AuthKit-issued Bearer JWTs whose audience is exactly that URL, and exposes `/.well-known/oauth-protected-resource/mcp/<workspaceId>` for MCP client discovery. AuthKit needs a resource indicator covering `<origin>/mcp/*` for each public host, or it ignores the client's `resource` and every token is refused. |
 | `adminRoleSlugs` | `string[]` | No | WorkOS membership role slugs that map to the app `admin` role (case-insensitive). Omit to use the defaults `["admin", "owner"]`. An explicit list **replaces** the defaults and must contain at least one non-empty slug — an empty list is rejected at startup. Set this when your WorkOS org's admin role carries a custom slug. |
 | `firstPartyClientIds` | `string[]` | No | Client IDs of your own apps that sign users in through AuthKit and call the REST API with the resulting token, such as a chat-channel bridge. See [First-party clients](#first-party-clients). Takes effect only with `authkitDomain` set, since without it no token is recognized as AuthKit-issued. Omitted or empty, no AuthKit token is first-party. |
+| `owners` | `string[]` | No | Emails of the org's owners. A listed user is an owner on every sign-in (matched case-insensitively), and cannot be demoted or deactivated from the Users page; remove them here first. Since only an owner can make another, this is where the first owner comes from. Each entry must be an email address. See [Owners from `instance.json`](/using/users/#owners-from-instancejson). |
 
 The sign-in callback is always `<public origin>/v1/auth/callback`, built from the deployment's [public origin](/config/environment/#nb_public_origin). Register that URL as a redirect URI in the WorkOS dashboard; `instance.json` has no field for it.
 
