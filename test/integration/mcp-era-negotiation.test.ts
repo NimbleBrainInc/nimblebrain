@@ -8,15 +8,15 @@
  * refused (ADR-0046), and the legacy retry after a
  * probe that meets an HTTP 500 (and not after a gateway's 502/503/504).
  *
- * Server role: `/mcp/<wsId>` answering a 2026-07-28 client and a 2025 client
- * with the same bare, workspace-walled tool names.
+ * Server role: `/mcp/<wsId>` serving a 2026-07-28 client by bare,
+ * workspace-walled tool names, and refusing a client that speaks only 2025.
  *
  * A 2026 server has no in-memory transport (the SDK's `InMemoryTransport`
- * links 2025-era instances only), so both eras are served over HTTP here: the
+ * links 2025-era instances only), so the connector servers here are HTTP: the
  * SDK's `createMcpHandler` for the modern one, its `legacyStatelessFallback`
  * for a server that predates `server/discover`.
  */
-import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -40,7 +40,6 @@ import {
   HOST_RESOURCES_CAPABILITY_KEY,
   HOST_RESOURCES_CAPABILITY_V1,
 } from "../../src/host-resources/index.ts";
-import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { TASKS_EXTENSION_ID } from "../../src/tools/mcp-task-client.ts";
@@ -593,15 +592,12 @@ class FixtureSource implements ToolSource {
   }
 }
 
-describe("/mcp/<wsId> on both eras", () => {
+describe("/mcp/<wsId> serves 2026-07-28 only", () => {
   let runtime: Runtime;
   let handle: ServerHandle;
   let workDir: string;
-  // Watches the whole block, so the era log test sees every client that arrived.
-  let info: ReturnType<typeof spyOn<typeof log, "info">>;
 
   beforeAll(async () => {
-    info = spyOn(log, "info");
     workDir = await mkdtemp(join(tmpdir(), "nb-mcp-era-"));
     runtime = await Runtime.start({
       identityProvider: devProvider,
@@ -617,62 +613,46 @@ describe("/mcp/<wsId> on both eras", () => {
   });
 
   afterAll(async () => {
-    info.mockRestore();
     handle.stop(true);
     await runtime.shutdown();
     rmSync(workDir, { recursive: true, force: true });
   });
 
-  async function client(negotiate: boolean): Promise<Client> {
-    const c = new Client(
+  function client(negotiate: boolean): Client {
+    return new Client(
       { name: "era-test", version: "1.0.0" },
       negotiate ? { versionNegotiation: { mode: "auto" } } : {},
     );
-    await c.connect(
-      new StreamableHTTPClientTransport(
-        new URL(`http://localhost:${handle.port}/mcp/${TEST_WORKSPACE_ID}`),
-      ),
-    );
-    return c;
   }
 
-  it.each([
-    { era: "modern", negotiate: true, version: "2026-07-28" },
-    { era: "legacy", negotiate: false, version: "2025-11-25" },
-  ])(
-    "serves a $era client the workspace's bare tool names and routes a call by one",
-    async ({ era, negotiate, version }) => {
-      const c = await client(negotiate);
-      try {
-        expect(c.getProtocolEra()).toBe(era as "modern" | "legacy");
-        expect(c.getNegotiatedProtocolVersion()).toBe(version);
-        const names = (await c.listTools()).tools.map((t) => t.name);
-        expect(names).toContain("fixture__greet");
-        const result = await c.callTool({ name: "fixture__greet", arguments: { name: "era" } });
-        expect(result.content).toEqual([{ type: "text", text: "hello era" }]);
-        // A retired `ws_<id>-` name addresses no workspace on either era.
-        await expect(
-          c.callTool({ name: `ws_${TEST_WORKSPACE_ID}-fixture__greet`, arguments: {} }),
-        ).rejects.toMatchObject({ code: -32602 });
-      } finally {
-        await c.close();
-      }
-    },
-  );
+  function transport(): StreamableHTTPClientTransport {
+    return new StreamableHTTPClientTransport(
+      new URL(`http://localhost:${handle.port}/mcp/${TEST_WORKSPACE_ID}`),
+    );
+  }
 
-  // The door logs which era each kind of client arrives on, once per (era,
-  // User-Agent), so production traffic shows who still needs the 2025 leg.
-  // Every client here shares one User-Agent, so each era logs exactly once.
-  it("logs each client's era once", async () => {
-    for (const negotiate of [true, false, true, false]) {
-      const c = await client(negotiate);
-      await c.listTools();
+  it("serves a negotiating client on 2026-07-28, by bare tool names", async () => {
+    const c = client(true);
+    await c.connect(transport());
+    try {
+      expect(c.getProtocolEra()).toBe("modern");
+      expect(c.getNegotiatedProtocolVersion()).toBe("2026-07-28");
+      const names = (await c.listTools()).tools.map((t) => t.name);
+      expect(names).toContain("fixture__greet");
+      const result = await c.callTool({ name: "fixture__greet", arguments: { name: "era" } });
+      expect(result.content).toEqual([{ type: "text", text: "hello era" }]);
+      // A retired `ws_<id>-` name addresses no workspace.
+      await expect(
+        c.callTool({ name: `ws_${TEST_WORKSPACE_ID}-fixture__greet`, arguments: {} }),
+      ).rejects.toMatchObject({ code: -32602 });
+    } finally {
       await c.close();
     }
-    const eraLines = info.mock.calls
-      .map((args) => String(args[0]))
-      .filter((line) => line.startsWith("[mcp] client era="));
-    expect(eraLines.filter((l) => l.includes("era=modern"))).toHaveLength(1);
-    expect(eraLines.filter((l) => l.includes("era=legacy"))).toHaveLength(1);
+  });
+
+  it("refuses a client that speaks only 2025-11-25", async () => {
+    await expect(client(false).connect(transport())).rejects.toThrow(
+      /Unsupported protocol version/,
+    );
   });
 });

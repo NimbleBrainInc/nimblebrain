@@ -1,10 +1,9 @@
 /**
- * `tasks__run` over `/mcp/<wsId>`: a run is an MCP task on the
- * 2026-07-28 leg (the tasks extension). The handle names the run, the run's
+ * `tasks__run` over `/mcp/<wsId>`: a run is an MCP task (the tasks
+ * extension). The handle names the run, the run's
  * record exists before the handle is returned, `tasks/get` and `tasks/cancel`
  * read and cancel the run for its owner only, and the handle outlives a
- * restart. A client that does not opt in, and any 2025-era client, gets the
- * inline answer it always got.
+ * restart. A client that does not opt in gets the inline answer.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -17,7 +16,6 @@ import {
   type CallToolResult,
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
-  Client,
   PROTOCOL_VERSION_META_KEY,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
@@ -30,6 +28,7 @@ import type { TaskRun } from "../../src/platform/tasks/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeIdentity } from "../helpers/identity.ts";
+import { MCP_PROTOCOL_VERSION, newMcpClient } from "../helpers/mcp-client.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const OTHER_HEADER = "x-tasks-identity";
@@ -216,7 +215,7 @@ function runIdOf(taskId: string): string {
   return named?.taskId ?? "";
 }
 
-describe("tasks__run on the 2026-07-28 leg", () => {
+describe("tasks__run as a task", () => {
   it("returns a handle naming the run, whose record exists, and completes with the deliverable", async () => {
     const taskId = await startRun({ definition: { body: "Write one line." }, input: { item: 7 } });
     const runId = runIdOf(taskId);
@@ -302,16 +301,15 @@ describe("tasks__run on the 2026-07-28 leg", () => {
   });
 });
 
-describe("tasks__run on the 2025-11-25 leg", () => {
-  it("answers inline with the run, as before", async () => {
-    // The SDK v2 client's default connect is the plain 2025 `initialize` handshake.
-    const client = new Client({ name: "tasks-2025", version: "1.0.0" });
+describe("tasks__run for a client that does not opt in to tasks", () => {
+  it("answers inline with the run", async () => {
+    const client = newMcpClient({ name: "tasks-inline", version: "1.0.0" });
     await client.connect(new StreamableHTTPClientTransport(mcpUrl()));
     try {
-      expect(client.getNegotiatedProtocolVersion()).toBe("2025-11-25");
+      expect(client.getNegotiatedProtocolVersion()).toBe(MCP_PROTOCOL_VERSION);
       const result = await client.callTool({
         name: "tasks__run",
-        arguments: { definition: { body: "Legacy inline." } },
+        arguments: { definition: { body: "Inline." } },
       });
       expect(result.isError).toBeFalsy();
       const body = JSON.parse((result.content[0] as { text: string }).text);
@@ -324,7 +322,7 @@ describe("tasks__run on the 2025-11-25 leg", () => {
 
   it("is told how to use the task tools in the server's instructions", async () => {
     // A remote client loads no skills: the task-authoring guide reaches it here.
-    const client = new Client({ name: "tasks-guide", version: "1.0.0" });
+    const client = newMcpClient({ name: "tasks-guide", version: "1.0.0" });
     await client.connect(new StreamableHTTPClientTransport(mcpUrl()));
     try {
       const instructions = client.getInstructions() ?? "";

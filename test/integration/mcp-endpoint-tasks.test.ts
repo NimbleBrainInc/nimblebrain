@@ -1,18 +1,11 @@
 /**
- * `/mcp/<wsId>` serves both protocol eras, and they are equivalent but for task
- * augmentation: a client on `2026-07-28` can do everything a client on
- * `2025-11-25` can. This suite is the guard on that rule. One set of scenarios
- * runs against each leg through a driver per era, and every assertion is
- * shared, so a change that lets the legs drift fails here.
- *
- * - 2025 leg: the SDK v2 client on its plain `initialize` handshake, sessionful. It serves no task augmentation
- *   (ADR-0046): no `tasks` capability, a `params.task` ignored, no `tasks/*`.
- * - 2026 leg: the SDK v2 client for what it speaks, and the tasks extension
- *   (SEP-2663) on the wire for what it does not (typescript-sdk#2189): opt-in
- *   per request, a flat task, `tasks/get` inlining the outcome.
+ * `/mcp/<wsId>` end to end on 2026-07-28: the basic scenarios through the SDK
+ * v2 client, and the tasks extension (SEP-2663) on the wire for what the client
+ * does not speak (typescript-sdk#2189): opt-in per request, a flat task,
+ * `tasks/get` inlining the outcome. The app bridge's own requests close it out.
  */
 
-import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -34,7 +27,6 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { FIRST_PARTY_GRANT, type VerifiedIdentity } from "../../src/identity/provider.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
-import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp } from "../../src/tools/in-process-app.ts";
 import {
@@ -47,6 +39,7 @@ import {
 import { buildMcpRequest, readMcpAnswer } from "../../web/src/mcp-bridge-client.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeIdentity } from "../helpers/identity.ts";
+import { MCP_PROTOCOL_VERSION } from "../helpers/mcp-client.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ── Fixture: a task-aware source, a resource source, two identities ─────
@@ -220,7 +213,7 @@ function mcpUrl(wsId: string = TEST_WORKSPACE_ID): URL {
 }
 
 beforeAll(async () => {
-  workDir = await mkdtemp(join(tmpdir(), "nb-mcp-era-parity-"));
+  workDir = await mkdtemp(join(tmpdir(), "nb-mcp-endpoint-tasks-"));
   runtime = await Runtime.start({
     identityProvider: ({ workDir: dir, userStore }) => new TwoIdentityProvider(dir, userStore),
     languageModel: createEchoModel(),
@@ -249,10 +242,10 @@ afterAll(async () => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-// ── One driver per era ─────────────────────────────────────────────────
+// ── The driver ───────────────────────────────────────────────────────
 
-/** What a scenario does at the door, in each era's own vocabulary. */
-interface EraDriver {
+/** What a scenario does at the door. */
+interface Driver {
   listTools(): Promise<string[]>;
   callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult>;
   readResource(uri: string): Promise<string | undefined>;
@@ -268,66 +261,6 @@ async function errorCode(p: Promise<unknown>): Promise<number | undefined> {
     return (err as { code?: number }).code;
   }
 }
-
-const LEGACY_VERSION = "2025-11-25";
-
-/**
- * A 2025-era client of the door, as the owner or as {@link OTHER}: the SDK 2
- * client on its plain `initialize` handshake. Also the session id, for the
- * requests the client will not send itself (`legacyPost`).
- */
-async function legacyClient(
-  as: "owner" | "other" = "owner",
-): Promise<{ client: Client; sessionId: string }> {
-  const client = new Client({ name: "parity-2025", version: "1.0.0" });
-  const headers: Record<string, string> = as === "other" ? { [OTHER_HEADER]: "1" } : {};
-  const transport = new StreamableHTTPClientTransport(mcpUrl(), { requestInit: { headers } });
-  await client.connect(transport);
-  expect(client.getNegotiatedProtocolVersion()).toBe(LEGACY_VERSION);
-  if (!transport.sessionId) throw new Error("the 2025 leg allocated no session");
-  return { client, sessionId: transport.sessionId };
-}
-
-/**
- * One 2025 request on the wire, in an existing session: what a client that
- * still speaks the 2025-11-25 tasks utility sends. The SDK 2 client sends
- * neither a `params.task` nor a `tasks/*` request itself.
- */
-async function legacyPost(
-  sessionId: string,
-  method: string,
-  params: Record<string, unknown>,
-): Promise<{ result?: Record<string, unknown>; error?: { code: number } }> {
-  const res = await fetch(mcpUrl(), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      "mcp-session-id": sessionId,
-      "mcp-protocol-version": LEGACY_VERSION,
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  const text = await res.text();
-  const json = text.startsWith("{") ? text : (text.match(/^data: (.*)$/m)?.[1] ?? "{}");
-  return JSON.parse(json);
-}
-
-async function legacyDriver(): Promise<EraDriver> {
-  const { client: owner } = await legacyClient();
-  return {
-    listTools: async () => (await owner.listTools()).tools.map((t) => t.name),
-    callTool: async (name, args) => owner.callTool({ name, arguments: args }),
-    readResource: async (uri) => {
-      const read = await owner.readResource({ uri });
-      const first = read.contents[0];
-      return first && "text" in first ? first.text : undefined;
-    },
-    close: () => owner.close(),
-  };
-}
-
-const MODERN_VERSION = "2026-07-28";
 
 /**
  * One 2026-07-28 request on the wire, with the envelope and the standard
@@ -347,7 +280,7 @@ async function modernPost(
     headers: {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
-      "mcp-protocol-version": MODERN_VERSION,
+      "mcp-protocol-version": MCP_PROTOCOL_VERSION,
       "mcp-method": method,
       ...(name !== undefined ? { "mcp-name": name } : {}),
       ...(opts.as === "other" ? { [OTHER_HEADER]: "1" } : {}),
@@ -360,7 +293,7 @@ async function modernPost(
         ...params,
         _meta: {
           ...(params._meta as Record<string, unknown> | undefined),
-          [PROTOCOL_VERSION_META_KEY]: MODERN_VERSION,
+          [PROTOCOL_VERSION_META_KEY]: MCP_PROTOCOL_VERSION,
           [CLIENT_INFO_META_KEY]: { name: "parity-2026", version: "1.0.0" },
           [CLIENT_CAPABILITIES_META_KEY]: opts.optIn
             ? { extensions: { [TASKS_EXTENSION_ID]: {} } }
@@ -384,13 +317,13 @@ async function modernResult(
   return body.result ?? {};
 }
 
-async function modernDriver(): Promise<EraDriver> {
+async function modernDriver(): Promise<Driver> {
   const client = new Client(
     { name: "parity-2026", version: "1.0.0" },
     { versionNegotiation: { mode: "auto" } },
   );
   await client.connect(new StreamableHTTPClientTransport(mcpUrl()));
-  expect(client.getNegotiatedProtocolVersion()).toBe(MODERN_VERSION);
+  expect(client.getNegotiatedProtocolVersion()).toBe(MCP_PROTOCOL_VERSION);
   return {
     listTools: async () => (await client.listTools()).tools.map((t) => t.name),
     callTool: async (name, args) =>
@@ -415,16 +348,13 @@ async function modernStatus(taskId: string, as: "owner" | "other" = "owner") {
   return (await modernResult("tasks/get", { taskId }, { as })).status as Task["status"];
 }
 
-// ── The scenarios, once per era ──────────────────────────────────────
+// ── The scenarios ────────────────────────────────────────────────────
 
-describe.each([
-  { era: "2025-11-25", driver: legacyDriver },
-  { era: "2026-07-28", driver: modernDriver },
-])("/mcp/<wsId> on $era", ({ driver }) => {
-  let d: EraDriver;
+describe("/mcp/<wsId>", () => {
+  let d: Driver;
 
   beforeAll(async () => {
-    d = await driver();
+    d = await modernDriver();
   });
 
   afterAll(async () => {
@@ -454,59 +384,7 @@ describe.each([
   });
 });
 
-describe("/mcp/<wsId> on 2025-11-25 serves no task augmentation", () => {
-  let client: Client;
-  let sessionId: string;
-
-  beforeAll(async () => {
-    ({ client, sessionId } = await legacyClient());
-  });
-
-  afterAll(async () => {
-    await client.close();
-  });
-
-  it("declares no tasks capability", () => {
-    expect(client.getServerCapabilities()?.tasks).toBeUndefined();
-  });
-
-  it("runs a call carrying params.task to completion, ignoring the task, and logs it", async () => {
-    const before = jobs.started;
-    const info = spyOn(log, "info");
-    try {
-      const { result, error } = await legacyPost(sessionId, "tools/call", {
-        name: `${SOURCE}__research`,
-        arguments: {},
-        task: { ttl: 60_000 },
-      });
-      expect(error).toBeUndefined();
-      expect(result?.content).toEqual([{ type: "text", text: "research:" }]);
-      expect(jobs.started).toBe(before);
-      // The log line is how 2025 task traffic stays visible.
-      expect(info.mock.calls.some(([msg]) => msg.startsWith("[mcp] ignored params.task"))).toBe(
-        true,
-      );
-    } finally {
-      info.mockRestore();
-    }
-  });
-
-  it("runs a task-only tool to completion", async () => {
-    const before = jobs.started;
-    const result = await client.callTool({ name: `${SOURCE}__batch`, arguments: {} });
-    expect(result.content).toEqual([{ type: "text", text: "batch:" }]);
-    expect(jobs.started).toBe(before);
-  });
-
-  for (const method of ["tasks/get", "tasks/result", "tasks/cancel", "tasks/list"]) {
-    it(`answers ${method} as method not found`, async () => {
-      const params = method === "tasks/list" ? {} : { taskId: "job-any" };
-      expect((await legacyPost(sessionId, method, params)).error?.code).toBe(-32601);
-    });
-  }
-});
-
-describe("/mcp/<wsId> task lifecycle on 2026-07-28", () => {
+describe("/mcp/<wsId> task lifecycle", () => {
   it("advertises the tasks extension before any call", async () => {
     const client = new Client(
       { name: "parity-2026", version: "1.0.0" },
@@ -548,7 +426,7 @@ describe("/mcp/<wsId> task lifecycle on 2026-07-28", () => {
 
 // ── What only the 2026 wire can get wrong ─────────────────────────────
 
-describe("/mcp/<wsId> tasks on 2026-07-28", () => {
+describe("/mcp/<wsId> tasks", () => {
   it("answers outright a call that did not opt in to the tasks extension", async () => {
     const result = await modernResult("tools/call", { name: `${SOURCE}__research`, arguments: {} });
     expect(result.resultType).toBe("complete");
@@ -662,7 +540,7 @@ describe("/mcp/<wsId> tasks on 2026-07-28", () => {
 
 // ── The app bridge's requests, as the web shell builds them ──────────────
 
-describe("/mcp/<wsId> answers the app bridge on 2026-07-28", () => {
+describe("/mcp/<wsId> answers the app bridge", () => {
   /** One request exactly as the web shell's bridge sends it, scoped to `app`. */
   async function bridgeSend(
     method: string,

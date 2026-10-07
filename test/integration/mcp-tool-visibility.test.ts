@@ -15,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { mcpResourceUrl } from "../../src/api/mcp-resource.ts";
@@ -29,6 +29,7 @@ import type { IdentityStores } from "../../src/runtime/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { surfaceTools } from "../../src/tools/surfacing.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
@@ -186,7 +187,7 @@ async function createMcpClient(external = false): Promise<Client> {
       ? { requestInit: { headers: { Authorization: `Bearer ${MCP_CLIENT_TOKEN}` } } }
       : undefined,
   );
-  const client = new Client({ name: "mcp-tool-visibility-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "mcp-tool-visibility-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }
@@ -291,43 +292,6 @@ describe("MCP Apps tool visibility — an agent's tools/call", () => {
       await expect(client.callTool({ name: "vis__nonexistent", arguments: {} })).rejects.toThrow(
         /not callable by an agent/,
       );
-    } finally {
-      await client.close();
-    }
-  });
-});
-
-describe("MCP Apps tool visibility — the session's grant", () => {
-  it("turns an external client away from a first-party session", async () => {
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
-    );
-    const client = new Client({ name: "mcp-tool-visibility-test", version: "1.0.0" });
-    await client.connect(transport);
-    try {
-      const sessionId = transport.sessionId;
-      expect(sessionId).toBeDefined();
-      const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-          Authorization: `Bearer ${MCP_CLIENT_TOKEN}`,
-          "Mcp-Session-Id": sessionId ?? "",
-          "Mcp-Protocol-Version": "2025-11-25",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: {
-            name: "vis__refresh",
-            arguments: {},
-            _meta: { [RESOURCE_SOURCE_META_KEY]: "vis" },
-          },
-        }),
-      });
-      expect(res.status).toBe(404);
     } finally {
       await client.close();
     }

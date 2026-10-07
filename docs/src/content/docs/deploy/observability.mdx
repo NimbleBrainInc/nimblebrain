@@ -158,7 +158,7 @@ Two loops run on timers inside the runtime process: the **connection revalidator
 Both are per-process and hold their state in memory, so both carry the same prerequisite:
 
 <Aside type="caution">
-  `replicas: 1` is the supported topology for both loops. At `replicas > 1` each pod would run its own copy: the revalidator would re-probe connections whose state another pod owns, and the poller would read every outbox once per pod and race the same stored cursor. Making either safe needs per-tenant leader election, which is not built. Keep the platform at a single replica — the same conclusion the [session store](#multi-replica-session-storage) reaches for its own reasons.
+  `replicas: 1` is the supported topology for both loops. At `replicas > 1` each pod would run its own copy: the revalidator would re-probe connections whose state another pod owns, and the poller would read every outbox once per pod and race the same stored cursor. Making either safe needs per-tenant leader election, which is not built. Keep the platform at a single replica; see [Scaling to multiple replicas](/config/nimblebrain-json/#scaling-to-multiple-replicas).
 </Aside>
 
 To confirm the poller found anything after a restart, look for `[notifications] targets=N` — it is logged on the first sweep and again whenever the count changes, so `targets=0` on a pod where an app declaring an outbox is installed means the declaration is not reaching the poller, which is a different fault from an outbox that is being read and is empty.
@@ -185,40 +185,3 @@ To see more than liveness:
 |---|---|
 | Which build is live | `version` and `buildSha` on the authenticated `GET /v1/bootstrap`, also shown on the **About** page in organization settings |
 | Whether connectors are up | The `nb_connector_unhealthy` gauge on [`/metrics`](#prometheus-metrics): `1` for each connector that is currently down, and no series for a healthy one |
-
-## Multi-replica session storage
-
-The `/mcp` endpoint allocates a stateful session per client (`Mcp-Session-Id`). At a single replica these live in process memory. To run more than one platform replica, the session **metadata** must be shared across pods through a registry, and requests must be routed back to the pod holding a session's transport.
-
-### Session store
-
-Select the session store with the `sessionStore` config block (or the env knobs below):
-
-| Store | When |
-|---|---|
-| `memory` | Single replica (default). Sessions live in process memory only |
-| `redis` | Multiple replicas. Session metadata is shared via Redis so any pod can recognize a session id |
-
-```json title="nimblebrain.json"
-{
-  "sessionStore": {
-    "type": "redis",
-    "url": "redis://nb-redis:6379"
-  }
-}
-```
-
-The registry stores only session metadata (`sessionId`, identity, workspace, timestamps) — never the live transport, which is process-bound. Routing a request to the pod that owns a session's transport is the load balancer's job (sticky routing on `Mcp-Session-Id`), not the registry's.
-
-### Session limits
-
-These apply regardless of store and tune the per-process transport map:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `MCP_MAX_SESSIONS` | `100` | Maximum concurrent MCP sessions per process. At the cap, a new `initialize` evicts the least-recently-used session rather than returning an error |
-| `MCP_SESSION_TTL_SECONDS` | `28800` (8h) | Idle session TTL. Drives both the per-process idle sweep and the registry TTL |
-
-<Aside type="caution">
-`sessionStore: "redis"` does not make `replicas > 1` work. More than one replica is not supported; see [Scaling to multiple replicas](/config/nimblebrain-json/#scaling-to-multiple-replicas). Keep the platform at a single replica.
-</Aside>
