@@ -11,11 +11,13 @@ The NimbleBrain platform injects CSS custom properties into every app iframe so 
 
 When your app's HTML loads in an iframe, the platform:
 
-1. **Injects a `<style>` block** into your `<head>` with the full token set (ext-apps `--color-*` / `--font-*` / `--border-radius-*` / `--shadow-*` plus the `--nb-*` extensions) for the current theme. This happens before your HTML renders — no flash of wrong colors.
-2. **Answers your app's `ui/initialize` request** with the spec tokens under `hostContext.styles.variables`.
-3. **Sends `ui/notifications/host-context-changed`** when the user toggles dark mode, with updated token values under `styles.variables`, once your app has sent `ui/notifications/initialized`.
+1. **Injects a `<style>` block** into your `<head>` with the tokens for the current theme (ext-apps `--color-*` / `--font-*` / `--border-radius-*` / `--shadow-*`, plus the NimbleBrain tokens that look the same in light and dark). This happens before your HTML renders — no flash of wrong colors.
+2. **Answers your app's `ui/initialize` request** with the spec tokens under `hostContext.styles.variables`, and the NimbleBrain tokens that change between light and dark (`--color-text-accent`, `--nb-color-processing`, `--nb-color-processing-light`) under `hostContext["ai.nimblebrain/styles"].variables`.
+3. **Sends `ui/notifications/host-context-changed`** when the user toggles dark mode, with the new mode's values in both fields, once your app has sent `ui/notifications/initialized`.
 
-Your CSS references these variables with `var(--token)`. Inside the platform the token always has a value — the `<style>` block lands before your HTML renders, and a `srcdoc` iframe inherits nothing else — so no fallback is needed. If your app also has to render where nothing injects tokens, see **Running outside the platform** below.
+The `<style>` block is written once, when the iframe loads, and the iframe stays loaded across a toggle. So every token that differs between light and dark also arrives over the protocol, and a token that is *only* delivered over the protocol is one whose value depends on the mode: the block would hold the load-time mode's value forever.
+
+Your CSS references these variables with `var(--token)`. Inside the platform, with Synapse, the token always has a value — the `<style>` block lands before your HTML renders, and Synapse applies the rest at the handshake, backed by its own defaults until then — so no fallback is needed. Without Synapse, apply both fields yourself (see **Handling dark mode**). If your app also has to render where nothing injects tokens, see **Running outside the platform** below.
 
 ## Using tokens in CSS
 
@@ -67,7 +69,7 @@ An app that only ever runs inside the platform should use the bare form shown un
 
 ## Handling dark mode
 
-The injected `<style>` block gives you the right tokens at load time. When the user toggles dark mode mid-session, the host sends the updated values in `ui/notifications/host-context-changed`, but only to an app that has completed the [initialization handshake](/apps/bridge/#initialization-handshake): the host holds every notification until the app sends `ui/notifications/initialized`. Synapse performs the handshake and applies the tokens for you. Without it, do both yourself:
+The injected `<style>` block gives you the mode-independent tokens, and a load-time value for the spec tokens. The handshake response carries the rest. When the user toggles dark mode mid-session, the host sends the updated values in `ui/notifications/host-context-changed`, but only to an app that has completed the [initialization handshake](/apps/bridge/#initialization-handshake): the host holds every notification until the app sends `ui/notifications/initialized`. Synapse performs the handshake and applies the tokens for you. Without it, do both yourself:
 
 ```javascript
 function applyTokens(tokens) {
@@ -84,6 +86,7 @@ window.addEventListener('message', (event) => {
   // The handshake response: apply its tokens, then tell the host you are ready
   if (msg.id === 'init-1' && msg.result) {
     applyTokens(msg.result.hostContext?.styles?.variables);
+    applyTokens(msg.result.hostContext?.['ai.nimblebrain/styles']?.variables);
     window.parent.postMessage(
       { jsonrpc: '2.0', method: 'ui/notifications/initialized', params: {} }, '*');
   }
@@ -91,6 +94,7 @@ window.addEventListener('message', (event) => {
   // A later change (dark-mode toggle and the like)
   if (msg.method === 'ui/notifications/host-context-changed') {
     applyTokens(msg.params?.styles?.variables);
+    applyTokens(msg.params?.['ai.nimblebrain/styles']?.variables);
   }
 });
 
@@ -106,20 +110,13 @@ window.parent.postMessage({
 
 `applyTokens` sets CSS variables on `document.documentElement`, which overrides the injected `<style>` values. Because your CSS uses `var()` references, the UI updates instantly.
 
-<Aside type="caution">
-**Live-update caveat.** The initial `<style>` block injected at load carries the full token set. But the `ui/notifications/host-context-changed` payload sent on a dark-mode toggle carries **only the tokens in the host's allow-list** — most, but not all, ext-apps spec tokens. These do **not** refresh live on a toggle:
-
-The rule, rather than a list you would have to keep checking: **only keys in the ext-apps spec's own variable enum cross the boundary.** Two families of what the host injects are not in it, so neither refreshes:
-
-- the `--nb-*` extension tokens, and
-- NimbleBrain's additions to spec-shaped families — `--color-text-accent`, and the `3xs`, `2xs` and `base` steps of the type scale (the spec enum carries only `xs`, `sm`, `md` and `lg`).
-
-Drive any surface that must flip between light and dark from the spec tokens that *do* cross: `--color-background-*`, `--color-text-*` other than `-accent`, `--color-border-*`, and `--color-ring-*`. Do **not** key light/dark styling off `--color-text-accent` — it is injected at load but never updates on a toggle.
+<Aside type="note">
+**Which field carries which token.** Only keys in the ext-apps spec's own variable enum go in `styles.variables`; a strict spec client rejects the whole host context over one key outside it. Every other token that changes between light and dark goes in `ai.nimblebrain/styles`. The rest of the NimbleBrain tokens — the `3xs`, `2xs` and `base` steps of the type scale, and `--nb-font-heading` — look the same in both modes and arrive only in the injected `<style>` block. Either way, apply what each message carries and every token follows the toggle.
 </Aside>
 
 ## Token reference
 
-The platform injects the following tokens into every iframe. Those in the ext-apps spec's variable enum also cross the protocol boundary and refresh live on theme changes; everything else — the `--nb-*` extensions, and NimbleBrain's own additions to spec-shaped families — is injected at load only. See the caveat above.
+The platform delivers the following tokens to every iframe, and every one that differs between light and dark refreshes on a theme change. Those in the ext-apps spec's variable enum arrive in `styles.variables`; the others in `ai.nimblebrain/styles` or the injected `<style>` block, as above.
 
 ### Colors (ext-apps spec)
 
@@ -131,7 +128,7 @@ The platform injects the following tokens into every iframe. Those in the ext-ap
 | `--color-text-primary` | Body text |
 | `--color-text-secondary` | Captions, metadata, placeholders |
 | `--color-text-tertiary` | De-emphasized text |
-| `--color-text-accent` | Links, primary buttons, AI accents (load-only — does not refresh on toggle) |
+| `--color-text-accent` | Links, primary buttons, AI accents (NimbleBrain's; in `ai.nimblebrain/styles`, not `styles.variables`) |
 | `--color-text-inverse` | Text on a filled accent or danger background |
 | `--color-text-danger` | Errors, destructive actions |
 | `--color-text-success` | Success indicators |
@@ -187,7 +184,7 @@ These tables list the tokens, not their values. The values are whatever the host
 
 ### NimbleBrain extensions (`--nb-*`)
 
-They are injected into the iframe's `<style>` block at load but do **not** cross the protocol boundary, so they will not refresh on a live theme toggle (see the caveat above), and no other host sends them.
+They never go in `styles.variables`, and no other host sends them. The two colours change with the mode, so they arrive in `ai.nimblebrain/styles` and refresh on a toggle; `--nb-font-heading` does not, and arrives in the injected `<style>` block.
 
 Each carries a value the ext-apps spec has no key for. `@nimblebrain/synapse` reads each, with a fallback for a host that does not send it:
 
@@ -215,7 +212,7 @@ Existing apps require zero changes — theming is entirely opt-in.
 
 ## Injected style cascade
 
-The platform injects a `<style>` block as the **first child of `<head>`**, before your app's own `<style>` tags. This means:
+The platform injects a `<style>` block at the **top of `<head>`**, before your app's own `<style>` tags (only the platform's Content-Security-Policy `<meta>` precedes it). This means:
 
 - Platform tokens are declared on `:root` and are available to your CSS.
 - The injected block includes a minimal body reset (`margin: 0`, `font-family: var(--font-sans)`, `background: var(--color-background-primary)`, `color: var(--color-text-primary)`).
@@ -238,7 +235,7 @@ Common issues:
 | Background is not what I expected | Your CSS uses `background: #fff` instead of `var(--color-background-primary)` | Replace hardcoded colors with `var()` references |
 | Tokens exist but aren't applied | CSS specificity — a more specific selector overrides the token | Check that your selector isn't more specific than the `:root` declaration |
 | Dark mode doesn't toggle | Missing `ui/notifications/host-context-changed` handler | Add the `applyTokens` message listener (see code above) |
-| An `--nb-*` color doesn't flip on toggle | `--nb-*` tokens are injected at load only, not in the live payload | Drive light/dark-sensitive surfaces from the spec `--color-*` tokens |
+| `--color-text-accent` or an `--nb-*` color doesn't flip on toggle | Your handler applies `styles.variables` but not `ai.nimblebrain/styles` | Apply both fields, as in the `applyTokens` listener above, or use Synapse 0.31 or later |
 | Tokens are stale after restart | `deps/` directory contains an old bundled copy | Delete `deps/<your-package>` during local development (see [Local Development](/apps/local-dev)) |
 
 ## Full example

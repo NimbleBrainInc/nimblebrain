@@ -28,11 +28,11 @@ import {
  * Spec keys follow the MCP ext-apps contract. A value goes out under its spec
  * key whenever the spec names one; only a value with no spec equivalent rides as
  * a `--nb-*` extension. The prefix *is* the rule, so there is no list to keep in
- * step: `--nb-*` keys are injected into the iframe's style block and
- * filtered off the protocol boundary by `getSpecThemeTokens`. (Note the
- * converse does not hold: a few spec-shaped keys are also filtered, because
- * NimbleBrain emits more of a family than the spec enumerates. `theme.ts` has
- * that rule.)
+ * step: `--nb-*` keys are filtered off `styles.variables` by
+ * `getSpecThemeTokens`. (Note the converse does not hold: a few spec-shaped
+ * keys are also filtered, because NimbleBrain emits more of a family than the
+ * spec enumerates.) How a filtered key reaches the app depends on whether it
+ * varies with the mode; `theme.ts` has that rule.
  */
 export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
   const c = (name: keyof typeof colors) => pick(colors[name], mode);
