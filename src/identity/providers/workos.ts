@@ -13,6 +13,7 @@ import {
   type TokenGrant,
   type TokenResult,
   TransientAuthError,
+  type UpdateUserInput,
   type UserIdentity,
   type VerifiedIdentity,
 } from "../provider.ts";
@@ -180,6 +181,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private organizationId: string | undefined;
   private authkitDomain: string | undefined;
   private adminRoleSlugs: Set<string>;
+  private adminRoleSlugForWrite: string;
   /** Client IDs whose AuthKit tokens are first-party; empty means none are. */
   private firstPartyClientIds: ReadonlySet<string>;
   private userStore: UserStore | null;
@@ -228,6 +230,9 @@ export class WorkosIdentityProvider implements IdentityProvider {
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
     this.adminRoleSlugs = normalizeAdminRoleSlugs(config.adminRoleSlugs);
+    // The slug written when `manage_users` makes someone an admin: the first
+    // one the operator names, so it is a role their WorkOS environment has.
+    this.adminRoleSlugForWrite = [...this.adminRoleSlugs][0] ?? "admin";
     this.firstPartyClientIds = new Set(
       (config.firstPartyClientIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0),
     );
@@ -238,6 +243,9 @@ export class WorkosIdentityProvider implements IdentityProvider {
       managedUsers: true,
       // AuthKit is the authorization server; without a domain there is none.
       authorizationServer: this.authkitOrigin() !== null,
+      // AuthKit signs a user in by their email, so changing it is an identity
+      // change WorkOS owns, not a profile edit.
+      providerOwnedUserFields: ["email"],
     };
   }
 
@@ -451,6 +459,49 @@ export class WorkosIdentityProvider implements IdentityProvider {
       lastName: rest.length > 0 ? rest.join(" ") : undefined,
     });
     return { user: toUser(result) };
+  }
+
+  /**
+   * Write an edit to WorkOS, then to the local profile. WorkOS is the source of
+   * the name and of the admin/member role, and `syncLocalProfile` copies both
+   * back over the local profile on the next uncached sign-in, so an edit made
+   * only locally would revert. `owner` is app-internal and is written locally
+   * only. Email is refused: AuthKit signs the user in by it
+   * (`providerOwnedUserFields`), so `manage_users` never sends it here.
+   */
+  async updateUser(userId: string, data: UpdateUserInput): Promise<User | null> {
+    if (!this.userStore) return null;
+    const existing = await this.userStore.get(userId);
+    if (!existing) return null;
+    if (data.email !== undefined && data.email !== existing.email) {
+      throw new Error("Email is managed in WorkOS. Change it there.");
+    }
+
+    const local: UpdateUserInput = { ...data };
+    delete local.email;
+    if (data.displayName !== undefined && data.displayName !== existing.displayName) {
+      const [firstName = "", ...rest] = data.displayName.trim().split(/\s+/);
+      const lastName = rest.join(" ");
+      await this.workos.userManagement.updateUser({
+        userId,
+        firstName,
+        // Empty, not omitted, so a one-word name clears the old last name
+        // rather than keeping it beside the new first name.
+        lastName,
+      });
+      // Stored as the login sync will rebuild it from WorkOS, so it never differs.
+      local.displayName = [firstName, lastName].filter(Boolean).join(" ");
+    }
+
+    if (
+      data.orgRole !== undefined &&
+      data.orgRole !== "owner" &&
+      data.orgRole !== existing.orgRole
+    ) {
+      await this.writeMembershipRole(userId, data.orgRole);
+    }
+
+    return this.userStore.update(userId, local);
   }
 
   async deleteUser(userId: string): Promise<boolean> {
@@ -739,6 +790,36 @@ export class WorkosIdentityProvider implements IdentityProvider {
       // resolveUser's catch decides between stale cache and 503.
       this.transient("org_role_unresolvable", { userId: workosUserId });
     }
+  }
+
+  /**
+   * Set the user's role in the configured WorkOS organization to the slug that
+   * `resolveOrgRole` maps back to `role`. A membership whose slug already maps
+   * to `role` is left alone, so a WorkOS `owner` slug (app `admin`) is not
+   * rewritten to `admin`.
+   */
+  private async writeMembershipRole(userId: string, role: "admin" | "member"): Promise<void> {
+    if (!this.organizationId) {
+      // With no organization every user resolves to member.
+      if (role === "admin") {
+        throw new Error("No WorkOS organization is configured, so no one can be an admin.");
+      }
+      return;
+    }
+    const memberships = await this.workos.userManagement.listOrganizationMemberships({
+      userId,
+      organizationId: this.organizationId,
+    });
+    const membership = memberships.data[0];
+    if (!membership) {
+      throw new Error("This user has no membership in the WorkOS organization.");
+    }
+    const slug = (membership.role as { slug?: string })?.slug?.trim().toLowerCase();
+    const current = slug && this.adminRoleSlugs.has(slug) ? "admin" : "member";
+    if (current === role) return;
+    await this.workos.userManagement.updateOrganizationMembership(membership.id, {
+      roleSlug: role === "admin" ? this.adminRoleSlugForWrite : "member",
+    });
   }
 
   /**

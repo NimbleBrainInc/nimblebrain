@@ -1,8 +1,14 @@
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
-import type { CreateUserResult, IdentityProvider, UserIdentity } from "../identity/provider.ts";
-import { ORG_ADMIN_ROLES } from "../identity/types.ts";
-import type { User, UserStore } from "../identity/user.ts";
+import type {
+  CreateUserResult,
+  IdentityProvider,
+  UpdateUserInput,
+  UserEditField,
+  UserIdentity,
+} from "../identity/provider.ts";
+import { ORG_ADMIN_ROLES, type OrgRole } from "../identity/types.ts";
+import { type User, UserConflictError, type UserStore } from "../identity/user.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
@@ -17,8 +23,8 @@ export interface ManageUsersContext {
 
 // ── Permission check ──────────────────────────────────────────────
 
-function isAdmin(identity: UserIdentity | null): boolean {
-  return identity !== null && ORG_ADMIN_ROLES.has(identity.orgRole);
+function isAdmin(identity: UserIdentity): boolean {
+  return ORG_ADMIN_ROLES.has(identity.orgRole);
 }
 
 function permissionDenied(): ToolResult {
@@ -101,7 +107,8 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
         },
         email: {
           type: "string",
-          description: "User email (required for create).",
+          description:
+            "User email (required for create, optional for update). Refused on update when the identity provider owns it.",
         },
         displayName: {
           type: "string",
@@ -110,7 +117,8 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
         orgRole: {
           type: "string",
           enum: ["owner", "admin", "member"],
-          description: 'Org role (defaults to "member" on create).',
+          description:
+            'Org role (defaults to "member" on create). On update, refused for your own role and for the last active owner.',
         },
         userId: {
           type: "string",
@@ -121,7 +129,7 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
     },
     handler: async (input): Promise<ToolResult> => {
       const identity = ctx.getIdentity();
-      if (!isAdmin(identity)) {
+      if (!identity || !isAdmin(identity)) {
         return permissionDenied();
       }
 
@@ -131,9 +139,9 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
         case "create":
           return handleCreate(ctx, input);
         case "update":
-          return handleUpdate(ctx, input);
+          return handleUpdate(ctx, identity, input);
         case "delete":
-          return handleDelete(ctx, input);
+          return handleDelete(ctx, identity, input);
         case "restore":
           return handleRestore(ctx, input);
         case "list":
@@ -193,49 +201,96 @@ async function handleCreate(
   }
 }
 
-type PatchResult = { patch: Record<string, unknown> } | { error: ToolResult };
+type PatchResult = { patch: UpdateUserInput } | { error: ToolResult };
 
-/** Build the update patch from input, or an error result for an invalid orgRole. */
+const FIELD_LABELS: Record<UserEditField, string> = {
+  email: "Email",
+  displayName: "Display name",
+  orgRole: "Role",
+};
+
+function refusal(message: string): ToolResult {
+  return { content: textContent(message), isError: true };
+}
+
+/**
+ * Build the update patch from input, or an error result for a value the user
+ * record cannot hold. A field omitted is left alone; none of these fields can
+ * be cleared, so `null` is refused rather than stored.
+ */
 function buildUserPatch(input: Record<string, unknown>): PatchResult {
-  const patch: Record<string, unknown> = {};
-  if (input.email !== undefined) patch.email = String(input.email);
-  if (input.displayName !== undefined) patch.displayName = String(input.displayName);
+  const patch: UpdateUserInput = {};
+  for (const field of ["email", "displayName", "orgRole"] as const) {
+    if (input[field] === null) {
+      return { error: refusal(`${FIELD_LABELS[field]} can't be cleared.`) };
+    }
+  }
+  if (input.email !== undefined) {
+    const email = String(input.email).trim();
+    if (!email.includes("@")) {
+      return { error: refusal("Enter an email address, such as name@example.com.") };
+    }
+    patch.email = email;
+  }
+  if (input.displayName !== undefined) {
+    const displayName = String(input.displayName).trim();
+    if (!displayName) {
+      return { error: refusal("A user needs a display name.") };
+    }
+    patch.displayName = displayName;
+  }
   if (input.orgRole !== undefined) {
     const orgRole = String(input.orgRole);
     if (!isValidOrgRole(orgRole)) {
       return { error: invalidOrgRoleResult(orgRole) };
     }
-    patch.orgRole = orgRole;
+    patch.orgRole = orgRole as OrgRole;
   }
   return { patch };
 }
 
-/** True when applying this patch would demote the org's last active owner. */
-async function wouldOrphanLastOwner(
+/**
+ * Why this edit of this user is refused, or null when it may go ahead. Mirrored
+ * by the Users page, which disables what these refuse; the server's answer is
+ * the one that counts.
+ */
+async function updateRefusal(
   ctx: ManageUsersContext,
-  userId: string,
-  patch: Record<string, unknown>,
-): Promise<boolean> {
-  if (!patch.orgRole || patch.orgRole === "owner") {
-    return false;
+  identity: UserIdentity,
+  user: User,
+  patch: UpdateUserInput,
+): Promise<string | null> {
+  const owned = ctx.provider.capabilities.providerOwnedUserFields ?? [];
+  for (const field of owned) {
+    if (patch[field] !== undefined && patch[field] !== user[field]) {
+      return `${FIELD_LABELS[field]} is managed by this organization's identity provider. Change it there.`;
+    }
   }
-  const currentUser = await ctx.userStore.get(userId);
-  if (!currentUser) {
-    return false;
+  if (user.deletedAt) {
+    return `${user.email} is deactivated. Restore them before editing.`;
   }
-  return isLastActiveOwner(ctx, currentUser);
+  if (patch.orgRole === undefined || patch.orgRole === user.orgRole) {
+    return null;
+  }
+  // Your own role is changed by someone else, so a manager can never demote
+  // themselves out of managing, and the org always keeps one who can.
+  if (user.id === identity.id) {
+    return "You can't change your own role. Ask another admin or owner.";
+  }
+  if (patch.orgRole !== "owner" && (await isLastActiveOwner(ctx, user))) {
+    return "Cannot change the role of the last owner. Promote another user to owner first.";
+  }
+  return null;
 }
 
 async function handleUpdate(
   ctx: ManageUsersContext,
+  identity: UserIdentity,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
   const userId = input.userId ? String(input.userId) : undefined;
   if (!userId) {
-    return {
-      content: textContent("userId is required for update."),
-      isError: true,
-    };
+    return refusal("userId is required for update.");
   }
 
   const built = buildUserPatch(input);
@@ -245,27 +300,29 @@ async function handleUpdate(
   const { patch } = built;
 
   if (Object.keys(patch).length === 0) {
-    return {
-      content: textContent("No fields to update. Provide email, displayName, or orgRole."),
-      isError: true,
-    };
+    return refusal("No fields to update. Provide email, displayName, or orgRole.");
   }
 
   try {
-    // Safety check: cannot downgrade the last active owner
-    if (await wouldOrphanLastOwner(ctx, userId, patch)) {
-      return {
-        content: textContent(
-          "Cannot change the role of the last owner. Promote another user to owner first.",
-        ),
-        isError: false,
-      };
+    const user = await ctx.userStore.get(userId);
+    if (!user) {
+      return userNotFoundResult(userId);
+    }
+    const refused = await updateRefusal(ctx, identity, user, patch);
+    if (refused) {
+      return refusal(refused);
     }
 
-    const updated = await ctx.userStore.update(userId, patch);
+    // A provider with its own directory writes it as well as the local
+    // profile, or its next sync would put the old value back.
+    const updated = ctx.provider.updateUser
+      ? await ctx.provider.updateUser(userId, patch)
+      : await ctx.userStore.update(userId, patch);
     if (!updated) {
       return userNotFoundResult(userId);
     }
+    // A cached identity carries the old role; drop it so the change applies now.
+    ctx.provider.invalidateUser?.(userId);
 
     const userData = {
       user: {
@@ -282,12 +339,16 @@ async function handleUpdate(
       isError: false,
     };
   } catch (err) {
+    if (err instanceof UserConflictError) {
+      return refusal(err.message);
+    }
     return failureResult("update user", err);
   }
 }
 
 async function handleDelete(
   ctx: ManageUsersContext,
+  identity: UserIdentity,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
   const userId = input.userId ? String(input.userId) : undefined;
@@ -296,6 +357,9 @@ async function handleDelete(
       content: textContent("userId is required for delete."),
       isError: true,
     };
+  }
+  if (userId === identity.id) {
+    return refusal("You can't deactivate yourself. Ask another admin or owner.");
   }
 
   try {
@@ -306,10 +370,7 @@ async function handleDelete(
     }
 
     if (await isLastActiveOwner(ctx, user)) {
-      return {
-        content: textContent("Cannot delete the last owner. Promote another user to owner first."),
-        isError: false,
-      };
+      return refusal("Cannot delete the last owner. Promote another user to owner first.");
     }
 
     // Soft delete: stamp a tombstone and revoke access, but keep the record so
@@ -379,7 +440,12 @@ async function handleList(ctx: ManageUsersContext): Promise<ToolResult> {
     }));
     return {
       content: textContent(`${result.length} user(s).`),
-      structuredContent: { users: result },
+      // The fields `update` refuses under this identity provider, so the Users
+      // page can say so before an edit rather than after.
+      structuredContent: {
+        users: result,
+        providerOwnedFields: [...(ctx.provider.capabilities.providerOwnedUserFields ?? [])],
+      },
       isError: false,
     };
   } catch (err) {

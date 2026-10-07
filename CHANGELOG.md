@@ -33,6 +33,7 @@
 
 ### Added
 
+- **Edit a user from Organization → Users.** An org admin or owner changes a user's display name, email, and role, each saving as it changes; under WorkOS the name and admin/member role are written to WorkOS and email stays WorkOS's ([docs](https://docs.nimblebrain.ai/using/users/#what-an-edit-can-change)).
 - **Every OAuth connector can show which account it is signed in as.** A catalog entry's `account` block names the tool to ask a service whose sign-in does not say (no OIDC, a broker that records none); the runtime asks once and keeps the answer with the connection. See [Showing the connected account](https://docs.nimblebrain.ai/config/connectors-catalog/#showing-the-connected-account) ([#1612](https://github.com/NimbleBrainInc/nimblebrain/issues/1612)).
 - **Task batches.** `tasks__run_batch` runs one task over up to 10,000 inputs, every item checked up front, with a concurrency limit, a whole-batch budget enforced before every model call, and a stop rule that pauses on a collapsed pass rate; `tasks__batch` pages its results, `tasks__batch_control` pauses, resumes, cancels, or re-runs failed items, and the Tasks panel shows each batch with its results ([docs](https://docs.nimblebrain.ai/using/tasks/#batches)).
 - **Task runs are judged.** A task names acceptance criteria (boolean, score, or choice), a confidence threshold, and what a poor result does (`record`, `notify`, `retry_once`); each run that leaves a deliverable is checked against its output schema, then judged by a judge server the workspace connected, and reads Succeeded, Poor result, or Needs review. `tasks__assess` records your verdict or judges a run again ([docs](https://docs.nimblebrain.ai/using/tasks/#judging-results)).
@@ -245,6 +246,7 @@
 
 ### Fixed
 
+- **`manage_users` refuses what it reports as refused.** Demoting or deactivating the last owner now answers `isError: true`, and changing your own role or deactivating yourself is refused on the server, not only hidden in the page.
 - **Listing conversations no longer re-parses a long conversation on every refresh.** While a turn runs, the conversations list re-reads only the events appended since its last read, so a refresh on a multi-megabyte conversation costs under a millisecond instead of blocking every chat on the tenant for up to 0.7s ([#1637](https://github.com/NimbleBrainInc/nimblebrain/pull/1637)).
 - **A connector whose sign-in ended is left to rest.** After a sign-in is declined or times out, the health monitor no longer restarts the connector every sweep with no way to succeed; Reconnect starts a new sign-in ([#337](https://github.com/NimbleBrainInc/nimblebrain/issues/337)).
 - **A brokered Google connection shows its account.** When the broker records no display name, the account comes from the id_token the vendor issued, so a Google toolkit whose auth config grants `openid` and `userinfo.email` reads "Connected as …" like Gmail does ([#1612](https://github.com/NimbleBrainInc/nimblebrain/issues/1612)).

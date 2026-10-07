@@ -13,6 +13,7 @@ import { UserStore } from "../../../src/identity/user.ts";
 import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 import type { ManageUsersContext } from "../../../src/tools/user-tools.ts";
 import { createManageUsersTool } from "../../../src/tools/user-tools.ts";
+import { userEditPatch } from "../../../web/src/pages/settings/user-edit-patch.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
 import { parseResult, resultText } from "../../helpers/tool-result.ts";
 
@@ -260,7 +261,7 @@ describe("nb__manage_users", () => {
         orgRole: "member",
       });
 
-      expect(updateResult.isError).toBe(false);
+      expect(updateResult.isError).toBe(true);
       expect(resultText(updateResult)).toContain("Cannot change the role of the last owner");
     });
 
@@ -317,8 +318,178 @@ describe("nb__manage_users", () => {
         orgRole: "member",
       });
 
-      expect(updateResult.isError).toBe(false);
+      expect(updateResult.isError).toBe(true);
       expect(resultText(updateResult)).toContain("Cannot change the role of the last owner");
+    });
+  });
+
+  describe("update guards", () => {
+    async function createUser(email: string, orgRole = "member"): Promise<string> {
+      const res = await tool.handler({
+        action: "create",
+        email,
+        displayName: email.split("@")[0],
+        orgRole,
+      });
+      return (parseResult(res) as { user: { id: string } }).user.id;
+    }
+
+    test("the Users page's patch for each field lands on the user", async () => {
+      const id = await createUser("bo@example.com");
+
+      for (const patch of [
+        userEditPatch(id, "displayName", "  Bo Diddley "),
+        userEditPatch(id, "email", " bo.d@example.com "),
+        userEditPatch(id, "orgRole", "admin"),
+      ]) {
+        const res = await tool.handler(patch);
+        expect(res.isError).toBe(false);
+      }
+
+      const user = await userStore.get(id);
+      expect(user?.displayName).toBe("Bo Diddley");
+      expect(user?.email).toBe("bo.d@example.com");
+      expect(user?.orgRole).toBe("admin");
+    });
+
+    test("you can't change your own role", async () => {
+      await userStore.create({
+        id: "usr_admin000000001",
+        email: "admin@example.com",
+        displayName: "Admin",
+        orgRole: "admin",
+      });
+      const res = await tool.handler({
+        action: "update",
+        userId: "usr_admin000000001",
+        orgRole: "member",
+      });
+
+      expect(res.isError).toBe(true);
+      expect(resultText(res)).toContain("You can't change your own role");
+      expect((await userStore.get("usr_admin000000001"))?.orgRole).toBe("admin");
+    });
+
+    test("you can change your own name", async () => {
+      await userStore.create({
+        id: "usr_admin000000001",
+        email: "admin@example.com",
+        displayName: "Admin",
+        orgRole: "admin",
+      });
+      const res = await tool.handler({
+        action: "update",
+        userId: "usr_admin000000001",
+        displayName: "Ada",
+      });
+      expect(res.isError).toBe(false);
+    });
+
+    test("a deactivated user can't be edited until restored", async () => {
+      const id = await createUser("cy@example.com");
+      await userStore.softDelete(id);
+
+      const res = await tool.handler({ action: "update", userId: id, displayName: "Cyrus" });
+
+      expect(res.isError).toBe(true);
+      expect(resultText(res)).toContain("Restore them before editing");
+    });
+
+    test("null, an empty name and an email without @ are refused, not stored", async () => {
+      const id = await createUser("bo@example.com");
+
+      const cleared = await tool.handler({ action: "update", userId: id, displayName: null });
+      expect(cleared.isError).toBe(true);
+      expect(resultText(cleared)).toContain("Display name can't be cleared");
+
+      const blank = await tool.handler({ action: "update", userId: id, displayName: "   " });
+      expect(blank.isError).toBe(true);
+      expect(resultText(blank)).toContain("needs a display name");
+
+      const badEmail = await tool.handler({ action: "update", userId: id, email: "bo" });
+      expect(badEmail.isError).toBe(true);
+      expect(resultText(badEmail)).toContain("Enter an email address");
+
+      const user = await userStore.get(id);
+      expect(user?.displayName).toBe("bo");
+      expect(user?.email).toBe("bo@example.com");
+    });
+
+    test("an email another user has is refused with the reason", async () => {
+      await createUser("al@example.com");
+      const id = await createUser("bo@example.com");
+
+      const res = await tool.handler({ action: "update", userId: id, email: "al@example.com" });
+
+      expect(res.isError).toBe(true);
+      expect(resultText(res)).toContain("already exists");
+    });
+
+    test("a field the provider owns is refused, and list says which", async () => {
+      provider = {
+        ...createMockProvider(userStore),
+        capabilities: {
+          ...createMockProvider(userStore).capabilities,
+          providerOwnedUserFields: ["email"],
+        },
+      };
+      tool = createManageUsersTool(makeCtx());
+      const id = await createUser("bo@example.com");
+
+      const res = await tool.handler({ action: "update", userId: id, email: "b@example.com" });
+      expect(res.isError).toBe(true);
+      expect(resultText(res)).toContain(
+        "Email is managed by this organization's identity provider",
+      );
+
+      // Sending the value it already has is not a change.
+      const same = await tool.handler({ action: "update", userId: id, email: "bo@example.com" });
+      expect(same.isError).toBe(false);
+
+      const list = parseResult(await tool.handler({ action: "list" })) as {
+        providerOwnedFields: string[];
+      };
+      expect(list.providerOwnedFields).toEqual(["email"]);
+    });
+
+    test("a provider with its own directory is written through, and its cache dropped", async () => {
+      const writes: Array<[string, unknown]> = [];
+      const invalidated: string[] = [];
+      provider = {
+        ...createMockProvider(userStore),
+        async updateUser(userId, data) {
+          writes.push([userId, data]);
+          return userStore.update(userId, data);
+        },
+        invalidateUser(userId) {
+          invalidated.push(userId);
+        },
+      };
+      tool = createManageUsersTool(makeCtx());
+      const id = await createUser("bo@example.com");
+
+      const res = await tool.handler({ action: "update", userId: id, orgRole: "admin" });
+
+      expect(res.isError).toBe(false);
+      expect(writes).toEqual([[id, { orgRole: "admin" }]]);
+      expect(invalidated).toEqual([id]);
+    });
+
+    test("a provider write that fails is reported, and nothing is stored", async () => {
+      provider = {
+        ...createMockProvider(userStore),
+        async updateUser() {
+          throw new Error("WorkOS is unavailable");
+        },
+      };
+      tool = createManageUsersTool(makeCtx());
+      const id = await createUser("bo@example.com");
+
+      const res = await tool.handler({ action: "update", userId: id, displayName: "Bobby" });
+
+      expect(res.isError).toBe(true);
+      expect(resultText(res)).toContain("WorkOS is unavailable");
+      expect((await userStore.get(id))?.displayName).toBe("bo");
     });
   });
 
@@ -377,6 +548,20 @@ describe("nb__manage_users", () => {
       expect(resultText(result)).toContain("userId is required");
     });
 
+    test("you can't deactivate yourself", async () => {
+      await userStore.create({
+        id: "usr_admin000000001",
+        email: "admin@example.com",
+        displayName: "Admin",
+        orgRole: "admin",
+      });
+      const result = await tool.handler({ action: "delete", userId: "usr_admin000000001" });
+
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("You can't deactivate yourself");
+      expect((await userStore.get("usr_admin000000001"))?.deletedAt).toBeUndefined();
+    });
+
     test("returns error for non-existent user", async () => {
       const result = await tool.handler({
         action: "delete",
@@ -401,7 +586,7 @@ describe("nb__manage_users", () => {
         userId: owner.user.id,
       });
 
-      expect(deleteResult.isError).toBe(false);
+      expect(deleteResult.isError).toBe(true);
       expect(resultText(deleteResult)).toContain("Cannot delete the last owner");
 
       // Verify user still exists
