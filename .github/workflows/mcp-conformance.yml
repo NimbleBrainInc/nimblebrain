@@ -1,0 +1,78 @@
+name: MCP Conformance
+
+# The official MCP conformance suite against `/mcp/<wsId>`, held to the baselines
+# in test/conformance/expected-failures/. It runs where the endpoint's behavior
+# can change, not on every PR:
+#   - a ready PR that touches the MCP door, the connector client, the tool
+#     routing behind it, the SDK (package.json, bun.lock), or the harness;
+#   - weekly on main, for a change outside those paths that still moves the
+#     endpoint;
+#   - by hand, optionally against another suite version (`suite`), to see what
+#     the next pin would change before moving it.
+# It is not a required check: a path-filtered workflow reports nothing on a PR
+# outside its paths, and a required check that never reports blocks the merge.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "src/api/**"
+      - "src/tools/**"
+      - "src/orchestrator/**"
+      - "test/conformance/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/mcp-conformance.yml"
+  schedule:
+    - cron: "0 15 * * 1"
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Suite version to run instead of the pinned one, e.g. 0.2.0-alpha.13"
+        required: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  BUN_VERSION: "1.4.2"
+
+jobs:
+  conformance:
+    name: MCP Conformance
+    # A draft is reviewed before CI runs; the run starts when it is marked ready.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache bun dependencies
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ github.job }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ github.job }}-
+            ${{ runner.os }}-bun-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Run the conformance suite
+        env:
+          MCP_CONFORMANCE_SUITE: ${{ inputs.suite }}
+        run: bun run test:conformance
+      - name: Upload results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: mcp-conformance-results
+          path: .cache/mcp-conformance/results/
+          # The results sit under `.cache/`, which the action skips as hidden.
+          include-hidden-files: true
+          retention-days: 14
