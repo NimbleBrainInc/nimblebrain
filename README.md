@@ -140,7 +140,7 @@ All system tools are prefixed with `nb__` (the `nb` source name + `__` separator
 |-----------|---------|
 | `nb__status` | Platform status: overview, connectors, skills, or config (scope param) |
 | `nb__search` | Unified search: installed tools or the connector catalog (scope param) |
-| `nb__read_resource` | Read a `skill://` / `ui://` resource from an installed app's MCP server |
+| `nb__read_resource` | Read a resource from an installed app's MCP server: a `skill://` or `ui://` resource, or one of the app's records by URI |
 | `nb__set_preferences` | Set user preferences (name, timezone, theme) |
 | `nb__manage_tools` | Promote/release tools in the active set |
 
