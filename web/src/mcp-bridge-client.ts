@@ -6,10 +6,10 @@
 // `resources/read`, `resources/list`, `resources/templates/list`, `tasks/get`,
 // `tasks/cancel`) through `sendMcpRequest`. Each request carries the 2026-07-28
 // `_meta` envelope (protocol version, client info, client capabilities), the
-// only revision `/mcp/<wsId>` serves. It is stateless: there is no handshake and no session, so nothing here is cached between
-// requests, and a workspace switch or a logout needs no teardown. The URL is
-// read from the active workspace and the credentials from the auth state on
-// every request.
+// only revision `/mcp/<wsId>` serves. It is stateless: there is no handshake
+// and no session, so nothing here is cached between requests, and a workspace
+// switch or a logout needs no teardown. The URL is read from the active
+// workspace and the credentials from the auth state on every request.
 //
 // The wire is driven here rather than by the SDK `Client` because the tasks
 // extension (`io.modelcontextprotocol/tasks`, SEP-2663) answers an opted-in

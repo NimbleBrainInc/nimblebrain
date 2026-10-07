@@ -183,12 +183,9 @@ describe("MCP Server Endpoint (/mcp)", () => {
     }
   });
 
-  // Standalone GET /mcp/<wsId> is the spec's optional server→client SSE channel.
-  // We deliberately don't implement it (see comment on `handleMcpRequest`)
-  // because we don't push standalone notifications and a long-lived
-  // idle connection gets killed by intermediate proxies. Returning 405
-  // is the spec-blessed escape hatch — the SDK client treats it as
-  // "server doesn't offer GET-style listening" and proceeds POST-only.
+  // `McpServerHost.handle` leaves GET and DELETE to the SDK, which answers 405:
+  // GET would open a standalone server→client stream, which the door does not
+  // serve, and DELETE would end a session, which the door does not have.
   it("returns 405 for GET and DELETE: there is no standalone stream and no session", async () => {
     for (const method of ["GET", "DELETE"]) {
       const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
