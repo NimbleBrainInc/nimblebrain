@@ -1,4 +1,4 @@
-# 0049. A server reports what a call cost; the host attributes it, prices it, and budgets it
+# 0049. A server reports what a call cost; the host attributes it and budgets it
 
 - Status: Proposed
 - Date: 2026-10-06
@@ -35,10 +35,6 @@ campaign cost, what one batch cost. The kernel cannot know what a customer
 record or a campaign is, and every kernel field added for one would be followed
 by a field for the next.
 
-What the host charges is a third number. It depends on the tenant's terms, which
-the server does not know and should not encode. A price derived on read from a
-table that can change rewrites history when the table changes (#739).
-
 MCP defines no way for a server to report usage or cost, and nothing like it is
 proposed upstream. The protocol leaves room for one: a result's `_meta` takes
 vendor-prefixed keys, and ADR-0024 settles how ours are named and when one is
@@ -47,8 +43,8 @@ accepted from a server.
 ## Decision
 
 **A server reports what a call consumed in the result's `_meta`, under
-`ai.nimblebrain/usage`. The host attaches attribution, applies the tenant's
-price, records both on the ledger, and debits the price from the run's spend accounts.**
+`ai.nimblebrain/usage`. The host attaches attribution, records the cost on the
+ledger, and debits it from the run's spend accounts.**
 
 ### The report
 
@@ -71,11 +67,14 @@ A tool result, success or `isError`, may carry one report:
 
 | Field | Rule |
 |---|---|
-| `id` | Server-minted, unique per server, and the same if the same work is reported again. The host ignores a report whose `id` it has already recorded from that server. A JSON-RPC id cannot serve: a client that loses a response re-issues the request under a new one. |
+| `id` | Server-minted, unique per server, and the same whenever the same work is reported again. The host can receive one report twice: a task-augmented call's final result is fetched again after the host restarts mid-task. It ignores a report whose `id` it has already recorded from that server for the same run, so the check reads one run's lines, not the ledger. |
 | `status` | `final`, or `estimated` when the server's own source says its figure is not a bill. |
-| `payer` | `server` when the server paid on its own account; `caller` when it ran on credentials the caller supplied. A `caller` report is shown and never debited or priced. |
-| `usage` | One or more `{meter, quantity, unit}`. `meter` is a name the server chooses for what was consumed, and never names an upstream vendor, a vendor's product, or a vendor's unit. `quantity` is a decimal string; `"0"` is a valid report of a call that consumed nothing, and is different from no report. |
-| `amount` | Optional. `value` is a decimal string, `currency` an ISO 4217 code with no default. `basis` is `cost` when it is what the server paid for this call, or `price` when it is what the server charges its caller. Either way it is what this call cost the host's side. A server may withhold `amount` and report units only. |
+| `payer` | `server` when the server paid on its own account; `caller` when it ran on credentials the caller supplied. A `caller` report is shown and never debited. |
+| `usage` | One or more `{meter, quantity, unit}`. `meter` is a name the server chooses for what was consumed, and never names an upstream vendor, a vendor's product, or a vendor's unit. `quantity` is a non-negative decimal string; `"0"` is a valid report of a call that consumed nothing, and is different from no report. |
+| `amount` | Optional. `value` is a non-negative decimal string, `currency` an ISO 4217 code with no default. `basis` is `cost` when it is what the server paid for this call, or `price` when it is what the server charges its caller; either way it is what the call cost the host, and the host records it as cost. A server may withhold `amount` and report units only. |
+
+A report never carries a negative number. A refund or a correction is a separate
+decision (below), and a report that tries to express one is malformed.
 
 ### Credits, prepaid balances, and what nobody here can see
 
@@ -98,9 +97,10 @@ what was paid. What each side can know:
   sets a cost rate per server and meter in the host's operator configuration.
   It lives there because it describes an account the host's operator manages,
   it can change without redeploying any server, and it prices a third-party
-  server's units the same way as ours. The host applies it, when it is written,
-  to a line that carries units and no `amount`, and marks the line's cost as
-  estimated from that rate. A provider-reported `amount` takes precedence.
+  server's units the same way as ours. The host applies it when the line is
+  written, to a line that carries units and no `amount`, and marks the line's
+  cost as estimated from that rate. A provider-reported `amount` takes
+  precedence.
 - **With no amount and no rate, a line is unpriced, not free.** It shows its
   units ("1,240 credits") and counts as unpriced spend on every total it is part
   of, and it debits no money account.
@@ -113,11 +113,6 @@ what was paid. What each side can know:
 Because every line keeps its units, a wrong rate is corrected by re-pricing the
 affected lines on purpose, never as a side effect of reading.
 
-The same holds on the host's side of the price. If a tenant buys NimbleBrain
-credits rather than paying in dollars, the price policy prices in that unit and
-a spend account is denominated in it. The tenant's purchase is billing, not a
-ledger line.
-
 A report describes its own hop. A server that called other servers reports what
 this call cost its caller, never the reports it received.
 
@@ -129,28 +124,37 @@ client that did not may put `_meta` where a model reads it.
 ### What the host does with it
 
 - **It is accepted from the wire, and bounded.** By ADR-0024's test, accepting
-  it widens nothing: a server that over-reports makes its own tenant's budget
-  stricter and its own cost higher, both through a server the workspace chose to
-  connect; one that under-reports or claims `payer: caller` is no worse than
-  reporting nothing. The host validates the report whole (entry count, string
-  lengths, decimal grammar, currency) and drops a malformed one entirely. Every
-  string in it is the server's, displayed as text, never interpreted.
+  it widens nothing: with every number non-negative, a server that over-reports
+  makes its own tenant's budget stricter and its own cost higher, both through a
+  server the workspace chose to connect; one that under-reports or claims
+  `payer: caller` is no worse than reporting nothing. The host validates the
+  report whole (entry count, string lengths, non-negative decimal grammar,
+  currency) and drops a malformed one entirely. Every string in it is the
+  server's, displayed as text, never interpreted.
 - **It never reaches a model.** The model's view of a result is built from
   `content`, and the report is read only by the host. The host's own MCP
   endpoint does not forward a server's `_meta` to the client that called it.
-- **It becomes a ledger line.** A line of kind `tool`, beside the model call's
-  kind `llm`, carrying the server and tool names, the report as received, the
-  receipt time, and the same attribution a model call's line carries.
+- **It becomes a ledger line.** The ledger entry gains a discriminator between a
+  model call and a tool report, and a line written before it reads as a model
+  call. A tool line carries the server and tool names, the report as received,
+  its cost (reported, or from an operator rate), the receipt time, and the same
+  attribution a model call's line carries.
 - **No report is unknown, not zero.** The host records nothing for a call
   without one, and shows, per server, whether it reports at all.
 
+Cost is shown wherever model cost is shown today. What a tenant is charged, if
+it ever differs from cost, is the host's to decide and never a server's; it
+waits for its own decision (below).
+
 ### Attribution: a run carries labels
 
-**A run's description may name labels, a small bounded map of opaque string
-keys and values that the source starting the run chooses. The kernel stamps them
-on every ledger line the run produces, model and tool alike, and never
-interprets them.** This is the shape spend accounts already have: the source
-names ids, and the door never reads their meaning.
+**A run's description may name labels: at most 8, each key at most 64
+characters of lowercase letters, digits, `.`, `_` and `-`, each value at most
+256 characters. The source starting the run chooses them, the door refuses a
+description whose labels are out of bounds, and the kernel stamps them on every
+ledger line the run produces, model and tool alike, without interpreting
+them.** This is the shape spend accounts already have: the source names ids, and
+the door never reads their meaning.
 
 The source that knows what a run is about sets them. A task names its task and
 its batch, and a task definition may map fields of its input to labels, so every
@@ -162,44 +166,42 @@ on labels; nothing is rolled up in advance.
 A call made on a run's behalf after it ends, such as the assessment of its
 deliverable, carries that run's labels.
 
-### Price: the host's policy, stored at write
-
-**What a tenant pays is the host's decision, made by a price policy in tenant
-configuration and applied when the line is written.** The policy prices a line
-from its cost, with a markup by default and an optional rate per meter, and
-covers model lines and tool lines alike. A per-meter rate prices units directly,
-so a line can carry a price even when its cost is unknown. Each line stores its `cost`, its
-`price`, and the version of the policy applied, as model lines already store the
-rates they were priced at. Changing the policy changes lines written after the
-change and none before.
-
-Tenant views show price. Cost and margin are for the operator. A server's
-`basis: price` is the host's cost: the host records it as cost and prices it
-again.
-
 ### Budgets
 
-**A spend account in the unit the price policy prices in (`usd`, or a credit
-unit the host sells) is debited a tool line's price after the call, and a tool
-call is refused while any such account its run holds is at or below zero.**
-Nothing is reserved before a tool call, because nothing about its cost is known
-before it. A run can therefore pass its budget by the cost of one tool call,
-as it can already pass it by input beyond its projection. An unpriced line
-(no amount and no operator rate) debits nothing, so a budget is only as complete
-as the reports and rates behind it, and a run or batch shows its unpriced units
-beside its total.
+**A `usd` spend account is debited a tool line's cost after the call. A tool
+call is not sent while any `usd` account its run holds is at or below zero; the
+run ends with the spend-limit stop reason naming the account, as it does when the
+door cannot pay for a model call.** Nothing is reserved before a tool call,
+because nothing about its cost is known before it.
 
-Token-unit accounts are never debited by a tool line. They budget the run's own
-model.
+So the bound on overshoot is every paid tool call in flight when the balance
+crosses zero, across every run that holds the account: a turn's tool calls run
+in parallel, and a batch runs several runs on one account, so each of those calls
+passes the check before any of them debits. **This amends ADR-0045 for tool
+spend:** runs sharing an account cannot together exceed it in model spend, and
+can exceed it in tool spend by that bound. Holding tool spend to the same
+guarantee would need a check that serializes tool calls against the account; it
+is not taken until an overshoot is measured that matters.
+
+An unpriced line debits nothing, so a budget is only as complete as the reports
+and rates behind it, and a run or batch shows its unpriced units beside its
+total. Token-unit accounts are never debited by a tool line. They budget the
+run's own model.
 
 ### Not decided here
 
-A charge that settles after the call (a pending report and a way to fetch its
-final figure), a charge with no originating call, corrections, a price declared
-before a call, and a host-side estimate for servers that report nothing are each
-their own decision, taken when a server needs one. The identifier is ours; it
-changes only if a shared shape is standardized, which needs other
-implementations first.
+Each of these is its own decision, taken when something needs it:
+
+- What a tenant is charged when it differs from cost: a markup, per-meter
+  rates, or credits a tenant buys from the host. Lines keep units and cost, so a
+  price applied at write later rewrites nothing.
+- A charge that settles after the call (a pending report and a way to fetch its
+  final figure), a refund or correction, and a charge with no originating call.
+- A price declared before a call, and a host-side estimate for servers that
+  report nothing.
+
+The identifier is ours; it changes only if a shared shape is standardized, which
+needs other implementations first.
 
 ## Consequences
 
@@ -210,15 +212,14 @@ implementations first.
   record under different keys produce two costs that never meet. The task
   authoring guide has to say so.
 - The ledger grows by one line per reported tool call. It stays a display
-  surface, not a billing record: an invoice, when there is one, freezes its own
-  prices, and the stored policy version is what makes it reproducible.
+  surface, not a billing record.
 - Every report is the server's claim. Over-reporting by a server the tenant
   connected is answered by disconnecting it; nothing in this design proves a
   figure.
 - A third-party server can report without reading our source, and a server that
   reports nothing is unaffected.
-- A tool's spend reaches a budget one call late, so a single expensive call can
-  overshoot it.
+- Tool spend reaches a budget after the calls that incurred it, so a budget can
+  be overshot by every paid tool call in flight across the runs that share it.
 
 ## Alternatives considered
 
@@ -227,10 +228,11 @@ implementations first.
 - **Server telemetry joined on trace id.** Works only when the host operator also
   runs the server's collector, and still needs a join to reach the attribution
   the host held at the moment of the call.
-- **The server reports the tenant's price.** Puts each tenant's terms into every
-  server, and cannot price a server we do not operate.
+- **The server reports what the tenant is charged.** Puts each tenant's terms
+  into every server, and cannot apply to a server we do not operate.
 - **Attribution as ledger fields (`batchId`, `subject`, ...).** Each grouping a
   kernel field, each a concept the kernel should not know.
 - **Reserving a tool call's cost before it.** Nothing about it is known before it;
   a reservation would be a guess dressed as a guarantee.
-- **Price derived on read.** Rewrites history whenever the policy changes.
+- **Cost derived on read from operator rates.** Rewrites history whenever a rate
+  changes (#739 is the same failure for model rates).
