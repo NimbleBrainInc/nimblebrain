@@ -1,31 +1,15 @@
 # Scenarios /mcp/<wsId> fails on protocol 2026-07-28, each with why. A scenario
 # here that passes fails the run, so remove it in the PR that fixes it.
 server:
-  # A tool needing a client capability the request did not declare runs, or
-  # fails with -32020, instead of failing with -32021.
-  - server-stateless
-  # A connector's progress notifications do not reach the client.
-  - tools-call-with-progress
-  # A connector's input_required result reaches the client as a complete one.
-  - input-required-result-basic-elicitation
-  - input-required-result-basic-sampling
-  - input-required-result-basic-list-roots
-  - input-required-result-request-state
-  - input-required-result-multiple-input-requests
-  - input-required-result-multi-round
-  - input-required-result-non-tool-request
-  - input-required-result-result-type
-  - input-required-result-tampered-state
-  - input-required-result-capability-check
-  - input-required-result-missing-input-response
-  - input-required-result-validate-input
-  # Prompts and completions are not served.
+  # Prompts and completions are not served, so neither is an input_required
+  # answer to prompts/get.
   - prompts-list
   - prompts-get-simple
   - prompts-get-with-args
   - prompts-get-embedded-resource
   - prompts-get-with-image
   - completion-complete
+  - input-required-result-non-tool-request
   # prompts/list is not served, and resources/read drops ttlMs and cacheScope.
   - caching
   # A request with an invalid Host or Origin header is served, not refused.

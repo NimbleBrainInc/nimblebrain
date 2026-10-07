@@ -16,8 +16,11 @@ import type {
   Transport,
 } from "@modelcontextprotocol/client";
 import {
+  CLIENT_CAPABILITIES_META_KEY,
   Client,
+  isInputRequiredResult,
   ProtocolError,
+  ProtocolErrorCode,
   SdkErrorCode,
   SdkHttpError,
   UnauthorizedError,
@@ -71,6 +74,7 @@ import {
   type ServerNotification,
 } from "./server-notifications.ts";
 import {
+  type McpCaller,
   type ResourceData,
   TaskAlreadyTerminalError,
   TaskNotFoundError,
@@ -1964,14 +1968,17 @@ export class McpSource implements ToolSource {
     // every call to a server advertising the extension takes the task path,
     // which handles a complete answer as well. Everything else uses the inline
     // path, and so does a call that asks for it (`options.inline`, the host's
-    // lifecycle calls). A 2025-era tool that requires a task is refused here,
-    // before anything is sent.
+    // lifecycle calls) or a call made for an outside client (`options.caller`,
+    // whose own capabilities decide whether the server may answer with a task).
+    // A 2025-era tool that requires a task is refused here, before anything is
+    // sent.
     const tool = this.findTool(toolName);
     const taskSupport = tool?.execution?.taskSupport;
     const refusal = this.taskRequiredRefusal(toolName, taskSupport);
     if (refusal) return { content: textContent(refusal), isError: true };
     const isTaskAugmented =
       options?.inline !== true &&
+      options?.caller === undefined &&
       this.protocolEra === "modern" &&
       TASKS_EXTENSION_ID in this.serverExtensions();
 
@@ -2001,12 +2008,22 @@ export class McpSource implements ToolSource {
         () =>
           isTaskAugmented
             ? this.callToolAsTask(toolName, dispatchArgs, signal)
-            : this.callToolInline(toolName, dispatchArgs, signal),
+            : this.callToolInline(toolName, dispatchArgs, signal, options?.caller),
         // A client cancellation isn't a crash — don't mark the span failed.
         { isExpectedError: () => signal?.aborted === true },
       );
     } catch (err) {
-      return this.handleExecuteError(err, toolName, dispatchArgs, signal, isTaskAugmented);
+      // An error that asks the client to change its request is the outside
+      // client's to act on, so it goes back to the door as it is.
+      if (options?.caller && isClientActionable(err)) throw err;
+      return this.handleExecuteError(
+        err,
+        toolName,
+        dispatchArgs,
+        signal,
+        isTaskAugmented,
+        options?.caller,
+      );
     }
   }
 
@@ -2054,6 +2071,7 @@ export class McpSource implements ToolSource {
     dispatchArgs: Record<string, unknown>,
     signal: AbortSignal | undefined,
     isTaskAugmented: boolean,
+    caller?: McpCaller,
   ): ToolResult | Promise<ToolResult> {
     // Cancellation isn't a crash — the source is healthy, the client just asked
     // to stop. Emit a terminal tool.task_status for task-augmented calls so a
@@ -2080,7 +2098,7 @@ export class McpSource implements ToolSource {
 
     return this.recover<ToolResult>(
       err,
-      () => this.callToolInline(toolName, dispatchArgs, signal),
+      () => this.callToolInline(toolName, dispatchArgs, signal, caller),
       {
         idempotent: !isTaskAugmented,
         // A throw on a tools/call is almost always the transport; recover even
@@ -2500,17 +2518,34 @@ export class McpSource implements ToolSource {
    * run-scoped abort cancels the in-flight RPC. Inline calls are expected to
    * finish within the stock MCP request timeout (~60s); use task-augmented
    * tools for anything longer.
+   *
+   * A call made for an outside client (`caller`) goes through
+   * `callToolForCaller`, and an `input_required` answer comes back as it is.
    */
   private async callToolInline(
     toolName: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    caller?: McpCaller,
   ): Promise<ToolResult> {
-    const result = await this.client?.callTool(
-      { name: toolName, arguments: args },
-      signal ? { signal } : undefined,
-    );
+    const result = caller
+      ? await this.callToolForCaller(toolName, args, caller, signal)
+      : await this.client?.callTool(
+          { name: toolName, arguments: args },
+          signal ? { signal } : undefined,
+        );
     if (!result) return { content: [], isError: true };
+    if (isInputRequiredResult(result)) {
+      const { inputRequests, requestState } = result;
+      return {
+        content: [],
+        isError: false,
+        inputRequired: {
+          ...(inputRequests ? { inputRequests } : {}),
+          ...(requestState !== undefined ? { requestState } : {}),
+        },
+      };
+    }
     const toolResult: ToolResult = {
       content: Array.isArray(result.content) ? (result.content as ContentBlock[]) : [],
       structuredContent: (result as Record<string, unknown>).structuredContent as
@@ -2529,6 +2564,36 @@ export class McpSource implements ToolSource {
       log.debug("mcp", `lie-normalized source=${this.name} tool=${toolName} path=inline`);
     }
     return promoted;
+  }
+
+  /**
+   * One inline `tools/call` made for an outside client. It carries that
+   * client's capabilities in its envelope (a `_meta` key the caller sets wins
+   * over the SDK's own), its answers and the connector's echoed state on a
+   * retry, and its progress callback. The SDK hands an `input_required` answer
+   * back as it is (`allowInputRequired`) instead of trying to fulfil it here.
+   */
+  private callToolForCaller(
+    toolName: string,
+    args: Record<string, unknown>,
+    caller: McpCaller,
+    signal?: AbortSignal,
+  ) {
+    const { inputResponses, requestState, onProgress } = caller;
+    return this.client?.callTool(
+      {
+        name: toolName,
+        arguments: args,
+        ...(inputResponses ? { inputResponses } : {}),
+        ...(requestState !== undefined ? { requestState } : {}),
+        _meta: { [CLIENT_CAPABILITIES_META_KEY]: caller.capabilities },
+      },
+      {
+        allowInputRequired: true,
+        ...(signal ? { signal } : {}),
+        ...(onProgress ? { onprogress: onProgress, resetTimeoutOnProgress: true } : {}),
+      },
+    );
   }
 
   /**
@@ -3172,6 +3237,19 @@ export type ConnectionFailure =
   | "timeout"
   | "unknown"
   | "none";
+
+/**
+ * Whether a connector's error asks the client to change its request: declare a
+ * capability (`-32021`) or complete a URL elicitation (`-32042`). Nothing the
+ * runtime does on its own side can answer either.
+ */
+function isClientActionable(err: unknown): boolean {
+  return (
+    err instanceof ProtocolError &&
+    (err.code === ProtocolErrorCode.MissingRequiredClientCapability ||
+      err.code === ProtocolErrorCode.UrlElicitationRequired)
+  );
+}
 
 /**
  * Classify a thrown error into a connection-failure class. Order matters:

@@ -19,11 +19,14 @@
  * form is retired and refused as `invalid_tool_name`.
  */
 
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type {
   CallToolRequest,
   CallToolResult,
+  ClientCapabilities,
+  InputRequiredResult,
   ListResourcesRequest,
   ListResourcesResult,
   ListResourceTemplatesRequest,
@@ -37,6 +40,8 @@ import type {
 import {
   CLIENT_CAPABILITIES_META_KEY,
   createMcpHandler,
+  createRequestStateCodec,
+  isInputRequiredResult,
   isLegacyRequest,
   MissingRequiredClientCapabilityError,
   ProtocolError,
@@ -63,7 +68,7 @@ import type { IdentityTaskSource } from "../tools/identity-task-source.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import type { TaskOwnerContext, ToolSource } from "../tools/types.ts";
+import type { McpCaller, TaskOwnerContext, ToolSource } from "../tools/types.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import { toWireJson } from "../util/wire-json.ts";
 import {
@@ -128,6 +133,12 @@ export class McpServerHost {
   /** User-Agents already logged by `logRefusedClient`. */
   private readonly seenRefusedClients = new Set<string>();
   private readonly runtime: Runtime | null;
+  /**
+   * Seals each `requestState` the door hands a client ({@link CallerRound}).
+   * Per process: a restart ends the input rounds in flight, whose retries then
+   * get `-32602` and start the call again.
+   */
+  private readonly roundKey = randomBytes(32);
 
   /**
    * `runtime` serves `tools/list` (the caller's identity tools, via
@@ -164,10 +175,13 @@ export class McpServerHost {
       );
       if (taskReply) return taskReply;
     }
-    const handler = createMcpHandler(() => createServer(this.runtime, features, requestCtx), {
-      legacy: "reject",
-      onerror: (err) => log.warn(`[mcp] request failed: ${err.message}`),
-    });
+    const handler = createMcpHandler(
+      () => createServer(this.runtime, features, requestCtx, this.roundKey),
+      {
+        legacy: "reject",
+        onerror: (err) => log.warn(`[mcp] request failed: ${err.message}`),
+      },
+    );
     return handler.fetch(request);
   }
 
@@ -490,8 +504,13 @@ function createServer(
   runtime: Runtime | null,
   features: ResolvedFeatures,
   requestCtx: McpRequestContext,
+  roundKey: Uint8Array,
 ): Server {
   const instructions = runtime?.platformInstructions();
+  const rounds = createRequestStateCodec<CallerRound>({
+    key: roundKey,
+    bind: () => `${requestCtx.identity?.id ?? ""}\0${requestCtx.workspaceId}`,
+  });
   const server = new Server(
     { name: "nimblebrain", version: MCP_SERVER_VERSION },
     {
@@ -501,6 +520,7 @@ function createServer(
         ...(runtime ? { extensions: { [TASKS_EXTENSION_ID]: {} } } : {}),
       },
       ...(instructions ? { instructions } : {}),
+      requestState: { verify: (state, ctx) => rounds.verify(state, ctx) },
     },
   );
   const handlers = createHandlers(runtime, features, requestCtx);
@@ -509,8 +529,47 @@ function createServer(
     // The SDK types the lifted envelope as `{}`; its keys are the reserved
     // `_meta` names, the client capabilities among them.
     const envelope = ctx.mcpReq.envelope as Record<string, unknown> | undefined;
-    const optedIn = optsInToTasks(envelope?.[CLIENT_CAPABILITIES_META_KEY]);
-    const result = await handlers.callTool(request, { optedIn });
+    const capabilities = (envelope?.[CLIENT_CAPABILITIES_META_KEY] ?? {}) as ClientCapabilities;
+    // Verified and bound to this (identity, workspace) by `rounds` before the
+    // handler runs; the tool it names is checked here.
+    const round = ctx.mcpReq.requestState<CallerRound>();
+    if (round && round.tool !== request.params.name) {
+      throw mcpError(ProtocolErrorCode.InvalidParams, "requestState belongs to another tool call");
+    }
+    const progressToken = ctx.mcpReq._meta?.progressToken;
+    const caller: McpCaller = {
+      capabilities,
+      ...(ctx.mcpReq.inputResponses ? { inputResponses: ctx.mcpReq.inputResponses } : {}),
+      ...(round?.state !== undefined ? { requestState: round.state } : {}),
+      ...(progressToken !== undefined
+        ? {
+            onProgress: (progress) => {
+              ctx.mcpReq
+                .notify({
+                  method: "notifications/progress",
+                  params: { progressToken, ...progress },
+                })
+                .catch(() => {});
+            },
+          }
+        : {}),
+    };
+    const result = await handlers.callTool(request, {
+      optedIn: optsInToTasks(capabilities),
+      caller,
+    });
+    if (isInputRequiredResult(result)) {
+      // The connector's state goes back to the client sealed with the tool and
+      // the caller, so it returns only on this caller's retry of this call.
+      const { requestState: state, ...rest } = result;
+      return {
+        ...rest,
+        requestState: await rounds.mint(
+          { tool: request.params.name, ...(state !== undefined ? { state } : {}) },
+          ctx,
+        ),
+      } as unknown as CallToolResult;
+    }
     // The SDK types a `tools/call` result as the tool's own; a SEP-2663 task
     // is the other result the extension allows, and the SDK sends it as given.
     return result as CallToolResult;
@@ -533,10 +592,30 @@ type TaskAwareSourceHandle = NonNullable<ReturnType<ToolRegistry["findTaskAwareS
  * What a `tools/call` asks of the task machinery: whether the request opts in
  * to the tasks extension, so the door tasks a call to a tool that can run as one.
  */
-type TaskAsk = { optedIn: boolean };
+type TaskAsk = {
+  optedIn: boolean;
+  /** The client's side of the protocol, forwarded to a connector the call runs inline on. */
+  caller?: McpCaller;
+};
 
-/** A `tools/call` answer: the tool's result, or the task it runs as. */
-type ToolCallAnswer = CallToolResult | ModernCreateTaskResult;
+/**
+ * The `requestState` the door hands a client with an `input_required` answer:
+ * the tool it was minted for and the connector's own state, sealed and bound to
+ * the caller's (identity, workspace) by the per-request codec in
+ * `createServer`. Every connector shares one connection per workspace source,
+ * so the connector cannot tell whose state it minted; the seal is what keeps
+ * one caller's round from being replayed by another.
+ */
+interface CallerRound {
+  tool: string;
+  state?: string;
+}
+
+/**
+ * A `tools/call` answer: the tool's result, the task it runs as, or the input
+ * the connector needs from the client first.
+ */
+type ToolCallAnswer = CallToolResult | ModernCreateTaskResult | InputRequiredResult;
 
 /** Whether the call runs as a task: the request opted in and the tool can run as one. */
 function runsAsTask(
@@ -567,6 +646,12 @@ function modernTaskContext(
       runtime.getIdentityTaskSource(name) ??
       (runtime.getRegistryForWorkspace(wsId).findTaskAwareSource(name) as TaskAwareSource | null),
   };
+}
+
+/** A source's answer to a call: the `input_required` it carries, or its result. */
+function toToolCallAnswer(result: ToolResult): CallToolResult | InputRequiredResult {
+  if (result.inputRequired) return { resultType: "input_required", ...result.inputRequired };
+  return toCallToolResult(result);
 }
 
 /** Shape an engine ToolResult into an MCP CallToolResult, preserving optional structuredContent. */
@@ -717,9 +802,11 @@ async function executeIdentityToolCall(
   }
 
   const idResult = await runWithRequestContext(identityCtx, () =>
-    routed.source.execute(bare, (args ?? {}) as Record<string, unknown>),
+    routed.source.execute(bare, (args ?? {}) as Record<string, unknown>, undefined, {
+      ...(ask.caller ? { caller: ask.caller } : {}),
+    }),
   );
-  return toCallToolResult(idResult);
+  return toToolCallAnswer(idResult);
 }
 
 /**
@@ -868,9 +955,11 @@ async function executeWorkspaceToolCall(
   // returned as-is`. `_meta` propagation is a no-op today because the engine's
   // ToolResult shape doesn't carry `_meta`.
   const result = await runWithRequestContext(reqCtx, () =>
-    source.execute(localName, (args ?? {}) as Record<string, unknown>),
+    source.execute(localName, (args ?? {}) as Record<string, unknown>, undefined, {
+      ...(ask.caller ? { caller: ask.caller } : {}),
+    }),
   );
-  return toCallToolResult(result);
+  return toToolCallAnswer(result);
 }
 
 /**
