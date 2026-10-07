@@ -278,7 +278,7 @@ Orchestrate over remote MCP:
 - [0020](adr/0020-the-runtime-connects-it-does-not-acquire.md) — the runtime orchestrates over remote MCP; it does not acquire or execute a server's code
 - [0021](adr/0021-one-run-start-door.md) — one run-start door; delegation is not a kernel capability
 - [0022](adr/0022-one-source-type-over-one-transport-union.md) — every source is one `McpSource` over one transport union
-- [0023](adr/0023-client-capability-advertisement.md) — the client advertises `extensions` and nothing it does not serve; `tasks` only as the 2026 extension (amended by 0046, 0050)
+- [0023](adr/0023-client-capability-advertisement.md) — the client advertises `extensions` and nothing it does not serve; `tasks` only as the 2026 extension (amended by 0046)
 - [0024](adr/0024-private-extensions-live-under-one-reverse-dns-namespace.md) — private extensions live under `ai.nimblebrain/*`, and reuse the spec's schemas
 - [0025](adr/0025-hook-declarations-come-from-the-operator-trusted-catalog.md) — hook declarations come from operator-trusted catalog metadata
 - [0026](adr/0026-a-brokered-provider-owns-auth-and-session-only.md) — a brokered provider owns auth-and-session only, never invocation
@@ -293,4 +293,4 @@ Orchestrate over remote MCP:
 - [0045](adr/0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) — *(proposed)* a task is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment
 - [0046](adr/0046-task-augmentation-is-the-2026-tasks-extension-only.md) — task augmentation is the 2026-07-28 tasks extension, inbound, outbound and app to host; the 2025-11-25 tasks utility is not spoken
 - [0047](adr/0047-the-door-decides-a-run-and-an-execution-provider-runs-it.md) — *(proposed)* the door decides a run and an execution provider runs it; in-process is the default and the reference; a remote execution provider gets a resolved spec and a run-scoped credential, and calls back through `/mcp` and a runtime-hosted model endpoint
-- [0050](adr/0050-a-servers-url-request-reaches-a-person-or-comes-back-as-a-link.md) — *(proposed)* the runtime relays a bundle's URL-mode input request to a `/mcp` caller that claimed URL mode, holding the bundle's `requestState` behind a handle; form mode and every other call stay unclaimed
+- [0050](adr/0050-a-servers-url-request-reaches-a-person-or-comes-back-as-a-link.md) — *(proposed)* the runtime relays a source's URL-mode input request to a `/mcp` caller that claimed URL mode on an inline `2026-07-28` call, naming the connector and holding the source's `requestState` behind an owner-checked handle; form mode, tasks and every other call stay unclaimed
