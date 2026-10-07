@@ -1,6 +1,6 @@
 # 0023. The client advertises `extensions`, and nothing it does not serve
 
-- Status: Accepted; amended by ADR-0046
+- Status: Accepted; amended by ADR-0046, ADR-0050
 - Date: 2026-09-03
 - Serves: orchestrate remote MCP
 
@@ -83,6 +83,11 @@ a not-yet.
   end of an event stream, not synchronously behind the tool call. There is no
   correct implementation of "block this call until someone answers" in a
   scheduled automation, so the honest advertisement is silence.
+
+- *Amended by ADR-0050:* URL-mode elicitation is claimed toward a bundle on a
+  `2026-07-28` request relayed for a `/mcp` caller that claimed it, and the
+  bundle's URL request is passed to that caller. Form mode and every other call
+  stay unclaimed.
 
 The same rule binds the other direction. An in-process source does not advertise
 `resources.subscribe`, because it registers no handler for it (ADR-0022).
