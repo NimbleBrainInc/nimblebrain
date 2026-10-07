@@ -1,6 +1,6 @@
 # 0045. A task is the unattended primitive; its trigger is optional, and its outcome separates running from being good
 
-- Status: Proposed
+- Status: Proposed; amended by ADR-0049
 - Date: 2026-10-03
 - Serves: orchestrate remote MCP, secure RBAC
 
@@ -94,6 +94,9 @@ the door rather than by any one source:
   learns what was spent from the run's reported usage. The door never interprets
   an account: whether an id stands for a batch, a task, or a workspace is the
   source's knowledge, so the door gains no notion of a run's parent (ADR-0021).
+  - *Amended by ADR-0049:* tool spend debits `usd` accounts after the call, with
+    no reservation, so runs sharing an account cannot together exceed it in model
+    spend but can in tool spend, by the paid tool calls in flight.
 
 A source that starts runs inherits both by construction, including sources not
 yet written.
