@@ -1,6 +1,6 @@
 /**
- * The tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663) on the
- * 2026-07-28 leg of `/mcp/<wsId>`: the server half of what
+ * The tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663) at
+ * `/mcp/<wsId>`: the server half of what
  * `src/tools/mcp-task-client.ts` drives as a client.
  *
  * SDK v2 produces no task result and routes no `tasks/*` method: a handler
@@ -162,7 +162,7 @@ async function taskRequestBody(request: Request): Promise<TaskRequestBody | null
 }
 
 /**
- * Answer a `tasks/get` or `tasks/cancel` on the 2026-07-28 leg, or null when
+ * Answer a `tasks/get` or `tasks/cancel`, or null when
  * the request is anything else (the SDK serves it).
  *
  * The standard headers are checked as the SDK checks them for its own methods:
@@ -170,7 +170,7 @@ async function taskRequestBody(request: Request): Promise<TaskRequestBody | null
  * method, and `Mcp-Name` the task id.
  *
  * `scopeOf` reads the source a request names under `RESOURCE_SOURCE_META_KEY`,
- * as on the 2025 leg: a scoped request reaches only a task that source ran.
+ * as a scoped resource request does: it reaches only a task that source ran.
  * Another identity's task, another workspace's, another source's and one that
  * never existed all answer the same `-32602`.
  */

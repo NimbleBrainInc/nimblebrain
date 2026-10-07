@@ -1,7 +1,7 @@
 /**
  * The task surface of a kernel identity source: what the `/mcp` identity door
- * needs to run one of the source's tools as a task (the tasks extension on the
- * 2026-07-28 leg) and to answer `tasks/get` and `tasks/cancel` for it.
+ * needs to run one of the source's tools as a task (the tasks extension) and
+ * to answer `tasks/get` and `tasks/cancel` for it.
  *
  * A connector's tasks live in its `McpSource` (`startToolAsTask` and friends).
  * An identity source's task is its own record: the tasks source hands out

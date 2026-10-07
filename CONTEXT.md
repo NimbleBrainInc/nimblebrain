@@ -46,7 +46,7 @@ its own (ADR-0038). A credential's audience says where it may be used; the
 client it was issued to says whose app holds it, and only a configured
 first-party client gets first-party standing. Either way, **membership of
 `<wsId>`, checked per request, authorizes** — the audience only prevents replay.
-An MCP session is bound to (identity, workspace).
+An MCP request is bound to (identity, workspace); `/mcp/<wsId>` keeps no session (ADR-0048).
 
 REST addresses a workspace the same way: `/v1/workspaces/<wsId>/…` (ADR-0037),
 admitted by the same membership check. A route either acts on a workspace and
@@ -194,8 +194,8 @@ remote source. `dcr` and `static` are runtime-native and stay outside the seam.
 How a long-running tool call is made without holding a socket open: the
 2026-07-28 tasks extension, and only that (ADR-0046). The server decides per call
 whether to answer with a task; the runtime polls it and can cancel (ADR-0029). A
-2025-era connection never carries a task, in either direction: `/mcp` runs its
-calls to completion, and the runtime calls a connector's tools inline or refuses
+2025-era connection never carries a task: `/mcp` serves only 2026-07-28
+(ADR-0048), and the runtime calls a 2025-era connector's tools inline or refuses
 one that requires a task. The retry policy inverts with it: an inline
 call is re-issued once on a transport error, and a task call is **never**
 retried — it has already created server-side state, so replaying it would
@@ -252,7 +252,7 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0006](adr/0006-personal-connector-use-requires-a-grant.md) — personal-connector use in a shared workspace requires a grant
 - [0007](adr/0007-offboarding-revokes-active-use.md) — offboarding revokes active use; ownership is necessary, not sufficient
 - [0008](adr/0008-notifications-are-pulled-and-routed-by-the-operator.md) — notifications are pulled into a workspace inbox and routed by the operator
-- [0036](adr/0036-an-mcp-connection-is-addressed-to-one-workspace-by-url.md) — an MCP connection is addressed to one workspace by URL; a token is valid only for its resource; membership authorizes
+- [0036](adr/0036-an-mcp-connection-is-addressed-to-one-workspace-by-url.md) — an MCP connection is addressed to one workspace by URL; a token is valid only for its resource; membership authorizes (amended by 0048)
 - [0037](adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md) — a workspace is addressed by URL on every surface; a route is workspace-scoped or identity-scoped, and its path says which
 - [0038](adr/0038-a-credential-is-first-party-by-the-client-it-was-issued-to.md) — a credential's audience says where it may be used; the client it was issued to says whose app holds it; only a configured first-party client gets first-party standing
 - [0039](adr/0039-the-first-workspace-is-an-ordinary-workspace.md) — the workspace provisioned for a user is an ordinary workspace; the default a user lands in is a preference
@@ -291,5 +291,6 @@ Orchestrate over remote MCP:
 - [0033](adr/0033-an-events-family-names-its-subject.md) — an event's family names its subject; process liveness is a connector fact
 - [0035](adr/0035-the-secrets-backend-is-configuration-and-a-sealed-value-opens-or-refuses.md) — the secrets backend is configuration; a value that claims to be sealed opens or refuses
 - [0045](adr/0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) — *(proposed)* a task is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment
-- [0046](adr/0046-task-augmentation-is-the-2026-tasks-extension-only.md) — task augmentation is the 2026-07-28 tasks extension, inbound, outbound and app to host; the 2025-11-25 tasks utility is not spoken
+- [0046](adr/0046-task-augmentation-is-the-2026-tasks-extension-only.md) — task augmentation is the 2026-07-28 tasks extension, inbound, outbound and app to host; the 2025-11-25 tasks utility is not spoken (amended by 0048)
 - [0047](adr/0047-the-door-decides-a-run-and-an-execution-provider-runs-it.md) — *(proposed)* the door decides a run and an execution provider runs it; in-process is the default and the reference; a remote execution provider gets a resolved spec and a run-scoped credential, and calls back through `/mcp` and a runtime-hosted model endpoint
+- [0048](adr/0048-mcp-serves-2026-07-28-only.md) — `/mcp/<wsId>` serves 2026-07-28 only, per request, with no session; the runtime as a client still falls back to 2025-11-25 for a connector

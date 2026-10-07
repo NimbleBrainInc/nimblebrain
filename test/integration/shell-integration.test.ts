@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ShellResponse, ToolCallResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
@@ -12,6 +12,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** What `POST …/tools/call` answers: the tool result's wire fields. */
@@ -78,7 +79,7 @@ async function createMcpClient(): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
     new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
   );
-  const client = new Client({ name: "integ-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "integ-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }

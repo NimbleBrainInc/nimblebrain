@@ -20,7 +20,7 @@ export interface AuthMiddlewareOptions {
 /**
  * Successful auth result: the caller the provider verified, and the grant their
  * credential carries. `/mcp` reads the grant to tell an external MCP client
- * from the operator's own clients (`McpSessionContext.grant`).
+ * from the operator's own clients (`McpRequestContext.grant`).
  */
 export type AuthSuccess = { identity: UserIdentity; grant: TokenGrant };
 

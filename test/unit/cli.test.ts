@@ -86,7 +86,6 @@ describe("loadConfig", () => {
       http: {},
       workDir: testDir,
       usage: { ledger: { retentionMonths: 6 } },
-      sessionStore: { type: "memory", ttlSeconds: 60 },
       secrets: {},
       telemetry: {},
       features: {},
@@ -103,7 +102,6 @@ describe("loadConfig", () => {
     const config = loadConfig({ config: configPath }) as unknown as Record<string, unknown>;
     expect(configurable.filter((k) => config[k] === undefined)).toEqual([]);
     expect(config.usage).toEqual({ ledger: { retentionMonths: 6 } });
-    expect(config.sessionStore).toEqual({ type: "memory", ttlSeconds: 60 });
     expect(config.notifications).toEqual({ poll: { intervalMs: 30000 } });
   });
 

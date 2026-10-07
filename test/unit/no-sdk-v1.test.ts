@@ -1,6 +1,6 @@
 /**
  * The runtime and the web client speak MCP without the v1 SDK
- * (`@modelcontextprotocol/sdk`): both legs of `/mcp`, the connector client and
+ * (`@modelcontextprotocol/sdk`): `/mcp`, the connector client and
  * the iframe bridge are on the SDK 2 packages (ADR-0046). This keeps it from
  * coming back unnoticed. The `mcp-sdk-v1-*` aliases are old SDK releases the
  * compatibility test runs as third-party servers; they are not the runtime's.

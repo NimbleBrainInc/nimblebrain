@@ -102,13 +102,13 @@ If you use a custom domain with the web UI, that domain must be in `ALLOWED_ORIG
 These headers are always permitted in CORS requests:
 
 ```
-Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version
+Content-Type, Authorization, Last-Event-ID, Mcp-Protocol-Version, Mcp-Method, Mcp-Name
 ```
 
 These headers are exposed to client JavaScript:
 
 ```
-Mcp-Session-Id, Mcp-Protocol-Version
+Mcp-Protocol-Version
 ```
 
 ### Cross-origin writes

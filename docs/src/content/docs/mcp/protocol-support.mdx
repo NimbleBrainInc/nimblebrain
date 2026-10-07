@@ -3,7 +3,6 @@ title: Protocol Support
 description: The MCP specification revisions, transports, and capabilities NimbleBrain supports as a client, an MCP Apps host, and a server, and the capabilities it deliberately does not advertise.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
 
 This page is the contract a server developer builds against: what the host speaks, what it claims of itself on each protocol era, and what it leaves out on purpose. Where the host does not advertise a capability, that is a decision, and the reason is given next to it.
 
@@ -15,14 +14,14 @@ The revisions fall into two eras. `2026-07-28` has no `initialize` handshake: a 
 
 | Revision | Supported |
 |---|---|
-| `2026-07-28` | Yes. As a client, the host probes for it first. |
-| `2025-11-25` | Yes. The revision the host offers in `initialize`. |
-| `2025-06-18` | Yes |
-| `2025-03-26` | Yes |
-| `2024-11-05` | Yes |
-| `2024-10-07` | Yes |
+| `2026-07-28` | Yes. As a client, the host probes for it first. As a server, it is the only revision served. |
+| `2025-11-25` | As a client. The revision the host offers in `initialize`. |
+| `2025-06-18` | As a client |
+| `2025-03-26` | As a client |
+| `2024-11-05` | As a client |
+| `2024-10-07` | As a client |
 
-As a client, the host negotiates each connection on its own. It sends `server/discover` first. A server that answers it with a `2026-07-28` result is spoken to on that revision. Any other answer, such as a method-not-found error, leads to the 2025 `initialize` handshake, which offers `2025-11-25` and accepts any older revision above that the server answers with. A probe that meets an HTTP 5xx is retried once on the 2025 era, because some 2025 servers answer every method they do not know with a 500. Nothing is pinned, so a server that moves to `2026-07-28` is spoken to on it at its next connection. As a server, the host serves whichever era each request arrives on, and the two are equivalent apart from tasks, which only `2026-07-28` serves; see [As a server to external clients](#as-a-server-to-external-clients).
+As a client, the host negotiates each connection on its own. It sends `server/discover` first. A server that answers it with a `2026-07-28` result is spoken to on that revision. Any other answer, such as a method-not-found error, leads to the 2025 `initialize` handshake, which offers `2025-11-25` and accepts any older revision above that the server answers with. A probe that meets an HTTP 5xx is retried once on the 2025 era, because some 2025 servers answer every method they do not know with a 500. Nothing is pinned, so a server that moves to `2026-07-28` is spoken to on it at its next connection. As a server, the host speaks `2026-07-28` only; see [As a server to external clients](#as-a-server-to-external-clients).
 
 MCP Apps (the `ui://` extension) is implemented from `@modelcontextprotocol/ext-apps`. See the [MCP App Bridge](/apps/bridge/) for the exact messages the host serves.
 
@@ -113,22 +112,15 @@ The host implements the MCP Apps specification: `ui/initialize`, tool input and 
 
 ## As a server to external clients
 
-Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HTTP with OAuth 2.0 protected-resource discovery. It serves both eras on the same URL, and they are equivalent but for tasks, which only `2026-07-28` serves. A request carrying the `2026-07-28` `_meta` envelope is answered on its own, with no session, and `server/discover` answers the capabilities. Anything else is 2025 traffic, served in a session opened by `initialize`. Both eras list the same tools and resources and return the same errors: a `resources/read` whose URI resolves nowhere answers `-32602` on either. On 2025, a tool whose `outputSchema` root is not an object is listed with that schema wrapped as the `result` property of an object schema, and its `structuredContent` is wrapped to match, because 2025 requires an object root. It advertises:
+Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HTTP with OAuth 2.0 protected-resource discovery. It speaks `2026-07-28` only: each request carrying the `_meta` envelope is answered on its own, with no session, and `server/discover` answers the capabilities. A request without the envelope, a 2025-era `initialize` included, is refused with HTTP `400` and `-32022`, whose `error.data.supported` is `["2026-07-28"]`. A `resources/read` whose URI resolves nowhere answers `-32602`. It advertises:
 
-| Capability | 2025 | `2026-07-28` | Notes |
-|---|---|---|---|
-| `tools` | Yes | Yes | The workspace's tools and the caller's identity tools, with the same filtering the agent gets |
-| `resources` | Yes | Yes | Resources from the workspace's servers |
-| `tasks` | No | Yes, as the `io.modelcontextprotocol/tasks` extension | Long-running tools stay long-running through the endpoint on `2026-07-28` only. On 2025 no `tasks` capability is declared: every `tools/call` runs to completion and answers its result, a `params.task` on it is ignored, and `tasks/*` answer `-32601`. On `2026-07-28`: the extension in `server/discover`'s `capabilities.extensions`; a `tools/call` whose request names the extension in its client capabilities is answered with a task when the tool can run as one, `tasks/get` inlines the result once the task ends, and `tasks/cancel` acknowledges. A call that does not opt in runs to completion inside the request. |
+| Capability | Notes |
+|---|---|
+| `tools` | The workspace's tools and the caller's identity tools, with the same filtering the agent gets |
+| `resources` | Resources from the workspace's servers |
+| `io.modelcontextprotocol/tasks` | In `server/discover`'s `capabilities.extensions`. Long-running tools stay long-running through the endpoint: a `tools/call` whose request names the extension in its client capabilities is answered with a task when the tool can run as one, `tasks/get` inlines the result once the task ends, and `tasks/cancel` acknowledges. A call that does not opt in runs to completion inside the request. The 2025-11-25 tasks utility is not served. |
 
-Neither era advertises `listChanged` or `resources.subscribe`. The endpoint does not serve the optional `GET` server-to-client stream, so progress arrives on the `POST` that started the call. The [MCP endpoint reference](/connect/mcp-endpoint/) covers authentication, sessions, and the audience rule.
-
-<Aside type="tip">
-To check what a host actually advertises, read what it sent on your connection
-(the `initialize` request on 2025, the request's `_meta` envelope on
-`2026-07-28`), not this page. A server that checks capabilities at runtime keeps working as the host
-changes.
-</Aside>
+It advertises neither `listChanged` nor `resources.subscribe`. The endpoint does not serve the optional `GET` server-to-client stream, so progress arrives on the `POST` that started the call. The [MCP endpoint reference](/connect/mcp-endpoint/) covers authentication, the protocol revision, and the audience rule.
 
 ## Related
 

@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// mcp-bridge-client — one stateless request at a time to the 2026-07-28 leg of
-// `/mcp/<wsId>`
+// mcp-bridge-client — one stateless request at a time to `/mcp/<wsId>` on
+// MCP 2026-07-28
 //
-// Pins what reaches the wire (the `_meta` envelope that routes a request to
-// the 2026 leg, the standard headers the server checks against the body, the
+// Pins what reaches the wire (the `_meta` envelope naming 2026-07-28, the
+// standard headers the server checks against the body, the
 // tasks opt-in), where it goes (the active workspace's path, read per
 // request), whose credentials it carries (read per request, refreshed through
 // the shared interceptor), and how each kind of answer comes back.

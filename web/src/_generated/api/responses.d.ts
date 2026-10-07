@@ -276,7 +276,7 @@ export interface JsonRpcErrorBody {
     };
     id: null;
 }
-/** The 2026-07-28 leg's answer to `tasks/get` or `tasks/cancel`, which the SDK does not route. */
+/** `/mcp`'s answer to `tasks/get` or `tasks/cancel`, which the SDK does not route. */
 export type McpTaskAnswer = {
     id: string | number;
 } & ({
