@@ -31,7 +31,7 @@ const hasWorkspace = (ctx: CommandSourceContext): boolean => Boolean(ctx.activeW
 // Reach, not writes — this hides a link to a surface `RouteGuard` admits at the
 // same minimum, so the two must resolve the role the same way or the palette
 // offers a destination the guard bounces. `useScopedRole` owns the mapping from
-// the raw `OrgRole` (`owner` / `admin` / `member`); those are a separate
+// the raw `OrgRole` (`admin` / `member`); those are a separate
 // vocabulary and never belong in a gate.
 const isOrgAdmin = (ctx: CommandSourceContext): boolean =>
   roleAtLeast(ctx.scopedRole ?? "none", "org_admin");

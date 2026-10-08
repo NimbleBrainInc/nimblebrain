@@ -514,7 +514,7 @@ User-uploaded files are persisted in the workspace `FileStore` and referenced fr
 
 Pluggable authentication via `IdentityProvider` interface (`src/identity/provider.ts`). Configured via `instance.json` in the work directory:
 
-- **`dev`** — No login: every request is one local developer (`usr_default`, org owner). Chosen only by writing `{"auth":{"adapter":"dev"}}`.
+- **`dev`** — No login: every request is one local developer (`usr_default`, org admin). Chosen only by writing `{"auth":{"adapter":"dev"}}`.
 - **`oidc`** — JWT verification via any OIDC provider. Auto-provisions users on first valid login.
 - **`workos`** — Full OAuth code flow with PKCE, token refresh, managed users via WorkOS. Supports MCP OAuth for external client access via AuthKit.
 

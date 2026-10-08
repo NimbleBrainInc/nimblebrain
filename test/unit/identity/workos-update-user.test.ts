@@ -3,8 +3,8 @@
  *
  * WorkOS is the source of a user's name and admin/member role, and the login
  * sync copies both back over the local profile, so an edit written only
- * locally would revert on the next uncached sign-in. `owner` is app-internal
- * and stays local; email is owned by WorkOS and refused.
+ * locally would revert on the next uncached sign-in. Email is owned by WorkOS
+ * and refused.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -114,21 +114,13 @@ describe("WorkOS updateUser", () => {
   });
 
   it("leaves a membership whose slug already maps to the role", async () => {
-    // A local owner whose WorkOS slug is `owner` (app admin) demoted to admin.
-    await userStore.update("user_bo", { orgRole: "owner" });
+    // WorkOS's own `owner` slug already maps to app admin; the local profile
+    // is stale until the next sign-in.
     const { provider, recorded } = makeProvider("owner");
     const updated = await provider.updateUser("user_bo", { orgRole: "admin" });
 
     expect(recorded.roleUpdates).toEqual([]);
     expect(updated?.orgRole).toBe("admin");
-  });
-
-  it("makes someone an owner locally only", async () => {
-    const { provider, recorded } = makeProvider("member");
-    const updated = await provider.updateUser("user_bo", { orgRole: "owner" });
-
-    expect(recorded.roleUpdates).toEqual([]);
-    expect(updated?.orgRole).toBe("owner");
   });
 
   it("refuses a role change for a user with no membership, and stores nothing", async () => {
@@ -150,40 +142,5 @@ describe("WorkOS updateUser", () => {
     const { provider, recorded } = makeProvider("member");
     expect(await provider.updateUser("user_ghost", { displayName: "Ghost" })).toBeNull();
     expect(recorded.userUpdates).toEqual([]);
-  });
-});
-
-describe("WorkOS auth.owners", () => {
-  /** Invoke the private `syncLocalProfile`, the step every sign-in runs. */
-  function sync(
-    provider: WorkosIdentityProvider,
-    id: string,
-    email: string,
-    orgRole: "admin" | "member",
-  ) {
-    return (
-      provider as unknown as {
-        syncLocalProfile: (
-          id: string,
-          data: { email: string; displayName: string; orgRole: string },
-        ) => Promise<{ orgRole: string }>;
-      }
-    ).syncLocalProfile.call(provider, id, { email, displayName: "X", orgRole });
-  }
-
-  it("makes a listed user an owner on sign-in, existing or new", async () => {
-    const { provider } = makeProvider("member", { owners: ["bo@example.com"] });
-    expect((await sync(provider, "user_bo", "BO@example.com", "member")).orgRole).toBe("owner");
-    expect((await userStore.get("user_bo"))?.orgRole).toBe("owner");
-
-    const fresh = await sync(provider, "user_new", "bo@example.com", "admin");
-    expect(fresh.orgRole).toBe("owner");
-  });
-
-  it("leaves an unlisted user on their WorkOS role", async () => {
-    const { provider } = makeProvider("member", { owners: ["someone@example.com"] });
-    expect((await sync(provider, "user_bo", "bo@example.com", "admin")).orgRole).toBe("admin");
-    expect(provider.isConfiguredOwner({ id: "user_bo", email: "bo@example.com" })).toBe(false);
-    expect(provider.isConfiguredOwner({ id: "x", email: "Someone@example.com" })).toBe(true);
   });
 });

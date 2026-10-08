@@ -29,12 +29,11 @@ type ListedUser = {
   id: string;
   email: string;
   displayName: string;
-  orgRole: "owner" | "admin" | "member";
+  orgRole: "admin" | "member";
   deletedAt?: string;
-  configuredOwner?: boolean;
 };
 const DEFAULT_USERS: ListedUser[] = [
-  { id: "usr_me", email: "me@example.com", displayName: "Me", orgRole: "owner" },
+  { id: "usr_me", email: "me@example.com", displayName: "Me", orgRole: "admin" },
   { id: "usr_bo", email: "bo@example.com", displayName: "Bo", orgRole: "member" },
   { id: "usr_al", email: "al@example.com", displayName: "Al", orgRole: "admin" },
   {
@@ -48,7 +47,6 @@ const DEFAULT_USERS: ListedUser[] = [
 let users: ListedUser[] = DEFAULT_USERS;
 let providerOwnedFields: string[] = [];
 let confirmAnswer = true;
-let viewerRole = "owner";
 const confirmations: string[] = [];
 
 mock.module("../src/api/client", () => ({
@@ -83,7 +81,6 @@ afterEach(async () => {
   providerOwnedFields = [];
   confirmAnswer = true;
   confirmations.length = 0;
-  viewerRole = "owner";
 });
 
 async function flush() {
@@ -109,7 +106,7 @@ async function mount(): Promise<HTMLElement> {
               id: "usr_me",
               email: "me@example.com",
               displayName: "Me",
-              orgRole: viewerRole,
+              orgRole: "admin",
             },
           }}
         >
@@ -183,22 +180,22 @@ describe("a refusal on the Users tab", () => {
   });
 
   test("a refused deactivate shows the server's reason", async () => {
-    refusal = "The last owner can't be deactivated.";
+    refusal = "Cannot deactivate the last admin. Make another user an admin first.";
     const c = await mount();
     await click(c.querySelector("button[title='Deactivate Bo']"));
 
     expect(calls.some((x) => x.action === "delete")).toBe(true);
-    expect(c.textContent).toContain("The last owner can't be deactivated.");
+    expect(c.textContent).toContain("Cannot deactivate the last admin.");
   });
 
-  test("a last-owner refusal sent without isError still shows its reason", async () => {
-    refusal = "Cannot delete the last owner. Promote another user to owner first.";
+  test("a refusal sent without isError still shows its reason", async () => {
+    refusal = "Cannot deactivate the last admin. Make another user an admin first.";
     refusalIsError = false;
     const c = await mount();
     await click(c.querySelector("button[title='Deactivate Bo']"));
 
     expect(calls.some((x) => x.action === "delete")).toBe(true);
-    expect(c.textContent).toContain("Cannot delete the last owner.");
+    expect(c.textContent).toContain("Cannot deactivate the last admin.");
   });
 
   test("a refused restore shows the server's reason", async () => {
@@ -272,8 +269,8 @@ describe("editing a user", () => {
 
   test("your own role is locked, with the server's rule as the reason", async () => {
     users = [
-      { id: "usr_me", email: "me@example.com", displayName: "Me", orgRole: "owner" },
-      { id: "usr_o2", email: "o2@example.com", displayName: "O2", orgRole: "owner" },
+      { id: "usr_me", email: "me@example.com", displayName: "Me", orgRole: "admin" },
+      { id: "usr_al", email: "al@example.com", displayName: "Al", orgRole: "admin" },
     ];
     const c = await mount();
     await click(c.querySelector("button[title='Edit Me']"));
@@ -284,34 +281,15 @@ describe("editing a user", () => {
     expect(field<HTMLInputElement>(c, "usr_me", "displayName")?.disabled).toBe(false);
   });
 
-  test("the last active owner's role is locked", async () => {
-    users = [
-      { id: "usr_me", email: "me@example.com", displayName: "Me", orgRole: "admin" },
-      { id: "usr_ow", email: "ow@example.com", displayName: "Ow", orgRole: "owner" },
-      {
-        id: "usr_gone",
-        email: "gone@example.com",
-        displayName: "Gone",
-        orgRole: "owner",
-        deletedAt: "2026-09-01T00:00:00.000Z",
-      },
-    ];
-    const c = await mount();
-    await click(c.querySelector("button[title='Edit Ow']"));
-
-    expect(field<HTMLSelectElement>(c, "usr_ow", "orgRole")?.disabled).toBe(true);
-    expect(c.textContent).toContain("The last owner keeps the owner role.");
-  });
-
   test("a refused role change shows the server's reason on the field", async () => {
-    refusal = "Cannot change the role of the last owner. Promote another user to owner first.";
+    refusal = "Cannot change the role of the last admin. Make another user an admin first.";
     const c = await mount();
-    await click(c.querySelector("button[title='Edit Al']"));
+    await click(c.querySelector("button[title='Edit Bo']"));
 
-    await choose(field<HTMLSelectElement>(c, "usr_al", "orgRole")!, "owner");
+    await choose(field<HTMLSelectElement>(c, "usr_bo", "orgRole")!, "admin");
 
     expect(c.textContent).toContain("Not saved");
-    expect(c.textContent).toContain("Cannot change the role of the last owner.");
+    expect(c.textContent).toContain("Cannot change the role of the last admin.");
   });
 
   test("an email the identity provider owns is not editable, and says where to change it", async () => {
@@ -339,82 +317,5 @@ describe("editing a user", () => {
 
     expect(field(c, "usr_bo", "displayName")).toBeNull();
     expect(updates()).toEqual([{ action: "update", userId: "usr_bo", displayName: "Robert" }]);
-  });
-});
-
-describe("owner rules on the Users tab", () => {
-  const OWNERS: ListedUser[] = [
-    { id: "usr_me", email: "me@example.com", displayName: "Me", orgRole: "admin" },
-    { id: "usr_ow", email: "ow@example.com", displayName: "Ow", orgRole: "owner" },
-    { id: "usr_o2", email: "o2@example.com", displayName: "O2", orgRole: "owner" },
-    { id: "usr_bo", email: "bo@example.com", displayName: "Bo", orgRole: "member" },
-    {
-      id: "usr_gone",
-      email: "gone@example.com",
-      displayName: "Gone",
-      orgRole: "owner",
-      deletedAt: "2026-09-01T00:00:00.000Z",
-    },
-  ];
-
-  test("an admin can't edit, deactivate, or restore an owner", async () => {
-    viewerRole = "admin";
-    users = OWNERS;
-    const c = await mount();
-
-    const edit = c.querySelectorAll<HTMLButtonElement>("button[title='Only an owner can change an owner']");
-    // Edit and Deactivate on each active owner, Restore on the deactivated one.
-    expect(edit.length).toBe(5);
-    for (const b of edit) expect(b.disabled).toBe(true);
-    expect(c.querySelector("button[title='Edit Ow']")).toBeNull();
-    expect(c.querySelector("button[title='Restore Gone']")).toBeNull();
-  });
-
-  test("an admin can't pick Owner for someone, and is told why", async () => {
-    viewerRole = "admin";
-    users = OWNERS;
-    const c = await mount();
-    await click(c.querySelector("button[title='Edit Bo']"));
-
-    const owner = field<HTMLSelectElement>(c, "usr_bo", "orgRole")?.querySelector<HTMLOptionElement>(
-      "option[value='owner']",
-    );
-    expect(owner?.disabled).toBe(true);
-    expect(c.textContent).toContain("Only an owner can make someone an owner.");
-  });
-
-  test("an owner can pick Owner for someone", async () => {
-    users = [...OWNERS.slice(1), { ...OWNERS[0]!, orgRole: "owner" }];
-    const c = await mount();
-    await click(c.querySelector("button[title='Edit Bo']"));
-
-    const role = field<HTMLSelectElement>(c, "usr_bo", "orgRole")!;
-    expect(role.querySelector<HTMLOptionElement>("option[value='owner']")?.disabled).toBe(false);
-    await choose(role, "owner");
-    expect(updates()).toEqual([{ action: "update", userId: "usr_bo", orgRole: "owner" }]);
-  });
-
-  test("an owner the config names can't be demoted or deactivated, and says where to change it", async () => {
-    users = [
-      { id: "usr_me", email: "me@example.com", displayName: "Me", orgRole: "owner" },
-      {
-        id: "usr_cfg",
-        email: "cfg@example.com",
-        displayName: "Cfg",
-        orgRole: "owner",
-        configuredOwner: true,
-      },
-    ];
-    const c = await mount();
-
-    const deactivate = c.querySelector<HTMLButtonElement>(
-      "button[title=\"An owner by this instance's configuration (auth.owners). Change it there.\"]",
-    );
-    expect(deactivate?.disabled).toBe(true);
-
-    await click(c.querySelector("button[title='Edit Cfg']"));
-    expect(field<HTMLSelectElement>(c, "usr_cfg", "orgRole")?.disabled).toBe(true);
-    expect(c.textContent).toContain("auth.owners");
-    expect(field<HTMLInputElement>(c, "usr_cfg", "displayName")?.disabled).toBe(false);
   });
 });

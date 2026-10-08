@@ -35,18 +35,18 @@ function permissionDenied(): ToolResult {
 }
 
 /**
- * Count org owners that are still active (not soft-deleted). The last-owner
+ * Count org admins that are still active (not soft-deleted). The last-admin
  * guards on both the update (demote) and delete (deactivate) paths use this so
- * a deactivated owner can never be mistaken for a live one — otherwise you
- * could demote/deactivate the last *active* owner and lock the org out.
+ * a deactivated admin can never be mistaken for a live one — otherwise you
+ * could demote/deactivate the last *active* admin and lock the org out.
  */
-function activeOwnerCount(users: User[]): number {
-  return users.filter((u) => u.orgRole === "owner" && !u.deletedAt).length;
+function activeAdminCount(users: User[]): number {
+  return users.filter((u) => u.orgRole === "admin" && !u.deletedAt).length;
 }
 
 // ── Shared helpers ────────────────────────────────────────────────
 
-const ORG_ROLES = ["owner", "admin", "member"];
+const ORG_ROLES = ["admin", "member"];
 
 /** True when the value is one of the accepted org roles. */
 function isValidOrgRole(role: string): boolean {
@@ -56,7 +56,7 @@ function isValidOrgRole(role: string): boolean {
 /** Error result for an org role outside the accepted set. */
 function invalidOrgRoleResult(role: string): ToolResult {
   return {
-    content: textContent(`Invalid orgRole: ${role}. Must be owner, admin, or member.`),
+    content: textContent(`Invalid orgRole: ${role}. Must be admin or member.`),
     isError: true,
   };
 }
@@ -79,30 +79,13 @@ function failureResult(action: string, err: unknown): ToolResult {
   };
 }
 
-const OWNER_ONLY =
-  "Only an owner can make someone an owner, or change, deactivate, or restore an owner.";
-
-/** Refusal when a caller who is not an owner reaches for the owner role or an owner's record. */
-function ownerOnlyRefusal(identity: UserIdentity, touchesOwner: boolean): string | null {
-  return touchesOwner && identity.orgRole !== "owner" ? OWNER_ONLY : null;
-}
-
-/** True when the instance's config makes this user an owner (`auth.owners`, dev's built-in owner). */
-function isConfiguredOwner(ctx: ManageUsersContext, user: User): boolean {
-  return ctx.provider.isConfiguredOwner?.(user) ?? false;
-}
-
-function configuredOwnerRefusal(user: User, verb: string): string {
-  return `${user.email} is an owner by this instance's configuration (auth.owners), so they can't be ${verb} here. Remove them from that list first.`;
-}
-
-/** True when this live owner is the only active owner left in the org. */
-async function isLastActiveOwner(ctx: ManageUsersContext, user: User): Promise<boolean> {
-  if (user.orgRole !== "owner" || user.deletedAt) {
+/** True when this live admin is the only active admin left in the org. */
+async function isLastActiveAdmin(ctx: ManageUsersContext, user: User): Promise<boolean> {
+  if (user.orgRole !== "admin" || user.deletedAt) {
     return false;
   }
   const allUsers = await ctx.userStore.list();
-  return activeOwnerCount(allUsers) <= 1;
+  return activeAdminCount(allUsers) <= 1;
 }
 
 // ── Tool factory ──────────────────────────────────────────────────
@@ -111,7 +94,7 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
   return {
     name: "manage_users",
     description:
-      "Create, update, delete, or list workspace users. Only org admins and owners can use this tool.",
+      "Create, update, delete, or list workspace users. Only org admins can use this tool.",
     meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
     inputSchema: {
       type: "object",
@@ -133,9 +116,9 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
         },
         orgRole: {
           type: "string",
-          enum: ["owner", "admin", "member"],
+          enum: ["admin", "member"],
           description:
-            'Org role (defaults to "member" on create). Only an owner may set "owner" or change an owner. On update, refused for your own role, for the last active owner, and for an owner the instance config names.',
+            'Org role (defaults to "member" on create). On update, refused for your own role and for the last active admin.',
         },
         userId: {
           type: "string",
@@ -154,13 +137,13 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
 
       switch (action) {
         case "create":
-          return handleCreate(ctx, identity, input);
+          return handleCreate(ctx, input);
         case "update":
           return handleUpdate(ctx, identity, input);
         case "delete":
           return handleDelete(ctx, identity, input);
         case "restore":
-          return handleRestore(ctx, identity, input);
+          return handleRestore(ctx, input);
         case "list":
           return handleList(ctx);
         default:
@@ -177,7 +160,6 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
 
 async function handleCreate(
   ctx: ManageUsersContext,
-  identity: UserIdentity,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
   const email = input.email ? String(input.email) : undefined;
@@ -194,16 +176,12 @@ async function handleCreate(
   if (!isValidOrgRole(orgRole)) {
     return invalidOrgRoleResult(orgRole);
   }
-  const ownerOnly = ownerOnlyRefusal(identity, orgRole === "owner");
-  if (ownerOnly) {
-    return refusal(ownerOnly);
-  }
 
   try {
     const result: CreateUserResult = await ctx.provider.createUser({
       email,
       displayName,
-      orgRole: orgRole as "owner" | "admin" | "member",
+      orgRole: orgRole as OrgRole,
     });
     return {
       content: textContent(`Created user ${result.user.email}.`),
@@ -288,13 +266,6 @@ async function updateRefusal(
       return `${FIELD_LABELS[field]} is managed by this organization's identity provider. Change it there.`;
     }
   }
-  const ownerOnly = ownerOnlyRefusal(
-    identity,
-    user.orgRole === "owner" || patch.orgRole === "owner",
-  );
-  if (ownerOnly) {
-    return ownerOnly;
-  }
   if (user.deletedAt) {
     return `${user.email} is deactivated. Restore them before editing.`;
   }
@@ -304,13 +275,10 @@ async function updateRefusal(
   // Your own role is changed by someone else, so a manager can never demote
   // themselves out of managing, and the org always keeps one who can.
   if (user.id === identity.id) {
-    return "You can't change your own role. Ask another admin or owner.";
+    return "You can't change your own role. Ask another admin.";
   }
-  if (user.orgRole === "owner" && isConfiguredOwner(ctx, user)) {
-    return configuredOwnerRefusal(user, "demoted");
-  }
-  if (patch.orgRole !== "owner" && (await isLastActiveOwner(ctx, user))) {
-    return "Cannot change the role of the last owner. Promote another user to owner first.";
+  if (await isLastActiveAdmin(ctx, user)) {
+    return "Cannot change the role of the last admin. Make another user an admin first.";
   }
   return null;
 }
@@ -391,25 +359,18 @@ async function handleDelete(
     };
   }
   if (userId === identity.id) {
-    return refusal("You can't deactivate yourself. Ask another admin or owner.");
+    return refusal("You can't deactivate yourself. Ask another admin.");
   }
 
   try {
-    // Safety check: cannot delete the last owner
+    // Safety check: cannot deactivate the last admin
     const user = await ctx.userStore.get(userId);
     if (!user) {
       return userNotFoundResult(userId);
     }
 
-    const ownerOnly = ownerOnlyRefusal(identity, user.orgRole === "owner");
-    if (ownerOnly) {
-      return refusal(ownerOnly);
-    }
-    if (isConfiguredOwner(ctx, user)) {
-      return refusal(configuredOwnerRefusal(user, "deactivated"));
-    }
-    if (await isLastActiveOwner(ctx, user)) {
-      return refusal("Cannot delete the last owner. Promote another user to owner first.");
+    if (await isLastActiveAdmin(ctx, user)) {
+      return refusal("Cannot deactivate the last admin. Make another user an admin first.");
     }
 
     // Soft delete: stamp a tombstone and revoke access, but keep the record so
@@ -438,7 +399,6 @@ async function handleDelete(
 
 async function handleRestore(
   ctx: ManageUsersContext,
-  identity: UserIdentity,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
   const userId = input.userId ? String(input.userId) : undefined;
@@ -450,12 +410,6 @@ async function handleRestore(
   }
 
   try {
-    // Restoring an owner gives back owner access, so it is an owner's call too.
-    const user = await ctx.userStore.get(userId);
-    const ownerOnly = ownerOnlyRefusal(identity, user?.orgRole === "owner");
-    if (ownerOnly) {
-      return refusal(ownerOnly);
-    }
     const restored = await ctx.userStore.restore(userId);
     if (!restored) {
       return userNotFoundResult(userId);
@@ -483,9 +437,6 @@ async function handleList(ctx: ManageUsersContext): Promise<ToolResult> {
       orgRole: u.orgRole,
       // Present only for deactivated users so the UI can render a "deleted" state.
       ...(u.deletedAt ? { deletedAt: u.deletedAt } : {}),
-      // Present only for an owner the instance config names, whom `update` and
-      // `delete` refuse to demote or deactivate.
-      ...(isConfiguredOwner(ctx, u) ? { configuredOwner: true } : {}),
     }));
     return {
       content: textContent(`${result.length} user(s).`),

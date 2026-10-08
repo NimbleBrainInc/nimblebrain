@@ -13,7 +13,7 @@ import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
 ## The file is required
 
-`serve` does not start without `<workDir>/instance.json`. It exits with an error naming the path and the two ways to write it. A missing file never selects an identity provider, because a deployment that lost its config would otherwise admit every caller as an owner.
+`serve` does not start without `<workDir>/instance.json`. It exits with an error naming the path and the two ways to write it. A missing file never selects an identity provider, because a deployment that lost its config would otherwise admit every caller as an admin.
 
 The dev launchers (`bun run dev` and its variants, including `dev:worktree`) write the `dev` adapter into a workdir that has no `instance.json`, and leave an existing one alone. With Docker Compose, write the file next to `docker-compose.yml`; it is mounted into the container's workdir.
 
@@ -31,7 +31,7 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
     }
     ```
 
-    No login. Every request authenticates as one built-in identity (`usr_default`, org role `owner`), with no credential checked. It passes the same authorization checks as any other user, as the org owner and an admin of its workspaces. Use it on your own machine only: anyone who can reach the server is that owner.
+    No login. Every request authenticates as one built-in identity (`usr_default`, org role `admin`), with no credential checked. It passes the same authorization checks as any other user, as an org admin and an admin of its workspaces. Use it on your own machine only: anyone who can reach the server is that admin.
   </TabItem>
   <TabItem label="OIDC">
     ```json title="instance.json"
@@ -41,8 +41,7 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
         "issuer": "https://auth.example.com",
         "clientId": "nimblebrain-app",
         "allowedDomains": ["example.com", "acme.com"],
-        "jwksUri": "https://auth.example.com/.well-known/jwks.json",
-        "owners": ["founder@example.com"]
+        "jwksUri": "https://auth.example.com/.well-known/jwks.json"
       },
       "orgName": "Acme",
       "orgId": "org_acme"
@@ -61,8 +60,7 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
         "apiKey": "sk_live_...",
         "authkitDomain": "myapp",
         "adminRoleSlugs": ["org-admin"],
-        "firstPartyClientIds": ["client_01DEF..."],
-        "owners": ["founder@example.com"]
+        "firstPartyClientIds": ["client_01DEF..."]
       },
       "orgName": "Acme",
       "orgId": "org_acme"
@@ -91,7 +89,6 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
 | `clientId` | `string` | Yes | OAuth client id registered with the provider. |
 | `allowedDomains` | `string[]` | Yes | Email domains permitted to sign in. A verified identity whose domain isn't listed is rejected. |
 | `jwksUri` | `string` | No | JWKS endpoint override. Discovered from the issuer's `.well-known` when omitted. |
-| `owners` | `string[]` | No | Emails of the org's owners. A listed user is an owner on every sign-in (matched case-insensitively), and cannot be demoted or deactivated from the Users page; remove them here first. Since only an owner can make another, this is where the first owner comes from. Each entry must be an email address. See [Owners from `instance.json`](/using/users/#owners-from-instancejson). |
 
 ## WorkOS adapter (`auth.adapter: "workos"`)
 
@@ -102,9 +99,8 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
 | `organizationId` | `string` | No | WorkOS Organization ID — scopes auth to a specific customer org. Every token, whether from the web login or AuthKit, must be issued for this org (its `org_id` claim), and its user must be a member of it. An empty or whitespace-only value is rejected at startup. Omitting the field admits every user in the AuthKit environment, so omit it only when this instance owns the whole environment. |
 | `apiKey` | `string` | No | WorkOS API key. Can also come from the `WORKOS_API_KEY` env var. |
 | `authkitDomain` | `string` | No | AuthKit subdomain for MCP OAuth (e.g. `"myapp"` → `myapp.authkit.app`). When set, `/mcp/<workspaceId>` accepts AuthKit-issued Bearer JWTs whose audience is exactly that URL, and exposes `/.well-known/oauth-protected-resource/mcp/<workspaceId>` for MCP client discovery. AuthKit needs a resource indicator covering `<origin>/mcp/*` for each public host, or it ignores the client's `resource` and every token is refused. |
-| `adminRoleSlugs` | `string[]` | No | WorkOS membership role slugs that map to the app `admin` role (case-insensitive). Omit to use the defaults `["admin", "owner"]`. An explicit list **replaces** the defaults and must contain at least one non-empty slug — an empty list is rejected at startup. Set this when your WorkOS org's admin role carries a custom slug. |
+| `adminRoleSlugs` | `string[]` | No | WorkOS membership role slugs that map to the app `admin` role (case-insensitive). Omit to use the defaults `["admin", "owner"]` (`owner` is WorkOS's org-owner role name, so it grants app `admin`). An explicit list **replaces** the defaults and must contain at least one non-empty slug — an empty list is rejected at startup. Set this when your WorkOS org's admin role carries a custom slug. |
 | `firstPartyClientIds` | `string[]` | No | Client IDs of your own apps that sign users in through AuthKit and call the REST API with the resulting token, such as a chat-channel bridge. See [First-party clients](#first-party-clients). Takes effect only with `authkitDomain` set, since without it no token is recognized as AuthKit-issued. Omitted or empty, no AuthKit token is first-party. |
-| `owners` | `string[]` | No | Emails of the org's owners. A listed user is an owner on every sign-in (matched case-insensitively), and cannot be demoted or deactivated from the Users page; remove them here first. Since only an owner can make another, this is where the first owner comes from. Each entry must be an email address. See [Owners from `instance.json`](/using/users/#owners-from-instancejson). |
 
 The sign-in callback is always `<public origin>/v1/auth/callback`, built from the deployment's [public origin](/config/environment/#nb_public_origin). Register that URL as a redirect URI in the WorkOS dashboard; `instance.json` has no field for it.
 

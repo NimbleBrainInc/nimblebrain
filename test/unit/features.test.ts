@@ -57,7 +57,6 @@ describe("isToolVisibleToRole", () => {
 
   it("shows set_model_config to admin users", () => {
     expect(isToolVisibleToRole("nb__set_model_config", "admin")).toBe(true);
-    expect(isToolVisibleToRole("nb__set_model_config", "owner")).toBe(true);
   });
 
   it("lets a non-admin reach manage_workspaces, whose handler gates each action", () => {

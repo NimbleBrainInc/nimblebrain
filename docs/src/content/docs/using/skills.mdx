@@ -126,7 +126,7 @@ Three core skills are always-on for every workspace and need no setup:
 
 All three ship with the platform, so they can't be edited in place — `skills__update` refuses to write a platform-vendored file. Change one by **authoring your own skill with the same name** in a scope that outranks it.
 
-Skills merge by `name`, with later tiers winning: **user > workspace > org (`~/.nimblebrain/skills/`) > platform**. So a file at `~/.nimblebrain/skills/customer-communication.md` replaces the shipped one for the whole org; the same name under a workspace or a single user narrows it further. Writing an org-scoped skill requires an org admin or owner role.
+Skills merge by `name`, with later tiers winning: **user > workspace > org (`~/.nimblebrain/skills/`) > platform**. So a file at `~/.nimblebrain/skills/customer-communication.md` replaces the shipped one for the whole org; the same name under a workspace or a single user narrows it further. Writing an org-scoped skill requires the org admin role.
 
 `soul` and `capabilities` are reserved names — `skills__create` refuses them, so an override for those two has to be a file you write yourself. `customer-communication` is not reserved, so either route works.
 

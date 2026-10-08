@@ -7,8 +7,8 @@
  *     usage aggregates regardless of which workspace the spend happened in.
  *   - `scope: "user"` (default) is gated to the caller's own spend via the
  *     aggregator's ownerFilter — a member can't see peers' usage.
- *   - `scope: "org"` requires org admin/owner; a member is denied.
- *   - The dev user is an org owner: it reads the org scope on its role, and
+ *   - `scope: "org"` requires org admin; a member is denied.
+ *   - The dev user is an org admin: it reads the org scope on its role, and
  *     its user scope is its own spend.
  *   - The response echoes the resolved `scope`.
  */
@@ -28,7 +28,7 @@ import type { UsageLedgerEntry } from "../../../../src/usage/types.ts";
 
 interface FakeIdentity {
   id: string;
-  orgRole: "owner" | "admin" | "member";
+  orgRole: "admin" | "member";
 }
 
 class FakeRuntime {
@@ -211,9 +211,9 @@ describe("usage source — scope: org", () => {
 });
 
 describe("usage source — the dev user", () => {
-  const DEV_USER: FakeIdentity = { id: "usr_default", orgRole: "owner" };
+  const DEV_USER: FakeIdentity = { id: "usr_default", orgRole: "admin" };
 
-  test("reads the org scope as an org owner", async () => {
+  test("reads the org scope as an org admin", async () => {
     const src = await buildSource();
     runtime.identity = DEV_USER;
 

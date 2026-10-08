@@ -19,7 +19,7 @@ export const DEV_IDENTITY: UserIdentity = {
   id: "usr_default",
   email: "dev@localhost",
   displayName: "Developer",
-  orgRole: "owner",
+  orgRole: "admin",
   preferences: {},
 };
 
@@ -72,11 +72,6 @@ export class DevIdentityProvider implements IdentityProvider {
 
   async deleteUser(userId: string): Promise<boolean> {
     return this.userStore.delete(userId);
-  }
-
-  /** The built-in developer is the owner every request runs as. */
-  isConfiguredOwner(user: Pick<User, "id" | "email">): boolean {
-    return user.id === DEV_IDENTITY.id;
   }
 
   // ── Private ───────────────────────────────────────────────────

@@ -37,16 +37,16 @@ interface FakeIdentity {
   id: string;
   email: string;
   displayName: string;
-  orgRole: "owner" | "admin" | "member";
+  orgRole: "admin" | "member";
   preferences: { timezone: string; locale: string; theme: string };
 }
 
-/** The dev user, as the `dev` provider verifies every request: org owner. */
+/** The dev user, as the `dev` provider verifies every request: org admin. */
 const DEV_USER: FakeIdentity = {
   id: "usr_default",
   email: "dev@localhost",
   displayName: "Developer",
-  orgRole: "owner",
+  orgRole: "admin",
   preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
 };
 
@@ -152,7 +152,7 @@ function readManifestField(path: string, key: string): string | undefined {
 // ── create ───────────────────────────────────────────────────────────────
 
 describe("skills__create", () => {
-  test("the dev user, an org owner, writes an org-scope skill and emits skill.created", async () => {
+  test("the dev user, an org admin, writes an org-scope skill and emits skill.created", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -354,7 +354,7 @@ describe("skills__create", () => {
 describe("skills — workspace-scope write gate", () => {
   const WS = "ws_0039fad880e2fea0";
 
-  function setIdentity(id: string, orgRole: "owner" | "admin" | "member"): void {
+  function setIdentity(id: string, orgRole: "admin" | "member"): void {
     runtime.wsId = WS;
     seedWorkspaceRoot(workDir, WS);
     runtime.identity = {
@@ -421,17 +421,6 @@ describe("skills — workspace-scope write gate", () => {
       "permission_denied",
     );
     expect(existsSync(join(workDir, "workspaces", WS, "skills", "orgadmin-cannot.md"))).toBe(false);
-  });
-
-  test("org OWNER who is NOT a workspace member CANNOT write (no org-owner override)", async () => {
-    setIdentity("u_owner", "owner");
-    runtime.setMember(WS, "someone_else", "admin");
-    const result = await createWsSkill("owner-cannot");
-    expect(result.isError).toBe(true);
-    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
-      "permission_denied",
-    );
-    expect(existsSync(join(workDir, "workspaces", WS, "skills", "owner-cannot.md"))).toBe(false);
   });
 });
 
@@ -855,7 +844,7 @@ describe("skills__update", () => {
   // Regression: production bug where the agent passed a stale `id` (a path
   // the skill used to live at, before being moved to a workspace dir). The
   // old ordering ran the permission check first and returned "Org-scope
-  // writes require org admin or owner" — sending the agent down a
+  // writes require org admin" — sending the agent down a
   // hallucination loop trying to fix its role instead of refreshing its
   // path. Existence-first surfaces the actual cause.
   test("stale org-scope id (file moved away) returns 'not found', not 'permission denied'", async () => {
@@ -1398,7 +1387,7 @@ describe("cross-workspace access — regression", () => {
       id: "u_alice",
       email: "alice@ex.com",
       displayName: "Alice",
-      orgRole: "owner", // even owner — strict policy denies cross-user
+      orgRole: "admin", // even an org admin — strict policy denies cross-user
       preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
     };
     const otherUserDir = join(workDir, "users", "u_carol", "skills");

@@ -227,7 +227,7 @@ export function WorkspaceDetailPage() {
   const memberUserIds = new Set(members.map((m) => m.userId));
   const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id));
 
-  // Same rule as the server's `canManageWorkspaceMembers`: an org admin/owner,
+  // Same rule as the server's `canManageWorkspaceMembers`: an org admin,
   // or an admin member of this workspace. A gate that disagrees with the server
   // renders controls it refuses, and `handleAdd` doesn't inspect the result,
   // so the refusal would be silent (#749). This page addresses a workspace by

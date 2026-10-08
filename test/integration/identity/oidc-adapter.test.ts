@@ -356,47 +356,7 @@ describe("OidcIdentityProvider", () => {
     });
   });
 
-  describe("auth.owners", () => {
-    const withOwners = () =>
-      new OidcIdentityProvider(
-        {
-          adapter: "oidc",
-          issuer,
-          clientId: CLIENT_ID,
-          allowedDomains: ALLOWED_DOMAINS,
-          owners: ["Boss@Example.com"],
-        },
-        userStore,
-      );
-
-    test("a listed user is an owner from their first sign-in, matched case-insensitively", async () => {
-      const token = await buildJwt({ email: "boss@example.com", sub: "boss-sub" });
-      const identity = await withOwners().verifyRequest(bearerRequest(token));
-      expect(identity?.orgRole).toBe("owner");
-      expect((await userStore.get(identity!.id))?.orgRole).toBe("owner");
-    });
-
-    test("a pre-created listed user becomes an owner at sign-in", async () => {
-      const pre = await userStore.create({
-        email: "boss@example.com",
-        displayName: "Boss",
-        orgRole: "member",
-      });
-      const token = await buildJwt({ email: "boss@example.com", sub: "boss-sub" });
-      const identity = await withOwners().verifyRequest(bearerRequest(token));
-      expect(identity?.id).toBe(pre.id);
-      expect(identity?.orgRole).toBe("owner");
-    });
-
-    test("an unlisted user keeps their role, and only listed users are configured owners", async () => {
-      const token = await buildJwt({ email: "alice@example.com", sub: "alice-sub" });
-      const p = withOwners();
-      const identity = await p.verifyRequest(bearerRequest(token));
-      expect(identity?.orgRole).toBe("member");
-      expect(p.isConfiguredOwner({ id: "x", email: "BOSS@example.com" })).toBe(true);
-      expect(p.isConfiguredOwner({ id: "x", email: "alice@example.com" })).toBe(false);
-    });
-
+  describe("profile fields", () => {
     test("email is provider-owned, since sign-in falls back to matching it", () => {
       expect(adapter.capabilities.providerOwnedUserFields).toEqual(["email"]);
     });

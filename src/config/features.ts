@@ -90,7 +90,7 @@ export function isToolEnabled(toolName: string, features: ResolvedFeatures): boo
 // ── Role-based tool visibility ───────────────────────────────────────
 
 /**
- * Tools that require org-level admin or owner to be visible.
+ * Tools that require org-level admin to be visible.
  * Non-admin users should never see these tools in the tool list.
  * Both prefixed and unprefixed names are included.
  *

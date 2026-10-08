@@ -133,7 +133,7 @@ describe("the server authenticates with the runtime's identity provider", () => 
   it("refuses an org member's org-wide usage report, and admits an org admin's", async () => {
     const refused = await callTool(MEMBER, "usage", "report", { scope: "org" });
     expect(refused.isError).toBe(true);
-    expect(refused.content?.[0]?.text).toContain("Org-scope usage requires org admin or owner");
+    expect(refused.content?.[0]?.text).toContain("Org-scope usage requires org admin");
 
     const admitted = await callTool(ADMIN, "usage", "report", { scope: "org" });
     expect(admitted.isError).toBe(false);

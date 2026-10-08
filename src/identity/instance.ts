@@ -13,14 +13,6 @@ export interface OidcAuth {
   allowedDomains: string[];
   /** JWKS URI override. If omitted, discovered via OIDC .well-known. */
   jwksUri?: string;
-  /**
-   * Emails of the org's owners, matched case-insensitively against the email
-   * the provider verified. A listed user is an owner on every sign-in, and
-   * `manage_users` refuses to demote or deactivate them: the list, not the
-   * Users page, decides. It is where the first owner comes from, since only an
-   * owner can make another.
-   */
-  owners?: string[];
 }
 
 export interface WorkosAuth {
@@ -43,10 +35,9 @@ export interface WorkosAuth {
    * `["admin", "owner"]`; an explicit list REPLACES the defaults and must
    * contain at least one non-empty slug. Set this when your WorkOS org's admin
    * role carries a custom slug (e.g. `org-admin`) — otherwise it silently maps
-   * to `member`. Any slug not listed maps to `member` (and is logged). Note:
-   * `owner` is an app-internal elevation assigned via `manage_users`, not a
-   * WorkOS-derived role; listing an `owner` slug here grants app `admin`, not
-   * app `owner`.
+   * to `member`. Any slug not listed maps to `member` (and is logged). The
+   * default `owner` is WorkOS's org-owner role name; it grants app `admin`,
+   * the top app role.
    */
   adminRoleSlugs?: string[];
   /**
@@ -60,14 +51,6 @@ export interface WorkosAuth {
    * carries the same `aud` as one of these apps' tokens.
    */
   firstPartyClientIds?: string[];
-  /**
-   * Emails of the org's owners, matched case-insensitively against the email
-   * the provider verified. A listed user is an owner on every sign-in, and
-   * `manage_users` refuses to demote or deactivate them: the list, not the
-   * Users page, decides. It is where the first owner comes from, since only an
-   * owner can make another.
-   */
-  owners?: string[];
 }
 
 /**
@@ -126,17 +109,6 @@ function validateFirstPartyClientIds(value: unknown): string[] | undefined {
   return value as string[];
 }
 
-/** Validate optional owner emails — an array of email addresses; empty means none. */
-function validateOwners(value: unknown, adapter: string): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (
-    !Array.isArray(value) ||
-    value.some((s) => typeof s !== "string" || !s.includes("@") || s.trim() !== s)
-  )
-    throw new Error(`instance.json: ${adapter} auth 'owners' must be an array of email addresses`);
-  return value as string[];
-}
-
 /** Validate and build an OIDC auth config, throwing on any missing or mistyped field. */
 function buildOidcAuth(auth: Record<string, unknown>): OidcAuth {
   if (typeof auth.issuer !== "string")
@@ -156,8 +128,6 @@ function buildOidcAuth(auth: Record<string, unknown>): OidcAuth {
     "instance.json: oidc auth 'jwksUri' must be a string",
   );
   if (jwksUri !== undefined) oidc.jwksUri = jwksUri;
-  const owners = validateOwners(auth.owners, "oidc");
-  if (owners !== undefined) oidc.owners = owners;
   return oidc;
 }
 
@@ -197,8 +167,6 @@ function buildWorkosAuth(auth: Record<string, unknown>): WorkosAuth {
   if (adminRoleSlugs !== undefined) workos.adminRoleSlugs = adminRoleSlugs;
   const firstPartyClientIds = validateFirstPartyClientIds(auth.firstPartyClientIds);
   if (firstPartyClientIds !== undefined) workos.firstPartyClientIds = firstPartyClientIds;
-  const owners = validateOwners(auth.owners, "workos");
-  if (owners !== undefined) workos.owners = owners;
   return workos;
 }
 

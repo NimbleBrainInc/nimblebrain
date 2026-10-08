@@ -96,7 +96,7 @@ The `web` container runs Caddy, which serves the static UI files and reverse-pro
 Authentication is configured through an `instance.json` adapter (`dev`, `oidc`, or `workos`), not an environment variable. There is no `NB_API_KEY` — see [Security](/deploy/security) for adapter setup.
 
 <Aside type="caution">
-The platform does not start without `instance.json`. The `dev` adapter (`{"auth":{"adapter":"dev"}}`) checks no credential, so every request is one built-in owner. That is acceptable for local development but never for production. See [Security](/deploy/security) for auth adapter setup.
+The platform does not start without `instance.json`. The `dev` adapter (`{"auth":{"adapter":"dev"}}`) checks no credential, so every request is one built-in admin. That is acceptable for local development but never for production. See [Security](/deploy/security) for auth adapter setup.
 </Aside>
 
 ### Health check

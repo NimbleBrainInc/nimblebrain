@@ -7,12 +7,11 @@
  */
 
 /** Mirrors `OrgRole` in src/identity/types.ts; web/ does not import src/. */
-export type OrgRole = "owner" | "admin" | "member";
+export type OrgRole = "admin" | "member";
 
 export const ORG_ROLE_OPTIONS: ReadonlyArray<{ value: OrgRole; label: string }> = [
   { value: "member", label: "Member" },
   { value: "admin", label: "Admin" },
-  { value: "owner", label: "Owner" },
 ];
 
 /** What each field holds while it is edited. */
@@ -40,5 +39,5 @@ export function userEditPatch<K extends UserEditField>(
 
 /** Whether moving from `from` to `to` takes away the right to manage the org. */
 export function removesAdminRights(from: OrgRole, to: OrgRole): boolean {
-  return from !== "member" && to === "member";
+  return from === "admin" && to === "member";
 }
