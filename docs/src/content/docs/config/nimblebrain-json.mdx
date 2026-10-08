@@ -172,7 +172,12 @@ In both cases a requested depth a model doesn't offer steps **down** to the
 nearest one it does, never up. Where nothing at or below the request is
 offered, no depth is sent and the model runs at its own default — so an
 explicitly set `thinkingEffort` can end up not applied on a model that doesn't
-accept it, rather than the call failing.
+accept it, rather than the call failing. When a known tier ladder steps down or
+drops an operator's requested tier, the runtime logs a `[thinking]` warning
+naming the requested tier and the tier sent (or the provider default), once per
+model and requested tier. An xAI model measured to accept no effort parameter
+sends none without this warning; an xAI model with no measured ladder warns when
+the operator's tier cannot be applied.
 
 `off` is not universally enforceable, and where it isn't, nothing is sent
 rather than a flag that would be rejected or ignored:

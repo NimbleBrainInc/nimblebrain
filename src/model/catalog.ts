@@ -544,9 +544,10 @@ export type XAIWireEffort = XAIEffort | "none";
  * capability flag; that would misreport reasoning cost to say nothing of being
  * false.
  *
- * Absent vs. empty behave identically at the engine (send nothing) but differ
- * to `xaiUnmeasuredReasoningModels` below, which is what keeps a newly-synced
- * Grok from silently inheriting a guessed ladder.
+ * Absent vs. empty both send nothing at the engine, but an operator-requested
+ * tier on an absent row logs a warning. They also differ to
+ * `xaiUnmeasuredReasoningModels` below, which keeps a newly-synced Grok from
+ * silently inheriting a guessed ladder.
  *
  * Only reasoning-capable models belong here. A non-reasoning one needs no row:
  * `resolveThinking` drops the override on `capabilities.reasoning` before the
