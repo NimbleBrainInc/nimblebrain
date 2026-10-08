@@ -48,4 +48,18 @@ describe("McpSource.resourceTemplates", () => {
     await source.stop();
     expect(await source.resourceTemplates()).toBe(first);
   });
+
+  it("reads the templates again after a reconnect", async () => {
+    const source = await startSource([{ uriTemplate: "crm://contacts/{id}", name: "contact" }]);
+    const first = await source.resourceTemplates();
+    await source.stop();
+    await source.start();
+    try {
+      const second = await source.resourceTemplates();
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+    } finally {
+      await source.stop();
+    }
+  });
 });

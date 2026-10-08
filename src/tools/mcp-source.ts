@@ -834,6 +834,7 @@ export class McpSource implements ToolSource {
       // path onto the bottom seam instead of early-returning.
       this.emitToolsChanged();
       this.resubscribeResources();
+      this.resourceTemplatesMemo = null;
     } catch (retryErr) {
       await this.cleanupOnStartFailure();
       throw retryErr;
