@@ -90,6 +90,8 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
 | `allowedDomains` | `string[]` | Yes | Email domains permitted to sign in. A verified identity whose domain isn't listed is rejected. |
 | `jwksUri` | `string` | No | JWKS endpoint override. Discovered from the issuer's `.well-known` when omitted. |
 
+Each sign-in is matched to a local user by the token's issuer and subject, and by email only to claim a user created ahead of time that no subject is bound to yet. A different subject with an email already bound to someone is refused. See [Signing in with OIDC](/using/users/#signing-in-with-oidc).
+
 ## WorkOS adapter (`auth.adapter: "workos"`)
 
 | Field | Type | Required | Description |

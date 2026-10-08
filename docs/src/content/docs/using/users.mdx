@@ -14,12 +14,24 @@ How users are managed depends on your authentication configuration in `instance.
 | Adapter | User management | Description |
 |---------|----------------|-------------|
 | **dev** | **Organization → Users** | `"adapter": "dev"`. Identities live in the built-in local store under `users/`. No credential is checked and every request is the built-in admin (see [Security](/deploy/security/)), but users, roles, and ownership still apply. |
-| **oidc** | External provider | Users are managed in your OIDC provider. NimbleBrain creates local records on first login. |
+| **oidc** | External provider | Users are managed in your OIDC provider. NimbleBrain creates a local record on first login, or binds one an admin created ahead of time. See [Signing in with OIDC](#signing-in-with-oidc). |
 | **workos** | External provider (WorkOS) | Identities and sign-in are managed in WorkOS / AuthKit. |
 
 <Aside type="tip">
 The `dev` adapter checks no credential. The dev launchers (`bun run dev` and its variants) write it for you; everywhere else, `instance.json` must name an adapter or the server does not start.
 </Aside>
+
+## Signing in with OIDC
+
+Under the **oidc** adapter, a user's account is their provider subject: the token's `iss` and `sub` claims. Each sign-in finds the local record in this order:
+
+1. The record bound to that issuer and subject. A user created at first login is bound when it is created.
+2. A record with the token's email that an admin created ahead of time and no subject is bound to yet. That sign-in binds the record to the subject.
+3. Neither: a new record, as **Member**, bound to the subject.
+
+Because the subject decides, a user whose email changes at the provider keeps the same account. A record bound to one subject is never matched by email: if the provider gives that email to a different person, their sign-in is refused and logged, and no second record is created.
+
+The binding is stored in the `identity` field of the user's `users/<id>/profile.json` and includes the issuer. If you change `issuer` in `instance.json`, users bound to the old issuer are refused. To let one sign in through the new issuer, set `identity` to `<new issuer>#<their sub at the new issuer>`; their next sign-in matches it.
 
 ## Managing users
 
