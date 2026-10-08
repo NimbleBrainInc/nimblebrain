@@ -122,6 +122,14 @@ async function oidcUserId(sub: string): Promise<string> {
   return `usr_oidc_${hashHex.slice(0, 12)}`;
 }
 
+/**
+ * The key a record is bound by. A subject is unique only within its issuer,
+ * and an issuer URL has no fragment, so `#` separates the two unambiguously.
+ */
+function subjectKey(issuer: string, sub: string): string {
+  return `${issuer}#${sub}`;
+}
+
 // ── OidcIdentityProvider ─────────────────────────────────────────
 
 /**
@@ -197,27 +205,67 @@ export class OidcIdentityProvider implements IdentityProvider {
 
     const email = payload.email!;
     const sub = payload.sub ?? email;
-    const deterministicId = await oidcUserId(sub);
-
-    let user = await this.userStore.get(deterministicId);
-    if (!user) {
-      user = await this.userStore.getByEmail(email);
-    }
-
-    if (!user) {
-      user = await this.userStore.create({
-        id: deterministicId,
-        email,
-        displayName: buildDisplayName(payload),
-        orgRole: "member",
-      });
-    }
+    const user = await this.resolveUser(sub, email, payload);
+    if (!user) return null;
 
     // SECURITY: soft-deleted (deactivated) users are denied access. The record
     // is retained as a tombstone; access resumes only after an admin restores it.
     if (user.deletedAt) return null;
 
     return { ...toIdentity(user), grant: FIRST_PARTY_GRANT };
+  }
+
+  /**
+   * Find, bind, or create the record for a verified `iss`+`sub`.
+   *
+   * A record's `identity` holds the subject it is bound to. The subject is the
+   * account; an email is only how a pre-created record (random id, subject not
+   * yet known) is claimed the first time. So the order is:
+   *
+   * 1. the subject-derived id (users auto-provisioned at first sign-in);
+   * 2. a record bound to this subject;
+   * 3. the email, only on a record with no subject bound, which then binds;
+   * 4. otherwise a new record, bound at creation.
+   *
+   * A record bound to another subject is never matched by email: the provider
+   * has given that email to someone else, so the sign-in is refused rather than
+   * handing them the record or creating a second one for the same email.
+   */
+  private async resolveUser(sub: string, email: string, payload: JwtPayload): Promise<User | null> {
+    const subject = subjectKey(this.issuer, sub);
+    const deterministicId = await oidcUserId(sub);
+
+    const byId = await this.userStore.get(deterministicId);
+    if (byId) return this.claim(byId, subject);
+
+    const users = await this.userStore.list();
+    const bound = users.find((u) => u.identity === subject);
+    if (bound) return bound;
+
+    const byEmail = users.find((u) => u.email === email);
+    if (byEmail) return this.claim(byEmail, subject);
+
+    return this.userStore.create({
+      id: deterministicId,
+      email,
+      displayName: buildDisplayName(payload),
+      orgRole: "member",
+      identity: subject,
+    });
+  }
+
+  /** Bind `user` to `subject` if it has none; refuse it if bound to another. */
+  private async claim(user: User, subject: string): Promise<User | null> {
+    if (user.identity === subject) return user;
+    if (user.identity) {
+      log.warn("[oidc] sign-in refused: the matching user is bound to another subject", {
+        userId: user.id,
+        issuer: this.issuer,
+      });
+      return null;
+    }
+    if (user.deletedAt) return user;
+    return (await this.userStore.update(user.id, { identity: subject })) ?? user;
   }
 
   async listUsers(): Promise<User[]> {

@@ -485,4 +485,118 @@ describe("OidcIdentityProvider", () => {
       await rm(workDir2, { recursive: true, force: true });
     });
   });
+
+  describe("subject binding", () => {
+    test("first sign-in by email binds the subject to the pre-created record", async () => {
+      const created = await userStore.create({
+        email: "pre@example.com",
+        displayName: "Pre",
+        orgRole: "admin",
+      });
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "pre@example.com", sub: "pre-sub" })),
+      );
+      expect(identity!.id).toBe(created.id);
+      expect((await userStore.get(created.id))!.identity).toBe(`${issuer}#pre-sub`);
+    });
+
+    test("a later sign-in with the same subject and a changed email finds the same record", async () => {
+      const created = await userStore.create({ email: "old@example.com", displayName: "Old" });
+      await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "old@example.com", sub: "moving-sub" })),
+      );
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "new@example.com", sub: "moving-sub" })),
+      );
+      expect(identity!.id).toBe(created.id);
+      expect(await userStore.list()).toHaveLength(1);
+    });
+
+    test("a new subject with a bound record's email is refused and creates no record", async () => {
+      const created = await userStore.create({
+        email: "taken@example.com",
+        displayName: "Taken",
+        orgRole: "admin",
+      });
+      await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "taken@example.com", sub: "first-sub" })),
+      );
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "taken@example.com", sub: "second-sub" })),
+      );
+      expect(identity).toBeNull();
+      const users = await userStore.list();
+      expect(users).toHaveLength(1);
+      expect(users[0]!.id).toBe(created.id);
+      expect(users[0]!.identity).toBe(`${issuer}#first-sub`);
+    });
+
+    test("an auto-provisioned user is bound at creation and found by subject", async () => {
+      const first = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "auto@example.com", sub: "auto-sub" })),
+      );
+      const stored = await userStore.get(first!.id);
+      expect(stored!.identity).toBe(`${issuer}#auto-sub`);
+
+      const again = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "auto-renamed@example.com", sub: "auto-sub" })),
+      );
+      expect(again!.id).toBe(first!.id);
+
+      const other = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "auto@example.com", sub: "someone-else" })),
+      );
+      expect(other).toBeNull();
+      expect(await userStore.list()).toHaveLength(1);
+    });
+
+    test("an auto-provisioned record from before binding binds on its next sign-in", async () => {
+      const first = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "legacy@example.com", sub: "legacy-sub" })),
+      );
+      await userStore.update(first!.id, { identity: undefined });
+
+      const again = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "legacy@example.com", sub: "legacy-sub" })),
+      );
+      expect(again!.id).toBe(first!.id);
+      expect((await userStore.get(first!.id))!.identity).toBe(`${issuer}#legacy-sub`);
+    });
+
+    test("the same subject from another issuer is refused and creates no record", async () => {
+      const first = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "iss@example.com", sub: "shared-sub" })),
+      );
+      expect(first).not.toBeNull();
+
+      const otherIssuer = `${issuer}/other`;
+      const otherAdapter = new OidcIdentityProvider(
+        {
+          adapter: "oidc",
+          issuer: otherIssuer,
+          clientId: CLIENT_ID,
+          allowedDomains: ALLOWED_DOMAINS,
+          jwksUri: `${issuer}/jwks`,
+        },
+        userStore,
+      );
+      const sameSub = await otherAdapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({ iss: otherIssuer, email: "iss2@example.com", sub: "shared-sub" }),
+        ),
+      );
+      expect(sameSub).toBeNull();
+
+      const sameEmail = await otherAdapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({ iss: otherIssuer, email: "iss@example.com", sub: "fresh-sub" }),
+        ),
+      );
+      expect(sameEmail).toBeNull();
+      expect(await userStore.list()).toHaveLength(1);
+    });
+  });
 });
