@@ -55,7 +55,6 @@ import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
   CONNECTOR_SKILL_SYNTHETIC,
   type ConnectorSkillCandidate,
-  type EffortSource,
   type EngineConfig,
   type EngineResult,
   type EventSink,
@@ -205,9 +204,12 @@ function nearestSupported<T extends string>(
   return undefined;
 }
 
+/** Process-wide deduplication for explicit tier mismatches. */
+const warnedTierDivergence = new Set<string>();
+
 /**
  * Which tier to actually send, for any dialect carrying a per-model tier set.
- * Both Google's levels and OpenAI's efforts obey the same three-part rule:
+ * Google, OpenAI, and xAI tiers obey the same three-part rule:
  *
  *   - the model offers what was asked for → send it
  *   - it doesn't, and the tier is the platform's own fallback rather than
@@ -219,18 +221,31 @@ function nearestSupported<T extends string>(
  *     or below. Never up: reasoning harder than asked is a worse surprise than
  *     not honoring the tier.
  *
- * `undefined` means send no tier at all. Note the operator's choice can end up
- * silently unapplied where nothing at or below it exists — see #809.
+ * `undefined` means send no tier at all. A measured empty ladder (xAI models
+ * with no effort knob) is expected and stays silent; an unknown ladder is a
+ * coverage gap and warns when an operator's requested tier is dropped.
  */
 function pickTier<T extends string>(
+  model: string,
   wanted: T,
-  supported: ReadonlySet<string>,
+  supported: ReadonlySet<string> | undefined,
   ladder: readonly T[],
-  source: EffortSource,
+  thinking: Extract<ResolvedThinking, { mode: "effort" | "enabled" }>,
 ): T | undefined {
-  if (supported.has(wanted)) return wanted;
-  if (source !== "operator") return undefined;
-  return nearestSupported(wanted, supported, ladder);
+  if (supported?.has(wanted)) return wanted;
+  if (thinking.source !== "operator" || supported?.size === 0) return undefined;
+
+  const tier = supported ? nearestSupported(wanted, supported, ladder) : undefined;
+  const key = JSON.stringify([model, thinking.effort]);
+  if (!warnedTierDivergence.has(key)) {
+    warnedTierDivergence.add(key);
+    const reason = supported ? `does not support "${wanted}"` : "has no measured effort ladder";
+    log.warn(
+      `[thinking] Requested thinkingEffort="${thinking.effort}" for "${model}", but it ${reason}; ` +
+        `sending ${tier ? `"${tier}"` : "no tier (provider default)"}. Logged once per model and requested tier.`,
+    );
+  }
+  return tier;
 }
 
 /**
@@ -314,10 +329,11 @@ function buildOpenAIThinkingOptions(
       // `gpt-5-pro` rejects `medium` — the platform fallback — so without
       // this a stock install 400s on every call to it.
       const tier = pickTier(
+        model,
         toOpenAIEffort(thinking.effort),
         openaiSupportedEfforts(model),
         OPENAI_EFFORTS,
-        thinking.source,
+        thinking,
       );
       return tier ? { openai: { reasoningEffort: tier } } : {};
     }
@@ -378,19 +394,18 @@ function buildXaiThinkingOptions(
   thinking: ResolvedThinking,
 ): SharedV4ProviderOptions {
   const supported = xaiSupportedEfforts(model);
-  if (!supported || supported.size === 0) return {};
 
   switch (thinking.mode) {
     case "off":
       // Only where measured — `grok-4.5` rejects `none` while taking the rest,
       // so this cannot be assumed from the provider.
-      return supported.has("none") ? { xai: { reasoningEffort: "none" } } : {};
+      return supported?.has("none") ? { xai: { reasoningEffort: "none" } } : {};
     case "adaptive":
       // No adaptive equivalent; the model applies its own per-call default.
       return {};
     case "effort":
     case "enabled": {
-      const tier = pickTier(toXaiEffort(thinking.effort), supported, XAI_EFFORTS, thinking.source);
+      const tier = pickTier(model, toXaiEffort(thinking.effort), supported, XAI_EFFORTS, thinking);
       return tier ? { xai: { reasoningEffort: tier } } : {};
     }
   }
@@ -401,6 +416,7 @@ const warnedUnmappedGoogle = new Set<string>();
 
 /** Gemini 3's dialect: a named level, from the set this specific model accepts. */
 function googleLevelOptions(
+  model: string,
   thinking: ResolvedThinking,
   levels: ReadonlySet<GoogleThinkingLevel>,
 ): SharedV4ProviderOptions {
@@ -415,10 +431,11 @@ function googleLevelOptions(
       : {};
   }
   const level = pickTier(
+    model,
     toGoogleLevel(thinking.effort),
     levels,
     GOOGLE_THINKING_LEVELS,
-    thinking.source,
+    thinking,
   );
   return level ? { google: { thinkingConfig: { thinkingLevel: level } } } : {};
 }
@@ -496,7 +513,7 @@ function buildGoogleThinkingOptions(
     return {};
   }
   return support.dialect === "level"
-    ? googleLevelOptions(thinking, support.levels)
+    ? googleLevelOptions(model, thinking, support.levels)
     : googleBudgetOptions(thinking, support, maxOutputTokens);
 }
 

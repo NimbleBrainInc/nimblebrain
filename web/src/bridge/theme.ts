@@ -177,9 +177,11 @@ export function buildThemeStyleBlock(mode: ThemeMode): string {
 
   // `color-scheme` is what the browser draws its own parts with: scrollbars, form
   // controls, the canvas behind a transparent body. Without it an app in dark mode
-  // gets a dark page with light scrollbars. It is set here, at parse time, because
-  // the document has to start in the host's mode; a later mode change is the app
-  // SDK's to follow, as it is for the variables.
+  // gets a dark page with light scrollbars. Here it is only the first-paint seed:
+  // the frame is sandboxed, so the host cannot update it after a toggle.
+  // `@nimblebrain/synapse` keeps it current, setting it inline from
+  // `hostContext.theme` at the handshake and on every `host-context-changed`. An
+  // app on another client keeps the mount's mode for these parts.
   return `<style>
 :root {
   color-scheme: ${mode};

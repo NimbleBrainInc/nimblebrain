@@ -19,6 +19,7 @@ export type ContainmentTag =
   | "app-instructions"
   | "app-custom-instructions"
   | "app-description"
+  | "app-resource-templates"
   | "app-guide"
   | "app-state"
   | "workspace-instructions"
@@ -232,6 +233,13 @@ export interface PromptAppInfo {
    * say over how the agent should behave when using this connector.
    */
   customInstructions?: string;
+  /**
+   * URI shapes of the records this connector serves (its
+   * `resources/templates/list`, already filtered and bounded by
+   * `readableRecordTemplates`). Rendered inside `<app-resource-templates>` so
+   * the model knows `nb__read_resource` reads them.
+   */
+  resourceTemplates?: Array<{ uriTemplate: string; name: string }>;
   ui: { name: string } | null;
 }
 
@@ -691,6 +699,7 @@ function appsLayers(apps?: PromptAppInfo[], hasProxiedTools?: boolean): PendingL
           hasCustomInstructions:
             !!app.customInstructions && app.customInstructions.trim().length > 0,
           ui: app.ui,
+          resourceTemplates: app.resourceTemplates?.length ?? 0,
         },
       })),
     },
@@ -877,11 +886,17 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
       // the connector author, but the same containment guarantee applies.
       lines.push(wrapContained("app-custom-instructions", app.customInstructions));
     }
+    if (app.resourceTemplates && app.resourceTemplates.length > 0) {
+      lines.push(wrapContained("app-resource-templates", formatResourceTemplates(app)));
+    }
   }
   lines.push(
     "",
     "When you create or modify data in apps that have a UI, mention that the user can view the result in the sidebar.",
   );
+  if (apps.some((app) => (app.resourceTemplates?.length ?? 0) > 0)) {
+    lines.push("", READABLE_RECORDS_NOTE);
+  }
   if (hasProxiedTools) {
     lines.push(
       "",
@@ -889,6 +904,21 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
     );
   }
   return lines.join("\n");
+}
+
+/**
+ * How the model uses `<app-resource-templates>`. Emitted once, and only when
+ * some app lists templates, so a workspace without record-serving connectors
+ * gets the same prompt as before.
+ */
+const READABLE_RECORDS_NOTE =
+  "Each line of an `app-resource-templates` block is the URI shape of a record that app serves. To read one record whole, fill in its braced parts (an id from that app's tool results, which often carry the record's `uri`) and pass the URI to `nb__read_resource`.";
+
+/** One `<shape> — <name>` line per template, each field flattened to one line. */
+function formatResourceTemplates(app: PromptAppInfo): string {
+  return (app.resourceTemplates ?? [])
+    .map((t) => `${sanitizeLineField(t.uriTemplate)} — ${sanitizeLineField(t.name).slice(0, 80)}`)
+    .join("\n");
 }
 
 const INTERACTION_RULES = `### Interaction Rules
