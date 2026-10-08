@@ -568,6 +568,8 @@ function createServer(
           { tool: request.params.name, ...(state !== undefined ? { state } : {}) },
           ctx,
         ),
+        // The handler is typed to answer a `CallToolResult`; an `input_required`
+        // answer is the other result 2026-07-28 allows, and the SDK sends it as given.
       } as unknown as CallToolResult;
     }
     // The SDK types a `tools/call` result as the tool's own; a SEP-2663 task

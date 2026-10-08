@@ -20,14 +20,27 @@ import {
 } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import { FIRST_PARTY_GRANT, type VerifiedIdentity } from "../../src/identity/provider.ts";
+import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeIdentity } from "../helpers/identity.ts";
 import { newMcpClient } from "../helpers/mcp-client.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const OTHER_WORKSPACE_ID = "ws_005c47492e176e75";
+/** The header that makes a request the second identity's. */
+const OTHER_HEADER = "x-caller-identity";
+const OTHER = makeIdentity({ id: "usr_caller_other", orgRole: "member" });
+
+/** The dev provider, except a request carrying {@link OTHER_HEADER} is {@link OTHER}. */
+class TwoIdentityProvider extends DevIdentityProvider {
+  override async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
+    if (req.headers.get(OTHER_HEADER)) return { ...OTHER, grant: FIRST_PARTY_GRANT };
+    return super.verifyRequest(req);
+  }
+}
 /** The connector's own state, which the client must never hold as it is. */
 const CONNECTOR_STATE = "connector-state-1";
 const ANSWER = { action: "accept", content: { yes: true } };
@@ -113,7 +126,7 @@ beforeAll(async () => {
   connector = Bun.serve({ port: 0, fetch: (request) => handler.fetch(request) });
   workDir = await mkdtemp(join(tmpdir(), "nb-mcp-caller-"));
   runtime = await Runtime.start({
-    identityProvider: devProvider,
+    identityProvider: ({ workDir: dir, userStore }) => new TwoIdentityProvider(dir, userStore),
     languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
@@ -133,6 +146,7 @@ beforeAll(async () => {
     await source.start();
     runtime.getRegistryForWorkspace(wsId).addSource(source);
   }
+  await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, OTHER.id, "member");
   handle = startServer({ runtime, port: 0 });
 });
 
@@ -144,7 +158,9 @@ afterAll(async () => {
 });
 
 /** A client of `/mcp/<wsId>`, answering elicitation when it declares it. */
-async function client(opts: { elicitation?: boolean; wsId?: string } = {}): Promise<Client> {
+async function client(
+  opts: { elicitation?: boolean; wsId?: string; other?: boolean } = {},
+): Promise<Client> {
   const c = newMcpClient(
     { name: "caller-test", version: "1.0.0" },
     { capabilities: opts.elicitation ? { elicitation: { form: {} } } : {} },
@@ -153,6 +169,7 @@ async function client(opts: { elicitation?: boolean; wsId?: string } = {}): Prom
   await c.connect(
     new StreamableHTTPClientTransport(
       new URL(`http://localhost:${handle.port}/mcp/${opts.wsId ?? TEST_WORKSPACE_ID}`),
+      opts.other ? { requestInit: { headers: { [OTHER_HEADER]: "1" } } } : {},
     ),
   );
   return c;
@@ -218,6 +235,24 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
       ).rejects.toMatchObject({ code: -32602 });
     } finally {
       await Promise.all([here.close(), there.close()]);
+    }
+  });
+
+  it("refuses a sealed state replayed by another member of the workspace", async () => {
+    const owner = await client({ elicitation: true });
+    const other = await client({ elicitation: true, other: true });
+    try {
+      const { requestState } = await firstRound(owner);
+      await expect(
+        other.callTool({
+          name: "fixture__confirm",
+          arguments: {},
+          inputResponses: { ok: ANSWER },
+          requestState,
+        } as never),
+      ).rejects.toMatchObject({ code: -32602 });
+    } finally {
+      await Promise.all([owner.close(), other.close()]);
     }
   });
 

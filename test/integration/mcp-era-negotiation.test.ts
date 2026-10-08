@@ -558,6 +558,20 @@ describe("the task wire", () => {
     }
   });
 
+  // A call made for a `/mcp` client keeps the task path, which polls to
+  // completion: an inline call would run under the request timeout instead.
+  it("takes the task path for a call made for a /mcp client", async () => {
+    const { served, seen } = sep2663Server("input_required");
+    const source = await connect(served.url);
+    try {
+      await source.execute("echo", { text: "deep" }, undefined, { caller: { capabilities: {} } });
+      expect(seen).toEqual(["tools/call", "tasks/get", "tasks/cancel"]);
+    } finally {
+      await source.stop();
+      served.close();
+    }
+  });
+
   it("takes a SEP-2663 server's complete answer when it chooses not to task the call", async () => {
     const served = serve(modernServer({ extensions: { [TASKS_EXTENSION_ID]: {} } }));
     const source = await connect(served.url);

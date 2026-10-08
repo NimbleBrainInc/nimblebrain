@@ -1968,8 +1968,9 @@ export class McpSource implements ToolSource {
     // every call to a server advertising the extension takes the task path,
     // which handles a complete answer as well. Everything else uses the inline
     // path, and so does a call that asks for it (`options.inline`, the host's
-    // lifecycle calls) or a call made for an outside client (`options.caller`,
-    // whose own capabilities decide whether the server may answer with a task).
+    // lifecycle calls). A call made for an outside client (`options.caller`)
+    // carries the client's side only on the inline path: the task path polls
+    // to completion, which an inline call under the request timeout would not.
     // A 2025-era tool that requires a task is refused here, before anything is
     // sent.
     const tool = this.findTool(toolName);
@@ -1978,7 +1979,6 @@ export class McpSource implements ToolSource {
     if (refusal) return { content: textContent(refusal), isError: true };
     const isTaskAugmented =
       options?.inline !== true &&
-      options?.caller === undefined &&
       this.protocolEra === "modern" &&
       TASKS_EXTENSION_ID in this.serverExtensions();
 
@@ -3240,14 +3240,13 @@ export type ConnectionFailure =
 
 /**
  * Whether a connector's error asks the client to change its request: declare a
- * capability (`-32021`) or complete a URL elicitation (`-32042`). Nothing the
- * runtime does on its own side can answer either.
+ * capability the call needs (`-32021`). Nothing the runtime does on its own side
+ * can answer it. (A URL elicitation is an `input_required` request on
+ * 2026-07-28, which reaches the client as an answer, not an error.)
  */
 function isClientActionable(err: unknown): boolean {
   return (
-    err instanceof ProtocolError &&
-    (err.code === ProtocolErrorCode.MissingRequiredClientCapability ||
-      err.code === ProtocolErrorCode.UrlElicitationRequired)
+    err instanceof ProtocolError && err.code === ProtocolErrorCode.MissingRequiredClientCapability
   );
 }
 
