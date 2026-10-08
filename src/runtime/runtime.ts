@@ -245,7 +245,7 @@ import {
 } from "../tools/instance-credentials.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
-import { APP_INSTRUCTIONS_URI } from "../tools/resource-schemes.ts";
+import { APP_INSTRUCTIONS_URI, readableRecordTemplates } from "../tools/resource-schemes.ts";
 import {
   announceResourceListChangedFor,
   relayIdentitySourceNotifications,
@@ -3407,10 +3407,22 @@ export class Runtime {
     // agent cannot discover that such resources exist.
     let instructions: string | undefined;
     let customInstructions: string | undefined;
+    let resourceTemplates: PromptAppInfo["resourceTemplates"] = [];
     const source = registry?.getSource(instance.serverName);
     if (source instanceof McpSource) {
       instructions = source.getInstructions();
-      customInstructions = await this.readAppCustomInstructions(source, instance.serverName);
+      // Read together: each is a round trip to the same server on a cold memo.
+      const [custom, templates] = await Promise.all([
+        this.readAppCustomInstructions(source, instance.serverName),
+        source.resourceTemplates(),
+      ]);
+      customInstructions = custom;
+      // The record shapes this connector serves, so the model knows
+      // `nb__read_resource` reads them (ADR-0049).
+      resourceTemplates = readableRecordTemplates(templates).map((t) => ({
+        uriTemplate: t.uriTemplate,
+        name: t.title ?? t.name,
+      }));
     }
 
     return {
@@ -3418,6 +3430,7 @@ export class Runtime {
       description: instance.description,
       instructions,
       ...(customInstructions !== undefined ? { customInstructions } : {}),
+      ...(resourceTemplates.length > 0 ? { resourceTemplates } : {}),
       ui,
     };
   }

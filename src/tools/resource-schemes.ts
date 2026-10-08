@@ -119,3 +119,33 @@ export function isReservedResourceScheme(uri: string): boolean {
   const scheme = uri.slice(0, colon).toLowerCase();
   return (RESERVED_RESOURCE_SCHEMES as readonly string[]).includes(scheme);
 }
+
+/** Most templates one app lists in the prompt. A server publishing more is cut, not refused. */
+export const MAX_PROMPT_RESOURCE_TEMPLATES = 10;
+
+/** Longest template kept. A URI shape longer than this is not one the model should type. */
+const MAX_RESOURCE_TEMPLATE_CHARS = 200;
+
+/**
+ * The connector templates worth naming to the model as readable records: each
+ * server's `resources/templates/list`, minus templates in a scheme the host
+ * resolves itself (a `skill://` or `ui://` template is reached through its own
+ * mechanism, not as a record), deduplicated by template, and bounded in count
+ * and length so a server cannot grow the prompt without limit. Order is the
+ * server's, so the prompt stays byte-stable while the server's list does.
+ */
+export function readableRecordTemplates<T extends { uriTemplate: string }>(
+  templates: readonly T[],
+): T[] {
+  const seen = new Set<string>();
+  const kept: T[] = [];
+  for (const t of templates) {
+    if (kept.length >= MAX_PROMPT_RESOURCE_TEMPLATES) break;
+    const shape = t.uriTemplate.trim();
+    if (!shape.includes("://") || shape.length > MAX_RESOURCE_TEMPLATE_CHARS) continue;
+    if (isReservedResourceScheme(shape) || seen.has(shape)) continue;
+    seen.add(shape);
+    kept.push({ ...t, uriTemplate: shape });
+  }
+  return kept;
+}

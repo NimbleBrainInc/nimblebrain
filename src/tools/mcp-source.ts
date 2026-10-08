@@ -110,6 +110,15 @@ const TASK_CREATED_TIMEOUT_MS = 60_000;
 const LISTEN_RETRY_BASE_MS = 1_000;
 /** Ceiling on the listen retry delay. */
 const LISTEN_RETRY_MAX_MS = 60_000;
+/** Ceiling on a `resources/templates/list` read made while a prompt is assembled. */
+const RESOURCE_TEMPLATES_TIMEOUT_MS = 5_000;
+
+/** One entry of a server's `resources/templates/list`, as the host keeps it. */
+export interface ResourceTemplateInfo {
+  uriTemplate: string;
+  name: string;
+  title?: string;
+}
 
 /**
  * Per-connector context threaded into McpSource so its Client can answer
@@ -449,6 +458,13 @@ export class McpSource implements ToolSource {
    *  completes, if the server reports none, or after stop(). */
   private _serverVersion: string | undefined;
   /**
+   * The server's `resources/templates/list`, fetched on first ask after each
+   * connect and kept until the next one. Null means not fetched on this
+   * connection. Survives `stop()`, so an idle-closed source still reports
+   * what it published while it was up.
+   */
+  private resourceTemplatesMemo: ResourceTemplateInfo[] | null = null;
+  /**
    * For `inProcess` mode only — the linked-pair MCP server that this source
    * speaks to. Owned by McpSource (constructed in `start()` via
    * `mode.createServer`, closed in `stop()`) so platform sources participate
@@ -668,6 +684,8 @@ export class McpSource implements ToolSource {
     // the system prompt composer can render it in the apps list.
     const instructions = this.client.getInstructions();
     this._instructions = typeof instructions === "string" ? instructions : undefined;
+    // A fresh connection may publish a different template set; re-read lazily.
+    this.resourceTemplatesMemo = null;
 
     // Capture the server's reported version (serverInfo.version, from the same
     // initialize response). The server is untrusted — a Composio gateway or a
@@ -816,6 +834,7 @@ export class McpSource implements ToolSource {
       // path onto the bottom seam instead of early-returning.
       this.emitToolsChanged();
       this.resubscribeResources();
+      this.resourceTemplatesMemo = null;
     } catch (retryErr) {
       await this.cleanupOnStartFailure();
       throw retryErr;
@@ -1652,6 +1671,38 @@ export class McpSource implements ToolSource {
    *  Undefined until start() completes; cleared by stop(). */
   getInstructions(): string | undefined {
     return this._instructions;
+  }
+
+  /**
+   * The resource templates this server advertises (`resources/templates/list`,
+   * first page), memoized per connection. Empty when the server declares no
+   * `resources` capability, does not answer the method, or is not connected and
+   * has never answered. The prompt reads this on every assembly, so a failure is
+   * memoized as empty rather than retried each turn, and the request carries a
+   * short timeout so a slow server cannot stall a turn.
+   */
+  async resourceTemplates(): Promise<ResourceTemplateInfo[]> {
+    if (this.resourceTemplatesMemo) return this.resourceTemplatesMemo;
+    const client = this.client;
+    if (!client?.getServerCapabilities()?.resources) return [];
+    let list: ResourceTemplateInfo[] = [];
+    try {
+      const res = await client.listResourceTemplates(undefined, {
+        timeout: RESOURCE_TEMPLATES_TIMEOUT_MS,
+      });
+      list = res.resourceTemplates.map((t) => ({
+        uriTemplate: t.uriTemplate,
+        name: t.name,
+        ...(typeof t.title === "string" ? { title: t.title } : {}),
+      }));
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `resource-templates source=${this.name} error=${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (this.client === client) this.resourceTemplatesMemo = list;
+    return list;
   }
 
   /** Sanitized `serverInfo.version` from the MCP `initialize` response.
