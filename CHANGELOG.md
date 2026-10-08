@@ -247,6 +247,7 @@
 
 ### Fixed
 
+- **An OIDC user created ahead of time is bound to its sign-in subject.** The first sign-in that claims the record by email records the issuer and subject on it, and later sign-ins find it by that subject, so an email changed at the provider keeps the same account. A record bound to one subject is never matched by email again: a different subject with that email is refused and logged, and no second record is created. Records with no subject bound yet bind on their next sign-in, so no migration is needed.
 - **Listing conversations no longer re-parses a long conversation on every refresh.** While a turn runs, the conversations list re-reads only the events appended since its last read, so a refresh on a multi-megabyte conversation costs under a millisecond instead of blocking every chat on the tenant for up to 0.7s ([#1637](https://github.com/NimbleBrainInc/nimblebrain/pull/1637)).
 - **A connector whose sign-in ended is left to rest.** After a sign-in is declined or times out, the health monitor no longer restarts the connector every sweep with no way to succeed; Reconnect starts a new sign-in ([#337](https://github.com/NimbleBrainInc/nimblebrain/issues/337)).
 - **A brokered Google connection shows its account.** When the broker records no display name, the account comes from the id_token the vendor issued, so a Google toolkit whose auth config grants `openid` and `userinfo.email` reads "Connected as …" like Gmail does ([#1612](https://github.com/NimbleBrainInc/nimblebrain/issues/1612)).
