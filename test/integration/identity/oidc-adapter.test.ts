@@ -566,6 +566,25 @@ describe("OidcIdentityProvider", () => {
       expect((await userStore.get(first!.id))!.identity).toBe(`${issuer}#legacy-sub`);
     });
 
+    test("an unbound auto-provisioned record is not claimed by email; its own subject still binds it", async () => {
+      const first = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "kept@example.com", sub: "owner-sub" })),
+      );
+      await userStore.update(first!.id, { identity: undefined });
+
+      const newcomer = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "kept@example.com", sub: "newcomer-sub" })),
+      );
+      expect(newcomer).toBeNull();
+      expect(await userStore.list()).toHaveLength(1);
+
+      const original = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "kept@example.com", sub: "owner-sub" })),
+      );
+      expect(original!.id).toBe(first!.id);
+      expect((await userStore.get(first!.id))!.identity).toBe(`${issuer}#owner-sub`);
+    });
+
     test("the same subject from another issuer is refused and creates no record", async () => {
       const first = await adapter.verifyRequest(
         bearerRequest(await buildJwt({ email: "iss@example.com", sub: "shared-sub" })),

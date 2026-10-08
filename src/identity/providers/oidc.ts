@@ -113,13 +113,16 @@ function buildDisplayName(payload: JwtPayload): string {
   return payload.email ?? payload.sub ?? "Unknown";
 }
 
+/** The id prefix of a record auto-provisioned at sign-in; such an id already names its subject. */
+const OIDC_USER_ID_PREFIX = "usr_oidc_";
+
 async function oidcUserId(sub: string): Promise<string> {
   const data = new TextEncoder().encode(sub);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashHex = Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-  return `usr_oidc_${hashHex.slice(0, 12)}`;
+  return `${OIDC_USER_ID_PREFIX}${hashHex.slice(0, 12)}`;
 }
 
 /**
@@ -224,11 +227,13 @@ export class OidcIdentityProvider implements IdentityProvider {
    *
    * 1. the subject-derived id (users auto-provisioned at first sign-in);
    * 2. a record bound to this subject;
-   * 3. the email, only on a record with no subject bound, which then binds;
+   * 3. the email, only on a pre-created record (no subject bound, and an id that
+   *    does not derive from a subject), which then binds;
    * 4. otherwise a new record, bound at creation.
    *
-   * A record bound to another subject is never matched by email: the provider
-   * has given that email to someone else, so the sign-in is refused rather than
+   * A record bound to another subject, or auto-provisioned for one (its id
+   * derives from that subject), is never claimed by email: the provider has
+   * given that email to someone else, so the sign-in is refused rather than
    * handing them the record or creating a second one for the same email.
    */
   private async resolveUser(sub: string, email: string, payload: JwtPayload): Promise<User | null> {
@@ -243,6 +248,13 @@ export class OidcIdentityProvider implements IdentityProvider {
     if (bound) return bound;
 
     const byEmail = users.find((u) => u.email === email);
+    if (byEmail?.id.startsWith(OIDC_USER_ID_PREFIX)) {
+      log.warn("[oidc] sign-in refused: the matching user was provisioned for another subject", {
+        userId: byEmail.id,
+        issuer: this.issuer,
+      });
+      return null;
+    }
     if (byEmail) return this.claim(byEmail, subject);
 
     return this.userStore.create({
