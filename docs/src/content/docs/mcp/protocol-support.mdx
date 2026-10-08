@@ -120,7 +120,14 @@ Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HT
 | `resources` | Resources from the workspace's servers |
 | `io.modelcontextprotocol/tasks` | In `server/discover`'s `capabilities.extensions`. Long-running tools stay long-running through the endpoint: a `tools/call` whose request names the extension in its client capabilities is answered with a task when the tool can run as one, `tasks/get` inlines the result once the task ends, and `tasks/cancel` acknowledges. A call that does not opt in runs to completion inside the request. The 2025-11-25 tasks utility is not served. |
 
-It advertises neither `listChanged` nor `resources.subscribe`. The endpoint does not serve the optional `GET` server-to-client stream, so progress arrives on the `POST` that started the call. The [MCP endpoint reference](/connect/mcp-endpoint/) covers authentication, the protocol revision, and the audience rule.
+It advertises neither `listChanged` nor `resources.subscribe`. The endpoint does not serve the optional `GET` server-to-client stream, so progress arrives on the `POST` that started the call.
+
+A tool call to a connector that does not advertise the tasks extension carries the caller's side of the protocol through to that connector. (A connector that advertises the extension runs each call as a task, polled to completion, and cannot ask the caller for input.)
+
+- The connector sees the caller's client capabilities, so it asks only for what the caller declared.
+- A connector's `input_required` answer (elicitation, sampling, or a roots request) reaches the caller as it is, and the caller's retry with `inputResponses` reaches the connector. The `requestState` the caller holds is the endpoint's own, signed and bound to the caller, the workspace, and the tool; the connector's state travels inside it. A state echoed by another caller, at another workspace's URL, or on a call to another tool is refused with `-32602`, as is one older than ten minutes or minted before the runtime restarted.
+- A connector's `-32021` (a client capability the request did not declare) reaches the caller as that error.
+- A connector's progress reaches the caller under the caller's own `progressToken`. The [MCP endpoint reference](/connect/mcp-endpoint/) covers authentication, the protocol revision, and the audience rule.
 
 ## Related
 

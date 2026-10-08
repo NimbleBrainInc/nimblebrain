@@ -1,6 +1,11 @@
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { McpUiToolVisibility } from "@modelcontextprotocol/ext-apps";
-import type { ContentBlock, TextContent, ToolAnnotations } from "@modelcontextprotocol/server";
+import type {
+  ContentBlock,
+  InputRequests,
+  TextContent,
+  ToolAnnotations,
+} from "@modelcontextprotocol/server";
 import type { TokenUsage } from "../usage/types.ts";
 import type { EngineEventPayloads } from "./schemas/events.ts";
 
@@ -130,6 +135,12 @@ export interface ToolResult {
    * connector, can opt into a `_meta` hint and have it reach the engine.
    */
   _meta?: Record<string, unknown>;
+  /**
+   * The connector needs input from the client before it can answer (an MCP
+   * `input_required` result). Only a call made with `ToolExecuteOptions.caller`
+   * can come back this way; `content` is then empty.
+   */
+  inputRequired?: { inputRequests?: InputRequests; requestState?: string };
 }
 
 /**
