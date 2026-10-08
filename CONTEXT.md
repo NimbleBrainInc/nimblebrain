@@ -73,7 +73,7 @@ a user in exactly one workspace into it and shows anyone else all of theirs
 
 ### Identity provider
 What authenticates a request and says who made it, named by `auth.adapter` in
-`instance.json`: `dev` (every request is one local developer, an org owner),
+`instance.json`: `dev` (every request is one local developer, an org admin),
 `oidc` or `workos`. It is always a choice: with no `instance.json` (and none
 passed in) the runtime does not start, and no request is admitted as `dev`
 because the file is absent. Every run names its caller and its workspace

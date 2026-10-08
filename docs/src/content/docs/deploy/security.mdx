@@ -15,14 +15,14 @@ NimbleBrain uses pluggable authentication adapters configured via `instance.json
 
 | Adapter | Use case | Configuration |
 |---------|----------|--------------|
-| **dev** | Local development | `adapter: "dev"`: every request is one built-in owner, no login |
+| **dev** | Local development | `adapter: "dev"`: every request is one built-in admin, no login |
 | **oidc** | Enterprise / SSO | Authorization-code flow against any OIDC provider |
 | **workos** | Enterprise / SSO via WorkOS | AuthKit-hosted login (`adapter: "workos"`) |
 
 The adapter is selected by the `auth.adapter` field in `instance.json`. The server does not start without the file: a missing identity config never selects an adapter.
 
 <Aside type="danger">
-The `dev` adapter checks no credential. Anyone who can reach the server is its org owner, with full access to the agent and every connector installed in its workspaces.
+The `dev` adapter checks no credential. Anyone who can reach the server is its org admin, with full access to the agent and every connector installed in its workspaces.
 </Aside>
 
 ### How authentication works

@@ -91,7 +91,7 @@ function checkModelConfigAccess(runtime: Runtime): string | null {
     );
   }
   if (!ORG_ADMIN_ROLES.has(identity.orgRole)) {
-    return "Only org admins or owners can change model configuration. The model config affects every workspace.";
+    return "Only org admins can change model configuration. The model config affects every workspace.";
   }
   return null;
 }

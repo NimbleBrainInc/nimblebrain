@@ -35,10 +35,9 @@ export interface WorkosAuth {
    * `["admin", "owner"]`; an explicit list REPLACES the defaults and must
    * contain at least one non-empty slug. Set this when your WorkOS org's admin
    * role carries a custom slug (e.g. `org-admin`) — otherwise it silently maps
-   * to `member`. Any slug not listed maps to `member` (and is logged). Note:
-   * `owner` is an app-internal elevation assigned via `manage_users`, not a
-   * WorkOS-derived role; listing an `owner` slug here grants app `admin`, not
-   * app `owner`.
+   * to `member`. Any slug not listed maps to `member` (and is logged). The
+   * default `owner` is WorkOS's org-owner role name; it grants app `admin`,
+   * the top app role.
    */
   adminRoleSlugs?: string[];
   /**

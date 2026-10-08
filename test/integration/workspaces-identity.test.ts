@@ -376,7 +376,7 @@ describe("Dev mode", () => {
     expect(identity).not.toBeNull();
     expect(identity!.id).toBe("usr_default");
     expect(identity!.email).toBe("dev@localhost");
-    expect(identity!.orgRole).toBe("owner");
+    expect(identity!.orgRole).toBe("admin");
 
     // Default user profile was auto-created
     const user = await userStore.get("usr_default");

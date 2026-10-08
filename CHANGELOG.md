@@ -33,6 +33,7 @@
 
 ### Added
 
+- **Edit a user from Organization → Users.** An org admin changes a user's display name, email, and role, each saving as it changes; under WorkOS the name and admin/member role are written to WorkOS, and email is locked under WorkOS and OIDC ([docs](https://docs.nimblebrain.ai/using/users/#what-an-edit-can-change)).
 - **The agent reads a connector's records whole.** A connector's resource templates are listed under it in the system prompt, `nb__read_resource` returns a non-skill resource up to the 50,000-character tool-result limit, and the `tool.done` log line ends with the result's size ([ADR-0049](adr/0049-the-agent-reads-a-connectors-records-as-resources.md)).
 - **`/mcp/<wsId>` carries the caller's side of a connector call.** A connector sees the outside client's capabilities, its `input_required` answers (elicitation, sampling, roots) reach the client and the client's answers come back, its `-32021` reaches the client as it is, and its progress arrives under the client's token. The `requestState` the client holds is signed and bound to the caller, workspace and tool. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).
 - **Every OAuth connector can show which account it is signed in as.** A catalog entry's `account` block names the tool to ask a service whose sign-in does not say (no OIDC, a broker that records none); the runtime asks once and keeps the answer with the connection. See [Showing the connected account](https://docs.nimblebrain.ai/config/connectors-catalog/#showing-the-connected-account) ([#1612](https://github.com/NimbleBrainInc/nimblebrain/issues/1612)).
@@ -151,6 +152,7 @@
 
 ### Breaking
 
+- **The `owner` org role is gone; `admin` is the top role.** It granted nothing beyond `admin`. `manage_users` accepts only `admin` or `member`, keeps at least one active admin, and the dev user is an admin. Upgrade floor: a deployment must hold no user with `orgRole: "owner"` before upgrading, because nothing reads it as an admin. Set each one's `orgRole` to `admin` in `users/<id>/profile.json` with the runtime stopped; the Users page cannot demote the last owner on earlier releases. Under OIDC, a user's email is no longer editable.
 - **`/mcp/<wsId>` speaks MCP 2026-07-28 only.** Each request is served on its own, with no `initialize` and no `Mcp-Session-Id`; a 2025-era client gets `-32022` naming the supported version. The `sessionStore` config key and the `MCP_SESSION_TTL_SECONDS` / `MCP_MAX_SESSIONS` env vars go with the sessions (a config that keeps `sessionStore` starts with a warning). The runtime still connects to a 2025-only connector. See [ADR-0048](adr/0048-mcp-serves-2026-07-28-only.md).
 - **With `NB_FLEET_AUTHORIZER_ISSUER` set, the runtime refuses to start without a valid `NB_TENANT_ID` and `NB_MCP_AUTHORIZER_TENANT_KEY`.** It no longer sends a fleet token request without a tenant assertion, which an authorizer that requires one refuses anyway. Provision the key before upgrading.
 - **A WorkOS instance with an empty `organizationId` refuses to start.** A blank or whitespace-only value in `instance.json` is a startup error. Omitting the field still runs without an organization, which admits every user in the AuthKit environment ([#1153](https://github.com/NimbleBrainInc/nimblebrain/issues/1153)).
@@ -248,6 +250,7 @@
 
 ### Fixed
 
+- **`manage_users` refuses what it reports as refused.** Demoting or deactivating the last admin answers `isError: true`, and changing your own role or deactivating yourself is refused on the server, not only hidden in the page.
 - **An OIDC user created ahead of time is bound to its sign-in subject.** The first sign-in that claims the record by email records the issuer and subject on it, and later sign-ins find it by that subject, so an email changed at the provider keeps the same account. A record bound to one subject is never matched by email again: a different subject with that email is refused and logged, and no second record is created. Records with no subject bound yet bind on their next sign-in, so no migration is needed.
 - **Listing conversations no longer re-parses a long conversation on every refresh.** While a turn runs, the conversations list re-reads only the events appended since its last read, so a refresh on a multi-megabyte conversation costs under a millisecond instead of blocking every chat on the tenant for up to 0.7s ([#1637](https://github.com/NimbleBrainInc/nimblebrain/pull/1637)).
 - **A connector whose sign-in ended is left to rest.** After a sign-in is declined or times out, the health monitor no longer restarts the connector every sweep with no way to succeed; Reconnect starts a new sign-in ([#337](https://github.com/NimbleBrainInc/nimblebrain/issues/337)).

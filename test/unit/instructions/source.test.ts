@@ -31,16 +31,16 @@ interface FakeIdentity {
   id: string;
   email: string;
   displayName: string;
-  orgRole: "owner" | "admin" | "member";
+  orgRole: "admin" | "member";
   preferences: { timezone: string; locale: string; theme: string };
 }
 
-/** The dev user, as the `dev` provider verifies every request: org owner. */
+/** The dev user, as the `dev` provider verifies every request: org admin. */
 const DEV_USER: FakeIdentity = {
   id: "usr_default",
   email: "dev@localhost",
   displayName: "Developer",
-  orgRole: "owner",
+  orgRole: "admin",
   preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
 };
 
@@ -312,7 +312,7 @@ describe("instructions source — role gates", () => {
     expect(result.isError).toBe(true);
   });
 
-  test("org admin/owner who is NOT a workspace member is denied for workspace scope (STRICT — no org bypass)", async () => {
+  test("org admin who is NOT a workspace member is denied for workspace scope (STRICT — no org bypass)", async () => {
     const src = await buildSource();
     runtime.identity = {
       id: "org_admin",
@@ -334,26 +334,6 @@ describe("instructions source — role gates", () => {
     const parsed = parseStructured(result as { content?: Array<{ type: string; text?: string }> });
     // Denied for membership, not for org role.
     expect(JSON.stringify(parsed)).toContain("member");
-  });
-
-  test("org owner who is NOT a workspace member is denied for workspace scope", async () => {
-    const src = await buildSource();
-    runtime.identity = {
-      id: "org_owner",
-      email: "owner@ex.com",
-      displayName: "Org Owner",
-      orgRole: "owner",
-      preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
-    };
-    runtime.wsId = "ws_002afe1142297ff4";
-    runtime.setMember("ws_002afe1142297ff4", "someone_else", "admin");
-
-    const client = src.getClient()!;
-    const result = await client.callTool({
-      name: "write_instructions",
-      arguments: { body: "x" },
-    });
-    expect(result.isError).toBe(true);
   });
 
   test("workspace admin identity allowed for workspace scope", async () => {

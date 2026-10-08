@@ -356,6 +356,12 @@ describe("OidcIdentityProvider", () => {
     });
   });
 
+  describe("profile fields", () => {
+    test("email is provider-owned, since sign-in falls back to matching it", () => {
+      expect(adapter.capabilities.providerOwnedUserFields).toEqual(["email"]);
+    });
+  });
+
   describe("OIDC auto-provisioning", () => {
     test("second login with same sub returns same user (no duplicate)", async () => {
       const sub = "repeat-login-sub";

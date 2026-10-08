@@ -150,6 +150,9 @@ export class OidcIdentityProvider implements IdentityProvider {
     managedUsers: false,
     // Verifies tokens minted elsewhere; this runtime is not the issuer.
     authorizationServer: false,
+    // Sign-in falls back to finding a user by email (below), so an editable
+    // email would let an admin point someone else's sign-in at a record.
+    providerOwnedUserFields: ["email"],
   };
 
   private issuer: string;

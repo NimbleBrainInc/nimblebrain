@@ -9,7 +9,7 @@ import { toolNameMatchesPattern } from "./tool-pattern.ts";
  * Choosing a tool's surface — the three resting places.
  *
  * Two orthogonal axes govern any tool:
- *   - AUTHORITY — who may invoke it (member/admin/owner). Enforced in the
+ *   - AUTHORITY — who may invoke it (member/admin). Enforced in the
  *     handler and by role visibility; NOT this file's concern.
  *   - DRIVER — what surface decides to call it: the agent *reasoning* about a
  *     capability, or a deterministic *UI affordance* a human clicks. This is

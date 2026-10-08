@@ -1485,7 +1485,7 @@ type AccessMode = "read" | "write";
  *
  * Tier rules (read | write):
  *   - connector      — read: anyone (Layer 1 vendored). write: refused (caller side).
- *   - org         — read: any tenant member.            write: org admin/owner.
+ *   - org         — read: any tenant member.            write: org admin.
  *   - workspace   — read+write: must be a member of the path's workspace.
  *                   write also requires `admin` role in that workspace.
  *   - user        — read+write: only the owning user.
@@ -1520,12 +1520,12 @@ function connectorAccess(mode: AccessMode): PermissionDecision {
   return { allowed: false, reason: "Connector (Layer 1) skills are vendored and not mutable" };
 }
 
-/** Org-tier access: any tenant member reads; only org admins/owners write. */
+/** Org-tier access: any tenant member reads; only org admins write. */
 function orgAccess(mode: AccessMode, isOrgAdmin: boolean): PermissionDecision {
   if (mode === "read") return { allowed: true };
   return isOrgAdmin
     ? { allowed: true }
-    : { allowed: false, reason: "Org-scope writes require org admin or owner" };
+    : { allowed: false, reason: "Org-scope writes require org admin" };
 }
 
 /** User-tier access: read+write only for the owning user named by the path (no org-admin override). */
@@ -1685,7 +1685,7 @@ async function reloadBootSkills(runtime: Runtime): Promise<void> {
 
 /**
  * Render a permission-denied error with causation. The bare reason from
- * `checkPathAccess` ("Org-scope writes require org admin or owner") leaves
+ * `checkPathAccess` ("Org-scope writes require org admin") leaves
  * the caller hypothesizing about why their path landed in that scope and
  * what role they actually have — surfaced as a real problem in production
  * when an agent looped trying to fix its role instead of fixing its `id`.

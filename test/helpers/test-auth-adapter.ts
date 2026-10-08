@@ -28,7 +28,7 @@ export const TEST_IDENTITY: UserIdentity = makeIdentity({
   id: "usr_test",
   email: "test@example.com",
   displayName: "Test User",
-  orgRole: "owner",
+  orgRole: "admin",
 });
 
 export class TestAuthAdapter implements IdentityProvider {

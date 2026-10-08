@@ -44,7 +44,7 @@ export const UsageReportInput = Type.Object({
     StringEnum(["user", "org"] as const, {
       description:
         "Aggregation scope. `user` (default) reports only the caller's own conversations. " +
-        "`org` reports every user's conversations and requires org admin/owner — pair with " +
+        "`org` reports every user's conversations and requires org admin — pair with " +
         '`groupBy: "user"` for a per-user breakdown.',
     }),
   ),
