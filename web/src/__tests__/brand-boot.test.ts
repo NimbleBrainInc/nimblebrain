@@ -180,6 +180,33 @@ describe("bootBrand", () => {
     expect(getBrand()).toEqual({});
   });
 
+  test("a 404 with a cached brand clears the cache and restores canonical", async () => {
+    // A runtime rolled back past the brand route answers 404: no route, no brand.
+    localStorage.setItem(BRAND_CACHE_KEY, JSON.stringify(ACME));
+    const server = deferredFetch();
+    await bootBrand({ fetch: server.impl });
+    expect(document.title).toBe("ACME");
+
+    server.answer({ error: "not_found" }, 404);
+    await settle();
+
+    expect(getBrand()).toEqual({});
+    expect(document.title).toBe("NimbleBrain");
+    expect(localStorage.getItem(BRAND_CACHE_KEY)).toBeNull();
+  });
+
+  test("another error status keeps the cached brand", async () => {
+    localStorage.setItem(BRAND_CACHE_KEY, JSON.stringify(ACME));
+    const server = deferredFetch();
+    await bootBrand({ fetch: server.impl });
+
+    server.answer({ error: "internal" }, 500);
+    await settle();
+
+    expect(document.title).toBe("ACME");
+    expect(localStorage.getItem(BRAND_CACHE_KEY)).not.toBeNull();
+  });
+
   test("an unreadable cache is ignored", async () => {
     localStorage.setItem(BRAND_CACHE_KEY, "{not json");
     await bootBrand({ fetch: failingFetch });

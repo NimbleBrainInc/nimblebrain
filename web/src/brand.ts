@@ -21,8 +21,10 @@
  * {@link FIRST_PAINT_WAIT_MS} so a slow server cannot hold the shell blank. A
  * fetch that lands after that still applies. `{}` from the server is an
  * answer, not a failure: it clears the cache and restores the canonical look.
+ * So is a 404, which means the runtime has no brand route at all.
  *
- * **Failure is canonical.** A fetch that fails keeps whatever is applied — the
+ * **Failure is canonical.** A fetch that fails (a network error, any other
+ * error status) keeps whatever is applied — the
  * cached brand, which was the server's own answer last time, or canonical. A
  * brand that cannot be applied (a cache written by an older client, a body the
  * merge cannot read) falls back to canonical rather than half-painting.
@@ -209,6 +211,9 @@ async function fetchBrand(fetchImpl: typeof fetch): Promise<ResolvedBrand | unde
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetchImpl(BRAND_URL, { signal: controller.signal });
+    // No route means a runtime that serves no brand (one rolled back past it):
+    // the same answer as `{}`, so a cached brand does not outlive it.
+    if (res.status === 404) return {};
     if (!res.ok) return undefined;
     const body: unknown = await res.json();
     return isBrand(body) ? body : undefined;
