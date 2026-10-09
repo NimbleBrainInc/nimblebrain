@@ -621,6 +621,8 @@ export interface TaskRunResult {
    * whether it did (`TaskRun.outputSchemaValid`).
    */
   structured?: unknown;
+  /** Why the run failed or did not start, as its record says. */
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------

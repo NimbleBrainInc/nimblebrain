@@ -255,6 +255,7 @@
 
 ### Fixed
 
+- **Every task run leaves a result.** A run that failed before the engine returned, never started, or was lost with its process now writes `<runId>.result.json` too, with an empty output and its `error`, so `tasks__run_result` and the Tasks panel read one shape. Runs recorded by earlier releases keep their preview fallback.
 - **`/mcp/<wsId>` refuses an untrusted browser `Origin` with `403`** (DNS-rebinding protection). A hostname you reach the web UI by, other than the public origin, goes in `ALLOWED_ORIGINS`. [Docs](https://docs.nimblebrain.ai/deploy/security/#browser-origins-at-mcpwsid).
 - **`manage_users` refuses what it reports as refused.** Demoting or deactivating the last admin answers `isError: true`, and changing your own role or deactivating yourself is refused on the server, not only hidden in the page.
 - **OIDC claims or provisions a user only from a verified email.** A token whose `email_verified` claim is not `true`, or is missing, is refused, so an unverified email can no longer take over a pre-created user or pass `allowedDomains`. **Breaking** for a provider that omits the claim — see Breaking ([#1662](https://github.com/NimbleBrainInc/nimblebrain/issues/1662)).

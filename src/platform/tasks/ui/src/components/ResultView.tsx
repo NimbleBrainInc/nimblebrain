@@ -59,6 +59,7 @@ export function Deliverable({
   onOpenFile?: (file: RunFileRef) => void;
 }) {
   const [raw, setRaw] = useState(false);
+  // Every run writes a result; a run recorded before that has only its preview.
   const output = result?.output ?? run?.resultPreview ?? "";
   const files = result?.outputFiles ?? [];
   const structured = isStructured(result, output);
@@ -87,7 +88,11 @@ export function Deliverable({
           dangerouslySetInnerHTML={{ __html: renderMarkdown(output) }}
         />
       ) : (
-        <p className="muted">No deliverable for this run.</p>
+        <p className="muted">
+          {run?.execution === "skipped"
+            ? "This run did not start, so it left no deliverable."
+            : "No deliverable for this run."}
+        </p>
       )}
       {!result && run?.resultPreview && (
         <p className="muted">Showing the preview; the full result could not be read.</p>
@@ -435,7 +440,8 @@ export function ResultBody({
   if (state.status !== "ready" && (state.status !== "loading" || !state.run)) return status;
   const { run, result } = state;
   const assessment = run?.assessment ?? result?.assessment;
-  const canJudge = canAct && run?.execution !== "skipped" && !!(result || run?.resultPreview);
+  // The verdict goes on a run that left a deliverable, as `tasks__assess` requires.
+  const canJudge = canAct && (run?.execution === "completed" || run?.execution === "incomplete");
   return (
     <Sections>
       <RunSummary run={run} result={result} />
