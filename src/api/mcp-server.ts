@@ -48,6 +48,7 @@ import {
   ProtocolErrorCode,
   Server,
 } from "@modelcontextprotocol/server";
+import { z } from "zod";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { isAppCallable, isModelVisible, type ToolResult } from "../engine/types.ts";
 import type { TokenGrant, UserIdentity } from "../identity/provider.ts";
@@ -61,8 +62,14 @@ import {
   WorkspaceAccessDenied,
 } from "../orchestrator/index.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
+import { wrapContained } from "../prompt/compose.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import {
+  parseSkillEntry,
+  SKILLS_EXTENSION_ID,
+  type SkillEntry,
+} from "../skills/skills-extension.ts";
 import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import type { IdentityTaskSource } from "../tools/identity-task-source.ts";
 import { McpSource } from "../tools/mcp-source.ts";
@@ -176,7 +183,14 @@ export class McpServerHost {
       if (taskReply) return taskReply;
     }
     const handler = createMcpHandler(
-      () => createServer(this.runtime, features, requestCtx, this.roundKey),
+      async () =>
+        createServer(
+          this.runtime,
+          features,
+          requestCtx,
+          this.roundKey,
+          await doorInstructions(this.runtime, requestCtx.workspaceId),
+        ),
       {
         legacy: "reject",
         onerror: (err) => log.warn(`[mcp] request failed: ${err.message}`),
@@ -493,6 +507,80 @@ function createHandlers(
   return { listTools, callTool, listResources, listResourceTemplates, readResource };
 }
 
+const SkillsListParamsSchema = z.looseObject({ cursor: z.string().optional() }).optional();
+const SkillsGetParamsSchema = z.looseObject({ uri: z.string() });
+/** `skills/list` and `skills/get` are cacheable results: stale at once, never shared across callers. */
+const SKILL_CACHE_HINTS = { ttlMs: 0, cacheScope: "private" } as const;
+
+/** The workspace's MCP connectors, in name order. */
+async function workspaceConnectors(runtime: Runtime, wsId: string): Promise<McpSource[]> {
+  let registry: ToolRegistry;
+  try {
+    registry = await runtime.ensureWorkspaceRegistry(wsId);
+  } catch {
+    return [];
+  }
+  return registry
+    .getSources()
+    .filter((src): src is McpSource => src instanceof McpSource)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * The instructions `/mcp/<wsId>` serves: the platform apps' own, then each of
+ * the workspace's connectors', under its source name and contained. A client
+ * reaches no connector directly, so this is the only place it learns how a
+ * connector's tools are meant to be used, and its model sees them as
+ * `<source>__<tool>`, not by the names the connector's text uses.
+ */
+async function doorInstructions(
+  runtime: Runtime | null,
+  wsId: string,
+): Promise<string | undefined> {
+  if (!runtime) return undefined;
+  const parts: string[] = [];
+  const platform = runtime.platformInstructions();
+  if (platform) parts.push(platform);
+  for (const source of await workspaceConnectors(runtime, wsId)) {
+    const text = source.getInstructions()?.trim();
+    if (!text) continue;
+    parts.push(
+      `## Connector \`${source.name}\`\n\nIts tools are named \`${source.name}__<tool>\` here.\n\n${wrapContained("connector-instructions", text)}`,
+    );
+  }
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
+/**
+ * The skills the workspace's connectors serve (SEP-2640), by `SKILL.md` URI. An
+ * entry the extension does not allow is dropped. A URI two connectors serve is
+ * left out: `resources/read` would answer it from whichever it reached first.
+ */
+async function workspaceSkills(
+  runtime: Runtime | null,
+  wsId: string,
+): Promise<Map<string, SkillEntry>> {
+  const skills = new Map<string, SkillEntry>();
+  if (!runtime) return skills;
+  const shared = new Set<string>();
+  for (const source of await workspaceConnectors(runtime, wsId)) {
+    if (source.skillsDiscovery() === "none") continue;
+    for (const raw of (await source.listSkills()).entries) {
+      const entry = parseSkillEntry(raw);
+      if (!entry) continue;
+      if (skills.has(entry.uri)) shared.add(entry.uri);
+      else skills.set(entry.uri, entry);
+    }
+  }
+  for (const uri of shared) {
+    skills.delete(uri);
+    log.warn(
+      `[mcp] skill served by more than one connector, left out uri=${JSON.stringify(uri)} ws=${wsId}`,
+    );
+  }
+  return skills;
+}
+
 /**
  * The SDK v2 `Server` built for one request by `createMcpHandler`, which
  * answers `server/discover` and serves the request under its `_meta` envelope.
@@ -505,8 +593,8 @@ function createServer(
   features: ResolvedFeatures,
   requestCtx: McpRequestContext,
   roundKey: Uint8Array,
+  instructions: string | undefined,
 ): Server {
-  const instructions = runtime?.platformInstructions();
   const rounds = createRequestStateCodec<CallerRound>({
     key: roundKey,
     bind: () => `${requestCtx.identity?.id ?? ""}\0${requestCtx.workspaceId}`,
@@ -517,7 +605,7 @@ function createServer(
       capabilities: {
         tools: {},
         resources: {},
-        ...(runtime ? { extensions: { [TASKS_EXTENSION_ID]: {} } } : {}),
+        ...(runtime ? { extensions: { [TASKS_EXTENSION_ID]: {}, [SKILLS_EXTENSION_ID]: {} } } : {}),
       },
       ...(instructions ? { instructions } : {}),
       requestState: { verify: (state, ctx) => rounds.verify(state, ctx) },
@@ -525,6 +613,21 @@ function createServer(
   );
   const handlers = createHandlers(runtime, features, requestCtx);
   server.setRequestHandler("tools/list", () => handlers.listTools());
+  // SEP-2640: the workspace's connectors' skills, in one page, as cacheable
+  // results. Each file reads through `resources/read`, which reaches the
+  // connector that serves it.
+  server.setRequestHandler("skills/list", { params: SkillsListParamsSchema }, async (params) => {
+    if (params?.cursor !== undefined) {
+      throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown cursor: ${params.cursor}`);
+    }
+    const skills = await workspaceSkills(runtime, requestCtx.workspaceId);
+    return { skills: [...skills.values()], ...SKILL_CACHE_HINTS };
+  });
+  server.setRequestHandler("skills/get", { params: SkillsGetParamsSchema }, async (params) => {
+    const skill = (await workspaceSkills(runtime, requestCtx.workspaceId)).get(params.uri);
+    if (!skill) throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown skill URI: ${params.uri}`);
+    return { skill, ...SKILL_CACHE_HINTS };
+  });
   server.setRequestHandler("tools/call", async (request, ctx) => {
     // The SDK types the lifted envelope as `{}`; its keys are the reserved
     // `_meta` names, the client capabilities among them.

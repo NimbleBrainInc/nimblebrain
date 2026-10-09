@@ -21,6 +21,16 @@ const SUITE_VERSION = "0.2.0-alpha.12";
 const REFERENCE_COMMIT = "c37eec888e1c6ff140af79987a40008548b7cc5f";
 /** The protocol versions `/mcp/<wsId>` serves. */
 const SPEC_VERSIONS = ["2026-07-28"] as const;
+/**
+ * The extension scenarios for extensions `/mcp/<wsId>` declares. The suite
+ * selects no extension by protocol version, so each is named, and all share
+ * one baseline, `expected-failures/extensions.yml`.
+ */
+const EXTENSION_SCENARIOS = [
+  "sep-2640-skills-enumeration",
+  "sep-2640-skills-manifest",
+  "sep-2640-skills-directory",
+] as const;
 
 const ROOT = join(import.meta.dir, "..", "..");
 const HERE = import.meta.dir;
@@ -83,36 +93,52 @@ async function startReference(dir: string): Promise<{ url: URL; stop: () => void
   throw new Error("the reference server did not start");
 }
 
+/**
+ * Run the suite with `selection` against `url`, checked against `baseline`.
+ * Async: the gateway runs in this process, so a blocking spawn would starve it.
+ */
+async function runSuite(
+  url: string,
+  selection: string[],
+  baseline: string,
+  results: string,
+): Promise<boolean> {
+  const suite = spawn(
+    "npx",
+    [
+      "-y",
+      `@modelcontextprotocol/conformance@${SUITE_VERSION}`,
+      "server",
+      "--url",
+      url,
+      ...selection,
+      "--expected-failures",
+      join(HERE, "expected-failures", baseline),
+      "--output-dir",
+      join(CACHE, "results", results),
+    ],
+    { stdio: "inherit" },
+  );
+  return (await new Promise<number | null>((resolve) => suite.on("exit", resolve))) === 0;
+}
+
 const reference = await startReference(await ensureReference());
 const gateway = await startGateway(reference.url);
 const failed: string[] = [];
 try {
   for (const version of SPEC_VERSIONS) {
     process.stdout.write(`\n=== MCP conformance ${SUITE_VERSION}, protocol ${version} ===\n`);
-    // Async: the gateway runs in this process, so a blocking spawn would starve it.
-    const suite = spawn(
-      "npx",
-      [
-        "-y",
-        `@modelcontextprotocol/conformance@${SUITE_VERSION}`,
-        "server",
-        "--url",
-        gateway.url,
-        // `all`: the suite marks scenarios of a protocol version it has not
-        // finalized as pending, and this endpoint serves that version already.
-        "--suite",
-        "all",
-        "--spec-version",
-        version,
-        "--expected-failures",
-        join(HERE, "expected-failures", `${version}.yml`),
-        "--output-dir",
-        join(CACHE, "results", version),
-      ],
-      { stdio: "inherit" },
-    );
-    const code = await new Promise<number | null>((resolve) => suite.on("exit", resolve));
-    if (code !== 0) failed.push(version);
+    // `all`: the suite marks scenarios of a protocol version it has not
+    // finalized as pending, and this endpoint serves that version already.
+    const selection = ["--suite", "all", "--spec-version", version];
+    if (!(await runSuite(gateway.url, selection, `${version}.yml`, version))) failed.push(version);
+  }
+  for (const scenario of EXTENSION_SCENARIOS) {
+    process.stdout.write(`\n=== MCP conformance ${SUITE_VERSION}, ${scenario} ===\n`);
+    const selection = ["--scenario", scenario];
+    if (!(await runSuite(gateway.url, selection, "extensions.yml", "extensions"))) {
+      failed.push(scenario);
+    }
   }
 } finally {
   await gateway.stop();
