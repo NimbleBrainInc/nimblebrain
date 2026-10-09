@@ -89,7 +89,7 @@ const BRAND_NAME_TOKEN = /\{\{brand\.name\}\}/g;
  * skill is not templated, so the literal reaches the model as written.
  */
 export function renderBrandName(text: string, name: string = brandName()): string {
-  return text.replace(BRAND_NAME_TOKEN, name);
+  return text.replace(BRAND_NAME_TOKEN, () => name);
 }
 
 /** The client identity sent in OAuth dynamic client registration (RFC 7591). */

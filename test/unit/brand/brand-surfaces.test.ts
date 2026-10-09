@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { brandRoutes } from "../../../src/api/routes/brand.ts";
 import { reinitiateParagraph, successPage } from "../../../src/api/routes/oauth-success-page.ts";
-import { loadBrand } from "../../../src/brand/index.ts";
+import { loadBrand, renderBrandName } from "../../../src/brand/index.ts";
 import { composeSystemPrompt, defaultIdentity } from "../../../src/prompt/compose.ts";
 import { loadCoreSkills } from "../../../src/skills/loader.ts";
 import type { Skill } from "../../../src/skills/types.ts";
@@ -36,6 +36,14 @@ describe("identity — {{brand.name}}", () => {
     expect(composeSystemPrompt([soul()])).toContain("powered by ACME.");
     expect(composeSystemPrompt([])).toContain("powered by ACME.");
     expect(defaultIdentity()).toContain("powered by ACME.");
+  });
+
+  test("a name with replacement patterns renders literally", () => {
+    expect(renderBrandName("{{brand.name}} and {{brand.name}}", "Acme $& Co")).toBe(
+      "Acme $& Co and Acme $& Co",
+    );
+    loadBrand({ brand: { name: "Acme $& Co" } });
+    expect(defaultIdentity()).toContain("powered by Acme $& Co.");
   });
 
   test("a tenant-authored core skill containing the literal is not substituted", () => {
