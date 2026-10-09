@@ -4,10 +4,6 @@ server:
   # A connector's input_required answer to prompts/get is not relayed to the
   # client: only a tools/call carries the caller's side of the protocol.
   - input-required-result-non-tool-request
-  # resources/read of the first listed resource (instructions://workspace)
-  # answers not found: the door reads workspace resources without the
-  # request's workspace in scope.
-  - caching
   # Not a gateway gap: the reference server exposes no tool with x-mcp-header
   # annotations, so the scenario cannot run against it either.
   - http-custom-header-server-validation
