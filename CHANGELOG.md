@@ -255,6 +255,7 @@
 
 ### Fixed
 
+- **A remote connector redeployed at the same URL reaches agent runs within a minute.** A run's tool list re-fetches a remote server's tools once they are older than 60 s, so a new tool or parameter is callable without a runtime restart ([#1683](https://github.com/NimbleBrainInc/nimblebrain/issues/1683)).
 - **`/mcp/<wsId>` refuses an untrusted browser `Origin` with `403`** (DNS-rebinding protection). A hostname you reach the web UI by, other than the public origin, goes in `ALLOWED_ORIGINS`. [Docs](https://docs.nimblebrain.ai/deploy/security/#browser-origins-at-mcpwsid).
 - **`manage_users` refuses what it reports as refused.** Demoting or deactivating the last admin answers `isError: true`, and changing your own role or deactivating yourself is refused on the server, not only hidden in the page.
 - **OIDC claims or provisions a user only from a verified email.** A token whose `email_verified` claim is not `true`, or is missing, is refused, so an unverified email can no longer take over a pre-created user or pass `allowedDomains`. **Breaking** for a provider that omits the claim — see Breaking ([#1662](https://github.com/NimbleBrainInc/nimblebrain/issues/1662)).
