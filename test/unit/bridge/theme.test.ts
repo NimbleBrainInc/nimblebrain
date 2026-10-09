@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   buildThemeStyleBlock,
   DARK_TOKENS,
+  getModeExtensionTokens,
   getThemeTokens,
   LIGHT_TOKENS,
   setThemePalette,
@@ -84,10 +85,14 @@ describe("buildThemeStyleBlock", () => {
 describe("a brand's palette reaches the iframe", () => {
   afterEach(() => setThemePalette());
 
-  test("the style block carries the brand accent once the palette is set", () => {
+  test("the brand accent reaches both channels once the palette is set", () => {
     setThemePalette(mergePalette(ACME_BRAND));
-    expect(buildThemeStyleBlock("light")).toContain("--color-text-accent: #B53707;");
-    expect(buildThemeStyleBlock("dark")).toContain("--color-text-accent: #FF8A4C;");
+    // Mode-independent spec keys ride the style block; the mode-varying accent
+    // rides the extension the host re-sends on every theme change.
+    expect(buildThemeStyleBlock("light")).toContain("--color-ring-primary: #B53707;");
+    expect(buildThemeStyleBlock("dark")).toContain("--color-ring-primary: #FF8A4C;");
+    expect(getModeExtensionTokens("light")["--color-text-accent"]).toBe("#B53707");
+    expect(getModeExtensionTokens("dark")["--color-text-accent"]).toBe("#FF8A4C");
     expect(getThemeTokens("light")["--font-sans"]).toBe(ACME_BRAND.fonts?.sans?.stack);
     expect(getThemeTokens("light")["--border-radius-md"]).toBe("0.25rem");
   });
