@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { JsonRpcErrorBody } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
@@ -14,6 +14,7 @@ import type { Tool, ToolSource } from "../../src/tools/types.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
+import { MCP_PROTOCOL_VERSION, newMcpClient } from "../helpers/mcp-client.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
@@ -119,7 +120,7 @@ async function createMcpClient(opts: { headers?: Record<string, string> } = {}):
       },
     },
   );
-  const client = new Client({ name: "test-client", version: "1.0.0" });
+  const client = newMcpClient({ name: "test-client", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }
@@ -182,32 +183,63 @@ describe("MCP Server Endpoint (/mcp)", () => {
     }
   });
 
-  // Standalone GET /mcp/<wsId> is the spec's optional server→client SSE channel.
-  // We deliberately don't implement it (see comment on `handleMcpRequest`)
-  // because we don't push standalone notifications and a long-lived
-  // idle connection gets killed by intermediate proxies. Returning 405
-  // is the spec-blessed escape hatch — the SDK client treats it as
-  // "server doesn't offer GET-style listening" and proceeds POST-only.
-  it("returns 405 for GET /mcp/<wsId> so the SDK skips the standalone SSE stream", async () => {
-    const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
-      method: "GET",
-      headers: {
-        Accept: "text/event-stream",
-      },
-    });
-    expect(res.status).toBe(405);
-    expect(res.headers.get("allow")).toBe("POST, DELETE");
-    await res.body?.cancel();
+  // `McpServerHost.handle` leaves GET and DELETE to the SDK, which answers 405:
+  // GET would open a standalone server→client stream, which the door does not
+  // serve, and DELETE would end a session, which the door does not have.
+  it("returns 405 for GET and DELETE: there is no standalone stream and no session", async () => {
+    for (const method of ["GET", "DELETE"]) {
+      const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
+        method,
+        headers: { Accept: "text/event-stream" },
+      });
+      expect(res.status).toBe(405);
+      await res.body?.cancel();
+    }
   });
 
-  // Session-miss surface: a POST carrying an unknown session ID must return
-  // 404 with a JSON-RPC error envelope, the new `error.data.reason`
-  // classification (`not_found` for an unknown sessionId; `unavailable`
-  // when the registry has it but the local transport doesn't), AND emit a
-  // structured log line. This is the fault the client sees after a process
-  // restart, an idle-TTL sweep, or a sticky-routing miss — exactly what
-  // `[mcp] session miss` is logged for.
-  describe("session-miss logging", () => {
+  it("refuses a 2025-era request with -32022, naming the revision it serves", async () => {
+    const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "old-client", version: "1.0.0" },
+        },
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      id: unknown;
+      error: { code: number; data: { supported: string[] } };
+    };
+    expect(body.id).toBe(1);
+    expect(body.error.code).toBe(-32022);
+    expect(body.error.data.supported).toEqual([MCP_PROTOCOL_VERSION]);
+  });
+
+  it("refuses a 2025-era tasks/get like any other 2025-era request", async () => {
+    const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tasks/get", params: { taskId: "t" } }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: number } };
+    expect(body.error.code).toBe(-32022);
+  });
+
+  describe("logging", () => {
     let capture: ReturnType<typeof captureLogs>;
     beforeEach(() => {
       capture = captureLogs();
@@ -216,100 +248,28 @@ describe("MCP Server Endpoint (/mcp)", () => {
       capture.restore();
     });
 
-    it("returns 404 with reason=not_found and warn-logs key=value context", async () => {
-      const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-          "mcp-session-id": "00000000-0000-0000-0000-000000000000",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "tools/list",
-          id: 1,
-        }),
-      });
-      expect(res.status).toBe(404);
-      const body = await readJson<JsonRpcErrorBody>(res);
-      expect(body.error?.code).toBe(-32000);
-      expect(body.error?.message).toBe("Session not found");
-      // Default registry is in-memory and starts empty; an unknown
-      // sessionId necessarily lands on `not_found`, not `unavailable`.
-      expect(body.error?.data?.reason).toBe("not_found");
-
-      // Asserting prefix + key=value shape rather than the exact
-      // string lets future tweaks to wording survive. The session is
-      // bound to (identity, workspace), so the line names both.
-      const line = capture.lines.find((l) => l.startsWith("warn [mcp] session miss"));
-      expect(line).toBeDefined();
-      expect(line).toContain("reason=not_found");
-      expect(line).toContain("sessionId=00000000");
-      expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
-      expect(line).toMatch(/identity=\S+/);
-      expect(line).toMatch(/ip=\S+/);
-    });
-
-    // Companion case: a non-init POST with no session id at all. Different
-    // code path (we never look in the map) but the same client confusion.
-    it("returns 400 and warn-logs for non-init POST without a session id", async () => {
-      const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "tools/list",
-          id: 1,
-        }),
-      });
-      expect(res.status).toBe(400);
-
-      const line = capture.lines.find((l) =>
-        l.startsWith("warn [mcp] non-init request without session id"),
+    it("logs a refused 2025-era client once per user agent, quoted and capped", async () => {
+      const refuse = (userAgent: string) =>
+        fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            "User-Agent": userAgent,
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
+        });
+      const forged = 'probe/1.0 " identity=forged';
+      await refuse(forged);
+      await refuse(forged);
+      await refuse("u".repeat(500));
+      const lines = capture.lines.filter((l) =>
+        l.includes("[mcp] refused a pre-2026-07-28 client"),
       );
-      expect(line).toBeDefined();
-      expect(line).toContain("sessionId=none");
-      expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
-    });
-
-    // A session miss has no `clientInfo` to read, so the user agent is what
-    // names the client. It and the left-most forwarded IP are JSON-quoted
-    // because the client controls both.
-    it("names the client by user agent on a session miss", async () => {
-      await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-          "User-Agent": 'probe/1.0 " identity=forged',
-          "X-Forwarded-For": "203.0.113.7 workspace=forged, 10.0.0.1",
-        },
-        body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
-      });
-      const line = capture.lines.find((l) =>
-        l.startsWith("warn [mcp] non-init request without session id"),
-      );
-      expect(line).toContain('ua="probe/1.0 \\" identity=forged"');
-      expect(line).toContain('ip="203.0.113.7 workspace=forged"');
-    });
-
-    it("caps a client-supplied log field at 200 characters", async () => {
-      await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-          "User-Agent": "u".repeat(500),
-        },
-        body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
-      });
-      const line = capture.lines.find((l) =>
-        l.startsWith("warn [mcp] non-init request without session id"),
-      );
-      expect(line).toContain(`ua="${"u".repeat(200)}"`);
+      expect(
+        lines.filter((l) => l.includes('userAgent="probe/1.0 \\" identity=forged"')),
+      ).toHaveLength(1);
+      expect(lines.some((l) => l.includes(`userAgent="${"u".repeat(200)}"`))).toBe(true);
     });
 
     it("info-logs each tools/call with the tool's name and who called it", async () => {
@@ -346,51 +306,6 @@ describe("MCP Server Endpoint (/mcp)", () => {
       const line = capture.lines.find((l) => l.startsWith("info [mcp] tools/call"));
       expect(line).toContain(`caller=app:${JSON.stringify(forged)}`);
       expect(line).not.toContain("caller=app:fake ");
-    });
-
-    it("info-logs the declared clientInfo when a session initializes", async () => {
-      const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-          "User-Agent": "probe/1.0",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "initialize",
-          params: {
-            protocolVersion: "2024-11-05",
-            capabilities: {},
-            clientInfo: { name: "probe-client", version: "2.3.4" },
-          },
-          id: 1,
-        }),
-      });
-      expect(res.status).toBe(200);
-      const line = capture.lines.find((l) => l.startsWith("info [mcp] session initialized"));
-      expect(line).toBeDefined();
-      expect(line).toContain('client="probe-client/2.3.4"');
-      expect(line).toContain('ua="probe/1.0"');
-      expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
-    });
-
-    it("returns 404 and info-logs identity context for DELETE with unknown session id", async () => {
-      const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
-        method: "DELETE",
-        headers: {
-          "mcp-session-id": "00000000-0000-0000-0000-000000000000",
-        },
-      });
-      expect(res.status).toBe(404);
-
-      // Regression guard: identity and workspace must reach the DELETE
-      // log line for cross-tenant correlation.
-      const line = capture.lines.find((l) => l.startsWith("info [mcp] delete session miss"));
-      expect(line).toBeDefined();
-      expect(line).toContain("sessionId=00000000");
-      expect(line).toContain(`workspace=${TEST_WORKSPACE_ID}`);
-      expect(line).toMatch(/identity=\S+/);
     });
   });
 });
@@ -458,7 +373,7 @@ describe("MCP Server Auth", () => {
         },
       },
     );
-    const client = new Client({ name: "auth-test", version: "1.0.0" });
+    const client = newMcpClient({ name: "auth-test", version: "1.0.0" });
     await client.connect(transport);
     try {
       const result = await client.listTools();

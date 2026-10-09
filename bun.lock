@@ -39,7 +39,7 @@
       },
       "devDependencies": {
         "@biomejs/biome": "^2.5.14",
-        "@nimblebrain/synapse": "0.30.0",
+        "@nimblebrain/synapse": "0.32.0",
         "@types/bun": "latest",
         "happy-dom": "^20.0.0",
         "mcp-sdk-v1-0": "npm:@modelcontextprotocol/sdk@1.0.4",
@@ -114,7 +114,7 @@
 
     "@modelcontextprotocol/server": ["@modelcontextprotocol/server@2.3.0", "", { "dependencies": { "@modelcontextprotocol/core": "2.3.0", "zod": "^4.2.0" } }, "sha512-+6b0LdsQLmHsvS7J6sQJ4weTpzUn61fU1JKS+321/+IyDYoHW5CR2Tgqcs6GgAAQvlesCo6yX3xttgmx+XGtJw=="],
 
-    "@nimblebrain/synapse": ["@nimblebrain/synapse@0.30.0", "", { "peerDependencies": { "@modelcontextprotocol/client": "^2.0.0", "@modelcontextprotocol/core": "^2.0.0", "@modelcontextprotocol/ext-apps": "^2.0.0", "react": "^18.0.0 || ^19.0.0" }, "optionalPeers": ["react"], "bin": { "synapse": "dist/codegen/cli.js" } }, "sha512-8/v/tVJi7wGXloZ2801vC2n7SAePTj8Ou+6Hi6eDQulbS8I2dsqxBjgOc8tvxYF+EGrsj/fi1qNuMCXQjfQOrw=="],
+    "@nimblebrain/synapse": ["@nimblebrain/synapse@0.32.0", "", { "peerDependencies": { "@modelcontextprotocol/client": "^2.0.0", "@modelcontextprotocol/core": "^2.0.0", "@modelcontextprotocol/ext-apps": "^2.0.0", "react": "^18.0.0 || ^19.0.0" }, "optionalPeers": ["react"], "bin": { "synapse": "dist/codegen/cli.js" } }, "sha512-5eF1Ad8uVtOY87lmGN1FpRraiae/XqBgkVWDzUUr3bqtU2QU23ARH6fYjmDCzRnJi9ih+BlB/S9TT934dMJyIg=="],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
 

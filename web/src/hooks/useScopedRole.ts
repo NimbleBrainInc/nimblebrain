@@ -7,13 +7,12 @@ import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceCon
  *
  *   none       — not signed in (or session not yet loaded)
  *   ws_member  — member of the active workspace, no admin powers
- *   ws_admin   — workspace admin OR org admin/owner (effective workspace-level *reach* — see the note below; this is NOT edit rights)
+ *   ws_admin   — workspace admin OR org admin (effective workspace-level *reach* — see the note below; this is NOT edit rights)
  *   org_admin  — org admin (manage all users, all workspaces)
- *   org_owner  — org owner (superset of org_admin)
  *
- * Org owners and admins are always treated as ws_admin for any workspace.
+ * Org admins are always treated as ws_admin for any workspace.
  * The hook returns the *highest* role that applies — gates check `>=` against
- * a required minimum, not equality, so org owners pass workspace-admin checks
+ * a required minimum, not equality, so org admins pass workspace-admin checks
  * automatically.
  *
  * **That escalation is for reach, not for writes.** It answers "may this user
@@ -26,9 +25,9 @@ import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceCon
  * matters; `roleAtLeast(role, "ws_admin")` would offer controls the server
  * refuses.
  */
-export type ScopedRole = "none" | "ws_member" | "ws_admin" | "org_admin" | "org_owner";
+export type ScopedRole = "none" | "ws_member" | "ws_admin" | "org_admin";
 
-const ROLE_ORDER: ScopedRole[] = ["none", "ws_member", "ws_admin", "org_admin", "org_owner"];
+const ROLE_ORDER: ScopedRole[] = ["none", "ws_member", "ws_admin", "org_admin"];
 
 /** True when `role` meets or exceeds `required`. */
 export function roleAtLeast(role: ScopedRole, required: ScopedRole): boolean {
@@ -44,7 +43,6 @@ export function resolveScopedRole(
   activeWorkspace: WorkspaceInfo | null,
 ): ScopedRole {
   const orgRole = session?.user?.orgRole;
-  if (orgRole === "owner") return "org_owner";
   if (orgRole === "admin") return "org_admin";
 
   if (!session?.authenticated) return "none";
@@ -105,7 +103,7 @@ export function canManageWorkspaceMembers(
   orgRole: string | undefined,
   membershipRole: WorkspaceInfo["userRole"],
 ): boolean {
-  return orgRole === "admin" || orgRole === "owner" || canWriteWorkspace(membershipRole);
+  return orgRole === "admin" || canWriteWorkspace(membershipRole);
 }
 
 /**

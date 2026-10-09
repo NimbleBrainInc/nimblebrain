@@ -1,5 +1,5 @@
-import { RotateCcw, Trash2, UserPlus } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { Pencil, RotateCcw, Trash2, UserPlus } from "lucide-react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Button } from "../../components/ui/button";
@@ -17,12 +17,14 @@ import {
 } from "../../components/ui/table";
 import { useSession } from "../../context/SessionContext";
 import { EmptyState, InlineError, SettingsListPage } from "./components";
+import { UserEditor } from "./UserEditor";
+import type { OrgRole } from "./user-edit-patch";
 
 interface User {
   id: string;
   email: string;
   displayName: string;
-  orgRole: string;
+  orgRole: OrgRole;
   createdAt?: string;
   /** Set when the user is deactivated (soft-deleted). Such users keep their record but cannot sign in. */
   deletedAt?: string;
@@ -41,12 +43,18 @@ function formatDate(iso?: string): string {
   }
 }
 
-/** Row action: restores a deactivated user, otherwise deactivates an active one. */
+/**
+ * Row actions: restores a deactivated user, otherwise edits or deactivates an
+ * active one. A deactivated user has no Edit: the server refuses to edit them
+ * until they are restored.
+ */
 function UserRowAction({
   user,
   isSelf,
   isBusy,
   isDeactivated,
+  isEditing,
+  onEdit,
   onDelete,
   onRestore,
 }: {
@@ -54,6 +62,8 @@ function UserRowAction({
   isSelf: boolean;
   isBusy: boolean;
   isDeactivated: boolean;
+  isEditing: boolean;
+  onEdit: (userId: string) => void;
   onDelete: (userId: string, displayName: string) => void;
   onRestore: (userId: string) => void;
 }) {
@@ -72,30 +82,46 @@ function UserRowAction({
     );
   }
   return (
-    <Button
-      size="sm"
-      variant="ghost"
-      disabled={isSelf || isBusy}
-      title={isSelf ? "Cannot deactivate yourself" : `Deactivate ${user.displayName}`}
-      onClick={() => onDelete(user.id, user.displayName)}
-      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-    >
-      <Trash2 className="h-4 w-4" />
-    </Button>
+    <div className="flex items-center gap-1">
+      <Button
+        size="sm"
+        variant="ghost"
+        title={isEditing ? `Close editor for ${user.displayName}` : `Edit ${user.displayName}`}
+        aria-expanded={isEditing}
+        onClick={() => onEdit(user.id)}
+        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+      >
+        <Pencil className="h-4 w-4" />
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={isSelf || isBusy}
+        title={isSelf ? "Cannot deactivate yourself" : `Deactivate ${user.displayName}`}
+        onClick={() => onDelete(user.id, user.displayName)}
+        className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </div>
   );
 }
 
-/** One users-table row: identity columns plus the deactivate/restore action. */
+/** One users-table row: identity columns plus the edit, deactivate and restore actions. */
 function UserRow({
   user,
   isSelf,
   isBusy,
+  isEditing,
+  onEdit,
   onDelete,
   onRestore,
 }: {
   user: User;
   isSelf: boolean;
   isBusy: boolean;
+  isEditing: boolean;
+  onEdit: (userId: string) => void;
   onDelete: (userId: string, displayName: string) => void;
   onRestore: (userId: string) => void;
 }) {
@@ -121,6 +147,8 @@ function UserRow({
           isSelf={isSelf}
           isBusy={isBusy}
           isDeactivated={isDeactivated}
+          isEditing={isEditing}
+          onEdit={onEdit}
           onDelete={onDelete}
           onRestore={onRestore}
         />
@@ -129,17 +157,28 @@ function UserRow({
   );
 }
 
-/** The users table: a column header plus one {@link UserRow} per user. */
+/**
+ * The users table: a column header plus one {@link UserRow} per user, and the
+ * open user's {@link UserEditor} in a full-width row beneath theirs.
+ */
 function UsersTable({
   users,
   currentUserId,
   busyId,
+  editingId,
+  providerOwnedFields,
+  onEdit,
+  onSaved,
   onDelete,
   onRestore,
 }: {
   users: User[];
   currentUserId?: string;
   busyId: string | null;
+  editingId: string | null;
+  providerOwnedFields: readonly string[];
+  onEdit: (userId: string) => void;
+  onSaved: () => void;
   onDelete: (userId: string, displayName: string) => void;
   onRestore: (userId: string) => void;
 }) {
@@ -151,20 +190,38 @@ function UsersTable({
           <TableHead>Email</TableHead>
           <TableHead>Role</TableHead>
           <TableHead>Created</TableHead>
-          <TableHead className="w-[60px]" />
+          <TableHead className="w-[84px]" />
         </TableRow>
       </TableHeader>
       <TableBody>
-        {users.map((u) => (
-          <UserRow
-            key={u.id}
-            user={u}
-            isSelf={u.id === currentUserId}
-            isBusy={busyId === u.id}
-            onDelete={onDelete}
-            onRestore={onRestore}
-          />
-        ))}
+        {users.map((u) => {
+          const isEditing = editingId === u.id && !u.deletedAt;
+          return (
+            <Fragment key={u.id}>
+              <UserRow
+                user={u}
+                isSelf={u.id === currentUserId}
+                isBusy={busyId === u.id}
+                isEditing={isEditing}
+                onEdit={onEdit}
+                onDelete={onDelete}
+                onRestore={onRestore}
+              />
+              {isEditing ? (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="whitespace-normal">
+                    <UserEditor
+                      user={u}
+                      isSelf={u.id === currentUserId}
+                      providerOwnedFields={providerOwnedFields}
+                      onSaved={onSaved}
+                    />
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </Fragment>
+          );
+        })}
       </TableBody>
     </Table>
   );
@@ -175,6 +232,8 @@ export function UsersTab() {
   const currentUserId = session?.user?.id;
 
   const [users, setUsers] = useState<User[]>([]);
+  const [providerOwnedFields, setProviderOwnedFields] = useState<string[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -191,8 +250,9 @@ export function UsersTab() {
     try {
       setError(null);
       const res = await callToolWithoutWorkspace("nb", "manage_users", { action: "list" });
-      const data = parseToolResult<{ users: User[] }>(res);
+      const data = parseToolResult<{ users: User[]; providerOwnedFields?: string[] }>(res);
       setUsers(data.users ?? []);
+      setProviderOwnedFields(data.providerOwnedFields ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load users");
     } finally {
@@ -203,6 +263,15 @@ export function UsersTab() {
   useEffect(() => {
     fetchUsers();
   }, [fetchUsers]);
+
+  // A saved edit re-reads the list, so the row shows it.
+  const refreshAfterEdit = useCallback(() => {
+    void fetchUsers();
+  }, [fetchUsers]);
+
+  const toggleEdit = useCallback((userId: string) => {
+    setEditingId((open) => (open === userId ? null : userId));
+  }, []);
 
   const handleCreate = useCallback(async () => {
     if (!createEmail.trim() || !createName.trim()) return;
@@ -368,6 +437,10 @@ export function UsersTab() {
           users={users}
           currentUserId={currentUserId}
           busyId={busyId}
+          editingId={editingId}
+          providerOwnedFields={providerOwnedFields}
+          onEdit={toggleEdit}
+          onSaved={refreshAfterEdit}
           onDelete={handleDelete}
           onRestore={handleRestore}
         />

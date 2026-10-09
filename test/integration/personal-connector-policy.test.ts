@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
@@ -14,6 +14,7 @@ import {
   type FakeConnectorServer,
   startFakeConnectorServer,
 } from "../helpers/fake-connector-server.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /**
@@ -51,7 +52,7 @@ async function installConnector(serverName: string, toolNames: string[]): Promis
 
 async function mcpClient(workspace: string): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${workspace}`));
-  const client = new Client({ name: "pc-policy-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "pc-policy-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }

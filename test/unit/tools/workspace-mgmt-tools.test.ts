@@ -92,20 +92,6 @@ describe("nb__manage_workspaces", () => {
       expect(parsed.workspace.name).toBe("Test Workspace");
     });
 
-    test("owner can create a workspace", async () => {
-      currentIdentity = { ...currentIdentity!, orgRole: "owner" };
-      tool = createManageWorkspacesTool(makeCtx());
-
-      const result = await tool.handler({
-        action: "create",
-        name: "Owner Workspace",
-      });
-
-      expect(result.isError).toBe(false);
-      const parsed = parseResult(result) as { workspace: { name: string } };
-      expect(parsed.workspace.name).toBe("Owner Workspace");
-    });
-
     test("member gets permission denied", async () => {
       currentIdentity = { ...currentIdentity!, orgRole: "member" };
       tool = createManageWorkspacesTool(makeCtx());

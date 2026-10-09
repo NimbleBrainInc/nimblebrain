@@ -16,7 +16,7 @@ import { readJson } from "../../helpers/http.ts";
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
-import type { McpSessionContext } from "../../../src/api/mcp-server.ts";
+import type { McpRequestContext } from "../../../src/api/mcp-server.ts";
 import { requireAuth } from "../../../src/api/middleware/auth.ts";
 import { RequestRateLimiter } from "../../../src/api/rate-limiter.ts";
 import { mcpRoutes } from "../../../src/api/routes/mcp.ts";
@@ -69,7 +69,7 @@ const WORKSPACES = new Map([
 ]);
 
 /** What reached the MCP host, if anything. */
-let reached: McpSessionContext[] = [];
+let reached: McpRequestContext[] = [];
 
 function makeCtx(mcpLimiter = new RequestRateLimiter(10_000, 60_000)): AppContext {
   const provider = {
@@ -99,7 +99,7 @@ function makeCtx(mcpLimiter = new RequestRateLimiter(10_000, 60_000)): AppContex
     runtime: { getFeatures: () => resolveFeatures() },
     workspaceStore: { get: async (id: string) => WORKSPACES.get(id) ?? null },
     mcpHost: {
-      handle: async (_req: Request, _features: unknown, sessionCtx: McpSessionContext) => {
+      handle: async (_req: Request, _features: unknown, sessionCtx: McpRequestContext) => {
         reached.push(sessionCtx);
         return Response.json({ ok: true });
       },

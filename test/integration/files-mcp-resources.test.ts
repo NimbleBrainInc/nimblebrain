@@ -20,11 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  Client,
-  ResourceNotFoundError,
-  StreamableHTTPClientTransport,
-} from "@modelcontextprotocol/client";
+import { ResourceNotFoundError, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
@@ -32,6 +28,7 @@ import type { FilesListOutput } from "../../src/platform/schemas/files.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { blobOf, textOf } from "../helpers/resource-contents.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
@@ -160,7 +157,7 @@ describe("workspace files exposed as MCP resources", () => {
     const id = await uploadChatFile(PNG_BYTES, "bridge.png", "image/png");
 
     const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${DEV_WS_ID}`));
-    const client = new Client({ name: "files-mcp-bridge-test", version: "1.0.0" });
+    const client = newMcpClient({ name: "files-mcp-bridge-test", version: "1.0.0" });
     await client.connect(transport);
     try {
       const result = await client.readResource({ uri: `files://${id}` });
@@ -184,7 +181,7 @@ describe("workspace files exposed as MCP resources", () => {
     const uri = `files://${id}`;
 
     const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${DEV_WS_ID}`));
-    const client = new Client({ name: "files-mcp-scoped-test", version: "1.0.0" });
+    const client = newMcpClient({ name: "files-mcp-scoped-test", version: "1.0.0" });
     await client.connect(transport);
     try {
       const own = await client.readResource({

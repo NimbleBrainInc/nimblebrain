@@ -21,8 +21,7 @@
  *     {@link RunBus.cancel} (the Stop button) does.
  *
  * Scope: single-process, in-memory. Multi-replica (`platform.replicas > 1`)
- * needs a Redis-backed log + conversationId-sticky routing — deferred,
- * mirrors the `SessionRegistry` pattern.
+ * needs a Redis-backed log + conversationId-sticky routing — deferred.
  */
 
 import { log as logger } from "../observability/log.ts";

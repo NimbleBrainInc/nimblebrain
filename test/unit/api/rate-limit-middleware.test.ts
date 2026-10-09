@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { Hono } from "hono";
 import { requestRateLimit } from "../../../src/api/middleware/rate-limit.ts";
 import { RequestRateLimiter } from "../../../src/api/rate-limiter.ts";
@@ -56,7 +56,28 @@ describe("requestRateLimit middleware", () => {
     const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("rate_limited");
     expect(body.message).toBe("Rate limit exceeded");
-    expect(res.headers.get("Retry-After")).toBe("60");
+    const retryAfter = Number(res.headers.get("Retry-After"));
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeLessThanOrEqual(60);
+  });
+
+  it("returns only the remaining seconds in Retry-After", async () => {
+    const now = spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      const app = buildAuthenticatedApp(new RequestRateLimiter(1, 60_000));
+      expect((await app.request(CHAT_PATH, { method: "POST" })).status).toBe(200);
+
+      now.mockReturnValue(31_001);
+      const halfway = await app.request(CHAT_PATH, { method: "POST" });
+      expect(halfway.status).toBe(429);
+      expect(halfway.headers.get("Retry-After")).toBe("30");
+
+      now.mockReturnValue(60_999);
+      const nearEnd = await app.request(CHAT_PATH, { method: "POST" });
+      expect(nearEnd.headers.get("Retry-After")).toBe("1");
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("tracks different users independently", async () => {

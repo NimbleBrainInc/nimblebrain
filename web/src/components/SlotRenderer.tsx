@@ -3,11 +3,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
-import {
-  buildHostContext,
-  buildHostExtensions,
-  type ConnectorForHostContext,
-} from "../bridge/host-extensions";
+import { buildHostExtensions, type ConnectorForHostContext } from "../bridge/host-extensions";
 import type { CreateIframeOptions } from "../bridge/iframe";
 import { createAppIframe } from "../bridge/iframe";
 import type { AppTrailEntry } from "../bridge/schemas";
@@ -16,6 +12,7 @@ import { useFileLimits } from "../context/ChatContext";
 import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useAppDisplayName } from "../hooks/useAppDisplayName";
+import { useHostContextSync } from "../hooks/useHostContextSync";
 import type { PlacementEntry } from "../types";
 import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
 import { useNotice } from "./notices";
@@ -337,22 +334,10 @@ export function SlotRenderer({
     deliverTarget(target);
   }, [target, deliverTarget]);
 
-  // Propagate host-context changes (theme, workspace, manage flag) to mounted
-  // iframes via the ext-apps `host-context-changed` notification. Iframes stay
-  // mounted; apps that observe `useHostContext()` (or `useTheme()`) re-render
-  // and refetch workspace-scoped data without losing local state. A role
-  // change mid-session reaches a mounted settings component this way.
-  useEffect(() => {
-    const ctx = buildHostContext(
-      mode,
-      activeWorkspace,
-      canManage === undefined ? undefined : { canManage },
-      uploadLimits,
-    );
-    for (const bridge of bridgesRef.current) {
-      bridge.setHostContext(ctx);
-    }
-  }, [mode, activeWorkspace, canManage, uploadLimits]);
+  // Iframes stay mounted across a theme, workspace or role change; apps that
+  // observe `useHostContext()` (or `useTheme()`) re-render and refetch
+  // workspace-scoped data without losing local state.
+  useHostContextSync(() => bridgesRef.current, mode, activeWorkspace, connector, uploadLimits);
 
   if (filtered.length === 0) return null;
 

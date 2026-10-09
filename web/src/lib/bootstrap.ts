@@ -12,7 +12,7 @@
 //
 // So dropping it no longer only hurts non-org-admins: an org admin used to sail
 // past a missing `userRole` via the early return in `resolveScopedRole`, and now
-// loses every workspace write too, org owners included. Anchor the mapping in
+// loses every workspace write too. Anchor the mapping in
 // a tested helper so a future contributor can't accidentally re-introduce the
 // omission.
 // ---------------------------------------------------------------------------

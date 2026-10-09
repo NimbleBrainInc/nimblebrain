@@ -1517,10 +1517,9 @@ export class ConnectorLifecycleManager {
    * successful recovery clears it.
    *
    * Per-pod by design, and correct under `replicas > 1` — do NOT move it
-   * to Redis/`SessionRegistry`. It guards a per-pod in-memory registry
-   * repair: a workspace registry is process-local and its sources are
-   * process-bound transports (see the "MCP Session Architecture" two-layer
-   * model — transports "never serialize, never share across processes").
+   * to a shared store. It guards a per-pod in-memory registry repair: a
+   * workspace registry is process-local and its sources are process-bound
+   * transports, which never serialize or move between processes.
    * A source missing from this pod's registry says nothing about another
    * pod's, so each pod must heal its own registry on its own evidence. A
    * cluster-shared cooldown would be a bug: one pod's failed heal would

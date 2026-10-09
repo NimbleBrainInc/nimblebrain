@@ -74,3 +74,15 @@ export const NIMBLEBRAIN_EXTENSIONS = [
   KEYDOWN_METHOD,
   LOCATION_METHOD,
 ] as const;
+
+/**
+ * Host-context key: the theme variables outside the spec's
+ * `styles.variables` enum that vary with the mode, as `{ variables }`
+ * (`getModeExtensionTokens`). Sent on `ui/initialize` and on every
+ * `host-context-changed`, so they follow a theme toggle the way the spec's
+ * variables do. A host-context field, not a method, so it is not declared in
+ * `hostCapabilities.experimental`: an app reads it where it is present. The
+ * spec's `McpUiHostContext` keeps unknown top-level keys, which is why it sits
+ * there and not inside `styles`, whose shape a spec client strips.
+ */
+export const HOST_STYLES_EXTENSION = "ai.nimblebrain/styles";

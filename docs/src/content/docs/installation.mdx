@@ -164,8 +164,6 @@ bun run eval          # LLM evals (requires ANTHROPIC_API_KEY)
 | `NB_PUBLIC_ORIGIN` | No | Canonical public origin used to build absolute URLs (OAuth callbacks, post-login landing). Default in dev: `http://localhost:27247`. Set this in production. See [Environment Variables](/config/environment/#public-origin-and-callbacks). |
 | `NB_WORK_DIR` | No | Working directory for conversations, skills, and app state. Default: `.nimblebrain/` (project-local) or `~/.nimblebrain` (global serve). Set to `/data` in the Docker image. |
 | `ALLOWED_ORIGINS` | No | Comma-separated allowed CORS origins. Default: all origins. |
-| `MCP_MAX_SESSIONS` | No | Maximum concurrent MCP sessions. Above this, new sessions evict the least-recently-used transport. Default: `100`. |
-| `MCP_SESSION_TTL_SECONDS` | No | MCP session idle TTL in seconds. Default: `28800` (8 hours). |
 | `NB_TELEMETRY_DISABLED` | No | Set to `1` to disable anonymous telemetry. |
 | `DO_NOT_TRACK` | No | Set to `1` to disable anonymous telemetry. |
 

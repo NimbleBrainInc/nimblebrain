@@ -37,15 +37,40 @@ describe("injectThemeStyles", () => {
   test("light mode contains light token values", () => {
     const result = injectThemeStyles(FULL_HTML, "light");
     expect(result).toContain("--color-background-primary: #ffffff;");
-    expect(result).toContain("--color-text-accent: #315EDB;");
     expect(result).toContain("--color-text-primary: #09090b;");
   });
 
   test("dark mode contains dark token values", () => {
     const result = injectThemeStyles(FULL_HTML, "dark");
     expect(result).toContain("--color-background-primary: #000000;");
-    expect(result).toContain("--color-text-accent: #6a8fe4;");
     expect(result).toContain("--color-text-primary: #fafafa;");
+  });
+
+  test("leaves out the non-spec tokens that vary with the mode", () => {
+    // They travel on the `ai.nimblebrain/styles` host-context extension, which
+    // follows a toggle. In this write-once block they would outrank an SDK's
+    // defaults at the mount's mode for the life of the frame.
+    for (const mode of ["light", "dark"] as const) {
+      const result = injectThemeStyles(FULL_HTML, mode);
+      expect(result).not.toContain("--color-text-accent");
+      expect(result).not.toContain("--nb-color-processing");
+    }
+  });
+
+  test("lands before the app's own head content, so the app's :root wins", () => {
+    // Equal-specificity unlayered rules resolve by document order. The host's
+    // block must come first so an app's own `:root` overrides it; the SDK's
+    // theming docs state this order as the reason that works.
+    const app = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>:root { --color-background-primary: red; }</style></head><body></body></html>`;
+    for (const html of [
+      injectThemeStyles(app, "light"),
+      injectCSP(injectThemeStyles(app, "light"), buildCSP()),
+    ]) {
+      const hostBlock = html.indexOf("color-scheme: light");
+      expect(hostBlock).toBeGreaterThan(html.indexOf("<head>"));
+      expect(hostBlock).toBeLessThan(html.indexOf('<meta charset="utf-8">'));
+      expect(hostBlock).toBeLessThan(html.indexOf("--color-background-primary: red"));
+    }
   });
 
   test("preserves original HTML content", () => {

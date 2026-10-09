@@ -90,9 +90,9 @@ describe("getSpecThemeTokens — protocol boundary", () => {
     // representative spec keys survive the filter
     expect(spec["--color-background-primary"]).toBe("#ffffff");
     expect(spec["--font-sans"]).toContain("Hanken Grotesk");
-    // out-of-spec tokens are injected into the iframe but do NOT cross the boundary
+    // out-of-spec tokens never go out on `styles.variables`; the mode-varying
+    // ones ride the `ai.nimblebrain/styles` extension instead
     expect(spec["--color-text-accent"]).toBeUndefined();
-    // the newly-added brand semantics do NOT cross the boundary
     expect(spec["--nb-color-processing"]).toBeUndefined();
   });
 });

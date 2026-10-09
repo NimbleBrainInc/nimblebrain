@@ -23,6 +23,7 @@ Each line is one capability, and each links to its page. The last column names t
 | [Host resources](/extensions/host-resources/) | Workspace files read by URI, instead of pasted into a tool argument | `ai.nimblebrain/host-resources` |
 | [Custom instructions](/extensions/custom-instructions/) | Guidance a user saved for your app, added to the agent's prompt on every turn | The `app://instructions` resource convention |
 | [App bridge extensions](/apps/bridge/#nimblebrain-extensions-ainimblebrain) | From your app's view: ask for a file, move the shell, forward keyboard shortcuts | `ai.nimblebrain/request-file`, `action`, `keydown` |
+| [Theme tokens](/apps/theming/) | From your app's view: the accent and processing colours, which the spec has no theme key for, refreshed on every theme toggle | `ai.nimblebrain/styles` (a host-context field) |
 
 [Reserved keys](/extensions/reserved-keys/) are the other half of the namespace: `ai.nimblebrain/*` keys only the host sets, which a server must not send.
 

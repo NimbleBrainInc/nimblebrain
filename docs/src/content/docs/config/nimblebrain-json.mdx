@@ -3,7 +3,7 @@ title: nimblebrain.json
 description: Complete reference for the NimbleBrain instance configuration file.
 ---
 
-import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
 NimbleBrain splits configuration into two files:
 
@@ -109,7 +109,6 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `thinking` | `"off" \| "adaptive" \| "enabled"` | `enabled` on reasoning models | Extended-thinking mode, applied to every provider that supports reasoning. `off`: do not reason — **not enforceable on Anthropic's adaptive-only models** (Opus 4.7/4.8, Sonnet 5, Opus 5), which have no such state: the AI SDK validates `thinking.type=disabled` and then never sends it, so the model applies its own default ([#738](https://github.com/NimbleBrainInc/nimblebrain/issues/738)). `adaptive`: model decides per call, at no stated depth. `enabled`: reason every turn, at `thinkingEffort`. **Applies only to models the catalog carries and flags reasoning-capable** — an override can ask for reasoning but cannot make the parameter exist. A pinned model id, or one served by an OpenAI-compatible proxy under its own name, isn't in the catalog and so gets no reasoning options; the runtime logs a warning naming the model when it drops an override this way. Typically set via the admin `set_model_config` tool, which writes it to `nimblebrain.overrides.json`. |
 | `thinkingEffort` | `"low" \| "medium" \| "high" \| "xhigh" \| "max"` | `medium` | How hard to think when reasoning is on. **The portable control** — see [reasoning depth](#reasoning-depth) for how it reaches each provider. Ignored for `off` and `adaptive`. |
 | `thinkingBudgetTokens` | `integer` | — | Explicit token budget, for metering thinking in tokens instead of naming a depth. Only honored by providers that meter it that way (Anthropic up to 4.6, Gemini 2.5); elsewhere `thinkingEffort` applies — Gemini 3 takes a level, not a budget. Counts toward `maxOutputTokens`. Anthropic requires a minimum of 1,024. Prefer `thinkingEffort` unless you need a hard token cap. |
-| `sessionStore` | `object` | `{ "type": "memory", "ttlSeconds": 28800 }` | MCP session metadata store for `/mcp`. See [sessionStore](#sessionstore). |
 | `logging` | `object` | — | Structured logging config. See [logging](#logging). |
 | `http` | `object` | `{ "port": 27247, "host": "127.0.0.1" }` | HTTP server config. Omit for programmatic-only use. |
 | `features` | `object` | all `true` | Feature flags. See [Feature Flags](/config/features). |
@@ -173,7 +172,12 @@ In both cases a requested depth a model doesn't offer steps **down** to the
 nearest one it does, never up. Where nothing at or below the request is
 offered, no depth is sent and the model runs at its own default — so an
 explicitly set `thinkingEffort` can end up not applied on a model that doesn't
-accept it, rather than the call failing.
+accept it, rather than the call failing. When a known tier ladder steps down or
+drops an operator's requested tier, the runtime logs a `[thinking]` warning
+naming the requested tier and the tier sent (or the provider default), once per
+model and requested tier. An xAI model measured to accept no effort parameter
+sends none without this warning; an xAI model with no measured ladder warns when
+the operator's tier cannot be applied.
 
 `off` is not universally enforceable, and where it isn't, nothing is sent
 rather than a flag that would be rejected or ignored:
@@ -359,93 +363,14 @@ Two other notes. xAI publishes no per-model max-output cap and accepts `max_toke
 
 Conversations are **workspace-owned and persisted automatically** — there is nothing to configure. Every turn is written to a per-conversation JSONL file at `{workDir}/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl` in the **event-sourced** format (one append-only event log per conversation), which is what enables crash-resilient run replay and history [compaction](/config/features/).
 
-## sessionStore
-
-Pluggable metadata store for MCP HTTP sessions. Tracks each `Mcp-Session-Id` and its idle TTL across the cluster.
-
-<Tabs>
-  <TabItem label="In-memory (default)">
-    ```json
-    {
-      "sessionStore": {
-        "type": "memory",
-        "ttlSeconds": 28800
-      }
-    }
-    ```
-
-    Process-local Map with periodic TTL sweep. No external dependencies. Default; fine for any single-replica deploy.
-  </TabItem>
-  <TabItem label="Redis">
-    ```json
-    {
-      "sessionStore": {
-        "type": "redis",
-        "ttlSeconds": 28800,
-        "redis": {
-          "url": "${REDIS_URL}",
-          "keyPrefix": "nb:mcp:session:"
-        }
-      }
-    }
-    ```
-
-    Hash-per-session with native `PEXPIRE` TTL. Required when `platform.replicas > 1`; also useful at single-replica if you want cluster-wide visibility into active sessions for ops/admin tooling. The `redis.url` field expands `${VAR}` placeholders from `process.env` at boot, so the deployment configmap can carry a literal `"${REDIS_URL}"` and have the actual URL injected from a secret via `envFrom`.
-  </TabItem>
-</Tabs>
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `type` | `"memory"` \| `"redis"` | `"memory"` | Provider. `redis` requires `redis.url`. |
-| `ttlSeconds` | `integer` (s) | `28800` (8 h) | Idle TTL. Each request resets the clock — actively-used sessions never expire. |
-| `redis.url` | `string` | — | Redis connection URL (`redis://` or `rediss://`). Required when `type` is `"redis"`. Supports `${VAR}` env expansion. |
-| `redis.keyPrefix` | `string` | `"nb:mcp:session:"` | Hash key prefix for session entries. |
-
-### Why a session store at all
-
-The MCP `/mcp` endpoint is stateful. Each session has two parts:
-
-- **Metadata** — `sessionId`, `identityId`, `workspaceId`, timestamps. Just data; lives in the session store.
-- **Live transport** — open HTTP response stream, SDK `Server` instance, registered request handlers, in-flight JSON-RPC state. Process-bound — holds open file descriptors and JS object references that cannot be serialized or moved.
-
-Metadata is shareable across processes; the live transport is not. Routing requests to the process that owns a session's transport is the **load balancer's** job (cookie affinity; hashing the random `Mcp-Session-Id` cannot find the pod that created the session), not the session store's. The session store is deliberately deployment-vocabulary-free — no notion of "which pod owns this" — so the same interface fits any deployment topology.
-
-When a request arrives at a process that doesn't have the live transport for the requested session, the 404 carries `error.data.reason`:
-
-| Reason | Meaning |
-|--------|---------|
-| `not_found` | Session store has no record. Idle-TTL eviction, or session never existed. |
-| `unavailable` | Session exists in the store, but the live transport isn't on this process. Possible causes: process restart, sticky-routing miss, transport closed locally. |
-
-Spec-compliant clients re-initialize on either reason. Operators distinguish `unavailable` causes via deploy timing, process uptime, and "session-store size vs local transport count" signals.
-
-### Configuration matrix
-
-| Replicas | Store | Use case |
-|----------|-------|----------|
-| 1 | `memory` | Default. Dev, programmatic use, simple production. Sessions die on process restart; clients re-initialize. |
-| 1 | `redis` | Single-process with cluster-shared metadata for ops visibility, audit trails, or future scale-out. |
-| N | `redis` | Horizontal scale. **Pair with sticky load-balancing** (e.g. ALB `lb_cookie`) — without it, every cross-process request returns `unavailable` and clients re-initialize constantly. |
-| N | `memory` | **Not supported.** Sessions partition across processes. |
-
-When `type: "redis"` is set without a `redis.url`, NimbleBrain refuses to fall back to in-memory and fails the boot — silently degrading would mask a misconfiguration.
-
-### Scaling to multiple replicas
+## Scaling to multiple replicas
 
 Run `platform.replicas: 1`. More than one replica is **not supported**: the runtime assumes it is the only process on a tenant's data, and no combination of settings makes a second replica safe today. With two replicas:
 
 - **Work runs twice.** Every pod's scheduler fires every due task, and every pod polls every notification outbox, so runs, posts and deliveries happen once per pod.
 - **Writes are lost.** Workspace records and notification files are rewritten whole, with locks that hold within one process only.
 - **State goes stale between pods.** A connector installed or removed on one pod, a deactivated user, a changed model config, and live events (including an in-flight chat turn) stay on the pod that saw them.
-- **Sticky routing does not fix this.** Load-balancer cookie affinity pins a browser, not an MCP client or a webhook sender, and routing on `Mcp-Session-Id` cannot pin a session to the pod that created it.
-
-`sessionStore.type: "redis"` is valid at one replica, for cluster-wide visibility into sessions, but it is not what makes more than one replica work.
-
-### Tuning `ttlSeconds`
-
-The 8 h default is tuned for a connector left open during a working day. Tighten it (e.g. `1800` for 30 minutes) if you want sessions to evict faster on idle; loosen it if your typical usage pattern leaves connectors open across days.
-
-`MCP_SESSION_TTL_SECONDS` env var overrides this when set.
+- **Sticky routing does not fix this.** Load-balancer cookie affinity pins a browser, not an MCP client or a webhook sender.
 
 ## logging
 

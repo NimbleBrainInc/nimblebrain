@@ -40,6 +40,7 @@ import type { FileEntry } from "../types";
 import { openAppChannel } from "./app-channel";
 import {
   ACTION_METHOD,
+  HOST_STYLES_EXTENSION,
   KEYDOWN_METHOD,
   LOCATION_METHOD,
   NAVIGATE_METHOD,
@@ -51,7 +52,7 @@ import {
 import { buildHostCapabilities, TASKS_EXTENSION_ID } from "./host-capabilities";
 import { buildHostStyles, type UploadLimits } from "./host-extensions";
 import type { LoggingMessageNotification } from "./schemas";
-import { getHostThemeMode, getSpecThemeTokens } from "./theme";
+import { getHostThemeMode, getModeExtensionTokens, getSpecThemeTokens } from "./theme";
 import type {
   AppNotice,
   BridgeCallbacks,
@@ -445,11 +446,11 @@ export function createBridge(
     },
 
     setHostContext(context: Record<string, unknown>): void {
-      // Filter spec-allowed theme keys centrally so every caller
-      // (SlotRenderer's theme toggle, future ones) can't bypass the
-      // ext-apps strict-Zod contract. Sending `--nb-*` or out-of-spec
-      // tokens to a strict client like Reboot tears down the connection
-      // on every host-context-changed notification.
+      // Derive the theme variables from the mode centrally, so every caller
+      // (SlotRenderer's theme toggle, future ones) sends the same split: spec
+      // keys on `styles.variables`, where a strict ext-apps client (Reboot)
+      // tears down the connection on any other key, and the mode-varying rest
+      // on the `ai.nimblebrain/styles` extension.
       const filtered = filterHostContextForSpec(context);
       const msg: ExtAppsHostContextChangedNotification = {
         jsonrpc: "2.0",
@@ -736,10 +737,11 @@ function handleInitialize(
   if (typeof id !== "string" && typeof id !== "number") return;
 
   const extMode = getHostThemeMode();
-  // Filter to spec-valid keys only. Strict ext-apps SDK clients (Reboot's
-  // React runtime validates via Zod) reject unknown keys on this field.
-  // NB extensions and out-of-spec tokens still flow through the iframe's
-  // injected `<style>` block — they just don't cross the protocol.
+  // Spec-valid keys only on `styles.variables`. Strict ext-apps SDK clients
+  // (Reboot's React runtime validates via Zod) reject unknown keys on this
+  // field. The non-spec tokens that vary with the mode go on the
+  // `ai.nimblebrain/styles` extension below; the mode-independent rest reach
+  // the app only through the iframe's injected `<style>` block.
   const extTokens = getSpecThemeTokens(extMode);
   // Spec-standardized fields (theme, styles) take precedence over any
   // same-named keys returned by `getHostExtensions()`, so callers can
@@ -771,6 +773,7 @@ function handleInitialize(
         origin: window.location.origin,
         theme: extMode,
         styles: buildHostStyles(extTokens),
+        [HOST_STYLES_EXTENSION]: { variables: getModeExtensionTokens(extMode) },
       },
     },
   };
@@ -1083,8 +1086,8 @@ function uploadError(err: unknown): { code: number; message: string; data?: Requ
 }
 
 // ---------------------------------------------------------------------------
-// MCP transport helpers — every request an app makes of its server goes to the
-// 2026-07-28 leg of `/mcp/<wsId>` through `sendMcpRequest`.
+// MCP transport helpers — every request an app makes of its server goes to
+// `/mcp/<wsId>` through `sendMcpRequest`.
 //
 // Rules:
 //   - What reaches `/mcp` is built here from the fields the method needs, plus
@@ -1269,14 +1272,16 @@ async function forwardTaskRequest(
 // ---------------------------------------------------------------------------
 
 /**
- * Filter `ui/notifications/host-context-changed` params so only spec-valid
- * theme variable keys cross the wire. Strict ext-apps SDK clients (Reboot's
- * React runtime validates via Zod) reject unknown keys on
- * `hostContext.styles.variables`; sending `--nb-*` or out-of-spec tokens
- * tears down the connection. Centralized here so callers can't skip it.
+ * Derive the theme variables of `ui/notifications/host-context-changed` params
+ * from the mode they carry. Strict ext-apps SDK clients (Reboot's React runtime
+ * validates via Zod) reject unknown keys on `hostContext.styles.variables`, and
+ * sending `--nb-*` or out-of-spec tokens there tears down the connection, so
+ * that field gets the spec keys alone. The out-of-spec tokens that vary with
+ * the mode ride the `ai.nimblebrain/styles` extension beside it, so a toggle
+ * refreshes them too. Centralized here so callers can't skip it.
  *
- * Only the `styles.variables` branch is filtered — other host-context
- * fields (theme mode, future additions) pass through unchanged.
+ * Only the theme variables are touched: other host-context fields (theme mode,
+ * workspace, future additions) pass through unchanged.
  */
 function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, unknown> {
   const styles = ctx.styles as { variables?: Record<string, string> } | undefined;
@@ -1288,6 +1293,7 @@ function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, 
       ...styles,
       variables: getSpecThemeTokens(mode),
     },
+    [HOST_STYLES_EXTENSION]: { variables: getModeExtensionTokens(mode) },
   };
 }
 

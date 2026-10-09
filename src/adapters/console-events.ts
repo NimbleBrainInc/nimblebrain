@@ -21,10 +21,16 @@ function logToolStart(data: ToolStartPayload): void {
   );
 }
 
-/** Logs a tool completion with its ok/error status and duration. */
+/**
+ * Logs a tool completion with its ok/error status and duration, then the
+ * result's size in characters, and what the model was shown when bounding cut
+ * it. The size trails the closing parenthesis so a reader matching
+ * `(ok|error, Nms)` keeps matching.
+ */
 function logToolDone(data: ToolDonePayload): void {
+  const toModel = data.modelOutput !== undefined ? `, ${data.modelOutput.length} to model` : "";
   console.error(
-    `[engine] tool.done: ${data.name} (${data.ok ? "ok" : "error"}, ${Math.round(data.ms)}ms)`,
+    `[engine] tool.done: ${data.name} (${data.ok ? "ok" : "error"}, ${Math.round(data.ms)}ms) ${data.output.length} chars${toModel}`,
   );
 }
 

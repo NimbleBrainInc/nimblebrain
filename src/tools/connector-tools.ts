@@ -3688,7 +3688,7 @@ async function handleListSecretKeys(
  *
  * Delegates to the single source of truth, `canWriteWorkspaceScoped`:
  * the identity must be a workspace member with the `admin` role. There
- * is no org-admin bypass — an org admin / owner who is not a workspace
+ * is no org-admin bypass — an org admin who is not a workspace
  * admin member cannot install connectors. The helper fails closed on a
  * malformed workspace record (non-array `members`).
  */

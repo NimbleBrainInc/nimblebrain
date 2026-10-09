@@ -56,7 +56,6 @@ describe("isAdminToolAllowed", () => {
 
   test("refuses an org admin who is not a member of the workspace", () => {
     expect(isAdminToolAllowed(identity("u_org", "admin"), WS, DECLARED, "configure")).toBe(false);
-    expect(isAdminToolAllowed(identity("u_owner", "owner"), WS, DECLARED, "configure")).toBe(false);
   });
 
   test("refuses when there is no identity", () => {

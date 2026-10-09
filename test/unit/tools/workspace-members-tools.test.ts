@@ -591,21 +591,6 @@ describe("nb__manage_workspaces member actions", () => {
       expect(resultText(result)).toContain("don't have permission");
     });
 
-    test("org owner who is NOT a member can manage members", async () => {
-      const ws = await wsStore.create("Team Owner");
-
-      currentIdentity = { ...currentIdentity!, orgRole: "owner" };
-      tool = createManageWorkspacesTool(makeCtx());
-
-      const result = await tool.handler({
-        action: "add_member",
-        workspaceId: ws.id,
-        userId: memberUser.id,
-      });
-
-      expect(result.isError).toBe(false);
-    });
-
     test("org admin who is NOT a member can list, promote, and remove members", async () => {
       const ws = await wsStore.create("Team Governed");
       await wsStore.addMember(ws.id, memberUser.id, "admin");
@@ -659,8 +644,8 @@ describe("nb__manage_workspaces member actions", () => {
       expect(resultText(demoted)).toContain("Cannot demote the last workspace admin");
     });
 
-    test("org owner who IS a workspace admin member can manage members", async () => {
-      currentIdentity = { ...currentIdentity!, orgRole: "owner" };
+    test("org admin who IS a workspace admin member can manage members", async () => {
+      currentIdentity = { ...currentIdentity!, orgRole: "admin" };
       const ws = await createWsAsAdmin("Team OwnerMember");
       tool = createManageWorkspacesTool(makeCtx());
 

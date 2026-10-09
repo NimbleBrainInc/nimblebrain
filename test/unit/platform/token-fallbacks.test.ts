@@ -3,10 +3,12 @@
  * never repeats it.
  *
  * `var(--color-text-secondary, #5c5c66)` looks defensive and is not. In a
- * host-themed tree the token always has a value: `buildThemeStyleBlock` injects
- * all of `paletteToExtAppsTokens` into the iframe's `<style>` before the app
- * renders, and a `srcdoc` iframe inherits nothing else, so there is no state in
- * which the host is present and the token is absent. The fallback is therefore
+ * host-themed tree the token always has a value: the host delivers all of
+ * `paletteToExtAppsTokens`, through the iframe's `<style>` before the app
+ * renders or, for an out-of-spec token that varies with the mode, over the
+ * protocol, where `@nimblebrain/synapse`'s default layer backs it until the
+ * handshake lands. A `srcdoc` iframe inherits nothing else, so there is no
+ * state in which the host is present and the token is absent. The fallback is therefore
  * dead in every case except one — a token name that does not exist — and that
  * is exactly the case where a second value does harm rather than good: instead
  * of failing loudly it renders a plausible colour, usually the light-palette

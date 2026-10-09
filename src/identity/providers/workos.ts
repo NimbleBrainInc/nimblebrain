@@ -13,6 +13,7 @@ import {
   type TokenGrant,
   type TokenResult,
   TransientAuthError,
+  type UpdateUserInput,
   type UserIdentity,
   type VerifiedIdentity,
 } from "../provider.ts";
@@ -139,9 +140,9 @@ function extractToken(req: Request): string | null {
 
 /**
  * WorkOS role slugs that map to the app `admin` role when the operator hasn't
- * configured `adminRoleSlugs`. Includes `owner` so a WorkOS org-owner role
- * lands as app `admin` (the app's `owner` tier is internal — see
- * `syncLocalProfile`), and so the common case works without configuration.
+ * configured `adminRoleSlugs`. Includes `owner`, WorkOS's name for an org
+ * owner, so that role lands as app `admin`, the top app role, without
+ * configuration.
  */
 const DEFAULT_ADMIN_ROLE_SLUGS = ["admin", "owner"];
 
@@ -180,6 +181,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private organizationId: string | undefined;
   private authkitDomain: string | undefined;
   private adminRoleSlugs: Set<string>;
+  private adminRoleSlugForWrite: string;
   /** Client IDs whose AuthKit tokens are first-party; empty means none are. */
   private firstPartyClientIds: ReadonlySet<string>;
   private userStore: UserStore | null;
@@ -228,6 +230,9 @@ export class WorkosIdentityProvider implements IdentityProvider {
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
     this.adminRoleSlugs = normalizeAdminRoleSlugs(config.adminRoleSlugs);
+    // The slug written when `manage_users` makes someone an admin: the first
+    // one the operator names, so it is a role their WorkOS environment has.
+    this.adminRoleSlugForWrite = [...this.adminRoleSlugs][0] ?? "admin";
     this.firstPartyClientIds = new Set(
       (config.firstPartyClientIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0),
     );
@@ -238,6 +243,9 @@ export class WorkosIdentityProvider implements IdentityProvider {
       managedUsers: true,
       // AuthKit is the authorization server; without a domain there is none.
       authorizationServer: this.authkitOrigin() !== null,
+      // AuthKit signs a user in by their email, so changing it is an identity
+      // change WorkOS owns, not a profile edit.
+      providerOwnedUserFields: ["email"],
     };
   }
 
@@ -453,6 +461,44 @@ export class WorkosIdentityProvider implements IdentityProvider {
     return { user: toUser(result) };
   }
 
+  /**
+   * Write an edit to WorkOS, then to the local profile. WorkOS is the source of
+   * the name and of the admin/member role, and `syncLocalProfile` copies both
+   * back over the local profile on the next uncached sign-in, so an edit made
+   * only locally would revert. Email is refused: AuthKit signs the user in by it
+   * (`providerOwnedUserFields`), so `manage_users` never sends it here.
+   */
+  async updateUser(userId: string, data: UpdateUserInput): Promise<User | null> {
+    if (!this.userStore) return null;
+    const existing = await this.userStore.get(userId);
+    if (!existing) return null;
+    if (data.email !== undefined && data.email !== existing.email) {
+      throw new Error("Email is managed in WorkOS. Change it there.");
+    }
+
+    const local: UpdateUserInput = { ...data };
+    delete local.email;
+    if (data.displayName !== undefined && data.displayName !== existing.displayName) {
+      const [firstName = "", ...rest] = data.displayName.trim().split(/\s+/);
+      const lastName = rest.join(" ");
+      await this.workos.userManagement.updateUser({
+        userId,
+        firstName,
+        // Empty, not omitted, so a one-word name clears the old last name
+        // rather than keeping it beside the new first name.
+        lastName,
+      });
+      // Stored as the login sync will rebuild it from WorkOS, so it never differs.
+      local.displayName = [firstName, lastName].filter(Boolean).join(" ");
+    }
+
+    if (data.orgRole !== undefined && data.orgRole !== existing.orgRole) {
+      await this.writeMembershipRole(userId, data.orgRole);
+    }
+
+    return this.userStore.update(userId, local);
+  }
+
   async deleteUser(userId: string): Promise<boolean> {
     try {
       await this.workos.userManagement.deleteUser(userId);
@@ -554,12 +600,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
       const displayName =
         [workosUser.firstName, workosUser.lastName].filter(Boolean).join(" ") || workosUser.email;
 
-      // The effective role (not the raw `orgRole`) is what gates the live
-      // session: `syncLocalProfile` may preserve a local `owner` that
-      // `resolveOrgRole` can't produce. Building the identity from the raw
-      // value would leave a preserved owner inert (store says owner, session
-      // says member) — see syncLocalProfile's contract.
-      const { preferences, orgRole: effectiveRole } = await this.syncLocalProfile(workosUserId, {
+      const preferences = await this.syncLocalProfile(workosUserId, {
         email: workosUser.email,
         displayName,
         orgRole,
@@ -569,7 +610,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
         id: workosUser.id,
         email: workosUser.email,
         displayName,
-        orgRole: effectiveRole,
+        orgRole,
         preferences,
       };
       this.userCache.set(workosUserId, { identity, fetchedAt: nowMs });
@@ -607,48 +648,33 @@ export class WorkosIdentityProvider implements IdentityProvider {
    * Sync WorkOS identity data to a local user profile.
    * Creates the profile if it doesn't exist; updates identity fields
    * (email, displayName, orgRole) on each login while preserving
-   * user-owned data (preferences).
-   *
-   * Returns both the user's preferences AND the **effective** org role — the
-   * post-preservation value, which may be `owner` even though `resolveOrgRole`
-   * never yields `owner`. The caller MUST build the live session identity from
-   * this returned role, not from the raw `data.orgRole`; otherwise a preserved
-   * owner exists only in the store and the live session is gated as a lesser
-   * role (store and session disagree).
+   * user-owned data (preferences), which it returns. WorkOS is the source of
+   * the org role, so the local profile always takes the WorkOS-derived one.
    */
   private async syncLocalProfile(
     workosUserId: string,
     data: { email: string; displayName: string; orgRole: OrgRole },
-  ): Promise<{ preferences: UserPreferences; orgRole: OrgRole }> {
-    if (!this.userStore) return { preferences: {}, orgRole: data.orgRole };
+  ): Promise<UserPreferences> {
+    if (!this.userStore) return {};
 
     const existing = await this.userStore.get(workosUserId);
     if (existing) {
-      // `owner` is an app-internal elevation, not a WorkOS-derived role:
-      // `resolveOrgRole` only ever yields "admin"/"member", and only the
-      // guarded `manage_users` path may create or remove an owner. So a
-      // login-time sync must never DOWNGRADE a local owner to a lesser
-      // WorkOS-derived role — otherwise a WorkOS membership change would
-      // silently strip owners and defeat the last-owner invariant (the
-      // sync path bypasses that guard). admin/member still track WorkOS.
-      const effectiveRole: OrgRole = existing.orgRole === "owner" ? "owner" : data.orgRole;
       // Update identity fields from WorkOS, preserve preferences
       if (
         existing.email !== data.email ||
         existing.displayName !== data.displayName ||
-        existing.orgRole !== effectiveRole
+        existing.orgRole !== data.orgRole
       ) {
         await this.userStore.update(workosUserId, {
           email: data.email,
           displayName: data.displayName,
-          orgRole: effectiveRole,
+          orgRole: data.orgRole,
         });
       }
-      return { preferences: existing.preferences, orgRole: effectiveRole };
+      return existing.preferences;
     }
 
-    // First login — create local profile. No existing record means no owner to
-    // preserve, so the effective role is the WorkOS-derived one.
+    // First login — create local profile.
     try {
       const user = await this.userStore.create({
         id: workosUserId,
@@ -656,14 +682,12 @@ export class WorkosIdentityProvider implements IdentityProvider {
         displayName: data.displayName,
         orgRole: data.orgRole,
       });
-      return { preferences: user.preferences, orgRole: user.orgRole };
+      return user.preferences;
     } catch {
       // UserConflictError — race condition, profile was created between get and
-      // create. Preserve the raced record's owner the same way the existing
-      // branch does, so a concurrent login can't strip it either.
+      // create.
       const raced = await this.userStore.get(workosUserId);
-      const racedRole: OrgRole = raced?.orgRole === "owner" ? "owner" : data.orgRole;
-      return { preferences: raced?.preferences ?? {}, orgRole: racedRole };
+      return raced?.preferences ?? {};
     }
   }
 
@@ -677,9 +701,8 @@ export class WorkosIdentityProvider implements IdentityProvider {
    *   - any other slug → "member" (logged, so a custom admin slug that should
    *     have matched is diagnosable instead of silently downgraded)
    *
-   * This NEVER returns "owner": `owner` is an app-internal elevation managed
-   * via `manage_users` and preserved across login by `syncLocalProfile`, not a
-   * WorkOS-derived role. A WorkOS owner-slug role therefore grants app `admin`.
+   * A WorkOS `owner` slug is in the default admin set, so it grants app
+   * `admin`, the top app role.
    *
    * Returns null if the user has no org membership — a security signal that the
    * user should be denied access, and the only meaning null carries here.
@@ -739,6 +762,36 @@ export class WorkosIdentityProvider implements IdentityProvider {
       // resolveUser's catch decides between stale cache and 503.
       this.transient("org_role_unresolvable", { userId: workosUserId });
     }
+  }
+
+  /**
+   * Set the user's role in the configured WorkOS organization to the slug that
+   * `resolveOrgRole` maps back to `role`. A membership whose slug already maps
+   * to `role` is left alone, so a WorkOS `owner` slug (app `admin`) is not
+   * rewritten to `admin`.
+   */
+  private async writeMembershipRole(userId: string, role: "admin" | "member"): Promise<void> {
+    if (!this.organizationId) {
+      // With no organization every user resolves to member.
+      if (role === "admin") {
+        throw new Error("No WorkOS organization is configured, so no one can be an admin.");
+      }
+      return;
+    }
+    const memberships = await this.workos.userManagement.listOrganizationMemberships({
+      userId,
+      organizationId: this.organizationId,
+    });
+    const membership = memberships.data[0];
+    if (!membership) {
+      throw new Error("This user has no membership in the WorkOS organization.");
+    }
+    const slug = (membership.role as { slug?: string })?.slug?.trim().toLowerCase();
+    const current = slug && this.adminRoleSlugs.has(slug) ? "admin" : "member";
+    if (current === role) return;
+    await this.workos.userManagement.updateOrganizationMembership(membership.id, {
+      roleSlug: role === "admin" ? this.adminRoleSlugForWrite : "member",
+    });
   }
 
   /**

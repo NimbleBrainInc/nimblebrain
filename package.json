@@ -52,6 +52,7 @@
     "docs:build": "cd docs && bun run build",
     "test:unit": "bun test --no-env-file test/unit/",
     "test:integration": "bun test --no-env-file test/integration/",
+    "test:conformance": "bun --no-env-file test/conformance/run.ts",
     "test": "bun run test:unit && bun run test:integration",
     "test:web": "cd web && bun test",
     "test:platform-apps": "for ui in src/platform/*/ui; do if [ -f \"$ui/package.json\" ] && [ -n \"$(find \"$ui/src\" \\( -name '*.test.ts' -o -name '*.test.tsx' \\) -print -quit 2>/dev/null)\" ]; then (cd \"$ui\" && bun test) || exit 1; fi; done",
@@ -97,7 +98,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
-    "@nimblebrain/synapse": "0.30.0",
+    "@nimblebrain/synapse": "0.32.0",
     "@types/bun": "latest",
     "happy-dom": "^20.0.0",
     "mcp-sdk-v1-0": "npm:@modelcontextprotocol/sdk@1.0.4",

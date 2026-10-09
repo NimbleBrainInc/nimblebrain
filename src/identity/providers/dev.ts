@@ -19,7 +19,7 @@ export const DEV_IDENTITY: UserIdentity = {
   id: "usr_default",
   email: "dev@localhost",
   displayName: "Developer",
-  orgRole: "owner",
+  orgRole: "admin",
   preferences: {},
 };
 

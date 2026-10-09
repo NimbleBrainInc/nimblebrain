@@ -4,7 +4,7 @@
  * STRICT policy: a workspace-scoped write is allowed iff the operator is an
  * authenticated user who is a member of the target workspace with the
  * `admin` member role. Org role (`orgRole`) grants NO bypass — an org
- * admin/owner who is not a workspace admin member cannot write workspace
+ * admin who is not a workspace admin member cannot write workspace
  * content. This mirrors the existing skills behavior and the HTTP
  * `requireWorkspace` middleware, which already requires membership.
  *
@@ -69,7 +69,7 @@ export function canWriteWorkspaceScoped(
  * and change the role of its members.
  *
  * Membership is access governance, not workspace content, so it is decided at
- * org scope as well as workspace scope: an org admin/owner may manage the
+ * org scope as well as workspace scope: an org admin may manage the
  * members of any workspace, as they may create or delete it, and a workspace
  * admin member may manage their own. Content writes stay with
  * `canWriteWorkspaceScoped`; an org admin who wants to write content seats
@@ -90,7 +90,7 @@ export function canManageWorkspaceMembers(
  * Decide whether `identity` may rename `ws`.
  *
  * A workspace's name, like its roster, is governance rather than content: the
- * workspace's own admins and an org admin/owner decide it, as they decide who
+ * workspace's own admins and an org admin decide it, as they decide who
  * belongs. So the rule is `canManageWorkspaceMembers`'. Its connector list stays
  * with org admins (`manage_workspaces update` with `connectors`).
  */
@@ -106,7 +106,7 @@ export function canRenameWorkspace(
  * their roles.
  *
  * Any member may, as they share the workspace with everyone on it, and so may
- * an org admin/owner, who may manage it. Changing the roster stays with
+ * an org admin, who may manage it. Changing the roster stays with
  * `canManageWorkspaceMembers`.
  */
 export function canReadWorkspaceMembers(

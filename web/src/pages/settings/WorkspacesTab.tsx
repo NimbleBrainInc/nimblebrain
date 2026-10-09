@@ -31,8 +31,6 @@ interface Workspace {
   createdAt?: string;
 }
 
-const ADMIN_ROLES = new Set(["admin", "owner"]);
-
 /** The org-admin page for one workspace. */
 function workspaceDetailPath(workspaceId: string): string {
   return `/org/workspaces/${toSlug(workspaceId)}`;
@@ -259,7 +257,7 @@ export function WorkspacesTab() {
   const navigate = useNavigate();
   const { refreshWorkspaces } = useWorkspaceContext();
   const notify = useNotice();
-  const isAdmin = ADMIN_ROLES.has(session?.user?.orgRole ?? "");
+  const isAdmin = session?.user?.orgRole === "admin";
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);

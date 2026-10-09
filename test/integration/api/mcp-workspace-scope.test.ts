@@ -9,7 +9,7 @@ import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { type ServerHandle, startServer } from "../../../src/api/server.ts";
 import { textContent } from "../../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
@@ -18,6 +18,7 @@ import { SharedSourceRef } from "../../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { newMcpClient } from "../../helpers/mcp-client.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 // ── Fake tool sources ───────────────────────────────────────────────
@@ -124,7 +125,7 @@ async function createMcpClient(headers?: Record<string, string>): Promise<Client
     new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
     { requestInit: { headers: { ...headers } } },
   );
-  const client = new Client({ name: "ws-scope-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "ws-scope-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }

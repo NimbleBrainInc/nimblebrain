@@ -245,7 +245,7 @@ import {
 } from "../tools/instance-credentials.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
-import { APP_INSTRUCTIONS_URI } from "../tools/resource-schemes.ts";
+import { APP_INSTRUCTIONS_URI, readableRecordTemplates } from "../tools/resource-schemes.ts";
 import {
   announceResourceListChangedFor,
   relayIdentitySourceNotifications,
@@ -3407,10 +3407,22 @@ export class Runtime {
     // agent cannot discover that such resources exist.
     let instructions: string | undefined;
     let customInstructions: string | undefined;
+    let resourceTemplates: PromptAppInfo["resourceTemplates"] = [];
     const source = registry?.getSource(instance.serverName);
     if (source instanceof McpSource) {
       instructions = source.getInstructions();
-      customInstructions = await this.readAppCustomInstructions(source, instance.serverName);
+      // Read together: each is a round trip to the same server on a cold memo.
+      const [custom, templates] = await Promise.all([
+        this.readAppCustomInstructions(source, instance.serverName),
+        source.resourceTemplates(),
+      ]);
+      customInstructions = custom;
+      // The record shapes this connector serves, so the model knows
+      // `nb__read_resource` reads them (ADR-0049).
+      resourceTemplates = readableRecordTemplates(templates).map((t) => ({
+        uriTemplate: t.uriTemplate,
+        name: t.title ?? t.name,
+      }));
     }
 
     return {
@@ -3418,6 +3430,7 @@ export class Runtime {
       description: instance.description,
       instructions,
       ...(customInstructions !== undefined ? { customInstructions } : {}),
+      ...(resourceTemplates.length > 0 ? { resourceTemplates } : {}),
       ui,
     };
   }
@@ -5673,45 +5686,6 @@ export class Runtime {
   /** Get the path to the nimblebrain.json config file (Helm-managed seed). */
   getConfigPath(): string | undefined {
     return this.config.configPath;
-  }
-
-  /**
-   * Loose session-store config for the API host to resolve. The actual
-   * defaulting + validation lives in `api/session-store/factory.ts` so this
-   * returns whatever was put in `nimblebrain.json`, untouched.
-   */
-  getSessionStoreConfig(): RuntimeConfig["sessionStore"] {
-    return this.config.sessionStore;
-  }
-
-  /**
-   * Resolved idle TTL for sessions, in milliseconds. Two operator surfaces,
-   * one currency:
-   *
-   *   - `MCP_SESSION_TTL_SECONDS` env var (highest priority — env wins so
-   *     ops can flip TTL without redeploying the configmap)
-   *   - `sessionStore.ttlSeconds` in `nimblebrain.json`
-   *   - 8 h fallback
-   *
-   * Internal callers (registry constructors, sweep math) take ms; the
-   * conversion happens once here so the rest of the runtime never deals
-   * in mixed units. `parsePositiveIntEnv`-style validation lives in
-   * `mcp-server.ts`; this accessor only consumes the parsed env value.
-   */
-  getSessionStoreTtlMs(): number {
-    const envRaw = process.env.MCP_SESSION_TTL_SECONDS;
-    if (envRaw !== undefined && envRaw !== "") {
-      const parsed = Number(envRaw);
-      if (Number.isFinite(parsed) && parsed > 0 && Number.isInteger(parsed)) {
-        return parsed * 1000;
-      }
-      // Invalid env value — fall through to config / default. We don't
-      // log here because the chart-rendered config path is the typical
-      // source of truth; an unset/typo'd env should be a quiet fallback,
-      // not a noise generator on every cold start.
-    }
-    const seconds = this.config.sessionStore?.ttlSeconds ?? 8 * 60 * 60;
-    return seconds * 1000;
   }
 
   /**

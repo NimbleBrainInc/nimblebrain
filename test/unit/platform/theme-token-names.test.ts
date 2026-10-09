@@ -28,7 +28,7 @@ import { readFileSync } from "node:fs";
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
 import { REPO, sourceFiles, THEMING_DOC, themedTrees } from "./themed-trees.ts";
 
-/** The names `buildThemeStyleBlock` writes into every iframe's style block. */
+/** The names the host delivers to every iframe, over the protocol or its style block. */
 const INJECTED = new Set(Object.keys(paletteToExtAppsTokens("light")));
 
 describe("themed trees only read tokens the host injects", () => {

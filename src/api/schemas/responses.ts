@@ -31,7 +31,7 @@ export interface ApiErrorBody {
 // ── Shared shapes ───────────────────────────────────────────────────────────
 
 /** Mirrors `OrgRole` (`src/identity/types.ts`). */
-export type OrgRole = "owner" | "admin" | "member";
+export type OrgRole = "admin" | "member";
 
 /** Mirrors `WorkspaceRole` (`src/workspace/types.ts`). */
 export type WorkspaceRole = "admin" | "member";
@@ -351,7 +351,7 @@ export interface JsonRpcErrorBody {
   id: null;
 }
 
-/** The 2026-07-28 leg's answer to `tasks/get` or `tasks/cancel`, which the SDK does not route. */
+/** `/mcp`'s answer to `tasks/get` or `tasks/cancel`, which the SDK does not route. */
 export type McpTaskAnswer = { id: string | number } & (
   | { result: Record<string, unknown> }
   | { error: { code: number; message: string } }

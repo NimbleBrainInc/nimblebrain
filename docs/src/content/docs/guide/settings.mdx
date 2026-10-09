@@ -86,7 +86,7 @@ The workspace's MCP URL, `<origin>/mcp/<workspaceId>`, with a copy button. Add i
 
 ## Organization (admin only)
 
-Visible only to organization admins and owners. Hidden from regular members. These settings live under `/org/*`, outside any workspace URL.
+Visible only to organization admins. Hidden from regular members. These settings live under `/org/*`, outside any workspace URL.
 
 ### Workspaces (`/org/workspaces`)
 
@@ -98,7 +98,7 @@ To edit a workspace's instructions, switch into it via the navigator and use **T
 
 ### Users (`/org/users`)
 
-Manage user accounts at the organization level: create a user with a Member or Admin role, deactivate one, or restore a deactivated one. See [User Management](/using/users/).
+Manage user accounts at the organization level: create a user with a Member or Admin role, edit a user's display name, email, and role, deactivate one, or restore a deactivated one. Edits save as each field changes. See [User Management](/using/users/).
 
 ### Models (`/org/model`)
 
@@ -120,7 +120,7 @@ The extended thinking modes are:
 Reasoning is billed as output tokens, and the agent's reasoning shows up in chat as a collapsible **Thought** chip. See [Chat](/using/chat#the-thoughts-panel).
 
 <Aside type="caution">
-  Model configuration is platform-wide. Changes affect every workspace and every user immediately. Restrict to org admins/owners.
+  Model configuration is platform-wide. Changes affect every workspace and every user immediately. Restrict to org admins.
 </Aside>
 
 ### Usage (`/org/usage`)

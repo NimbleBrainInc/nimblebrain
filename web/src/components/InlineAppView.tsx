@@ -6,9 +6,11 @@ import { createBridge } from "../bridge/bridge";
 import { buildHostExtensions } from "../bridge/host-extensions";
 import { createAppIframe } from "../bridge/iframe";
 import { useFileLimits } from "../context/ChatContext";
+import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { ToolResultForUI } from "../hooks/chat-store";
 import { useAppDisplayName } from "../hooks/useAppDisplayName";
+import { useHostContextSync } from "../hooks/useHostContextSync";
 import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
 import { useNotice } from "./notices";
 
@@ -52,17 +54,24 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
   const nameApp = useAppDisplayName();
-  // Mirror SlotRenderer: publish workspace into hostContext so apps mounted
-  // here see the same `useHostContext().workspace` value as in placements.
-  // Inline previews don't push host-context-changed (they're scoped to a
-  // single tool result, no workspace switching mid-life), so the handshake
-  // is the only delivery point.
+  // Mirror SlotRenderer: the same host context at the handshake and on every
+  // change, so an app mounted here sees what it would in a placement and
+  // follows a theme toggle while its iframe stays mounted.
+  const { mode } = useTheme();
   const { activeWorkspace } = useWorkspaceContext();
   const workspaceRef = useRef(activeWorkspace);
   workspaceRef.current = activeWorkspace;
   const uploadLimits = useFileLimits();
   const uploadLimitsRef = useRef(uploadLimits);
   uploadLimitsRef.current = uploadLimits;
+
+  useHostContextSync(
+    () => (bridgeRef.current ? [bridgeRef.current] : []),
+    mode,
+    activeWorkspace,
+    undefined,
+    uploadLimits,
+  );
 
   const [height, setHeight] = useState(DEFAULT_CONTENT_HEIGHT);
   const [loading, setLoading] = useState(true);

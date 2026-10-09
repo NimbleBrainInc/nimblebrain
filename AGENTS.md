@@ -26,6 +26,7 @@ bun run verify:test-unit   # test:unit + test:web + test:platform-apps
 bun run test               # Unit then integration (stops at the first failing suite)
 bun run test:unit          # Unit tests only (fast, ~10s)
 bun run test:integration   # Integration tests only
+bun run test:conformance   # MCP conformance suite against /mcp/<wsId> (not in verify; see test/conformance/AGENTS.md)
 bun run lint               # Biome linter
 bun run format:check       # Biome format diff (no writes) — matches CI
 bun run check              # TypeScript strict mode
@@ -73,12 +74,13 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`src/tools/AGENTS.md`](./src/tools/AGENTS.md) | `CredentialStore`, credential refs, OAuth records, credential ownership; long-running (task-augmented) MCP tools |
 | [`src/conversation/AGENTS.md`](./src/conversation/AGENTS.md) | Conversation paths, workspace binding on resume, no cross-workspace listing |
 | [`src/files/AGENTS.md`](./src/files/AGENTS.md) | File store paths, bare `files://` URIs, the file locator |
-| [`src/api/AGENTS.md`](./src/api/AGENTS.md) | Three API audiences, tool actions over new routes, named response bodies, router middleware chained per route, `/mcp/<wsId>` wall and which credentials reach it, MCP sessions, what blocks running more than one replica, `clientAddressFor` |
+| [`src/api/AGENTS.md`](./src/api/AGENTS.md) | Three API audiences, tool actions over new routes, named response bodies, router middleware chained per route, `/mcp/<wsId>` wall and which credentials reach it, the one protocol revision `/mcp` speaks, what blocks running more than one replica, `clientAddressFor` |
 | [`src/hooks/AGENTS.md`](./src/hooks/AGENTS.md) | The inbound webhook door: never parse a body, uniform 404, delivery ids, rotation, provisioning |
 | [`src/lifecycle/AGENTS.md`](./src/lifecycle/AGENTS.md) | Connector `on_ready` / `on_removing` notifications |
 | [`src/connectors/runtime/AGENTS.md`](./src/connectors/runtime/AGENTS.md) | Connector teardown and workspace delete; connection credential re-validation |
 | [`src/observability/AGENTS.md`](./src/observability/AGENTS.md) | `NB_DEBUG` / `nb_debug` namespaces, structured logs, OTel spans, what may be stamped |
 | [`web/AGENTS.md`](./web/AGENTS.md) | Web shell: gating workspace writes, forms that save as they change and notices, shell rules, chat panel workspace scope, main-area views |
+| [`test/conformance/AGENTS.md`](./test/conformance/AGENTS.md) | The MCP conformance suite against `/mcp/<wsId>`: what it measures, the per-version baselines, the pin, where it runs in CI |
 | [`web/src/bridge/AGENTS.md`](./web/src/bridge/AGENTS.md) | MCP App Bridge rules: iframe scoping, handshake gate, notification relay, host capabilities |
 
 ## Conventions

@@ -4,7 +4,7 @@ import type { TokenGrant } from "../../identity/provider.ts";
 import { publicOrigin } from "../../oauth/public-origin.ts";
 import { authenticateRequest, isAuthError } from "../auth-middleware.ts";
 import { MCP_PATH_PREFIX, mcpResourceMetadataUrl, mcpResourceUrl } from "../mcp-resource.ts";
-import type { McpSessionContext } from "../mcp-server.ts";
+import type { McpRequestContext } from "../mcp-server.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { requestRateLimit } from "../middleware/rate-limit.ts";
 import type { JsonRpcErrorBody } from "../schemas/responses.ts";
@@ -146,12 +146,12 @@ export function mcpRoutes(ctx: AppContext) {
         return workspaceNotFound();
       }
 
-      const sessionCtx: McpSessionContext = {
+      const requestCtx: McpRequestContext = {
         identity,
         workspaceId: wsId,
         grant: c.var.grant.kind,
       };
-      return ctx.mcpHost.handle(c.req.raw, features, sessionCtx);
+      return ctx.mcpHost.handle(c.req.raw, features, requestCtx);
     },
   );
 

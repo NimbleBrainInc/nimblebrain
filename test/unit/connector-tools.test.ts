@@ -856,20 +856,20 @@ describe("manage_connectors.install", () => {
     expect(structured(result).error).toBe("permission_denied");
   });
 
-  test("returns permission_denied for an org owner who is NOT a member of the target workspace", async () => {
+  test("returns permission_denied for an org admin who is NOT a member of the target workspace", async () => {
     // Strict workspace-scoped-write policy (#389): orgRole grants NO
-    // bypass. An org owner/admin who isn't a workspace admin member of
+    // bypass. An org admin who isn't a workspace admin member of
     // the target workspace cannot install — they must be seated as a
     // workspace admin first. This is the behavior change from the old
     // org-admin override in isWorkspaceAdmin.
-    const orgOwnerNonMember: UserIdentity = {
-      id: "usr_org_owner",
-      email: "owner@example.test",
-      displayName: "Org Owner",
-      orgRole: "owner",
+    const orgAdminNonMember: UserIdentity = {
+      id: "usr_org_admin",
+      email: "org-admin@example.test",
+      displayName: "Org Admin",
+      orgRole: "admin",
       preferences: {},
     };
-    const tool = buildTool(h, orgOwnerNonMember);
+    const tool = buildTool(h, orgAdminNonMember);
     const result = await tool.handler({
       action: "install",
       entry: unsupportedEntry(),
