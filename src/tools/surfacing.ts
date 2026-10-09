@@ -77,7 +77,6 @@ function toolSource(t: ToolSchema): string {
  * demand. Promotion mutates the tools block — which precedes the messages in
  * the request — so proxying a hot kernel tool busts the conversation's cached
  * prefix on every promote. Keeping kernel tools direct keeps that prefix stable.
-
  */
 function isKernelTool(t: ToolSchema): boolean {
   return isSystemTool(t) || isIdentitySource(toolSource(t));

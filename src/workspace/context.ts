@@ -271,7 +271,7 @@ function workspaceRootOf(dir: string): { wsId: string; root: string } | null {
  * without changing what it does for the others.
  *
  * Call this directly when the writer must keep its own `mkdir` — the
- * credential and instructions dirs pass `mode: 0o700`, and several are
+ * credential dirs pass `mode: 0o700`, and several are
  * `await mkdir`, so swapping in {@link ensureWorkspaceDir} would widen them to
  * the umask default or make them synchronous. Both entry points read one rule
  * from one place; there is no second definition of it.

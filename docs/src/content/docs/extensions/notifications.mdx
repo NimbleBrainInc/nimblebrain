@@ -62,7 +62,7 @@ One block in `_meta["ai.nimblebrain/host"]`:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `resource` | `string` | Yes | The outbox resource URI, read by the host as an opaque string. **Scheme and path are both yours** — `acme://inbox` and `acme://events` are as valid as the example above; the host derives no meaning from either half. Three rules bind. It must carry a scheme. It must **not** carry a query string or a fragment, because the host appends its own query parameters and one of yours would be overwritten. And its scheme must not be one the host resolves itself — `skill://`, `ui://`, `instructions://`, `artifact://`, `files://`, `app://` — because a single resource cannot mean two things to the same reader; such a declaration is refused and the outbox is not polled. |
+| `resource` | `string` | Yes | The outbox resource URI, read by the host as an opaque string. **Scheme and path are both yours** — `acme://inbox` and `acme://events` are as valid as the example above; the host derives no meaning from either half. Three rules bind. It must carry a scheme. It must **not** carry a query string or a fragment, because the host appends its own query parameters and one of yours would be overwritten. And its scheme must not be one the host resolves itself — `skill://`, `ui://`, `artifact://`, `files://`, `app://` — because a single resource cannot mean two things to the same reader; such a declaration is refused and the outbox is not polled. |
 | `description` | `string` | No | What the outbox carries. Operator-facing; the host never acts on it. |
 
 One outbox per server, carrying every event name you emit. The host filters;
@@ -80,7 +80,7 @@ That cost is why the host polls **only what is declared**, and why there is no
 scheme to name your outbox after. A host that found outboxes by matching a URI
 pattern would be granting itself that poll on any server that happened to
 publish the right shape, which turns an opt-in into an opt-out. Schemes the host
-*does* resolve on its own — `skill://`, `ui://`, `instructions://`, `artifact://`,
+*does* resolve on its own — `skill://`, `ui://`, `artifact://`,
 `files://`, `app://` — are the ones that buy you nothing by publishing them: it
 reads a skill when it wants one, renders a UI when the agent asks, fetches an
 artifact or a file when a viewer opens it, and reads your own
