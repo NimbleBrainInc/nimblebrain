@@ -33,6 +33,7 @@
 
 ### Added
 
+- **`/mcp/<wsId>` serves its connectors' prompts and completions.** Each prompt is named `<source>__<prompt>`, as tools are. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).
 - **`/mcp/<wsId>` serves its connectors' instructions and skills.** `server/discover` answers each connector's server instructions under its source name, and the MCP Skills extension (`skills/list`, `skills/get`) lists the skills the workspace's connectors serve, so a client outside NimbleBrain learns how their tools are meant to be used. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).
 - **Edit a user from Organization → Users.** An org admin changes a user's display name, email, and role, each saving as it changes; under WorkOS the name and admin/member role are written to WorkOS, and email is locked under WorkOS and OIDC ([docs](https://docs.nimblebrain.ai/using/users/#what-an-edit-can-change)).
 - **The agent reads a connector's records whole.** A connector's resource templates are listed under it in the system prompt, `nb__read_resource` returns a non-skill resource up to the 50,000-character tool-result limit, and the `tool.done` log line ends with the result's size ([ADR-0049](adr/0049-the-agent-reads-a-connectors-records-as-resources.md)).
@@ -253,6 +254,7 @@
 ### Fixed
 
 - **Every task run leaves a result.** A run that failed before the engine returned, never started, or was lost with its process now writes `<runId>.result.json` too, with an empty output and its `error`, so `tasks__run_result` and the Tasks panel read one shape. Runs recorded by earlier releases keep their preview fallback.
+- **`/mcp/<wsId>` refuses an untrusted browser `Origin` with `403`** (DNS-rebinding protection). A hostname you reach the web UI by, other than the public origin, goes in `ALLOWED_ORIGINS`. [Docs](https://docs.nimblebrain.ai/deploy/security/#browser-origins-at-mcpwsid).
 - **`manage_users` refuses what it reports as refused.** Demoting or deactivating the last admin answers `isError: true`, and changing your own role or deactivating yourself is refused on the server, not only hidden in the page.
 - **OIDC claims or provisions a user only from a verified email.** A token whose `email_verified` claim is not `true`, or is missing, is refused, so an unverified email can no longer take over a pre-created user or pass `allowedDomains`. **Breaking** for a provider that omits the claim — see Breaking ([#1662](https://github.com/NimbleBrainInc/nimblebrain/issues/1662)).
 - **An OIDC user created ahead of time is bound to its sign-in subject.** The first sign-in that claims the record by email records the issuer and subject on it, and later sign-ins find it by that subject, so an email changed at the provider keeps the same account. A record bound to one subject is never matched by email again: a different subject with that email is refused and logged, and no second record is created. Records with no subject bound yet bind on their next sign-in, so no migration is needed.

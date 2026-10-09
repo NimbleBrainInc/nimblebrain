@@ -21,8 +21,8 @@ import { IdentityContext } from "./context.ts";
  *
  * Ownership is **structural**: a ref stored here is user-owned by virtue of
  * its location, not a field on the ref. Refs carry no `oauthScope` — the
- * `"user"` scope value was removed from the `ConnectorRef` union in Stage 2, and
- * a `"workspace"` scope would be meaningless off any workspace. The source
+ * `ConnectorRef` union has no `"user"` scope value, and a `"workspace"`
+ * scope would be meaningless off any workspace. The source
  * holder that reads this record constructs a `{ type: "user" }` OAuth provider
  * because the ref came from `connectors.json`, not from any workspace.
  *

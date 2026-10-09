@@ -808,8 +808,7 @@ export function extractOutputFiles(toolCalls: TaskFnResult["toolCalls"]): RunFil
  *                                              operator knows)
  *
  * Defaulting unknown values to `failure` is intentional: the alternative
- * is silent green status, which is exactly the masking this PR's parent
- * change is meant to eliminate. Any new stop reason from the engine
+ * is silent green status, which would mask a failed run as a success. Any new stop reason from the engine
  * should explicitly opt into `success` here.
  */
 function mapStopReasonToStatus(stopReason: TaskRun["stopReason"]): TaskRun["status"] {
@@ -917,15 +916,10 @@ export function createDirectExecutor(
     // OR the per-run timeout elapses. The combined signal goes into
     // taskFn → runtime.executeTask → engine.run → every tool call, so an
     // abort actually cancels in-flight LLM/tool work instead of
-    // orphaning it the way the old `Promise.race` pattern did.
-    //
-    // Production bug this fixes: `morning-brief-6am-pt` runs took
-    // 6–7 minutes while the 5-minute Promise.race rejected at the
-    // 5-minute mark, returning to dispatchRun. The task kept running,
-    // finished cleanly 1–2 minutes later, wrote a complete conversation
-    // to disk — and the result was discarded. The agent saw a "timeout"
-    // run record with `iterations: 0, toolCalls: 0` despite the agent
-    // doing all the work.
+    // orphaning it. A `Promise.race` against a timer would reject at the
+    // deadline and return to dispatchRun while the task kept running,
+    // finished, and had its result discarded — a "timeout" run record
+    // with `iterations: 0, toolCalls: 0` for a run that did all the work.
     const runController = new AbortController();
     let timedOut = false;
     const timeoutTimer = setTimeout(() => {

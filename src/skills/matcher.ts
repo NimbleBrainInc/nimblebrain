@@ -7,7 +7,7 @@ import type { Skill } from "./types.ts";
  * high-confidence explicit phrases for deterministic ("must-fire") activation —
  * e.g. a compliance skill that must load whenever the user names a regulated
  * action, rather than relying on the model noticing the catalog. Topic/keyword
- * matching is no longer a separate signal: the standard folds keywords into the
+ * matching is not a separate signal: the standard folds keywords into the
  * `description`, and the model activates from the catalog on that (P3).
  *
  * Only `dynamic` skills are matchable; `always` skills compose into the context

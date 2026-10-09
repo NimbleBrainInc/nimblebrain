@@ -112,7 +112,7 @@ describe("estimateMessageTokens — image regression", () => {
     expect(tokens).toBe(1600);
   });
 
-  test("REGRESSION: two large PNG attachments combined < 10K tokens (was 2.8M pre-fix)", () => {
+  test("two large PNG attachments combined < 10K tokens (binary bytes are not counted as text)", () => {
     // The exact prod scenario: two attached PNGs in one user turn. Prod
     // reported `totalTokens: 2,853,357` for this case.
     const a = new Uint8Array(207_007);

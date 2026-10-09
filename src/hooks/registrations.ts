@@ -126,7 +126,7 @@ export function listRegistrations(ws: Pick<Workspace, "hooks">): HookRegistratio
  * writer of a workspace record shares — see its doc for why the lock is keyed by
  * workspace rather than by field. It also closes the `hooks__rotate_webhook`-vs-reconcile
  * window that `ensureHooks` leaves open by bypassing the flight for a rotation:
- * the two can still run concurrently, but they can no longer interleave inside
+ * the two can still run concurrently, but they cannot interleave inside
  * the write.
  */
 export async function updateRegistrations(

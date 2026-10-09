@@ -174,7 +174,7 @@ describe("published skills and the surface-once channel", () => {
     // The called tool's own skill: composed once, and still once after the call.
     expect(peakOccurrences(MARKER_A)).toBe(1);
     // Its neighbour on the same server: the affinity glob is per-SERVER, so this
-    // is the one that used to double without any tool of its own being called.
+    // is the one that could double without any tool of its own being called.
     expect(peakOccurrences(MARKER_B)).toBe(1);
   });
 

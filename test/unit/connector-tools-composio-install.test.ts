@@ -698,7 +698,7 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(sc.wsId).toBe(personalWsId);
 
     // The ref landed in the workspace with the composio marker
-    // and the post-T008 workspace scope.
+    // and the workspace scope.
     const personalWs = await h.workspaceStore.get(personalWsId);
     const installed = personalWs?.connectors.find(
       (b): b is Extract<ConnectorRef, { url: string }> => "url" in b && b.brokered !== undefined,

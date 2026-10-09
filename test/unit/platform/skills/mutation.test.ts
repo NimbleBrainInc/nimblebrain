@@ -1,5 +1,5 @@
 /**
- * Phase 4 — mutation-tool behavior tests for `nb__skills`.
+ * Mutation-tool behavior tests for `nb__skills`.
  *
  * Per-tool: happy path + at least one error/permission edge. Versioning
  * (`_versions/{name}.{iso}.md` snapshots) is verified as a side-effect of
@@ -177,14 +177,10 @@ describe("skills__create", () => {
   });
 
   test("a skill cannot be created inside a task run at all", async () => {
-    // This began as a provenance test. While a run's correlation id lived in
-    // `conversationId`, a task-created skill was persisted as
-    // `origin: "chat"` with a run id recorded as its conversation — wrong data
-    // on disk. #1033 corrected the stamp; the unattended wall then removed the
-    // path, which is the stronger guarantee: a skill is durable guidance that
-    // loads itself into later conversations, and a run ingesting untrusted
-    // content must not be able to author one. So the assertion is no longer
-    // "the provenance is right" but "nothing was written".
+    // The unattended wall removes the path, which is a stronger guarantee
+    // than correct provenance: a skill is durable guidance that loads itself
+    // into later conversations, and a run ingesting untrusted content must
+    // not be able to author one. So the assertion is "nothing was written".
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
@@ -842,12 +838,11 @@ describe("skills__update", () => {
     expect(result.isError).toBe(true);
   });
 
-  // Regression: production bug where the agent passed a stale `id` (a path
-  // the skill used to live at, before being moved to a workspace dir). The
-  // old ordering ran the permission check first and returned "Org-scope
-  // writes require org admin" — sending the agent down a
-  // hallucination loop trying to fix its role instead of refreshing its
-  // path. Existence-first surfaces the actual cause.
+  // The agent can pass a stale `id` (a path the skill no longer lives at,
+  // after a move to a workspace dir). Running the permission check first
+  // would return "Org-scope writes require org admin" — sending the agent
+  // down a hallucination loop trying to fix its role instead of refreshing
+  // its path. Existence-first surfaces the actual cause.
   test("stale org-scope id (file moved away) returns 'not found', not 'permission denied'", async () => {
     runtime.identity = {
       id: "u_member",
@@ -1143,7 +1138,7 @@ describe("durable status is set_status only", () => {
   });
 
   test("update refuses manifest.status — set_status is the only durable door", async () => {
-    // The schema no longer declares the field, but the validator lets unknown
+    // The schema does not declare the field, but the validator lets unknown
     // keys through, so a silent drop would report a disable that never
     // happened. Refuse instead, and say where the capability lives.
     const src = await buildSource();

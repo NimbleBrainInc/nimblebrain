@@ -256,8 +256,8 @@ describe("routeToolCall — strict invariant (no ambient workspace)", () => {
 });
 
 describe("routeToolCall — the wall (cross-workspace reach is unexpressible)", () => {
-  // A session bounded to one workspace cannot reach another — and no longer
-  // because reach is denied, but because no name can express it. Rejected before
+  // A session bounded to one workspace cannot reach another — not because
+  // reach is denied, but because no name can express it. Rejected before
   // any workspace resolution, so no WorkspaceContext is constructed.
   test("a `ws_<id>-` name is rejected as a retired wire form, whatever workspace it names", async () => {
     const runtime = makeStubRuntime({

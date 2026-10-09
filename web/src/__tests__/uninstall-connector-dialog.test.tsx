@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
 // UninstallConnectorDialog — what the uninstall takes with it.
 //
-// Uninstall used to remove the connector and leave its credentials on the
-// volume, where nothing referenced them and no surface admitted they existed:
-// the rotation section renders only for an INSTALLED connector, so the moment
-// the connector was gone its secret was unreachable from the UI entirely. In a
+// An uninstall that removed the connector and left its credentials on the
+// volume would leave them where nothing references them and no surface admits
+// they exist: the rotation section renders only for an INSTALLED connector, so
+// once the connector is gone its secret is unreachable from the UI entirely. In a
 // store that is plaintext-on-disk in v1, that orphan is a live outbound
 // capability nobody can see.
 //

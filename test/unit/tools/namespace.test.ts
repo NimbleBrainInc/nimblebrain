@@ -1,16 +1,15 @@
 /**
  * Unit tests for `src/tools/namespace.ts`.
  *
- * Pins the primitive's contract for Stage 2 of the cross-workspace
- * refactor. Failure modes covered (in order of likelihood we'd silently
- * regress):
+ * Pins the primitive's contract. Failure modes covered (in order of
+ * likelihood we'd silently regress):
  *
  *  - `parseNamespacedToolName` silently falling back to "current
- *    workspace" on a non-namespaced input (the Stage 1 lesson 3
- *    failure mode).
+ *    workspace" on a non-namespaced input (a silent default instead
+ *    of a loud failure).
  *  - `namespacedToolName` accepting a wsId carrying path traversal
- *    or whitespace — the Stage 2 invariant lift that motivates the
- *    `WORKSPACE_ID_RE` import.
+ *    or whitespace — the reason the primitive imports
+ *    `WORKSPACE_ID_RE`.
  *  - Embedded `-` in tool name being mis-split (we take the FIRST `-`
  *    as the separator; this contract is asserted explicitly).
  *  - Round-trip property: anything `namespacedToolName` produces must
@@ -39,7 +38,7 @@ describe("namespacedToolName — construction", () => {
     );
   });
 
-  test("throws on empty wsId — fail-loud, no silent default (Stage 1 lesson 3)", () => {
+  test("throws on empty wsId — fail-loud, no silent default", () => {
     expect(() => namespacedToolName("", "foo")).toThrow(InvalidNamespacedToolNameInput);
   });
 

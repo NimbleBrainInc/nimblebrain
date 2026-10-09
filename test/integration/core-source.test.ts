@@ -299,9 +299,9 @@ describe("Core Source", () => {
   });
 
   it("nb__set_model_config accepts thinking='enabled' without a budget", async () => {
-    // A budget used to be mandatory here, because `enabled` with nothing to
-    // size it fell through to the SDK's 1,024-token floor. It now resolves
-    // to the default effort tier, which is well-defined on every provider —
+    // A budget is not mandatory: `enabled` with nothing to size it
+    // resolves to the default effort tier rather than the SDK's 1,024-token
+    // floor, and that tier is well-defined on every provider —
     // so requiring a token count would be demanding a number the operator
     // has no reason to have.
     const workDir = join(testDir, `work-thinking-nobudget-${Date.now()}`);
@@ -518,11 +518,11 @@ describe("Core Source", () => {
   });
 
   it("nb__set_model_config allows dropping a budget while keeping thinking='enabled'", async () => {
-    // This combination used to be rejected: clearing the budget left
-    // enabled with nothing to size it, and the SDK silently downgraded to
-    // its 1,024-token floor. Now it falls back to the default effort tier,
-    // which is the honest way to say "reason, at a normal depth" — so
-    // dropping a token cap is a legitimate operation rather than a trap.
+    // Clearing the budget leaves enabled with nothing to size it, so it
+    // falls back to the default effort tier rather than the SDK's silent
+    // 1,024-token floor. That is the honest way to say "reason, at a normal
+    // depth" — so dropping a token cap is a legitimate operation rather
+    // than a trap.
     const workDir = join(testDir, `work-thinking-clearbudget-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     const configPath = join(workDir, "nimblebrain.json");
@@ -588,9 +588,8 @@ describe("Core Source", () => {
       expect(result.isError).toBe(false);
       const raw = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
       expect(raw.thinking).toBeUndefined();
-      // The budget survives on purpose. It used to be deleted alongside the
-      // mode on the grounds that it meant nothing without one; the resolver's
-      // no-mode path now honors a bare budget, so cascading the delete would
+      // The budget survives on purpose. The resolver's no-mode path honors a
+      // bare budget, so cascading the delete would
       // silently discard a setting that is still in force. Clearing it is a
       // separate instruction (`thinkingBudgetTokens: null`).
       expect(raw.thinkingBudgetTokens).toBe(8192);

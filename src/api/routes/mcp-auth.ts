@@ -73,7 +73,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
 
   // ── POST /v1/workspaces/:wsId/mcp-auth/initiate ───────────────────
   //
-  // Workspace-authed. Body: { serverName }. Stage 2: every URL connector
+  // Workspace-authed. Body: { serverName }. Every URL connector
   // is workspace-scoped, so the principal is always `WORKSPACE_PRINCIPAL_ID`.
   // Personal connectors live on the identity plane, not here. Calls
   // `lifecycle.startAuth`, which is idempotent on double-click and tears

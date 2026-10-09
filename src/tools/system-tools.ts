@@ -448,8 +448,8 @@ async function handleSkillStatus(
 ): Promise<ToolResult> {
   // Report through the SAME per-request path `chat` composes with
   // (`describeRequestSkills` → `selectRequestLayer3`), so workspace- and
-  // user-tier skills that actually load into the prompt appear here — the old
-  // path read a boot-time cache and reported only platform/core skills.
+  // user-tier skills that actually load into the prompt appear here — a
+  // boot-time cache would report only platform/core skills.
   const { context, layer3 } = await runtime.describeRequestSkills(wsId);
   // Legacy trigger-matched skills still come from the boot matcher cache.
   const matchable = getSkills?.().matchable ?? [];

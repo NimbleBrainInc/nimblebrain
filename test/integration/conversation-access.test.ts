@@ -243,9 +243,9 @@ describe("runtime.chat — identity-provider gate", () => {
   test("identity provider configured + missing request.identity throws hard (no usr_default fallback)", async () => {
     // The production path is for the auth middleware to populate
     // request.identity before runtime.chat runs. If middleware is broken
-    // or bypassed, the previous unconditional fallback silently minted
-    // usr_default-owned conversations for every request — Stage 1 closes
-    // that hole.
+    // or bypassed, an unconditional fallback would silently mint
+    // usr_default-owned conversations for every request, so the runtime
+    // throws instead.
     let caught: unknown = null;
     try {
       await runtime.chat({

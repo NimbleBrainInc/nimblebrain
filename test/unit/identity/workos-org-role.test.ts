@@ -158,7 +158,7 @@ describe("WorkOS resolveOrgRole slug mapping", () => {
   });
 
   it("treats an explicit adminRoleSlugs list as the full set (replaces defaults)", async () => {
-    // With a custom list, the built-in 'admin' slug is no longer special — and
+    // With a custom list, the built-in 'admin' slug is not special — and
     // the unmatched-slug warning makes that visible in logs.
     const p = makeProvider(new Map([["u", "admin"]]), { adminRoleSlugs: ["org-admin"] });
     expect(await resolveOrgRole(p, "u")).toBe("member");

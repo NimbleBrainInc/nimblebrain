@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Connector section components — render contracts.
 //
-// Pins three things this PR makes load-bearing for the Configure page:
+// Pins three things the Configure page relies on:
 //
 //   1. Each section renders only when its credential lifecycle is
 //      relevant to the connector. The page composes all three and

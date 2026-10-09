@@ -275,8 +275,8 @@ test("a registration its connector's catalog entry no longer declares forwards n
 });
 
 test("another workspace's id does not reach this workspace's connector", async () => {
-  // The isolation the sealed `wid` used to carry. Resolution is now a lookup,
-  // so the property has to be asserted against the lookup: an id minted for
+  // Resolution is a lookup, so workspace isolation has to be asserted
+  // against the lookup: an id minted for
   // one workspace forwards for THAT workspace, and nothing about the door's
   // scan may let it land on a neighbour's registration.
   const other = await store.create("other");
@@ -452,8 +452,7 @@ describe("every way a delivery is refused looks the same", () => {
   });
 
   test("a registration whose id rotated away, past its grace window", async () => {
-    // Replaces a case that asked about the KEY id. The door no longer weighs
-    // that: the id and the key rotate together, so a second window would be a
+    // The door does not weigh the KEY id: the id and the key rotate together, so a second window would be a
     // second truth to keep in step. The id's window is the one gate.
     await seedWorkspace({
       hooks: {

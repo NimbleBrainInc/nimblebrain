@@ -434,7 +434,7 @@ describe("OidcIdentityProvider", () => {
       const wsStore = new WorkspaceStore(workDir);
       const ws = await wsStore.create("Default Workspace");
 
-      // OidcIdentityProvider no longer auto-adds to workspaces — that is handled
+      // OidcIdentityProvider does not auto-add to workspaces — that is handled
       // by the runtime layer. Verify the user is provisioned and can be manually added.
       const token = await buildJwt({
         email: "ws-user@example.com",

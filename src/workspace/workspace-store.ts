@@ -352,8 +352,7 @@ export class WorkspaceStore {
    *
    * From every other surface the workspace is gone the moment this
    * returns: `get`/`list` read `workspaces/`, which no longer holds the
-   * subtree. Membership-change notifications fire for each former member,
-   * exactly as before (the only change is on-disk: archive vs. destroy).
+   * subtree. Membership-change notifications fire for each former member.
    *
    * Returns `false` (idempotent no-op) when no such workspace dir exists.
    *

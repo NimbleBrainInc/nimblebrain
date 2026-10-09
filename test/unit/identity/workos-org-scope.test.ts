@@ -203,7 +203,7 @@ describe("WorkosIdentityProvider.verifyRequest org_id gate", () => {
         makeRequest(await workosToken("org_some_other_org")),
       );
       expect(identity).toBeNull();
-      // The previously-silent gate now names itself for operators.
+      // The gate names itself for operators.
       const orgMismatchCall = warnSpy.mock.calls.find((c) => String(c[0]).includes("org_mismatch"));
       expect(orgMismatchCall).toBeDefined();
       // Token-derived ids are stamped; the raw token never is.

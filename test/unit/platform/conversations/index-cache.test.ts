@@ -37,7 +37,7 @@ function writeConvFile(spec: ConvSpec): string {
     ...(spec.workspaceId ? { workspaceId: spec.workspaceId } : {}),
   };
 
-  // Connector no longer reads line-1 totals — attach the requested totals
+  // The connector does not read line-1 totals — attach the requested totals
   // as `metadata.usage` on the last assistant message so the read-time
   // derivation produces matching numbers without changing message count.
   const messages = (spec.messages ?? []).map((m) => ({ ...m })) as Array<Record<string, unknown>>;

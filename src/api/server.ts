@@ -205,7 +205,7 @@ export function startServer(options: ServerOptions): ServerHandle {
     // Post-login landing — a user-facing browser destination, so it uses
     // webOrigin() like the connectors return (one rule: browser-facing →
     // webOrigin, vendor-facing → publicOrigin). Identical to publicOrigin() in
-    // prod; decoupled from the CORS allowlist (no longer ALLOWED_ORIGINS[0]).
+    // prod; decoupled from the CORS allowlist (not ALLOWED_ORIGINS[0]).
     appOrigin: webOrigin(),
     mcpHost,
   };

@@ -118,6 +118,8 @@ Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HT
 |---|---|
 | `tools` | The workspace's tools and the caller's identity tools, with the same filtering the agent gets |
 | `resources` | Resources from the workspace's servers |
+| `prompts` | The workspace's connectors' prompts, each named `<source>__<prompt>` as its tools are, in one page. `prompts/get` reaches the connector that serves the prompt; a name no connector answers to is refused with `-32602`. A connector's `input_required` answer to `prompts/get` is not relayed to the caller. |
+| `completions` | Asked of the connector that owns the reference: the one a `<source>__<prompt>` name names, or the one that lists the resource template. A connector that declares no `completions` capability has nothing to suggest. |
 | `io.modelcontextprotocol/skills` | In `server/discover`'s `capabilities.extensions`. `skills/list` and `skills/get` answer the skills the workspace's connectors serve, and each skill file reads through `resources/read`. A skill URI that two connectors serve is left out. |
 | `io.modelcontextprotocol/tasks` | In `server/discover`'s `capabilities.extensions`. Long-running tools stay long-running through the endpoint: a `tools/call` whose request names the extension in its client capabilities is answered with a task when the tool can run as one, `tasks/get` inlines the result once the task ends, and `tasks/cancel` acknowledges. A call that does not opt in runs to completion inside the request. The 2025-11-25 tasks utility is not served. |
 

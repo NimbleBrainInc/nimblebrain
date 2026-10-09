@@ -239,10 +239,10 @@ describe("conversations__stats — ambient workspace scoping", () => {
 });
 
 describe("there is no cross-workspace conversation listing", () => {
-  // `ConversationLocator.list` used to take an OPTIONAL `workspaceId`, so
-  // forgetting it widened the read to every workspace — silently, and looking
-  // identical to a scoped call. The workspace is now a required positional
-  // argument, so the widening form does not exist to be reached.
+  // `ConversationLocator.list` takes the workspace as a required positional
+  // argument. Were it optional, forgetting it would widen the read to every
+  // workspace — silently, and looking identical to a scoped call. Required,
+  // the widening form does not exist to be reached.
   test("a listing covers only the named workspace", async () => {
     const locator = new ConversationLocator(join(workDir, "workspaces"));
     const result = await locator.list(WS_A, { limit: 100 }, { userId: OWNER_ID });

@@ -204,14 +204,13 @@ describe("Security Hardening Regression Tests", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // NB-007: App guide containment (replaces prior per-turn trust gate)
+  // NB-007: App guide containment
   // ---------------------------------------------------------------------------
   //
-  // The platform previously gated `<app-guide>` injection on MTF trust score
-  // >= 50. That gate has been removed: if a connector is active in the workspace
-  // its tools are already callable, so suppressing the workflow guidance that
-  // teaches the model how to use them safely leaves the model less safe,
-  // not more. Trust is an install-time concern.
+  // `<app-guide>` injection is not gated on MTF trust score: if a connector is
+  // active in the workspace its tools are already callable, so suppressing the
+  // workflow guidance that teaches the model how to use them safely leaves the
+  // model less safe, not more. Trust is an install-time concern.
   //
   // The remaining defense is the same one used for every other connector-
   // authored containment tag (`<app-instructions>`, `<app-state>`,

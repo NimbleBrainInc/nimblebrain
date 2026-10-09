@@ -133,9 +133,9 @@ export function createInstructionsSource(runtime: Runtime, eventSink: EventSink)
       meta: { ui: { visibility: ["app"] } },
       inputSchema: InstructionsWriteInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
-        // A stale `scope` used to choose the file. The schema no longer declares
-        // it and AJV lets unknown keys through, so ignoring it would silently
-        // redirect an org-intended write onto the workspace overlay — which is
+        // A caller may still send a `scope` meant to choose the file. The schema
+        // does not declare it and AJV lets unknown keys through, so ignoring it
+        // would silently redirect an org-intended write onto the workspace overlay — which is
         // overwrite-only with no history, so the displaced body is gone. Refuse
         // instead, and say where org-wide guidance lives now. Removable once no
         // caller emits it.
