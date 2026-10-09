@@ -22,16 +22,11 @@
  * forbids importing from outside `src/platform/schemas/`.
  */
 
-import { type Static, type TProperties, type TSchema, Type } from "@sinclair/typebox";
-import { StringEnum } from "./_shared.ts";
+import { type Static, type TProperties, Type } from "@sinclair/typebox";
+import { clearable, StringEnum } from "./_shared.ts";
 import { NotificationRouteMatch } from "./notifications.ts";
 
 // ── Shared sub-schemas ───────────────────────────────────────────────────
-
-/** An optional field an update clears with `null` (src/platform/AGENTS.md §1.3). */
-function clearable<T extends TSchema>(schema: T, description: string) {
-  return Type.Optional(Type.Union([schema, Type.Null()], { description }));
-}
 
 const TaskIdField = Type.String({
   minLength: 1,

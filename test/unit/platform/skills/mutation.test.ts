@@ -918,6 +918,115 @@ describe("skills__update", () => {
   });
 });
 
+// ── null clears (platform/AGENTS.md §1.3) ────────────────────────────────
+
+describe("skills__update — null clears a field, omission keeps it", () => {
+  async function seedFull(): Promise<{
+    id: string;
+    client: NonNullable<ReturnType<McpSource["getClient"]>>;
+  }> {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const created = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: {
+          name: "full",
+          description: "Every field set",
+          loadingStrategy: "always",
+          priority: 40,
+          toolAffinity: ["gmail__*"],
+          triggers: ["ship it"],
+          allowedTools: ["files__read"],
+        },
+        body: "Body.",
+      },
+    });
+    expect(created.isError).toBeFalsy();
+    return { id: join(workDir, "skills", "full.md"), client };
+  }
+
+  const read = (id: string) => parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false });
+
+  test("null on a list removes the key from the file", async () => {
+    const { id, client } = await seedFull();
+    for (const [field, key] of [
+      ["toolAffinity", "tool-affinity"],
+      ["triggers", "triggers"],
+      ["allowedTools", "allowed-tools"],
+    ] as const) {
+      const result = await client.callTool({
+        name: "update",
+        arguments: { id, manifest: { [field]: null } },
+      });
+      expect(result.isError).toBeFalsy();
+      expect(readFileSync(id, "utf-8")).not.toContain(`${key}:`);
+      expect(read(id)?.manifest[field]).toBeUndefined();
+    }
+  });
+
+  test("null on priority or loadingStrategy restores the default the loader applies", async () => {
+    const { id, client } = await seedFull();
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, manifest: { priority: null, loadingStrategy: null } },
+    });
+    expect(result.isError).toBeFalsy();
+    const written = read(id);
+    expect(written?.manifest.priority).toBe(50);
+    expect(written?.manifest.loadingStrategy).toBe("dynamic");
+  });
+
+  test("an omitted field keeps its value", async () => {
+    const { id, client } = await seedFull();
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, manifest: { triggers: null } },
+    });
+    expect(result.isError).toBeFalsy();
+    const m = read(id)?.manifest;
+    expect(m?.triggers).toBeUndefined();
+    expect(m?.description).toBe("Every field set");
+    expect(m?.loadingStrategy).toBe("always");
+    expect(m?.priority).toBe(40);
+    expect(m?.toolAffinity).toEqual(["gmail__*"]);
+    expect(m?.allowedTools).toEqual(["files__read"]);
+  });
+
+  test("a required field takes no null, and nothing is written", async () => {
+    const { id, client } = await seedFull();
+    const before = readFileSync(id, "utf-8");
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, manifest: { description: null } },
+    });
+    expect(result.isError).toBe(true);
+    expect(readFileSync(id, "utf-8")).toBe(before);
+  });
+
+  test("the schema declares each clear as anyOf [T, null], and description has none", async () => {
+    const src = await buildSource();
+    const { tools } = await src.getClient()!.listTools();
+    const update = tools.find((t) => t.name === "update");
+    if (!update) throw new Error("no update tool");
+    const manifest = (
+      update.inputSchema.properties as Record<string, { properties: Record<string, unknown> }>
+    ).manifest;
+    for (const field of [
+      "loadingStrategy",
+      "priority",
+      "toolAffinity",
+      "triggers",
+      "allowedTools",
+    ]) {
+      const prop = manifest?.properties[field] as { anyOf?: Array<{ type?: string }> };
+      expect(prop.anyOf?.some((branch) => branch.type === "null")).toBe(true);
+    }
+    expect(JSON.stringify(manifest?.properties.description)).not.toContain('"null"');
+  });
+});
+
 // ── the Skills editor's per-field saves ──────────────────────────────────
 
 // The editor saves one field at a time through `skillEditPatch`; these send
@@ -969,6 +1078,27 @@ describe("skills__update — the Skills editor's per-field saves", () => {
     expect(written?.manifest.triggers).toEqual(["ship it"]);
     expect(written?.manifest.priority).toBe(40);
     expect(written?.manifest.loadingStrategy).toBe("always");
+  });
+
+  test("a list emptied in the editor is cleared from the file", async () => {
+    const { id, client } = await seed();
+    await client.callTool({
+      name: "update",
+      arguments: { ...skillEditPatch(id, "triggers", "ship it") },
+    });
+    await client.callTool({
+      name: "update",
+      arguments: { ...skillEditPatch(id, "toolAffinity", "gmail__*") },
+    });
+    for (const field of ["triggers", "toolAffinity"] as const) {
+      const result = await client.callTool({
+        name: "update",
+        arguments: { ...skillEditPatch(id, field, "  \n ") },
+      });
+      expect(result.isError).toBeFalsy();
+      expect(read(id)?.manifest[field]).toBeUndefined();
+    }
+    expect(read(id)?.manifest.priority).toBe(40);
   });
 
   test("a header kept as text in the body sets no field", async () => {

@@ -218,6 +218,9 @@ The Skills pages in settings (your profile, a workspace, and the organization) c
 - **Editing** an existing skill has no Save button. Each field saves on its own: the loading strategy when you pick one, the priority when you leave it or press Enter, and the body, tool patterns, and trigger phrases when you leave them. A save shows a notice with **Undo**; one the server refuses stays on the field with the reason, **Retry**, and **Revert**.
 - On an existing skill, the fields set the manifest and the body is only prose. A body that starts with a `---` header is not applied, because it would overwrite fields saved separately: remove the header, or tick **Keep it as body text**.
 - The loading verdict above **Advanced** describes the skill as saved. While an edit hasn't saved yet, it says which one.
+- Emptying the tool patterns or trigger phrases removes them from the skill.
+
+The agent edits a skill with `skills__update`, which takes a patch: a field it leaves out keeps its value, and `null` clears one. A cleared list is removed from the file, and a cleared `loading-strategy` or `priority` returns to its default (`dynamic`, 50). `description` is required, so it takes no `null`.
 
 ## Auditing how skills loaded
 
