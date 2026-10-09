@@ -11,9 +11,13 @@ import {
   resolvedBrand,
 } from "../../../src/brand/index.ts";
 import { getValidator } from "../../../src/config/index.ts";
-import { mergePalette } from "../../../web/src/theme/brand.ts";
+import {
+  BRAND_COLOR_TOKENS,
+  BRAND_FONT_ROLES,
+  mergePalette,
+} from "../../../web/src/theme/brand.ts";
 import { contrastRatio } from "../../../web/src/theme/contrast.ts";
-import { colors, extOnlyColors, fonts, radiusScale } from "../../../web/src/theme/palette.ts";
+import { colors, extOnlyColors, fonts } from "../../../web/src/theme/palette.ts";
 import { ACME_BRAND } from "../../helpers/acme-brand.ts";
 
 afterEach(() => {
@@ -51,27 +55,30 @@ describe("brand schema", () => {
     expect(ok).toBe(false);
   });
 
-  test("rejects url and faces together", () => {
-    const { ok } = validate({
+  test("flags radius, a mono role, faces and an unsupported colour as unknown keys", () => {
+    const { errors } = validate({
+      colors: { primary: ["#B53707", "#FF8A4C"], success: ["#0D6B45", "#3fbf85"] },
       fonts: {
-        mono: {
-          stack: "'Plex', monospace",
-          family: "Plex",
-          url: "https://static.example.com/a.woff2",
-          faces: [{ url: "https://static.example.com/b.woff2", weight: "600" }],
-        },
+        mono: { stack: "ui-monospace, monospace" },
+        sans: { stack: "x", faces: [{ url: "https://static.example.com/a.woff2" }] },
       },
+      radius: { md: "0.25rem" },
     });
-    expect(ok).toBe(false);
+    const unknown = errors
+      .filter((e) => e.keyword === "additionalProperties")
+      .map((e) => (e.params as { additionalProperty: string }).additionalProperty)
+      .sort();
+    expect(unknown).toEqual(["faces", "mono", "radius", "success"]);
+    expect(errors.filter((e) => e.keyword !== "additionalProperties")).toEqual([]);
   });
 
-  test("requires family whenever a file is declared", () => {
+  test("weight needs url", () => {
+    expect(validate({ fonts: { sans: { stack: "x", weight: "400" } } }).ok).toBe(false);
+  });
+
+  test("requires family whenever a url is declared", () => {
     expect(
       validate({ fonts: { sans: { stack: "x", url: "https://static.example.com/a.woff2" } } }).ok,
-    ).toBe(false);
-    expect(
-      validate({ fonts: { sans: { stack: "x", faces: [{ url: "https://s.example/a.woff2" }] } } })
-        .ok,
     ).toBe(false);
   });
 
@@ -89,11 +96,11 @@ describe("brand schema", () => {
   });
 
   /**
-   * The schema hand-lists the overridable tokens so editors can complete them.
-   * That list is a copy of the palette's names, so it is pinned here: a token
-   * added to `palette.ts` fails until the schema offers it too.
+   * The schema lists the colours and font roles a brand may set so editors can
+   * complete them, and the types list the same ones. Pinned here so the two
+   * cannot drift.
    */
-  test("brand.colors lists exactly the palette's settable tokens", () => {
+  test("brand.colors and brand.fonts list exactly what the Brand type allows", () => {
     const schema = JSON.parse(
       readFileSync(
         resolve(import.meta.dir, "../../../src/config/nimblebrain-config.schema.json"),
@@ -101,14 +108,10 @@ describe("brand schema", () => {
       ),
     );
     const brandSchema = schema.properties.brand.properties;
-    const settable = [...Object.keys(colors), ...Object.keys(extOnlyColors)].filter(
-      (k) => !k.endsWith("-tint"),
+    expect(Object.keys(brandSchema.colors.properties).sort()).toEqual(
+      [...BRAND_COLOR_TOKENS].sort(),
     );
-    expect(Object.keys(brandSchema.colors.properties).sort()).toEqual(settable.sort());
-    expect(Object.keys(brandSchema.fonts.properties).sort()).toEqual(Object.keys(fonts).sort());
-    expect(Object.keys(brandSchema.radius.properties).map((s) => `--border-radius-${s}`)).toEqual(
-      Object.keys(radiusScale).filter((k) => k.startsWith("--border-radius-")),
-    );
+    expect(Object.keys(brandSchema.fonts.properties).sort()).toEqual([...BRAND_FONT_ROLES].sort());
   });
 });
 
@@ -118,34 +121,27 @@ describe("mergePalette", () => {
     expect(merged.colors).toEqual({ ...colors });
     expect(merged.extOnlyColors).toEqual({ ...extOnlyColors });
     expect(merged.fonts).toEqual({ ...fonts });
-    expect(merged.radiusScale).toEqual({ ...radiusScale });
   });
 
-  test("derives an omitted <x>-foreground as white or black by contrast against the new base", () => {
+  test("derives primary-foreground as white or black by contrast against the brand primary", () => {
     const merged = mergePalette({ colors: { primary: ["#1d4ed8", "#bfdbfe"] } });
     expect(merged.colors["primary-foreground"]).toEqual(["#ffffff", "#000000"]);
   });
 
-  test("keeps a supplied foreground", () => {
-    const merged = mergePalette({ colors: ACME_BRAND.colors });
-    expect(merged.colors["primary-foreground"]).toEqual(["#FFFFFF", "#1B1B1F"]);
+  test("ignores tokens and roles a brand may not set", () => {
+    const merged = mergePalette({
+      colors: { success: ["#000000", "#ffffff"] },
+      fonts: { mono: { stack: "x" } },
+    } as never);
+    expect(merged.colors.success).toEqual(colors.success);
+    expect(merged.fonts.mono).toBe(fonts.mono);
   });
 
-  test("recomputes the translucent tints from the merged source", () => {
-    const merged = mergePalette({ colors: ACME_BRAND.colors });
-    expect(merged.colors["foreground-tint"]).toEqual([
-      "rgba(27, 27, 31, 0.1)",
-      "rgba(243, 237, 226, 0.1)",
-    ]);
-  });
-
-  test("overrides font stacks and the radius scale", () => {
+  test("overrides the brand's font stacks and keeps the canonical mono", () => {
     const merged = mergePalette(ACME_BRAND);
     expect(merged.fonts.heading).toBe("'Syne', system-ui, sans-serif");
     expect(merged.fonts.reading).toBe("'Fraunces', Georgia, serif");
-    expect(merged.radiusScale["--border-radius-xs"]).toBe("0");
-    expect(merged.radiusScale["--border-radius-xl"]).toBe("0.5rem");
-    expect(merged.radiusScale["--border-width-regular"]).toBe("1px");
+    expect(merged.fonts.mono).toBe(fonts.mono);
   });
 });
 
@@ -164,26 +160,28 @@ describe("loadBrand", () => {
     expect(resolved.colors).toEqual(ACME_BRAND.colors);
   });
 
-  test("normalises every font role to a faces list", () => {
+  test("serves fonts in the shape the config wrote them", () => {
     const fontsOut = loadBrand({ brand: ACME_BRAND }).fonts;
-    expect(fontsOut?.sans).toEqual({
-      stack: "'Instrument Sans', system-ui, sans-serif",
-      family: "Instrument Sans",
-      faces: [
-        {
-          url: "https://static.example.com/brands/acme/fonts/instrument-sans-latin-wght-normal.woff2",
-          weight: "400 700",
-        },
-      ],
-    });
-    expect(fontsOut?.mono?.faces).toHaveLength(2);
-    for (const font of Object.values(fontsOut ?? {})) {
-      expect(font).not.toHaveProperty("url");
-      expect(font).not.toHaveProperty("weight");
-    }
+    expect(fontsOut).toEqual(ACME_BRAND.fonts);
   });
 
-  test("a system-font role carries no faces", () => {
+  test("drops keys the schema does not define, as the config loader reports them", () => {
+    const resolved = loadBrand({
+      brand: {
+        name: "ACME",
+        colors: { primary: ["#B53707", "#FF8A4C"], success: ["#000000", "#000000"] },
+        fonts: { mono: { stack: "x" }, sans: { stack: "x", faces: [] } },
+        radius: { md: "0" },
+      } as never,
+    });
+    expect(resolved).toEqual({
+      name: "ACME",
+      colors: { primary: ["#B53707", "#FF8A4C"] },
+      fonts: { sans: { stack: "x" } },
+    });
+  });
+
+  test("a system-font role is its stack alone", () => {
     const resolved = loadBrand({ brand: { fonts: { reading: { stack: "Georgia, serif" } } } });
     expect(resolved.fonts?.reading).toEqual({ stack: "Georgia, serif" });
   });
@@ -199,41 +197,13 @@ describe("loadBrand", () => {
     expect(resolvedBrand()).toEqual({});
   });
 
-  test("rejects a brand whose canonical status colour fails on the brand's own ground", () => {
-    // Canonical success clears AA on white, not over its own tint on ACME paper.
-    const { success: _success, ...rest } = ACME_BRAND.colors ?? {};
-    expect(() => loadBrand({ brand: { ...ACME_BRAND, colors: rest } })).toThrow(
-      "light mode: success on success/10 over background",
-    );
-  });
-
-  test("rejects an accent foreground that does not read on the danger fill", () => {
-    // An embedded app paints the accent's foreground on the danger fill too:
-    // one `--color-text-inverse` key carries both.
-    const brand: Brand = {
-      colors: { primary: ["#123524", "#6a8fe4"], "primary-foreground": ["#FFB4A8", "#000000"] },
-    };
-    expect(() => loadBrand({ brand })).toThrow(
-      "light mode: primary-foreground on destructive (ext-apps text-inverse on a danger fill)",
-    );
-  });
-
-  test("rejects url and faces together, and a non-woff2 url", () => {
-    const both: Brand = {
-      fonts: {
-        mono: {
-          stack: "x",
-          family: "x",
-          url: "https://s.example/a.woff2",
-          faces: [{ url: "https://s.example/b.woff2" }],
-        },
-      },
-    };
-    expect(() => loadBrand({ brand: both })).toThrow("sets both url and faces");
+  test("rejects a non-woff2 url, and a url without a family", () => {
     const css: Brand = {
       fonts: { sans: { stack: "x", family: "x", url: "https://fonts.googleapis.com/css2?x" } },
     };
     expect(() => loadBrand({ brand: css })).toThrow("is not a .woff2 file");
+    const noFamily: Brand = { fonts: { sans: { stack: "x", url: "https://s.example/a.woff2" } } };
+    expect(() => loadBrand({ brand: noFamily })).toThrow("sets a url but no family");
   });
 
   test("OAuth identity uses the brand's name, homepage and raster logo", () => {

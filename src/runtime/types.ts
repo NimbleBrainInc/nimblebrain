@@ -221,7 +221,7 @@ export interface RuntimeConfig {
   secrets?: SecretsConfig;
 
   /**
-   * White-label branding: name, logos, palette, fonts, radius. Absent is
+   * White-label branding: name, logos, accent colour, fonts. Absent is
    * NimbleBrain. Validated and installed by `loadBrand` (`src/brand/`).
    */
   brand?: Brand;

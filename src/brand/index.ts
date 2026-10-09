@@ -6,20 +6,21 @@
  * The type and the palette merge live in `web/src/theme/brand.ts`, beside the
  * palette they override, because the web client merges the same block at boot.
  * This module owns what only the runtime does with it: reject a brand whose
- * merged palette fails a contrast pair, normalise its fonts into the shape
- * `GET /v1/brand` serves, and hand the result to its readers.
+ * merged palette fails a contrast pair, keep only the keys the schema defines,
+ * and hand the result to its readers.
  *
  * An absent brand is NimbleBrain: {@link resolvedBrand} is `{}` and
  * {@link brandName} is {@link DEFAULT_BRAND_NAME}.
  */
 
-import type {
-  Brand,
-  BrandFont,
-  ResolvedBrand,
-  ResolvedBrandFont,
+import {
+  BRAND_COLOR_TOKENS,
+  BRAND_FONT_ROLES,
+  type Brand,
+  type BrandFont,
+  mergePalette,
+  type ResolvedBrand,
 } from "../../web/src/theme/brand.ts";
-import { mergePalette } from "../../web/src/theme/brand.ts";
 import { contrastRatio } from "../../web/src/theme/contrast.ts";
 import { contrastChecks } from "../../web/src/theme/contrast-pairs.ts";
 
@@ -27,11 +28,8 @@ export type {
   Brand,
   BrandColorToken,
   BrandFont,
-  BrandFontFace,
-  FontRole,
-  RadiusStep,
+  BrandFontRole,
   ResolvedBrand,
-  ResolvedBrandFont,
   ThemeSetting,
 } from "../../web/src/theme/brand.ts";
 
@@ -55,8 +53,10 @@ let current: ResolvedBrand = {};
  *
  * Runs the full contrast pair set from `contrast-pairs.ts` against the brand
  * merged over the canonical palette, in both modes, and throws
- * {@link BrandConfigError} naming the first failing pair and its ratio. An
- * absent brand installs `{}`. Idempotent: calling it again with the same config
+ * {@link BrandConfigError} naming the first failing pair and its ratio. Keys
+ * the schema does not define are dropped, as the config loader reports them:
+ * an unknown key is warned about and ignored, never served. An absent brand
+ * installs `{}`. Idempotent: calling it again with the same config
  * installs the same value.
  */
 export function loadBrand(config: { brand?: Brand }): ResolvedBrand {
@@ -65,10 +65,9 @@ export function loadBrand(config: { brand?: Brand }): ResolvedBrand {
     current = {};
     return current;
   }
-  assertColors(brand);
-  assertContrast(brand);
-  const { fonts, ...rest } = brand;
-  current = fonts ? { ...rest, fonts: resolveFonts(fonts) } : rest;
+  const resolved = resolveBrand(brand);
+  assertContrast(resolved);
+  current = resolved;
   return current;
 }
 
@@ -124,11 +123,42 @@ export function oauthClientIdentity(): OAuthClientIdentity {
   };
 }
 
-function assertColors(brand: Brand): void {
-  for (const [token, pair] of Object.entries(brand.colors ?? {})) {
+/** `brand` holding only the keys the schema defines, each checked. */
+function resolveBrand(brand: Brand): ResolvedBrand {
+  return {
+    ...pick(brand, ["name", "homepageUrl", "favicon", "defaultTheme"]),
+    ...(brand.logo ? { logo: pick(brand.logo, ["light", "dark", "mark", "raster"]) } : {}),
+    ...(brand.colors ? { colors: resolveColors(brand.colors) } : {}),
+    ...(brand.fonts ? { fonts: resolveFonts(brand.fonts) } : {}),
+  };
+}
+
+/** The keys of `obj` named in `keys` that are set. */
+function pick<T extends object, K extends keyof T>(obj: T, keys: readonly K[]): Pick<T, K> {
+  const out: Partial<Pick<T, K>> = {};
+  for (const key of keys) if (obj[key] !== undefined) out[key] = obj[key];
+  return out as Pick<T, K>;
+}
+
+function resolveColors(colors: NonNullable<Brand["colors"]>): NonNullable<Brand["colors"]> {
+  const out: NonNullable<Brand["colors"]> = {};
+  for (const token of BRAND_COLOR_TOKENS) {
+    const pair = colors[token];
+    if (pair === undefined) continue;
     const ok = Array.isArray(pair) && pair.length === 2 && pair.every((v) => HEX.test(v));
     if (!ok) throw new BrandConfigError(`colors.${token} must be [light, dark] as #rrggbb`);
+    out[token] = pair;
   }
+  return out;
+}
+
+function resolveFonts(fonts: NonNullable<Brand["fonts"]>): NonNullable<Brand["fonts"]> {
+  const out: NonNullable<Brand["fonts"]> = {};
+  for (const role of BRAND_FONT_ROLES) {
+    const font = fonts[role];
+    if (font) out[role] = resolveFont(role, font);
+  }
+  return out;
 }
 
 function assertContrast(brand: Brand): void {
@@ -146,41 +176,21 @@ function assertContrast(brand: Brand): void {
   }
 }
 
-function resolveFonts(fonts: NonNullable<Brand["fonts"]>): NonNullable<ResolvedBrand["fonts"]> {
-  const out: NonNullable<ResolvedBrand["fonts"]> = {};
-  for (const [role, font] of Object.entries(fonts) as [keyof typeof fonts, BrandFont][]) {
-    out[role] = resolveFont(role, font);
-  }
-  return out;
-}
-
-/**
- * One role's faces as a list, whichever way the config wrote them. `url` +
- * `weight` is one face; `faces` is several; neither is a system font.
- */
-function resolveFont(role: string, font: BrandFont): ResolvedBrandFont {
-  if (font.url !== undefined && font.faces !== undefined) {
-    throw new BrandConfigError(`fonts.${role} sets both url and faces; use one`);
-  }
-  const faces =
-    font.faces ??
-    (font.url !== undefined
-      ? [{ url: font.url, ...(font.weight ? { weight: font.weight } : {}) }]
-      : undefined);
-  for (const face of faces ?? []) {
-    if (!WOFF2_URL.test(face.url)) {
+/** One role's font: a woff2 `url` declared under a `family`, or a system font. */
+function resolveFont(role: string, font: BrandFont): BrandFont {
+  if (font.url !== undefined) {
+    if (!WOFF2_URL.test(font.url)) {
       throw new BrandConfigError(
-        `fonts.${role} url ${face.url} is not a .woff2 file. A font URL names the font file ` +
+        `fonts.${role} url ${font.url} is not a .woff2 file. A font URL names the font file ` +
           `itself; a stylesheet URL (such as Google Fonts CSS) is not accepted`,
       );
     }
+    if (!font.family) {
+      throw new BrandConfigError(`fonts.${role} sets a url but no family to declare it under`);
+    }
   }
-  if (faces && !font.family) {
-    throw new BrandConfigError(`fonts.${role} declares faces but no family to declare them under`);
-  }
-  return {
-    stack: font.stack,
-    ...(font.family ? { family: font.family } : {}),
-    ...(faces ? { faces } : {}),
-  };
+  return pick(
+    font,
+    font.url !== undefined ? ["stack", "family", "url", "weight"] : ["stack", "family"],
+  );
 }

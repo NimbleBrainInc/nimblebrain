@@ -493,7 +493,7 @@
       "additionalProperties": false
     },
     "brand": {
-      "description": "White-label branding: the product name, logos, palette, typefaces and corner radius a tenant's users see in place of NimbleBrain's. Every key is optional, and an absent block is NimbleBrain. The runtime rejects at load a palette that fails any WCAG AA contrast pair the canonical palette is held to. Served unauthenticated at GET /v1/brand. See https://docs.nimblebrain.ai/config/branding/.",
+      "description": "White-label branding: the product name, logos, accent colour and typefaces a tenant's users see in place of NimbleBrain's. Every key is optional, and an absent block is NimbleBrain. The runtime rejects at load a palette that fails any WCAG AA contrast pair the canonical palette is held to. Served unauthenticated at GET /v1/brand. See https://docs.nimblebrain.ai/config/branding/.",
       "type": "object",
       "properties": {
         "name": {
@@ -541,137 +541,22 @@
         },
         "colors": {
           "type": "object",
-          "description": "Palette overrides by token name, each a [light, dark] pair of #rrggbb values. An omitted <x>-foreground whose <x> is set is derived as white or black, whichever reads better.",
+          "description": "Accent colours, each a [light, dark] pair of #rrggbb values. primary-foreground is derived from primary as white or black, whichever reads better.",
           "properties": {
-            "background": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "foreground": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "card": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "card-foreground": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "popover": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "popover-foreground": {
-              "$ref": "#/$defs/brandColorPair"
-            },
             "primary": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "primary-foreground": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "secondary": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "secondary-foreground": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "muted": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "muted-foreground": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "accent": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "accent-foreground": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "destructive": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "destructive-foreground": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "border": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "input": {
-              "$ref": "#/$defs/brandColorPair"
+              "$ref": "#/$defs/brandColorPair",
+              "description": "The accent: primary actions, links, accent text."
             },
             "ring": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "success": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "warning": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "processing": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "processing-light": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "info-light": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "scope-org": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "scope-workspace": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "scope-user": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "scope-connector": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "chart-1": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "chart-2": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "chart-3": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "chart-4": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "chart-5": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "sidebar": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "sidebar-foreground": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "sidebar-border": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "sidebar-hover": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "tooltip": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "tooltip-foreground": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "background-tertiary": {
-              "$ref": "#/$defs/brandColorPair"
-            },
-            "text-tertiary": {
-              "$ref": "#/$defs/brandColorPair"
+              "$ref": "#/$defs/brandColorPair",
+              "description": "The focus ring. Usually the same value as primary."
             }
           },
           "additionalProperties": false
         },
         "fonts": {
           "type": "object",
-          "description": "Typeface overrides per role. A family with no url or faces must be a system font.",
+          "description": "Typeface overrides per role. A role with no url must name a system font.",
           "properties": {
             "sans": {
               "$ref": "#/$defs/brandFont"
@@ -681,31 +566,6 @@
             },
             "reading": {
               "$ref": "#/$defs/brandFont"
-            },
-            "mono": {
-              "$ref": "#/$defs/brandFont"
-            }
-          },
-          "additionalProperties": false
-        },
-        "radius": {
-          "type": "object",
-          "description": "Corner radius scale overrides, as CSS lengths.",
-          "properties": {
-            "xs": {
-              "$ref": "#/$defs/brandLength"
-            },
-            "sm": {
-              "$ref": "#/$defs/brandLength"
-            },
-            "md": {
-              "$ref": "#/$defs/brandLength"
-            },
-            "lg": {
-              "$ref": "#/$defs/brandLength"
-            },
-            "xl": {
-              "$ref": "#/$defs/brandLength"
             }
           },
           "additionalProperties": false
@@ -729,10 +589,6 @@
       "minItems": 2,
       "maxItems": 2
     },
-    "brandLength": {
-      "type": "string",
-      "pattern": "^(0|[0-9]*\\.?[0-9]+(px|rem|em))$"
-    },
     "brandFontUrl": {
       "type": "string",
       "description": "A woff2 font file. Not a stylesheet: Google Fonts CSS URLs are rejected.",
@@ -743,22 +599,9 @@
       "description": "CSS font-weight descriptor: \"400\", or a variable range \"400 700\".",
       "pattern": "^[1-9][0-9]{0,2}( [1-9][0-9]{0,2})?$"
     },
-    "brandFontFace": {
-      "type": "object",
-      "required": ["url"],
-      "properties": {
-        "url": {
-          "$ref": "#/$defs/brandFontUrl"
-        },
-        "weight": {
-          "$ref": "#/$defs/brandFontWeight"
-        }
-      },
-      "additionalProperties": false
-    },
     "brandFont": {
       "type": "object",
-      "description": "One typeface role. `url` (+ `weight`) declares one face, typical for a variable font; `faces` declares several static ones. Not both.",
+      "description": "One typeface role: a CSS stack, and optionally one woff2 file (typically a variable font) declared under family.",
       "required": ["stack"],
       "properties": {
         "stack": {
@@ -771,29 +614,18 @@
           "type": "string",
           "minLength": 1,
           "pattern": "^[^;{}<>\\\\'\"]+$",
-          "description": "Family name the faces are declared under. Required with url or faces."
+          "description": "Family name the file is declared under. Required with url."
         },
         "url": {
           "$ref": "#/$defs/brandFontUrl"
         },
         "weight": {
           "$ref": "#/$defs/brandFontWeight"
-        },
-        "faces": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/brandFontFace"
-          }
         }
       },
       "dependencies": {
         "url": ["family"],
-        "faces": ["family"],
         "weight": ["url"]
-      },
-      "not": {
-        "required": ["url", "faces"]
       },
       "additionalProperties": false
     },

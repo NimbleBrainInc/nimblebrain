@@ -97,12 +97,11 @@ describe("OAuth pages", () => {
     expect(page.html).toContain("NimbleBrain</div>");
   });
 
-  test("branded: brand accent and background, brand wordmark, no NimbleBrain mark", () => {
+  test("branded: brand accent, brand wordmark, no NimbleBrain mark", () => {
     loadBrand({ brand: ACME_BRAND });
     const page = successPage("t", "/r");
     const style = styleOf(page.html);
     expect(style).toContain("fill:#B53707");
-    expect(style).toContain("background:#FAF6EE");
     expect(style).toContain("color:#FF8A4C");
     expect(page.html).toContain(">ACME</div>");
     expect(page.html).not.toContain("<svg");

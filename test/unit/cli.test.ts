@@ -309,6 +309,33 @@ describe("config validation", () => {
     );
   });
 
+  it("warns on brand keys outside the schema and does not install them", () => {
+    const configPath = writeTestConfig("brand-unknown.json", {
+      brand: {
+        name: "ACME",
+        colors: { primary: ["#B53707", "#FF8A4C"], success: ["#0D6B45", "#3fbf85"] },
+        fonts: { mono: { stack: "ui-monospace, monospace" } },
+        radius: { md: "0.25rem" },
+      },
+    });
+    const spy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      loadConfig({ config: configPath });
+      const warnings = spy.mock.calls.map((c) => c[0] as string);
+      for (const key of ["success", "mono", "radius"]) {
+        expect(warnings.some((w) => w.includes(`Unknown key "${key}"`))).toBe(true);
+      }
+      expect(resolvedBrand()).toEqual({
+        name: "ACME",
+        colors: { primary: ["#B53707", "#FF8A4C"] },
+        fonts: {},
+      });
+    } finally {
+      spy.mockRestore();
+      loadBrand({});
+    }
+  });
+
   it("warns on unknown keys but does not throw", () => {
     const configPath = writeTestConfig("unknown-keys.json", {
       maxIterations: 7,

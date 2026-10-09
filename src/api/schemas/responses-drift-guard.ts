@@ -65,9 +65,7 @@ export type DriftChatResultKeys = AssertNever<Exclude<keyof ChatResult, keyof Wi
 // the wire type is a deliberate widening of an external union).
 export type DriftToolContent = AssertAssignable<ContentBlock, Wire.ToolContentBlock>;
 
-// The brand's colour map is keyed by the palette's token union, which the wire
-// type widens to `string`, so the served brand must fit the wire type and the
-// two must name the same fields.
+// The served brand must fit the wire type and the two must name the same fields.
 export type DriftBrand = AssertAssignable<ResolvedBrand, Wire.BrandResponse>;
 export type DriftBrandKeys = AssertNever<
   | Exclude<keyof ResolvedBrand, keyof Wire.BrandResponse>
