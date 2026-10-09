@@ -835,6 +835,30 @@ export function newRunId(): string {
   return `run_${randomBytes(6).toString("hex")}`;
 }
 
+/**
+ * The result of a run that left none of its own: it threw before the engine
+ * returned, or it never started. Every recorded run has a result, so a reader
+ * needs one shape; this one says what the run has, its error or the reason
+ * it did not start, with no deliverable and an empty activity log.
+ */
+function resultOfRecord(run: TaskRun): TaskRunResult {
+  return {
+    runId: run.id,
+    taskId: run.taskId,
+    completedAt: run.completedAt ?? run.startedAt,
+    output: "",
+    activityLog: [],
+    outputFiles: [],
+    usage: {
+      inputTokens: run.inputTokens,
+      outputTokens: run.outputTokens,
+      iterations: run.iterations,
+    },
+    ...(run.stopReason !== undefined ? { stopReason: run.stopReason } : {}),
+    ...(run.error !== undefined ? { error: run.error } : {}),
+  };
+}
+
 /** A requested run's record, carrying its id and what it was asked with. */
 function withRequest(run: TaskRun, requested: RequestedRun): TaskRun {
   return {
@@ -888,6 +912,8 @@ interface UpdateAfterRunOptions {
   dispatchRunId?: string;
   /** False when the run's record is already in the index. */
   appendRecord?: boolean;
+  /** The run's result, written before its record; one built from the record when absent. */
+  result?: TaskRunResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -1449,6 +1475,7 @@ export class Scheduler {
         ? "The runtime stopped while this run was in flight, so it did not finish."
         : "The runtime stopped before this queued run started.",
     };
+    saveRunResult(this.config.workDir, wsId, ownerId, ticket.taskId, resultOfRecord(run));
     appendRun(this.config.workDir, wsId, ownerId, ticket.taskId, run);
     taskRunsTotal.inc({ status: run.status });
     const settled: RunTicket = { ...ticket, run };
@@ -2144,13 +2171,14 @@ export class Scheduler {
         batch?.accounts(),
       );
       const run = requested ? withRequest(executed.run, requested) : executed.run;
-      const result =
-        requested && executed.result ? { ...executed.result, runId: run.id } : executed.result;
-      this.updateAfterRun(auto, run, trigger, firedOnceAt, { dispatchRunId: runId });
-      // Persist the full deliverable sidecar alongside the run summary. Present
-      // for both the scheduled and manual (runNow) paths; null only when the
-      // executor had no clean data (it rejected instead — see the catch below).
-      if (result) this.persistRunResult(auto, result);
+      const result: TaskRunResult = executed.result
+        ? {
+            ...executed.result,
+            runId: run.id,
+            ...(run.error !== undefined ? { error: run.error } : {}),
+          }
+        : resultOfRecord(run);
+      this.updateAfterRun(auto, run, trigger, firedOnceAt, { dispatchRunId: runId, result });
       ticket(run);
       this.runRecorded(auto);
       return { run, result };
@@ -2171,10 +2199,13 @@ export class Scheduler {
         trigger,
       };
       const failedRun = requested ? withRequest(failed, requested) : failed;
-      this.updateAfterRun(auto, failedRun, trigger, firedOnceAt, { dispatchRunId: runId });
+      // The executor threw, so no activity reached the scheduler: the result
+      // carries the error alone.
+      const result = resultOfRecord(failedRun);
+      this.updateAfterRun(auto, failedRun, trigger, firedOnceAt, { dispatchRunId: runId, result });
       ticket(failedRun);
       this.runRecorded(auto);
-      return { run: failedRun, result: null };
+      return { run: failedRun, result };
     }
   }
 
@@ -2203,14 +2234,15 @@ export class Scheduler {
    * `dispatchRunId` is the id the run was dispatched under (defaults to the
    * record's); a `scheduledRunInFlight` naming it is cleared by this write.
    * `appendRecord: false` updates the task for a run whose record is already
-   * in the index.
+   * in the index. A record appended here has `result` written first (one
+   * built from the record when absent), so every index line has a result.
    */
   updateAfterRun(
     task: Task,
     run: TaskRun,
     trigger?: TaskRunTrigger,
     firedOnceAt: string | undefined = task.schedule?.at,
-    { dispatchRunId = run.id, appendRecord = true }: UpdateAfterRunOptions = {},
+    { dispatchRunId = run.id, appendRecord = true, result }: UpdateAfterRunOptions = {},
   ): void {
     const wsId = task.workspaceId;
     const ownerId = task.ownerId;
@@ -2261,21 +2293,14 @@ export class Scheduler {
 
     // Persist the run summary + the updated definition, then sync the single
     // in-memory entry so the timer sees the new nextRunAt without re-scanning.
+    // The result lands before the index line, so every line has one.
     if (appendRecord) {
+      saveRunResult(this.config.workDir, wsId, ownerId, task.id, result ?? resultOfRecord(run));
       appendRun(this.config.workDir, wsId, ownerId, task.id, run);
       taskRunsTotal.inc({ status: run.status });
     }
     saveTask(this.config.workDir, wsId, ownerId, auto);
     this.definitions.set(Scheduler.keyOf(auto), auto);
-  }
-
-  /**
-   * Persist a run's full result sidecar under the task's provenance
-   * workspace + owner. No-op when either is missing (defensive).
-   */
-  private persistRunResult(auto: Task, result: TaskRunResult): void {
-    if (!auto.workspaceId || !auto.ownerId) return;
-    saveRunResult(this.config.workDir, auto.workspaceId, auto.ownerId, auto.id, result);
   }
 
   /**
@@ -2362,6 +2387,13 @@ export class Scheduler {
     };
     const run = requested ? withRequest(notStarted, requested) : notStarted;
     if (!auto.workspaceId || !auto.ownerId) return run;
+    saveRunResult(
+      this.config.workDir,
+      auto.workspaceId,
+      auto.ownerId,
+      auto.id,
+      resultOfRecord(run),
+    );
     appendRun(this.config.workDir, auto.workspaceId, auto.ownerId, auto.id, run);
     taskRunsTotal.inc({ status: run.status });
     if (requested) this.writeTicket(auto.workspaceId, auto.ownerId, auto.id, requested, run);

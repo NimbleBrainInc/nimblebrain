@@ -503,6 +503,8 @@ export interface TaskRunResultBody {
     stopReason?: "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "length" | "content_filter" | "error" | "other";
     /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
     structured?: unknown;
+    /** Why the run failed or did not start, as its record says. */
+    error?: string;
 }
 /**
  * `tasks__run_result`: one run by id, whatever state it is in. `status` says
@@ -518,7 +520,11 @@ export type TasksRunResultOutput = {
 } | {
     status: "ended";
     run: TaskRunView;
-    /** Absent when the run left no deliverable (skipped, cancelled before it began, failed early). */
+    /**
+     * Every recorded run has one: a run that failed before the engine
+     * returned, or never started, has an empty output and activity log and
+     * its `error`. Absent only for a run recorded before every run wrote one.
+     */
     result?: TaskRunResultBody;
 };
 /**

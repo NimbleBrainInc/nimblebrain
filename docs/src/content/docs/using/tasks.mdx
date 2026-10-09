@@ -190,7 +190,7 @@ Opening a run opens its page under its task's, wherever you opened it from, so t
 
 ## Running from an MCP client
 
-A remote agent connected to `/mcp/<workspace-id>` runs a task with `tasks__run`. Every call answers with the run's id (`runId`). `tasks__run_result` with that `runId` says whether the run is still queued or running (an answer to poll again, not an error), and once it has ended returns its record and full result. `tasks__cancel` with the `runId` stops it. The server's `instructions` carry a guide to the task tools, the same one the agent in chat follows.
+A remote agent connected to `/mcp/<workspace-id>` runs a task with `tasks__run`. Every call answers with the run's id (`runId`). `tasks__run_result` with that `runId` says whether the run is still queued or running (an answer to poll again, not an error), and once it has ended returns its record and full result. Every run has a result: one that never started, or failed before doing any work, has an empty output and says why in its `error`. `tasks__cancel` with the `runId` stops it. The server's `instructions` carry a guide to the task tools, the same one the agent in chat follows.
 
 Every tool names a task by its id (`taskId`, as `tasks__list` returns it) and a run by its id (`runId`).
 
