@@ -98,7 +98,10 @@ it, and claims URL mode only on the requests where it can.**
   wants a click from it returns a view. ADR-0023's reasoning stands for form
   mode, sampling, and every unattended run.
 - The host keeps per-call relay state with an expiry, which is new state on the
-  `/mcp` door. An expired handle fails the retry, and the server's own page still
+  `/mcp` door, where ADR-0048 otherwise keeps none. The handle lives in the
+  process that relayed the request, as a task started at `/mcp` does, so it
+  joins the blockers under "Running more than one replica" (`src/api/AGENTS.md`).
+  An expired or lost handle fails the retry, and the server's own page still
   holds the person's confirmation, so the caller calls again.
 - Clients differ in how they treat URL requests. Some ask before opening; some
   decline them silently under a no-prompt policy. A declined request returns to
