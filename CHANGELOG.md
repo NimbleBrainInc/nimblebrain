@@ -153,6 +153,7 @@
 
 ### Breaking
 
+- **A task run's deliverable is read only from its result.** The Tasks panel and a `tasks__run` task's result no longer fall back to the run's `resultPreview`. Upgrade floor: every run index line, hot and archived, has its `<runId>.result.json`.
 - **An oidc provider must send `email_verified: true`.** A token without it is refused, including for users who have signed in before; configure the provider to include the claim before upgrading ([docs](https://docs.nimblebrain.ai/using/users/#signing-in-with-oidc)).
 - **The `owner` org role is gone; `admin` is the top role.** It granted nothing beyond `admin`. `manage_users` accepts only `admin` or `member`, keeps at least one active admin, and the dev user is an admin. Upgrade floor: a deployment must hold no user with `orgRole: "owner"` before upgrading, because nothing reads it as an admin. Set each one's `orgRole` to `admin` in `users/<id>/profile.json` with the runtime stopped; the Users page cannot demote the last owner on earlier releases. Under OIDC, a user's email is no longer editable.
 - **`/mcp/<wsId>` speaks MCP 2026-07-28 only.** Each request is served on its own, with no `initialize` and no `Mcp-Session-Id`; a 2025-era client gets `-32022` naming the supported version. The `sessionStore` config key and the `MCP_SESSION_TTL_SECONDS` / `MCP_MAX_SESSIONS` env vars go with the sessions (a config that keeps `sessionStore` starts with a warning). The runtime still connects to a 2025-only connector. See [ADR-0048](adr/0048-mcp-serves-2026-07-28-only.md).
@@ -252,7 +253,7 @@
 
 ### Fixed
 
-- **Every task run leaves a result.** A run that failed before the engine returned, never started, or was lost with its process now writes `<runId>.result.json` too, with an empty output and its `error`, so `tasks__run_result` and the Tasks panel read one shape. Runs recorded by earlier releases keep their preview fallback.
+- **Every task run leaves a result.** A run that failed before the engine returned, never started, or was lost with its process now writes `<runId>.result.json` too, with an empty output and its `error`, so `tasks__run_result` and the Tasks panel read one shape. See Breaking for the upgrade floor.
 - **`manage_users` refuses what it reports as refused.** Demoting or deactivating the last admin answers `isError: true`, and changing your own role or deactivating yourself is refused on the server, not only hidden in the page.
 - **OIDC claims or provisions a user only from a verified email.** A token whose `email_verified` claim is not `true`, or is missing, is refused, so an unverified email can no longer take over a pre-created user or pass `allowedDomains`. **Breaking** for a provider that omits the claim — see Breaking ([#1662](https://github.com/NimbleBrainInc/nimblebrain/issues/1662)).
 - **An OIDC user created ahead of time is bound to its sign-in subject.** The first sign-in that claims the record by email records the issuer and subject on it, and later sign-ins find it by that subject, so an email changed at the provider keeps the same account. A record bound to one subject is never matched by email again: a different subject with that email is refused and logged, and no second record is created. Records with no subject bound yet bind on their next sign-in, so no migration is needed.

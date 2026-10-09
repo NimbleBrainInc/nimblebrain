@@ -195,7 +195,7 @@ export function createTaskRunSource(deps: TaskRunSourceDeps): IdentityTaskSource
         taskId,
       );
       return {
-        content: [{ type: "text", text: result?.output ?? run.resultPreview ?? "" }],
+        content: [{ type: "text", text: result?.output ?? "" }],
         structuredContent: {
           run: { ...run, execution: executionOf(run), label: labelOf(run) },
           result,
