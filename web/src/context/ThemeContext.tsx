@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { getBrand, useBrand } from "../brand";
 import { matchesShortcut, SHORTCUTS } from "../lib/shortcuts";
 
 type ThemeMode = "light" | "dark";
@@ -42,19 +43,37 @@ function resolvePreference(pref: ThemePreference): ThemeMode {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-/** Resolve initial theme synchronously to prevent FOUC. */
+function isPreference(value: unknown): value is ThemePreference {
+  return value === "light" || value === "dark" || value === "system";
+}
+
+/**
+ * The preference in force: the person's own choice (stored in this browser,
+ * and kept in step with their server preference), else the brand's
+ * `defaultTheme`, else the OS. A choice always wins over the brand.
+ */
+export function effectivePreference(
+  stored: string | null,
+  brandDefault: string | undefined,
+): ThemePreference {
+  if (isPreference(stored)) return stored;
+  if (isPreference(brandDefault)) return brandDefault;
+  return "system";
+}
+
+/** The preference in force in this browser right now. */
+function currentPreference(): ThemePreference {
+  return effectivePreference(localStorage.getItem(LS_KEY), getBrand().defaultTheme);
+}
+
+/**
+ * Resolve the initial theme synchronously to prevent FOUC. The brand boot runs
+ * before the first render, so the cached (or just-fetched) brand's default is
+ * already readable here and the sign-in page paints in it.
+ */
 function getInitialMode(): ThemeMode {
   if (typeof window === "undefined") return "light";
-
-  const stored = localStorage.getItem(LS_KEY);
-  if (stored === "dark" || stored === "light" || stored === "system") {
-    const mode = resolvePreference(stored as ThemePreference);
-    applyMode(mode);
-    return mode;
-  }
-
-  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  const mode: ThemeMode = prefersDark ? "dark" : "light";
+  const mode = resolvePreference(currentPreference());
   applyMode(mode);
   return mode;
 }
@@ -119,13 +138,24 @@ export function ThemeProvider({
     setModeState(resolved);
   }, []);
 
+  // A brand that arrives or changes after the first render (an uncached boot
+  // that outlasted its wait, a brand changed on the server) moves a person who
+  // never chose a theme to the new default. A stored choice is left alone.
+  const brandDefault = useBrand().defaultTheme;
+  useEffect(() => {
+    if (isPreference(localStorage.getItem(LS_KEY))) return;
+    const resolved = resolvePreference(effectivePreference(null, brandDefault));
+    modeRef.current = resolved;
+    applyMode(resolved);
+    setModeState(resolved);
+  }, [brandDefault]);
+
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
 
     function handleChange(e: MediaQueryListEvent) {
-      // Follow OS preference when set to "system" or no explicit choice
-      const stored = localStorage.getItem(LS_KEY);
-      if (!stored || stored === "system") {
+      // Follow the OS only while the preference in force is "system".
+      if (currentPreference() === "system") {
         const next: ThemeMode = e.matches ? "dark" : "light";
         applyMode(next);
         setModeState(next);
