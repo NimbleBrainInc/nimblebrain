@@ -184,9 +184,8 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
 /**
  * Defense-in-depth safety check on a `ServerDetail` regardless of which
  * source emitted it. Runs at the directory boundary so registry-published
- * entries are scrubbed identically wherever they came from
- * static entries — run only on static-source entries, a malicious
- * publisher on a non-curated registry could ship
+ * and static entries are scrubbed identically: if it ran only on
+ * static-source entries, a malicious publisher on a non-curated registry could ship
  * `_meta.docsUrl: "javascript:..."` and the Configure page would render
  * it as a clickable `<a href>`. `target="_blank" rel="noopener noreferrer"`
  * does NOT block `javascript:` URI execution.
