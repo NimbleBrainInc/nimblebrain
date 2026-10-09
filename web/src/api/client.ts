@@ -630,8 +630,7 @@ export async function initiateComposioOAuth(
  * Per-workspace installed view. Returns every connector visible in the
  * workspace. Personal connectors live on the caller's identity, not here.
  *
- * Stage 2: `scope` is always `"workspace"`. The legacy `"user"` arm was
- * removed in T008/T009.
+ * `scope` is always `"workspace"`.
  */
 export interface InstalledConnector {
   serverName: string;

@@ -150,7 +150,6 @@ describe("ToolRegistry.execute permission gate", () => {
     }
   });
 
-  // Stage 2: the legacy `UserPoolSource` (member-scope) path was
-  // deleted. The fail-closed `principal_required` case it covered no
-  // longer has a code path — every connector is workspace-scoped now.
+  // There is no member-scope pool, so no `principal_required` case to
+  // cover: every connector is workspace-scoped.
 });

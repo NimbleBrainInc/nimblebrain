@@ -4,8 +4,8 @@ import { resolveModelString } from "../../src/model/registry.ts";
 import { isModelSlot, MODEL_SLOTS, parseModelSlotRef } from "../../src/model/slots.ts";
 
 describe("parseModelSlotRef", () => {
-  // The bug: workspace.json agent profiles document a BARE slot name
-  // (`"model": "reasoning"`), and only the `alias:` form used to resolve.
+  // workspace.json agent profiles document a BARE slot name
+  // (`"model": "reasoning"`), so it must resolve, not only the `alias:` form.
   test.each([...MODEL_SLOTS])("resolves the bare slot name %s", (slot) => {
     expect(parseModelSlotRef(slot)).toBe(slot);
   });

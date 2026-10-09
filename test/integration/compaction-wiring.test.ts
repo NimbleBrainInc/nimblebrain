@@ -175,7 +175,7 @@ describe("history compaction — wired path", () => {
     );
 
     // The auto-title call is forked the same way, after the turn returns, and
-    // is the other spend that used to fall out as `system`.
+    // is the other spend that must not fall out as `system`.
     expect(metricsBody).toMatch(
       /nb_llm_tokens_total\{(?=[^}]*source="title")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
     );

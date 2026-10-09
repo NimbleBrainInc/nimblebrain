@@ -15,7 +15,7 @@ import { createSpendBalances, type SpendAccount } from "../../src/runtime/spend.
 import { costBreakdown, resolveRates } from "../../src/usage/cost.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 
-/** A model whose catalog output ceiling is 128k, the case that used to stop every run. */
+/** A model whose catalog output ceiling is 128k, the case that must not stop every run. */
 const BIG_MODEL = "anthropic:claude-opus-4-7";
 
 const baseConfig: EngineConfig = {

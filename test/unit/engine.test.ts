@@ -3681,11 +3681,9 @@ describe("audience filtering", () => {
   });
 });
 
-// NOTE: The task polling tests that lived here previously exercised the
-// legacy `_taskResult` + pollTask infrastructure that was deleted when MCP
-// task support moved to the SDK's `client.experimental.tasks.callToolStream`
-// API inside McpSource. Task-augmented execution is now an McpSource-internal
-// concern and is covered in `test/unit/mcp-source-tasks.test.ts`.
+// NOTE: Task-augmented execution is an McpSource-internal concern (the SDK's
+// `client.experimental.tasks.callToolStream` API) and is covered in
+// `test/unit/mcp-source-tasks.test.ts`.
 
 // ---------------------------------------------------------------------------
 // Error path coverage — message sanitization edge cases
@@ -4740,14 +4738,13 @@ describe("malformed tool call input", () => {
 
   describe("cancellation via config.signal", () => {
     it("aborts the loop between iterations when config.signal fires after a tool call", async () => {
-      // Regression for the orphan-and-write bug: before this PR, the
-      // engine only forwarded `config.signal` to `tools.execute`. A
-      // run whose signal aborted mid-flight would let the current tool
-      // call honor it (good) but still proceed to the NEXT LLM call,
-      // wasting a model round-trip and generating downstream tool
-      // calls the caller no longer wants. The fix is a check at the
-      // top of every iteration; this test exercises that check
-      // end-to-end.
+      // Guards the orphan-and-write bug. Forwarding `config.signal`
+      // only to `tools.execute` would let a run whose signal aborted
+      // mid-flight have the current tool call honor it (good) but still
+      // proceed to the NEXT LLM call, wasting a model round-trip and
+      // generating downstream tool calls the caller no longer wants.
+      // The engine checks the signal at the top of every iteration;
+      // this test exercises that check end-to-end.
       const controller = new AbortController();
       let modelCalls = 0;
       const model = createMockModel(() => {
@@ -4924,8 +4921,8 @@ describe("malformed tool call input", () => {
     it("threads run cancellation into model.doStream via a linked signal", async () => {
       // Regression for the in-flight LLM stream cancellation gap: the run
       // signal must reach the model call so AI SDK providers can abort the
-      // underlying fetch. The engine now passes a COMPOSED signal (run signal
-      // ∨ per-call idle watchdog, see model/stream.ts), so it is no longer
+      // underlying fetch. The engine passes a COMPOSED signal (run signal
+      // ∨ per-call idle watchdog, see model/stream.ts), so it is not
       // identical to `config.signal` — but aborting the run must still abort
       // the signal the model received.
       const controller = new AbortController();

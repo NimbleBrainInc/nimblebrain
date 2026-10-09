@@ -134,17 +134,17 @@ describe("WorkspaceContext isolation", () => {
   });
 });
 
-// ── Stage 0 isolation invariants ──────────────────────────────────
+// ── Isolation invariants ──────────────────────────────────────────
 //
-// These are the structural tests REFACTOR_PLAN Stage 0 commits to:
-// "WorkspaceContext(A) cannot produce paths for workspace B." Each
+// The structural guarantee: "WorkspaceContext(A) cannot produce paths
+// for workspace B." Each
 // test exercises a different surface of the context and proves the
 // boundary holds. Failure of any test here means a
 // regression in workspace isolation, not a trivial implementation
-// detail — these are the load-bearing invariants for the whole
-// cross-workspace refactor.
+// detail — these are the load-bearing invariants for cross-workspace
+// isolation.
 
-describe("Stage 0 isolation invariants", () => {
+describe("workspace isolation invariants", () => {
   test("every scope path under context A is disjoint from context B", () => {
     const a = new WorkspaceContext({ wsId: WS_A, workDir });
     const b = new WorkspaceContext({ wsId: WS_B, workDir });

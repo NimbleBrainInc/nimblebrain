@@ -212,7 +212,7 @@
    on the wrapper fails and the buttons render but ignore clicks.
    See https://github.com/vercel/streamdown/issues/494. Pin the action
    bar with `position: absolute` so clicks land on the buttons. The
-   trade-off is that actions no longer stay visible when scrolling past
+   trade-off is that actions do not stay visible when scrolling past
    long blocks — acceptable for chat prose. */
 .presence-assistant-message [data-streamdown="code-block"]
   > div:has(> [data-streamdown="code-block-actions"]) {

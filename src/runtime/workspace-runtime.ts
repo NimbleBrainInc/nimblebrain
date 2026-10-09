@@ -440,7 +440,7 @@ export async function startWorkspaceConnectors(
  * Max connectors to start in parallel during `startWorkspaceConnectors`. Override with
  * `NB_CONNECTOR_START_CONCURRENCY`. Default 4 keeps peak memory/CPU bounded on a
  * 2-CPU/4Gi pod while capturing most of the serial→parallel win. Set to 1 for
- * legacy sequential behavior.
+ * sequential starts.
  */
 export function resolveConnectorStartConcurrency(): number {
   const raw = process.env.NB_CONNECTOR_START_CONCURRENCY;

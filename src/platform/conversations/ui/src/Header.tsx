@@ -19,9 +19,8 @@ interface HeaderProps {
 }
 
 // React preserves the input's DOM node across re-renders, so the input keeps
-// its focus naturally when the user clears via Esc / × / typing. The original
-// inline-HTML implementation needed manual `.focus()` because each render
-// rewrote the entire DOM via `innerHTML`; that's no longer the case.
+// its focus naturally when the user clears via Esc / × / typing, with no
+// manual `.focus()`.
 export function Header({
   totalCount,
   loading,

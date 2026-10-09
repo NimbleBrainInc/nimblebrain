@@ -598,7 +598,7 @@ export interface RunFileRef {
 /**
  * The full result of a task run — what the run *produced*, persisted
  * once per run as a sidecar to the lightweight {@link TaskRun} summary.
- * A task run is no longer a conversation: instead of a chat trace, it
+ * A task run is not a conversation: instead of a chat trace, it
  * leaves a deliverable (the final output), the activity log of what it did,
  * and references to any files it wrote (in the workspace file store).
  */

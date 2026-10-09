@@ -81,13 +81,13 @@ interface StartConnectorOpts {
    *
    * Applies to EVERY boot failure mode, not only an unreachable endpoint — a
    * rejected credential is retained too. That is deliberate but worth stating,
-   * because it drops a brake: the old `removeSource` set `stopped`, which is what
-   * made `HealthMonitor` treat the source as terminal. Retained sources instead
+   * because it drops a brake: removing the source would set `stopped`, which is
+   * what makes `HealthMonitor` treat a source as terminal. Retained sources instead
    * get its exponential-backoff bursts followed by the slow re-probe cooldown,
    * which is what bounds the cost of a source that will not come back on its own.
-   * Classifying the failure here to keep only "retryable" ones was tried and
-   * removed: a 401 arrives as a `ServerError`, not `UnauthorizedError`, so the
-   * gate missed the common shape while implying a protection it did not provide.
+   * There is no classification here to keep only "retryable" failures: a 401
+   * arrives as a `ServerError`, not `UnauthorizedError`, so such a gate would miss
+   * the common shape while implying a protection it does not provide.
    */
   keepRegisteredOnStartFailure?: boolean;
   /**

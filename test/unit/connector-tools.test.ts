@@ -935,7 +935,7 @@ describe("manage_connectors.install", () => {
     // the tool installs there. Pin three things:
     //   - The recorded `wsId` is the one supplied.
     //   - The persisted ConnectorRef carries `oauthScope: "workspace"`.
-    //     The "user" literal is gone (T008) and stays gone.
+    //     There is no "user" literal.
     //   - The slug-shaped serverName is unchanged.
     const adminPersonalWsId = "ws_00130226f6411195";
     await seedWorkspace(h.workspaceStore, adminPersonalWsId, {
@@ -966,8 +966,8 @@ describe("manage_connectors.install", () => {
     expect(sc.scope).toBe("workspace");
     expect(sc.wsId).toBe(adminPersonalWsId);
 
-    // Persisted ref pins the post-T008 shape: oauthScope: "workspace"
-    // (the legacy "user" literal does not exist in this codebase).
+    // Persisted ref pins the shape: oauthScope: "workspace"
+    // (there is no "user" literal).
     const personalWs = await h.workspaceStore.get(adminPersonalWsId);
     const installed = personalWs?.connectors.find(
       (b): b is Extract<ConnectorRef, { url: string }> =>
@@ -1049,7 +1049,7 @@ describe("manage_connectors.install", () => {
   });
 
   test("install into a shared workspace records wsId on the structuredContent (audit attribution)", async () => {
-    // Audit attribution (Stage 1 lesson 2): every install event must
+    // Audit attribution: every install event must
     // surface the picked `wsId`, NOT the session's active
     // workspace. We can't observe the persisted audit-log event
     // from the unit-test harness (NoopEventSink), but the

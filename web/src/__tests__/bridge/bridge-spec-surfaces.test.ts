@@ -2,7 +2,7 @@
 // Bridge spec-surface tests
 //
 // Three spec requests the host answers, and the capabilities it advertises for
-// them. Each was previously absent, and an absent handler on this bridge is
+// them. An absent handler on this bridge is
 // silent — the switch drops the message and the app's promise never settles —
 // so these assert that something comes back at all as much as what it says.
 //
@@ -389,16 +389,16 @@ describe("notifications/message", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Request ids, and answering the two requests that used to go unanswered
+// Request ids, and answering `ui/message` and `ui/open-link`
 //
 // A JSON-RPC id is a string or a number, and the MCP SDK numbers requests from
-// zero — so an app built on the spec's own client sends numeric ids. The
-// schemas took `Type.String()` for these methods, which made the validator drop
-// every such frame: the link never opened, the message never arrived, and the
-// app's promise never settled.
+// zero — so an app built on the spec's own client sends numeric ids. A schema
+// of `Type.String()` for these methods would make the validator drop every such
+// frame: the link never opens, the message never arrives, and the app's promise
+// never settles.
 //
-// `ui/message` and `ui/open-link` are requests in the spec. The host served
-// both and answered neither, which a client with a deadline reads as a failure.
+// `ui/message` and `ui/open-link` are requests in the spec. A host that serves
+// them without answering reads as a failure to a client with a deadline.
 // Both forms still arrive — an app on an older SDK sends them as notifications,
 // which take no answer.
 // ---------------------------------------------------------------------------
@@ -629,11 +629,11 @@ describe("ai.nimblebrain/upload-files", () => {
 });
 
 describe("ai.nimblebrain/request-file", () => {
-  // A JSON-RPC result is an object, and MCP types it as one. The picker used to
-  // answer a bare array, a bare object, or `null` — shapes a client that
-  // validates against the spec cannot parse, so the call never settled and the
-  // picker hung with no error. Both paths are asserted on the wire, because the
-  // wrapper is the whole fix and the old shapes were also "truthy and plausible".
+  // A JSON-RPC result is an object, and MCP types it as one. A bare array, a
+  // bare object, or `null` is a shape a client that validates against the spec
+  // cannot parse, so the call never settles and the picker hangs with no error.
+  // Both paths are asserted on the wire, because the wrapper is what makes the
+  // result parse and the bare shapes are also "truthy and plausible".
   //
   // The OS picker cannot be opened here, so each path is driven at its own
   // seam: a cancel through the `cancel` event the browser fires on the input,

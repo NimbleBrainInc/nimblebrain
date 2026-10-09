@@ -82,8 +82,8 @@ function stopReasonMessage(stopReason: string): string {
       // A turn whose run ended without a terminal event — the process stopped
       // mid-run (a deploy, a restart). The work is gone; the partial output
       // above is all there is. Without this case it falls to the generic
-      // branch and reads "Run ended: interrupted", which is worse than the
-      // sentence the client used to stamp on this same state.
+      // branch and reads "Run ended: interrupted", which tells the user
+      // neither what happened nor what to do next.
       return "This response was interrupted before it finished. Send another message to continue.";
     case "cancelled":
       // The run's abort signal fired: the Stop button, a timeout, the per-run

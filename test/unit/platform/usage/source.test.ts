@@ -50,9 +50,7 @@ const AT = "2026-04-10T12:00:00Z";
 /**
  * Seed one user's spend into the ledger.
  *
- * The tool used to walk every workspace's conversation files to find a user's
- * usage across workspaces; the ledger carries `userId` and `workspaceId` on the
- * line, so there is nothing to walk and the owner scoping is a field predicate.
+ * The ledger carries `userId` and `workspaceId` on the line, so there is nothing to walk and the owner scoping is a field predicate.
  * The `workspaceId` is kept on the fixture because the calls really did happen
  * in different workspaces — that a cross-workspace read still aggregates by
  * owner is the property these tests exist for.

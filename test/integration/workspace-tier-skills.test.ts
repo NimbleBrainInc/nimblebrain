@@ -104,12 +104,11 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
   });
 
   it("reports the focused workspace's `always` skill on the status surface (describeRequestSkills)", async () => {
-    // Regression for the second half of the shared-workspace report: a
-    // workspace-tier `always` skill composed into the prompt (asserted above)
-    // but `nb__status scope:skills` showed only platform/core skills, because
-    // the status path read a boot-time cache instead of the per-request Layer-3
-    // set. `describeRequestSkills` now reports through the SAME path `chat`
-    // composes with, so the two surfaces can no longer disagree.
+    // A workspace-tier `always` skill composed into the prompt (asserted
+    // above) must also show on `nb__status scope:skills`. A status path that
+    // read a boot-time cache instead of the per-request Layer-3 set would show
+    // only platform/core skills. `describeRequestSkills` reports through the
+    // SAME path `chat` composes with, so the two surfaces cannot disagree.
     const { layer3 } = await asDevUser(() => runtime.describeRequestSkills(TEST_WORKSPACE_ID));
     const entry = layer3.find((s) => s.skill.manifest.name === SHARED_SKILL_NAME);
     expect(entry).toBeDefined();
@@ -122,7 +121,7 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
     // reaches the prompt via the context channel (Layer 0/1), surfaced by
     // describeRequestSkills().context — NOT the Layer-3 set. This is the
     // kill-always regression guard at the integration level: a workspace context
-    // skill must NOT be silently dropped now that it no longer rides Layer 3.
+    // skill must NOT be silently dropped, since it does not ride Layer 3.
     const ctxName = "shared-context-rule";
     const dir = join(testDir, "workspaces", TEST_WORKSPACE_ID, "skills");
     writeFileSync(

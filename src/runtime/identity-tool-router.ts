@@ -1,5 +1,5 @@
 /**
- * Identity-scoped `ToolRouter` — the bridge between Stage 2's identity-bound
+ * Identity-scoped `ToolRouter` — the bridge between identity-bound
  * sessions and the engine's per-call ToolRouter contract.
  *
  * A session is bounded to one workspace (the wall). This router is the single

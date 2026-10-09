@@ -64,7 +64,7 @@ import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
  * MCP-tool-call surface is the canonical first-party API for the web
  * shell, and keeping one tool minimizes route bloat.
  *
- * Stage 2: every install is workspace-scoped. The `install` action
+ * Every install is workspace-scoped. The `install` action
  * targets the request's active workspace (`ctx.getWorkspaceId()`, set
  * from the `/w/<slug>` route); an explicit `wsId` arg overrides it for
  * direct API callers. Any workspace is a valid target.
@@ -498,7 +498,7 @@ function resolveDispatchArgs(
     // Default the install target to the request's workspace — the same
     // `ctx.getWorkspaceId()` (the workspace in the request URL) every other
     // action on this tool uses. The web shell installs into the
-    // workspace the user is viewing; it no longer carries a separately-picked
+    // workspace the user is viewing; it does not carry a separately-picked
     // target. An explicit `wsId` arg still wins for direct API callers. Keeping
     // install on the same workspace selector as connect / list / status is what
     // closes the "Connector not installed" scope mismatch (an install seeded under
@@ -1047,9 +1047,8 @@ async function buildInstalledEntry(
 async function handleListInstalled(
   ctx: ManageConnectorsContext,
   wsId: string | null,
-  // Stage 2: callerId no longer disambiguates between workspace-scope
-  // and user-scope views (the latter was removed). Kept for signature
-  // stability across `handleGetInstalled`; ignored.
+  // Ignored: every view is workspace-scoped, so the caller does not
+  // select one. Kept for signature parity with `handleGetInstalled`.
   _callerId: string | null,
   scope: string,
   /**
@@ -1203,7 +1202,7 @@ async function handleInstall(
   // `wsId` is REQUIRED for every install, but it resolves to the request's
   // workspace by default (the workspace in the request URL) — the dispatcher
   // passes `ctx.getWorkspaceId()` when no explicit arg is given. There is still no default-to-personal fallback
-  // (Stage 1 precedent: `startConnectorSource` hard-errors on missing wsId;
+  // (`startConnectorSource` hard-errors on missing wsId too;
   // pooling credentials across tenants via a silent default is the failure
   // mode this guard forecloses). A call bound to no workspace and carrying
   // no `wsId` arg hits the guard below.
@@ -2439,13 +2438,12 @@ interface RemoteInstallMessageParts {
  * Success `content` string for a remote-OAuth install.
  *
  * **All three parts belong in this sentence, and they are separate because they
- * mean different things.** A contract violation used to be folded into the
- * eager-start clause and rendered as "Source eager-start failed" for a connector
- * whose source was up, sending the operator to click Connect on a live
- * connection. Splitting them fixed the label — and then dropping the contract
- * warning from here made it invisible, which is worse: the engine feeds the
- * model a tool result's `content` and never its `structuredContent`, and the web
- * client's install call types its return without `warning`. So `content` is the
+ * mean different things.** A contract violation folded into the eager-start
+ * clause would render as "Source eager-start failed" for a connector whose source
+ * is up, sending the operator to click Connect on a live connection. Dropping the
+ * contract warning from here would make it invisible, which is worse: the engine
+ * feeds the model a tool result's `content` and never its `structuredContent`,
+ * and the web client's install call types its return without `warning`. So `content` is the
  * only surface either audience reads, and a check nobody can see is not a check.
  *
  * `structuredContent.warning` still carries the combined string for anything
@@ -2764,13 +2762,13 @@ async function handleListTools(
   scopeHint: string | undefined,
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
-  void scopeHint; // Stage 2: scopeHint is workspace-only and informational
-  void callerId; // unused post-Stage-2; kept for caller signature stability
+  void scopeHint; // workspace-only and informational
+  void callerId; // unused; kept for caller signature stability
   const lifecycle = ctx.runtime.getLifecycle();
 
-  // Stage 2: every connector is workspace-scoped. The caller must
+  // Every connector is workspace-scoped. The caller must
   // disambiguate the workspace (the UI selects it via the sidebar
-  // navigator — see Q1 in STAGE_2_DESIGN_DECISIONS.md).
+  // navigator).
   if (!wsId) return errResult("Workspace context required.");
   if (!lifecycle.getInstance(serverName, wsId)) {
     return errResult(`Connector "${serverName}" not installed in workspace.`);

@@ -1,5 +1,5 @@
 /**
- * Phase 2 — read-tool behavior tests for `nb__skills`.
+ * Read-tool behavior tests for `nb__skills`.
  *
  * Exercises real handler logic against a stand-in Runtime:
  *   - `skills__list` filters (scope, layer, type, status, modified_since,
@@ -206,8 +206,8 @@ beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "skills-tools-test-"));
   runtime = new FakeRuntime(workDir);
   // Default identity matches the `ownerId: "user_test"` used by every
-  // `runtime.store().create({...})` call in this file. Stage 1 single-
-  // owner means tools that read conversation events require the caller
+  // `runtime.store().create({...})` call in this file. Single-owner
+  // conversations mean tools that read conversation events require the caller
   // to own the conversation; this seeds that match for the happy path.
   // Tests that need to assert ownership-mismatch should override.
   runtime.identity = { id: "user_test" };

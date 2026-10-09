@@ -525,7 +525,7 @@ describe("System Tools", () => {
       { name: "test__tool.with.dot" },
     ]);
 
-    // search no longer mutates the active set (append-only — promoting a tool
+    // search does not mutate the active set (append-only — promoting a tool
     // would bust the cached prefix), so it added nothing; the manage_tools
     // call below is the only promotion (intent: it accepts the searched name).
     expect(calls).toEqual([]);

@@ -631,7 +631,7 @@ describe("reconstructMessages", () => {
   });
 
   it("populates usage in assistant metadata so cost can be derived later", () => {
-    // costUsd is no longer stored on metadata — cost is computed at the API
+    // costUsd is not stored on metadata — cost is computed at the API
     // boundary from (model, usage). The reconstructor's job is to make the
     // inputs available; downstream consumers compute the dollar value.
     const events: ConversationEvent[] = [

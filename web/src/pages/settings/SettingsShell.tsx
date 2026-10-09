@@ -8,9 +8,9 @@ import { cn } from "../../lib/utils";
 //
 // Renders one scope's settings nav (a flat list of sections, optionally
 // with nested sub-items) plus an `<Outlet/>` for the active tab. The scope's
-// name is the top bar's title, not repeated here. Settings used to be one page grouped by scope (workspace vs org);
-// each scope now owns its own URL subtree (`/w/:slug/settings`, `/org`)
-// so the shell is single-scope and the cross-scope grouping is gone.
+// name is the top bar's title, not repeated here. Each scope owns its own URL
+// subtree (`/w/:slug/settings`, `/org`), so the shell is single-scope and
+// never groups across scopes.
 //
 // Each item declares the minimum role to *see* it (defense in depth — the
 // backend tools enforce the real write boundary). A `footer` item pins to

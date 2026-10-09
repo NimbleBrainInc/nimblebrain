@@ -18,7 +18,7 @@ import {
 
 // ── Orchestrator error taxonomy mapping ────────────────────────
 
-describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
+describe("runtime.chat — orchestrator error taxonomy", () => {
   let fixture: TwoWorkspaceFixture | null = null;
 
   afterEach(async () => {

@@ -247,7 +247,7 @@ describe("ConversationIndex", () => {
 
   it("excludes legacy files missing ownerId from list()", async () => {
     // Strict single-owner invariant: an ownerless on-disk file
-    // predates Stage 1 and has no defensible owner, so the index
+    // predates the ownership invariant and has no defensible owner, so the index
     // drops it rather than synthesizing one. Pair to load()'s throw
     // at conversation-metadata.test.ts:52-64.
     writeConversation(dir, "conv_valid", { title: "Owned" });

@@ -21,13 +21,12 @@ import { installTestCredentialStore } from "../helpers/credential-store.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /**
- * Integration coverage for T010's `manage_connectors.install` contract:
+ * Integration coverage for the `manage_connectors.install` contract:
  *
  *   1. **Persisted shape**: after a successful install into a shared
  *      workspace, the on-disk `ConnectorInstance` carries
- *      `wsId: <picked>` and `oauthScope: "workspace"`. The legacy
- *      `oauthScope: "user"` literal is gone (T008) and stays gone —
- *      we read `workspace.json` directly to pin this.
+ *      `wsId: <picked>` and `oauthScope: "workspace"`, never
+ *      `oauthScope: "user"` — we read `workspace.json` directly to pin this.
  *
  *   2. **Every workspace installs the same way**: installing into a
  *      workspace the caller alone belongs to records that workspace's
@@ -46,7 +45,7 @@ import { seedWorkspace } from "../helpers/test-workspace.ts";
  *
  *   4. **Explicit wsId overrides the request workspace**: a caller may
  *      pass `wsId` to install into a workspace other than the session
- *      header (direct API / MCP callers). The web shell no longer does
+ *      header (direct API / MCP callers). The web shell does not do
  *      this — it installs where the route points — but the override
  *      stays supported. Pins audit attribution per install.
  *
@@ -156,8 +155,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     expect(sc.scope).toBe("workspace");
 
     // Read workspace.json directly. The persisted ConnectorRef must
-    // carry `oauthScope: "workspace"` — never `"user"` (T008 removed
-    // that literal; this test pins it stays gone).
+    // carry `oauthScope: "workspace"` — never `"user"`.
     const wsDoc = JSON.parse(
       readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
     );
@@ -252,7 +250,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     // header by passing `wsId` explicitly (direct API / MCP callers).
     // Session header points at sharedWsId; the explicit arg names
     // the caller's own workspace, so the install lands there and sharedWsId
-    // stays empty. The web shell no longer exercises this (it omits
+    // stays empty. The web shell does not exercise this (it omits
     // wsId), but the override must keep working.
     h = await buildHarness({ sessionWsId: h.sharedWsId });
     const personalWsId = h.personalWsId;

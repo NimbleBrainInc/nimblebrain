@@ -260,8 +260,7 @@ async function admitDelivery(
   // A scan, not an index. A tenant holds tens of workspaces and each a handful
   // of registrations, so the walk is small and — unlike an index — has no second
   // copy to fall out of step with the records it describes. It sits behind the
-  // per-source bucket above, in the same place the MAC verification used to,
-  // which is what keeps an unauthenticated caller from choosing how much work
+  // per-source bucket above, which is what keeps an unauthenticated caller from choosing how much work
   // this does. Build an index when a measurement asks for one.
   for (const ws of await ctx.runtime.getWorkspaceStore().list()) {
     for (const registration of listRegistrations(ws)) {

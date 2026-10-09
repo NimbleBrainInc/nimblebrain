@@ -231,10 +231,9 @@ describe("ConnectorCatalog lookup tables", () => {
   });
 
   test("catalogById finds an icon-less provider entry — the path that refused the install", async () => {
-    // Regression for the catalog projection foot-gun: an icon-less
-    // `provider`-auth connector used to be dropped at projection time, so
-    // catalogById returned null and the provider-auth install failed with
-    // "not a recognized platform connector". Icons are cosmetic — a missing
+    // An icon-less `provider`-auth connector must survive catalog
+    // projection; dropped there, catalogById returns null and the
+    // provider-auth install fails with "not a recognized platform connector". Icons are cosmetic — a missing
     // icon must never make a connector non-functional.
     const catalogDir = freshCatalog();
     writeStaticCatalog([

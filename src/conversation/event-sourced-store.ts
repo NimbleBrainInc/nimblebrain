@@ -494,7 +494,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
 
     const raw = JSON.parse(lines[0]!) as Record<string, unknown>;
     if (typeof raw.ownerId !== "string" || raw.ownerId.length === 0) {
-      // Stage 1 invariant: every conversation has an ownerId. A file
+      // Invariant: every conversation has an ownerId. A file
       // without one is pre-migration data and unreadable by this code.
       // Throw a typed error so the HTTP layer can map to a clean
       // `422 conversation_corrupted` (with the migration command in

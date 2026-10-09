@@ -1,5 +1,5 @@
 /**
- * End-to-end integration test for the Phase 2 read tools.
+ * End-to-end integration test for the skills read tools.
  *
  * Boots a real Runtime, creates a workspace, drops a Layer 3 skill into the
  * workspace skills dir, runs a turn (which triggers Layer 3 selection +
@@ -38,7 +38,7 @@ async function callTool(
   const result = await runWithRequestContext(
     {
       // Match the dev-fallback ownerId minted by `runtime.chat()`
-      // when no identity is passed. Stage 1's per-conversation
+      // when no identity is passed. The per-conversation
       // ownership gate on skills__loading_log requires
       // a real identity in the request context.
       identity: DEV_IDENTITY,
