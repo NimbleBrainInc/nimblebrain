@@ -54,7 +54,7 @@ function makeCtx(opts: { issuer?: string; verify?: () => Promise<null> } = {}): 
 function createApp(opts: { issuer?: string; verify?: () => Promise<null> } = {}) {
   const ctx = makeCtx(opts);
   const app = new Hono();
-  app.route("/", mcpRoutes(ctx));
+  app.route("/", mcpRoutes(ctx, null));
   return app;
 }
 

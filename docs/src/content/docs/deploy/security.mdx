@@ -115,6 +115,15 @@ Mcp-Protocol-Version
 
 CORS stops a script on another origin from reading a response, but a plain form or `text/plain` POST needs no preflight, and `SameSite=Lax` sends the session cookie on it when the other origin is on the same site. So any write (a method other than `GET`, `HEAD` or `OPTIONS`, on any route: `/v1/*`, `/mcp/<wsId>`, webhook deliveries) that the browser marks `Sec-Fetch-Site: same-site` or `cross-site` is refused with `403 cross_site_request`, unless its `Origin` is in `ALLOWED_ORIGINS`. Same-origin requests, and clients that are not browsers (MCP clients, webhook senders, services calling the API), send no such header and are unaffected. A browser request that CORS admits after a preflight comes from an allowed origin, so it is unaffected too.
 
+### Browser origins at `/mcp/<wsId>`
+
+A request to `/mcp/<workspaceId>` that carries an `Origin` header is refused with `403 untrusted_origin` unless that origin is one of:
+
+- the instance's public origin, platform host or custom domain, or an origin in `ALLOWED_ORIGINS`;
+- the address the request was sent to, when that address is `localhost` or an IP address (a self-hosted instance opened at its own address).
+
+This is the MCP transport's DNS-rebinding protection: a page on another hostname whose DNS was pointed at your instance sends requests the browser treats as same-origin, and its `Origin` names that hostname. If you reach the web UI by a hostname that is not your public origin (for example, a LAN name for a self-hosted instance), add it to `ALLOWED_ORIGINS`, or apps in the UI cannot call their tools. MCP clients send no `Origin` and are unaffected.
+
 ## Network architecture
 
 ### Keep the platform internal
