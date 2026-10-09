@@ -3565,8 +3565,9 @@ export class Runtime {
 
   /**
    * The platform apps' `initialize.instructions`: how to use their tools, for a
-   * remote MCP client, which reaches them through `/mcp` and loads no skills.
-   * Undefined when no app declares any.
+   * remote MCP client, which reaches them through `/mcp`. The door serves them
+   * ahead of the workspace's connectors' own (`doorInstructions`). Undefined
+   * when no app declares any.
    */
   platformInstructions(): string | undefined {
     const parts: string[] = [];
