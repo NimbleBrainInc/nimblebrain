@@ -17,7 +17,19 @@ The `brand` block in `nimblebrain.json` white-labels a deployment: your users se
 | OAuth consent screens at connector vendors (dynamic client registration) | `name`, `homepageUrl`, `logo.raster` |
 | The OAuth "You're in." success page and the OAuth error pages | `name`, `colors` |
 | Connector-tool error messages | `name` |
+| The logo on the sign-in page and in the expanded sidebar | `logo.light`, `logo.dark` |
+| The logo in the collapsed sidebar | `logo.mark` |
+| The browser tab title | `name` |
+| The favicon | `favicon` |
+| The shell's colours, typefaces and corner radius | `colors`, `fonts`, `radius` |
+| Embedded apps' colours, typefaces and corner radius (the theme tokens the shell injects) | `colors`, `fonts`, `radius` |
+| The "Leaving …" dialog shown before an external link opens | `name` |
+| The notification route help text in workspace settings | `name` |
+| The sidebar's home link, as a screen reader names it | `name` |
+| The colour theme a person starts in | `defaultTheme` |
 | `GET /v1/brand.js`, which the web client loads before its bundle | the whole block |
+
+A brand that sets `name` but no `logo` or `favicon` keeps the bundled NimbleBrain artwork in those places, with your name as the logo's alt text, so set them together.
 
 Wire identifiers do not change: MCP client and server names, the `nb__` tool namespace, `ai.nimblebrain/*` metadata keys, the `NB_` environment prefix, the `nimblebrain.json` filename. They identify the software to other software, not to a person.
 
