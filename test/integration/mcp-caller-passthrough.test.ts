@@ -524,7 +524,9 @@ describe("/mcp/<wsId> carries the caller's side of a prompts/get", () => {
       await expect(
         c.getPrompt({ ...retry, arguments: { topic: "b" } } as never),
       ).rejects.toMatchObject({ code: -32602 });
-      await expect(c.callTool({ ...retry, arguments: {} } as never)).rejects.toMatchObject({
+      await expect(
+        c.callTool({ ...retry, arguments: { topic: "a" } } as never),
+      ).rejects.toMatchObject({
         code: -32602,
       });
     } finally {
