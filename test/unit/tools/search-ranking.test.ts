@@ -87,10 +87,10 @@ describe("ToolRegistry invalid-tool-name suggestions", () => {
     // it at rank 1.
     const registry = new ToolRegistry();
     registry.addSource(
-      await makeInProcessSource("instructions", [
+      await makeInProcessSource("settings", [
         {
-          name: "write_instructions",
-          description: "Save workspace-wide custom instructions",
+          name: "save_preferences",
+          description: "Save the workspace preferences",
           meta: { ui: { visibility: ["app"] } },
           inputSchema: { type: "object", properties: {} },
           handler: async () => ({ content: textContent("ok"), isError: false }),
@@ -100,13 +100,13 @@ describe("ToolRegistry invalid-tool-name suggestions", () => {
 
     const result = await registry.execute({
       id: "t2",
-      name: "write_instructions",
+      name: "save_preferences",
       input: {},
     });
 
     expect(result.isError).toBe(true);
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-    expect(text).not.toContain("instructions__write_instructions");
+    expect(text).not.toContain("settings__save_preferences");
     expect(text).not.toContain("Did you mean");
   });
 });

@@ -155,7 +155,7 @@ export interface RunSpec {
    */
   workspaceId: string;
   /**
-   * The workspace the prompt NARRATES — installed apps, instruction overlays,
+   * The workspace the prompt NARRATES — installed apps,
    * the "## Workspace" block, the workspace persona. Equal to `workspaceId` for
    * a run focused on its workspace; absent for a run merely *housed* in a
    * workspace (an unfocused task), which is walled to that workspace without

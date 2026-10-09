@@ -25,9 +25,8 @@ import { toolNameMatchesPattern } from "./tool-pattern.ts";
  *      cold tools, not for hot ones.
  *   3. APP-ONLY — the agent NEVER legitimately calls it; it's a UI-driven
  *      affordance the web shell or a view invokes by name (settings/admin ops:
- *      `manage_*`, `set_model_config`, `briefing`,
- *      `instructions__write_instructions`). Declare the MCP Apps
- *      `_meta.ui.visibility: ["app"]` — stripped from EVERY listing that reaches a
+ *      `manage_*`, `set_model_config`, `briefing`, `skills__set_status`).
+ *      Declare the MCP Apps `_meta.ui.visibility: ["app"]` — stripped from EVERY listing that reaches a
  *      model: the chat tool list (`visibleTools` at the top of `surfaceTools`
  *      below), `nb__search`, the `/mcp` `tools/list`, and the invalid-name
  *      recovery hint (`ToolRegistry.searchTools`); the engine also refuses to
@@ -78,12 +77,6 @@ function toolSource(t: ToolSchema): string {
  * demand. Promotion mutates the tools block — which precedes the messages in
  * the request — so proxying a hot kernel tool busts the conversation's cached
  * prefix on every promote. Keeping kernel tools direct keeps that prefix stable.
- *
- * `instructions__write_instructions` is deliberately NOT here: the workspace
- * overlay is human-authored through the settings UI, and the tool that backs
- * that UI is internal (tier 3) — the model persists standing guidance by
- * drafting it and pointing the user at settings, not by writing the overlay
- * itself. See `src/platform/instructions/source.ts`.
  */
 function isKernelTool(t: ToolSchema): boolean {
   return isSystemTool(t) || isIdentitySource(toolSource(t));

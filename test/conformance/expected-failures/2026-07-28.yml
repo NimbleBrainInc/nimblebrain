@@ -1,10 +1,6 @@
 # Scenarios /mcp/<wsId> fails on protocol 2026-07-28, each with why. A scenario
 # here that passes fails the run, so remove it in the PR that fixes it.
 server:
-  # resources/read of the first listed resource (instructions://workspace)
-  # answers not found: the door reads workspace resources without the
-  # request's workspace in scope.
-  - caching
   # Not a gateway gap: the reference server exposes no tool with x-mcp-header
   # annotations, so the scenario cannot run against it either.
   - http-custom-header-server-validation

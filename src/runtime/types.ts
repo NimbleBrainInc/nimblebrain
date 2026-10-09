@@ -291,7 +291,7 @@ export interface ChatRequest {
    * The workspace the chat is *focused* on (the `/w/:slug` the user is
    * viewing, plumbed from the workspace in the chat URL). Drives the
    * deterministic, workspace-scoped **briefing**: the Installed Apps
-   * section and the org/workspace instruction overlays reflect THIS
+   * section reflects THIS
    * workspace, identical for every member (no per-user generation).
    *
    * It is ALSO the tool scope: a session is walled to this one workspace —

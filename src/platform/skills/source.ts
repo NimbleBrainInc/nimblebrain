@@ -3,7 +3,7 @@
  *
  * Owns Layer 3 (cross-connector agent orchestration) skill visibility and
  * mutation, plus a single Layer 1 vendored resource: the platform-authored
- * guide for writing good skills. Mirrors `instructions.ts` structurally.
+ * guide for writing good skills.
  *
  * Tools surfaced (read-only):
  *   skills__list           — enumerate skills with scope/layer/status filters
@@ -226,9 +226,7 @@ const SKILLS_DEACTIVATE_DESCRIPTION =
  * untrusted content (email, web pages, tickets). A write from inside one would
  * put attacker-authored text into future interactive sessions with nothing
  * standing between them — a foothold that outlives the run and then loads
- * itself. That is the argument `createInstructionsSource` makes for the same
- * wall, and it is stronger here: instructions are one document a scope opts
- * into, while a skill can auto-load on a tool match and there can be many.
+ * itself.
  *
  * Reads stay open deliberately. A task that audits the catalog and
  * reports what it found — stale skills, overlapping guidance, a recommendation
@@ -481,8 +479,7 @@ export function createSkillsSource(
   // `unattended` rides the ambient request context (set by `executeTask`,
   // preserved across the per-call restamp), so the wall does not depend on
   // which router dispatched the call, or on the tool ever having been surfaced
-  // to the model. Same placement and reasoning as `createTasksSource` and
-  // `createInstructionsSource`.
+  // to the model. Same placement and reasoning as `createTasksSource`.
   const walled: InProcessTool[] = enabled.map((tool) =>
     SKILLS_TASK_SAFE_TOOLS.has(tool.name)
       ? tool

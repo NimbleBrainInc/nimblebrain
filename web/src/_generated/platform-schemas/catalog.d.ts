@@ -107,13 +107,6 @@ export declare const PlatformToolCatalog: {
             }>;
         };
     };
-    readonly instructions: {
-        readonly write_instructions: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                body: import("@sinclair/typebox").TString;
-            }>;
-        };
-    };
     readonly compose: {
         readonly effective_context: {
             readonly input: import("@sinclair/typebox").TObject<{

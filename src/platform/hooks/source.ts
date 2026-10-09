@@ -15,7 +15,7 @@
  * act from an agent that can pass it on.
  *
  * **Both require workspace admin**, by the strict rule
- * `canWriteWorkspaceScoped` already enforces for the instructions overlay: an
+ * `canWriteWorkspaceScoped` enforces for every workspace-scoped write: an
  * org role grants no bypass. Reading is gated as tightly as rotating because
  * reading is what discloses the capability; rotating only replaces it.
  */

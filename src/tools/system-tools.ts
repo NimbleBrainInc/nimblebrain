@@ -211,7 +211,7 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
   return {
     name: "read_resource",
     description:
-      "Read a resource published by an installed app or by the platform. Use this when an app's instructions tell you to load a specific resource, when you need to inspect platform-published context (e.g. saved overlay instructions), or to read one of an app's records whole: the URI shapes an app serves are listed under it in an `app-resource-templates` block, and its tool results often carry a record's `uri`. Supported URI schemes include " +
+      "Read a resource published by an installed app or by the platform. Use this when an app's instructions tell you to load a specific resource, when you need to inspect platform-published context, or to read one of an app's records whole: the URI shapes an app serves are listed under it in an `app-resource-templates` block, and its tool results often carry a record's `uri`. Supported URI schemes include " +
       `${READ_RESOURCE_SCHEMES_PROSE}, and any connector-published scheme matching the connector's source name. ` +
       "Pass the full URI; the content comes back as text in the tool result.",
     inputSchema: {

@@ -66,7 +66,6 @@ function full() {
     prefs,
     false,
     ws,
-    { workspace: "Be concise." },
     layer3,
     "chat",
     skillCatalog,
@@ -82,7 +81,6 @@ describe("composeSystemSegments", () => {
     expect(seg("user_context_skill")).toBe("stable");
     expect(seg("user_prefs")).toBe("stable");
     expect(seg("workspace_context")).toBe("stable");
-    expect(seg("workspace_overlay")).toBe("stable");
     expect(seg("layer3_skills")).toBe("stable");
     expect(seg("skill_catalog")).toBe("stable");
     expect(seg("apps")).toBe("stable");
@@ -193,7 +191,6 @@ describe("composeSystemSegments — skill catalog layer", () => {
       prefs,
       false,
       ws,
-      undefined,
       layer3,
       "chat",
       entries,
