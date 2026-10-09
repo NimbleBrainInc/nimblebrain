@@ -1,6 +1,6 @@
 # 0023. The client advertises `extensions`, and nothing it does not serve
 
-- Status: Accepted; amended by ADR-0046
+- Status: Accepted; amended by ADR-0046, ADR-0050
 - Date: 2026-09-03
 - Serves: orchestrate remote MCP
 
@@ -83,6 +83,13 @@ a not-yet.
   end of an event stream, not synchronously behind the tool call. There is no
   correct implementation of "block this call until someone answers" in a
   scheduled automation, so the honest advertisement is silence.
+
+- *Amended by ADR-0050:* a call `/mcp/<wsId>` makes inline for an outside
+  client sends that client's own capabilities to the connector, and the
+  connector's input requests (elicitation, sampling, roots) go back to that
+  client to answer, each elicitation naming the connector. The answerer is the
+  client's person, and nothing here waits. The runtime still claims none of
+  them on its own calls.
 
 The same rule binds the other direction. An in-process source does not advertise
 `resources.subscribe`, because it registers no handler for it (ADR-0022).

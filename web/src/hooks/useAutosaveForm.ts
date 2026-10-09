@@ -24,7 +24,9 @@ import { useNotice } from "../components/notices";
  * being edited, and the form never has to lock.
  *
  * A failed save keeps the draft and marks the field, so nothing typed is lost;
- * the field offers Retry and Revert.
+ * the field offers Retry and Revert. A field still failed when the form leaves
+ * the page, or one that fails after, raises an error notice, since the field
+ * that showed it is gone.
  */
 
 export type FieldStatus = "clean" | "dirty" | "saving" | "saved" | "error";
@@ -65,6 +67,9 @@ type StringKeys<V> = { [K in keyof V]: V[K] extends string ? K : never }[keyof V
 
 export function useAutosaveForm<V extends object>(initial: V, options: AutosaveOptions<V>) {
   const notify = useNotice();
+  // The unmount pass runs from an effect cleanup that captured the first render.
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
   const [draft, setDraftState] = useState<V>(initial);
   const [statuses, setStatuses] = useState<Partial<Record<keyof V, FieldStatus>>>({});
   const [errors, setErrors] = useState<Partial<Record<keyof V, string>>>({});
@@ -83,6 +88,10 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
   const timers = useRef(new Map<keyof V, ReturnType<typeof setTimeout>>());
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  // Each field's error, and the fields whose error has already been raised as
+  // a notice, for the unmount pass below.
+  const errorsRef = useRef<Partial<Record<keyof V, string>>>({});
+  const noticed = useRef(new Set<keyof V>());
   // Undo raises `commit` from a notice created by an earlier render.
   const commitRef = useRef<(field: keyof V, value?: V[keyof V]) => void>(() => {});
 
@@ -92,6 +101,16 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
   useEffect(() => {
     mounted.current = true;
     const pending = timers.current;
+    // A save refused while the form was here showed on its field, which is
+    // leaving with it: say so once, unless a notice already has.
+    const reportLeftFailure = (field: keyof V) => {
+      if (noticed.current.has(field)) return;
+      notifyRef.current({
+        level: "error",
+        title: `Couldn't save ${optionsRef.current.labels[field]}`,
+        description: errorsRef.current[field] ?? "The change was not saved.",
+      });
+    };
     return () => {
       mounted.current = false;
       for (const timer of pending.values()) clearTimeout(timer);
@@ -100,6 +119,7 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
       // refs hold the latest state, and the save runs after the form is gone.
       for (const [field, fieldStatus] of Object.entries(statusRef.current)) {
         if (fieldStatus === "dirty") commitRef.current(field as keyof V);
+        if (fieldStatus === "error") reportLeftFailure(field as keyof V);
       }
     };
   }, []);
@@ -121,12 +141,12 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
   }, []);
 
   const setError = useCallback((field: keyof V, message: string | null) => {
-    setErrors((prev) => {
-      const next = { ...prev };
-      if (message === null) delete next[field];
-      else next[field] = message;
-      return next;
-    });
+    const next = { ...errorsRef.current };
+    if (message === null) delete next[field];
+    else next[field] = message;
+    errorsRef.current = next;
+    noticed.current.delete(field);
+    setErrors(next);
   }, []);
 
   /** Replace every field's draft and saved value, as on first load. */
@@ -134,6 +154,8 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
     draftRef.current = values;
     savedRef.current = values;
     statusRef.current = {};
+    errorsRef.current = {};
+    noticed.current.clear();
     setDraftState(values);
     setStatuses({});
     setErrors({});
@@ -170,6 +192,7 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
       const label = opts.labels[field];
       const title = isUndo ? `Couldn't undo the change to ${label}` : `Couldn't save ${label}`;
       notify({ level: "error", title, description: message });
+      noticed.current.add(field);
     },
     [notify, setError, setStatus],
   );
