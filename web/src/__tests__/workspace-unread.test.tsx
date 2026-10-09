@@ -162,6 +162,7 @@ describe("the switcher", () => {
     const dot = trigger()?.querySelector('[data-testid="unread-dot"]');
     expect(dot).not.toBeNull();
     // On the chevrons, not a sibling of the focused workspace's name.
+    expect(dot?.parentElement).not.toBe(trigger());
     expect(dot?.parentElement?.querySelector("svg")).not.toBeNull();
     expect(trigger()?.getAttribute("aria-label")).toContain("Unread in Other");
   });
