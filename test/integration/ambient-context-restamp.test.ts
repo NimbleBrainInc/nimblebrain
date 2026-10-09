@@ -76,7 +76,7 @@ function buildContextProbeSource(sourceName: string, toolName: string): ProbeSou
   return { observations, source };
 }
 
-describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed workspace", () => {
+describe("ambient RequestContext.workspaceId matches the routed workspace", () => {
   let workDir: string;
   let runtime: Runtime | null = null;
 

@@ -918,7 +918,7 @@ export class ConnectorLifecycleManager {
     // disconnect (tokens revoked but McpSource still alive in memory),
     // after reauth_required, and after dead/crashed states. We construct
     // a fresh provider+source below regardless of prior state.
-    await this.teardownConnectionSource(serverName, wsId, principalId);
+    await this.teardownConnectionSource(serverName, wsId);
 
     // Resolve pre-registered OAuth client config (Track A: oauthClient
     // + scopes + additionalAuthorizationParams). Dereferences the client
@@ -1271,7 +1271,7 @@ export class ConnectorLifecycleManager {
     if (principalId !== WORKSPACE_PRINCIPAL_ID) {
       throw new Error(
         `[lifecycle] disconnect: principal "${principalId}" is not a workspace principal — ` +
-          "Stage 2 cut the legacy user-scope path.",
+          "a workspace connector is disconnected as the workspace; disconnect a personal connector from the identity plane.",
       );
     }
 
@@ -1301,7 +1301,7 @@ export class ConnectorLifecycleManager {
         brokered: brokeredTarget.brokered,
         workDir: opts.workDir,
       });
-      await this.teardownConnectionSource(serverName, wsId, principalId);
+      await this.teardownConnectionSource(serverName, wsId);
       await clearMcpOAuthAuthLost({ type: "workspace", wsId }, serverName);
       this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
         authorizationUrl: undefined,
@@ -1332,7 +1332,7 @@ export class ConnectorLifecycleManager {
     });
     const result = await provider.revokeAndDeleteTokens({ connectorUrl: ref.url });
 
-    await this.teardownConnectionSource(serverName, wsId, principalId);
+    await this.teardownConnectionSource(serverName, wsId);
     // A disconnect is deliberate: whatever broke before it, the connection now
     // rests. Cleared after teardown, so a refresh still in flight on the old
     // source — racing the revoke above — cannot set it again.
@@ -1360,18 +1360,11 @@ export class ConnectorLifecycleManager {
    * live on the identity plane and never reach here.
    *
    * Idempotent: silently no-ops if no source is currently wired up.
+   *
+   * Takes no principal: every caller (`startAuth`, `disconnect`) has already
+   * refused one other than `WORKSPACE_PRINCIPAL_ID`.
    */
-  private async teardownConnectionSource(
-    serverName: string,
-    wsId: string,
-    principalId: string,
-  ): Promise<void> {
-    if (principalId !== WORKSPACE_PRINCIPAL_ID) {
-      throw new Error(
-        `[lifecycle] teardownConnectionSource: principal "${principalId}" is not a workspace principal — ` +
-          "Stage 2 cut the legacy user-scope path.",
-      );
-    }
+  private async teardownConnectionSource(serverName: string, wsId: string): Promise<void> {
     // `removeSource` calls `stop()` on the way out, so the registry entry is
     // both the handle and the teardown. There is no second reference to stop.
     const registry = this.workspaceRegistries().get(wsId);

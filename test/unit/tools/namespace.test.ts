@@ -38,7 +38,7 @@ describe("namespacedToolName — construction", () => {
     );
   });
 
-  test("throws on empty wsId — fail-loud, no silent default (Stage 1 lesson 3)", () => {
+  test("throws on empty wsId — fail-loud, no silent default", () => {
     expect(() => namespacedToolName("", "foo")).toThrow(InvalidNamespacedToolNameInput);
   });
 

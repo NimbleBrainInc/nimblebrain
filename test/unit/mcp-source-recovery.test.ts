@@ -507,7 +507,7 @@ describe("execute (tools/call) — unified recovery", () => {
 });
 
 describe("readResource — unified recovery (new behaviors)", () => {
-  it("flips reauth_required on auth loss (was a silent null before)", async () => {
+  it("flips reauth_required on auth loss rather than returning a silent null", async () => {
     const notifyAuthLost = mock(() => {});
     const source = remoteSource({
       readResource: () => Promise.reject(new UnauthorizedError("token rejected")),
@@ -523,7 +523,7 @@ describe("readResource — unified recovery (new behaviors)", () => {
     }
   });
 
-  it("recovers a torn transport on a ui:// read (was a silent null before)", async () => {
+  it("recovers a torn transport on a ui:// read rather than returning a silent null", async () => {
     let calls = 0;
     const source = remoteSource({
       readResource: () => {

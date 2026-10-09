@@ -38,8 +38,8 @@ import {
 } from "../api/client";
 import type { ChatRequest } from "../types";
 
-describe("ChatRequest wire shape (T006 contract)", () => {
-  test("ChatRequest has exactly the fields T006 codified — no workspaceId", () => {
+describe("ChatRequest wire shape", () => {
+  test("ChatRequest has exactly the session fields — no workspaceId", () => {
     // Mutual-extends: catches both widening and narrowing.
     // Adding `workspaceId` (or anything else) would break `backward`;
     // dropping one of the listed keys would break `forward`.
@@ -52,7 +52,7 @@ describe("ChatRequest wire shape (T006 contract)", () => {
     expect(backward).toBe(true);
   });
 
-  test("setActiveWorkspaceId is exported (T013 plumbing — sidebar will call it)", () => {
+  test("setActiveWorkspaceId is exported for the sidebar's workspace switcher", () => {
     // Smoke: the setter must remain a callable export. The sidebar's
     // workspace switcher depends on it. A regression that deleted the setter alongside the
     // UI would surface here.

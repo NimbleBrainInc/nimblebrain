@@ -88,7 +88,7 @@ describe("UC-W1: Private work with shared tools", () => {
 // UC-W2: Collaborative conversation
 // ---------------------------------------------------------------------------
 
-describe("UC-W2: Single-owner conversation (Stage 1)", () => {
+describe("UC-W2: Single-owner conversation", () => {
   let workDir: string;
 
   afterEach(() => {

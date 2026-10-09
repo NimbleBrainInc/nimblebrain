@@ -1499,7 +1499,7 @@ describe("Tier 3: Boundary Probes — known injection patterns", () => {
       expect(result).not.toContain("## User");
     });
 
-    it("no Participants section is ever emitted (removed in Stage 1)", () => {
+    it("no Participants section is ever emitted (conversations are single-owner)", () => {
       const result = composeSystemPrompt([], null);
       expect(result).not.toContain("## Participants");
     });

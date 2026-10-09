@@ -125,7 +125,7 @@ describe("each id in the ledger lands under its own name", () => {
     expect(rec.runId).toBeUndefined();
   });
 
-  test("sessionId is no longer written", () => {
+  test("sessionId is not written", () => {
     expect(fieldsFor({ identity: null, conversationId: "conv-42" }).sessionId).toBeUndefined();
     expect(
       fieldsFor({ identity: null, runId: "run-42", unattended: true }).sessionId,

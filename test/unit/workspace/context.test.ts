@@ -144,7 +144,7 @@ describe("WorkspaceContext isolation", () => {
 // detail — these are the load-bearing invariants for cross-workspace
 // isolation.
 
-describe("Stage 0 isolation invariants", () => {
+describe("workspace isolation invariants", () => {
   test("every scope path under context A is disjoint from context B", () => {
     const a = new WorkspaceContext({ wsId: WS_A, workDir });
     const b = new WorkspaceContext({ wsId: WS_B, workDir });
