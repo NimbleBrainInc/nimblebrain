@@ -22,11 +22,14 @@ import { serveSkillsConnector } from "../helpers/skills-connector.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let prompts: ReturnType<typeof servePromptsConnector>;
+let noCompletions: ReturnType<typeof servePromptsConnector>;
 let noPrompts: ReturnType<typeof serveSkillsConnector>;
 let runtime: Runtime;
 let handle: ServerHandle;
 let workDir: string;
 let c: Client;
+/** The template only the connector without completions lists. */
+const QUIET_TEMPLATE = "quiet://{id}";
 
 async function install(name: string, url: URL): Promise<void> {
   const source = new McpSource(
@@ -40,6 +43,7 @@ async function install(name: string, url: URL): Promise<void> {
 
 beforeAll(async () => {
   prompts = servePromptsConnector();
+  noCompletions = servePromptsConnector({ completions: false, template: QUIET_TEMPLATE });
   noPrompts = serveSkillsConnector();
   workDir = await mkdtemp(join(tmpdir(), "nb-mcp-prompts-"));
   runtime = await Runtime.start({
@@ -49,10 +53,11 @@ beforeAll(async () => {
     workDir,
   });
   await provisionTestWorkspace(runtime);
-  // The same connector twice, so its prompt is listed under two sources, and
-  // one that declares no prompts at all.
+  // The same connector twice, so its prompt is listed under two sources; one
+  // that declares no completions; and one that declares no prompts at all.
   await install("alpha", prompts.url);
   await install("beta", prompts.url);
+  await install("gamma", noCompletions.url);
   await install("plain", noPrompts.url);
   handle = startServer({ runtime, port: 0 });
   c = newMcpClient({ name: "prompts-test", version: "1.0.0" });
@@ -68,6 +73,7 @@ afterAll(async () => {
   handle.stop(true);
   await runtime.shutdown();
   prompts.stop();
+  noCompletions.stop();
   noPrompts.stop();
   rmSync(workDir, { recursive: true, force: true });
 });
@@ -82,6 +88,7 @@ describe("/mcp/<wsId> serves its connectors' prompts", () => {
     expect(listed.prompts.map((p) => p.name)).toEqual([
       `alpha__${PROMPT_NAME}`,
       `beta__${PROMPT_NAME}`,
+      `gamma__${PROMPT_NAME}`,
     ]);
     expect(listed.prompts[0]?.arguments).toEqual([
       { name: "name", description: "Who to greet.", required: true },
@@ -129,6 +136,16 @@ describe("/mcp/<wsId> completes from the connector that owns the reference", () 
       argument: { name: "id", value: "10" },
     });
     expect(res.completion.values).toEqual(["101", "102"]);
+  });
+
+  it("answers no values for a reference whose connector declares no completions", async () => {
+    for (const ref of [
+      { type: "ref/prompt" as const, name: `gamma__${PROMPT_NAME}` },
+      { type: "ref/resource" as const, uri: QUIET_TEMPLATE },
+    ]) {
+      const res = await c.complete({ ref, argument: { name: "id", value: "" } });
+      expect(res.completion).toEqual({ values: [], hasMore: false });
+    }
   });
 
   it("refuses a reference no connector owns with -32602", async () => {
