@@ -236,6 +236,7 @@ export default defineConfig({
               { label: 'Composio', slug: 'gateways/composio' },
               { label: 'Smithery', slug: 'gateways/smithery' },
               { label: 'MCP360', slug: 'gateways/mcp360' },
+              { label: 'Obot', slug: 'gateways/obot' },
             ],
           },
           {
