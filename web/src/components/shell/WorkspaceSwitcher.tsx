@@ -18,7 +18,10 @@
 //
 // A dot marks a workspace with unread notifications, on its row and, when it
 // is a workspace other than this one, on the trigger: the trigger is the way
-// there, so it is where the dot pulls.
+// there, so it is where the dot pulls. On the expanded trigger the dot sits on
+// the chevrons, the part that opens the list, never beside the focused name,
+// where it would read as this workspace's. The trigger's tooltip names the
+// workspaces it points at, because the bell beside it counts only this one.
 //
 // Switching mirrors the api/client setter's equality guard — re-picking the
 // focused workspace never calls setActiveWorkspace — and always lands on the
@@ -43,7 +46,10 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
   const navigate = useNavigate();
   const focused = wsCtx.activeWorkspace;
   const { unreadFor } = useWorkspaceUnread();
-  const elsewhere = wsCtx.workspaces.some((ws) => ws.id !== focused?.id && unreadFor(ws.id) > 0);
+  const unreadElsewhere = wsCtx.workspaces.filter(
+    (ws) => ws.id !== focused?.id && unreadFor(ws.id) > 0,
+  );
+  const elsewhere = unreadElsewhere.length > 0;
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -113,9 +119,10 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
   }
 
   const label = focused?.name ?? "Choose a workspace";
-  const triggerLabel = `Workspace: ${label}. Switch workspace${
-    elsewhere ? ". Another workspace has unread notifications" : ""
-  }`;
+  const unreadSummary = unreadIn(unreadElsewhere.map((ws) => ws.name));
+  const triggerLabel = [`Workspace: ${label}. Switch workspace`, unreadSummary]
+    .filter(Boolean)
+    .join(". ");
   const trigger = collapsed ? (
     <Popover.Trigger
       aria-label={triggerLabel}
@@ -137,19 +144,21 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
     >
       {focused && <WorkspaceGlyph workspace={focused} />}
       <span className="flex-1 truncate text-sm font-semibold text-foreground">{label}</span>
-      {elsewhere && <UnreadDot />}
-      <ChevronsUpDown aria-hidden="true" className="size-3.5 shrink-0" />
+      <Chevrons unread={elsewhere} />
     </Popover.Trigger>
   );
 
   return (
     <Popover.Root open={open} onOpenChange={handleOpenChange}>
       {collapsed ? (
-        <Tooltip label={label} side="right">
+        <Tooltip label={[label, unreadSummary].filter(Boolean).join(" · ")} side="right">
           {trigger}
         </Tooltip>
       ) : (
-        trigger
+        // The name is already visible, so the tooltip shows only to say where the unread is.
+        <Tooltip label={unreadSummary} disabled={!elsewhere}>
+          {trigger}
+        </Tooltip>
       )}
       <Popover.Portal>
         <Popover.Positioner
@@ -273,6 +282,29 @@ function FooterAction({
       <Icon aria-hidden="true" className="size-3.5 shrink-0" />
       <span className="truncate">{label}</span>
     </button>
+  );
+}
+
+/**
+ * "Unread in Acme", or "Unread in Acme and 2 others", for the trigger's tooltip
+ * and accessible name. Empty when no other workspace has unread.
+ */
+export function unreadIn(names: string[]): string {
+  const [first, ...rest] = names;
+  if (first === undefined) return "";
+  if (rest.length === 0) return `Unread in ${first}`;
+  return `Unread in ${first} and ${rest.length} other${rest.length === 1 ? "" : "s"}`;
+}
+
+// The expanded trigger's chevrons, carrying the dot when another workspace has unread.
+function Chevrons({ unread }: { unread: boolean }) {
+  return (
+    <span aria-hidden="true" className="relative flex shrink-0">
+      <ChevronsUpDown className="size-3.5" />
+      {unread && (
+        <UnreadDot className="absolute -top-1 -right-1 size-[7px] ring-2 ring-background" />
+      )}
+    </span>
   );
 }
 

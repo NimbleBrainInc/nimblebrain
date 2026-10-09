@@ -96,6 +96,10 @@ control with a visible text label gets none. The trigger keeps its own
 native `title` on an icon button: it shows late, unstyled, and never with a
 shortcut.
 
+- **Status, not a name:** a control with a visible label may take a tooltip
+  for status that label cannot show, shown only while that status holds
+  (`disabled` otherwise): the workspace switcher names which other workspaces
+  have unread items.
 - **Label:** what the control does, in a few words, sentence case: "Search",
   "Close sidebar", "New chat". Not its icon's name, not a sentence.
 - **Shortcut:** pass the chord from `lib/shortcuts` (`shortcut={SHORTCUTS.chat}`),

@@ -28,13 +28,21 @@ interface TooltipProps {
   shortcut?: Shortcut;
   /** Which side of the trigger. Point it away from the nearest screen edge. */
   side?: "top" | "right" | "bottom" | "left";
+  /** Shows nothing while true, keeping the trigger mounted so its state survives. */
+  disabled?: boolean;
   /** The trigger element. It must accept a ref and spread props. */
   children: ReactElement;
 }
 
-export function Tooltip({ label, shortcut, side = "bottom", children }: TooltipProps) {
+export function Tooltip({
+  label,
+  shortcut,
+  side = "bottom",
+  disabled = false,
+  children,
+}: TooltipProps) {
   return (
-    <BaseTooltip.Root>
+    <BaseTooltip.Root disabled={disabled}>
       <BaseTooltip.Trigger render={children} />
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner side={side} sideOffset={6} className="z-50">
