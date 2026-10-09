@@ -48,7 +48,7 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
     }
     ```
 
-    Verifies incoming Bearer JWTs against the provider's JWKS. Users whose email domain is not in `allowedDomains` are rejected.
+    Verifies incoming Bearer JWTs against the provider's JWKS. A token whose `email_verified` claim is not `true`, or is missing, is rejected, as is a user whose email domain is not in `allowedDomains`.
   </TabItem>
   <TabItem label="WorkOS">
     ```json title="instance.json"
@@ -87,8 +87,10 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
 | `adapter` | `"oidc"` | Yes | Selects the OIDC adapter. |
 | `issuer` | `string` | Yes | OIDC issuer URL. |
 | `clientId` | `string` | Yes | OAuth client id registered with the provider. |
-| `allowedDomains` | `string[]` | Yes | Email domains permitted to sign in. A verified identity whose domain isn't listed is rejected. |
+| `allowedDomains` | `string[]` | Yes | Email domains permitted to sign in. A token whose email domain isn't listed is rejected. |
 | `jwksUri` | `string` | No | JWKS endpoint override. Discovered from the issuer's `.well-known` when omitted. |
+
+The provider must send `email_verified: true` in each token. A token with `email_verified: false` or no `email_verified` claim is refused and logged, because the email decides domain admission and which pre-created user a first sign-in claims. Some providers omit the claim by default; configure yours to include it before switching to this adapter.
 
 Each sign-in is matched to a local user by the token's issuer and subject, and by email only to claim a user created ahead of time that no subject is bound to yet. A different subject with an email already bound to someone is refused. See [Signing in with OIDC](/using/users/#signing-in-with-oidc).
 

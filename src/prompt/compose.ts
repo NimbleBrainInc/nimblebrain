@@ -25,6 +25,7 @@ export type ContainmentTag =
   | "workspace-instructions"
   | "layer3-skill"
   | "connector-skill"
+  | "connector-instructions"
   | "activated-skill"
   | "skill-instructions"
   | "run-input"

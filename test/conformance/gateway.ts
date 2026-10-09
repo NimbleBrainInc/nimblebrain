@@ -1,7 +1,9 @@
 /**
  * `/mcp/<wsId>` as the conformance suite sees it: a runtime on the dev
  * identity, one workspace, and an upstream MCP server installed in it as a
- * remote connector, behind a front door that maps tool names.
+ * remote connector, behind a front door that maps tool names. The reference
+ * server serves no skills, so a second connector (`serveSkillsConnector`)
+ * serves one for the suite's Skills extension scenarios.
  *
  * The gateway names a connector's tools `<source>__<tool>`, and the suite calls
  * its fixture tools by the upstream's own names. The front door adds the prefix
@@ -18,6 +20,7 @@ import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { serveSkillsConnector } from "../helpers/skills-connector.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** The connector's name in the workspace, and so its tools' prefix. */
@@ -51,6 +54,19 @@ export async function startGateway(upstream: URL): Promise<Gateway> {
   );
   await source.start();
   runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
+  const skills = serveSkillsConnector();
+  const skillsSource = new McpSource(
+    "demo",
+    {
+      type: "remote",
+      url: skills.url,
+      transportConfig: { type: "streamable-http" },
+      allowInsecure: true,
+    },
+    new NoopEventSink(),
+  );
+  await skillsSource.start();
+  runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(skillsSource);
   const server = startServer({ runtime, port: 0 });
 
   const front = Bun.serve({
@@ -65,6 +81,7 @@ export async function startGateway(upstream: URL): Promise<Gateway> {
       front.stop(true);
       server.stop(true);
       await runtime.shutdown();
+      skills.stop();
       await rm(workDir, { recursive: true, force: true });
     },
   };

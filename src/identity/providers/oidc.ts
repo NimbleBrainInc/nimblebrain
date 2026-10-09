@@ -44,6 +44,7 @@ interface JwtPayload {
   exp?: number;
   sub?: string;
   email?: string;
+  email_verified?: unknown;
   name?: string;
   given_name?: string;
   family_name?: string;
@@ -140,6 +141,11 @@ function subjectKey(issuer: string, sub: string): string {
  *
  * Verifies Bearer token JWTs against a configurable JWKS endpoint.
  * Auto-provisions users into the local UserStore on first valid login.
+ *
+ * A token is accepted only when its `email_verified` claim is `true`. The
+ * email decides `allowedDomains` admission, which record a first sign-in
+ * claims, and what a new record is created with, so an email the provider
+ * has not verified is a claim anyone could make. A missing claim is unverified.
  * No auth code flow — providers that need redirect login (WorkOS, Clerk)
  * bring their own SDK and implement it in their own provider.
  */
@@ -208,6 +214,15 @@ export class OidcIdentityProvider implements IdentityProvider {
 
     const verified = await this.verifySignature(header, signatureInput, signature, keys);
     if (!verified) return null;
+
+    // Checked after the signature, so only the provider's own tokens are logged.
+    if (payload.email_verified !== true) {
+      log.warn("[oidc] sign-in refused: the token's email is not verified", {
+        issuer: this.issuer,
+        emailVerified: payload.email_verified === undefined ? "missing" : "not true",
+      });
+      return null;
+    }
 
     const email = payload.email!;
     const sub = payload.sub ?? email;
