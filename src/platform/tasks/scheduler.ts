@@ -1465,6 +1465,18 @@ export class Scheduler {
    */
   settleLostRun(wsId: string, ownerId: string, ticket: RunTicket): RunTicket {
     if (!isOpenRun(ticket.run) || this.openRuns.has(ticket.runId)) return ticket;
+    // A process that recorded the run (result, then index line) and stopped
+    // before rewriting the ticket: settle the ticket from that record and
+    // write nothing else, so its result and its one line stand.
+    const recorded = readRuns(this.config.workDir, wsId, ownerId, ticket.taskId).find(
+      (r) => r.id === ticket.runId,
+    );
+    if (recorded) {
+      const settled: RunTicket = { ...ticket, run: recorded };
+      saveRunTicket(this.config.workDir, wsId, ownerId, settled);
+      this.config.onRunRecorded?.(ownerId);
+      return settled;
+    }
     const wasRunning = ticket.run.status === "running";
     const now = new Date().toISOString();
     const run: TaskRun = {

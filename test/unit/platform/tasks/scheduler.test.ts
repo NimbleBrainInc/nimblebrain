@@ -29,6 +29,7 @@ import {
   loadOwnerTasks,
   readRunResult,
   readRuns,
+  saveRunResult,
   saveTask,
 } from "../../../../src/platform/tasks/store.ts";
 import type { Task, TaskRun } from "../../../../src/platform/tasks/types.ts";
@@ -3502,6 +3503,36 @@ describe("Scheduler — every recorded run has a result", () => {
     expect(settled.run.status).toBe("failure");
     const result = readRunResult(tmpDir, WS, OWNER, auto.id, runId);
     expect(result?.error).toBe(settled.run.error);
+  });
+
+  it("a lost requested run already in the index keeps its result and gets no second line", () => {
+    // The process recorded the run (result, then index line) and died before
+    // rewriting its ticket, which still says running.
+    const auto = seedOne();
+    const scheduler = new Scheduler(createMockExecutor(), { workDir: tmpDir });
+    const runId = "run_0123456789ab";
+    const recorded: TaskRun = { ...makeSuccessRun(auto.id), id: runId, trigger: "manual" };
+    saveRunResult(tmpDir, WS, OWNER, auto.id, {
+      runId,
+      taskId: auto.id,
+      completedAt: recorded.completedAt!,
+      output: "THE DELIVERABLE",
+      activityLog: [],
+      outputFiles: [],
+      usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
+    });
+    appendRun(tmpDir, WS, OWNER, auto.id, recorded);
+
+    const settled = scheduler.settleLostRun(WS, OWNER, {
+      runId,
+      taskId: auto.id,
+      requestedAt: recorded.startedAt,
+      run: { ...recorded, completedAt: undefined, status: "running" },
+    });
+
+    expect(readRunResult(tmpDir, WS, OWNER, auto.id, runId)?.output).toBe("THE DELIVERABLE");
+    expect(settled.run.status).toBe("success");
+    expect(readRuns(tmpDir, WS, OWNER, auto.id).filter((r) => r.id === runId)).toHaveLength(1);
   });
 
   it("a scheduled run interrupted by a stop has a result once the next process settles it", async () => {
