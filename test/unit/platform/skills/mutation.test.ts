@@ -31,6 +31,7 @@ import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { surfaceTools } from "../../../../src/tools/surfacing.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
+import { skillEditPatch } from "../../../../web/src/pages/settings/skill-edit-patch.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 interface FakeIdentity {
@@ -909,6 +910,89 @@ describe("skills__update", () => {
     expect(text).toMatch(/org-scope/);
     expect(text).toMatch(/workspace-scoped/); // alternate-scope hint
     expect(text).toMatch(/member/);
+  });
+});
+
+// ── the Skills editor's per-field saves ──────────────────────────────────
+
+// The editor saves one field at a time through `skillEditPatch`; these send
+// exactly what it sends, so a body save and a field save are checked against
+// the real handler, not a hand-written input.
+describe("skills__update — the Skills editor's per-field saves", () => {
+  async function seed(): Promise<{
+    id: string;
+    client: NonNullable<ReturnType<McpSource["getClient"]>>;
+  }> {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: {
+          name: "edited",
+          description: "Edited",
+          loadingStrategy: "always",
+          priority: 40,
+        },
+        body: "Original.",
+      },
+    });
+    return { id: join(workDir, "skills", "edited.md"), client };
+  }
+
+  const read = (id: string) => parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false });
+
+  test("a field save leaves the body alone, and a body save leaves the fields alone", async () => {
+    const { id, client } = await seed();
+
+    const field = await client.callTool({
+      name: "update",
+      arguments: { ...skillEditPatch(id, "triggers", "ship it") },
+    });
+    expect(field.isError).toBeFalsy();
+    expect(read(id)?.body).toBe("Original.");
+    expect(read(id)?.manifest.triggers).toEqual(["ship it"]);
+
+    const body = await client.callTool({
+      name: "update",
+      arguments: { ...skillEditPatch(id, "body", "Rewritten.") },
+    });
+    expect(body.isError).toBeFalsy();
+    const written = read(id);
+    expect(written?.body).toBe("Rewritten.");
+    expect(written?.manifest.triggers).toEqual(["ship it"]);
+    expect(written?.manifest.priority).toBe(40);
+    expect(written?.manifest.loadingStrategy).toBe("always");
+  });
+
+  test("a header kept as text in the body sets no field", async () => {
+    const { id, client } = await seed();
+    const header = [
+      "---",
+      "name: edited",
+      "description: Hijacked.",
+      "metadata:",
+      "  nimblebrain:",
+      "    loading-strategy: dynamic",
+      "    priority: 70",
+      "---",
+      "",
+      "Prose about headers.",
+    ].join("\n");
+    const result = await client.callTool({
+      name: "update",
+      arguments: { ...skillEditPatch(id, "body", header, { keepHeaderAsText: true }) },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(
+      (result.structuredContent as { frontmatterApplied?: string[] }).frontmatterApplied,
+    ).toBeUndefined();
+    const written = read(id);
+    expect(written?.manifest.description).toBe("Edited");
+    expect(written?.manifest.loadingStrategy).toBe("always");
+    expect(written?.manifest.priority).toBe(40);
+    expect(written?.body).toContain("Hijacked.");
   });
 });
 
