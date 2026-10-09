@@ -3,10 +3,12 @@
  * connector: the client's capabilities decide what the connector asks for, an
  * `input_required` answer reaches the client and the client's answers reach the
  * connector, the connector's `requestState` travels sealed to the caller and
- * the tool, an error that asks the client to change its request reaches the
- * client as it is, and progress arrives under the client's own token.
+ * the tool and its arguments, an error that asks the client to change its
+ * request reaches the client as it is, and progress arrives under the client's
+ * own token. Each relayed elicitation names the connector it came from, and a
+ * root-relative URL-mode `url` resolves against the runtime's web origin.
  */
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setSystemTime } from "bun:test";
 import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,6 +24,7 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { FIRST_PARTY_GRANT, type VerifiedIdentity } from "../../src/identity/provider.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
+import { webOrigin } from "../../src/oauth/public-origin.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -45,7 +48,11 @@ class TwoIdentityProvider extends DevIdentityProvider {
 const CONNECTOR_STATE = "connector-state-1";
 const ANSWER = { action: "accept", content: { yes: true } };
 
-/** The connector under test: one tool that asks, one that needs sampling, one that reports progress. */
+/**
+ * The connector under test: one tool that asks in form mode, one that asks in
+ * URL mode for the `url` it is given, one that needs sampling, one that
+ * reports progress.
+ */
 function buildConnector(): Server {
   const server = new Server(
     { name: "caller-fixture", version: "1.0.0" },
@@ -55,6 +62,7 @@ function buildConnector(): Server {
   server.setRequestHandler("tools/list", async () => ({
     tools: [
       { name: "confirm", inputSchema: schema },
+      { name: "confirm_url", inputSchema: schema },
       { name: "needs_sampling", inputSchema: schema },
       { name: "count", inputSchema: schema },
     ],
@@ -91,6 +99,21 @@ function buildConnector(): Server {
           ],
         };
       }
+      case "confirm_url":
+        return {
+          resultType: "input_required",
+          inputRequests: {
+            ok: {
+              method: "elicitation/create",
+              params: {
+                mode: "url",
+                message: "Open the page to confirm",
+                elicitationId: "e1",
+                url: String(request.params.arguments?.url),
+              },
+            },
+          },
+        } as never;
       case "needs_sampling":
         if (!capabilities?.sampling) {
           throw new MissingRequiredClientCapabilityError(
@@ -157,15 +180,23 @@ afterAll(async () => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
+/** The elicitation messages the clients were asked, in order. */
+const asked: string[] = [];
+
 /** A client of `/mcp/<wsId>`, answering elicitation when it declares it. */
 async function client(
   opts: { elicitation?: boolean; wsId?: string; other?: boolean } = {},
 ): Promise<Client> {
   const c = newMcpClient(
     { name: "caller-test", version: "1.0.0" },
-    { capabilities: opts.elicitation ? { elicitation: { form: {} } } : {} },
+    { capabilities: opts.elicitation ? { elicitation: { form: {}, url: {} } } : {} },
   );
-  if (opts.elicitation) c.setRequestHandler("elicitation/create", async () => ANSWER as never);
+  if (opts.elicitation) {
+    c.setRequestHandler("elicitation/create", async (request) => {
+      asked.push(request.params.message);
+      return ANSWER as never;
+    });
+  }
   await c.connect(
     new StreamableHTTPClientTransport(
       new URL(`http://localhost:${handle.port}/mcp/${opts.wsId ?? TEST_WORKSPACE_ID}`),
@@ -180,11 +211,15 @@ function text(result: { content?: unknown }): string {
 }
 
 /** A connector's first-round `input_required` answer, as the client receives it. */
-async function firstRound(c: Client): Promise<{ requestState?: string }> {
-  return (await c.callTool(
-    { name: "fixture__confirm", arguments: {} },
-    { allowInputRequired: true },
-  )) as { requestState?: string };
+async function firstRound(
+  c: Client,
+  name = "fixture__confirm",
+  args: Record<string, unknown> = {},
+): Promise<{
+  requestState?: string;
+  inputRequests?: Record<string, { params: { message: string; url?: string } }>;
+}> {
+  return (await c.callTool({ name, arguments: args }, { allowInputRequired: true })) as never;
 }
 
 describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
@@ -193,6 +228,43 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
     try {
       const result = await c.callTool({ name: "fixture__confirm", arguments: {} });
       expect(text(result)).toBe(`answered:${JSON.stringify(ANSWER)} state:${CONNECTOR_STATE}`);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("names the connector in the relayed form-mode message", async () => {
+    const c = await client({ elicitation: true });
+    asked.length = 0;
+    try {
+      await c.callTool({ name: "fixture__confirm", arguments: {} });
+      expect(asked).toEqual(["fixture: Proceed?"]);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("relays a URL-mode request naming the connector, an absolute url as it is", async () => {
+    const c = await client({ elicitation: true });
+    try {
+      const url = "https://confirm.example.com/send/1";
+      const { inputRequests } = await firstRound(c, "fixture__confirm_url", { url });
+      expect(inputRequests?.ok?.params).toMatchObject({
+        message: "fixture: Open the page to confirm",
+        url,
+      });
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("resolves a root-relative URL-mode url against the runtime's web origin", async () => {
+    const c = await client({ elicitation: true });
+    try {
+      const { inputRequests } = await firstRound(c, "fixture__confirm_url", {
+        url: "/confirm/send/1",
+      });
+      expect(inputRequests?.ok?.params.url).toBe(`${webOrigin()}/confirm/send/1`);
     } finally {
       await c.close();
     }
@@ -264,6 +336,42 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
         c.callTool({ name: "fixture__count", arguments: {}, requestState } as never),
       ).rejects.toMatchObject({ code: -32602 });
     } finally {
+      await c.close();
+    }
+  });
+
+  it("refuses a sealed state on a call with other arguments", async () => {
+    const c = await client({ elicitation: true });
+    try {
+      const { requestState } = await firstRound(c, "fixture__confirm", { to: "a@example.com" });
+      await expect(
+        c.callTool({
+          name: "fixture__confirm",
+          arguments: { to: "b@example.com" },
+          inputResponses: { ok: ANSWER },
+          requestState,
+        } as never),
+      ).rejects.toMatchObject({ code: -32602 });
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("refuses a sealed state older than ten minutes", async () => {
+    const c = await client({ elicitation: true });
+    try {
+      const { requestState } = await firstRound(c);
+      setSystemTime(new Date(Date.now() + 11 * 60 * 1000));
+      await expect(
+        c.callTool({
+          name: "fixture__confirm",
+          arguments: {},
+          inputResponses: { ok: ANSWER },
+          requestState,
+        } as never),
+      ).rejects.toMatchObject({ code: -32602 });
+    } finally {
+      setSystemTime();
       await c.close();
     }
   });

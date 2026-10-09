@@ -51,6 +51,7 @@ import {
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { isAppCallable, isModelVisible, type ToolResult } from "../engine/types.ts";
 import type { TokenGrant, UserIdentity } from "../identity/provider.ts";
+import { webOrigin } from "../oauth/public-origin.ts";
 import { log } from "../observability/log.ts";
 import {
   ConnectorGrantDenied,
@@ -71,6 +72,7 @@ import type { ToolRegistry } from "../tools/registry.ts";
 import type { McpCaller, TaskOwnerContext, ToolSource } from "../tools/types.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import { toWireJson } from "../util/wire-json.ts";
+import { argsDigest, relayInputRequests } from "./mcp-input-relay.ts";
 import {
   answerModernTaskRequest,
   type ModernCreateTaskResult,
@@ -531,11 +533,9 @@ function createServer(
     const envelope = ctx.mcpReq.envelope as Record<string, unknown> | undefined;
     const capabilities = (envelope?.[CLIENT_CAPABILITIES_META_KEY] ?? {}) as ClientCapabilities;
     // Verified and bound to this (identity, workspace) by `rounds` before the
-    // handler runs; the tool it names is checked here.
-    const round = ctx.mcpReq.requestState<CallerRound>();
-    if (round && round.tool !== request.params.name) {
-      throw mcpError(ProtocolErrorCode.InvalidParams, "requestState belongs to another tool call");
-    }
+    // handler runs; the tool and arguments it names are checked here.
+    const args = argsDigest(request.params.arguments);
+    const round = roundForCall(ctx.mcpReq.requestState<CallerRound>(), request.params.name, args);
     const progressToken = ctx.mcpReq._meta?.progressToken;
     const caller: McpCaller = {
       capabilities,
@@ -559,13 +559,14 @@ function createServer(
       caller,
     });
     if (isInputRequiredResult(result)) {
-      // The connector's state goes back to the client sealed with the tool and
-      // the caller, so it returns only on this caller's retry of this call.
+      // The connector's state goes back to the client sealed with the tool,
+      // its arguments and the caller, so it returns only on this caller's
+      // retry of this call.
       const { requestState: state, ...rest } = result;
       return {
         ...rest,
         requestState: await rounds.mint(
-          { tool: request.params.name, ...(state !== undefined ? { state } : {}) },
+          { tool: request.params.name, args, ...(state !== undefined ? { state } : {}) },
           ctx,
         ),
         // The handler is typed to answer a `CallToolResult`; an `input_required`
@@ -602,15 +603,33 @@ type TaskAsk = {
 
 /**
  * The `requestState` the door hands a client with an `input_required` answer:
- * the tool it was minted for and the connector's own state, sealed and bound to
- * the caller's (identity, workspace) by the per-request codec in
- * `createServer`. Every connector shares one connection per workspace source,
- * so the connector cannot tell whose state it minted; the seal is what keeps
- * one caller's round from being replayed by another.
+ * the tool and argument digest it was minted for and the connector's own
+ * state, sealed and bound to the caller's (identity, workspace) by the
+ * per-request codec in `createServer`. Every connector shares one connection
+ * per workspace source, so the connector cannot tell whose state it minted;
+ * the seal is what keeps one caller's round from being replayed by another, or
+ * on a call with other arguments.
  */
 interface CallerRound {
   tool: string;
+  /** `argsDigest` of the call's arguments. */
+  args: string;
   state?: string;
+}
+
+/**
+ * The verified round a retry presents, refused with `-32602` unless it was
+ * minted for this tool and these arguments.
+ */
+function roundForCall(
+  round: CallerRound | undefined,
+  tool: string,
+  args: string,
+): CallerRound | undefined {
+  if (round && (round.tool !== tool || round.args !== args)) {
+    throw mcpError(ProtocolErrorCode.InvalidParams, "requestState belongs to another tool call");
+  }
+  return round;
 }
 
 /**
@@ -650,10 +669,38 @@ function modernTaskContext(
   };
 }
 
-/** A source's answer to a call: the `input_required` it carries, or its result. */
-function toToolCallAnswer(result: ToolResult): CallToolResult | InputRequiredResult {
-  if (result.inputRequired) return { resultType: "input_required", ...result.inputRequired };
-  return toCallToolResult(result);
+/**
+ * A source's answer to a call: its result, or the `input_required` it carries,
+ * relayed for the outside client (`relayInputRequests`): each elicitation names
+ * the connector by its display name, and a root-relative URL resolves against
+ * this runtime's web origin.
+ */
+async function toToolCallAnswer(
+  result: ToolResult,
+  connector: string,
+  runtime: Runtime,
+): Promise<CallToolResult | InputRequiredResult> {
+  if (!result.inputRequired) return toCallToolResult(result);
+  const { inputRequests, requestState } = result.inputRequired;
+  if (!inputRequests) return { resultType: "input_required", ...result.inputRequired };
+  const label = (await runtime.connectorTitles()).get(connector) ?? connector;
+  return {
+    resultType: "input_required",
+    inputRequests: relayInputRequests(inputRequests, label, relayOrigin()),
+    ...(requestState !== undefined ? { requestState } : {}),
+  };
+}
+
+/**
+ * The origin a relayed root-relative URL resolves against, or null when the
+ * runtime has none configured (`webOrigin` refuses), which leaves the URL as it is.
+ */
+function relayOrigin(): string | null {
+  try {
+    return webOrigin();
+  } catch {
+    return null;
+  }
 }
 
 /** Shape an engine ToolResult into an MCP CallToolResult, preserving optional structuredContent. */
@@ -808,7 +855,7 @@ async function executeIdentityToolCall(
       ...(ask.caller ? { caller: ask.caller } : {}),
     }),
   );
-  return toToolCallAnswer(idResult);
+  return toToolCallAnswer(idResult, routed.source.name, runtime);
 }
 
 /**
@@ -961,7 +1008,7 @@ async function executeWorkspaceToolCall(
       ...(ask.caller ? { caller: ask.caller } : {}),
     }),
   );
-  return toToolCallAnswer(result);
+  return toToolCallAnswer(result, source.name, runtime);
 }
 
 /**
