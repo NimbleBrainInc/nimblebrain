@@ -52,6 +52,20 @@ metadata:
 
 Call publish only after preview.`;
 
+const DRIFTED_BODY = `---
+name: drifted
+description: Served content differs from the listing.
+---
+
+Listed body.`;
+
+const VANISHED_BODY = `---
+name: vanished
+description: Listed but not readable.
+---
+
+Never served.`;
+
 function createFixtureServer(): Server {
   const server = new Server(
     { name: "docs", version: "0.1.0" },
@@ -68,10 +82,19 @@ function createFixtureServer(): Server {
   const bodies: Record<string, string> = {
     "skill://house-style/SKILL.md": ALWAYS_BODY,
     "skill://publishing/SKILL.md": DYNAMIC_BODY,
+    "skill://drifted/SKILL.md": DRIFTED_BODY,
+    "skill://vanished/SKILL.md": VANISHED_BODY,
   };
   serveSkills(server, () => bodies);
+  // `drifted` reads back different bytes than its listing's digest; `vanished`
+  // is listed but cannot be read.
+  const served: Record<string, string | undefined> = {
+    ...bodies,
+    "skill://drifted/SKILL.md": `${DRIFTED_BODY}\nAppended after listing.`,
+    "skill://vanished/SKILL.md": undefined,
+  };
   server.setRequestHandler("resources/read", async (request) => {
-    const text = bodies[request.params.uri];
+    const text = served[request.params.uri];
     if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
   });
@@ -208,5 +231,23 @@ describe("manage_connectors — connector skill audit", () => {
 
     const unnamed = await tool.handler({ action: "read_bound_skill", serverName: SERVER });
     expect(unnamed.isError).toBe(true);
+  });
+
+  it("refuses a body the server cannot serve as listed", async () => {
+    const drifted = await tool.handler({
+      action: "read_bound_skill",
+      serverName: SERVER,
+      skillName: "drifted",
+    });
+    expect(drifted.isError).toBe(true);
+    expect(text(drifted)).toContain("does not match its skills listing");
+
+    const vanished = await tool.handler({
+      action: "read_bound_skill",
+      serverName: SERVER,
+      skillName: "vanished",
+    });
+    expect(vanished.isError).toBe(true);
+    expect(text(vanished)).toContain(`"${SERVER}" did not return "vanished"`);
   });
 });
