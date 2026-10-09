@@ -65,17 +65,19 @@ export function looksLikeFrontmatter(body: string): boolean {
   return /^---[ \t]*\r?\n/.test(body.trim());
 }
 
+type ToolManifest = NonNullable<SkillsUpdateInput["manifest"]>;
+
 /**
  * The arguments `skills__update` takes from this editor: a narrowing of the
- * tool's own input type, so a field the tool stops accepting fails to compile.
+ * tool's own input type. `manifest` picks its fields from the tool's, so a
+ * field the tool stops accepting, or one whose type changes, fails to compile.
  */
 export interface SkillUpdateArgs extends SkillsUpdateInput {
   id: string;
-  manifest?: {
+  // A strategy or priority save always carries a value; the editor never clears either.
+  manifest?: Pick<ToolManifest, "loadingStrategy" | "priority" | "toolAffinity" | "triggers"> & {
     loadingStrategy?: LoadingStrategy;
     priority?: number;
-    toolAffinity?: string[] | null;
-    triggers?: string[] | null;
   };
   body?: string;
   body_mode?: "replace";
