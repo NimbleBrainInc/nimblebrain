@@ -245,6 +245,7 @@ export default defineConfig({
             icon: 'cloud-download',
             items: [
               { label: 'Docker Compose', slug: 'deploy/docker' },
+              { label: 'White-labeling', slug: 'deploy/white-label' },
               { label: 'Security', slug: 'deploy/security' },
               { label: 'Observability', slug: 'deploy/observability' },
             ],
