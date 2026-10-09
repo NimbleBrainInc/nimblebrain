@@ -1189,7 +1189,7 @@ export type TasksRunResultOutput =
       /**
        * Every recorded run has one: a run that failed before the engine
        * returned, or never started, has an empty output and activity log and
-       * its `error`. Absent only when it cannot be read.
+       * its `error`. Absent only for a run recorded before every run wrote one.
        */
       result?: TaskRunResultBody;
     };

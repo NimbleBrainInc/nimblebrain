@@ -126,7 +126,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       "deliverable: the untruncated output, the activity log of every tool call, refs to files " +
       "it wrote, usage, and `structured` (the output parsed against the task's outputSchema). " +
       "A run that never started, or failed before any work, has a `result` with an empty " +
-      "output and its `error`; `result` is absent only when it cannot be read.",
+      "output and its `error`; `result` is absent only for a run recorded by an older release.",
     inputSchema: TasksRunResultInput,
     annotations: READ,
   },
