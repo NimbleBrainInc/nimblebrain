@@ -108,6 +108,8 @@ interface TokenOptions {
   exp?: number;
   sub?: string;
   email?: string;
+  /** Defaults to `true`; pass `undefined` explicitly to omit the claim. */
+  email_verified?: unknown;
   name?: string;
   given_name?: string;
   family_name?: string;
@@ -128,6 +130,7 @@ async function buildJwt(opts: TokenOptions = {}): Promise<string> {
     exp: opts.exp ?? nowSec + 3600,
     sub: opts.sub ?? "user-123",
     email: opts.email ?? "alice@example.com",
+    email_verified: "email_verified" in opts ? opts.email_verified : true,
     name: opts.name,
     given_name: opts.given_name,
     family_name: opts.family_name,
@@ -622,6 +625,108 @@ describe("OidcIdentityProvider", () => {
       );
       expect(sameEmail).toBeNull();
       expect(await userStore.list()).toHaveLength(1);
+    });
+  });
+
+  describe("email verification", () => {
+    async function preCreated() {
+      return userStore.create({
+        email: "owner@example.com",
+        displayName: "Owner",
+        orgRole: "admin",
+      });
+    }
+
+    test("an unverified email does not claim a pre-created record and creates none", async () => {
+      const created = await preCreated();
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({
+            email: "owner@example.com",
+            sub: "attacker-sub",
+            email_verified: false,
+          }),
+        ),
+      );
+      expect(identity).toBeNull();
+      const users = await userStore.list();
+      expect(users).toHaveLength(1);
+      expect(users[0]!.id).toBe(created.id);
+      expect(users[0]!.identity).toBeUndefined();
+    });
+
+    test("a missing email_verified claim is treated as unverified", async () => {
+      const created = await preCreated();
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({
+            email: "owner@example.com",
+            sub: "attacker-sub",
+            email_verified: undefined,
+          }),
+        ),
+      );
+      expect(identity).toBeNull();
+      const users = await userStore.list();
+      expect(users).toHaveLength(1);
+      expect(users[0]!.identity).toBeUndefined();
+      expect(users[0]!.id).toBe(created.id);
+    });
+
+    test("a truthy non-boolean email_verified is treated as unverified", async () => {
+      await preCreated();
+      const identity = await adapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({
+            email: "owner@example.com",
+            sub: "attacker-sub",
+            email_verified: "true",
+          }),
+        ),
+      );
+      expect(identity).toBeNull();
+      expect((await userStore.list())[0]!.identity).toBeUndefined();
+    });
+
+    test("a verified email claims the pre-created record and binds it", async () => {
+      const created = await preCreated();
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({ email: "owner@example.com", sub: "owner-sub", email_verified: true }),
+        ),
+      );
+      expect(identity!.id).toBe(created.id);
+      expect(identity!.orgRole).toBe("admin");
+      expect((await userStore.get(created.id))!.identity).toBe(`${issuer}#owner-sub`);
+    });
+
+    test("an unverified email does not auto-provision a new record", async () => {
+      for (const email_verified of [false, undefined]) {
+        const identity = await adapter.verifyRequest(
+          bearerRequest(
+            await buildJwt({ email: "new@example.com", sub: "new-sub", email_verified }),
+          ),
+        );
+        expect(identity).toBeNull();
+      }
+      expect(await userStore.list()).toHaveLength(0);
+    });
+
+    test("a bound user whose token's email is unverified is refused", async () => {
+      const first = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "bound@example.com", sub: "bound-sub" })),
+      );
+      expect(first).not.toBeNull();
+
+      const again = await adapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({ email: "bound@example.com", sub: "bound-sub", email_verified: false }),
+        ),
+      );
+      expect(again).toBeNull();
     });
   });
 });
