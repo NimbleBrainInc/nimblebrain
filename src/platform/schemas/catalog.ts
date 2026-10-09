@@ -2,7 +2,6 @@ import type { Static, TSchema } from "@sinclair/typebox";
 import * as Compose from "./compose.ts";
 import * as Conversations from "./conversations.ts";
 import * as Files from "./files.ts";
-import * as Instructions from "./instructions.ts";
 import * as ManageTools from "./manage-tools.ts";
 import * as Notifications from "./notifications.ts";
 import * as Skills from "./skills.ts";
@@ -30,9 +29,6 @@ export const PlatformToolCatalog = {
   },
   usage: {
     report: { input: Usage.UsageReportInput },
-  },
-  instructions: {
-    write_instructions: { input: Instructions.InstructionsWriteInput },
   },
   compose: {
     effective_context: { input: Compose.ComposeEffectiveContextInput },

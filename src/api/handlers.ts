@@ -609,9 +609,8 @@ export async function handleReadResource(
 
   // Wrap the source's read in a request-scoped context so the
   // AsyncLocalStorage-backed `runtime.requireWorkspaceId()` is available
-  // to any callback-form resource (e.g. `instructions://workspace`'s
-  // `text: () => store.read({ wsId: runtime.requireWorkspaceId() })`).
-  // Without this wrapper, those callbacks throw and `McpSource.readResource`
+  // to any callback-form resource that reads its workspace with
+  // `runtime.requireWorkspaceId()`. Without this wrapper, those callbacks throw and `McpSource.readResource`
   // catches the exception, returning null → 404 to the caller.
   const reqCtx: RequestContext = {
     identity: null,

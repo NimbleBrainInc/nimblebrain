@@ -110,7 +110,6 @@ import { requireRequestIdentity, resolveRequestOwnerId } from "../identity/owner
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { createIdentityProvider } from "../identity/provider.ts";
 import { UserStore } from "../identity/user.ts";
-import { InstructionsStore } from "../instructions/index.ts";
 import {
   forgetLifecycleBinding,
   type LifecycleSourceLike,
@@ -1860,6 +1859,14 @@ export class Runtime {
   }
 
   /**
+   * The installed apps the prompt narrates. `wsId` is the conversation's own
+   * (chat) or focused (task) workspace; `undefined` (an unfocused task) has none.
+   */
+  private async briefingApps(wsId: string | undefined): Promise<PromptAppInfo[]> {
+    return wsId ? this.buildAppsList(wsId) : [];
+  }
+
+  /**
    * The prompt a run reasons with, and the tool surface it reasons over.
    *
    * One phase, because the two are a cycle otherwise: the matched skill's
@@ -1900,9 +1907,7 @@ export class Runtime {
       ? collectSuppressedSkillNames(await binding.store.readEvents(binding.conversation.id))
       : new Set<string>();
 
-    // The briefing (installed apps + the instruction overlays) describes the
-    // workspace the prompt narrates; empty for a run that narrates none.
-    const { apps, liveOverlays } = await this.buildWorkspaceBriefing(briefingWsId);
+    const apps = await this.briefingApps(briefingWsId);
 
     // App scoping (§7 app-aware chat), resolved in the SAME single workspace
     // the run's tools are bound to.
@@ -2100,7 +2105,6 @@ export class Runtime {
       prefs,
       proxied.length > 0,
       workspaceContext,
-      liveOverlays,
       layer3Entries,
       attended ? "chat" : "task",
       skillCatalog,
@@ -2358,20 +2362,6 @@ export class Runtime {
       );
     }
     return resolveModelString(requestModel);
-  }
-
-  /**
-   * The workspace briefing surfaces (apps + the workspace overlay) for a turn.
-   * `wsId` is the conversation's own (chat) or focused (task) workspace;
-   * `undefined` (an unfocused task) yields empty apps and an empty overlay.
-   */
-  private async buildWorkspaceBriefing(wsId: string | undefined): Promise<{
-    apps: PromptAppInfo[];
-    liveOverlays: { workspace: string };
-  }> {
-    const apps = wsId ? await this.buildAppsList(wsId) : [];
-    const liveOverlays = wsId ? await this.readPromptOverlays(wsId) : { workspace: "" };
-    return { apps, liveOverlays };
   }
 
   /**
@@ -3501,31 +3491,6 @@ export class Runtime {
    */
   getConnectorMcpDeps(wsId: string): ConnectorMcpDeps | undefined {
     return this._connectorMcpDepsFactory?.(wsId);
-  }
-
-  /**
-   * Get a per-workdir `InstructionsStore` for the workspace overlay.
-   * Per-connector instructions are NOT stored here — connectors own their storage
-   * and publish a `app://instructions` resource if and only if they
-   * support the convention. The store is stateless aside from the rooted
-   * workdir, so a fresh instance per call is fine.
-   */
-  getInstructionsStore(): InstructionsStore {
-    return new InstructionsStore(this.getWorkDir());
-  }
-
-  /**
-   * Read the workspace instruction overlay for a system-prompt
-   * assembly. Per-connector overlays are NOT read here — they're populated on
-   * `PromptAppInfo.customInstructions` directly in `buildAppsList`.
-   *
-   * Reads happen on every call (no caching) per the locked decision: edits
-   * must apply mid-conversation.
-   */
-  /** Public so the compose-effective-context debug tool can re-read the overlay
-   *  in live mode. Workspace-scoped; no caller-controlled escalation. */
-  async readPromptOverlays(wsId: string): Promise<{ workspace: string }> {
-    return { workspace: await this.getInstructionsStore().read({ wsId }) };
   }
 
   /** Get the ToolRegistry for a specific workspace. Throws if workspace registry not found. */

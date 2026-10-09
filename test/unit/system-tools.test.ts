@@ -1169,15 +1169,14 @@ describe("nb__read_resource system tool", () => {
   });
 
   // Description signals the supported URI schemes so the agent can discover
-  // the platform-published `instructions://` resources and connector-published
-  // `<connector>://...` resources without having to be told about each one.
-  it("description references instructions:// and connector-scheme URIs alongside skill:// / ui://", async () => {
+  // connector-published `<connector>://...` resources without having to be
+  // told about each one.
+  it("description references connector-scheme URIs alongside skill:// / ui://", async () => {
     const registry = new ToolRegistry();
     const systemTools = await createSystemTools(() => registry);
     const tools = await systemTools.tools();
     const readResource = tools.find((t) => t.name === "nb__read_resource");
     expect(readResource).toBeDefined();
-    expect(readResource?.description).toContain("instructions://");
     expect(readResource?.description).toContain("skill://");
     expect(readResource?.description).toContain("ui://");
     expect(readResource?.description).toContain("app-resource-templates");

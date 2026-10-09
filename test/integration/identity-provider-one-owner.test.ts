@@ -118,15 +118,16 @@ describe("the server authenticates with the runtime's identity provider", () => 
     expect(res.status).toBe(401);
   });
 
-  it("refuses a workspace member's write to the workspace instructions, and admits the admin's", async () => {
-    const refused = await callTool(MEMBER, "instructions", "write_instructions", {
-      body: "from a member",
+  it("refuses a workspace member's workspace skill, and admits the admin's", async () => {
+    const skill = (name: string) => ({
+      scope: "workspace",
+      manifest: { name, description: "House rules." },
+      body: "Be brief.",
     });
+    const refused = await callTool(MEMBER, "skills", "create", skill("from-a-member"));
     expect(refused.isError).toBe(true);
 
-    const admitted = await callTool(ADMIN, "instructions", "write_instructions", {
-      body: "from the admin",
-    });
+    const admitted = await callTool(ADMIN, "skills", "create", skill("from-the-admin"));
     expect(admitted.isError).toBe(false);
   });
 

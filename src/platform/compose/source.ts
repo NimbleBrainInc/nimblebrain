@@ -246,8 +246,6 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  *     tier.
  *   - `apps` = `runtime.buildAppsList(wsId)` — workspace-scoped, includes
  *     each connector's `app://instructions` overlay.
- *   - `overlays` = `runtime.readPromptOverlays(wsId)` — the workspace
- *     instruction overlay.
  *   - `layer3Skills` = `loadConversationSkills` ∩ `selectLayer3Skills`
  *     against the role-filtered active tool set, less the skills this
  *     conversation has muted.
@@ -282,11 +280,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
     runtime.loadConversationSkills(wsId, userId).filter((sk) => !suppressed.has(sk.manifest.name)),
   );
 
-  // Gather inputs in parallel where possible.
-  const [apps, overlays] = await Promise.all([
-    runtime.buildAppsList(wsId),
-    runtime.readPromptOverlays(wsId),
-  ]);
+  const apps = await runtime.buildAppsList(wsId);
 
   // Replicate `runtime.chat()`'s tool-set construction so the trace
   // matches reality:
@@ -355,7 +349,6 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
       : undefined,
     proxied.length > 0,
     workspaceContext,
-    overlays,
     layer3Entries,
     "chat",
     skillCatalog,

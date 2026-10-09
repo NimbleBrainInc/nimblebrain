@@ -39,7 +39,6 @@ mock.module("../src/api/client", () => ({
     bootstraps++;
     return null;
   },
-  readResource: async () => ({ contents: [{ uri: "instructions://workspace", text: "" }] }),
   callTool: async (
     _server: string,
     tool: string,

@@ -49,7 +49,7 @@ import { ARTIFACT_URI_SCHEME } from "../host-resources/artifacts/artifact-uri.ts
  * Their home is here because no single module owns one: each is published as
  * resources by whichever in-process app serves them.
  */
-const REGISTRY_RESOURCE_SCHEMES = ["skill", "ui", "instructions"] as const;
+const REGISTRY_RESOURCE_SCHEMES = ["skill", "ui"] as const;
 
 /**
  * The `app://` scheme, and the single URI under it the runtime reads.
@@ -75,7 +75,7 @@ export const APP_INSTRUCTIONS_URI = `${APP_URI_SCHEME}://instructions`;
  *
  * Composed rather than restated: `artifact` and `files` are taken from the
  * modules that own them, each of which already validates its own scheme as the
- * single authority for it. Adding a seventh means extending
+ * single authority for it. Adding a sixth means extending
  * {@link REGISTRY_RESOURCE_SCHEMES}, importing the constant its owner exports, or —
  * when the scheme has no owner but this module — declaring it here as `app` is
  * declared. Never a second spelling of a scheme that already has a home.

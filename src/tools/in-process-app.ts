@@ -132,7 +132,7 @@ export interface DefineInProcessAppOptions {
   instructions?: string;
   /**
    * URI templates advertised via `resources/templates/list`. Use for
-   * parametric URIs (e.g. `instructions://connectors/{name}`) where the catalog
+   * parametric URIs (e.g. `notes://{id}`) where the catalog
    * is dynamic but the shape is known.
    */
   templates?: ResourceTemplate[];
