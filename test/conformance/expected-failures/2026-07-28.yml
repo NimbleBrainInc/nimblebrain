@@ -1,9 +1,6 @@
 # Scenarios /mcp/<wsId> fails on protocol 2026-07-28, each with why. A scenario
 # here that passes fails the run, so remove it in the PR that fixes it.
 server:
-  # A connector's input_required answer to prompts/get is not relayed to the
-  # client: only a tools/call carries the caller's side of the protocol.
-  - input-required-result-non-tool-request
   # Not a gateway gap: the reference server exposes no tool with x-mcp-header
   # annotations, so the scenario cannot run against it either.
   - http-custom-header-server-validation
