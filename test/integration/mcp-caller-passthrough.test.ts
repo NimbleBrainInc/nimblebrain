@@ -5,11 +5,11 @@
  * connector, the connector's `requestState` travels sealed to the caller and
  * the tool and its arguments, an error that asks the client to change its
  * request reaches the client as it is, and progress arrives under the client's
- * own token. Each relayed elicitation names the connector it came from, and a
- * root-relative URL-mode `url` resolves against the runtime's web origin.
+ * own token. Each relayed elicitation names the connector it came from: its
+ * catalog title, else its server name.
  */
 import { afterAll, beforeAll, describe, expect, it, setSystemTime } from "bun:test";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,9 +22,10 @@ import {
 } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
+import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import { FIRST_PARTY_GRANT, type VerifiedIdentity } from "../../src/identity/provider.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
-import { webOrigin } from "../../src/oauth/public-origin.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -44,6 +45,11 @@ class TwoIdentityProvider extends DevIdentityProvider {
     return super.verifyRequest(req);
   }
 }
+/** A catalog entry naming the same connector under a second server name, by its title. */
+const CATALOGED_ID = "ai.example.mail/mcp";
+const CATALOGED = slugifyServerName(CATALOGED_ID);
+const CATALOGED_TITLE = "Example Mail";
+
 /** The connector's own state, which the client must never hold as it is. */
 const CONNECTOR_STATE = "connector-state-1";
 const ANSWER = { action: "accept", content: { yes: true } };
@@ -143,11 +149,47 @@ let connector: ReturnType<typeof Bun.serve>;
 let runtime: Runtime;
 let handle: ServerHandle;
 let workDir: string;
+let priorCatalogDir: string | undefined;
+
+/** An MCP source for the fixture connector, registered under `name`. */
+async function fixtureSource(name: string): Promise<McpSource> {
+  const source = new McpSource(
+    name,
+    {
+      type: "remote",
+      url: new URL(`http://localhost:${connector.port}/mcp`),
+      transportConfig: { type: "streamable-http" },
+      allowInsecure: true,
+    },
+    new NoopEventSink(),
+  );
+  await source.start();
+  return source;
+}
 
 beforeAll(async () => {
   const handler = createMcpHandler(buildConnector);
   connector = Bun.serve({ port: 0, fetch: (request) => handler.fetch(request) });
   workDir = await mkdtemp(join(tmpdir(), "nb-mcp-caller-"));
+  const catalogDir = join(workDir, "catalog");
+  mkdirSync(catalogDir, { recursive: true });
+  writeFileSync(
+    join(catalogDir, "mail.yaml"),
+    `servers:
+  - name: ${CATALOGED_ID}
+    title: ${CATALOGED_TITLE}
+    description: Test connector
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: http://localhost:${connector.port}/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: none
+`,
+  );
+  priorCatalogDir = process.env[CATALOG_DIR_ENV];
+  process.env[CATALOG_DIR_ENV] = catalogDir;
   runtime = await Runtime.start({
     identityProvider: ({ workDir: dir, userStore }) => new TwoIdentityProvider(dir, userStore),
     languageModel: createEchoModel(),
@@ -156,19 +198,9 @@ beforeAll(async () => {
   });
   for (const wsId of [TEST_WORKSPACE_ID, OTHER_WORKSPACE_ID]) {
     await provisionTestWorkspace(runtime, wsId, wsId);
-    const source = new McpSource(
-      "fixture",
-      {
-        type: "remote",
-        url: new URL(`http://localhost:${connector.port}/mcp`),
-        transportConfig: { type: "streamable-http" },
-        allowInsecure: true,
-      },
-      new NoopEventSink(),
-    );
-    await source.start();
-    runtime.getRegistryForWorkspace(wsId).addSource(source);
+    runtime.getRegistryForWorkspace(wsId).addSource(await fixtureSource("fixture"));
   }
+  runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(await fixtureSource(CATALOGED));
   await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, OTHER.id, "member");
   handle = startServer({ runtime, port: 0 });
 });
@@ -177,6 +209,8 @@ afterAll(async () => {
   handle.stop(true);
   await runtime.shutdown();
   connector.stop(true);
+  if (priorCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
+  else process.env[CATALOG_DIR_ENV] = priorCatalogDir;
   rmSync(workDir, { recursive: true, force: true });
 });
 
@@ -258,13 +292,15 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
     }
   });
 
-  it("resolves a root-relative URL-mode url against the runtime's web origin", async () => {
+  it("names a cataloged connector by its catalog title", async () => {
     const c = await client({ elicitation: true });
     try {
-      const { inputRequests } = await firstRound(c, "fixture__confirm_url", {
-        url: "/confirm/send/1",
+      const { inputRequests } = await firstRound(c, `${CATALOGED}__confirm_url`, {
+        url: "https://confirm.example.com/send/1",
       });
-      expect(inputRequests?.ok?.params.url).toBe(`${webOrigin()}/confirm/send/1`);
+      expect(inputRequests?.ok?.params.message).toBe(
+        `${CATALOGED_TITLE}: Open the page to confirm`,
+      );
     } finally {
       await c.close();
     }

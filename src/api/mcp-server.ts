@@ -52,7 +52,6 @@ import { z } from "zod";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { isAppCallable, isModelVisible, type ToolResult } from "../engine/types.ts";
 import type { TokenGrant, UserIdentity } from "../identity/provider.ts";
-import { webOrigin } from "../oauth/public-origin.ts";
 import { log } from "../observability/log.ts";
 import {
   ConnectorGrantDenied,
@@ -644,8 +643,7 @@ function createServer(
     const capabilities = (envelope?.[CLIENT_CAPABILITIES_META_KEY] ?? {}) as ClientCapabilities;
     // Verified and bound to this (identity, workspace) by `rounds` before the
     // handler runs; the tool and arguments it names are checked here.
-    const args = argsDigest(request.params.arguments);
-    const round = roundForCall(ctx.mcpReq.requestState<CallerRound>(), request.params.name, args);
+    const round = roundForCall(ctx.mcpReq.requestState<CallerRound>(), request.params);
     const progressToken = ctx.mcpReq._meta?.progressToken;
     const caller: McpCaller = {
       capabilities,
@@ -676,7 +674,11 @@ function createServer(
       return {
         ...rest,
         requestState: await rounds.mint(
-          { tool: request.params.name, args, ...(state !== undefined ? { state } : {}) },
+          {
+            tool: request.params.name,
+            args: argsDigest(request.params.arguments),
+            ...(state !== undefined ? { state } : {}),
+          },
           ctx,
         ),
         // The handler is typed to answer a `CallToolResult`; an `input_required`
@@ -733,10 +735,9 @@ interface CallerRound {
  */
 function roundForCall(
   round: CallerRound | undefined,
-  tool: string,
-  args: string,
+  call: CallToolRequest["params"],
 ): CallerRound | undefined {
-  if (round && (round.tool !== tool || round.args !== args)) {
+  if (round && (round.tool !== call.name || round.args !== argsDigest(call.arguments))) {
     throw mcpError(ProtocolErrorCode.InvalidParams, "requestState belongs to another tool call");
   }
   return round;
@@ -782,8 +783,7 @@ function modernTaskContext(
 /**
  * A source's answer to a call: its result, or the `input_required` it carries,
  * relayed for the outside client (`relayInputRequests`): each elicitation names
- * the connector by its display name, and a root-relative URL resolves against
- * this runtime's web origin.
+ * the connector by its display name.
  */
 async function toToolCallAnswer(
   result: ToolResult,
@@ -796,21 +796,9 @@ async function toToolCallAnswer(
   const label = (await runtime.connectorTitles()).get(connector) ?? connector;
   return {
     resultType: "input_required",
-    inputRequests: relayInputRequests(inputRequests, label, relayOrigin()),
+    inputRequests: relayInputRequests(inputRequests, label),
     ...(requestState !== undefined ? { requestState } : {}),
   };
-}
-
-/**
- * The origin a relayed root-relative URL resolves against, or null when the
- * runtime has none configured (`webOrigin` refuses), which leaves the URL as it is.
- */
-function relayOrigin(): string | null {
-  try {
-    return webOrigin();
-  } catch {
-    return null;
-  }
 }
 
 /** Shape an engine ToolResult into an MCP CallToolResult, preserving optional structuredContent. */

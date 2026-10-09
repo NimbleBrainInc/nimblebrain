@@ -4,65 +4,31 @@
  * client's `requestState` to the call it was minted for.
  *
  * The outside client attributes every request it receives to this host, so the
- * host names the connector an elicitation comes from: each `elicitation/create`
- * message, form or URL mode, is prefixed with the connector's display name. A
- * URL-mode request whose `url` is root-relative is resolved against this
- * runtime's web origin, because the client has no base to resolve it against.
- * Sampling and roots requests carry no message and pass through as they are.
+ * host tells it which connector asked: each `elicitation/create` message, form
+ * or URL mode, starts with the connector's display name, which the connector
+ * neither chooses nor removes. The text after it, and a URL-mode `url`, are the
+ * connector's own and pass through as they are, as do sampling and roots
+ * requests, which carry no message.
  */
 
 import { createHash } from "node:crypto";
 import type { InputRequest, InputRequests } from "@modelcontextprotocol/server";
 
-/**
- * The connector's input requests as the outside client receives them: each
- * elicitation message names `connector`, and a root-relative URL-mode `url` is
- * resolved against `origin`. A null `origin` leaves every `url` as it is.
- */
-export function relayInputRequests(
-  inputRequests: InputRequests,
-  connector: string,
-  origin: string | null,
-): InputRequests {
+/** The connector's input requests as the outside client receives them: each elicitation message names `connector`. */
+export function relayInputRequests(inputRequests: InputRequests, connector: string): InputRequests {
   const out: InputRequests = {};
   for (const [key, request] of Object.entries(inputRequests)) {
-    out[key] = relayInputRequest(request, connector, origin);
+    out[key] = relayInputRequest(request, connector);
   }
   return out;
 }
 
-function relayInputRequest(
-  request: InputRequest,
-  connector: string,
-  origin: string | null,
-): InputRequest {
+function relayInputRequest(request: InputRequest, connector: string): InputRequest {
   if (request.method !== "elicitation/create") return request;
-  const params = request.params;
-  const message = `${connector}: ${params.message}`;
-  if (params.mode === "url") {
-    return {
-      ...request,
-      params: { ...params, message, url: resolveRelayedUrl(params.url, origin) },
-    };
-  }
-  return { ...request, params: { ...params, message } };
-}
-
-/**
- * A URL-mode `url` as the outside client receives it. A root-relative path (one
- * leading `/`) is resolved against `origin`; anything else (an absolute URL, a
- * protocol-relative `//host`, a `/\host` a URL parser reads as one, or any
- * path when there is no origin) is left as it is, so a connector can never
- * point a relative URL at another host.
- */
-export function resolveRelayedUrl(url: string, origin: string | null): string {
-  if (!origin || !url.startsWith("/") || url[1] === "/" || url[1] === "\\") return url;
-  try {
-    const resolved = new URL(url, origin);
-    return resolved.origin === new URL(origin).origin ? resolved.href : url;
-  } catch {
-    return url;
-  }
+  return {
+    ...request,
+    params: { ...request.params, message: `${connector}: ${request.params.message}` },
+  };
 }
 
 /**

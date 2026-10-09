@@ -59,16 +59,13 @@ client's retry to the call it was made for.
     answer and send no caller.
 - **Every input request is passed through, attributed, and never answered
   here.** A connector's `InputRequiredResult` goes back to the client as an
-  `InputRequiredResult`. Each elicitation's `message`, form and URL mode alike,
-  is prefixed with the connector's display name (its catalog title, else its
-  server name), because the client shows it as this host's request: a connector
-  cannot put a page or a question in front of a person under the host's name.
-  The runtime never opens, fetches, or accepts a URL itself.
-- **A root-relative URL resolves against this runtime's web origin.** A URL-mode
-  `url` that starts with a single `/` is resolved against the runtime's public
-  web origin (`webOrigin`), since the client has no base for it. An absolute URL,
-  anything that names another host, and any URL when no origin is configured
-  pass through as they are.
+  `InputRequiredResult`. The client shows it as this host's request, so each
+  elicitation's `message`, form and URL mode alike, starts with the connector's
+  display name (its catalog title, else its server name): the client is told
+  which connector asked. The connector neither chooses that name nor removes
+  it; the text after it is the connector's own. Everything else, a URL-mode
+  `url` included, is relayed exactly as the connector sent it. The runtime
+  never opens, fetches, or accepts a URL itself.
 - **The connector's `requestState` goes to the caller sealed.** The door signs
   it inside its own `requestState` together with the tool name and a digest of
   the call's arguments, bound to the caller's identity and workspace, under a
@@ -130,7 +127,7 @@ client's retry to the call it was made for.
   minted, so another caller could replay or alter it.
 - **Relay only first-party connectors' requests**: rejected. It needs a trust
   class the runtime does not have, and naming the connector in the message
-  closes the attribution gap for every connector.
+  tells the client which connector asked, whichever connector it is.
 - **Claim URL mode on the runtime's own calls and render the link in chat**:
   rejected. The runtime's own chat has views for this, and an unattended run has
   no one to show a link to; claiming it there is the "advertise and fail"
