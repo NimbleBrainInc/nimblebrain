@@ -12,9 +12,9 @@
  * text, in a connector whose stylesheet spells the same token correctly 22 times.
  *
  * The docs half is the same failure aimed at app authors. `theming.mdx`
- * publishes the token *names* by hand (round 4 removed the values, which drift
- * fastest, but names drift too — a token deleted from the palette stays
- * published). An author who copies a name that is no longer emitted writes CSS
+ * publishes the token *names* by hand (not the values, which drift fastest,
+ * but names drift too — a token deleted from the palette stays published).
+ * An author who copies a name that is not emitted writes CSS
  * that silently uses its fallback forever.
  *
  * Both directions are asserted for the docs: no undocumented key, no documented

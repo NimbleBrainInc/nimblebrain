@@ -41,7 +41,7 @@ export function conciseReason(reason: string): string {
 
 /**
  * The resting-state description of how a skill reaches the prompt — the
- * discriminator the flat catalog used to hide until a row was expanded.
+ * discriminator shown without expanding a row.
  * `text` is the plain lead; `mono` is an optional monospace tail (the tool
  * globs a `tool_affinity` skill matches), kept separate so the caller renders
  * it in mono without re-parsing the string.

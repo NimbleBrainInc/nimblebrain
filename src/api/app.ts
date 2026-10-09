@@ -75,7 +75,7 @@ export function createApp(ctx: AppContext, allowedOrigins: Set<string> | null) {
   const hooks = hooksRoutes(ctx);
   if (hooks) app.route("/", hooks);
 
-  app.route("/", mcpRoutes(ctx));
+  app.route("/", mcpRoutes(ctx, allowedOrigins));
   app.route("/", conversationEventRoutes(ctx));
 
   app.route("/", bootstrapRoutes(ctx));

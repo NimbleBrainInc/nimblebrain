@@ -16,8 +16,8 @@ const OVERRIDE_PATTERNS = [
 ];
 
 // Agent Skills standard: lowercase alphanumerics + single hyphens, no
-// leading/trailing/consecutive hyphen. Tightened from the legacy
-// `[a-zA-Z0-9_-]+` so authored names stay portable across standard agents.
+// leading/trailing/consecutive hyphen, so authored names stay portable across
+// standard agents.
 const VALID_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 export function validateSkill(

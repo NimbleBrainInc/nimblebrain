@@ -1,11 +1,10 @@
 /**
  * The durable half of the spend chokepoint: one JSONL line per priced LLM call.
  *
- * Usage was previously *derived* from a storage side effect — a conversation
- * file happening to exist, in a workspace still on disk — so any call path that
- * did not write one was invisible, and four such paths existed. A line here is
- * recorded at the point of spend instead, which is what makes the fifth such
- * path visible without anyone remembering to wire it up.
+ * Usage derived from a storage side effect — a conversation file happening to
+ * exist, in a workspace still on disk — misses every call path that does not
+ * write one. A line here is recorded at the point of spend instead, which is
+ * what makes a new such path visible without anyone remembering to wire it up.
  *
  * **This is not `api/metrics.ts`.** That module is process-local and
  * side-effect-free on import, which is why it is safe to wire in anywhere; a

@@ -126,10 +126,9 @@ function messagesContainOverlay(prompt: LanguageModelV4Message[]): boolean {
 describe("connector-skill surface-once (engine + event store)", () => {
   it("delivers the overlay in the SAME run, before the model's next action", async () => {
     // The point of surfacing on first use: the guidance has to arrive before
-    // the calls it governs. It used to be emitted as an event only, so the
-    // body first appeared on the NEXT turn's rehydration — after the writes it
-    // was meant to govern, and never at all for a conversation that ends in
-    // one run.
+    // the calls it governs. Emitted as an event only, the body would first
+    // appear on the NEXT turn's rehydration — after the writes it is meant to
+    // govern, and never at all for a conversation that ends in one run.
     const store = freshStore();
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "u1" });
     store.setActiveConversation(conv.id);

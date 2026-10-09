@@ -3,7 +3,7 @@
 //
 // The rule these encode is that the recorded rows are NOT four disjoint
 // regions: `skills` measures a slice of `system_prompt`. Getting it wrong
-// overstates the context window, which is what both surfaces used to do.
+// overstates the context window on both surfaces.
 //
 // The window *total* is not computed here — it ships as `windowTokens` on the
 // digest, so there is one answer and no cross-tier copy to keep in sync. What

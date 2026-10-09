@@ -81,7 +81,7 @@ describe("reconcileConnectorSkills", () => {
       skillsLock: [lock("outlook", "v0.2.0")],
     });
     const current = connector({ serverName: "com-gmail-mcp", skillsLock: [lock("gmail", PIN)] });
-    // A pre-URL registry row as it sits on disk; ConnectorRef no longer admits it.
+    // A pre-URL registry row as it sits on disk; ConnectorRef does not admit it.
     const registry = { name: "@nimblebraininc/synapse-crm" } as unknown as ConnectorRef;
     const { deps, cap } = buildDeps(
       [{ id: "ws_00079598e311c160", connectors: [stale, current, registry] }],

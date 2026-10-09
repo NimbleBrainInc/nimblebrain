@@ -853,7 +853,7 @@ async function readConvEvents(
   // Mirrors the helper in skills.ts. Inlined here rather than imported so
   // this source doesn't take a dep on a sibling tool's private API.
   //
-  // Stage 1 single-owner: gate the read on ownership BEFORE touching
+  // Conversations are single-owner: gate the read on ownership BEFORE touching
   // the event log. The conversation id is a tool input — any
   // authenticated caller could pass an arbitrary id; without this
   // check, `effective_context` would happily read peer conversations'

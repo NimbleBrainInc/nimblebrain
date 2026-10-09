@@ -1600,10 +1600,10 @@ export class AgentEngine {
         // 7. Deliver any overlay surfaced while those tools ran, in the same
         // position the reconstructor will replay it into — after this
         // iteration's tool results. The model reads the guidance before its
-        // next action, which is what "surface on first use" was supposed to
-        // mean; previously the event was recorded here and the body only
-        // appeared on a later rehydration, so the calls it governs had already
-        // happened and a single-run conversation never saw it at all.
+        // next action, which is what "surface on first use" means. Recording
+        // the event here and leaving the body to a later rehydration would
+        // deliver it after the calls it governs had already happened, and a
+        // single-run conversation would never see it at all.
         //
         // The role is `user`, not `assistant`, and that is load-bearing: this
         // message ENDS the history for the next model call of this same run,
@@ -1766,8 +1766,8 @@ export class AgentEngine {
   }
 
   /**
-   * Emit the run-scope telemetry the runtime pre-computed (Phase 2:
-   * skills.loaded and context.assembled). Tied to the same `runId` as
+   * Emit the run-scope telemetry the runtime pre-computed
+   * (skills.loaded and context.assembled). Tied to the same `runId` as
    * `run.start` so the conversation log records what the prompt looked like for
    * this turn.
    */

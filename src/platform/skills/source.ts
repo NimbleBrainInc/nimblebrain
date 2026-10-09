@@ -1,8 +1,8 @@
 /**
  * Skills platform source — in-process MCP server.
  *
- * Owns Phase 2 read-only Layer 3 (cross-connector agent orchestration) skill
- * visibility plus a single Layer 1 vendored resource: the platform-authored
+ * Owns Layer 3 (cross-connector agent orchestration) skill visibility and
+ * mutation, plus a single Layer 1 vendored resource: the platform-authored
  * guide for writing good skills. Mirrors `instructions.ts` structurally.
  *
  * Tools surfaced (read-only):
@@ -17,9 +17,8 @@
  * Resource surfaced:
  *   skill://skills/authoring-guide — Layer 1 vendored markdown
  *
- * Mutation tools (create/update/delete/activate/etc.) are Phase 3 — see the
- * comment block at the bottom of this file for the intended surface so the
- * next implementer registers them in the right place.
+ * Mutation tools (create/update/history/restore/delete/set_status) and the
+ * per-conversation mute (activate/deactivate) register here too.
  */
 
 import { existsSync, readFileSync, realpathSync } from "node:fs";
@@ -210,10 +209,8 @@ const SKILLS_DEACTIVATE_DESCRIPTION =
 /**
  * Create the skills platform source.
  *
- * The `eventSink` parameter is currently unused but kept on the signature to
- * mirror `createInstructionsSource` and reserve the wiring for Phase 3
- * mutation tools, which will emit `skill.created` / `skill.updated` /
- * `skill.deleted` engine events.
+ * The `eventSink` carries the mutation tools' `skill.created` /
+ * `skill.updated` / `skill.deleted` engine events.
  */
 /**
  * Skills tools that stay reachable inside an unattended run: the read-only
@@ -620,11 +617,9 @@ async function listSkills(
     }
   }
 
-  // Layer 1: vendored connector resources. Phase 2 surfaces only the platform-
-  // authored authoring guide (`skill://skills/authoring-guide`). Future
-  // connectors that publish their own `skill://...` resources will be
-  // discovered via a runtime resource scan; for Phase 2 the catalog is
-  // static and small.
+  // Layer 1: vendored connector resources. Only the platform-authored
+  // authoring guide (`skill://skills/authoring-guide`) is surfaced, so the
+  // catalog is static and small.
   if (includeLayer1) {
     const entry = buildAuthoringGuideEntry(authoringGuidePath);
     if (entry) out.push(entry);
@@ -856,7 +851,7 @@ async function readSkillById(
   // Dispatch by id scheme.
   if (id === AUTHORING_GUIDE_URI || id.startsWith(SKILL_URI_PREFIX)) {
     if (id !== AUTHORING_GUIDE_URI) {
-      // Phase 2 only exposes the one Layer 1 resource by URI.
+      // Only the one Layer 1 resource is exposed by URI.
       return null;
     }
     if (!existsSync(authoringGuidePath)) return null;
@@ -1235,8 +1230,7 @@ interface LoadingLogInput {
  * is provided, scan just that conversation (owner-gated, and resolvable from
  * any workspace — the same by-id read a deep link does); otherwise scan every
  * conversation the caller owns in the active workspace. The cross-conv scan
- * reads each jsonl in turn — intentionally simple for Phase 2; a derived index
- * lands in Phase 6.
+ * reads each jsonl in turn — intentionally simple; there is no derived index.
  */
 async function loadingLog(
   runtime: Runtime,
@@ -1244,7 +1238,7 @@ async function loadingLog(
 ): Promise<SkillLoadRow[]> {
   const filter = input as LoadingLogInput;
 
-  // Stage 1 single-owner: every conversation read here must belong to
+  // Conversations are single-owner: every conversation read here must belong to
   // the caller. Without an identity we refuse rather than scan — the
   // top-level store holds every user's conversations and an
   // unauthenticated scan would leak peer skills.loaded events.
@@ -2179,8 +2173,8 @@ async function updateSkillHandler(
   /**
    * Let this call write `manifest.status`. ONLY `set_status` passes it — that
    * tool is app-only, so the door stays shut to the model. Without the flag a
-   * `status` in the patch is refused rather than dropped: the schema no longer
-   * declares the field, but the validator lets unknown keys through, so
+   * `status` in the patch is refused rather than dropped: the schema does not
+   * declare the field, but the validator lets unknown keys through, so
    * ignoring it would report a successful disable that never happened.
    */
   opts: { allowStatus?: boolean } = {},
@@ -2441,17 +2435,16 @@ async function deleteSkillHandler(
 /**
  * Mute or un-mute a skill FOR THE CURRENT CONVERSATION.
  *
- * This used to write `status:` to the skill file, which is shared by every
+ * It does not write `status:` to the skill file, which is shared by every
  * conversation that loads it — for a user-scope skill, across every workspace
- * that user touches. So one chat's "not right now" silently reconfigured all
- * the others, with no signal to any of them, and an operator ended up policing
- * skill state by hand.
+ * that user touches. Writing it would let one chat's "not right now" silently
+ * reconfigure all the others, with no signal to any of them.
  *
- * The two intents behind that one write are genuinely different, and only one
+ * The two intents are genuinely different, and only one
  * of them is the agent's: "don't use this for the task at hand" is per
  * conversation, while "retire this skill" is a durable decision a human makes
  * in settings, where they can see the blast radius. Turning a skill off
- * permanently is no longer reachable from here at all.
+ * permanently is not reachable from here at all.
  *
  * Resolution is by NAME, not path: a mute is conversation state, so it never
  * touches the file and needs none of the path gates `update` runs. The name is

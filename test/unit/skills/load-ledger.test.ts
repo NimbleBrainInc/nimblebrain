@@ -83,8 +83,8 @@ describe("projectSkillLoads — channel coverage", () => {
   });
 
   test("a surface-once overlay is visible — the regression this projection exists for", () => {
-    // `skills__loading_log` previously hard-filtered `ev.type !== "skills.loaded"`,
-    // so a conversation whose only guidance came from an overlay read as empty.
+    // A filter on `ev.type === "skills.loaded"` alone would make a conversation
+    // whose only guidance came from an overlay read as empty.
     const rows = projectSkillLoads(CONV, [connectorInjected("2026-08-01T00:00:00Z")]);
 
     expect(rows).toHaveLength(1);

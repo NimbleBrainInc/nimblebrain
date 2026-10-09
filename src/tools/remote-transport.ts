@@ -162,7 +162,7 @@ function applyProviderAuth(
  * static headers plus, for `provider` auth, the fetch wrapper that mints and
  * re-mints a token per request.
  *
- * Exported because the MCP transport is no longer the only thing that calls a
+ * Exported because the MCP transport is not the only thing that calls a
  * connector's server. The hooks door forwards an inbound vendor delivery to a
  * route the SAME connector declared, and it must present the SAME credential —
  * resolving it a second way is how the two drift into disagreeing about how a

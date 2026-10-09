@@ -371,9 +371,9 @@ export interface ChatResult {
    * carrying the reserved `my_` marker. Stored raw; display name and friendly
    * name are rendered on the fly. The workspace is NOT in the name — it is the
    * session's, resolved from the conversation. There is no top-level
-   * `ChatResult.workspaceId` field (removed by T006 — different tool
-   * calls in the same turn can land in different workspaces, so a
-   * single result-level workspaceId would be misleading).
+   * `ChatResult.workspaceId` field (different tool calls in the same
+   * turn can land in different workspaces, so a single result-level
+   * workspaceId would be misleading).
    */
   toolCalls: Array<{
     id: string;
@@ -510,7 +510,7 @@ export interface TaskRequest {
  * Modeled on `ChatResult` but with chat-specific fields removed:
  *  - No `skillName` — task mode does not perform skill matching on the
  *    prompt; connector-affined skills still surface via Layer 3.
- *  - `response` renamed to `output` to reflect the deliverable contract.
+ *  - `output` rather than `response`, to reflect the deliverable contract.
  *  - `runId` is a traceability anchor — the id of the run, under which the
  *    caller (the tasks app) persists the run result (output +
  *    activity log + output-file refs). No conversation is created.

@@ -2,9 +2,7 @@
  * The run-start door holds the membership gate — once, for every trigger.
  *
  * ADR-0007's invariant is that the workspace a run acts in is membership-
- * validated at session establishment on EVERY door. It used to hold because
- * each door re-implemented it: `chat()` gated a resume, `executeTask()` gated a
- * task run, and nothing tied the two together. `startRun` is now the only
+ * validated at session establishment on EVERY door. `startRun` is the only
  * place a run is established, so the check has one call site and the invariant
  * holds by construction.
  *

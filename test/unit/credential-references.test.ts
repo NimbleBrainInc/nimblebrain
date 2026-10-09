@@ -83,7 +83,7 @@ describe("transport auth — literal and reference", () => {
     expect(headers).toEqual({ "x-trace": "t_stored", "x-plain": "kept" });
   });
 
-  test("`${VAR}` no longer resolves anywhere — it is sent verbatim", async () => {
+  test("`${VAR}` does not resolve anywhere — it is sent verbatim", async () => {
     process.env.NB_CREDREF_PROBE = "from-env";
     try {
       const config: RemoteTransportConfig = {

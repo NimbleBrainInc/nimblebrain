@@ -527,7 +527,7 @@ function StatusBlock({
         </div>
       </div>
       {/* A suppressed CTA leaves a member with a pulsing dot and no
-       * explanation — worse than the refusal they used to click into. Say
+       * explanation — worse than a refusal after clicking. Say
        * why, matching the "Workspace admin required" copy the browse page
        * shows in the same situation. */}
       {blocked && (

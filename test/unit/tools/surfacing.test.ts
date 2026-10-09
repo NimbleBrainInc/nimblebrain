@@ -355,15 +355,15 @@ describe("composeSystemPrompt — apps injection", () => {
   });
 });
 
-// --- Stage 2: namespaced (cross-workspace) tool names ---
+// --- Namespaced (cross-workspace) tool names ---
 //
 // The cross-workspace aggregator namespaces every tool as
 // `ws_<id>-<source>__<tool>` via `namespacedToolName`. System-tool
 // detection and skill-glob matching must see through that prefix. The
-// pre-existing tests above use only BARE names, which is exactly why the
-// regression shipped: in Tier 2, `direct` is the system-tool list, and a
-// raw `startsWith("nb__")` matches zero namespaced names — handing the
-// model an empty tool list and forcing it to hallucinate tool calls.
+// tests above use only BARE names, so they cannot catch it: in Tier 2,
+// `direct` is the system-tool list, and a raw `startsWith("nb__")` matches
+// zero namespaced names — handing the model an empty tool list and forcing
+// it to hallucinate tool calls.
 
 describe("surfaceTools — namespaced (cross-workspace) names", () => {
   const WS = "ws_003eba8844413cd9";

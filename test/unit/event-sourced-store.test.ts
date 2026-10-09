@@ -44,7 +44,7 @@ describe("EventSourcedConversationStore", () => {
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
     const meta = JSON.parse(lines[0]);
     expect(meta.format).toBe("events");
-    // Token totals are no longer stored on Conversation; they're derived
+    // Token totals are not stored on Conversation; they're derived
     // from events at read time.
     expect(meta.totalInputTokens).toBeUndefined();
   });
@@ -500,10 +500,6 @@ describe("EventSourcedConversationStore", () => {
     expect(totalIn).toBe(20);
   });
 
-  // Stage 1 removed share/unshare/addParticipant/removeParticipant —
-  // see the Stage 1 refactor. Sharing returns in
-  // Stage 4 with policy-gated primitives.
-
   it("list() reflects title from metadata events", async () => {
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     await store.update(conv.id, { title: "Event-Derived Title" });
@@ -528,7 +524,7 @@ describe("EventSourcedConversationStore", () => {
 
   it("backward compat: old files with title in line 1 still work", async () => {
     // Simulate an old-format file with title baked into line 1 — but
-    // ownerId is required post-Stage-1 (the migration script stamps it).
+    // ownerId is required (the migration script stamps it).
     const id = "conv_1e9ac4c0000000a1";
     const path = join(dirs.dir, `${id}.jsonl`);
     const meta = {
@@ -553,11 +549,10 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("fork() preserves assistant turns through history() round-trip", async () => {
-    // Regression: fork() previously wrote llm.response events without
-    // run.start/run.done bookends. The reconstructor only emits assistant
-    // messages inside an active run scope, so history() on a forked
-    // event-format conversation returned only the user turns. Assistant
-    // turns silently disappeared.
+    // fork() must write llm.response events inside run.start/run.done
+    // bookends. The reconstructor only emits assistant messages inside an
+    // active run scope, so without them history() on a forked event-format
+    // conversation returns only the user turns.
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 

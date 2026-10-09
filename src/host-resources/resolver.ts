@@ -208,8 +208,8 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   /**
    * Single place that validates the URI scheme. Unknown schemes return
    * `-32602 Invalid params` with the supported set in `data.supported`,
-   * so a connector author with a typo gets actionable feedback. Phase 1
-   * advertises only `files`; future schemes (e.g. `entities`) get added
+   * so a connector author with a typo gets actionable feedback. The
+   * resolver advertises only `files`; other schemes (e.g. `entities`) get added
    * here as the resolver gains additional backends.
    */
   private requireFileScheme(uri: string): string {

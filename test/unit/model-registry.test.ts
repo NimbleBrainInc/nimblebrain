@@ -8,10 +8,9 @@ describe("resolveModelString", () => {
   });
 
   it("looks up bare google model id in the catalog (fixes UI sending bare gemini ids to anthropic)", () => {
-    // Regression: the settings UI used to write `gemini-3.1-pro-preview`
-    // as the saved value (no `google:` prefix). Without the catalog
-    // fallback, that id defaulted to `anthropic:` and 404'd against
-    // the Anthropic API.
+    // A saved value can be a bare `gemini-3.1-pro-preview` (no `google:`
+    // prefix). Without the catalog fallback, that id would default to
+    // `anthropic:` and 404 against the Anthropic API.
     expect(resolveModelString("gemini-3.1-pro-preview")).toBe("google:gemini-3.1-pro-preview");
   });
 

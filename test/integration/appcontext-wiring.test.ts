@@ -95,8 +95,8 @@ describe("Runtime.chat() appContext wiring", () => {
     const system = getSystem();
     // The focused app section should be present
     expect(system).toContain("Active App: My App");
-    // Tool names are no longer listed inline in the focused app section;
-    // the section now contains the app guide and interaction rules.
+    // Tool names are not listed inline in the focused app section;
+    // the section contains the app guide and interaction rules.
     expect(system).toContain("Interaction Rules");
 
     await runtime.shutdown();

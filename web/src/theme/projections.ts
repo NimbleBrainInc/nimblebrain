@@ -104,8 +104,7 @@ export function paletteToRootCss(): string {
   // in index.css. Same single-source path as colors/radius/layout.
   for (const [k, v] of Object.entries(typeScale)) lightDecls.push(`  ${k}: ${v};`);
   // Font stacks — single-sourced into the shell as `--nb-font-*`, aliased to
-  // Tailwind's `--font-*` in index.css (the shell previously restated these as
-  // literals). Mode-independent, :root only.
+  // Tailwind's `--font-*` in index.css. Mode-independent, :root only.
   for (const [k, v] of Object.entries(fonts)) lightDecls.push(`  --nb-font-${k}: ${v};`);
   // Shadows — mode-dependent, so emitted into both :root and .dark. Renamed to
   // `--nb-shadow-*` (Tailwind owns the `--shadow-*` key) and aliased to it in

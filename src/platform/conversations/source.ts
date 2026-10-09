@@ -93,7 +93,7 @@ export async function createConversationsSource(
    * Resolve the current request's access context. Reads
    * `runtime.getCurrentIdentity()`; throws if the dispatcher fires
    * without an authenticated request — these tools are user-facing
-   * and have no defensible "system" caller post-Stage-1.
+   * and have no defensible "system" caller.
    */
   function currentAccess(): AccessContext {
     const identity = runtime.getCurrentIdentity();

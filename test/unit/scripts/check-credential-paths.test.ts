@@ -9,7 +9,7 @@
  *
  * The final block runs the script as a subprocess against the actual
  * `src/` tree — exit 0 there proves the predicate set above doesn't
- * false-positive on the post-Stage-2 codebase. The matching "exit 1 on
+ * false-positive on the actual codebase. The matching "exit 1 on
  * violation" half is covered by the predicate unit tests above — each
  * is a single fixture snippet that the predicate either flags or not.
  */
@@ -186,7 +186,7 @@ describe("check-credential-paths — allow-marker discipline", () => {
 describe("check-credential-paths — script self-invocation", () => {
   test("clean tree: running the script produces a passing message and exits 0", async () => {
     // Subprocess invocation: the lint runs against the current src/
-    // tree, which is the post-Stage-2 clean state. Exit 0 here proves
+    // tree, which is clean. Exit 0 here proves
     // the predicate set above doesn't false-positive on the actual
     // codebase. The matching "exit 1 on violation" half is covered by
     // the predicate unit tests above — each is a single fixture

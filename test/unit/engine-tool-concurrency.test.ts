@@ -77,7 +77,7 @@ describe("engine tool-call fan-out is bounded per source", () => {
 
     // Read the SAME source the engine reads (process.env), not the hardcoded
     // default — otherwise this goes red on correct code in any shell that
-    // exports the knob, which is precisely what this PR invites operators to do.
+    // exports the knob, which operators are invited to do.
     // Clamped to the group size, since that is the real ceiling on in-flight.
     // Exact, not a range: with 25 calls queued behind it the pool starts `cap`
     // workers immediately, so peak IS the cap. Stronger than `<= cap` (which a
