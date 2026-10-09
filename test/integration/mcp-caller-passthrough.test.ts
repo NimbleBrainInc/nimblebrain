@@ -6,7 +6,8 @@
  * the tool and its arguments, an error that asks the client to change its
  * request reaches the client as it is, and progress arrives under the client's
  * own token. Each relayed elicitation names the connector it came from: its
- * catalog title, else its server name.
+ * catalog title, else its server name. A `prompts/get` carries the same side of
+ * the protocol, under a round sealed to the prompt.
  */
 import { afterAll, beforeAll, describe, expect, it, setSystemTime } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -57,13 +58,44 @@ const ANSWER = { action: "accept", content: { yes: true } };
 /**
  * The connector under test: one tool that asks in form mode, one that asks in
  * URL mode for the `url` it is given, one that needs sampling, one that
- * reports progress.
+ * reports progress, and a prompt named like the first tool that asks as it does.
  */
 function buildConnector(): Server {
   const server = new Server(
     { name: "caller-fixture", version: "1.0.0" },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, prompts: {} } },
   );
+  server.setRequestHandler("prompts/list", async () => ({ prompts: [{ name: "confirm" }] }));
+  server.setRequestHandler("prompts/get", async (_request, ctx) => {
+    const answer = ctx.mcpReq.inputResponses?.ok;
+    if (!answer) {
+      return {
+        resultType: "input_required",
+        inputRequests: {
+          ok: {
+            method: "elicitation/create",
+            params: {
+              message: "Draft the prompt?",
+              requestedSchema: { type: "object", properties: { yes: { type: "boolean" } } },
+            },
+          },
+        },
+        requestState: CONNECTOR_STATE,
+      } as never;
+    }
+    const state = ctx.mcpReq.requestState<string>();
+    return {
+      messages: [
+        {
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: `answered:${JSON.stringify(answer)} state:${state}`,
+          },
+        },
+      ],
+    };
+  });
   const schema = { type: "object" as const, properties: {} };
   server.setRequestHandler("tools/list", async () => ({
     tools: [
@@ -433,6 +465,87 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
       );
       expect(text(result)).toBe("counted");
       expect(seen).toEqual([1, 2]);
+    } finally {
+      await c.close();
+    }
+  });
+});
+
+describe("/mcp/<wsId> carries the caller's side of a prompts/get", () => {
+  /** The prompt's first-round `input_required` answer, as the client receives it. */
+  async function firstPromptRound(
+    c: Client,
+    args: Record<string, string> = {},
+  ): Promise<{
+    requestState?: string;
+    inputRequests?: Record<string, { params: { message: string } }>;
+  }> {
+    return (await c.getPrompt(
+      { name: "fixture__confirm", arguments: args },
+      { allowInputRequired: true },
+    )) as never;
+  }
+
+  it("relays the connector's input request naming the connector, and the answer and state back", async () => {
+    const c = await client({ elicitation: true });
+    asked.length = 0;
+    try {
+      const result = await c.getPrompt({ name: "fixture__confirm" });
+      expect(result.messages[0]?.content).toEqual({
+        type: "text",
+        text: `answered:${JSON.stringify(ANSWER)} state:${CONNECTOR_STATE}`,
+      });
+      expect(asked).toEqual(["fixture: Draft the prompt?"]);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("hands the client a sealed state, never the connector's own", async () => {
+    const c = await client({ elicitation: true });
+    try {
+      const { requestState } = await firstPromptRound(c);
+      expect(requestState).toBeDefined();
+      expect(requestState).not.toBe(CONNECTOR_STATE);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("refuses a prompt's state on another member's retry, with other arguments, or on a tool call", async () => {
+    const c = await client({ elicitation: true });
+    const other = await client({ elicitation: true, other: true });
+    try {
+      const { requestState } = await firstPromptRound(c, { topic: "a" });
+      const retry = { name: "fixture__confirm", inputResponses: { ok: ANSWER }, requestState };
+      await expect(
+        other.getPrompt({ ...retry, arguments: { topic: "a" } } as never),
+      ).rejects.toMatchObject({ code: -32602 });
+      await expect(
+        c.getPrompt({ ...retry, arguments: { topic: "b" } } as never),
+      ).rejects.toMatchObject({ code: -32602 });
+      await expect(
+        c.callTool({ ...retry, arguments: { topic: "a" } } as never),
+      ).rejects.toMatchObject({
+        code: -32602,
+      });
+    } finally {
+      await c.close();
+      await other.close();
+    }
+  });
+
+  it("refuses a tool call's state on a prompt of the same name", async () => {
+    const c = await client({ elicitation: true });
+    try {
+      const { requestState } = await firstRound(c);
+      await expect(
+        c.getPrompt({
+          name: "fixture__confirm",
+          inputResponses: { ok: ANSWER },
+          requestState,
+        } as never),
+      ).rejects.toMatchObject({ code: -32602 });
     } finally {
       await c.close();
     }
