@@ -5,11 +5,12 @@
  * server serves no skills, so a second connector (`serveSkillsConnector`)
  * serves one for the suite's Skills extension scenarios.
  *
- * The gateway names a connector's tools `<source>__<tool>`, and the suite calls
- * its fixture tools by the upstream's own names. The front door adds the prefix
- * to a `tools/call` of a bare name (body and `Mcp-Name` header) and strips it
- * from every answer, and changes nothing else, so the suite measures what passes through
- * the gateway, not how it names tools.
+ * The gateway names a connector's tools and prompts `<source>__<name>`, and the
+ * suite calls its fixture's by the upstream's own names. The front door adds the
+ * prefix to the name a `tools/call`, `prompts/get` or prompt completion carries
+ * (body and `Mcp-Name` header) and strips it from every answer, and changes
+ * nothing else, so the suite measures what passes through the gateway, not how
+ * it names things.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -94,7 +95,7 @@ async function forward(req: Request, origin: string): Promise<Response> {
   let body: string | undefined;
   if (req.method === "POST") {
     body = await req.text();
-    const prefixed = prefixToolCall(body);
+    const prefixed = prefixName(body);
     if (prefixed) {
       body = prefixed;
       const name = headers.get("mcp-name");
@@ -137,17 +138,31 @@ async function forward(req: Request, origin: string): Promise<Response> {
   return new Response(stream, { status: res.status, headers: out });
 }
 
-/** `body` with its `tools/call` name prefixed, or undefined when it is no `tools/call`. */
-function prefixToolCall(body: string): string | undefined {
-  let msg: { method?: unknown; params?: { name?: unknown } };
+/**
+ * `body` with the connector-scoped name it carries prefixed: a `tools/call`'s or
+ * `prompts/get`'s `name`, or a prompt completion's `ref.name`. Undefined when it
+ * carries none.
+ */
+function prefixName(body: string): string | undefined {
+  let msg: {
+    method?: unknown;
+    params?: { name?: unknown; ref?: { type?: unknown; name?: unknown } };
+  };
   try {
     msg = JSON.parse(body);
   } catch {
     return undefined;
   }
-  if (msg.method !== "tools/call" || typeof msg.params?.name !== "string") return undefined;
+  const params = msg.params;
+  const holder =
+    msg.method === "tools/call" || msg.method === "prompts/get"
+      ? params
+      : msg.method === "completion/complete" && params?.ref?.type === "ref/prompt"
+        ? params.ref
+        : undefined;
+  if (!holder || typeof holder.name !== "string") return undefined;
   // A name that already carries a source (a platform tool's) is left alone.
-  if (msg.params.name.includes("__")) return undefined;
-  msg.params.name = PREFIX + msg.params.name;
+  if (holder.name.includes("__")) return undefined;
+  holder.name = PREFIX + holder.name;
   return JSON.stringify(msg);
 }

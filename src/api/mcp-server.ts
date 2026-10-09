@@ -26,12 +26,17 @@ import type {
   CallToolRequest,
   CallToolResult,
   ClientCapabilities,
+  CompleteRequest,
+  CompleteResult,
+  GetPromptRequest,
+  GetPromptResult,
   InputRequiredResult,
   ListResourcesRequest,
   ListResourcesResult,
   ListResourceTemplatesRequest,
   ListResourceTemplatesResult,
   ListToolsResult,
+  Prompt,
   ReadResourceRequest,
   ReadResourceResult,
   Resource,
@@ -509,8 +514,12 @@ function createHandlers(
 
 const SkillsListParamsSchema = z.looseObject({ cursor: z.string().optional() }).optional();
 const SkillsGetParamsSchema = z.looseObject({ uri: z.string() });
-/** `skills/list` and `skills/get` are cacheable results: stale at once, never shared across callers. */
-const SKILL_CACHE_HINTS = { ttlMs: 0, cacheScope: "private" } as const;
+/**
+ * The cache hints on a listing the door assembles from the workspace's
+ * connectors (`skills/*`, `prompts/list`): stale at once, since a connector can
+ * change what it serves, and never shared across callers.
+ */
+const DOOR_CACHE_HINTS = { ttlMs: 0, cacheScope: "private" } as const;
 
 /**
  * The workspace's MCP connectors, in name order. The kernel's own apps sit in
@@ -589,6 +598,97 @@ async function workspaceSkills(
 }
 
 /**
+ * The prompts the workspace's connectors serve, each named
+ * `<source>__<prompt>` as its tools are, so two connectors' prompts of one name
+ * stay apart. A connector that declares no `prompts` capability is not asked,
+ * and one that fails to answer is left out of the listing.
+ */
+async function workspacePrompts(runtime: Runtime | null, wsId: string): Promise<Prompt[]> {
+  if (!runtime) return [];
+  const prompts: Prompt[] = [];
+  for (const source of await workspaceConnectors(runtime, wsId)) {
+    const client = source.getServerCapabilities()?.prompts ? source.getClient() : null;
+    if (!client) continue;
+    try {
+      for (const prompt of (await client.listPrompts()).prompts) {
+        prompts.push({ ...prompt, name: `${source.name}__${prompt.name}` });
+      }
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `prompts/list source=${source.name} error=${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return prompts;
+}
+
+/**
+ * The connector a `<source>__<prompt>` name reaches, and the name the connector
+ * knows the prompt by. A name no workspace connector serving prompts answers
+ * to is refused as an unknown prompt.
+ */
+async function promptConnector(
+  runtime: Runtime | null,
+  wsId: string,
+  name: string,
+): Promise<{
+  source: McpSource;
+  client: NonNullable<ReturnType<McpSource["getClient"]>>;
+  name: string;
+}> {
+  const { sourcePrefix, bareToolName: bare, hasSeparator } = splitInnerToolName(name);
+  const source =
+    runtime && hasSeparator && bare.length > 0
+      ? (await workspaceConnectors(runtime, wsId)).find((src) => src.name === sourcePrefix)
+      : undefined;
+  const client = source?.getServerCapabilities()?.prompts ? source.getClient() : null;
+  if (!source || !client) {
+    throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown prompt: ${name}`);
+  }
+  return { source, client, name: bare };
+}
+
+/** `prompts/get`: the prompt from the connector that serves it, as it answered. */
+async function getPrompt(
+  runtime: Runtime | null,
+  wsId: string,
+  params: GetPromptRequest["params"],
+): Promise<GetPromptResult> {
+  const { client, name } = await promptConnector(runtime, wsId, params.name);
+  return client.getPrompt({ name, ...(params.arguments ? { arguments: params.arguments } : {}) });
+}
+
+/** The answer for a reference that has nothing to complete. */
+const NO_COMPLETIONS: CompleteResult = { completion: { values: [], hasMore: false } };
+
+/**
+ * `completion/complete`: asked of the connector that owns the reference. A
+ * prompt reference names its connector, as `prompts/get` does; a resource
+ * template reference reaches the connector that lists that template. A
+ * connector that declares no `completions` capability has nothing to suggest.
+ */
+async function complete(
+  runtime: Runtime | null,
+  wsId: string,
+  params: CompleteRequest["params"],
+): Promise<CompleteResult> {
+  const { ref, ...rest } = params;
+  if (ref.type === "ref/prompt") {
+    const { source, client, name } = await promptConnector(runtime, wsId, ref.name);
+    if (!source.getServerCapabilities()?.completions) return NO_COMPLETIONS;
+    return client.complete({ ...rest, ref: { ...ref, name } });
+  }
+  for (const source of runtime ? await workspaceConnectors(runtime, wsId) : []) {
+    const templates = await source.resourceTemplates();
+    if (!templates.some((t) => t.uriTemplate === ref.uri)) continue;
+    const client = source.getServerCapabilities()?.completions ? source.getClient() : null;
+    return client ? client.complete(params) : NO_COMPLETIONS;
+  }
+  throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown resource template: ${ref.uri}`);
+}
+
+/**
  * The SDK v2 `Server` built for one request by `createMcpHandler`, which
  * answers `server/discover` and serves the request under its `_meta` envelope.
  * Tasks are the tasks extension (SEP-2663), advertised in `server/discover`: a
@@ -612,6 +712,8 @@ function createServer(
       capabilities: {
         tools: {},
         resources: {},
+        prompts: {},
+        completions: {},
         ...(runtime ? { extensions: { [TASKS_EXTENSION_ID]: {}, [SKILLS_EXTENSION_ID]: {} } } : {}),
       },
       ...(instructions ? { instructions } : {}),
@@ -628,12 +730,12 @@ function createServer(
       throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown cursor: ${params.cursor}`);
     }
     const skills = await workspaceSkills(runtime, requestCtx.workspaceId);
-    return { skills: [...skills.values()], ...SKILL_CACHE_HINTS };
+    return { skills: [...skills.values()], ...DOOR_CACHE_HINTS };
   });
   server.setRequestHandler("skills/get", { params: SkillsGetParamsSchema }, async (params) => {
     const skill = (await workspaceSkills(runtime, requestCtx.workspaceId)).get(params.uri);
     if (!skill) throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown skill URI: ${params.uri}`);
-    return { skill, ...SKILL_CACHE_HINTS };
+    return { skill, ...DOOR_CACHE_HINTS };
   });
   server.setRequestHandler("tools/call", async (request, ctx) => {
     // The SDK types the lifted envelope as `{}`; its keys are the reserved
@@ -686,6 +788,20 @@ function createServer(
     // is the other result the extension allows, and the SDK sends it as given.
     return result as CallToolResult;
   });
+  // The workspace's connectors' prompts, in one page, each under its source.
+  server.setRequestHandler("prompts/list", async (request) => {
+    if (request.params?.cursor !== undefined) {
+      throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown cursor: ${request.params.cursor}`);
+    }
+    const prompts = await workspacePrompts(runtime, requestCtx.workspaceId);
+    return { prompts, ...DOOR_CACHE_HINTS };
+  });
+  server.setRequestHandler("prompts/get", (request) =>
+    getPrompt(runtime, requestCtx.workspaceId, request.params),
+  );
+  server.setRequestHandler("completion/complete", (request) =>
+    complete(runtime, requestCtx.workspaceId, request.params),
+  );
   server.setRequestHandler("resources/list", (request) => handlers.listResources(request));
   server.setRequestHandler("resources/templates/list", (request) =>
     handlers.listResourceTemplates(request),
