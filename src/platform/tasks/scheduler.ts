@@ -835,7 +835,6 @@ export function newRunId(): string {
   return `run_${randomBytes(6).toString("hex")}`;
 }
 
-/** A requested run's record, carrying its id and what it was asked with. */
 /**
  * The result of a run that left none of its own: it threw before the engine
  * returned, or it never started. Every recorded run has a result, so a reader
@@ -860,6 +859,7 @@ function resultOfRecord(run: TaskRun): TaskRunResult {
   };
 }
 
+/** A requested run's record, carrying its id and what it was asked with. */
 function withRequest(run: TaskRun, requested: RequestedRun): TaskRun {
   return {
     ...run,
@@ -912,6 +912,8 @@ interface UpdateAfterRunOptions {
   dispatchRunId?: string;
   /** False when the run's record is already in the index. */
   appendRecord?: boolean;
+  /** The run's result, written before its record; one built from the record when absent. */
+  result?: TaskRunResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -1065,8 +1067,6 @@ export class Scheduler {
           error: INTERRUPTED_RUN_ERROR,
           trigger: "scheduled",
         };
-        // A record in the index already has its result: it lands first.
-        if (!recorded) this.persistRunResult(auto, resultOfRecord(run));
         this.updateAfterRun(auto, run, "scheduled", inFlight.onceAt, {
           appendRecord: recorded === undefined,
         });
@@ -2178,9 +2178,7 @@ export class Scheduler {
             ...(run.error !== undefined ? { error: run.error } : {}),
           }
         : resultOfRecord(run);
-      // The result lands before the index line, so every line has one.
-      this.persistRunResult(auto, result);
-      this.updateAfterRun(auto, run, trigger, firedOnceAt, { dispatchRunId: runId });
+      this.updateAfterRun(auto, run, trigger, firedOnceAt, { dispatchRunId: runId, result });
       ticket(run);
       this.runRecorded(auto);
       return { run, result };
@@ -2204,8 +2202,7 @@ export class Scheduler {
       // The executor threw, so no activity reached the scheduler: the result
       // carries the error alone.
       const result = resultOfRecord(failedRun);
-      this.persistRunResult(auto, result);
-      this.updateAfterRun(auto, failedRun, trigger, firedOnceAt, { dispatchRunId: runId });
+      this.updateAfterRun(auto, failedRun, trigger, firedOnceAt, { dispatchRunId: runId, result });
       ticket(failedRun);
       this.runRecorded(auto);
       return { run: failedRun, result };
@@ -2237,14 +2234,15 @@ export class Scheduler {
    * `dispatchRunId` is the id the run was dispatched under (defaults to the
    * record's); a `scheduledRunInFlight` naming it is cleared by this write.
    * `appendRecord: false` updates the task for a run whose record is already
-   * in the index.
+   * in the index. A record appended here has `result` written first (one
+   * built from the record when absent), so every index line has a result.
    */
   updateAfterRun(
     task: Task,
     run: TaskRun,
     trigger?: TaskRunTrigger,
     firedOnceAt: string | undefined = task.schedule?.at,
-    { dispatchRunId = run.id, appendRecord = true }: UpdateAfterRunOptions = {},
+    { dispatchRunId = run.id, appendRecord = true, result }: UpdateAfterRunOptions = {},
   ): void {
     const wsId = task.workspaceId;
     const ownerId = task.ownerId;
@@ -2295,21 +2293,14 @@ export class Scheduler {
 
     // Persist the run summary + the updated definition, then sync the single
     // in-memory entry so the timer sees the new nextRunAt without re-scanning.
+    // The result lands before the index line, so every line has one.
     if (appendRecord) {
+      saveRunResult(this.config.workDir, wsId, ownerId, task.id, result ?? resultOfRecord(run));
       appendRun(this.config.workDir, wsId, ownerId, task.id, run);
       taskRunsTotal.inc({ status: run.status });
     }
     saveTask(this.config.workDir, wsId, ownerId, auto);
     this.definitions.set(Scheduler.keyOf(auto), auto);
-  }
-
-  /**
-   * Persist a run's full result sidecar under the task's provenance
-   * workspace + owner. No-op when either is missing (defensive).
-   */
-  private persistRunResult(auto: Task, result: TaskRunResult): void {
-    if (!auto.workspaceId || !auto.ownerId) return;
-    saveRunResult(this.config.workDir, auto.workspaceId, auto.ownerId, auto.id, result);
   }
 
   /**
@@ -2396,7 +2387,13 @@ export class Scheduler {
     };
     const run = requested ? withRequest(notStarted, requested) : notStarted;
     if (!auto.workspaceId || !auto.ownerId) return run;
-    this.persistRunResult(auto, resultOfRecord(run));
+    saveRunResult(
+      this.config.workDir,
+      auto.workspaceId,
+      auto.ownerId,
+      auto.id,
+      resultOfRecord(run),
+    );
     appendRun(this.config.workDir, auto.workspaceId, auto.ownerId, auto.id, run);
     taskRunsTotal.inc({ status: run.status });
     if (requested) this.writeTicket(auto.workspaceId, auto.ownerId, auto.id, requested, run);
