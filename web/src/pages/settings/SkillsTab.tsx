@@ -42,6 +42,7 @@ import { linkSafety, rehypePlugins } from "../../lib/streamdown-config";
 import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
 import type { ToolCallResponse } from "../../types";
+import { ConnectorSkillsSection } from "./ConnectorSkillsSection";
 import { AutosaveField, RequireActiveWorkspace, SettingsPageHeader } from "./components";
 import {
   type LoadingStrategy,
@@ -73,7 +74,15 @@ export function SkillsTab() {
  */
 function ForActiveWorkspace() {
   const { activeWorkspace } = useWorkspaceContext();
-  return <SkillsBrowser key={activeWorkspace?.id} surface="workspace" />;
+  return (
+    <SkillsBrowser
+      key={activeWorkspace?.id}
+      surface="workspace"
+      connectorSkills={
+        activeWorkspace && <ConnectorSkillsSection workspaceId={activeWorkspace.id} />
+      }
+    />
+  );
 }
 
 /**
@@ -91,8 +100,17 @@ function ForActiveWorkspace() {
  * "show every scope" fallback isn't reachable from any route.
  */
 type SkillsBrowserProps =
-  | { surface: "workspace"; lockedScope?: never }
-  | { lockedScope: "org" | "user"; surface?: never };
+  | {
+      surface: "workspace";
+      lockedScope?: never;
+      /**
+       * The read-only skills the workspace's connectors contribute, shown below
+       * the list. Connectors are installed per workspace, so only this vantage
+       * has them.
+       */
+      connectorSkills?: ReactNode;
+    }
+  | { lockedScope: "org" | "user"; surface?: never; connectorSkills?: never };
 
 type WritableScope = "org" | "workspace" | "user";
 
@@ -611,6 +629,8 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
           + Add a skill
         </Button>
       )}
+
+      {props.connectorSkills}
     </div>
   );
 }

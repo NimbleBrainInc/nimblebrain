@@ -191,7 +191,10 @@ import {
   discoveredSkillFromEntry,
   hydrateSkill,
   PUBLISHED_SKILL_SCOPE,
+  type PublishedSkillInfo,
+  parseConnectorSkillName,
   parseSkillMarkdown,
+  publishedSkillInfo,
   reportUnmatchedToolAffinity,
   synthesizeConnectorSkill,
 } from "../skills/connector-skills.ts";
@@ -201,6 +204,7 @@ import {
   loadScopedSkills,
   loadSkillDir,
   mergeScopedSkills,
+  parseSkillFile,
   partitionSkills,
 } from "../skills/loader.ts";
 import { type SkillMatch, SkillMatcher } from "../skills/matcher.ts";
@@ -5485,6 +5489,53 @@ export class Runtime {
   listConnectorOverlays(wsId: string): ConnectorOverlayInfo[] {
     const dir = this.getWorkspaceContext(wsId).getDataPath(CONNECTOR_SKILLS_SUBDIR);
     return listConnectorOverlays(dir);
+  }
+
+  /**
+   * Every skill the workspace's connected servers publish, from the same pool
+   * prompt composition draws on ({@link loadConnectorSkills}), so the listing is
+   * what the runtime loads: a server whose curated overlay supersedes its
+   * published skills contributes none here, and its overlay is listed by
+   * {@link listConnectorOverlays}. Reads the servers' listings only; no body is
+   * fetched. Backs `manage_connectors list_bound_skills`.
+   */
+  async listPublishedSkills(wsId: string): Promise<PublishedSkillInfo[]> {
+    await this.ensureWorkspaceRegistry(wsId);
+    return (await this.loadConnectorSkills(wsId)).flatMap((skill) => {
+      const info = publishedSkillInfo(skill);
+      return info ? [info] : [];
+    });
+  }
+
+  /**
+   * The body of one skill a connector contributes to this workspace, as the
+   * model receives it: a curated overlay's materialized file, or a published
+   * skill's `SKILL.md` fetched, verified, and budget-capped by the same loader
+   * composition uses. `null` when the workspace has no such skill. Backs
+   * `manage_connectors read_bound_skill`.
+   */
+  async readConnectorSkill(
+    wsId: string,
+    serverName: string,
+    name: string,
+  ): Promise<({ kind: "overlay" | "published" } & SkillBodyLoad) | null> {
+    const overlay = this.listConnectorOverlays(wsId).find(
+      (o) => o.server === serverName && o.name === name,
+    );
+    if (overlay) {
+      const skill = parseSkillFile(overlay.path, { cap: false });
+      return skill ? { kind: "overlay", ok: true, body: skill.body } : null;
+    }
+    await this.ensureWorkspaceRegistry(wsId);
+    const published = (await this.loadConnectorSkills(wsId)).find((skill) => {
+      const id = parseConnectorSkillName(skill.manifest.name);
+      return id?.connector === serverName && id.name === name;
+    });
+    if (!published) return null;
+    const loaded = published.loadBody
+      ? await published.loadBody()
+      : { ok: true as const, body: published.body };
+    return { kind: "published", ...loaded };
   }
 
   /**

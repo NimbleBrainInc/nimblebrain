@@ -44,6 +44,7 @@ import matter from "gray-matter";
 
 import { log } from "../observability/log.ts";
 import { toolNameMatchesPattern } from "../tools/tool-pattern.ts";
+import { resolveLoadingMechanism, type SkillLoadingMechanism } from "./loading.ts";
 import type { SkillEntry } from "./skills-extension.ts";
 import type { Skill, SkillBodyLoad, SkillLoadingStrategy, SkillScope } from "./types.ts";
 
@@ -416,4 +417,47 @@ export async function hydrateSkill(skill: Skill): Promise<Skill | null> {
   if (!loaded.ok) return null;
   const { loadBody: _loaded, ...rest } = skill;
   return { ...rest, body: loaded.body };
+}
+
+/**
+ * One skill a connected server publishes, as the runtime loads it. Backs
+ * `manage_connectors list_bound_skills`, so a workspace admin can audit what a
+ * server puts into the model's context without the body being fetched.
+ */
+export interface PublishedSkillInfo {
+  /** The publishing server (the install's tool-namespace prefix). */
+  server: string;
+  /** The skill's own name on that server. */
+  name: string;
+  description: string;
+  /** The skill's `SKILL.md` URI on the server. */
+  uri: string;
+  loadingStrategy: SkillLoadingStrategy;
+  priority: number;
+  /** The tool patterns the skill is bound to, under the server's namespace. */
+  toolAffinity: string[];
+  triggers?: string[];
+  /** How the skill reaches the model ({@link resolveLoadingMechanism}). */
+  mechanism: SkillLoadingMechanism;
+}
+
+/**
+ * Project a synthesized server skill to its {@link PublishedSkillInfo}, or
+ * `null` for a skill this module did not synthesize.
+ */
+export function publishedSkillInfo(skill: Skill): PublishedSkillInfo | null {
+  const id = parseConnectorSkillName(skill.manifest.name);
+  if (!id) return null;
+  const { manifest } = skill;
+  return {
+    server: id.connector,
+    name: id.name,
+    description: manifest.description,
+    uri: skill.sourcePath,
+    loadingStrategy: manifest.loadingStrategy,
+    priority: manifest.priority,
+    toolAffinity: manifest.toolAffinity ?? [],
+    ...(manifest.triggers?.length ? { triggers: manifest.triggers } : {}),
+    mechanism: resolveLoadingMechanism(manifest),
+  };
 }
