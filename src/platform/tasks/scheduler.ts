@@ -836,6 +836,30 @@ export function newRunId(): string {
 }
 
 /** A requested run's record, carrying its id and what it was asked with. */
+/**
+ * The result of a run that left none of its own: it threw before the engine
+ * returned, or it never started. Every recorded run has a result, so a reader
+ * needs one shape; this one says what the run has, its error or the reason
+ * it did not start, with no deliverable and an empty activity log.
+ */
+function resultOfRecord(run: TaskRun): TaskRunResult {
+  return {
+    runId: run.id,
+    taskId: run.taskId,
+    completedAt: run.completedAt ?? run.startedAt,
+    output: "",
+    activityLog: [],
+    outputFiles: [],
+    usage: {
+      inputTokens: run.inputTokens,
+      outputTokens: run.outputTokens,
+      iterations: run.iterations,
+    },
+    ...(run.stopReason !== undefined ? { stopReason: run.stopReason } : {}),
+    ...(run.error !== undefined ? { error: run.error } : {}),
+  };
+}
+
 function withRequest(run: TaskRun, requested: RequestedRun): TaskRun {
   return {
     ...run,
@@ -1041,6 +1065,8 @@ export class Scheduler {
           error: INTERRUPTED_RUN_ERROR,
           trigger: "scheduled",
         };
+        // A record in the index already has its result: it lands first.
+        if (!recorded) this.persistRunResult(auto, resultOfRecord(run));
         this.updateAfterRun(auto, run, "scheduled", inFlight.onceAt, {
           appendRecord: recorded === undefined,
         });
@@ -1449,6 +1475,7 @@ export class Scheduler {
         ? "The runtime stopped while this run was in flight, so it did not finish."
         : "The runtime stopped before this queued run started.",
     };
+    saveRunResult(this.config.workDir, wsId, ownerId, ticket.taskId, resultOfRecord(run));
     appendRun(this.config.workDir, wsId, ownerId, ticket.taskId, run);
     taskRunsTotal.inc({ status: run.status });
     const settled: RunTicket = { ...ticket, run };
@@ -2144,13 +2171,16 @@ export class Scheduler {
         batch?.accounts(),
       );
       const run = requested ? withRequest(executed.run, requested) : executed.run;
-      const result =
-        requested && executed.result ? { ...executed.result, runId: run.id } : executed.result;
+      const result: TaskRunResult = executed.result
+        ? {
+            ...executed.result,
+            runId: run.id,
+            ...(run.error !== undefined ? { error: run.error } : {}),
+          }
+        : resultOfRecord(run);
+      // The result lands before the index line, so every line has one.
+      this.persistRunResult(auto, result);
       this.updateAfterRun(auto, run, trigger, firedOnceAt, { dispatchRunId: runId });
-      // Persist the full deliverable sidecar alongside the run summary. Present
-      // for both the scheduled and manual (runNow) paths; null only when the
-      // executor had no clean data (it rejected instead — see the catch below).
-      if (result) this.persistRunResult(auto, result);
       ticket(run);
       this.runRecorded(auto);
       return { run, result };
@@ -2171,10 +2201,14 @@ export class Scheduler {
         trigger,
       };
       const failedRun = requested ? withRequest(failed, requested) : failed;
+      // The executor threw, so no activity reached the scheduler: the result
+      // carries the error alone.
+      const result = resultOfRecord(failedRun);
+      this.persistRunResult(auto, result);
       this.updateAfterRun(auto, failedRun, trigger, firedOnceAt, { dispatchRunId: runId });
       ticket(failedRun);
       this.runRecorded(auto);
-      return { run: failedRun, result: null };
+      return { run: failedRun, result };
     }
   }
 
@@ -2362,6 +2396,7 @@ export class Scheduler {
     };
     const run = requested ? withRequest(notStarted, requested) : notStarted;
     if (!auto.workspaceId || !auto.ownerId) return run;
+    this.persistRunResult(auto, resultOfRecord(run));
     appendRun(this.config.workDir, auto.workspaceId, auto.ownerId, auto.id, run);
     taskRunsTotal.inc({ status: run.status });
     if (requested) this.writeTicket(auto.workspaceId, auto.ownerId, auto.id, requested, run);
