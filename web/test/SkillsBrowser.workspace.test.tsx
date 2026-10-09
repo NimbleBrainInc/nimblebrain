@@ -30,7 +30,12 @@ import { realClient } from "./setup";
   }
 }
 
-type CallToolArgs = { server: string; tool: string; args: Record<string, unknown> };
+type CallToolArgs = {
+  server: string;
+  tool: string;
+  args: Record<string, unknown>;
+  opts?: { workspaceId?: string };
+};
 const callToolCalls: CallToolArgs[] = [];
 
 const SKILLS_FIXTURE = [
@@ -110,10 +115,19 @@ const deletedIds = new Set<string>();
 // the server does, so a stale detail on the client is observable.
 const savedBodies = new Map<string, string>();
 
+// When set, the next `skills__update` is refused with this text, as the server
+// answers a refusal: a result with `isError`, not a throw.
+let updateRefusal: string | null = null;
+
 mock.module("../src/api/client", () => ({
   ...realClient,
-  callTool: async (server: string, tool: string, args: Record<string, unknown>) => {
-    callToolCalls.push({ server, tool, args });
+  callTool: async (
+    server: string,
+    tool: string,
+    args: Record<string, unknown>,
+    opts?: { workspaceId?: string },
+  ) => {
+    callToolCalls.push({ server, tool, args, opts });
     if (server === "skills" && tool === "list") {
       return {
         structuredContent: { skills: SKILLS_FIXTURE.filter((s) => !deletedIds.has(s.id)) },
@@ -139,6 +153,11 @@ mock.module("../src/api/client", () => ({
       };
     }
     if (server === "skills" && tool === "update") {
+      if (updateRefusal) {
+        const text = updateRefusal;
+        updateRefusal = null;
+        return { content: [{ type: "text", text }], isError: true };
+      }
       if (typeof args.body === "string") savedBodies.set(args.id as string, args.body);
       return { structuredContent: { id: args.id }, isError: false };
     }
@@ -177,6 +196,7 @@ const { MemoryRouter } = await import("react-router-dom");
 const { SkillsBrowser } = await import("../src/pages/settings/SkillsTab");
 const { SessionProvider } = await import("../src/context/SessionContext");
 const { WorkspaceProvider } = await import("../src/context/WorkspaceContext");
+const { NoticeProvider, NoticeViewport } = await import("../src/components/notices");
 
 /** Wrap an element in a session so `useScopedRole` resolves a real org role. */
 function withOrgRole(element: React.ReactElement, orgRole: string): React.ReactElement {
@@ -245,6 +265,7 @@ afterEach(() => {
   callToolCalls.length = 0;
   deletedIds.clear();
   savedBodies.clear();
+  updateRefusal = null;
 });
 
 async function mount(element: React.ReactElement): Promise<Mounted> {
@@ -252,7 +273,14 @@ async function mount(element: React.ReactElement): Promise<Mounted> {
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
-    root.render(React.createElement(MemoryRouter, null, element));
+    // The edit form raises notices, so the shell's provider is part of the page.
+    root.render(
+      React.createElement(
+        MemoryRouter,
+        null,
+        React.createElement(NoticeProvider, null, React.createElement(NoticeViewport), element),
+      ),
+    );
   });
   await act(async () => {
     await Promise.resolve();
@@ -303,7 +331,7 @@ function expanderFor(container: HTMLElement, text: string): HTMLButtonElement | 
 }
 
 /** Set a controlled input/textarea's value the way a user typing would. */
-async function typeInto(el: HTMLElement | null, value: string): Promise<void> {
+async function typeInto(el: Element | null, value: string): Promise<void> {
   expect(el).not.toBeNull();
   const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
   const proto =
@@ -312,6 +340,20 @@ async function typeInto(el: HTMLElement | null, value: string): Promise<void> {
     Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value);
     el?.dispatchEvent(new WindowEvent("input", { bubbles: true }));
   });
+}
+
+/** Leave a field, which is when the edit form commits a text field or textarea. */
+async function blur(el: Element | null): Promise<void> {
+  expect(el).not.toBeNull();
+  const win = (globalThis as unknown as { window: { FocusEvent: typeof FocusEvent } }).window;
+  await act(async () => {
+    el?.dispatchEvent(new win.FocusEvent("focusout", { bubbles: true }));
+  });
+  for (let i = 0; i < 4; i++) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
 }
 
 /** Click a radio/checkbox by its DOM node, firing the events React listens for. */
@@ -333,6 +375,30 @@ async function openCreateForm(): Promise<Mounted> {
   });
   return m;
 }
+
+/** Open the workspace rule ("workflow") for editing as a workspace admin. */
+async function openEditForm(): Promise<Mounted> {
+  const m = await mountAsAdmin();
+  await act(async () => {
+    clickByText(m.container, "Workspace-tier rule.");
+  });
+  for (let i = 0; i < 2; i++) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+  await act(async () => {
+    clickByText(m.container, "Edit");
+  });
+  for (let i = 0; i < 2; i++) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+  return m;
+}
+
+const updateCalls = () => callToolCalls.filter((c) => c.server === "skills" && c.tool === "update");
 
 describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () => {
   test("does not render a scope filter", async () => {
@@ -411,7 +477,7 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
       bodyInput!.dispatchEvent(new WindowEvent("input", { bubbles: true }));
     });
     await act(async () => {
-      clickByText(mounted!.container, "Save");
+      clickByText(mounted!.container, "Create");
     });
     await act(async () => {
       await Promise.resolve();
@@ -446,88 +512,36 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
   });
 
   test("editing an existing rule does NOT send description or type (would wipe on-disk values)", async () => {
-    // CRITICAL regression guard. skills__update is a partial-patch
-    // merge: any field present in the manifest is written to disk and
-    // overwrites the prior value. Earlier in this PR the UI was sending
-    // `{ description: "", type: "context", ... }` identically on create
-    // and update — which silently wiped author-curated descriptions and
-    // coerced `type: skill` rules into `type: context`, changing
-    // Layer-3 loading inference. (It was also self-defeating because
-    // the redesigned row's display label IS the description.)
-    //
-    // The fix at SkillsTab.tsx::handleSubmit splits the manifest by
-    // branch: update only carries fields the user explicitly touched
-    // via the Advanced expander; create carries the full set.
-    mounted = await mountAsAdmin();
+    // CRITICAL regression guard. skills__update is a partial-patch merge: any
+    // field present in the manifest is written to disk and overwrites the
+    // prior value. An earlier editor sent `{ description: "", type: "context" }`
+    // on every update, which wiped author-curated descriptions.
+    mounted = await openEditForm();
 
-    // Expand the workspace rule (the "workflow" fixture), wait for the
-    // read, then click Edit.
-    await act(async () => {
-      clickByText(mounted!.container, "Workspace-tier rule.");
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    await act(async () => {
-      clickByText(mounted!.container, "Edit");
-    });
+    const body = mounted.container.querySelector("#rule-body");
+    await typeInto(body, "Edited body content.");
+    await blur(body);
 
-    // Modify the body so there's a real edit to ship.
-    const bodyInput = mounted.container.querySelector("#rule-body") as HTMLTextAreaElement | null;
-    expect(bodyInput).not.toBeNull();
-    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window
-      .Event;
-    await act(async () => {
-      const setTa = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
-      setTa?.call(bodyInput, "Edited body content.");
-      bodyInput!.dispatchEvent(new WindowEvent("input", { bubbles: true }));
-    });
-    await act(async () => {
-      clickByText(mounted!.container, "Save");
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    const updateCall = callToolCalls.find((c) => c.server === "skills" && c.tool === "update");
-    expect(updateCall).toBeDefined();
-    // The body change goes through.
-    expect(updateCall!.args.body).toBe("Edited body content.");
-    // THE load-bearing assertions — the manifest patch MUST NOT carry
-    // description, type, or name. If any of these appear, the partial
-    // patch silently overwrites disk and we're back in the bug.
-    const manifest = updateCall!.args.manifest as Record<string, unknown>;
-    expect(manifest.description).toBeUndefined();
-    expect(manifest.type).toBeUndefined();
-    expect(manifest.name).toBeUndefined();
-    // The manifest fields the form DOES own now ride every save, including
-    // their empty forms: the editor can set a trigger list, so it has to be
-    // able to clear one, and an omitted key keeps the value on disk.
-    expect(manifest.loadingStrategy).toBe("always");
-    expect(manifest.toolAffinity).toEqual([]);
-    expect(manifest.triggers).toEqual([]);
+    const updates = updateCalls();
+    expect(updates).toHaveLength(1);
+    // The body change goes through, and it is all that goes: a body save
+    // carries no manifest, so it can touch no field.
+    expect(updates[0]!.args.body).toBe("Edited body content.");
+    expect(updates[0]!.args.manifest).toBeUndefined();
   });
 
   test("after a save, the open row and the next edit show the saved body", async () => {
     // The open row's detail is what Edit seeds the form from. Left at the
     // pre-save read, the row shows the old body, and a second edit would save
     // that old body back over the one just written.
-    mounted = await mountAsAdmin();
+    mounted = await openEditForm();
+    const field = mounted.container.querySelector("#rule-body");
+    await typeInto(field, "Edited body content.");
+    await blur(field);
     await act(async () => {
-      clickByText(mounted!.container, "Workspace-tier rule.");
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    await act(async () => {
-      clickByText(mounted!.container, "Edit");
-    });
-    await typeInto(mounted.container.querySelector("#rule-body"), "Edited body content.");
-    await act(async () => {
-      clickByText(mounted!.container, "Save");
+      (
+        mounted!.container.querySelector('button[aria-label="Back to skills"]') as HTMLButtonElement
+      ).click();
     });
     for (let i = 0; i < 3; i++) {
       await act(async () => {
@@ -771,7 +785,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
       bodyInput!.dispatchEvent(new WindowEvent("input", { bubbles: true }));
     });
     await act(async () => {
-      clickByText(mounted!.container, "Save");
+      clickByText(mounted!.container, "Create");
     });
     await act(async () => {
       await Promise.resolve();
@@ -1023,7 +1037,7 @@ describe("SkillsBrowser authoring — the loading verdict and a pasted SKILL.md"
     await typeInto(mounted.container.querySelector("#tool-affinity"), "files__*\n\ndocs__*");
     await typeInto(mounted.container.querySelector("#triggers"), "ship it");
     await act(async () => {
-      clickByText(mounted!.container, "Save");
+      clickByText(mounted!.container, "Create");
     });
     await act(async () => {
       await Promise.resolve();
@@ -1049,7 +1063,7 @@ describe("SkillsBrowser authoring — the loading verdict and a pasted SKILL.md"
     expect(mounted.container.textContent).toContain("Keep it as body text instead");
 
     await act(async () => {
-      clickByText(mounted!.container, "Save");
+      clickByText(mounted!.container, "Create");
     });
     await act(async () => {
       await Promise.resolve();
@@ -1088,7 +1102,7 @@ describe("SkillsBrowser authoring — the loading verdict and a pasted SKILL.md"
       mounted.container.querySelector('input[type="checkbox"]') as HTMLInputElement | null,
     );
     await act(async () => {
-      clickByText(mounted!.container, "Save");
+      clickByText(mounted!.container, "Create");
     });
     await act(async () => {
       await Promise.resolve();
@@ -1107,12 +1121,181 @@ describe("SkillsBrowser authoring — the loading verdict and a pasted SKILL.md"
       "---\nname: reported\ndescription: A real one.\n---\n\nBody.",
     );
     await act(async () => {
-      clickByText(mounted!.container, "Save");
+      clickByText(mounted!.container, "Create");
     });
     await act(async () => {
       await Promise.resolve();
     });
     expect(mounted.container.textContent).toContain("Applied the frontmatter");
     expect(mounted.container.textContent).toContain("description, loading-strategy");
+  });
+});
+
+// ── Editing an existing skill: each field saves as it changes ────────────
+//
+// The rule the editor holds: every manifest field is its own source of truth
+// and saves alone, as a manifest patch; the body saves alone, as prose, with
+// `frontmatter: "ignore"`, so a header in it can never override a field.
+describe("SkillsBrowser — editing an existing skill", () => {
+  test("has no Save button; one field saves alone when it is left", async () => {
+    mounted = await openEditForm();
+    const buttons = Array.from(mounted.container.querySelectorAll("button")).map((b) =>
+      b.textContent?.trim(),
+    );
+    expect(buttons).not.toContain("Save");
+
+    await act(async () => {
+      clickByText(mounted!.container, "Advanced");
+    });
+    const priority = mounted.container.querySelector("#priority");
+    await typeInto(priority, "40");
+    expect(updateCalls()).toHaveLength(0);
+    await blur(priority);
+
+    expect(updateCalls().map((c) => c.args)).toEqual([
+      { id: "/tmp/skills/ws/workflow.md", manifest: { priority: 40 } },
+    ]);
+    expect(mounted.container.textContent).toContain("Saved");
+  });
+
+  test("a refused save keeps the edit and offers Retry and Revert", async () => {
+    mounted = await openEditForm();
+    const body = mounted.container.querySelector("#rule-body") as HTMLTextAreaElement;
+    updateRefusal = "Permission denied: workspace admin required.";
+    await typeInto(body, "Edited body content.");
+    await blur(body);
+
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("Permission denied: workspace admin required.");
+    expect(text).toContain("Retry");
+    expect(text).toContain("Revert");
+    // The typed text is kept for a retry.
+    expect((mounted.container.querySelector("#rule-body") as HTMLTextAreaElement).value).toBe(
+      "Edited body content.",
+    );
+
+    // Retry sends it again; this time the server takes it.
+    await act(async () => {
+      clickByText(mounted!.container, "Retry");
+    });
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+    expect(updateCalls()).toHaveLength(2);
+    expect(mounted.container.textContent).not.toContain("Permission denied");
+
+    // Revert puts a failed field back to what is saved, sending nothing.
+    updateRefusal = "Refused again.";
+    await typeInto(mounted.container.querySelector("#rule-body"), "Another edit.");
+    await blur(mounted.container.querySelector("#rule-body"));
+    await act(async () => {
+      clickByText(mounted!.container, "Revert");
+    });
+    expect((mounted.container.querySelector("#rule-body") as HTMLTextAreaElement).value).toBe(
+      "Edited body content.",
+    );
+    expect(updateCalls()).toHaveLength(3);
+  });
+
+  test("the body and the fields never overwrite each other", async () => {
+    mounted = await openEditForm();
+    await act(async () => {
+      clickByText(mounted!.container, "Advanced");
+    });
+    // A field save carries that field and no body.
+    await check(
+      mounted.container.querySelector(
+        'input[name="loading-strategy"][value="dynamic"]',
+      ) as HTMLInputElement | null,
+    );
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+    expect(updateCalls().map((c) => c.args)).toEqual([
+      { id: "/tmp/skills/ws/workflow.md", manifest: { loadingStrategy: "dynamic" } },
+    ]);
+
+    // A body that opens with a header would, if applied, set the strategy the
+    // reader just saved. It is held, never sent.
+    const body = mounted.container.querySelector("#rule-body");
+    await typeInto(body, "---\nname: workflow\ndescription: x\n---\n\nNew rules.");
+    await blur(body);
+    expect(updateCalls()).toHaveLength(1);
+    expect(mounted.container.textContent).toContain("remove the header, or keep it as body text");
+
+    // Keeping it as text sends it as prose: `frontmatter: "ignore"`, no manifest.
+    await check(
+      mounted.container.querySelector('input[type="checkbox"]') as HTMLInputElement | null,
+    );
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+    const bodySave = updateCalls()[1]!.args;
+    expect(bodySave.frontmatter).toBe("ignore");
+    expect(bodySave.body_mode).toBe("replace");
+    expect(bodySave.manifest).toBeUndefined();
+  });
+
+  test("the loading verdict describes the skill as saved, never a mix with drafts", async () => {
+    mounted = await openEditForm();
+    expect(mounted.container.textContent).toContain("Loads on every turn");
+    await act(async () => {
+      clickByText(mounted!.container, "Advanced");
+    });
+    await check(
+      mounted.container.querySelector(
+        'input[name="loading-strategy"][value="dynamic"]',
+      ) as HTMLInputElement | null,
+    );
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+    expect(mounted.container.textContent).toContain("Never loads");
+
+    // A trigger typed but not yet saved does not revive the verdict; the
+    // verdict says what it leaves out.
+    const triggers = mounted.container.querySelector("#triggers");
+    await typeInto(triggers, "deploy to staging");
+    expect(mounted.container.textContent).toContain("Never loads");
+    expect(mounted.container.textContent).toContain("not yet: trigger phrases");
+
+    await blur(triggers);
+    expect(mounted.container.textContent).toContain('Loads on "deploy to staging"');
+    expect(mounted.container.textContent).not.toContain("not yet:");
+  });
+
+  test("a workspace save names the workspace it was opened in", async () => {
+    mounted = await openEditForm();
+    const body = mounted.container.querySelector("#rule-body");
+    await typeInto(body, "Edited body content.");
+    await blur(body);
+    expect(updateCalls()[0]?.opts).toEqual({ workspaceId: "ws_0076759dbbe19fcc" });
+  });
+
+  test("creating still takes an explicit Create; leaving a field sends nothing", async () => {
+    mounted = await openCreateForm();
+    const name = mounted.container.querySelector("#rule-name");
+    const body = mounted.container.querySelector("#rule-body");
+    await typeInto(name, "explicit");
+    await blur(name);
+    await typeInto(body, "Only on Create.");
+    await blur(body);
+    expect(callToolCalls.some((c) => c.tool === "create" || c.tool === "update")).toBe(false);
+
+    await act(async () => {
+      clickByText(mounted!.container, "Create");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(callToolCalls.filter((c) => c.tool === "create")).toHaveLength(1);
   });
 });

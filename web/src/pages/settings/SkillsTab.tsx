@@ -1,5 +1,14 @@
 import { Lock, Trash2 } from "lucide-react";
-import { type RefObject, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link } from "react-router-dom";
 import { Streamdown } from "streamdown";
 import type { ToolInput } from "../../_generated/platform-schemas/catalog";
@@ -21,6 +30,8 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
+import { useWorkspaceContext } from "../../context/WorkspaceContext";
+import { useAutosaveForm } from "../../hooks/useAutosaveForm";
 import { roleAtLeast, useCanWriteActiveWorkspace, useScopedRole } from "../../hooks/useScopedRole";
 import {
   formatTokenCount,
@@ -30,7 +41,19 @@ import {
 import { linkSafety, rehypePlugins } from "../../lib/streamdown-config";
 import { parseToolResponse } from "../../lib/tool-response";
 import { cn } from "../../lib/utils";
-import { RequireActiveWorkspace, SettingsPageHeader } from "./components";
+import type { ToolCallResponse } from "../../types";
+import { AutosaveField, RequireActiveWorkspace, SettingsPageHeader } from "./components";
+import {
+  type LoadingStrategy,
+  looksLikeFrontmatter,
+  MAX_PRIORITY,
+  MIN_PRIORITY,
+  parseLines,
+  type SkillEditField,
+  type SkillEditValues,
+  type SkillUpdateArgs,
+  skillEditPatch,
+} from "./skill-edit-patch";
 
 // ── Wrappers ─────────────────────────────────────────────────────────────
 
@@ -38,9 +61,19 @@ import { RequireActiveWorkspace, SettingsPageHeader } from "./components";
 export function SkillsTab() {
   return (
     <RequireActiveWorkspace>
-      <SkillsBrowser surface="workspace" />
+      <ForActiveWorkspace />
     </RequireActiveWorkspace>
   );
+}
+
+/**
+ * Keyed by the workspace, so a switch starts a fresh browser: the route keeps
+ * this element mounted across `/w/:slug` changes, and one workspace's open
+ * editor must never save into another.
+ */
+function ForActiveWorkspace() {
+  const { activeWorkspace } = useWorkspaceContext();
+  return <SkillsBrowser key={activeWorkspace?.id} surface="workspace" />;
 }
 
 /**
@@ -172,9 +205,24 @@ function matchingDetail(editingId: string | null, detail: ReadSkill | null): Rea
   return editingId && detail?.id === editingId ? detail : null;
 }
 
-/** Whether the edit view is still waiting on the detail read for `editingId`. */
-function isDetailPending(editingId: string | null, detail: ReadSkill | null): boolean {
-  return editingId !== null && (!detail || detail.id !== editingId);
+/**
+ * `skills__update`, sent to the scope this browser edits. A workspace save
+ * names the workspace the browser was opened on: the workspace wrapper keys the
+ * browser by it, so a queued save can never land in a workspace switched to
+ * since. The org and profile vantages are in no workspace and send none
+ * (ADR-0043).
+ */
+function useSendSkillUpdate(lockedScope: "org" | "user" | undefined) {
+  const { activeWorkspace } = useWorkspaceContext();
+  const workspaceId = activeWorkspace?.id;
+  return useCallback(
+    async (args: SkillUpdateArgs): Promise<ToolCallResponse> => {
+      if (lockedScope) return callToolWithoutWorkspace("skills", "update", args);
+      if (!workspaceId) throw new Error("No workspace is open, so the change was not saved.");
+      return callTool("skills", "update", args, { workspaceId });
+    },
+    [lockedScope, workspaceId],
+  );
 }
 
 export function SkillsBrowser(props: SkillsBrowserProps) {
@@ -207,6 +255,9 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
   // where the save lands.
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Read by a save that lands later, to re-read only the row still open.
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
   const [detail, setDetail] = useState<ReadSkill | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionPending, setActionPending] = useState(false);
@@ -329,85 +380,71 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
     [runMutation],
   );
 
-  const handleSubmit = useCallback(
-    async (patch: EditorPatch) => {
-      // Create writes the full manifest; update is a partial patch.
-      //
-      // On UPDATE we still omit name and description:
-      //   - description doubles as the row label (`rowLabel`); it's set from
-      //     the title at create and left alone. Patching it to "" would wipe
-      //     a label authored here or a richer description set via CLI/chat.
-      //     A pasted document may still set it — the server applies that from
-      //     the frontmatter, which is a statement, not an empty form field.
-      //   - name is the filename — immutable; sending it is a no-op at best,
-      //     a silent rename attempt at worst.
-      //
-      // Everything the manifest section of the form owns is sent on both
-      // paths, including the empty forms: clearing the trigger list has to
-      // reach the file, or the editor would be able to add a signal and never
-      // take one away.
-      const manifest = {
-        loadingStrategy: patch.loadingStrategy,
-        priority: Math.min(99, Math.max(11, patch.priority)),
-        toolAffinity: patch.toolAffinity,
-        triggers: patch.triggers,
-      };
+  const handleCreate = useCallback(
+    async (draft: CreateDraft) => {
       // The escape hatch, opt-in: a body whose leading `---` is genuinely
       // prose. Default is `apply`, so the ordinary paste just works.
-      const frontmatter = patch.keepFrontmatterAsText ? "ignore" : undefined;
-      if (editingId) {
-        await runMutation(
-          "update",
-          // `replace`: this editor is a full-document textarea, so what it
-          // holds IS the intended body. `append` would double the skill on
-          // every save. An agent adding a single rule wants the other mode.
-          {
-            id: editingId,
-            manifest,
-            body: patch.body,
-            body_mode: "replace",
-            ...(frontmatter ? { frontmatter } : {}),
+      const frontmatter = draft.keepFrontmatterAsText ? "ignore" : undefined;
+      await runMutation(
+        "create",
+        {
+          scope: createLockedScope,
+          manifest: {
+            name: draft.name,
+            // The human title, which is also the row label. The on-disk
+            // schema requires it non-empty; a pasted document that states a
+            // real description overrides it server-side.
+            description: draft.description,
+            loadingStrategy: draft.loadingStrategy,
+            priority: Math.min(MAX_PRIORITY, Math.max(MIN_PRIORITY, draft.priority)),
+            toolAffinity: draft.toolAffinity,
+            triggers: draft.triggers,
           },
-          () => {
-            setView("list");
-            setEditingId(null);
-            // The open row shows, and Edit seeds the form from, this detail.
-            // The write result carries no body, so re-read it; dropping the
-            // old one first keeps a quick second Edit from seeding the form
-            // with the pre-save body and saving it back.
-            setDetail(null);
-            void fetchDetail(editingId);
-          },
-        );
-      } else {
-        await runMutation(
-          "create",
-          {
-            scope: createLockedScope,
-            manifest: {
-              name: patch.name,
-              // The human title, which is also the row label. The on-disk
-              // schema requires it non-empty; a pasted document that states a
-              // real description overrides it server-side.
-              description: patch.description,
-              ...manifest,
-            },
-            body: patch.body,
-            ...(frontmatter ? { frontmatter } : {}),
-          },
-          (result) => {
-            setView("list");
-            setEditingId(null);
-            // The new skill lands in the editable tier; clear any active filter
-            // so it's visible instead of landing behind a segment showing
-            // another tier (only edits of an already-shown row stay put).
-            setSegment("all");
-            if (result.id) setSelectedId(result.id);
-          },
-        );
+          body: draft.body,
+          ...(frontmatter ? { frontmatter } : {}),
+        },
+        (result) => {
+          setView("list");
+          setEditingId(null);
+          // The new skill lands in the editable tier; clear any active filter
+          // so it's visible instead of landing behind a segment showing
+          // another tier (only edits of an already-shown row stay put).
+          setSegment("all");
+          if (result.id) setSelectedId(result.id);
+        },
+      );
+    },
+    [createLockedScope, runMutation],
+  );
+
+  const sendUpdate = useSendSkillUpdate(lockedScope);
+
+  /**
+   * Save one field of an open skill. The open row shows, and the next Edit
+   * seeds from, `detail`, so it is dropped before the write and re-read after
+   * it: a quick second Edit then waits for the saved skill instead of seeding
+   * from the one this save replaced. The open form seeded once and does not
+   * read `detail` again, so the re-read never overwrites an edit in progress.
+   */
+  const saveField = useCallback(
+    async (id: string, args: SkillUpdateArgs) => {
+      setDetail((prev) => (prev?.id === id ? null : prev));
+      try {
+        const res = await sendUpdate(args);
+        // A refusal comes back as a result, not a throw; without this it
+        // would be reported as saved.
+        if (res.isError) throw new Error(res.content?.[0]?.text ?? "The change was not saved.");
+      } finally {
+        // The re-reads report their own failures; the write has landed or
+        // failed already, and neither re-read changes that. A save that lands
+        // after the reader opened another row leaves that row's detail alone.
+        await Promise.all([
+          fetchSkills(),
+          selectedIdRef.current === id ? fetchDetail(id) : Promise.resolve(),
+        ]);
       }
     },
-    [editingId, createLockedScope, runMutation, fetchDetail],
+    [sendUpdate, fetchSkills, fetchDetail],
   );
 
   const startCreate = useCallback(() => {
@@ -460,15 +497,24 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
     if (segment !== "all" && !tiers.some((t) => t.scope === segment)) setSegment("all");
   }, [tiers, segment]);
 
+  if (view === "edit" && editingId) {
+    return (
+      <EditSkillView
+        key={editingId}
+        id={editingId}
+        detail={matchingDetail(editingId, detail)}
+        onSave={saveField}
+        onBack={cancelEdit}
+      />
+    );
+  }
   if (view === "edit") {
     return (
-      <EditView
-        existing={matchingDetail(editingId, detail)}
-        loading={isDetailPending(editingId, detail)}
+      <CreateSkillView
         pending={actionPending}
         error={error}
         onCancel={cancelEdit}
-        onSubmit={handleSubmit}
+        onCreate={handleCreate}
       />
     );
   }
@@ -945,7 +991,7 @@ function Toggle({
   );
 }
 
-// ── Edit view ────────────────────────────────────────────────────────────
+// ── Create and edit views ─────────────────────────────────────────────────
 
 type CreateInput = ToolInput<"skills", "create">;
 
@@ -968,23 +1014,15 @@ function slugifyName(input: string): string {
     .replace(/^[-_]+|[-_]+$/g, "");
 }
 
-/** Header title for the edit view across its loading / new / edit states. */
-function editViewTitle(loading: boolean, isNew: boolean): string {
-  if (loading) return "Loading…";
-  return isNew ? "New skill" : "Edit this skill";
-}
-
-/** Name input with a slug hint (new) or an immutability note (edit). */
+/** The name input of the create form, with the slug it will be saved as. */
 function RuleNameField({
   name,
-  isNew,
   slug,
   showSlugHint,
   nameRef,
   onChange,
 }: {
   name: string;
-  isNew: boolean;
   slug: string;
   showSlugHint: boolean;
   nameRef: RefObject<HTMLInputElement | null>;
@@ -1001,17 +1039,10 @@ function RuleNameField({
         value={name}
         onChange={(e) => onChange(e.target.value)}
         placeholder="Voice rules"
-        disabled={!isNew}
-        className={isNew ? "" : "font-mono"}
       />
       {showSlugHint && (
         <p className="text-xs text-muted-foreground">
           Saved as <span className="font-mono">{slug}</span>
-        </p>
-      )}
-      {!isNew && (
-        <p className="text-xs text-muted-foreground">
-          Names are immutable — they're the filename on disk.
         </p>
       )}
     </div>
@@ -1020,10 +1051,8 @@ function RuleNameField({
 
 // ── The manifest a skill is being authored with ──────────────────────────
 
-type LoadingStrategy = "always" | "dynamic";
-
-/** What the editor hands back on save. */
-interface EditorPatch {
+/** What the create form hands back on Create. */
+interface CreateDraft {
   name: string;
   description: string;
   body: string;
@@ -1035,53 +1064,30 @@ interface EditorPatch {
   keepFrontmatterAsText: boolean;
 }
 
-/** One item per non-empty line — the shape a list field round-trips through. */
-function parseLines(value: string): string[] {
-  return value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-}
-
-/**
- * Does this body look like it opens a document header?
- *
- * A hint, not a contract: the server owns the real rule (a CLOSED fence whose
- * YAML yields keys) and refuses anything that fails it. This only decides
- * whether to warn that the fields below may be overridden on save, so it is
- * deliberately the looser test — over-warning costs a sentence, under-warning
- * costs the surprise this whole change exists to remove, and takes the opt-out
- * checkbox with it because the notice is what carries it.
- *
- * Tested against the TRIMMED body, which is what save sends, and tolerating
- * trailing space on the fence line, which the server's own line check does:
- * either one silently absorbs while a stricter hint says nothing.
- */
-function looksLikeFrontmatter(body: string): boolean {
-  return /^---[ \t]*\r?\n/.test(body.trim());
-}
-
 /**
  * What will happen to this skill, stated while it is still being written.
  *
  * A skill's whole purpose is to load, and the editor used to never say whether
  * it would — `never loads` in particular was reachable in one click and looked
  * identical to every healthy skill. The mechanism and the token cost are both
- * derived from the form's live state through the runtime's own code, so the
- * sentence here and the row's after a save are the same verdict.
+ * derived through the runtime's own code, so the sentence here and the row's
+ * after a save are the same verdict.
+ *
+ * It describes one state, never a mix: the create form's draft, or an open
+ * skill as saved. `footnote` says what the state leaves out.
  */
 function LoadingVerdict({
   strategy,
   toolAffinity,
   triggers,
   body,
-  frontmatterPending,
+  footnote,
 }: {
   strategy: LoadingStrategy;
   toolAffinity: string[];
   triggers: string[];
   body: string;
-  frontmatterPending: boolean;
+  footnote?: string;
 }) {
   const mechanism = resolveLoadingMechanism({
     loadingStrategy: strategy,
@@ -1112,7 +1118,7 @@ function LoadingVerdict({
         {strategy === "always"
           ? `≈${formatTokenCount(tokens)} tokens in every conversation`
           : `≈${formatTokenCount(tokens)} tokens when it loads`}
-        {frontmatterPending && " · the pasted frontmatter may change this"}
+        {footnote && ` · ${footnote}`}
       </p>
     </div>
   );
@@ -1121,23 +1127,33 @@ function LoadingVerdict({
 /**
  * The `---` block sitting at the top of the body, and what will become of it.
  *
- * Shown before the save rather than reported after it: a user who pastes a file
- * and gets a changed strategy, priority and description with no acknowledgement
- * has been surprised twice.
+ * Shown before the save rather than reported after it. On create the block
+ * configures the new skill. On an existing skill the fields own those values,
+ * so the block is never applied: the body's save is held until it is removed or
+ * kept as text.
  */
 function FrontmatterNotice({
+  existing,
   keepAsText,
   onKeepAsTextChange,
 }: {
+  existing: boolean;
   keepAsText: boolean;
   onKeepAsTextChange: (value: boolean) => void;
 }) {
   return (
     <div className="rounded-md border border-border bg-secondary/40 px-3.5 py-3 space-y-2">
-      <p className="text-sm">
-        This starts with a <span className="font-mono">---</span> block. If it's SKILL.md
-        frontmatter, its fields configure the skill on save and the block isn't stored as text.
-      </p>
+      {existing ? (
+        <p className="text-sm">
+          This starts with a <span className="font-mono">---</span> block. On an existing skill the
+          fields below configure it, so a header here is not applied. Remove it, or keep it as text.
+        </p>
+      ) : (
+        <p className="text-sm">
+          This starts with a <span className="font-mono">---</span> block. If it's SKILL.md
+          frontmatter, its fields configure the skill on save and the block isn't stored as text.
+        </p>
+      )}
       <label className="flex items-center gap-2 text-xs text-muted-foreground">
         <input
           type="checkbox"
@@ -1184,16 +1200,91 @@ function ListField({
   );
 }
 
+/** The two loading strategies as a radio pair. A choice is a complete edit. */
+function StrategyRadios({
+  id,
+  value,
+  onChange,
+  invalid,
+}: {
+  id?: string;
+  value: LoadingStrategy;
+  onChange: (value: LoadingStrategy) => void;
+  invalid?: boolean;
+}) {
+  return (
+    <div
+      id={id}
+      role="radiogroup"
+      aria-label="When it loads"
+      aria-invalid={invalid || undefined}
+      className="flex flex-col gap-1 pt-1"
+    >
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="radio"
+          name="loading-strategy"
+          value="always"
+          checked={value === "always"}
+          onChange={() => onChange("always")}
+        />
+        Always — in context every conversation
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="radio"
+          name="loading-strategy"
+          value="dynamic"
+          checked={value === "dynamic"}
+          onChange={() => onChange("dynamic")}
+        />
+        On demand — only when something below matches
+      </label>
+    </div>
+  );
+}
+
+const TOOL_AFFINITY_HINT =
+  "One glob per line, e.g. files__*. Loads whenever a matching tool is active.";
+const TRIGGERS_HINT = "One phrase per line. Loads whenever the phrase appears in a message.";
+const PRIORITY_HINT = `${MIN_PRIORITY}–${MAX_PRIORITY}, lower = read first (default 50)`;
+
+/** The collapsible "Advanced" disclosure the manifest fields sit behind. */
+function AdvancedDisclosure({
+  open,
+  onToggle,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
+      >
+        <span className={cn("inline-block transition-transform", open && "rotate-90")}>▸</span>
+        Advanced
+      </button>
+      {open && <div className="mt-4 pl-5 space-y-4 border-l border-border">{children}</div>}
+    </div>
+  );
+}
+
 /**
- * Collapsible advanced controls — the manifest fields behind the prose.
+ * The create form's manifest fields, behind the prose.
  *
- * `loadingStrategy` used to be hardcoded here because a `dynamic` skill with
+ * `loadingStrategy` used to be hardcoded because a `dynamic` skill with
  * neither triggers nor tool-affinity is catalog-only, and with a thin
  * description that means it never loads — a silent failure the editor had no
- * way to show. `LoadingVerdict` above shows it now, at the moment the condition
- * is created, which is what makes exposing the control safe.
+ * way to show. `LoadingVerdict` shows it now, at the moment the condition is
+ * created, which is what makes exposing the control safe.
  */
-function AdvancedSection({
+function CreateAdvancedSection({
   open,
   priority,
   strategy,
@@ -1217,152 +1308,99 @@ function AdvancedSection({
   onTriggersChange: (value: string) => void;
 }) {
   return (
-    <div>
-      <button
-        type="button"
-        onClick={onToggle}
-        className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-2"
-      >
-        <span className={cn("inline-block transition-transform", open && "rotate-90")}>▸</span>
-        Advanced
-      </button>
-      {open && (
-        <div className="mt-4 pl-5 space-y-4 border-l border-border">
-          <fieldset className="space-y-1">
-            <legend className="block text-sm font-medium">When it loads</legend>
-            <div className="flex flex-col gap-1 pt-1">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="loading-strategy"
-                  value="always"
-                  checked={strategy === "always"}
-                  onChange={() => onStrategyChange("always")}
-                />
-                Always — in context every conversation
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="loading-strategy"
-                  value="dynamic"
-                  checked={strategy === "dynamic"}
-                  onChange={() => onStrategyChange("dynamic")}
-                />
-                On demand — only when something below matches
-              </label>
-            </div>
-          </fieldset>
+    <AdvancedDisclosure open={open} onToggle={onToggle}>
+      <fieldset className="space-y-1">
+        <legend className="block text-sm font-medium">When it loads</legend>
+        <StrategyRadios value={strategy} onChange={onStrategyChange} />
+      </fieldset>
 
-          {/* Shown only for `dynamic`: with `always` these fields still store,
-           * but nothing reads them, and a control that does nothing where it
-           * sits is the kind of quiet lie this change is removing. */}
-          {strategy === "dynamic" && (
-            <>
-              <ListField
-                id="tool-affinity"
-                label="Tool patterns"
-                hint="One glob per line, e.g. files__*. Loads whenever a matching tool is active."
-                value={toolAffinity}
-                placeholder="files__*"
-                onChange={onToolAffinityChange}
-              />
-              <ListField
-                id="triggers"
-                label="Trigger phrases"
-                hint="One phrase per line. Loads whenever the phrase appears in a message."
-                value={triggers}
-                placeholder="deploy to staging"
-                onChange={onTriggersChange}
-              />
-            </>
-          )}
-
-          <div className="space-y-1">
-            <label className="block text-sm font-medium" htmlFor="priority">
-              Priority
-            </label>
-            <div className="flex items-baseline gap-3">
-              <input
-                id="priority"
-                type="number"
-                min={11}
-                max={99}
-                value={priority}
-                onChange={(e) => onPriorityChange(parseInt(e.target.value, 10) || 50)}
-                className="text-sm bg-background border-b border-border pb-1 w-20 outline-none focus:border-foreground"
-              />
-              <span className="text-xs text-muted-foreground">
-                11–99, lower = read first (default 50)
-              </span>
-            </div>
-          </div>
-        </div>
+      {/* Shown only for `dynamic`: with `always` these fields still store,
+       * but nothing reads them, and a control that does nothing where it
+       * sits is the kind of quiet lie this editor avoids. */}
+      {strategy === "dynamic" && (
+        <>
+          <ListField
+            id="tool-affinity"
+            label="Tool patterns"
+            hint={TOOL_AFFINITY_HINT}
+            value={toolAffinity}
+            placeholder="files__*"
+            onChange={onToolAffinityChange}
+          />
+          <ListField
+            id="triggers"
+            label="Trigger phrases"
+            hint={TRIGGERS_HINT}
+            value={triggers}
+            placeholder="deploy to staging"
+            onChange={onTriggersChange}
+          />
+        </>
       )}
-    </div>
+
+      <div className="space-y-1">
+        <label className="block text-sm font-medium" htmlFor="priority">
+          Priority
+        </label>
+        <div className="flex items-baseline gap-3">
+          <input
+            id="priority"
+            type="number"
+            min={MIN_PRIORITY}
+            max={MAX_PRIORITY}
+            value={priority}
+            onChange={(e) => onPriorityChange(parseInt(e.target.value, 10) || 50)}
+            className="text-sm bg-background border-b border-border pb-1 w-20 outline-none focus:border-foreground"
+          />
+          <span className="text-xs text-muted-foreground">{PRIORITY_HINT}</span>
+        </div>
+      </div>
+    </AdvancedDisclosure>
   );
 }
 
-/** The strategy an existing skill is on, normalized for the radio group. */
-function initialStrategy(existing: ReadSkill | null): LoadingStrategy {
-  return existing?.metadata.loadingStrategy === "dynamic" ? "dynamic" : "always";
-}
+/** The body textarea's shared attributes. */
+const BODY_PLACEHOLDER = "Match my writing voice. Avoid em-dashes.";
+const BODY_HINT = "Plain English works. Use line breaks for separate ideas.";
 
-function EditView({
-  existing,
-  loading,
+/**
+ * A new skill. Nothing exists to save into until Create, so this form keeps an
+ * explicit action and sends every field at once.
+ */
+function CreateSkillView({
   pending,
   error,
   onCancel,
-  onSubmit,
+  onCreate,
 }: {
-  existing: ReadSkill | null;
-  loading: boolean;
   pending: boolean;
   error: string | null;
   onCancel: () => void;
-  onSubmit: (patch: EditorPatch) => void;
+  onCreate: (draft: CreateDraft) => void;
 }) {
-  const isNew = existing === null && !loading;
-  const [name, setName] = useState(existing?.metadata.name ?? "");
-  const [body, setBody] = useState(existing?.content ?? "");
+  const [name, setName] = useState("");
+  const [body, setBody] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [priority, setPriority] = useState<number>(existing?.metadata.priority ?? 50);
+  const [priority, setPriority] = useState<number>(50);
   // A new skill defaults to always-on — the editor's stated purpose is durable
   // prose the agent reads every turn — and the lede below says so rather than
   // leaving it to be discovered after the save.
-  const [strategy, setStrategy] = useState<LoadingStrategy>(initialStrategy(existing));
-  const [toolAffinity, setToolAffinity] = useState(
-    (existing?.metadata.toolAffinity ?? []).join("\n"),
-  );
-  const [triggers, setTriggers] = useState((existing?.metadata.triggers ?? []).join("\n"));
+  const [strategy, setStrategy] = useState<LoadingStrategy>("always");
+  const [toolAffinity, setToolAffinity] = useState("");
+  const [triggers, setTriggers] = useState("");
   const [keepFrontmatterAsText, setKeepFrontmatterAsText] = useState(false);
 
   const nameRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
-    if (isNew) nameRef.current?.focus();
-  }, [isNew]);
-
-  // Sync form to a freshly-loaded detail (e.g. user clicked Edit on a
-  // different rule before the prior read resolved).
-  useEffect(() => {
-    if (existing) {
-      setName(existing.metadata.name);
-      setBody(existing.content);
-      setPriority(existing.metadata.priority ?? 50);
-      setStrategy(initialStrategy(existing));
-      setToolAffinity((existing.metadata.toolAffinity ?? []).join("\n"));
-      setTriggers((existing.metadata.triggers ?? []).join("\n"));
-      setKeepFrontmatterAsText(false);
-    }
-  }, [existing]);
+    nameRef.current?.focus();
+  }, []);
 
   // The user types anything they want ("Test 123") and we slugify before
   // it reaches the server (which enforces `^[a-zA-Z0-9_-]+$` because the
   // value becomes a filename). Show the slugified form as a hint when it
   // differs from the typed value so the on-disk identity is honest.
   const slug = slugifyName(name);
-  const showSlugHint = isNew && slug.length > 0 && slug !== name.trim();
+  const showSlugHint = slug.length > 0 && slug !== name.trim();
 
   const affinityList = parseLines(toolAffinity);
   const triggerList = parseLines(triggers);
@@ -1373,8 +1411,8 @@ function EditView({
   return (
     <div className="space-y-6">
       <SettingsPageHeader
-        title={editViewTitle(loading, isNew)}
-        // `onBack` (not `back`) because EditView is component state on
+        title="New skill"
+        // `onBack` (not `back`) because the editor is component state on
         // SkillsBrowser, not a routed sub-page — the URL stays on
         // .../skills while editing. A router Link would navigate UP the
         // tree (out of skills) and silently drop the form state.
@@ -1389,70 +1427,64 @@ function EditView({
         </Card>
       )}
 
-      {!loading && (
-        <div className="space-y-6">
-          {isNew && (
-            <p className="text-sm text-muted-foreground">
-              New skills are always on — the agent reads them in every conversation. Change that
-              under <strong>Advanced</strong>, or paste a whole{" "}
-              <span className="font-mono">SKILL.md</span> and its frontmatter will set it.
-            </p>
-          )}
+      <div className="space-y-6">
+        <p className="text-sm text-muted-foreground">
+          New skills are always on — the agent reads them in every conversation. Change that under{" "}
+          <strong>Advanced</strong>, or paste a whole <span className="font-mono">SKILL.md</span>{" "}
+          and its frontmatter will set it.
+        </p>
 
-          <RuleNameField
-            name={name}
-            isNew={isNew}
-            slug={slug}
-            showSlugHint={showSlugHint}
-            nameRef={nameRef}
-            onChange={setName}
+        <RuleNameField
+          name={name}
+          slug={slug}
+          showSlugHint={showSlugHint}
+          nameRef={nameRef}
+          onChange={setName}
+        />
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium" htmlFor="rule-body">
+            What should the agent do?
+          </label>
+          <Textarea
+            id="rule-body"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={8}
+            placeholder={BODY_PLACEHOLDER}
           />
-
-          <div className="space-y-2">
-            <label className="block text-sm font-medium" htmlFor="rule-body">
-              What should the agent do?
-            </label>
-            <Textarea
-              id="rule-body"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={8}
-              placeholder="Match my writing voice. Avoid em-dashes."
-            />
-            <p className="text-xs text-muted-foreground">
-              Plain English works. Use line breaks for separate ideas.
-            </p>
-          </div>
-
-          {looksLikeFrontmatter(body) && (
-            <FrontmatterNotice
-              keepAsText={keepFrontmatterAsText}
-              onKeepAsTextChange={setKeepFrontmatterAsText}
-            />
-          )}
-
-          <LoadingVerdict
-            strategy={strategy}
-            toolAffinity={affinityList}
-            triggers={triggerList}
-            body={body}
-            frontmatterPending={frontmatterPending}
-          />
-
-          <AdvancedSection
-            open={advancedOpen}
-            priority={priority}
-            strategy={strategy}
-            toolAffinity={toolAffinity}
-            triggers={triggers}
-            onToggle={() => setAdvancedOpen((v) => !v)}
-            onPriorityChange={setPriority}
-            onStrategyChange={setStrategy}
-            onToolAffinityChange={setToolAffinity}
-            onTriggersChange={setTriggers}
-          />
+          <p className="text-xs text-muted-foreground">{BODY_HINT}</p>
         </div>
-      )}
+
+        {looksLikeFrontmatter(body) && (
+          <FrontmatterNotice
+            existing={false}
+            keepAsText={keepFrontmatterAsText}
+            onKeepAsTextChange={setKeepFrontmatterAsText}
+          />
+        )}
+
+        <LoadingVerdict
+          strategy={strategy}
+          toolAffinity={affinityList}
+          triggers={triggerList}
+          body={body}
+          footnote={frontmatterPending ? "the pasted frontmatter may change this" : undefined}
+        />
+
+        <CreateAdvancedSection
+          open={advancedOpen}
+          priority={priority}
+          strategy={strategy}
+          toolAffinity={toolAffinity}
+          triggers={triggers}
+          onToggle={() => setAdvancedOpen((v) => !v)}
+          onPriorityChange={setPriority}
+          onStrategyChange={setStrategy}
+          onToolAffinityChange={setToolAffinity}
+          onTriggersChange={setTriggers}
+        />
+      </div>
 
       <div className="flex items-center justify-between border-t border-border pt-6">
         <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
@@ -1462,11 +1494,10 @@ function EditView({
           type="button"
           onClick={() =>
             valid &&
-            onSubmit({
+            onCreate({
               name: slug,
               // The typed title is the human label → on-disk `description`
-              // (required non-empty). `name` is its slug (the filename). On
-              // edit the title is immutable and description is left untouched.
+              // (required non-empty). `name` is its slug (the filename).
               description: name.trim(),
               body: body.trim(),
               priority,
@@ -1478,9 +1509,244 @@ function EditView({
           }
           disabled={!valid || pending}
         >
-          {pending ? "Saving…" : "Save"}
+          {pending ? "Creating…" : "Create"}
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ── Editing a skill that exists ──────────────────────────────────────────
+
+const EDIT_LABELS: Record<SkillEditField, string> = {
+  body: "Skill body",
+  loadingStrategy: "When it loads",
+  priority: "Priority",
+  toolAffinity: "Tool patterns",
+  triggers: "Trigger phrases",
+};
+
+/**
+ * Every field changes how the skill loads or what it says, in every
+ * conversation its scope reaches, the moment it saves, so each save raises a
+ * notice with Undo.
+ */
+const EDIT_NOTICES = Object.fromEntries(
+  Object.keys(EDIT_LABELS).map((field) => [field, { undo: true }]),
+) as Record<SkillEditField, { undo: true }>;
+
+/** The fields `LoadingVerdict` reads. */
+const VERDICT_FIELDS: SkillEditField[] = ["body", "loadingStrategy", "toolAffinity", "triggers"];
+
+/** An existing skill's stored values, as the edit form's field values. */
+function toEditValues(skill: ReadSkill): SkillEditValues {
+  return {
+    body: skill.content,
+    loadingStrategy: skill.metadata.loadingStrategy === "dynamic" ? "dynamic" : "always",
+    priority: String(skill.metadata.priority ?? 50),
+    toolAffinity: (skill.metadata.toolAffinity ?? []).join("\n"),
+    triggers: (skill.metadata.triggers ?? []).join("\n"),
+  };
+}
+
+/**
+ * An existing skill: the read it opens from, then a form whose fields save as
+ * they change. The read seeds the form once; later re-reads (after each save)
+ * refresh the list behind it, never the fields being edited.
+ */
+function EditSkillView({
+  id,
+  detail,
+  onSave,
+  onBack,
+}: {
+  id: string;
+  detail: ReadSkill | null;
+  onSave: (id: string, args: SkillUpdateArgs) => Promise<void>;
+  onBack: () => void;
+}) {
+  const [seed, setSeed] = useState<ReadSkill | null>(detail);
+  if (!seed && detail) setSeed(detail);
+  return (
+    <div className="space-y-6">
+      <SettingsPageHeader
+        title={seed ? "Edit this skill" : "Loading…"}
+        // `onBack`, not a router link: the editor is component state on
+        // SkillsBrowser and the URL stays on .../skills.
+        onBack={{ onClick: onBack, label: "Back to skills" }}
+      />
+      {seed && <EditSkillForm id={id} skill={seed} onSave={onSave} />}
+    </div>
+  );
+}
+
+function EditSkillForm({
+  id,
+  skill,
+  onSave,
+}: {
+  id: string;
+  skill: ReadSkill;
+  onSave: (id: string, args: SkillUpdateArgs) => Promise<void>;
+}) {
+  const initial = useMemo(() => toEditValues(skill), [skill]);
+  // A stored body that opens with `---` was kept as text on purpose (the
+  // server strips a header it applies), so it starts kept.
+  const [keepAsText, setKeepAsText] = useState(() => looksLikeFrontmatter(skill.content));
+  const keepAsTextRef = useRef(keepAsText);
+  keepAsTextRef.current = keepAsText;
+  // What the file holds, field by field, for the loading verdict. The form's
+  // drafts can run ahead of it, or fail to reach it.
+  const [saved, setSaved] = useState<SkillEditValues>(initial);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  const save = useCallback(
+    async <K extends SkillEditField>(field: K, value: SkillEditValues[K]) => {
+      await onSave(
+        id,
+        skillEditPatch(id, field, value, { keepHeaderAsText: keepAsTextRef.current }),
+      );
+    },
+    [id, onSave],
+  );
+  const onSaved = useCallback(
+    <K extends SkillEditField>(field: K, value: SkillEditValues[K]) =>
+      setSaved((prev) => ({ ...prev, [field]: value })),
+    [],
+  );
+  const form = useAutosaveForm(initial, {
+    save,
+    onSaved,
+    labels: EDIT_LABELS,
+    notices: EDIT_NOTICES,
+  });
+  const { values, revert, commit } = form;
+
+  // Hidden list fields under `always`. One holding an edit not yet saved, or a
+  // failed one, would leave a change nobody can see to retry or revert, so it
+  // goes back to its saved value (the same rule the Model tab applies).
+  const listsShown = values.loadingStrategy === "dynamic";
+  const affinityStatus = form.fieldState("toolAffinity").status;
+  const triggersStatus = form.fieldState("triggers").status;
+  useEffect(() => {
+    if (listsShown) return;
+    if (affinityStatus === "error" || affinityStatus === "dirty") revert("toolAffinity");
+    if (triggersStatus === "error" || triggersStatus === "dirty") revert("triggers");
+  }, [listsShown, affinityStatus, triggersStatus, revert]);
+
+  // The verdict describes the skill as saved, so it never mixes saved fields
+  // with drafts that may still fail. It names what it leaves out instead.
+  const pendingVerdictFields = VERDICT_FIELDS.filter(
+    (f) => form.fieldState(f).status !== "clean" && form.fieldState(f).status !== "saved",
+  );
+  const footnote =
+    pendingVerdictFields.length > 0
+      ? `as saved; not yet: ${pendingVerdictFields.map((f) => EDIT_LABELS[f].toLowerCase()).join(", ")}`
+      : undefined;
+
+  const bodyHasHeader = looksLikeFrontmatter(values.body);
+  const onKeepAsTextChange = (keep: boolean) => {
+    keepAsTextRef.current = keep;
+    setKeepAsText(keep);
+    // Keeping the header as text is what the held body save was waiting on.
+    if (keep && form.fieldState("body").status === "error") commit("body");
+  };
+
+  const listField = (field: "toolAffinity" | "triggers", hint: string, placeholder: string) => (
+    <AutosaveField
+      id={field === "toolAffinity" ? "tool-affinity" : "triggers"}
+      label={EDIT_LABELS[field]}
+      hint={hint}
+      {...form.fieldState(field)}
+    >
+      <Textarea
+        id={field === "toolAffinity" ? "tool-affinity" : "triggers"}
+        rows={3}
+        placeholder={placeholder}
+        className="font-mono text-xs"
+        {...form.textareaProps(field)}
+      />
+    </AutosaveField>
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <label className="block text-sm font-medium" htmlFor="rule-name">
+          Name
+        </label>
+        <Input id="rule-name" value={skill.metadata.name} disabled className="font-mono" />
+        <p className="text-xs text-muted-foreground">
+          Names are immutable — they're the filename on disk. Each field below saves when you leave
+          it.
+        </p>
+      </div>
+
+      <AutosaveField
+        id="rule-body"
+        label="What should the agent do?"
+        hint={BODY_HINT}
+        {...form.fieldState("body")}
+      >
+        <Textarea
+          id="rule-body"
+          rows={8}
+          placeholder={BODY_PLACEHOLDER}
+          {...form.textareaProps("body")}
+        />
+      </AutosaveField>
+
+      {bodyHasHeader && (
+        <FrontmatterNotice
+          existing
+          keepAsText={keepAsText}
+          onKeepAsTextChange={onKeepAsTextChange}
+        />
+      )}
+
+      <LoadingVerdict
+        strategy={saved.loadingStrategy}
+        toolAffinity={parseLines(saved.toolAffinity)}
+        triggers={parseLines(saved.triggers)}
+        body={saved.body}
+        footnote={footnote}
+      />
+
+      <AdvancedDisclosure open={advancedOpen} onToggle={() => setAdvancedOpen((v) => !v)}>
+        <AutosaveField
+          id="loading-strategy"
+          label={EDIT_LABELS.loadingStrategy}
+          {...form.fieldState("loadingStrategy")}
+        >
+          <StrategyRadios
+            id="loading-strategy"
+            value={values.loadingStrategy}
+            onChange={(v) => commit("loadingStrategy", v)}
+            invalid={form.fieldState("loadingStrategy").status === "error"}
+          />
+        </AutosaveField>
+
+        {/* Shown only for `dynamic`, as on create: under `always` nothing
+         * reads them. */}
+        {listsShown && listField("toolAffinity", TOOL_AFFINITY_HINT, "files__*")}
+        {listsShown && listField("triggers", TRIGGERS_HINT, "deploy to staging")}
+
+        <AutosaveField
+          id="priority"
+          label={EDIT_LABELS.priority}
+          hint={PRIORITY_HINT}
+          {...form.fieldState("priority")}
+        >
+          <Input
+            id="priority"
+            type="number"
+            min={MIN_PRIORITY}
+            max={MAX_PRIORITY}
+            className="w-24"
+            {...form.inputProps("priority")}
+          />
+        </AutosaveField>
+      </AdvancedDisclosure>
     </div>
   );
 }
