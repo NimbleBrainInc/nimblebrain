@@ -512,7 +512,11 @@ const SkillsGetParamsSchema = z.looseObject({ uri: z.string() });
 /** `skills/list` and `skills/get` are cacheable results: stale at once, never shared across callers. */
 const SKILL_CACHE_HINTS = { ttlMs: 0, cacheScope: "private" } as const;
 
-/** The workspace's MCP connectors, in name order. */
+/**
+ * The workspace's MCP connectors, in name order. The kernel's own apps sit in
+ * every workspace registry too, and are not connectors: their instructions are
+ * `platformInstructions`.
+ */
 async function workspaceConnectors(runtime: Runtime, wsId: string): Promise<McpSource[]> {
   let registry: ToolRegistry;
   try {
@@ -522,7 +526,10 @@ async function workspaceConnectors(runtime: Runtime, wsId: string): Promise<McpS
   }
   return registry
     .getSources()
-    .filter((src): src is McpSource => src instanceof McpSource)
+    .filter(
+      (src): src is McpSource =>
+        src instanceof McpSource && runtime.getKernelSource(src.name) !== src,
+    )
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
