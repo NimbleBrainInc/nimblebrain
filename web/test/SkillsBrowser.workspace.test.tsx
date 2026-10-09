@@ -193,9 +193,11 @@ const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter } = await import("react-router-dom");
-const { SkillsBrowser } = await import("../src/pages/settings/SkillsTab");
+const { SkillsBrowser, SkillsTab } = await import("../src/pages/settings/SkillsTab");
 const { SessionProvider } = await import("../src/context/SessionContext");
-const { WorkspaceProvider } = await import("../src/context/WorkspaceContext");
+const { WorkspaceProvider, useWorkspaceContext } = await import(
+  "../src/context/WorkspaceContext"
+);
 const { NoticeProvider, NoticeViewport } = await import("../src/components/notices");
 
 /** Wrap an element in a session so `useScopedRole` resolves a real org role. */
@@ -1242,6 +1244,29 @@ describe("SkillsBrowser — editing an existing skill", () => {
     expect(bodySave.manifest).toBeUndefined();
   });
 
+  test("a held header body is reported when the reader clicks Back, not dropped", async () => {
+    mounted = await openEditForm();
+    const body = mounted.container.querySelector("#rule-body");
+    await typeInto(body, "---\nname: workflow\ndescription: x\n---\n\nNew rules.");
+    // Pressing Back blurs the textarea first, which commits it.
+    await blur(body);
+    await act(async () => {
+      (
+        mounted!.container.querySelector('button[aria-label="Back to skills"]') as HTMLButtonElement
+      ).click();
+    });
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+    expect(mounted.container.querySelector("#rule-body")).toBeNull();
+    expect(updateCalls()).toHaveLength(0);
+    const notice = document.body.querySelector("[data-testid='notice']");
+    expect(notice?.textContent).toContain("Couldn't save Skill body");
+    expect(notice?.textContent).toContain("remove the header");
+  });
+
   test("the loading verdict describes the skill as saved, never a mix with drafts", async () => {
     mounted = await openEditForm();
     expect(mounted.container.textContent).toContain("Loads on every turn");
@@ -1270,6 +1295,102 @@ describe("SkillsBrowser — editing an existing skill", () => {
     await blur(triggers);
     expect(mounted.container.textContent).toContain('Loads on "deploy to staging"');
     expect(mounted.container.textContent).not.toContain("not yet:");
+  });
+
+  test("a list field hidden by switching to always goes back to its saved value", async () => {
+    mounted = await openEditForm();
+    await act(async () => {
+      clickByText(mounted!.container, "Advanced");
+    });
+    const radio = (value: string) =>
+      mounted!.container.querySelector(
+        `input[name="loading-strategy"][value="${value}"]`,
+      ) as HTMLInputElement | null;
+    const settle = async () => {
+      for (let i = 0; i < 4; i++) {
+        await act(async () => {
+          await Promise.resolve();
+        });
+      }
+    };
+    await check(radio("dynamic"));
+    await settle();
+    // Typed, never left, then hidden: an edit nobody can see to save or revert.
+    await typeInto(mounted.container.querySelector("#triggers"), "deploy to staging");
+    await check(radio("always"));
+    await settle();
+    expect(mounted.container.querySelector("#triggers")).toBeNull();
+
+    await check(radio("dynamic"));
+    await settle();
+    expect((mounted.container.querySelector("#triggers") as HTMLTextAreaElement).value).toBe("");
+    expect(mounted.container.textContent).not.toContain("not yet: trigger phrases");
+    const sentTriggers = updateCalls().some(
+      (c) => (c.args.manifest as { triggers?: unknown } | undefined)?.triggers !== undefined,
+    );
+    expect(sentTriggers).toBe(false);
+  });
+
+  test("switching workspaces closes the open editor; its pending edit saves to its own workspace", async () => {
+    const workspaces = ["ws_0076759dbbe19fcc", "ws_00a1b2c3d4e5f607"].map((id, i) => ({
+      id,
+      name: `Workspace ${i}`,
+      memberCount: 1,
+      connectorCount: 0,
+      userRole: "admin" as const,
+    }));
+    let switchTo: (id: string) => void = () => {};
+    function Switcher() {
+      const { workspaces: all, setActiveWorkspace } = useWorkspaceContext();
+      switchTo = (id) => setActiveWorkspace(all.find((w) => w.id === id)!);
+      return null;
+    }
+    mounted = await mount(
+      React.createElement(SessionProvider, {
+        session: {
+          authenticated: true,
+          user: { id: "u1", email: "a@b.co", displayName: "A", orgRole: "member" },
+        },
+        children: React.createElement(WorkspaceProvider, {
+          initialWorkspaces: workspaces,
+          initialActiveId: workspaces[0]!.id,
+          children: React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(Switcher),
+            React.createElement(SkillsTab),
+          ),
+        }),
+      }),
+    );
+    await act(async () => {
+      clickByText(mounted!.container, "Workspace-tier rule.");
+    });
+    for (let i = 0; i < 2; i++) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+    await act(async () => {
+      clickByText(mounted!.container, "Edit");
+    });
+    for (let i = 0; i < 2; i++) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+    // Typed and never left: the switch is what ends the edit.
+    await typeInto(mounted.container.querySelector("#rule-body"), "Typed in the first workspace.");
+
+    await act(async () => switchTo(workspaces[1]!.id));
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+    expect(mounted.container.querySelector("#rule-body")).toBeNull();
+    expect(mounted.container.textContent).toContain("+ Add a skill");
+    expect(updateCalls().map((c) => c.opts)).toEqual([{ workspaceId: workspaces[0]!.id }]);
   });
 
   test("a workspace save names the workspace it was opened in", async () => {

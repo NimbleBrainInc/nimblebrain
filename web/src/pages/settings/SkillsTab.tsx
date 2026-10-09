@@ -1067,9 +1067,9 @@ interface CreateDraft {
 /**
  * What will happen to this skill, stated while it is still being written.
  *
- * A skill's whole purpose is to load, and the editor used to never say whether
- * it would — `never loads` in particular was reachable in one click and looked
- * identical to every healthy skill. The mechanism and the token cost are both
+ * A skill's whole purpose is to load, and a skill that never loads looks like
+ * every healthy one everywhere else, so the editor says which it is while the
+ * condition can still be changed. The mechanism and the token cost are both
  * derived through the runtime's own code, so the sentence here and the row's
  * after a save are the same verdict.
  *
@@ -1113,8 +1113,8 @@ function LoadingVerdict({
         )}
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
-        {/* An always-on skill is paid on every turn, and nothing used to say
-         * what that cost. The estimate is the same one `skills__list` reports. */}
+        {/* An always-on skill is paid on every turn, so its cost is stated
+         * here. The estimate is the same one `skills__list` reports. */}
         {strategy === "always"
           ? `≈${formatTokenCount(tokens)} tokens in every conversation`
           : `≈${formatTokenCount(tokens)} tokens when it loads`}
@@ -1278,11 +1278,9 @@ function AdvancedDisclosure({
 /**
  * The create form's manifest fields, behind the prose.
  *
- * `loadingStrategy` used to be hardcoded because a `dynamic` skill with
- * neither triggers nor tool-affinity is catalog-only, and with a thin
- * description that means it never loads — a silent failure the editor had no
- * way to show. `LoadingVerdict` shows it now, at the moment the condition is
- * created, which is what makes exposing the control safe.
+ * A `dynamic` skill with neither triggers nor tool-affinity is catalog-only,
+ * and with a thin description it never loads. Offering the strategy is safe
+ * because `LoadingVerdict` names that outcome the moment the form reaches it.
  */
 function CreateAdvancedSection({
   open,
