@@ -37,13 +37,9 @@ export function validateConversationId(id: string, dir: string): void {
 /**
  * Access context for filtering conversations by user identity.
  *
- * Stage 1: single-owner only. A conversation is accessible iff the
- * caller's `userId` matches the conversation's `ownerId`.
- *
- * Stage 4 reintroduces sharing primitives with policy gating and will
- * extend this context (workspace-admin override, sharing claims, etc.).
- * Defining them now would be a no-op slot — the type tracks what
- * Stage 1 actually uses.
+ * Conversations are single-owner. A conversation is accessible iff the
+ * caller's `userId` matches the conversation's `ownerId`, so the context
+ * carries only the caller's id.
  */
 export interface ConversationAccessContext {
   userId: string;
@@ -114,8 +110,8 @@ export interface ConversationSummary {
   totalOutputTokens: number;
   totalCostUsd: number;
   /**
-   * Owner of the conversation. Required: Stage 1 invariant says every
-   * conversation has an owner. Files lacking `ownerId` are excluded
+   * Owner of the conversation. Required: every conversation has
+   * an owner. Files lacking `ownerId` are excluded
    * from the index entirely (see `parseFileHeader`), and direct
    * `load()` calls on such files throw.
    */

@@ -482,7 +482,7 @@ describe("SseEventManager — identity-scoped clients", () => {
   test("membership-change refresh delivers events for newly-added workspaces", async () => {
     // Alice starts with no workspaces. Workspace add → manager re-queries
     // and the next emit reaches her. This is the workspace-switch /
-    // newly-invited path post-Stage-2, without an SSE reconnect.
+    // newly-invited path, without an SSE reconnect.
     store.setMemberships("usr_alice", []);
     const alice = collect(mgr.addIdentityClient("usr_alice", new Set()));
     released.push(alice.release);

@@ -399,7 +399,7 @@ describe("runtime.executeTask", () => {
     // and a name addressing ANOTHER workspace does not
     // resolve — not because reach is denied, but because the `ws_<id>-` form is
     // retired and rejected at parse. A task reaches exactly one workspace plus
-    // identity tools, and there is no longer a name that can say otherwise. The
+    // identity tools, and there is no name that can say otherwise. The
     // echo model is scripted to emit the retired cross-workspace form directly.
     const namespacedPing = `${SHARED_WS_ID}-probe__ping`;
     runtime = await bootRuntime({

@@ -1,5 +1,5 @@
 /**
- * Phase 2 — `skills.loaded` and `context.assembled` event tests.
+ * `skills.loaded` and `context.assembled` event tests.
  *
  * Two scopes:
  *   1. Engine-level: when `EngineConfig.runMetadata` carries skills/context

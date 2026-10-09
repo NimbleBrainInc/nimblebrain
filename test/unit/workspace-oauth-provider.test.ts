@@ -986,7 +986,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
   });
 });
 
-describe("WorkspaceOAuthProvider — WorkspaceContext construction (Stage 0)", () => {
+describe("WorkspaceOAuthProvider — WorkspaceContext construction", () => {
   let workDir: string;
 
   beforeEach(() => {

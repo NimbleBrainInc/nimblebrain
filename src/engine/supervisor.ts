@@ -48,7 +48,7 @@ import {
  *
  *  - NON-ADVANCING BUDGET: a per-tool count of non-advancing results in the
  *    run, tripping at `maxNonAdvancingCalls` (default 6) however much the
- *    input varied. This bounds the flail the streak no longer catches: room to
+ *    input varied. This bounds the flail the streak does not catch: room to
  *    ask a handful of genuinely different questions, and a ceiling once the
  *    answer is consistently nothing. Any advancing result clears it — a tool
  *    that found something is not the tool this guard is about.

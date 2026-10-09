@@ -235,7 +235,7 @@ describe("OIDC integration: full flow", () => {
     // Create a default workspace first
     const ws = await wsStore.create("Default");
 
-    // OidcIdentityProvider no longer auto-adds to workspaces — that is handled
+    // OidcIdentityProvider does not auto-add to workspaces — that is handled
     // by the runtime layer. Verify the user is provisioned and can be manually added.
     const adapter = new OidcIdentityProvider(
       { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },

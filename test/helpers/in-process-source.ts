@@ -1,9 +1,8 @@
 /**
- * Test helper for tests that previously did `new InlineSource(name, tools)`.
+ * Test helper for a source built from a name and a tool list.
  *
- * The platform replaced `InlineSource` with `defineInProcessApp` (an
- * in-process MCP server reachable via `InMemoryTransport`). Construction
- * is now async (the SDK `initialize` handshake) and requires an
+ * In-process sources are `defineInProcessApp` (an in-process MCP server
+ * reachable via `InMemoryTransport`). Construction is async (the SDK `initialize` handshake) and requires an
  * `EventSink`. This helper compresses the boilerplate so tests that just
  * want a synchronous-looking source get one with one `await`.
  *

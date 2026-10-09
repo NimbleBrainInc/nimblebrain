@@ -112,7 +112,7 @@ function makeCtx(mcpLimiter = new RequestRateLimiter(10_000, 60_000)): AppContex
 function makeApp(mcpLimiter?: RequestRateLimiter): Hono {
   const ctx = makeCtx(mcpLimiter);
   const app = new Hono();
-  app.route("/", mcpRoutes(ctx));
+  app.route("/", mcpRoutes(ctx, null));
   // A REST route behind the same middleware every `/v1/*` group uses.
   app.post(`/v1/workspaces/${WS_A}/tools/call`, requireAuth(ctx.authOptions), (c) =>
     c.json({ ok: true }),
@@ -275,5 +275,32 @@ describe("/mcp/<wsId> rate limit", () => {
     expect((await post(app, `/mcp/${WS_A}`, "alice-first-party")).status).toBe(200);
     expect((await post(app, `/mcp/${WS_A}`, "alice-first-party")).status).toBe(200);
     expect((await post(app, `/mcp/${WS_A}`, "alice-first-party")).status).toBe(429);
+  });
+});
+
+describe("/mcp/<wsId> browser origin", () => {
+  async function postFrom(origin: string, token?: string): Promise<Response> {
+    return makeApp().request(`${ORIGIN}/mcp/${WS_A}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: origin,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+  }
+
+  it("refuses an untrusted origin with 403 before authentication", async () => {
+    const res = await postFrom("https://evil.example.com");
+    expect(res.status).toBe(403);
+    expect(res.headers.get("WWW-Authenticate")).toBeNull();
+    expect((await postFrom("https://evil.example.com", "alice-first-party")).status).toBe(403);
+    expect(reached).toEqual([]);
+  });
+
+  it("serves the deployment's own origin", async () => {
+    const res = await postFrom(ORIGIN, "alice-first-party");
+    expect(res.status).toBe(200);
   });
 });

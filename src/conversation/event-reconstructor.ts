@@ -105,8 +105,8 @@ export interface DerivedConversationMeta {
  * Scans for `metadata.title` events; falls back to `defaults` (from line 1)
  * when none are present.
  *
- * Stage 1 simplification: the previous `metadata.visibility` and
- * `metadata.participants` event types are gone — single-owner only.
+ * Conversations are single-owner, so there are no visibility or
+ * participants metadata events to derive.
  */
 export function deriveConversationMeta(
   events: readonly ConversationEvent[],

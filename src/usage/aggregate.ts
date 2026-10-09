@@ -2,14 +2,13 @@
  * Usage aggregation — the ONE reader of tenant-level spend.
  *
  * Source of truth: the durable usage ledger (`src/usage/ledger.ts`), one line
- * per priced LLM call. It used to be `llm.response` events scanned out of
- * conversation JSONL files, which made usage a function of whether a
- * conversation file happened to exist — so task runs, sub-agent runs, the
- * background briefing and archived workspaces all spent money this never saw.
+ * per priced LLM call. Scanning `llm.response` events out of conversation
+ * JSONL files would make usage a function of whether a conversation file
+ * happened to exist — so task runs, sub-agent runs, the background briefing
+ * and archived workspaces would all spend money it never saw.
  *
- * **There is exactly one reader, deliberately.** The codebase previously had
- * two that disagreed, which is how the undercount survived; a third would
- * repeat it. Per-conversation display still reads `llm.response` from the
+ * **There is exactly one reader, deliberately.** Two readers can disagree,
+ * and the disagreement hides an undercount. Per-conversation display still reads `llm.response` from the
  * conversation log, because "what happened in this conversation" is a different
  * question from "what did this tenant spend" — but neither side may sum the
  * other's source.

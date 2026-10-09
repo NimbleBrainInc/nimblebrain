@@ -36,7 +36,7 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
   const createdAt = opts.createdAt ?? "2025-01-15T10:00:00.000Z";
   const updatedAt = opts.updatedAt ?? createdAt;
 
-  // Line-1 totals are no longer read by the connector; lastModel still is.
+  // Line-1 totals are not read by the connector; lastModel is.
   const meta = JSON.stringify({
     model: "anthropic:claude-sonnet-4-6",
     id,

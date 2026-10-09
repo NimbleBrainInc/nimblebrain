@@ -125,11 +125,11 @@ function humanSize(bytes: number): string {
  * (text/code, PDF, DOCX, XLSX) the text block includes the extracted text
  * up to `maxExtractedTextSize`.
  *
- * Bytes were previously surfaced as a base64 string in the tool result.
- * The model could not consume base64 as image/PDF input — providers handle
- * those via native file parts on user uploads (see `src/files/rehydrate.ts`)
- * — so the base64 path produced unusable payloads while inflating the
- * conversation log and replay tokens by 5–10× per byte. This handler is the
+ * Bytes are never surfaced as a base64 string in the tool result. The
+ * model cannot consume base64 as image/PDF input — providers handle those
+ * via native file parts on user uploads (see `src/files/rehydrate.ts`) —
+ * so base64 would be an unusable payload that inflates the conversation
+ * log and replay tokens by 5–10× per byte. This handler is the
  * single seam where that leak is closed for the agent-pull direction; the
  * user-attachment direction is already lean via `ingest.ts`.
  */

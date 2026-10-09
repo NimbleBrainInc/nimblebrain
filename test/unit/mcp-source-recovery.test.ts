@@ -9,13 +9,12 @@ import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-pro
 import { payloadsOf } from "../helpers/engine-events.ts";
 
 /**
- * Phase 2 of the recovery redesign (research/SPEC-mcp-source-recovery.md): the
- * single `recover` path that both `execute` (tools/call) and `readResource` route
- * their catch through, driven by `classifyConnectionFailure` + `policyFor`. These
- * lock the intentional behavior CONVERGENCES that the unification introduces:
+ * The single `recover` path that both `execute` (tools/call) and `readResource`
+ * route their catch through, driven by `classifyConnectionFailure` + `policyFor`.
+ * These lock the behavior the shared path guarantees:
  *   - app/protocol errors on tools/call surface WITHOUT a futile restart
- *   - readResource now handles auth-loss (flips reauth_required) and recovers a
- *     torn transport — previously a silent null
+ *   - readResource handles auth-loss (flips reauth_required) and recovers a
+ *     torn transport rather than returning a silent null
  *   - the task-augmented no-retry invariant survives (policy-level)
  */
 
@@ -137,7 +136,7 @@ describe("execute (tools/call) — unified recovery", () => {
   it("surfaces a 429 WITHOUT restarting, and tells the agent to fan out less", async () => {
     // The failure this closes: a gateway answers `429 {"error":"rate_limited"}` to
     // a parallel batch of tool calls. That arrives message-only (no numeric code),
-    // so it used to classify as `unknown` → `transport-dead` → stop()/start().
+    // so it could classify as `unknown` → `transport-dead` → stop()/start().
     // Because `stop()` aborts every in-flight stream on the source, ONE throttled
     // call tears the transport out from under every admitted sibling in the batch —
     // including writes the server has already committed. The restart must not
@@ -508,7 +507,7 @@ describe("execute (tools/call) — unified recovery", () => {
 });
 
 describe("readResource — unified recovery (new behaviors)", () => {
-  it("flips reauth_required on auth loss (was a silent null before)", async () => {
+  it("flips reauth_required on auth loss rather than returning a silent null", async () => {
     const notifyAuthLost = mock(() => {});
     const source = remoteSource({
       readResource: () => Promise.reject(new UnauthorizedError("token rejected")),
@@ -524,7 +523,7 @@ describe("readResource — unified recovery (new behaviors)", () => {
     }
   });
 
-  it("recovers a torn transport on a ui:// read (was a silent null before)", async () => {
+  it("recovers a torn transport on a ui:// read rather than returning a silent null", async () => {
     let calls = 0;
     const source = remoteSource({
       readResource: () => {

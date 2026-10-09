@@ -209,7 +209,7 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
     expect(darkBlock).toContain("--nb-shadow-sm: 0 1px 2px rgba(0,0,0,0.3);");
   });
 
-  test("the --radius base is no longer emitted (vestigial after the radius convergence)", () => {
+  test("no --radius base is emitted", () => {
     expect(rootBlock).not.toContain("--radius:");
   });
 });

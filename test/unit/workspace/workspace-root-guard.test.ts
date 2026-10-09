@@ -116,7 +116,7 @@ Confirm the recipient before calling gmail__send.
 
 /**
  * One entry per workspace-scoped writer the delete path leaves holding a stale
- * path. Each `write` is the first touch — the call that used to mkdir its way
+ * path. Each `write` is the first touch — the call that could mkdir its way
  * back into a workspace that had just been archived.
  */
 const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [

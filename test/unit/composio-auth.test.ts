@@ -107,11 +107,10 @@ function sha256Hex(input: string): string {
  * Capturing record of the last `recordConnectionStateChange` call the
  * stub lifecycle observed. Tests assert against `.lastCall` to verify
  * the callback / initiate adopt paths actually flip the connector's
- * persisted state — previously the callback's `try { ctx.runtime
- * .getLifecycle().recordConnectionStateChange(...) }` silently
- * swallowed the throw from a stub-missing-method test (the call was
- * never asserted, so a refactor dropping it would have gone
- * unnoticed). The stub now succeeds AND records what was called.
+ * persisted state. The callback wraps
+ * `recordConnectionStateChange(...)` in a `try`, so a stub missing the
+ * method would be silently swallowed and a refactor dropping the call
+ * would go unnoticed. The stub succeeds AND records what was called.
  */
 interface StubLifecycleCalls {
   recordConnectionStateChange: {

@@ -1285,7 +1285,7 @@ describe("composeSystemPrompt — task mode", () => {
 
   it("task identity contract forbids greetings and follow-up questions", () => {
     // These phrases are the literal contract — if they ever disappear,
-    // the conversational regression from before this PR returns.
+    // task runs regress to conversational replies.
     expect(TASK_IDENTITY).toMatch(/do not greet/i);
     expect(TASK_IDENTITY).toMatch(/follow-up questions/i);
     expect(TASK_IDENTITY).toMatch(/finished, self-contained deliverable/i);

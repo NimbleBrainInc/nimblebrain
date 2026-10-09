@@ -77,7 +77,7 @@ async function getLatestRunId(runtime: Runtime, convId: string): Promise<string 
       // no `request.identity` is passed and no identity provider is
       // configured. Without this, the in-context store reads in
       // `compose__effective_context` refuse the read as a foreign-
-      // owner access (Stage 1 single-owner gate).
+      // owner access (single-owner gate).
       identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
     },

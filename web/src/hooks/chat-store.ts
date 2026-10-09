@@ -139,7 +139,7 @@ export interface ChatMessage {
   };
 }
 
-/** Conversation-level metadata (Stage 1: single-owner only). */
+/** Conversation-level metadata (conversations are single-owner). */
 export interface LoadedConversationMeta {
   ownerId?: string;
   /**
@@ -387,10 +387,9 @@ function buildOptimisticUserMessage(
     role: "user",
     content: params.text,
     timestamp: new Date().toISOString(),
-    // `userId` is intentional forward-compat plumbing (Stage 4 sharing), not
-    // dead code: it has no UI consumer today (single-owner → userId is always
-    // the current user, so the removed speaker labels never showed), but the
-    // per-message author id is round-tripped end to end. Keep it.
+    // `userId` is the per-message author id, round-tripped end to end. It
+    // has no UI consumer (single-owner → userId is always the current user),
+    // but it is not dead code. Keep it.
     ...(params.currentUserId ? { userId: params.currentUserId } : {}),
     ...(userFiles && userFiles.length > 0 ? { files: userFiles } : {}),
   };

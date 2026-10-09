@@ -45,9 +45,9 @@ describe("resolveThinking", () => {
   it("never reads an output ceiling", () => {
     // The regression this whole shape exists to prevent: with no operator
     // ceiling, `maxOutputTokens` is the model's own catalog maximum, and
-    // sizing thinking from it turned a number nobody chose into a directive
-    // to reason maximally on every call. The resolver no longer accepts the
-    // value at all, so the same input can only produce one answer.
+    // sizing thinking from it would turn a number nobody chose into a
+    // directive to reason maximally on every call. The resolver does not
+    // accept the value at all, so the same input can only produce one answer.
     const small = resolveThinking({ model: "anthropic:claude-opus-5" });
     const large = resolveThinking({ model: "anthropic:claude-opus-4-7" });
     expect(small).toEqual({ mode: "effort", effort: DEFAULT_THINKING_EFFORT, source: "platform" });
@@ -171,11 +171,10 @@ describe("resolveThinking", () => {
 
   it("refuses to enable thinking on a model the catalog says can't", () => {
     // An override can ask for reasoning; it cannot make the parameter exist.
-    // This gate used to be skipped for explicit `enabled`, which was inert
-    // while the engine dropped every non-Anthropic provider and became a
-    // live wrong-parameter send once OpenAI and Nebius were wired — Nebius
-    // hosts non-reasoning open-weight models and its adapter forwards
-    // `reasoning_effort` without a gate of its own.
+    // The gate applies to explicit `enabled` too. Skipping it would be a
+    // live wrong-parameter send — Nebius hosts non-reasoning open-weight
+    // models and its adapter forwards `reasoning_effort` without a gate of
+    // its own.
     //
     // Every id here must be one the catalog CARRIES and flags
     // `reasoning: false`, which the first assertion enforces. An uncatalogued
@@ -183,8 +182,8 @@ describe("resolveThinking", () => {
     // `getModelByString(...)?.capabilities.reasoning ?? false` and proves the
     // catalog-MISS path instead — a real path, but one already covered by
     // "returns undefined when the model is unknown", and not the one this
-    // test is named for. Both ids this list used to carry were misses, so it
-    // asserted nothing about the flag on either arm.
+    // test is named for. So every id in this list must be a catalog hit, or
+    // the test asserts nothing about the flag on either arm.
     for (const model of [
       "openai:gpt-4o",
       "google:gemini-2.5-flash-preview-tts",

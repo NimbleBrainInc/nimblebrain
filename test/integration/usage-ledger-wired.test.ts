@@ -1,13 +1,12 @@
 /**
  * The ledger, end to end: a real turn spends, and `usage__report` reads it back.
  *
- * This is the regression test for the defect the ledger exists to fix. Usage
- * used to be derived from a storage side effect — a conversation JSONL
- * happening to exist — so a task run, which persists no conversation, spent
- * money the report could not see. The first test below runs `executeTask` and
- * asserts the spend appears. Before the ledger it did not, and no unit test
- * could have caught that, because the gap was between the writer and the
- * reader rather than inside either.
+ * This guards the defect the ledger exists to prevent. Usage derived from a
+ * storage side effect — a conversation JSONL happening to exist — would miss a
+ * task run, which persists no conversation. The first test below runs
+ * `executeTask` and asserts the spend appears. No unit test can catch that,
+ * because the gap is between the writer and the reader rather than inside
+ * either.
  */
 
 import { afterEach, expect, test } from "bun:test";

@@ -5,13 +5,13 @@
 /**
  * Approximate token count for a body of text.
  *
- * Phase 2 uses `Math.ceil(text.length / 4)` as a cheap stand-in. The
+ * Uses `Math.ceil(text.length / 4)` as a cheap stand-in. The
  * estimate is consistent across the platform (skills loader, runtime
  * telemetry, app-state truncation) so tokens reported in `skills.loaded`
  * match what `compose.ts` would budget against.
  *
- * Phase 5 will swap this for a model-specific tokenizer once attribution
- * lands; centralising the math here means a single point to replace — which is
+ * Centralising the math here means a single point to replace with a
+ * model-specific tokenizer — which is
  * why the skills editor does not re-implement it: `bun run codegen` emits a
  * verbatim copy of this file to `web/src/_generated/skill-tokens.ts` so the
  * cost shown while authoring is the same number `skills__list` will report.

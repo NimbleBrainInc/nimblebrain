@@ -1,6 +1,5 @@
 /**
- * Two-workspace fixture for the Stage 2 cross-workspace
- * contract.
+ * Two-workspace fixture for the cross-workspace contract.
  *
  * Boots a `Runtime` with two workspaces visible to a single identity:
  *   1. A shared workspace (default id `ws_003eba8844413cd9`).
@@ -12,7 +11,7 @@
  * dispatch topology (e.g. that a `ws_003eba8844413cd9/...` tool call did NOT land in
  * the identity's own workspace's source).
  *
- * Reuse: T011's smoke variant imports this fixture to drive an external MCP
+ * Reuse: a smoke variant can import this fixture to drive an external MCP
  * client end-to-end. Anything that bakes in test-only assumptions
  * (test-mode auth, in-memory stores, etc.) belongs in the test file, not
  * here. The fixture leans on the same public `Runtime.start()` /
@@ -40,7 +39,7 @@ import { seedWorkspace } from "./test-workspace.ts";
 
 /**
  * Options for `createTwoWorkspaceFixture`. All fields optional; defaults
- * are designed to mirror the load-bearing Stage 2 chat surface a single
+ * are designed to mirror the load-bearing chat surface a single
  * user would actually see: one shared workspace + one workspace of their own.
  */
 export interface TwoWorkspaceFixtureOptions {
@@ -84,11 +83,11 @@ export interface TwoWorkspaceFixtureOptions {
  * `qualifiedToolName` fields are the load-bearing strings tests assert on:
  *
  *  - `qualifiedToolName` is the `ws_<id>-<source>__<tool>` form the
- *    orchestrator (post-T006) parses on every tool call.
+ *    orchestrator parses on every tool call.
  *  - `callCount()` is the topology probe — a non-zero counter on the
  *    *wrong* workspace would fail the "naive: dispatch to current
- *    workspace" failure mode (lesson 1).
- *  - `auditTrail()` is the attribution probe (Stage 1 lesson 2) — the
+ *    workspace" failure mode.
+ *  - `auditTrail()` is the attribution probe — the
  *    sequence of `RequestContext.workspaceId` values that were active
  *    each time this source's handler ran. A correct orchestrator stamps
  *    the parsed-from-namespace workspace; the failure mode (stamping the
@@ -130,8 +129,8 @@ export interface WorkspaceHandle {
  * `type === "tool.done"` and assert per-call attribution.
  *
  * The fixture deliberately stores events as `{type, data}` envelopes
- * (matching `EngineEvent`) rather than narrowing here — Stage 2's
- * orchestrator will add a `workspaceId` field to `tool.done.data`, and
+ * (matching `EngineEvent`) rather than narrowing here — the
+ * orchestrator stamps a `workspaceId` field on `tool.done.data`, and
  * the test that asserts that exact contract lives in the test file, not
  * this helper.
  */
@@ -179,7 +178,7 @@ export interface TwoWorkspaceFixture {
 
 /**
  * Neutral placeholder identity. No tenant- or person-specific information;
- * the fixture is reused in OSS-public tests and in T011's smoke variant.
+ * the fixture is reused in OSS-public tests.
  */
 const DEFAULT_IDENTITY: UserIdentity = {
   id: "user_a",
@@ -202,8 +201,8 @@ const PERSONAL_SOURCE_NAME = "gmail";
  * echo tool. The handler closes over a local `count` variable so the
  * caller can read dispatch topology from the returned `callCount()` getter,
  * and an `audit` array so callers can read the per-call
- * `RequestContext.workspaceId` (Stage 1 lesson 2 — attribution proof
- * independent of the dispatch-topology counter).
+ * `RequestContext.workspaceId` (attribution proof independent of the
+ * dispatch-topology counter).
  */
 function buildCounterSource(
   sourceName: string,
@@ -369,8 +368,7 @@ export async function createTwoWorkspaceFixture(
   sharedRegistry.addSource(sharedSource.source);
   personalRegistry.addSource(personalSource.source);
 
-  // T006 fixture reconciliation: post-orchestrator, the fixture's qualified
-  // names route through `routeToolCall` and must match the orchestrator's
+  // The fixture's qualified names route through `routeToolCall` and must match the orchestrator's
   // parse contract exactly. Build them via the single legal construction
   // site (`namespacedToolName`) so any future tweak to the primitive
   // surfaces here as a build error instead of as a silent dispatch miss.

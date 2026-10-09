@@ -83,7 +83,7 @@ describe("fetchWithRefresh", () => {
   test("does NOT log out on a transient 408 — only 400/401 are definitive", async () => {
     // Guards the thesis: a non-{400,401} 4xx (408 Request Timeout here) is
     // transient, not a dead session. Treating all 4xx as dead would log users
-    // out on a timeout — a smaller version of the bug this PR fixes.
+    // out on a timeout.
     let authErrorCalled = false;
     const fakeFetch = async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input.toString();

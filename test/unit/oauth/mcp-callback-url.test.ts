@@ -43,7 +43,7 @@ describe("mcpAuthCallbackUrl — single callback-URL authority", () => {
     process.env.NB_OAUTH_BOUNCER_TENANT_KEY = randomBytes(32).toString("base64");
     process.env.NB_TENANT_ID = "tenant-a";
     // Even with a tenant-direct public origin set, bouncer wins — this is the
-    // exact prod config where boot-start used to diverge onto the tenant host.
+    // exact prod config where boot-start could diverge onto the tenant host.
     process.env.NB_PLATFORM_HOST = "nb.example.com";
     _resetBouncerModeForTest();
 

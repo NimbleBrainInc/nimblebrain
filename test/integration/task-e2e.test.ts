@@ -198,7 +198,7 @@ describe("task e2e: create -> run -> verify", () => {
     expect(latestRun.status).toBe("success");
     expect(latestRun.toolCalls).toBe(3);
     expect(latestRun.iterations).toBe(2);
-    // A run is no longer a conversation — it leaves a result sidecar instead.
+    // A run is not a conversation — it leaves a result sidecar instead.
     const result = ctx.readRunResult("daily-summary", latestRun.id);
     expect(result).not.toBeNull();
     expect(result!.usage.iterations).toBe(2);
