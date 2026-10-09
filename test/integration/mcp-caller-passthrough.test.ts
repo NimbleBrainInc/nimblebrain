@@ -3,11 +3,13 @@
  * connector: the client's capabilities decide what the connector asks for, an
  * `input_required` answer reaches the client and the client's answers reach the
  * connector, the connector's `requestState` travels sealed to the caller and
- * the tool, an error that asks the client to change its request reaches the
- * client as it is, and progress arrives under the client's own token.
+ * the tool and its arguments, an error that asks the client to change its
+ * request reaches the client as it is, and progress arrives under the client's
+ * own token. Each relayed elicitation names the connector it came from: its
+ * catalog title, else its server name.
  */
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { rmSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, it, setSystemTime } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +22,8 @@ import {
 } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
+import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import { FIRST_PARTY_GRANT, type VerifiedIdentity } from "../../src/identity/provider.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -41,11 +45,20 @@ class TwoIdentityProvider extends DevIdentityProvider {
     return super.verifyRequest(req);
   }
 }
+/** A catalog entry naming the same connector under a second server name, by its title. */
+const CATALOGED_ID = "ai.example.mail/mcp";
+const CATALOGED = slugifyServerName(CATALOGED_ID);
+const CATALOGED_TITLE = "Example Mail";
+
 /** The connector's own state, which the client must never hold as it is. */
 const CONNECTOR_STATE = "connector-state-1";
 const ANSWER = { action: "accept", content: { yes: true } };
 
-/** The connector under test: one tool that asks, one that needs sampling, one that reports progress. */
+/**
+ * The connector under test: one tool that asks in form mode, one that asks in
+ * URL mode for the `url` it is given, one that needs sampling, one that
+ * reports progress.
+ */
 function buildConnector(): Server {
   const server = new Server(
     { name: "caller-fixture", version: "1.0.0" },
@@ -55,6 +68,7 @@ function buildConnector(): Server {
   server.setRequestHandler("tools/list", async () => ({
     tools: [
       { name: "confirm", inputSchema: schema },
+      { name: "confirm_url", inputSchema: schema },
       { name: "needs_sampling", inputSchema: schema },
       { name: "count", inputSchema: schema },
     ],
@@ -91,6 +105,21 @@ function buildConnector(): Server {
           ],
         };
       }
+      case "confirm_url":
+        return {
+          resultType: "input_required",
+          inputRequests: {
+            ok: {
+              method: "elicitation/create",
+              params: {
+                mode: "url",
+                message: "Open the page to confirm",
+                elicitationId: "e1",
+                url: String(request.params.arguments?.url),
+              },
+            },
+          },
+        } as never;
       case "needs_sampling":
         if (!capabilities?.sampling) {
           throw new MissingRequiredClientCapabilityError(
@@ -120,11 +149,47 @@ let connector: ReturnType<typeof Bun.serve>;
 let runtime: Runtime;
 let handle: ServerHandle;
 let workDir: string;
+let priorCatalogDir: string | undefined;
+
+/** An MCP source for the fixture connector, registered under `name`. */
+async function fixtureSource(name: string): Promise<McpSource> {
+  const source = new McpSource(
+    name,
+    {
+      type: "remote",
+      url: new URL(`http://localhost:${connector.port}/mcp`),
+      transportConfig: { type: "streamable-http" },
+      allowInsecure: true,
+    },
+    new NoopEventSink(),
+  );
+  await source.start();
+  return source;
+}
 
 beforeAll(async () => {
   const handler = createMcpHandler(buildConnector);
   connector = Bun.serve({ port: 0, fetch: (request) => handler.fetch(request) });
   workDir = await mkdtemp(join(tmpdir(), "nb-mcp-caller-"));
+  const catalogDir = join(workDir, "catalog");
+  mkdirSync(catalogDir, { recursive: true });
+  writeFileSync(
+    join(catalogDir, "mail.yaml"),
+    `servers:
+  - name: ${CATALOGED_ID}
+    title: ${CATALOGED_TITLE}
+    description: Test connector
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: http://localhost:${connector.port}/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: none
+`,
+  );
+  priorCatalogDir = process.env[CATALOG_DIR_ENV];
+  process.env[CATALOG_DIR_ENV] = catalogDir;
   runtime = await Runtime.start({
     identityProvider: ({ workDir: dir, userStore }) => new TwoIdentityProvider(dir, userStore),
     languageModel: createEchoModel(),
@@ -133,19 +198,9 @@ beforeAll(async () => {
   });
   for (const wsId of [TEST_WORKSPACE_ID, OTHER_WORKSPACE_ID]) {
     await provisionTestWorkspace(runtime, wsId, wsId);
-    const source = new McpSource(
-      "fixture",
-      {
-        type: "remote",
-        url: new URL(`http://localhost:${connector.port}/mcp`),
-        transportConfig: { type: "streamable-http" },
-        allowInsecure: true,
-      },
-      new NoopEventSink(),
-    );
-    await source.start();
-    runtime.getRegistryForWorkspace(wsId).addSource(source);
+    runtime.getRegistryForWorkspace(wsId).addSource(await fixtureSource("fixture"));
   }
+  runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(await fixtureSource(CATALOGED));
   await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, OTHER.id, "member");
   handle = startServer({ runtime, port: 0 });
 });
@@ -154,8 +209,13 @@ afterAll(async () => {
   handle.stop(true);
   await runtime.shutdown();
   connector.stop(true);
+  if (priorCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
+  else process.env[CATALOG_DIR_ENV] = priorCatalogDir;
   rmSync(workDir, { recursive: true, force: true });
 });
+
+/** The elicitation messages the clients were asked, in order. */
+const asked: string[] = [];
 
 /** A client of `/mcp/<wsId>`, answering elicitation when it declares it. */
 async function client(
@@ -163,9 +223,14 @@ async function client(
 ): Promise<Client> {
   const c = newMcpClient(
     { name: "caller-test", version: "1.0.0" },
-    { capabilities: opts.elicitation ? { elicitation: { form: {} } } : {} },
+    { capabilities: opts.elicitation ? { elicitation: { form: {}, url: {} } } : {} },
   );
-  if (opts.elicitation) c.setRequestHandler("elicitation/create", async () => ANSWER as never);
+  if (opts.elicitation) {
+    c.setRequestHandler("elicitation/create", async (request) => {
+      asked.push(request.params.message);
+      return ANSWER as never;
+    });
+  }
   await c.connect(
     new StreamableHTTPClientTransport(
       new URL(`http://localhost:${handle.port}/mcp/${opts.wsId ?? TEST_WORKSPACE_ID}`),
@@ -180,11 +245,15 @@ function text(result: { content?: unknown }): string {
 }
 
 /** A connector's first-round `input_required` answer, as the client receives it. */
-async function firstRound(c: Client): Promise<{ requestState?: string }> {
-  return (await c.callTool(
-    { name: "fixture__confirm", arguments: {} },
-    { allowInputRequired: true },
-  )) as { requestState?: string };
+async function firstRound(
+  c: Client,
+  name = "fixture__confirm",
+  args: Record<string, unknown> = {},
+): Promise<{
+  requestState?: string;
+  inputRequests?: Record<string, { params: { message: string; url?: string } }>;
+}> {
+  return (await c.callTool({ name, arguments: args }, { allowInputRequired: true })) as never;
 }
 
 describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
@@ -193,6 +262,45 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
     try {
       const result = await c.callTool({ name: "fixture__confirm", arguments: {} });
       expect(text(result)).toBe(`answered:${JSON.stringify(ANSWER)} state:${CONNECTOR_STATE}`);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("names the connector in the relayed form-mode message", async () => {
+    const c = await client({ elicitation: true });
+    asked.length = 0;
+    try {
+      await c.callTool({ name: "fixture__confirm", arguments: {} });
+      expect(asked).toEqual(["fixture: Proceed?"]);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("relays a URL-mode request naming the connector, an absolute url as it is", async () => {
+    const c = await client({ elicitation: true });
+    try {
+      const url = "https://confirm.example.com/send/1";
+      const { inputRequests } = await firstRound(c, "fixture__confirm_url", { url });
+      expect(inputRequests?.ok?.params).toMatchObject({
+        message: "fixture: Open the page to confirm",
+        url,
+      });
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("names a cataloged connector by its catalog title", async () => {
+    const c = await client({ elicitation: true });
+    try {
+      const { inputRequests } = await firstRound(c, `${CATALOGED}__confirm_url`, {
+        url: "https://confirm.example.com/send/1",
+      });
+      expect(inputRequests?.ok?.params.message).toBe(
+        `${CATALOGED_TITLE}: Open the page to confirm`,
+      );
     } finally {
       await c.close();
     }
@@ -264,6 +372,42 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
         c.callTool({ name: "fixture__count", arguments: {}, requestState } as never),
       ).rejects.toMatchObject({ code: -32602 });
     } finally {
+      await c.close();
+    }
+  });
+
+  it("refuses a sealed state on a call with other arguments", async () => {
+    const c = await client({ elicitation: true });
+    try {
+      const { requestState } = await firstRound(c, "fixture__confirm", { to: "a@example.com" });
+      await expect(
+        c.callTool({
+          name: "fixture__confirm",
+          arguments: { to: "b@example.com" },
+          inputResponses: { ok: ANSWER },
+          requestState,
+        } as never),
+      ).rejects.toMatchObject({ code: -32602 });
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("refuses a sealed state older than ten minutes", async () => {
+    const c = await client({ elicitation: true });
+    try {
+      const { requestState } = await firstRound(c);
+      setSystemTime(new Date(Date.now() + 11 * 60 * 1000));
+      await expect(
+        c.callTool({
+          name: "fixture__confirm",
+          arguments: {},
+          inputResponses: { ok: ANSWER },
+          requestState,
+        } as never),
+      ).rejects.toMatchObject({ code: -32602 });
+    } finally {
+      setSystemTime();
       await c.close();
     }
   });
