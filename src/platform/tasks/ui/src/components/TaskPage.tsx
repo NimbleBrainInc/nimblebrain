@@ -302,9 +302,8 @@ export function SetupSections({ d, onEdit }: { d: TaskDetail; onEdit?: () => voi
 }
 
 /**
- * The latest result's body: the full result once read (structured output as
- * values, text as prose); the run's preview only when the result cannot be
- * read and the preview is not cut-off JSON.
+ * The latest result's body once read: structured output as values, text as
+ * prose, or why the run left none.
  */
 function LatestBody({
   run,
@@ -315,21 +314,12 @@ function LatestBody({
   result: TaskRunResult | null | undefined;
   raw: boolean;
 }) {
-  if (result === undefined && run.resultPreview) {
-    return <div className="skel skel-card" aria-busy="true" />;
-  }
-  const text = result?.output ?? run.resultPreview;
-  if (result?.structured !== undefined || (result && text)) {
+  if (result === undefined) return <div className="skel skel-card" aria-busy="true" />;
+  const text = result?.output ?? "";
+  if (result?.structured !== undefined || text) {
     return <ResultPreview structured={result?.structured} text={text} raw={raw} />;
   }
-  if (text && typeof asJson(text) !== "object" && !/^\s*(```|[[{])/.test(text)) {
-    return <ResultPreview text={text} />;
-  }
-  return (
-    <p className="muted">
-      {run.error ?? (text ? "Open the run to read its result." : "This run left no result.")}
-    </p>
-  );
+  return <p className="muted">{run.error ?? "This run left no result."}</p>;
 }
 
 /** The latest result as a section: its label and time, Show raw and Open the run in the header. */

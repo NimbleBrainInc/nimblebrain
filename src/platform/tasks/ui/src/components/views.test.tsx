@@ -538,7 +538,6 @@ describe("Result", () => {
     expect(html).toMatch(/Outcome<\/span><span class="tile-value">Failed/);
     expect(html).toContain("Connector gone");
     expect(html).toContain("No deliverable for this run.");
-    expect(html).not.toContain("Showing the preview");
     expect(html).not.toContain(">Accept<");
   });
 
@@ -560,14 +559,14 @@ describe("Result", () => {
     expect(html).not.toContain(">Accept<");
   });
 
-  test("a run recorded with no result shows its preview and says so", () => {
+  test("the deliverable is the result's output, never the run's preview", () => {
     const html = body({
       status: "ready",
       run: { ...RUN, assessment: undefined, resultPreview: "Three prospects found." },
       result: null,
     });
-    expect(html).toContain("Three prospects found.");
-    expect(html).toContain("Showing the preview; the full result could not be read.");
+    expect(html).not.toContain("Three prospects found.");
+    expect(html).toContain("No deliverable for this run.");
   });
 });
 
