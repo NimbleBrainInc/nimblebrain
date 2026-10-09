@@ -15,6 +15,8 @@
  * is the one place a pasted header configures it.
  */
 
+import type { SkillsUpdateInput } from "../../_generated/platform-schemas/skills";
+
 export type LoadingStrategy = "always" | "dynamic";
 
 /**
@@ -44,6 +46,12 @@ export function parseLines(value: string): string[] {
     .filter((line) => line.length > 0);
 }
 
+/** A list field's lines, or `null` (clear) when it has none. */
+function listOrClear(value: string): string[] | null {
+  const lines = parseLines(value);
+  return lines.length > 0 ? lines : null;
+}
+
 /**
  * Does this body look like it opens a document header?
  *
@@ -57,14 +65,19 @@ export function looksLikeFrontmatter(body: string): boolean {
   return /^---[ \t]*\r?\n/.test(body.trim());
 }
 
-/** The arguments `skills__update` takes from this editor. */
-export interface SkillUpdateArgs {
+type ToolManifest = NonNullable<SkillsUpdateInput["manifest"]>;
+
+/**
+ * The arguments `skills__update` takes from this editor: a narrowing of the
+ * tool's own input type. `manifest` picks its fields from the tool's, so a
+ * field the tool stops accepting, or one whose type changes, fails to compile.
+ */
+export interface SkillUpdateArgs extends SkillsUpdateInput {
   id: string;
-  manifest?: {
+  // A strategy or priority save always carries a value; the editor never clears either.
+  manifest?: Pick<ToolManifest, "loadingStrategy" | "priority" | "toolAffinity" | "triggers"> & {
     loadingStrategy?: LoadingStrategy;
     priority?: number;
-    toolAffinity?: string[];
-    triggers?: string[];
   };
   body?: string;
   body_mode?: "replace";
@@ -75,9 +88,9 @@ export interface SkillUpdateArgs {
  * The `skills__update` arguments for one field of skill `id`.
  *
  * One field per save, so a save never touches a field the reader did not
- * change. A list clears by sending `[]`; `skills__update` takes no `null` for
- * these fields. Throws, with the message the field shows, for a value the form
- * must not send.
+ * change. A list left with no lines sends `null`, which clears it: a skill
+ * stores no empty list, so "none" and "unset" are one state. Throws, with the
+ * message the field shows, for a value the form must not send.
  */
 export function skillEditPatch<K extends SkillEditField>(
   id: string,
@@ -110,9 +123,9 @@ export function skillEditPatch<K extends SkillEditField>(
       return { id, manifest: { priority } };
     }
     case "toolAffinity":
-      return { id, manifest: { toolAffinity: parseLines(value) } };
+      return { id, manifest: { toolAffinity: listOrClear(value) } };
     case "triggers":
-      return { id, manifest: { triggers: parseLines(value) } };
+      return { id, manifest: { triggers: listOrClear(value) } };
   }
   throw new Error(`Unknown skill field: ${String(field)}`);
 }

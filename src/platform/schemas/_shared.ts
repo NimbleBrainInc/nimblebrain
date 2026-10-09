@@ -26,7 +26,7 @@
 // One-line rule: **schemas validated by AJV → StringEnum; schemas
 // validated by TypeBox `Value.Check` → Union-of-Literal.**
 
-import { Type } from "@sinclair/typebox";
+import { type TSchema, Type } from "@sinclair/typebox";
 
 export function StringEnum<T extends string>(
   values: readonly T[],
@@ -40,4 +40,9 @@ export function NumberEnum<T extends number>(
   options: { description?: string } = {},
 ) {
   return Type.Unsafe<T>({ type: "number", enum: [...values], ...options });
+}
+
+/** An optional field an update clears with `null` (src/platform/AGENTS.md §1.3). */
+export function clearable<T extends TSchema>(schema: T, description: string) {
+  return Type.Optional(Type.Union([schema, Type.Null()], { description }));
 }

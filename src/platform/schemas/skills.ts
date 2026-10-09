@@ -1,5 +1,5 @@
 import { type Static, Type } from "@sinclair/typebox";
-import { NumberEnum, StringEnum } from "./_shared.ts";
+import { clearable, NumberEnum, StringEnum } from "./_shared.ts";
 
 // ── Shared building blocks ───────────────────────────────────────────────
 
@@ -182,7 +182,7 @@ export const SkillsCreateInput = Type.Object(
 );
 export type SkillsCreateInput = Static<typeof SkillsCreateInput>;
 
-// Update: partial of ManifestFields minus `name` and `status`.
+// Update: a patch of ManifestFields minus `name` and `status`.
 //
 // `name` is not patchable because it IS the filename — the path-derived id
 // would drift out from under the caller.
@@ -194,15 +194,28 @@ export type SkillsCreateInput = Static<typeof SkillsCreateInput>;
 // `manifest` patch would hand the agent back exactly the capability the mute
 // exists to take away from it.
 //
-// All fields optional (omitted fields keep their current values), unlike
-// create where name + description are required.
+// An omitted field keeps its value; `null` clears one (platform/AGENTS.md
+// §1.3). `description` is required on every skill, so it takes no `null`.
 const UpdateManifestFields = {
   description: Type.Optional(ManifestFields.description),
-  loadingStrategy: ManifestFields.loadingStrategy,
-  priority: ManifestFields.priority,
-  toolAffinity: ManifestFields.toolAffinity,
-  triggers: ManifestFields.triggers,
-  allowedTools: ManifestFields.allowedTools,
+  loadingStrategy: clearable(
+    LoadingStrategy,
+    "`always` or `dynamic`, or null for the default (`dynamic`).",
+  ),
+  priority: clearable(SkillPriority, "11–99, or null for the default (50)."),
+  toolAffinity: clearable(
+    Type.Array(Type.String()),
+    "Tool-name globs (e.g. `gmail__*`); a dynamic skill auto-loads when one is active. " +
+      "null removes them.",
+  ),
+  triggers: clearable(
+    Type.Array(Type.String()),
+    "Exact phrases that deterministically activate a dynamic skill. null removes them.",
+  ),
+  allowedTools: clearable(
+    Type.Array(Type.String()),
+    "Tools the skill is permitted to call. null removes the list.",
+  ),
 };
 
 export const SkillsUpdateInput = Type.Object(
@@ -210,7 +223,8 @@ export const SkillsUpdateInput = Type.Object(
     id: Type.String({ description: "Filesystem path returned by `skills__list`." }),
     manifest: Type.Optional(
       Type.Object(UpdateManifestFields, {
-        description: "Partial manifest patch. Omitted fields keep their current values.",
+        description:
+          "Partial manifest patch. An omitted field keeps its value; `null` clears it to the default.",
       }),
     ),
     body: Type.Optional(
