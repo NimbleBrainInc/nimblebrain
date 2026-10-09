@@ -247,7 +247,9 @@ function addCost(target: CostBreakdown, cost: CostBreakdown): void {
  */
 /**
  * The provider a qualified model string names — the segment before the first
- * colon. Unqualified strings are Anthropic, matching `getModelByString`.
+ * colon. Ledger lines written before model ids were always qualified can carry
+ * a bare Anthropic id, so a string with no colon reads as Anthropic, matching
+ * `getModelByString`.
  */
 export function providerOf(model: string): string {
   const i = model.indexOf(":");

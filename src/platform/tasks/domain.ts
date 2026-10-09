@@ -24,6 +24,8 @@
  * See `src/platform/AGENTS.md` § 1.4 for the cross-cutting rule.
  */
 
+import { requireQualifiedModelId } from "../../model/model-id.ts";
+import { parseModelSlotRef } from "../../model/slots.ts";
 import { computeBudgetResetAt, computeNextRunAt, setNextRunAt } from "./scheduler.ts";
 import {
   type Criterion,
@@ -237,6 +239,16 @@ export interface CreateResult {
   message: string;
 }
 
+/**
+ * Refuse a task model that is neither a slot name nor `provider:model`. Checked
+ * where the definition is written, so a bad id is reported to whoever wrote it
+ * rather than failing every scheduled run later.
+ */
+function assertTaskModel(model: string | null | undefined): void {
+  if (model == null || parseModelSlotRef(model)) return;
+  requireQualifiedModelId(model, "Task model");
+}
+
 export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): CreateResult {
   const id = toKebabCase(input.name);
   const defs = ctx.definitions();
@@ -251,6 +263,7 @@ export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): Cr
   }
 
   assertEventScheduleAllowed(input.schedule, input.source ?? "agent", input.name);
+  assertTaskModel(input.model);
 
   const now = new Date().toISOString();
   const task: Task = {
@@ -410,6 +423,7 @@ export function updateTask(
   const task = requireTask(defs, taskId);
 
   assertEventScheduleAllowed(patch.schedule ?? undefined, task.source, task.name);
+  assertTaskModel(patch.model);
 
   // Snapshot before the loop overwrites it — the window reset is gated on a real
   // budget change, not merely a write (see `tokenBudgetsEqual`).

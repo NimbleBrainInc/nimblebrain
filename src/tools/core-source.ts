@@ -15,7 +15,7 @@ import {
 } from "../host-resources/artifacts/index.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import { getAvailableModels, isModelAllowed, isModelInPolicy } from "../model/catalog.ts";
-import { resolveModelString } from "../model/registry.ts";
+import { unqualifiedModelIdError } from "../model/model-id.ts";
 import { isModelSlot, MODEL_SLOTS } from "../model/slots.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { InProcessTool } from "./in-process-app.ts";
@@ -117,10 +117,9 @@ function positiveIntFieldError(
 
 function unreachableModelError(model: string, runtime: Runtime, slot?: string): string | null {
   const subject = slot ? `Invalid model "${model}" for slot "${slot}"` : `Invalid model "${model}"`;
-  // Qualified before the policy check: `isModelInPolicy` is an exact match on
-  // `provider:id`, and a bare id is legal input here — legacy saved values and
-  // the settings tab both pass one through.
-  if (!isModelInPolicy(resolveModelString(model), runtime.getModelPolicy())) {
+  const unqualified = unqualifiedModelIdError(model, slot ? `models.${slot}` : "Model");
+  if (unqualified) return unqualified;
+  if (!isModelInPolicy(model, runtime.getModelPolicy())) {
     return `${subject}. It is not in this organization's allowed models.`;
   }
   if (isModelAllowed(model, runtime.getProviderConfigs())) return null;
@@ -329,7 +328,7 @@ function buildPreferencesPatch(input: Record<string, unknown>): Record<string, u
     // them back sends exactly that — and storing it would pin the user to an
     // empty model id they cannot correct without a working turn.
     const chosen = typeof input.model === "string" ? input.model.trim() : "";
-    patch.models = chosen ? { default: resolveModelString(chosen) } : {};
+    patch.models = chosen ? { default: chosen } : {};
   }
   return patch;
 }
@@ -344,9 +343,10 @@ function preferredModelError(input: Record<string, unknown>, runtime: Runtime): 
   if (typeof input.model !== "string") return null;
   const chosen = input.model.trim();
   if (chosen === "") return null; // clearing, nothing to validate
+  const unqualified = unqualifiedModelIdError(chosen);
+  if (unqualified) return unqualified;
   if (runtime.isModelPermitted(chosen)) return null;
-  const qualified = resolveModelString(chosen);
-  return `Model "${qualified}" is not permitted. Either its provider is not configured or it is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ") || "(none)"}`;
+  return `Model "${chosen}" is not permitted. Either its provider is not configured or it is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ") || "(none)"}`;
 }
 
 // --- list_artifacts / read_artifact helpers -----------------------------------
@@ -563,12 +563,13 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             properties: {
               default: {
                 ...nullable({ type: "string" }),
-                description: "Primary model for chat. null clears the slot.",
+                description:
+                  "Primary model for chat, as provider:model-id (e.g. anthropic:claude-sonnet-4-6). null clears the slot.",
               },
               fast: {
                 ...nullable({ type: "string" }),
                 description:
-                  "Cheap/fast model for auxiliary tasks. null clears the slot (falls back to the built-in default model).",
+                  "Cheap/fast model for auxiliary tasks, as provider:model-id. null clears the slot (falls back to the built-in default model).",
               },
             },
           },

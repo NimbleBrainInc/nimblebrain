@@ -104,8 +104,7 @@ export function resolveThinking(input: ResolveThinkingInput): ResolvedThinking |
   if (!supportsReasoning) {
     // Dropping an instruction the operator wrote is worth saying out loud. A
     // model absent from the catalog is a supported configuration (pinned ids,
-    // and OpenAI-compatible proxies with their own model names — see
-    // `resolveModelString`), and it lands here looking identical to a genuinely
+    // and OpenAI-compatible proxies with their own model names), and it lands here looking identical to a genuinely
     // non-reasoning model, so the warning naming the model is the whole
     // diagnosis.
     if (input.model && askedForReasoning(input) && !warnedUncatalogued.has(input.model)) {

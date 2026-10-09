@@ -330,7 +330,8 @@ const SkillField = Type.String({
 
 const ModelField = Type.String({
   minLength: 1,
-  description: "Model for this task's runs. Omit to use the workspace default.",
+  description:
+    "Model for this task's runs, as provider:model-id (e.g. anthropic:claude-sonnet-4-6) or a slot name (fast). Omit to use the workspace default.",
 });
 
 // The definition fields every shape shares: create's manifest, update's patch

@@ -195,9 +195,8 @@ export interface Conversation {
    *  - **Resolved, never an alias.** `alias:fast` is a legal model string; a
    *    pin holding one would be retargeted by a slot change, which is exactly
    *    what this binding prevents.
-   *  - **Provider-qualified** (`provider:model-id`), never bare. A bare id
-   *    falls back to `anthropic:<id>`, and the pin is immutable, so a bare
-   *    pin cannot be repaired.
+   *  - **Provider-qualified** (`provider:model-id`), never bare. The pin is
+   *    immutable, so a pin that named no provider could never be repaired.
    *
    * `resolveRequestModelString` satisfies both, and is the only writer.
    *

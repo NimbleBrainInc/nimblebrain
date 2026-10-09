@@ -18,6 +18,7 @@ import {
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { RefreshTokenError } from "../identity/provider.ts";
 import { getAvailableModels } from "../model/catalog.ts";
+import { ModelNotQualifiedError } from "../model/model-id.ts";
 import { log } from "../observability/log.ts";
 import {
   ConversationAccessDeniedError,
@@ -87,6 +88,9 @@ function mapChatTurnError(err: unknown): Response | null {
   }
   if (err instanceof ModelNotAllowedError) {
     return modelNotAllowedResponse(err);
+  }
+  if (err instanceof ModelNotQualifiedError) {
+    return apiError(400, err.code, err.message, { model: err.model });
   }
   return null;
 }
