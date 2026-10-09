@@ -33,6 +33,7 @@
 
 ### Added
 
+- **`/mcp/<wsId>` serves its connectors' prompts and completions.** Each prompt is named `<source>__<prompt>`, as tools are. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).
 - **`/mcp/<wsId>` serves its connectors' instructions and skills.** `server/discover` answers each connector's server instructions under its source name, and the MCP Skills extension (`skills/list`, `skills/get`) lists the skills the workspace's connectors serve, so a client outside NimbleBrain learns how their tools are meant to be used. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).
 - **Edit a user from Organization → Users.** An org admin changes a user's display name, email, and role, each saving as it changes; under WorkOS the name and admin/member role are written to WorkOS, and email is locked under WorkOS and OIDC ([docs](https://docs.nimblebrain.ai/using/users/#what-an-edit-can-change)).
 - **The agent reads a connector's records whole.** A connector's resource templates are listed under it in the system prompt, `nb__read_resource` returns a non-skill resource up to the 50,000-character tool-result limit, and the `tool.done` log line ends with the result's size ([ADR-0049](adr/0049-the-agent-reads-a-connectors-records-as-resources.md)).

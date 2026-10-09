@@ -1,16 +1,12 @@
 # Scenarios /mcp/<wsId> fails on protocol 2026-07-28, each with why. A scenario
 # here that passes fails the run, so remove it in the PR that fixes it.
 server:
-  # Prompts and completions are not served, so neither is an input_required
-  # answer to prompts/get.
-  - prompts-list
-  - prompts-get-simple
-  - prompts-get-with-args
-  - prompts-get-embedded-resource
-  - prompts-get-with-image
-  - completion-complete
+  # A connector's input_required answer to prompts/get is not relayed to the
+  # client: only a tools/call carries the caller's side of the protocol.
   - input-required-result-non-tool-request
-  # prompts/list is not served, and resources/read drops ttlMs and cacheScope.
+  # resources/read of the first listed resource (instructions://workspace)
+  # answers not found: the door reads workspace resources without the
+  # request's workspace in scope.
   - caching
   # Not a gateway gap: the reference server exposes no tool with x-mcp-header
   # annotations, so the scenario cannot run against it either.
