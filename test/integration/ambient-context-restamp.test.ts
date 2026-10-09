@@ -1,5 +1,5 @@
 /**
- * Stage 2 T008 — Ambient-context fix (Group C audit follow-up).
+ * Ambient RequestContext.workspaceId matches the routed workspace.
  *
  * The chat path's outer `runWithRequestContext` sets
  * `RequestContext.workspaceId` for the session. Tool handlers that read `runtime.requireWorkspaceId()` —
@@ -7,15 +7,15 @@
  * otherwise see the SESSION workspace, not the routed workspace,
  * when a cross-workspace call lands on a shared system tool.
  *
- * T008 chose approach (a) per the task spec: wrap each per-call
+ * The chat path wraps each per-call
  * `source.execute(...)` in a fresh `runWithRequestContext` keyed on
  * `routed.context.workspaceId`. This test pins the contract: a
  * cross-workspace call into `ws_003eba8844413cd9/...` makes the handler observe
  * `ws_003eba8844413cd9`, not the user's other (default) workspace.
  *
  * Both surfaces (chat + `/mcp`) must honour the same contract. The
- * `/mcp` path was already correct (it constructs its own RequestContext
- * from the routed wsId per call); we exercise it here to pin parity.
+ * `/mcp` path constructs its own RequestContext from the routed wsId per
+ * call; we exercise it here to pin parity.
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
@@ -52,7 +52,7 @@ function buildContextProbeSource(sourceName: string, toolName: string): ProbeSou
     inputSchema: { type: "object", properties: {} },
     handler: async () => {
       // Read the in-process RequestContext that the runtime sets
-      // around each `source.execute(...)` dispatch. T008's fix wraps
+      // around each `source.execute(...)` dispatch. The runtime wraps
       // the source dispatch with a per-call `runWithRequestContext`
       // keyed on the ROUTED workspace — this observation must reflect
       // that.

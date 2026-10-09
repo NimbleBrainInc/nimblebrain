@@ -20,11 +20,11 @@
  * at the provider boundary, breaking tool registration. `-` satisfies
  * both the provider regex and our unambiguity requirement.
  *
- * Design rules (matching Stage 1 lessons):
+ * Design rules:
  *
- * 1. **Strict invariants over defensive defaults** (lesson 3). Every
+ * 1. **Strict invariants over defensive defaults.** Every
  *    invalid shape throws — no `??` / `?? null` / `?? ""` fallbacks
- *    anywhere. The orchestrator (T004) catches `UnknownNamespacedToolName`
+ *    anywhere. The orchestrator catches `UnknownNamespacedToolName`
  *    and decides what to do; the primitive does not guess.
  * 2. **Single source of truth for `wsId` validation.**
  *    `WORKSPACE_ID_RE` is imported from `src/workspace/workspace-store.ts`
@@ -93,7 +93,7 @@ export class UnknownNamespacedToolName extends Error {
    *
    * Values: `empty_input`, `empty_tool_name`, `invalid_wsid`, and
    * `legacy_namespaced_form` (raised by the orchestrator for the retired
-   * `ws_<id>-` wire form, which parses fine but is no longer routed).
+   * `ws_<id>-` wire form, which parses fine but is not routed).
    */
   readonly reason: string;
 

@@ -489,8 +489,8 @@ export interface EngineConfig {
    * fires these immediately after `run.start` and before the first LLM call,
    * so the conversation log records what the prompt looked like.
    *
-   * Phase 2: `skills.loaded` and `context.assembled` payloads. Future phases
-   * may add more entries here without touching the engine signature.
+   * `skills.loaded` and `context.assembled` payloads. More entries can be
+   * added here without touching the engine signature.
    */
   runMetadata?: RunMetadata;
   /**

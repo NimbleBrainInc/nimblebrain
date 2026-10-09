@@ -66,8 +66,8 @@ There is **no expiry**. A vendor holds a URL for months, so retirement is the
 lookup, which runs on every delivery and is effective immediately, rather than a
 clock that can only fire late.
 
-**The key** is `NB_HOOK_TOKEN_KEY`, a per-tenant secret. It no longer seals or
-opens anything — it is the **switch deciding whether the door mounts at all**.
+**The key** is `NB_HOOK_TOKEN_KEY`, a per-tenant secret. It does not seal or
+open anything — it is the **switch deciding whether the door mounts at all**.
 **Absent key ⇒ nothing is mounted** and the whole prefix 404s at the router, so
 a local checkout gains no surface. The comma-separated ring it accepts is still
 parsed and validated at boot (base64 round-trip, minimum length, placeholder

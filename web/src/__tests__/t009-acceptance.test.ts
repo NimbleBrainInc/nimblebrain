@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
-// T009 — Web shell teardown acceptance tests
+// Web shell chat contract tests
 //
-// Pins the contract the task spec calls out:
+// Pins:
 //
 //   1. `ChatRequest` (the shape the chat composer POSTs to
-//      /v1/workspaces/<wsId>/chat/start) has NO `workspaceId` field — matches T006's identity-bound session
+//      /v1/workspaces/<wsId>/chat/start) has NO `workspaceId` field — matches the identity-bound session
 //      contract. A type-level mutual-extends assertion catches future
 //      widening at compile time.
 //   2. `setActiveWorkspaceId` is exported (the sidebar's workspace switcher
@@ -53,8 +53,8 @@ describe("ChatRequest wire shape (T006 contract)", () => {
   });
 
   test("setActiveWorkspaceId is exported (T013 plumbing — sidebar will call it)", () => {
-    // Smoke: the setter must remain a callable export. T013's sidebar
-    // depends on it. A regression that deleted the setter alongside the
+    // Smoke: the setter must remain a callable export. The sidebar's
+    // workspace switcher depends on it. A regression that deleted the setter alongside the
     // UI would surface here.
     expect(typeof setActiveWorkspaceId).toBe("function");
     // Calling with null is benign and resets state — verify the call

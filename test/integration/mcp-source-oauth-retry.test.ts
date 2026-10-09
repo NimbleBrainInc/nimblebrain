@@ -27,10 +27,6 @@ import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
  *   /authorize                              → 302 to redirect_uri with code
  *   /token                                  → exchanges code for access token
  *   /mcp                                    → 401 without bearer, 200 with
- *
- * This is the test W5 in the QA review asked for — the PR's biggest
- * behavioral change previously had zero direct coverage beyond the Reboot
- * hand-exercise.
  */
 
 const CALLBACK = "http://localhost:27247/v1/mcp-auth/callback";

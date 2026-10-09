@@ -93,8 +93,8 @@ beforeAll(async () => {
     },
   ]);
 
-  // Sources are no longer registered on a global registry.
-  // They'll be added to the workspace registry below.
+  // Sources are registered on the workspace registry, not a global one.
+  // They'll be added below.
   const wsRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 
   // Protected source is shared via SharedSourceRef
@@ -184,7 +184,7 @@ describe("MCP workspace scoping", () => {
   it("CallTool to non-workspace connector returns a JSON-RPC error (unknown_tool_source)", async () => {
     const client = await createMcpClient();
     try {
-      // Stage 2: a source not in the target workspace's registry
+      // A source not in the target workspace's registry
       // surfaces as the orchestrator's `UnknownToolSource` →
       // -32601 MethodNotFound with `data.reason: "unknown_tool_source"`.
       let errorCode: number | undefined;

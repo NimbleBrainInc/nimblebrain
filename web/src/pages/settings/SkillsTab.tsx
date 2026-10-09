@@ -761,8 +761,8 @@ function SkillRow({
 
   const label = rowLabel(skill);
   const labelIsName = label === skill.name;
-  // How the skill loads, stated at rest under the name — the discriminator the
-  // flat list used to hide until a row was expanded. Same vocabulary as the
+  // How the skill loads, stated at rest under the name, so the discriminator
+  // is visible without expanding the row. Same vocabulary as the
   // in-chat ledger's "Using …" line.
   const mechanism = skillMechanismLabel(skill);
   const hasExpandedMeta = skill.priority != null || !labelIsName;
@@ -1064,9 +1064,9 @@ function looksLikeFrontmatter(body: string): boolean {
 /**
  * What will happen to this skill, stated while it is still being written.
  *
- * A skill's whole purpose is to load, and the editor used to never say whether
- * it would — `never loads` in particular was reachable in one click and looked
- * identical to every healthy skill. The mechanism and the token cost are both
+ * A skill's whole purpose is to load, so the editor says whether it will —
+ * `never loads` in particular is reachable in one click and would otherwise
+ * look identical to every healthy skill. The mechanism and the token cost are both
  * derived from the form's live state through the runtime's own code, so the
  * sentence here and the row's after a save are the same verdict.
  */
@@ -1187,11 +1187,10 @@ function ListField({
 /**
  * Collapsible advanced controls — the manifest fields behind the prose.
  *
- * `loadingStrategy` used to be hardcoded here because a `dynamic` skill with
- * neither triggers nor tool-affinity is catalog-only, and with a thin
- * description that means it never loads — a silent failure the editor had no
- * way to show. `LoadingVerdict` above shows it now, at the moment the condition
- * is created, which is what makes exposing the control safe.
+ * A `dynamic` skill with neither triggers nor tool-affinity is catalog-only,
+ * and with a thin description that means it never loads. `LoadingVerdict`
+ * above shows that at the moment the condition is created, which is what
+ * makes exposing the `loadingStrategy` control safe.
  */
 function AdvancedSection({
   open,

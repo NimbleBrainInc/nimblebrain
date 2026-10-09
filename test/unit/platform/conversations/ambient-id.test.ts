@@ -358,7 +358,7 @@ describe("a task run has no conversation", () => {
   }
 
   test("a run id arriving in the conversation field is still refused", async () => {
-    // The reader-side forward guard. `executeTask` no longer produces this
+    // The reader-side forward guard. `executeTask` does not produce this
     // shape, so nothing else on this branch exercises the shape-check.
     const result = await withRunIdInConversationField("update", { title: "Doctrine" });
 

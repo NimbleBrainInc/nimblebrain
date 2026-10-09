@@ -2,12 +2,12 @@
  * The Composio transport credential must be registered by `Runtime.start`
  * itself, before `startWorkspaceConnectors` runs.
  *
- * This pins the defect that shipped in this PR's first cut: registration lived
- * in `createComposioProvider`, which runs only when the managed-connector
- * registry is first built — lazily, after `start()` has returned. A connected
- * Composio connector starts *inside* `start()`, so `applyProviderAuth` threw
- * `provider "composio" is not registered`, `startup.ts` dropped the source, and
- * every Composio connector lost its tools on every restart.
+ * Registration in `createComposioProvider` would be too late: that runs only
+ * when the managed-connector registry is first built — lazily, after `start()`
+ * has returned. A connected Composio connector starts *inside* `start()`, so
+ * `applyProviderAuth` would throw `provider "composio" is not registered`,
+ * `startup.ts` would drop the source, and every Composio connector would lose
+ * its tools on every restart.
  *
  * It lives in `test/integration/` because it calls `Runtime.start()`, and it
  * asserts against a **cleared** registry: the registry is a process-global Map

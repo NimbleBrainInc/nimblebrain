@@ -10,10 +10,10 @@ import {
 
 describe("sync-nebius invariants", () => {
   it("keeps the context floor clear of the output default", () => {
-    // Dropping the output clamp (`Math.min(DEFAULT_OUTPUT_LIMIT, context)`) was
-    // only safe because nothing past the gate can have a context smaller than
-    // the output we hand it. That guarantee used to be mechanical and is now
-    // structural, so it needs a tripwire: lower the floor under the output
+    // There is no output clamp (`Math.min(DEFAULT_OUTPUT_LIMIT, context)`): it
+    // is unneeded only because nothing past the gate can have a context smaller
+    // than the output we hand it. That guarantee is structural, not mechanical,
+    // so it needs a tripwire: lower the floor under the output
     // default and every catalogued model gets a max_tokens above its window.
     expect(MIN_USABLE_CONTEXT).toBeGreaterThan(DEFAULT_OUTPUT_LIMIT);
   });
@@ -113,9 +113,9 @@ describe("probeModel", () => {
   });
 
   it("sends the auth header, the tool, and a budget big enough for a reasoning trace", async () => {
-    // The fake fetch used to ignore its arguments, so a dropped header, a
-    // malformed tool, or a shrunken budget all stayed green — and the budget is
-    // exactly what produced this file's false negatives.
+    // A fake fetch that ignores its arguments would keep a dropped header, a
+    // malformed tool, or a shrunken budget green — and a shrunken budget is
+    // what produces false negatives in the probe.
     let seen: { url?: string; headers?: Record<string, string>; body?: Record<string, unknown> } =
       {};
     const capturing = (async (

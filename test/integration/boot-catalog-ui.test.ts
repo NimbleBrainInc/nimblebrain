@@ -2,9 +2,9 @@
  * A placement the catalog gains after a connector was installed reaches that
  * connector at the next boot, without a reinstall.
  *
- * Install stores the catalog's host UI on the connector's record. Boot used to
- * register placements from that stored copy alone, so the placement registry —
- * what the sidebar, the route table and the connector settings page read — kept
+ * Install stores the catalog's host UI on the connector's record. Registering
+ * placements from that stored copy alone would leave the placement registry —
+ * what the sidebar, the route table and the connector settings page read — with
  * the shape the catalog had on the day of install.
  */
 

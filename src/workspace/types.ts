@@ -31,8 +31,7 @@ export interface Workspace {
 
   /**
    * Short human-readable description. Populated by the workspace
-   * settings UI and consumed by the Stage 3+ discovery layer (workspace
-   * directory). Defined now so the schema doesn't migrate twice.
+   * settings UI.
    *
    * Defaults to `null` on creation. Patchable.
    */

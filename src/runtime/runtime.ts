@@ -332,7 +332,7 @@ function applyClearable<T>(current: T | undefined, patched: T | null | undefined
 /**
  * Warn about a configured slot the org's own policy forbids.
  *
- * A config file can strand a slot the way `set_model_config` no longer can: it
+ * A config file can strand a slot the way `set_model_config` cannot: it
  * is written by hand, so nothing validates it against the policy beside it.
  *
  * Reported rather than refused — a deployment that boots with an error it can
@@ -1708,7 +1708,7 @@ export class Runtime {
     });
 
     // Evict the volatile head onto the latest user message so a per-run change
-    // (date, app/focused-app state, matched skill) no longer rewrites the
+    // (date, app/focused-app state, matched skill) does not rewrite the
     // 1h-cached system prefix. Telemetry above counts every segment via
     // `systemPrompt`; the prepend runs after it, so history isn't double-counted.
     // Falls back to folding the head into the system string when there's no user
@@ -1772,7 +1772,7 @@ export class Runtime {
     // `workspaceId`, which is the right answer for session-scoped reads
     // (overlays, file store) and the wrong one for per-call data. Per-call
     // handlers should take a `WorkspaceContext` argument from the dispatch
-    // path instead. T008 (credential rebinding) tightens this further.
+    // path instead.
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
     // ── The spend accounts ──────────────────────────────────────────────────
@@ -2345,7 +2345,7 @@ export class Runtime {
     if (slot) return this.getModelSlot(slot);
 
     // A concrete model named by the caller is the one untrusted value here,
-    // and since #892 it is written to the conversation's immutable pin. An
+    // and it is written to the conversation's immutable pin. An
     // unchecked value would not overspend for a turn; it would seal the
     // conversation to a disallowed model for life, past any later policy change.
     // Checked before qualification, not after: `resolveModelString("")` is
@@ -2646,7 +2646,7 @@ export class Runtime {
     };
   }
 
-  // ── Stage 2 (T006) — identity-bound chat helpers ─────────────────
+  // ── Identity-bound chat helpers ──────────────────────────────────
 
   /**
    * Construct the chat surface's identity-bound `ToolRouter`.
@@ -5275,7 +5275,7 @@ export class Runtime {
    * BOOT-TIME context skills (org/core/builtin) with any toggled Off
    * (`status: "disabled"`) removed. Audit/management helper only.
    *
-   * NOTE: the prompt composition path no longer reads this. Compose routes by
+   * NOTE: the prompt composition path does not read this. Compose routes by
    * ROLE via `partitionSkillsByRole(loadConversationSkills(...))`, whose
    * `context` set spans EVERY tier (boot + workspace + user) and applies the
    * same active-status filter. This method is the boot-only subset — use it for
@@ -5296,7 +5296,7 @@ export class Runtime {
   }
 
   /**
-   * Phase 2 — per-conversation Layer 3 skill overlay.
+   * Per-conversation Layer 3 skill overlay.
    *
    * Returns the merged platform-tier + workspace-tier + user-tier set,
    * deduplicated by `manifest.name` with later scopes overriding earlier
@@ -6604,8 +6604,8 @@ export function buildContextAssembledPayload(input: {
   const historyTokens = input.messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
   // NOTE: `skills` is an ANNOTATION of what the composed skills cost, NOT a
   // disjoint bucket — those skill bodies are already inside `system_prompt`, so
-  // `totalTokens` intentionally double-counts them (unchanged from Phase 1, now
-  // spanning always-on/trigger too since the payload widened). Don't "fix" the
+  // `totalTokens` intentionally double-counts them (always-on and trigger
+  // skills included). Don't "fix" the
   // total by subtracting; the disjoint budget is system_prompt + tools + history.
   const sources: ContextAssembledSource[] = [
     { kind: "system_prompt", tokens: promptTokens },

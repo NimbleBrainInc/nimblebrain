@@ -322,8 +322,8 @@ describe("IdentityToolRouter — the wall (cross-workspace reach is unexpressibl
       runtime,
     });
 
-    // Naming another workspace is no longer DENIED — it is unexpressible. The
-    // `ws_<id>-` form is retired, so this is rejected as a stale wire name
+    // Naming another workspace is not DENIED — it is unexpressible. The
+    // `ws_<id>-` form is not routed, so this is rejected as a stale wire name
     // before any workspace resolution happens, and there is no name left that
     // can address a workspace other than the session's own. That is a stronger
     // guarantee than catching the attempt after the fact: there is no attempt to

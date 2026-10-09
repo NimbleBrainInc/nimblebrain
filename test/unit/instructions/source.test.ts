@@ -246,7 +246,7 @@ describe("instructions source — write_instructions", () => {
     expect(JSON.stringify(parsed)).toContain("8192");
   });
 
-  // A stale `scope` must not be ignored. The schema no longer declares it and
+  // A stale `scope` must not be ignored. The schema does not declare it and
   // unknown keys pass validation, so ignoring it would redirect an org-intended
   // write onto the workspace overlay — overwrite-only, no history, previous body
   // gone, with a success string as the only signal.

@@ -53,8 +53,7 @@ import type { CatalogListing, ConnectorCatalogEntry } from "./types.ts";
  * so they stay inline at the catalog call site.
  *
  * `auth` always resolves (defaulting to `"dcr"`); the rest are present only
- * when the meta carries them, matching the `...(meta?.X ? { X } : {})`
- * shape both sites previously inlined.
+ * when the meta carries them (the `...(meta?.X ? { X } : {})` shape).
  */
 function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
   auth: ConnectorAuthKind;
@@ -186,8 +185,8 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
  * Defense-in-depth safety check on a `ServerDetail` regardless of which
  * source emitted it. Runs at the directory boundary so registry-published
  * entries are scrubbed identically wherever they came from
- * static entries — pre-fix only static-source ran this check, so a
- * malicious publisher on a non-curated registry could ship
+ * static entries — run only on static-source entries, a malicious
+ * publisher on a non-curated registry could ship
  * `_meta.docsUrl: "javascript:..."` and the Configure page would render
  * it as a clickable `<a href>`. `target="_blank" rel="noopener noreferrer"`
  * does NOT block `javascript:` URI execution.

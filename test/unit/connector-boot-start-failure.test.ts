@@ -5,11 +5,11 @@ import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 
 /**
  * A remote connector whose endpoint is unreachable during the boot loop — a fleet
- * service that was mid-rollout when the runtime came up — used to be dropped for
- * the whole process lifetime: no lifecycle instance, no placements, no recovery.
- * The app vanished from the shell and the route it owned rendered blank.
+ * service that was mid-rollout when the runtime came up — must not be dropped for
+ * the whole process lifetime (no lifecycle instance, no placements, no recovery,
+ * the app gone from the shell and the route it owned rendering blank).
  *
- * It is now seeded like any other installed connector, carrying `startError`. These
+ * It is seeded like any other installed connector, carrying `startError`. These
  * tests pin the two halves of that: the Connection must reflect the failure
  * rather than inheriting the auth-derived `running`, and the instance must exist
  * so `tryRecoverSource` has a ref to re-spawn from.

@@ -287,11 +287,11 @@ describe("connector-skill adapter — end-to-end", () => {
   });
 
   it("does not let one workspace's discovery answer for another", async () => {
-    // Discovery used to resolve a server name against whichever workspace
-    // registry iterated first, and cache the result under the bare name. So a
-    // connector installed in several workspaces had ONE shared answer: whichever
-    // instance won the race spoke for all of them, and an instance that
-    // published nothing (or was transiently unreachable) decided the skill for
+    // Discovery that resolves a server name against whichever workspace
+    // registry iterates first, and caches the result under the bare name, gives
+    // a connector installed in several workspaces ONE shared answer: whichever
+    // instance wins the race speaks for all of them, and an instance that
+    // publishes nothing (or is transiently unreachable) decides the skill for
     // everyone. That moves the catalog and the surface-once candidates
     // together, since both read this.
     //

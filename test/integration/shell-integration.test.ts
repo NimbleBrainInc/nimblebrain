@@ -176,7 +176,7 @@ describe("Connector with placements → /v1/workspaces/:wsId/shell", () => {
 // =============================================================================
 
 describe("MCP client e2e with nb tools", () => {
-  // Stage 2: every tool name is namespaced as `ws_<id>/<source>__<tool>`.
+  // Every tool name is namespaced as `ws_<id>/<source>__<tool>`.
   const NB_PREFIX = "nb__";
 
   it("listTools includes nb__ prefixed tools", async () => {

@@ -1,5 +1,3 @@
-// `ParticipantInfo` was the participants-section input; gone post Stage 1.
-// Stage 4 reintroduces a participants concept with policy gating.
 import type { SkillCatalogEntry } from "../skills/catalog.ts";
 import type { LoadedBy } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
@@ -144,7 +142,7 @@ export interface ComposedPrompt {
  * overlays, apps). `volatileHead` is the per-turn-volatile content (current
  * date, app/focused-app state, matched skill) wrapped in a single
  * `<runtime-context>` block — the runtime prepends it to the latest user
- * message so a per-turn change no longer rewrites the cached system prefix.
+ * message so a per-turn change does not rewrite the cached system prefix.
  * `volatileHead` is "" when there is no volatile content.
  *
  * `layers` and `totalTokens` mirror `ComposedPrompt` (the full set, both tiers).
@@ -389,8 +387,7 @@ export function composeSystemPromptTraced(
   layers.push(...userIdentityLayers(userPrefs));
   layers.push(...currentDateLayers(userPrefs));
 
-  // Layer 1.6: Participants section — removed in Stage 1 (single-owner
-  // conversations). Returns in Stage 4 with policy-gated sharing.
+  // No participants section: a conversation has exactly one owner.
 
   // Layers 1.7 → 4, in prompt order: workspace context, workspace overlay,
   // Layer 3 skills, installed apps, app state, focused app, matched skill.
@@ -809,7 +806,7 @@ function matchedSkillLayers(
  * Same composition (delegates to the traced builder — single source of truth
  * for layer order and classification), but splits the result into the cacheable
  * `stableSystem` prefix and the per-turn `volatileHead`. The runtime sends
- * `stableSystem` as the system block (so a per-turn change no longer rewrites
+ * `stableSystem` as the system block (so a per-turn change does not rewrite
  * the 1h-cached prefix) and prepends `volatileHead` to the latest user message.
  */
 export function composeSystemSegments(

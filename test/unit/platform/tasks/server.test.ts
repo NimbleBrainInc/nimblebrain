@@ -989,7 +989,7 @@ describe("handleRun", () => {
       expect(result.message).not.toContain("disabled");
     } finally {
       // Drain the pending runNow promise so it doesn't sit live past
-      // the test (handleRun no longer awaits it after the sync-wait
+      // the test (handleRun does not await it after the sync-wait
       // times out, and Bun's runner doesn't pin the suite on it, but
       // hygiene matters when the file grows).
       resolveRun?.(makeRun());

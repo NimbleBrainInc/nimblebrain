@@ -20,9 +20,9 @@ export const MINTED_PROVIDER = "minted";
  * the catalog provenance that `validateConnectorUrl`'s `fleetInternal` exception
  * assumes (in-cluster `.svc` over plain HTTP).
  *
- * Keyed on the provider NAME, deliberately. `auth.type === "provider"` used to be
- * synonymous with "minted", so callers keyed on the kind; it no longer is. A
- * brokered connector names a credential provider too, but its URL comes from the
+ * Keyed on the provider NAME, deliberately, not on `auth.type === "provider"`:
+ * that kind is not synonymous with "minted". A brokered connector names a
+ * credential provider too, but its URL comes from the
  * vendor's API response and is persisted into tenant state, so it carries none of
  * the provenance the exception rests on.
  */

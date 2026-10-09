@@ -2,11 +2,10 @@
  * A server that publishes more than one `always` skill keeps ALL of them when
  * the user enters its app.
  *
- * Regression guard. `loadConnectorSkills` used to skip the entered SOURCE, on the
- * premise that its guidance was recovered via `<app-guide>` — but `<app-guide>`
- * carries only the primary skill (the first `resources/list` entry). One skill
- * per server made that equivalent; six made it a five-sixths loss, silently, on
- * every turn sent from the app panel. Dedup is per-SKILL (`excludeSkill`), keyed
+ * `loadConnectorSkills` must not skip the entered SOURCE on the premise that its
+ * guidance is recovered via `<app-guide>` — `<app-guide>` carries only the
+ * primary skill (the first `resources/list` entry). With six skills, skipping
+ * would be a five-sixths loss, silently, on every turn sent from the app panel. Dedup is per-SKILL (`excludeSkill`), keyed
  * by publisher AND path, so only the body actually composed elsewhere is
  * withheld — and only on the server that published it.
  *
@@ -291,7 +290,7 @@ describe("same skill path on two servers", () => {
   it("entering one server keeps the other's identically-pathed `always` skill", async () => {
     // Both publish `skill://orientation/SKILL.md`. Keying the exclusion on the
     // uri alone would drop the neighbour's copy the moment the first is entered
-    // — the same silent drop this PR closes, one scope out.
+    // — the same silent drop this file guards against, one scope out.
     await runtime.chat({
       identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,

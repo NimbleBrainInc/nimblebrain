@@ -8,9 +8,9 @@ import { Tooltip } from "./ui/tooltip";
 
 // ---------------------------------------------------------------------------
 // Avatar palette. The user gets a deterministic index hashed from
-// email/id; T013's sidebar workspace+apps navigator will adopt the same
-// palette so workspace + identity avatars stay visually consistent
-// without colliding (different hash inputs → different hues).
+// email/id. Workspace avatars share the palette so workspace + identity
+// avatars stay visually consistent without colliding (different hash
+// inputs → different hues).
 // ---------------------------------------------------------------------------
 
 const AVATAR_PALETTE: [string, string][] = [

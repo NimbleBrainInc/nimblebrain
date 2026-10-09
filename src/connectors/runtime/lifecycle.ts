@@ -1201,12 +1201,12 @@ export class ConnectorLifecycleManager {
         // swallowing it. (The SDK's `OAuthError` carries the OAuth error code,
         // e.g. `invalid_grant`, as its message.)
         const msg = err instanceof Error ? err.message || err.name : String(err);
-        // Always surface the failure. The interactive path (capturedAuthUrl
-        // set) used to be swallowed here: if the background start() failed
-        // AFTER the auth URL was returned — the token exchange or reconnect
-        // threw once the user came back, or the pending flow timed out — the
-        // connection was left stuck in `pending_auth` ("Connecting…") forever
-        // with no log and no tokens. Log it and move the connection to `dead`
+        // Always surface the failure, including on the interactive path
+        // (capturedAuthUrl set): if the background start() fails AFTER the
+        // auth URL was returned — the token exchange or reconnect throws once
+        // the user comes back, or the pending flow times out — a swallowed
+        // error leaves the connection stuck in `pending_auth` ("Connecting…")
+        // forever with no log and no tokens. Log it and move the connection to `dead`
         // (+ lastError) so the UI offers a recoverable Reconnect instead of
         // an indefinite spinner.
         log.warn(
@@ -1266,7 +1266,7 @@ export class ConnectorLifecycleManager {
     if (!ref || !("url" in ref)) {
       throw new Error(`[lifecycle] missing URL ref for "${serverName}" — cannot revoke tokens`);
     }
-    // Stage 2: every URL connector is workspace-scoped. The only legal
+    // Every URL connector is workspace-scoped. The only legal
     // principal is `WORKSPACE_PRINCIPAL_ID`.
     if (principalId !== WORKSPACE_PRINCIPAL_ID) {
       throw new Error(
@@ -1744,7 +1744,7 @@ export class ConnectorLifecycleManager {
    * LOCAL credentials, so the platform forgets them. The workspace `uninstall`
    * DOES revoke upstream (`revokeUrlConnectorTokens` for DCR, the provider's
    * `cleanup` arm for a brokered one) — a known asymmetry with this method, and
-   * one the seam no longer blocks: `cleanup` takes an owner, so closing it is a
+   * one the seam does not block: `cleanup` takes an owner, so closing it is a
    * call, deliberately left to the connection-state / reauth slice rather than
    * changing teardown semantics here. A user who wants the vendor-side grant gone
    * meanwhile can revoke it in the vendor's own authorized-apps list.
@@ -2054,7 +2054,7 @@ export class ConnectorLifecycleManager {
     // Liveness, not membership. A boot-failed source stays REGISTERED so it
     // remains visible and HealthMonitor can heal it — so `hasSource` would say
     // "already fine" for exactly the sources that need this path most, and the
-    // app-open recovery that used to re-spawn them would never fire.
+    // app-open recovery that re-spawns them would never fire.
     if (wsRegistry.hasEstablishedSource(serverName)) return true;
 
     const key = `${serverName}|${wsId}`;

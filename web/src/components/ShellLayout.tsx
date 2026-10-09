@@ -111,8 +111,7 @@ export const ShellLayout = memo(function ShellLayout({
 
       {/* Main content — pushes over to make room for the chat panel
           when it's open in sidebar mode. The marginRight + transition
-          here is what every route now relies on (was previously
-          duplicated only inside AppWithChat). Mobile / fullscreen
+          here is what every route relies on. Mobile / fullscreen
           modes don't need this push: mobile chat is full-width;
           fullscreen chat covers the content overlay-style. */}
       <main

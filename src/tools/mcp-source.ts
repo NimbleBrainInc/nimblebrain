@@ -3276,7 +3276,7 @@ export function isMcpResourceMiss(err: unknown): boolean {
  * `source-absent` (a registry-lookup miss before any call) and `credential-lost`
  * (a `ConnectionRevalidator` probe verdict) are deliberately absent: they are not
  * thrown errors, so they cannot be classified from one. They reach recovery as
- * detector *signals* (handled by the recovery policy in Phase 2), never as
+ * detector *signals* (handled by the recovery policy, `policyFor`), never as
  * outputs of `classifyConnectionFailure`.
  */
 export type ConnectionFailure =
@@ -3325,7 +3325,7 @@ function isClientActionable(err: unknown): boolean {
  * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
  * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
  *   note its recovery *policy* is config-dependent — a static-auth remote can't
- *   reauth — but that decision is Phase 2's (see the SPEC §3.2), not this function's.
+ *   reauth — but that decision is the recovery policy's (`policyFor`), not this function's.
  * - **transport-dead** — a RECOGNIZED torn-transport shape (closed / refused /
  *   reset / timed out / fetch error / broken pipe).
  * - **none** — the server answered with a standard JSON-RPC *protocol* error

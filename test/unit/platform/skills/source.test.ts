@@ -137,7 +137,7 @@ describe("skills source — tools list", () => {
     const client = src.getClient()!;
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name);
-    // Phase 4+ tools — author/commit_draft/lint/attribution land later.
+    // author/commit_draft/lint/attribution are not tools of this source.
     expect(names).not.toContain("author");
     expect(names).not.toContain("commit_draft");
     expect(names).not.toContain("lint");
@@ -206,8 +206,8 @@ describe("skills source — resources", () => {
 describe("skills source — unattended-run wall", () => {
   // `set_status` is the durable write and is barred, obviously.
   //
-  // `activate`/`deactivate` are barred too, and stay barred now that they only
-  // mute for one conversation. They no longer touch a file, but "turn the
+  // `activate`/`deactivate` are barred too, though they only mute for one
+  // conversation. They do not touch a file, but "turn the
   // guidance off" is exactly the lever untrusted content would reach for, and
   // an unattended run is where nobody is watching it happen. Not writing to
   // disk makes them safer for a human's chat; it does not make them safe here.

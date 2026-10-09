@@ -2,11 +2,11 @@
  * What survives `tools/list`.
  *
  * An MCP tool listing carries four things beyond the name and description, and
- * the host used to keep two of them. `annotations` and `outputSchema` were read
- * off the wire and dropped on the floor, silently: the server said something
- * about the tool and nothing downstream ever heard it. The failure that costs
- * something is `destructiveHint` — a tool that declares itself destructive was
- * indistinguishable, everywhere in the host, from a read-only one.
+ * the host keeps all four. Dropping `annotations` or `outputSchema` would be
+ * silent: the server says something about the tool and nothing downstream
+ * hears it. The failure that costs something is `destructiveHint` — a tool that
+ * declares itself destructive would be indistinguishable, everywhere in the
+ * host, from a read-only one.
  *
  * `_meta` and `annotations` are separate namespaces in the spec, and they stay
  * separate here: `_meta` is the free-form reverse-DNS bag where host

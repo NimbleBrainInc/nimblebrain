@@ -104,7 +104,7 @@ export interface WorkspaceOAuthProviderOptions {
   ownerDisplayName?: string;
   serverName: string;
   /**
-   * Workspace-bound context, optional. It no longer decides where anything
+   * Workspace-bound context, optional. It does not decide where anything
    * lands — the credential store resolves the owner's scope itself — but when
    * present the provider asserts `workspaceContext.workspaceId ===
    * owner.wsId`, so a caller cannot pair a context bound to ws_A with
@@ -724,7 +724,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // verify in depth, at the boundary.
     assertSafeOwnerId(opts.serverName);
     assertSafeOwnerId(opts.owner.type === "workspace" ? opts.owner.wsId : opts.owner.userId);
-    // A `workspaceContext` no longer decides where anything lands — the store
+    // A `workspaceContext` does not decide where anything lands — the store
     // resolves the owner's scope on its own — but pairing one with a
     // user-scoped owner is still a category error worth refusing, and a
     // context bound to ws_A alongside `owner: {wsId: ws_B}` is a caller bug

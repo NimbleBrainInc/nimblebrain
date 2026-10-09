@@ -173,8 +173,7 @@ async function callModelInner(
    *
    * Provider-agnostic: AI SDK V4 normalizes `tool-input-start` across
    * Anthropic / OpenAI / Google. Providers that never emit it simply
-   * skip the callback (engine falls back to `tool.start`-only signals,
-   * matching legacy behavior).
+   * skip the callback (engine falls back to `tool.start`-only signals).
    */
   onToolInputStart?: (id: string, toolName: string) => void,
   onToolInputEnd?: (id: string) => void,

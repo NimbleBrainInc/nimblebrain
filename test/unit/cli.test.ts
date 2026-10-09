@@ -332,7 +332,7 @@ describe("config validation", () => {
     }
   });
 
-  // Keys the loader no longer reads take the unknown-key path like any other:
+  // Keys the loader does not read take the unknown-key path like any other:
   // warned by name, ignored, and never copied into the runtime config.
   for (const [key, value] of [
     ["model", { provider: "anthropic" }],

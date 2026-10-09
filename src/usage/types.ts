@@ -58,11 +58,11 @@ export interface UsageRates {
 /**
  * One priced LLM call, as written to the durable usage ledger.
  *
- * Usage used to be derived from a storage side effect — a conversation JSONL
- * happening to exist, in a workspace still on disk — so any call path that did
- * not write one was invisible by default, and four such paths existed. A line
- * here is a *fact recorded at the point of spend*, which is what makes the next
- * non-conversation call path visible without anyone remembering to wire it.
+ * Usage derived from a storage side effect — a conversation JSONL happening to
+ * exist, in a workspace still on disk — misses every call path that does not
+ * write one. A line here is a *fact recorded at the point of spend*, which is
+ * what makes a non-conversation call path visible without anyone remembering
+ * to wire it.
  *
  * Written only by `src/usage/record.ts`; read only by `src/usage/aggregate.ts`.
  */

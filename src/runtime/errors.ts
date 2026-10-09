@@ -9,9 +9,8 @@ export class RunInProgressError extends Error {
 
 /**
  * Thrown when a caller attempts to read or write a conversation they
- * don't own. Stage 1 is single-owner: the conversation's `ownerId`
- * must match the requesting identity. Stage 4 will widen this with
- * policy-gated sharing.
+ * don't own. Conversations are single-owner: the conversation's
+ * `ownerId` must match the requesting identity.
  *
  * The HTTP handler maps this to `403 conversation_access_denied`.
  * Returning a `404` would be a defensible alternative (don't leak
@@ -120,7 +119,7 @@ export class DeclaredToolsUnavailableError extends Error {
 }
 
 /**
- * Thrown when a conversation file on disk fails the Stage 1 invariant
+ * Thrown when a conversation file on disk fails the ownership invariant
  * check at load time — specifically, a pre-migration file that lacks
  * `ownerId`. The store can't synthesize an owner safely and the chat
  * runtime can't authorize access on it.

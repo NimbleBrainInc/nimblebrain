@@ -45,7 +45,7 @@ function seedInstance(
   lifecycle: ConnectorLifecycleManager,
   serverName: string,
   wsId: string,
-  // Stage 2: only "workspace" is legal post-schema-cut.
+  // Only "workspace" is a legal scope.
   oauthScope: "workspace" = "workspace",
   ref?: ConnectorRef,
 ): ConnectorInstance {

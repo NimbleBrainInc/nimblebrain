@@ -64,9 +64,9 @@ describe("originOf", () => {
 });
 
 describe("each id in the ledger lands under its own name", () => {
-  // `sessionId` used to hold a conversation-or-run union told apart by
-  // `origin`. Each fact now has its own field, and `runId` — the engine's, per
-  // turn — is the one the union could not express at all.
+  // Each fact has its own field rather than a conversation-or-run union told
+  // apart by `origin`, and `runId` — the engine's, per turn — is one such a
+  // union could not express at all.
   function fieldsFor(
     ctx: Parameters<typeof runWithRequestContext>[0],
     event?: Record<string, unknown>,

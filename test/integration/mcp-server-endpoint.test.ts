@@ -23,7 +23,7 @@ import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-works
 // ---------------------------------------------------------------------------
 //
 // The session-miss tests below assert on log content, not just status codes.
-// The whole reason this PR's logs exist is to make session-miss diagnoseable
+// The whole reason these logs exist is to make session-miss diagnoseable
 // in production — if a future refactor silently drops the `log.warn` calls,
 // status codes alone wouldn't catch it. Capturing also keeps stderr clean of
 // the yellow `[mcp] session miss` lines that the tests deliberately provoke.
