@@ -210,6 +210,15 @@ If a connector has a curated overlay, the platform skips synthesizing its publis
 
 Ask the agent which skills are loaded — it uses the built-in `skills__list` tool to report each skill's name, loading strategy, priority, and source file. To see one skill's full definition, ask the agent for its details.
 
+## Editing a skill in settings
+
+The Skills pages in settings (your profile, a workspace, and the organization) create and edit skills without touching files.
+
+- **Creating** a skill is one explicit action: fill in the name and body, set anything under **Advanced**, and click **Create**. A pasted whole `SKILL.md` works here: its frontmatter sets the fields it declares, and the block isn't stored as text.
+- **Editing** an existing skill has no Save button. Each field saves on its own: the loading strategy when you pick one, the priority when you leave it or press Enter, and the body, tool patterns, and trigger phrases when you leave them. A save shows a notice with **Undo**; one the server refuses stays on the field with the reason, **Retry**, and **Revert**.
+- On an existing skill, the fields set the manifest and the body is only prose. A body that starts with a `---` header is not applied, because it would overwrite fields saved separately: remove the header, or tick **Keep it as body text**.
+- The loading verdict above **Advanced** describes the skill as saved. While an edit hasn't saved yet, it says which one.
+
 ## Auditing how skills loaded
 
 `skills__list` says which skills *exist*. To see which ones actually reached the model, and how, replay the skill-load ledger with `skills__loading_log`.
