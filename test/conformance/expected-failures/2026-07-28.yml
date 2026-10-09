@@ -12,8 +12,6 @@ server:
   - input-required-result-non-tool-request
   # prompts/list is not served, and resources/read drops ttlMs and cacheScope.
   - caching
-  # A request with an invalid Host or Origin header is served, not refused.
-  - dns-rebinding-protection
   # Not a gateway gap: the reference server exposes no tool with x-mcp-header
   # annotations, so the scenario cannot run against it either.
   - http-custom-header-server-validation
