@@ -272,7 +272,7 @@ export interface RuntimeConfig {
     timezone?: string;
     /** BCP 47 locale. Default: "en-US". */
     locale?: string;
-    /** Color theme. Default: `brand.defaultTheme`, else "system". */
+    /** Color theme. Default: "system". */
     theme?: "system" | "light" | "dark";
   };
 }

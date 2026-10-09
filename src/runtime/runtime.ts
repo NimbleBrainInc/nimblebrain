@@ -11,7 +11,7 @@ import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.ts";
-import { loadBrand, resolvedBrand } from "../brand/index.ts";
+import { loadBrand } from "../brand/index.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
@@ -5125,8 +5125,7 @@ export class Runtime {
   /**
    * Tenant-level default preferences from the deployed runtime config
    * (`config.preferences`, with `config.home.timezone` as the timezone
-   * fallback and `brand.defaultTheme` as the theme fallback). Per-user identity
-   * preferences override them at request time.
+   * fallback). Per-user identity preferences override them at request time.
    */
   getTenantDefaultPreferences(): {
     displayName?: string;
@@ -5136,12 +5135,11 @@ export class Runtime {
   } {
     const prefs = this.config.preferences ?? {};
     const home = this.config.home ?? {};
-    const theme = prefs.theme ?? resolvedBrand().defaultTheme;
     return {
       ...(prefs.displayName ? { displayName: prefs.displayName } : {}),
       ...((prefs.timezone ?? home.timezone) ? { timezone: prefs.timezone ?? home.timezone } : {}),
       ...(prefs.locale ? { locale: prefs.locale } : {}),
-      ...(theme ? { theme } : {}),
+      ...(prefs.theme ? { theme: prefs.theme } : {}),
     };
   }
 
