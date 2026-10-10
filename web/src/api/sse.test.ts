@@ -44,7 +44,7 @@ test("a frame whose event and data lines arrive in separate reads is delivered",
     chunkedResponse([
       "event: conversation.title\n",
       `data: ${JSON.stringify(data)}\n\n`,
-    ])) as unknown as typeof fetch;
+    ])) as unknown as typeof fetch; // Bun's `fetch` type also declares `preconnect`, absent here
 
   const received: Array<{ type: string; data: unknown }> = [];
   const conn = connectEvents({

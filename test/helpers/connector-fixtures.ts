@@ -17,5 +17,6 @@ export const CONNECTOR_FIXTURE_DIR = join(import.meta.dir, "..", "fixtures", "co
  * `"url" in ref` guards that tests feed them to exist for exactly those rows.
  */
 export function legacyConnectorRef(shape: { name: string } | { path: string }): ConnectorRef {
+  // A legacy row is deliberately a shape `ConnectorRef` refuses (no `url`).
   return shape as unknown as ConnectorRef;
 }

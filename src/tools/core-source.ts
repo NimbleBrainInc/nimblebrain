@@ -3,7 +3,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { artifactResolutionsTotal } from "../api/metrics.ts";
 import { OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
-import { textContent } from "../engine/content-helpers.ts";
+import { structuredContent, textContent } from "../engine/content-helpers.ts";
 import type { ThinkingEffort, ToolResult } from "../engine/types.ts";
 import {
   type ArtifactListItem,
@@ -883,7 +883,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           const output: BriefingOutput = { items, generated_at: new Date().toISOString() };
           return {
             content: textContent(renderBriefingText(items)),
-            structuredContent: output as unknown as Record<string, unknown>,
+            structuredContent: structuredContent(output),
             isError: false,
           };
         } catch (err) {

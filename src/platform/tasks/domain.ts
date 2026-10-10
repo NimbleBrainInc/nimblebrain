@@ -370,6 +370,9 @@ function reanchorNextRunAt(task: Task, defaultTimezone?: string): void {
  */
 function applyPatchFields(task: Task, patch: DomainUpdatePatch): boolean {
   let changed = false;
+  // `field` ranges over a union of keys, and TS cannot relate `patch[field]`
+  // (which may be `null`) to `task[field]` for the same key, so the loop writes
+  // through a string-keyed view of the same `Task` object.
   const record = task as unknown as Record<string, unknown>;
   for (const field of UPDATABLE_FIELDS) {
     if (!(field in patch) || patch[field] === undefined) continue;

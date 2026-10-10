@@ -21,7 +21,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 interface ToolCall {
   source: string;
@@ -80,6 +80,7 @@ async function mount(
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
+  // Each `installed` entry carries only the `serverName` and `displayName` the tab reads, not a full InstalledConnector.
   const icons = {
     iconFor: () => undefined,
     connectors: { workspaceId: WS.id, installed },
@@ -186,7 +187,7 @@ describe("the delivery URL", () => {
   test("copies whole while masked", async () => {
     listed = [hook()];
     const written: string[] = [];
-    const nav = (globalThis as unknown as { window: { navigator: Navigator } }).window.navigator;
+    const nav = window.navigator;
     Object.defineProperty(nav, "clipboard", {
       configurable: true,
       value: { writeText: async (t: string) => void written.push(t) },

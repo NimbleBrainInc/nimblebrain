@@ -20,7 +20,7 @@ import { __internal__ } from "../api/events-client";
 import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 import type { BootstrapResponse, WorkspaceStreamEvents } from "../types";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const HOME = "ws_00a1b2c3d4e5f607";
 const OTHER = "ws_00f7e6d5c4b3a291";
@@ -29,6 +29,7 @@ let rebootstrap: BootstrapResponse["workspaces"] = [];
 
 mock.module("../api/client", () => ({
   ...realClient,
+  // The unread provider reads only `workspaces` from a re-bootstrap; `user` and `config` are not built.
   tryBootstrap: mock(async () => ({ workspaces: rebootstrap }) as unknown as BootstrapResponse),
 }));
 

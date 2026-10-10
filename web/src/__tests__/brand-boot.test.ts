@@ -4,20 +4,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { applyBrand, bootBrand, getBrand } from "../brand";
 import { brandFontOrigins } from "../bridge/fonts";
 import { getThemeTokens } from "../bridge/theme";
 import type { ResolvedBrand } from "../theme/brand";
 
-// happy-dom's selector parser constructs `window.SyntaxError`, which the test
-// window lacks, so any querySelectorAll throws. Same patch the other DOM tests carry.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 const ACME_FAVICON = "https://static.example.com/brands/acme/favicon.png";
 
@@ -102,6 +95,7 @@ describe("bootBrand", () => {
 
 describe("applyBrand", () => {
   test("a brand the merge cannot read falls back to canonical", () => {
+    // A `null` color, which `ResolvedBrand` does not admit, is the unreadable brand under test.
     applyBrand({ name: "Broken", colors: { primary: null } } as unknown as ResolvedBrand);
     expect(getBrand()).toEqual({});
     expect(brandStyle()).toBeNull();

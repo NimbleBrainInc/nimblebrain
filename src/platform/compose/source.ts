@@ -38,7 +38,7 @@ import {
   type ConversationEvent,
   type SkillsLoadedEvent,
 } from "../../conversation/types.ts";
-import { textContent } from "../../engine/content-helpers.ts";
+import { structuredContent, textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
 import { filterAdmittedTools } from "../../permissions/admin-tools.ts";
 import {
@@ -175,7 +175,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
 
           return {
             content: textContent(formatTextSummary(response)),
-            structuredContent: response as unknown as Record<string, unknown>,
+            structuredContent: structuredContent(response),
             isError: false,
           };
         } catch (err) {
@@ -205,7 +205,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
           const digest = await readAssembledContext(runtime, convId, args.run_id);
           return {
             content: textContent(formatAssembledSummary(digest)),
-            structuredContent: digest as unknown as Record<string, unknown>,
+            structuredContent: structuredContent(digest),
             isError: false,
           };
         } catch (err) {

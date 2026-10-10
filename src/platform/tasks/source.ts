@@ -1,3 +1,4 @@
+import type { Static } from "@sinclair/typebox";
 import { effectiveRunLimits } from "../../config/tasks.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
@@ -8,7 +9,7 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import type { TaskRequest } from "../../runtime/types.ts";
 import { coreSkillBody } from "../../skills/loader.ts";
 import { isTaskForbiddenIdentityTool } from "../../tools/identity-sources.ts";
-import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
+import { defineInProcessApp, type InProcessTool, typedTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { unmatchedAllowedTools } from "../../tools/tool-pattern.ts";
 import { ledgerCostByTaskRun } from "../../usage/aggregate.ts";
@@ -27,7 +28,7 @@ import {
   judgeWarnings,
 } from "./judge.ts";
 import { countsAsEventFire, isOpenRun, Scheduler } from "./scheduler.ts";
-import { TOOL_SCHEMAS } from "./schemas.ts";
+import { type TaskToolName, TOOL_SCHEMAS } from "./schemas.ts";
 import {
   handleAssess,
   handleCancel,
@@ -533,11 +534,9 @@ export async function createTasksSource(
   );
 
   /** Shared error handler — catches, formats, returns isError result. */
-  function withErrorHandling(
-    fn: (input: Record<string, unknown>) => Promise<object> | object,
-  ): (
-    input: Record<string, unknown>,
-  ) => Promise<{ content: ReturnType<typeof textContent>; isError: boolean }> {
+  function withErrorHandling<I>(
+    fn: (input: I) => Promise<object> | object,
+  ): (input: I) => Promise<{ content: ReturnType<typeof textContent>; isError: boolean }> {
     return async (input) => {
       try {
         const result = await fn(input);
@@ -599,66 +598,63 @@ export async function createTasksSource(
     return withTaskWarnings(out, out.task);
   }
 
-  const tools: InProcessTool[] = TOOL_SCHEMAS.map((schema) => ({
-    ...schema,
-    handler: withErrorHandling((input) => {
-      // Unattended-run wall. A task must not reach the
-      // task-authoring surface (create/update/delete/run, and any authoring
-      // tool added later — the allowlist in `isTaskForbiddenIdentityTool` fails
-      // closed). Enforced HERE, at the source, because it is the single dispatch
-      // point every caller funnels through. `unattended` rides the ambient
-      // request context (set by `executeTask`, preserved across the per-call
-      // restamp), so this does not depend on which router dispatched the call,
-      // or on the tool having been surfaced to the model.
-      const refusal = unattendedRefusal(schema.name);
-      if (refusal) throw new Error(refusal);
-      const ctx = getToolContext();
-      switch (schema.name) {
-        case "create":
-          return warnAboutTask(handleCreate(input, ctx));
-        case "update":
-          return warnAboutTask(handleUpdate(input, ctx));
-        case "delete":
-          return handleDelete(input, ctx);
-        case "list":
-          return handleList(input, ctx);
-        case "status":
-          return handleStatus(input, ctx);
-        case "runs":
-          return handleRuns(input, ctx);
-        case "run_result":
-          return handleRunResult(input, ctx);
-        // Every run and batch is warned about, saved task or inline: a judge
-        // disconnected since the task was written fails its runs the same way.
-        case "run":
-          return handleRun(input, ctx).then((out) =>
-            withTaskWarnings(out, ctx.definitions().get(runOutputTaskId(out)), "run"),
-          );
-        case "run_batch": {
-          const out = handleRunBatch(input, ctx);
-          return withTaskWarnings(out, ctx.definitions().get(out.batch.taskId), "batch");
-        }
-        case "batch":
-          return handleBatch(input, ctx);
-        case "batch_control":
-          return handleBatchControl(input, ctx);
-        case "batches":
-          return handleBatches(input, ctx);
-        case "upcoming":
-          return handleUpcoming(input, ctx);
-        case "stats":
-          return handleStats(input, ctx);
-        case "judges":
-          return handleJudges(input, ctx);
-        case "cancel":
-          return handleCancel(input, ctx);
-        case "assess":
-          return handleAssess(input, ctx);
-        default:
-          throw new Error(`Unknown tool: ${schema.name}`);
-      }
-    }),
-  }));
+  // Every handler, keyed by tool name. The mapped type types each one's input
+  // from its own entry in `TOOL_SCHEMAS`, and a tool missing here fails to
+  // compile.
+  const handlers: {
+    [K in TaskToolName]: (
+      input: Static<(typeof TOOL_SCHEMAS)[K]["inputSchema"]>,
+      ctx: ToolContext,
+    ) => Promise<object> | object;
+  } = {
+    create: (input, ctx) => warnAboutTask(handleCreate(input, ctx)),
+    update: (input, ctx) => warnAboutTask(handleUpdate(input, ctx)),
+    delete: handleDelete,
+    list: handleList,
+    status: handleStatus,
+    runs: handleRuns,
+    run_result: handleRunResult,
+    // Every run and batch is warned about, saved task or inline: a judge
+    // disconnected since the task was written fails its runs the same way.
+    run: (input, ctx) =>
+      handleRun(input, ctx).then((out) =>
+        withTaskWarnings(out, ctx.definitions().get(runOutputTaskId(out)), "run"),
+      ),
+    assess: handleAssess,
+    run_batch: (input, ctx) => {
+      const out = handleRunBatch(input, ctx);
+      return withTaskWarnings(out, ctx.definitions().get(out.batch.taskId), "batch");
+    },
+    batch: handleBatch,
+    batch_control: handleBatchControl,
+    batches: handleBatches,
+    upcoming: handleUpcoming,
+    stats: handleStats,
+    judges: handleJudges,
+    cancel: handleCancel,
+  };
+
+  function registerTool<K extends TaskToolName>(name: K): InProcessTool {
+    const handle = handlers[name];
+    return typedTool({
+      ...TOOL_SCHEMAS[name],
+      handler: withErrorHandling((input) => {
+        // Unattended-run wall. A task must not reach the
+        // task-authoring surface (create/update/delete/run, and any authoring
+        // tool added later — the allowlist in `isTaskForbiddenIdentityTool` fails
+        // closed). Enforced HERE, at the source, because it is the single dispatch
+        // point every caller funnels through. `unattended` rides the ambient
+        // request context (set by `executeTask`, preserved across the per-call
+        // restamp), so this does not depend on which router dispatched the call,
+        // or on the tool having been surfaced to the model.
+        const refusal = unattendedRefusal(name);
+        if (refusal) throw new Error(refusal);
+        return handle(input, getToolContext());
+      }),
+    });
+  }
+
+  const tools: InProcessTool[] = (Object.keys(TOOL_SCHEMAS) as TaskToolName[]).map(registerTool);
 
   const resources = new Map([["ui://tasks/panel", TASKS_PANEL_HTML]]);
 

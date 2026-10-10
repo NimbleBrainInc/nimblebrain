@@ -18,7 +18,7 @@
  * Placements: sidebar files link at priority 3
  */
 
-import { textContent } from "../../engine/content-helpers.ts";
+import { structuredContent, textContent } from "../../engine/content-helpers.ts";
 import type { ContentBlock, EventSink, ToolResult } from "../../engine/types.ts";
 import { extractPdfPages, extractText } from "../../files/extract.ts";
 import { IMAGE_TYPES, isExtractable, PDF_TYPES } from "../../files/ingest.ts";
@@ -34,6 +34,7 @@ import {
   type InProcessResource,
   type InProcessTool,
   MCP_APP_MIME_TYPE,
+  typedTool,
 } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import {
@@ -295,7 +296,7 @@ async function handleReadPdfPages(
 
   return {
     content: [link, { type: "text", text }],
-    structuredContent: out as unknown as Record<string, unknown>,
+    structuredContent: structuredContent(out),
     isError: false,
   };
 }
@@ -514,39 +515,36 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
   }
 
   const tools: InProcessTool[] = [
-    {
+    typedTool({
       name: "list",
       description:
         "List your files: in one folder (with the folders inside it) or across all of them, " +
         "filtered by text, kind, source, conversation, run, creation time, tags, or MIME type, " +
         "sorted and paged. Each file carries its folder path, and the result counts matches by kind and source.",
       inputSchema: FilesListInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
-          const out: FilesListOutput = await listFiles(
-            getStore(),
-            input as unknown as FilesListInput,
-          );
+          const out: FilesListOutput = await listFiles(getStore(), input);
           return ok(out);
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "search",
       description:
         "Search files by keyword. Case-insensitive substring match on filename, description, and tags.",
       inputSchema: FilesSearchInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
-          return ok(await handleSearch(getStore(), input as unknown as SearchInput));
+          return ok(await handleSearch(getStore(), input));
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "read",
       description:
         "Read a file by ID. Returns a resource_link reference and a human-readable summary. " +
@@ -556,43 +554,39 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
         "is returned — images attached to a user message are delivered to the model via native " +
         "file input on the next turn, not through this tool.",
       inputSchema: FilesReadInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
-          return await handleRead(
-            getStore(),
-            runtime.getFilesConfig().maxExtractedTextSize,
-            input as unknown as { id: string },
-          );
+          return await handleRead(getStore(), runtime.getFilesConfig().maxExtractedTextSize, input);
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "read_pdf_pages",
       description:
         "Read extracted text from specific 1-based pages of a PDF by file ID. " +
         "Use this for oversized PDFs or when the user asks about pages beyond the truncated attachment preview. " +
         "Returns bounded per-page text only, never the whole PDF or base64 bytes. Max 10 pages per call.",
       inputSchema: FilesReadPdfPagesInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
-          return await handleReadPdfPages(getStore(), input as unknown as FilesReadPdfPagesInput);
+          return await handleReadPdfPages(getStore(), input);
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "create",
       description:
         "Create a new file in your file store. `manifest` is the file metadata; `body` is the content — " +
         'base64 by default, or written verbatim when you pass encoding: "text" (use that for markdown, code, or anything else you are composing yourself).',
       inputSchema: FilesCreateInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
           return ok(
-            await handleCreate(getStore(), input as unknown as CreateInput, (path) =>
+            await handleCreate(getStore(), input, (path) =>
               folderWrite((store) => ensureFolderPath(store, path)),
             ),
           );
@@ -600,52 +594,52 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "info",
       description: "Get file metadata by ID (no file content returned).",
       inputSchema: FilesInfoInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
-          return ok(await handleInfo(getStore(), input as unknown as { id: string }));
+          return ok(await handleInfo(getStore(), input));
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "tag",
       description: "Add or remove tags on a file.",
       inputSchema: FilesTagInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
-          return ok(await handleTag(getStore(), input as unknown as TagInput));
+          return ok(await handleTag(getStore(), input));
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "delete",
       description:
         "Delete a file by ID. Removes the file from disk and marks it as deleted in the registry.",
       inputSchema: FilesDeleteInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
-          return ok(await handleDelete(getStore(), input as unknown as { id: string }));
+          return ok(await handleDelete(getStore(), input));
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "move",
       description:
         'Move files into a folder, by id; "root" is the top level. Every id must name one of your files, or none moves.',
       inputSchema: FilesMoveInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
-          const { ids, folderId } = input as unknown as FilesMoveInput;
+          const { ids, folderId } = input;
           const out: FilesMoveOutput = {
             ids,
             folderId: await folderWrite((store) => moveFiles(store, ids, folderId)),
@@ -655,15 +649,15 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "create_folder",
       description:
         "Create a folder, at the top level or inside `parentId`. A name must be unique among the folders beside it. To put a new file in a folder by path, pass `manifest.folder` to `create` instead; it creates missing folders.",
       inputSchema: FilesCreateFolderInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
-          const { manifest } = input as unknown as FilesCreateFolderInput;
+          const { manifest } = input;
           const out: FilesFolderOutput = await folderWrite((store) =>
             createFolder(store, manifest),
           );
@@ -672,15 +666,15 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "update_folder",
       description:
         'Rename a folder (`manifest.name`) or move it (`manifest.parentId`; "root" is the top level). Its files and folders go with it.',
       inputSchema: FilesUpdateFolderInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
-          const { id, manifest } = input as unknown as FilesUpdateFolderInput;
+          const { id, manifest } = input;
           const out: FilesFolderOutput = await folderWrite((store) =>
             updateFolder(store, { id, ...manifest }),
           );
@@ -689,15 +683,15 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "delete_folder",
       description:
         "Delete an empty folder. A folder that holds files or folders is refused; move or delete what is inside first.",
       inputSchema: FilesDeleteFolderInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         try {
-          const { id } = input as unknown as FilesDeleteFolderInput;
+          const { id } = input;
           await folderWrite((store) => deleteFolder(store, id));
           const out: FilesDeleteFolderOutput = { deleted: true };
           return ok(out);
@@ -705,7 +699,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
           return fail(err instanceof Error ? err.message : String(err));
         }
       },
-    },
+    }),
   ];
 
   const resources = new Map<string, InProcessResource>([

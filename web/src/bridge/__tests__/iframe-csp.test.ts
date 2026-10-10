@@ -85,6 +85,7 @@ describe("isValidCspDomain", () => {
 
   it("rejects empty / non-string inputs", () => {
     expect(isValidCspDomain("")).toBe(false);
+    // `undefined` where the signature takes a string: a server-declared domain list is untyped JSON.
     expect(isValidCspDomain(undefined as unknown as string)).toBe(false);
   });
 });

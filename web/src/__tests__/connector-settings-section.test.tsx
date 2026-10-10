@@ -27,7 +27,7 @@ import type { InstalledConnector } from "../api/client";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const SERVER = "crm";
 
@@ -211,6 +211,7 @@ function appSide(container: HTMLElement): AppSide {
   expect(iframes.length).toBe(1);
   const iframe = iframes[0] as HTMLIFrameElement;
   const inbox: Array<Record<string, unknown>> = [];
+  // The app's window, reduced to the `postMessage` the bridge calls on it.
   const stubWindow = {
     postMessage(data: Record<string, unknown>) {
       inbox.push(data);

@@ -52,8 +52,7 @@ function makeTestIframe(): TestIframe {
   });
 
   function send(data: unknown): void {
-    const WindowMessageEvent = (window as unknown as { MessageEvent: typeof MessageEvent })
-      .MessageEvent;
+    const WindowMessageEvent = window.MessageEvent;
     const event = new WindowMessageEvent("message", { data });
     Object.defineProperty(event, "source", {
       configurable: true,

@@ -645,6 +645,8 @@ function useEditorData(taskId: string | undefined) {
   useEffect(() => {
     judgesTool
       .call({})
+      // `tasks__judges` answers JSON read as `JudgesData`, this package's
+      // hand-kept mirror of `TasksJudgesOutput`; nothing checks it at runtime.
       .then((res) => setJudges(asDict(res.data) as unknown as JudgesData))
       .catch(() => setJudges({ servers: [] }));
     if (!taskId) return;

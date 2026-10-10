@@ -255,6 +255,57 @@ drift guard (`src/platform/files/output-types-drift-guard.ts`).
 
 ---
 
+## Types
+
+### A double cast names its mismatch
+
+Reach a type through a typed path: a type guard, a schema parse, a typed
+helper, or the SDK's own input or output type. When none exists, an
+`as unknown as T` carries a comment, on its line or the line above, that names
+what the value is and what the code claims it is.
+
+```ts
+// BAD — nothing says why the compiler is wrong, or when it stops being wrong.
+const { taskId } = args as unknown as { taskId: string };
+const stub = { postMessage() {} } as unknown as Window;
+```
+
+```ts
+// GOOD — a typed path: `typedTool` gives the handler its schema's static type.
+typedTool({
+  name: "delete",
+  inputSchema: TasksDeleteInput,
+  handler: async ({ taskId }) => ok(await deleteTask(taskId)),
+});
+
+// GOOD — no typed path, so the comment names the mismatch.
+// The app's window, reduced to the `postMessage` the bridge calls on it.
+const stub = { postMessage() {} } as unknown as Window;
+```
+
+**Rationale.** A cast through `unknown` switches the compiler off for one
+value, and nothing records why. A typed path removes the hole: the type comes
+from where the value is made or checked (the validator, the schema, the SDK), so
+a change on that side fails the build at the use. Where no typed path exists,
+the comment is the only record of the mismatch, and it says when the cast can
+go: when the SDK types the result, when the stub grows the missing member.
+
+**Detection.** `bun run check:unsafe-casts` (wired into `verify:static`) flags
+an `as unknown as T` (or `<T><unknown>x`) under the check's scope with no
+qualifying comment on the line holding `unknown`, on the line where the asserted
+expression starts, or on the line directly above either. A comment qualifies
+when, with its markers and any lint directive stripped, it holds at least three
+words outside a list of generic ones (`cast`, `type`, `hack`, `TODO`, `unsafe`,
+`sdk`, …). That floor rejects the empty and the placeholder comment; whether a
+passing comment is true is review's call.
+
+**Override.** None: no per-line marker and no file exemption. The scope (the
+`SCOPE` roots in `scripts/check-unsafe-casts.ts`) covers `src/` (the platform
+app UIs included), `web/src/`, and each `test/` directory whose casts are clean;
+a directory joins the scope when it is cleaned.
+
+---
+
 ## Adding a new rule
 
 1. **Pick the smallest possible rule.** One pattern, one example, one

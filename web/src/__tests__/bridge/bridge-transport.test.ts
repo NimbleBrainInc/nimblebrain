@@ -128,8 +128,7 @@ function makeTestIframe(): TestIframe {
     // happy-dom `window` global. We then override the `source` getter
     // so the bridge's `event.source === iframe.contentWindow` security
     // check matches our stub.
-    const WindowMessageEvent = (window as unknown as { MessageEvent: typeof MessageEvent })
-      .MessageEvent;
+    const WindowMessageEvent = window.MessageEvent;
     const event = new WindowMessageEvent("message", { data });
     Object.defineProperty(event, "source", {
       configurable: true,

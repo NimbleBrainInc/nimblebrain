@@ -255,6 +255,8 @@ export function UpcomingView({
     setLoading(true);
     try {
       const res = await upcomingTool.call({ days });
+      // `tasks__upcoming` answers JSON this package reads as `UpcomingData`, its
+      // hand-kept mirror of `TasksUpcomingOutput`; nothing checks it at runtime.
       const next = asDict(res.data) as unknown as UpcomingData;
       setData(next);
       setError(null);

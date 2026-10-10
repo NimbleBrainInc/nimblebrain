@@ -4,18 +4,11 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom's selector parser constructs `window.SyntaxError`, which the test
-// window lacks. Same patch the other DOM tests carry.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
@@ -34,6 +27,7 @@ const realMatchMedia = window.matchMedia;
 
 /** Report the OS as dark mode. */
 function osPrefersDark() {
+  // A MediaQueryList with only what the theme reads; no `onchange`, `addListener`, or `dispatchEvent`.
   window.matchMedia = ((query: string) => ({
     matches: query.includes("dark"),
     media: query,

@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");

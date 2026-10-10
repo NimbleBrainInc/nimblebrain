@@ -11,6 +11,7 @@ import {
   ProtocolErrorCode,
   Server,
 } from "@modelcontextprotocol/server";
+import type { Static, TSchema } from "@sinclair/typebox";
 import type { PlacementDeclaration } from "../connectors/runtime/types.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
 import { bytesToBase64 } from "../util/base64.ts";
@@ -51,6 +52,26 @@ export interface InProcessTool {
   /** See the note on {@link InProcessTool}: this obliges `handler` to return
    * `structuredContent`. */
   outputSchema?: Record<string, unknown>;
+}
+
+/** An {@link InProcessTool} whose handler reads the static type of its TypeBox `inputSchema`. */
+export interface TypedInProcessTool<S extends TSchema>
+  extends Omit<InProcessTool, "inputSchema" | "handler"> {
+  inputSchema: S;
+  handler: (input: Static<S>) => Promise<ToolResult>;
+}
+
+/**
+ * Register a tool whose handler takes its input as `Static<S>`. `tools/call`
+ * runs `validateToolInput` against `inputSchema` before it calls a handler, so
+ * a handler never sees input its schema rejects, and it reads typed fields
+ * without a cast of its own.
+ */
+export function typedTool<S extends TSchema>(tool: TypedInProcessTool<S>): InProcessTool {
+  // `InProcessTool.handler` takes the `Record<string, unknown>` the SDK hands
+  // `tools/call`; the input has already passed validation against `S`, which
+  // that parameter type cannot express. Identical at runtime: the same object.
+  return tool as unknown as InProcessTool;
 }
 
 /**

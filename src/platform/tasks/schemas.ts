@@ -2,11 +2,13 @@
  * Tool descriptions and annotations for the tasks source. The input schemas
  * live in `src/platform/schemas/tasks.ts`, the single source of truth the
  * in-process source and its handlers share; this file pairs each with its
- * name, description, and spec annotations as the `TOOL_SCHEMAS` array the
- * source registers.
+ * description and spec annotations under its tool name, in the order the
+ * source registers them. Each entry keeps its own schema's type, so the
+ * source types each handler's input from it.
  */
 
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
+import type { TSchema } from "@sinclair/typebox";
 import {
   TasksAssessInput,
   TasksBatchControlInput,
@@ -30,15 +32,23 @@ import {
 export interface ToolSchema {
   name: string;
   description: string;
-  inputSchema: Record<string, unknown>;
+  inputSchema: TSchema;
   annotations: ToolAnnotations;
+}
+
+/**
+ * Keeps each entry's own schema type, so the source types each handler's input
+ * from it, and holds every entry's `name` to its key.
+ */
+function toolSchemas<T extends { [K in keyof T]: ToolSchema & { name: K } }>(schemas: T): T {
+  return schemas;
 }
 
 /** A read: changes nothing, and reaches nothing outside this workspace's tasks. */
 const READ: ToolAnnotations = { readOnlyHint: true, openWorldHint: false };
 
-export const TOOL_SCHEMAS: ToolSchema[] = [
-  {
+export const TOOL_SCHEMAS = toolSchemas({
+  create: {
     name: "create",
     description:
       "Create a task: `manifest` is the definition, `body` the prompt that opens each run. Its " +
@@ -59,7 +69,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       openWorldHint: false,
     },
   },
-  {
+  update: {
     name: "update",
     description:
       "Change a task by `taskId`: a `manifest` patch (field names as tasks__create; omitted " +
@@ -74,7 +84,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       openWorldHint: false,
     },
   },
-  {
+  delete: {
     name: "delete",
     description: "Delete a task by `taskId`. Removes the definition; its run history is kept.",
     inputSchema: TasksDeleteInput,
@@ -85,7 +95,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       openWorldHint: false,
     },
   },
-  {
+  list: {
     name: "list",
     description:
       "Your tasks in this workspace: id, name, schedule in words, enabled, last run, next fire " +
@@ -95,7 +105,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     inputSchema: TasksListInput,
     annotations: READ,
   },
-  {
+  status: {
     name: "status",
     description:
       "One task by `taskId`: its whole definition (prompt, schedule, tools, schemas, criteria), " +
@@ -104,7 +114,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     inputSchema: TasksStatusInput,
     annotations: READ,
   },
-  {
+  runs: {
     name: "runs",
     description:
       "Ended runs, newest first, across your tasks or one (`taskId`), filtered by `label` or " +
@@ -117,7 +127,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     inputSchema: TasksRunsInput,
     annotations: READ,
   },
-  {
+  run_result: {
     name: "run_result",
     description:
       "One run by `runId`, in whatever state it is. `status` is queued or running while it has " +
@@ -130,7 +140,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     inputSchema: TasksRunResultInput,
     annotations: READ,
   },
-  {
+  run: {
     name: "run",
     description:
       "Run a task now: a saved one by `taskId`, or a one-off from `definition` (create's " +
@@ -154,7 +164,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       openWorldHint: true,
     },
   },
-  {
+  assess: {
     name: "assess",
     description:
       "Set your verdict on a run's deliverable ({runId, verdict: 'pass'|'fail', note?}), or " +
@@ -170,7 +180,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       openWorldHint: false,
     },
   },
-  {
+  run_batch: {
     name: "run_batch",
     description:
       "Run one task over many inputs: a saved task by `taskId`, or a one-off from `definition` " +
@@ -189,7 +199,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       openWorldHint: true,
     },
   },
-  {
+  batch: {
     name: "batch",
     description:
       "One batch by `batchId`: its state (and why it paused), counts (pending, queued, running, " +
@@ -200,7 +210,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     inputSchema: TasksBatchInput,
     annotations: READ,
   },
-  {
+  batch_control: {
     name: "batch_control",
     description:
       "Pause, resume, cancel, or re-run the failed items of a batch. pause: no new item starts. " +
@@ -216,7 +226,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       openWorldHint: true,
     },
   },
-  {
+  batches: {
     name: "batches",
     description:
       "Your batches in this workspace, newest first, optionally by task or state, each with its " +
@@ -224,7 +234,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     inputSchema: TasksBatchesInput,
     annotations: READ,
   },
-  {
+  upcoming: {
     name: "upcoming",
     description:
       "What runs next among your tasks in this workspace: runs holding a run slot now and runs " +
@@ -237,7 +247,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     inputSchema: TasksUpcomingInput,
     annotations: READ,
   },
-  {
+  stats: {
     name: "stats",
     description:
       "Per task, since a time (default 30 days ago): how many runs started, their verdicts " +
@@ -247,7 +257,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     inputSchema: TasksStatsInput,
     annotations: READ,
   },
-  {
+  judges: {
     name: "judges",
     description:
       "The judge servers connected in this workspace (servers exposing judge and " +
@@ -257,7 +267,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     inputSchema: TasksJudgesInput,
     annotations: READ,
   },
-  {
+  cancel: {
     name: "cancel",
     description:
       "Cancel one run by `runId`: stop it in flight, or take it out of the queue (recorded " +
@@ -272,4 +282,6 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       openWorldHint: false,
     },
   },
-];
+});
+
+export type TaskToolName = keyof typeof TOOL_SCHEMAS;

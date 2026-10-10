@@ -14,7 +14,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 import type { PlacementEntry } from "../types";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 mock.module("../api/client", () => ({
   ...realClient,
@@ -63,10 +63,11 @@ async function connectFrame(container: HTMLElement, serverName: string) {
   const iframe = container.getElementsByTagName("iframe")[0];
   if (!iframe) throw new Error("no iframe mounted");
   const inbox: unknown[] = [];
+  // The app's window, reduced to the `postMessage` the bridge calls on it.
   const stub = { postMessage: (data: unknown) => inbox.push(data) } as unknown as Window;
   Object.defineProperty(iframe, "contentWindow", { configurable: true, get: () => stub });
   const send = (data: unknown) => {
-    const Ctor = (window as unknown as { MessageEvent: typeof MessageEvent }).MessageEvent;
+    const Ctor = window.MessageEvent;
     const event = new Ctor("message", { data });
     Object.defineProperty(event, "source", { configurable: true, get: () => stub });
     window.dispatchEvent(event);

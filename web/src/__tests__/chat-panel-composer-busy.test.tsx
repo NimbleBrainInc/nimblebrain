@@ -8,19 +8,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom's Window stub doesn't expose SyntaxError/TypeError; querySelector's
-// selector parser constructs one and trips on the gap.
-{
-  const win = (globalThis as unknown as { window?: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 /** Makes the workspace's `/chat/start` fail, as a network error on the first send would. */
 let failStart = false;
@@ -133,7 +126,7 @@ function textarea(): HTMLTextAreaElement {
 
 // happy-dom's `dispatchEvent` accepts only its own window's event classes, not
 // the runtime's globals.
-const win = window as unknown as { Event: typeof Event; KeyboardEvent: typeof KeyboardEvent };
+const win = window;
 
 /** Type the way a person does: set the value natively, then fire `input`. */
 async function type(value: string): Promise<void> {

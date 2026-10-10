@@ -21,7 +21,7 @@ import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const CONV_ID = "conv_00000000000000aa";
 
@@ -410,7 +410,7 @@ describe("ContextInspectorPage", () => {
     // Poll the DOM outside act (which would drain pending effects) so the click
     // lands in the window after the layers render and before the auto-open
     // effect runs. That effect must not close the layer the click opened.
-    const g = globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean };
+    const g = globalThis;
     g.IS_REACT_ACT_ENVIRONMENT = false;
     try {
       const { container } = renderPage();

@@ -9,7 +9,7 @@
  */
 
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { textContent } from "../../src/engine/content-helpers.ts";
+import { structuredContent, textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { defineInProcessApp } from "../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
@@ -63,12 +63,9 @@ export function answerAll(
 
 /** A started stub judge source named `name`. */
 export async function createStubJudge(name = "judge"): Promise<StubJudge> {
-  const stub: StubJudge = {
-    source: undefined as unknown as McpSource,
-    calls: [],
-    answer: (call) => answerAll(call, true),
-  };
   const judgeTool = async (input: Record<string, unknown>): Promise<ToolResult> => {
+    // The `judge` input schema checks only that `criteria` and `state` are
+    // there; the runtime's judge port sends the whole `StubJudgeCall`.
     const call = input as unknown as StubJudgeCall;
     stub.calls.push(call);
     const out = stub.answer(call);
@@ -90,11 +87,11 @@ export async function createStubJudge(name = "judge"): Promise<StubJudge> {
     }
     return {
       content: textContent(JSON.stringify(out)),
-      structuredContent: out as unknown as Record<string, unknown>,
+      structuredContent: structuredContent(out),
       isError: false,
     };
   };
-  stub.source = defineInProcessApp(
+  const source = defineInProcessApp(
     {
       name,
       version: "1.0.0",
@@ -142,6 +139,8 @@ export async function createStubJudge(name = "judge"): Promise<StubJudge> {
     },
     new NoopEventSink(),
   );
-  await stub.source.start();
+  // `judgeTool` reads `stub` only when called, after it is built here.
+  const stub: StubJudge = { source, calls: [], answer: (call) => answerAll(call, true) };
+  await source.start();
   return stub;
 }

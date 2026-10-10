@@ -78,6 +78,8 @@ async function fetchPage(app: App, key: string, page: number): Promise<ListResul
     offset: page * PAGE_SIZE,
   });
   if (res.isError) {
+    // `callTool<ListResult>` types `data` as `ListResult` whether or not the call
+    // failed; a failed `files__list` carries `{ error }` there instead.
     const message = (res.data as unknown as { error?: string } | undefined)?.error;
     throw new Error(message ?? "Failed to load files");
   }
