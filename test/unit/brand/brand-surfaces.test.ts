@@ -64,26 +64,50 @@ describe("identity — {{brand.name}}", () => {
   });
 });
 
-describe("GET /v1/brand", () => {
+describe("GET /v1/brand.js", () => {
   const app = () => new Hono().route("/", brandRoutes());
 
-  test("serves {} without auth when no brand is configured, publicly cacheable", async () => {
-    const res = await app().request("/v1/brand");
+  /** The value the script assigns, read back by running the script against a stand-in `window`. */
+  async function assigned(res: Response): Promise<unknown> {
+    const body = await res.text();
+    const window: { __NB_BRAND__?: unknown } = {};
+    new Function("window", body)(window);
+    return window.__NB_BRAND__;
+  }
+
+  test("serves {} without auth when no brand is configured, as a publicly cacheable script", async () => {
+    const res = await app().request("/v1/brand.js");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({});
+    expect(res.headers.get("Content-Type")).toBe("text/javascript; charset=utf-8");
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=60");
+    expect(await res.clone().text()).toBe("window.__NB_BRAND__ = {};\n");
+    expect(await assigned(res)).toEqual({});
   });
 
-  test("serves the resolved brand", async () => {
+  test("assigns the resolved brand, and nothing else", async () => {
     const resolved = loadBrand({ brand: ACME_BRAND });
-    const res = await app().request("/v1/brand");
-    expect(await res.json()).toEqual(JSON.parse(JSON.stringify(resolved)));
+    const res = await app().request("/v1/brand.js");
+    const body = await res.clone().text();
+    expect(body.match(/window\.__NB_BRAND__ =/g)).toHaveLength(1);
+    expect(body).toBe(`window.__NB_BRAND__ = ${JSON.stringify(resolved)};\n`);
+    expect(await assigned(res)).toEqual(JSON.parse(JSON.stringify(resolved)));
+  });
+
+  test("a value holding a closing script tag stays inside its string", async () => {
+    loadBrand({ brand: { name: "</script><script>alert(1)</script>" } });
+    const res = await app().request("/v1/brand.js");
+    expect(await assigned(res)).toEqual({ name: "</script><script>alert(1)</script>" });
   });
 
   test("serves defaultTheme, which the web client reads before the OS setting", async () => {
     loadBrand({ brand: { defaultTheme: "light" } });
+    const res = await app().request("/v1/brand.js");
+    expect(await assigned(res)).toEqual({ defaultTheme: "light" });
+  });
+
+  test("the JSON route is gone", async () => {
     const res = await app().request("/v1/brand");
-    expect(await res.json()).toEqual({ defaultTheme: "light" });
+    expect(res.status).toBe(404);
   });
 });
 

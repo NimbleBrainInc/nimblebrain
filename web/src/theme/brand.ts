@@ -2,7 +2,7 @@
  * A tenant brand, and the palette it produces when laid over the canonical one.
  *
  * The brand is the `brand` block of `nimblebrain.json`. The runtime validates it
- * at config load and serves it at `GET /v1/brand`; the web client merges it at
+ * at config load and serves it at `GET /v1/brand.js`; the web client merges it at
  * boot. Both call {@link mergePalette}, so the palette the runtime checked for
  * contrast is exactly the palette the shell paints.
  *
@@ -66,7 +66,7 @@ export interface Brand {
   fonts?: Partial<Record<BrandFontRole, BrandFont>>;
 }
 
-/** The brand as `GET /v1/brand` serves it: validated, and holding only the keys above. */
+/** The brand as `GET /v1/brand.js` serves it: validated, and holding only the keys above. */
 export type ResolvedBrand = Brand;
 
 /** The full overridable palette: colours and stacks. */

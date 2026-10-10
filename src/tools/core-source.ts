@@ -523,7 +523,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                 // theme it is given, so reporting "system" for a user who never
                 // chose one overrode the theme their browser holds whenever a
                 // `config.changed` event made it re-read this. A brand's
-                // `defaultTheme` reaches the shell through `/v1/brand` instead,
+                // `defaultTheme` reaches the shell through `/v1/brand.js` instead,
                 // so it is never mistaken for the person's own choice.
                 ...(preferences.theme ? { theme: preferences.theme } : {}),
                 // Empty when unset, so a client can tell "following the

@@ -17,7 +17,7 @@ The `brand` block in `nimblebrain.json` white-labels a deployment: your users se
 | OAuth consent screens at connector vendors (dynamic client registration) | `name`, `homepageUrl`, `logo.raster` |
 | The OAuth "You're in." success page and the OAuth error pages | `name`, `colors` |
 | Connector-tool error messages | `name` |
-| `GET /v1/brand`, which the web client reads | the whole block |
+| `GET /v1/brand.js`, which the web client loads before its bundle | the whole block |
 
 Wire identifiers do not change: MCP client and server names, the `nb__` tool namespace, `ai.nimblebrain/*` metadata keys, the `NB_` environment prefix, the `nimblebrain.json` filename. They identify the software to other software, not to a person.
 
@@ -125,9 +125,15 @@ A complete block for a fictional ACME deployment:
 }
 ```
 
-## `GET /v1/brand`
+## `GET /v1/brand.js`
 
-The runtime serves the validated block at `GET /v1/brand`, unauthenticated, with `Cache-Control: public, max-age=60`. It is public because the sign-in page shows the brand before anyone has signed in, and nothing in it is private. Without a `brand` block it returns `{}`.
+The runtime serves the validated block as a script at `GET /v1/brand.js`, unauthenticated, with `Content-Type: text/javascript` and `Cache-Control: public, max-age=60`. The body is one assignment:
+
+```js
+window.__NB_BRAND__ = {"name":"ACME","defaultTheme":"light"};
+```
+
+The web client loads it with a plain `<script>` before its bundle, so the brand is in place before the first paint. It is public because the sign-in page shows the brand before anyone has signed in, and nothing in it is private. Without a `brand` block it assigns `{}`.
 
 The served block is the configured one, holding only the keys on this page. A key the schema does not define is reported as an unknown key at startup and ignored; it is never served.
 

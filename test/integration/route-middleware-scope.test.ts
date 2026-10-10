@@ -53,7 +53,7 @@ const PUBLIC = new Set([
   "GET /.well-known/oauth-protected-resource/mcp/:wsId",
   "GET /.well-known/oauth-authorization-server",
   "GET /v1/health",
-  "GET /v1/brand",
+  "GET /v1/brand.js",
   "GET /metrics",
   "GET /v1/auth/authorize",
   "GET /v1/auth/callback",

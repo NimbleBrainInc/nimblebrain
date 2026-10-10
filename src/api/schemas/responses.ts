@@ -175,7 +175,7 @@ export interface HealthResponse {
   status: "ok";
 }
 
-// ── GET /v1/brand ───────────────────────────────────────────────────────────
+// ── GET /v1/brand.js ────────────────────────────────────────────────────────
 
 /** One typeface role as served. Mirrors `BrandFont` (`web/src/theme/brand.ts`). */
 export interface BrandFontResponse {
@@ -186,9 +186,10 @@ export interface BrandFontResponse {
 }
 
 /**
- * The deployment's validated brand block, `{}` when none is configured.
- * Mirrors `ResolvedBrand` (`web/src/theme/brand.ts`); each colour is a
- * `[light, dark]` hex pair.
+ * The deployment's validated brand block, `{}` when none is configured: the
+ * value `GET /v1/brand.js` assigns to `window.__NB_BRAND__`. Mirrors
+ * `ResolvedBrand` (`web/src/theme/brand.ts`); each colour is a `[light, dark]`
+ * hex pair.
  */
 export interface BrandResponse {
   name?: string;

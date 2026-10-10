@@ -71,7 +71,7 @@ export function loadBrand(config: { brand?: Brand }): ResolvedBrand {
   return current;
 }
 
-/** The installed brand, as `GET /v1/brand` serves it. `{}` when none is configured. */
+/** The installed brand, as `GET /v1/brand.js` serves it. `{}` when none is configured. */
 export function resolvedBrand(): ResolvedBrand {
   return current;
 }

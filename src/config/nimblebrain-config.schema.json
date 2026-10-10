@@ -493,7 +493,7 @@
       "additionalProperties": false
     },
     "brand": {
-      "description": "White-label branding: the product name, logos, accent colour and typefaces a tenant's users see in place of NimbleBrain's. Every key is optional, and an absent block is NimbleBrain. The runtime rejects at load a palette that fails any WCAG AA contrast pair the canonical palette is held to. Served unauthenticated at GET /v1/brand. See https://docs.nimblebrain.ai/config/branding/.",
+      "description": "White-label branding: the product name, logos, accent colour and typefaces a tenant's users see in place of NimbleBrain's. Every key is optional, and an absent block is NimbleBrain. The runtime rejects at load a palette that fails any WCAG AA contrast pair the canonical palette is held to. Served unauthenticated at GET /v1/brand.js. See https://docs.nimblebrain.ai/config/branding/.",
       "type": "object",
       "properties": {
         "name": {
