@@ -7,7 +7,7 @@
  * and applies the result everywhere the product shows itself:
  *
  *  - a `<style id="nb-brand">` redefining the shell's tokens, plus one
- *    `@font-face` per brand face;
+ *    `@font-face` per brand font file;
  *  - `document.title` and the favicon links;
  *  - the iframe token maps and the iframe font channel, so embedded apps paint
  *    the brand too;
@@ -123,7 +123,7 @@ export function applyBrand(brand: ResolvedBrand): void {
 function paint(brand: ResolvedBrand): void {
   const palette = mergePalette(brand);
   const faces = brandFaces(brand);
-  const overrides = brand.colors || brand.fonts || brand.radius;
+  const overrides = brand.colors || brand.fonts;
 
   let style = document.getElementById(STYLE_ID);
   if (overrides) {
@@ -145,19 +145,17 @@ function paint(brand: ResolvedBrand): void {
   setFavicon(brand.favicon);
 }
 
-/** Every face the brand declares, one per distinct family, URL and weight. */
+/** The `@font-face` each brand role with a file declares, one per distinct family, URL and weight. */
 function brandFaces(brand: ResolvedBrand): BrandFontSpec[] {
   const out = new Map<string, BrandFontSpec>();
   for (const font of Object.values(brand.fonts ?? {})) {
-    if (!font?.family) continue;
-    for (const face of font.faces ?? []) {
-      const spec: BrandFontSpec = {
-        family: font.family,
-        url: face.url,
-        ...(face.weight ? { weight: face.weight } : {}),
-      };
-      out.set(`${spec.family}\n${spec.url}\n${spec.weight ?? ""}`, spec);
-    }
+    if (!font?.family || !font.url) continue;
+    const spec: BrandFontSpec = {
+      family: font.family,
+      url: font.url,
+      ...(font.weight ? { weight: font.weight } : {}),
+    };
+    out.set(`${spec.family}\n${spec.url}\n${spec.weight ?? ""}`, spec);
   }
   return [...out.values()];
 }

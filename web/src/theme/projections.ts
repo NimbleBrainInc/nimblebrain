@@ -8,9 +8,9 @@
  *
  * Both take the palette to project and default to the canonical one. The
  * generator calls them with the default; the browser entry calls them with a
- * tenant's brand merged over it (`brand.ts`). Colours, fonts and the radius
- * scale come from the argument; the type scale, shadows and layout constants
- * are not brand-overridable and always come from `palette.ts`.
+ * tenant's brand merged over it (`brand.ts`). Colours and fonts come from the
+ * argument; the radius scale, type scale, shadows and layout constants are not
+ * brand-overridable and always come from `palette.ts`.
  *
  * No DOM, no side effects. Given the palette, return data.
  */
@@ -29,7 +29,7 @@ import {
 } from "./palette.ts";
 
 /** The canonical palette in the shape a brand merge produces. */
-export const canonicalPalette: Palette = { colors, extOnlyColors, fonts, radiusScale };
+export const canonicalPalette: Palette = { colors, extOnlyColors, fonts };
 
 /**
  * Build the ext-apps token map for a mode.
@@ -79,7 +79,7 @@ export function paletteToExtAppsTokens(
     ...typeScale,
 
     // ── ext-apps spec: Layout ──
-    ...palette.radiusScale,
+    ...radiusScale,
 
     // ── ext-apps spec: Effects ──
     ...shadows[mode],
@@ -111,7 +111,7 @@ export function paletteToRootCss(palette: Palette = canonicalPalette): string {
   // as `--border-radius-*` (the ext-apps / synapse-ui names) and aliased to
   // Tailwind's `--radius-*` in index.css, so the shell and the apps round
   // equivalent elements identically.
-  for (const [k, v] of Object.entries(palette.radiusScale)) lightDecls.push(`  ${k}: ${v};`);
+  for (const [k, v] of Object.entries(radiusScale)) lightDecls.push(`  ${k}: ${v};`);
   // Type scale is mode-independent — :root only, aliased to Tailwind `--text-*`
   // in index.css. Same single-source path as colors/radius/layout.
   for (const [k, v] of Object.entries(typeScale)) lightDecls.push(`  ${k}: ${v};`);

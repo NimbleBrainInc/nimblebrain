@@ -8,7 +8,7 @@ import {
   setThemePalette,
 } from "../../../web/src/bridge/theme.ts";
 import { mergePalette } from "../../../web/src/theme/brand.ts";
-import { colors } from "../../../web/src/theme/palette.ts";
+import { colors, radiusScale } from "../../../web/src/theme/palette.ts";
 import { ACME_BRAND } from "../../helpers/acme-brand.ts";
 
 /**
@@ -94,7 +94,7 @@ describe("a brand's palette reaches the iframe", () => {
     expect(getModeExtensionTokens("light")["--color-text-accent"]).toBe("#B53707");
     expect(getModeExtensionTokens("dark")["--color-text-accent"]).toBe("#FF8A4C");
     expect(getThemeTokens("light")["--font-sans"]).toBe(ACME_BRAND.fonts?.sans?.stack);
-    expect(getThemeTokens("light")["--border-radius-md"]).toBe("0.25rem");
+    expect(getThemeTokens("light")["--border-radius-md"]).toBe(radiusScale["--border-radius-md"]);
   });
 
   test("setting no palette restores the canonical tokens", () => {

@@ -25,17 +25,13 @@ const ACME_FAVICON = "https://static.example.com/brands/acme/favicon.png";
 const ACME: ResolvedBrand = {
   name: "ACME",
   favicon: ACME_FAVICON,
-  colors: { primary: ["#B53707", "#FF8A4C"], "primary-foreground": ["#FFFFFF", "#1B1B1F"] },
+  colors: { primary: ["#B53707", "#FF8A4C"], ring: ["#B53707", "#FF8A4C"] },
   fonts: {
     sans: {
       stack: "'Instrument Sans', system-ui, sans-serif",
       family: "Instrument Sans",
-      faces: [
-        {
-          url: "https://static.example.com/brands/acme/fonts/instrument-sans.woff2",
-          weight: "400 700",
-        },
-      ],
+      url: "https://static.example.com/brands/acme/fonts/instrument-sans.woff2",
+      weight: "400 700",
     },
   },
 };
