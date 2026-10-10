@@ -1,11 +1,11 @@
 ---
 title: White-labeling
-description: Put your own product name, logos, colours and typefaces on a deployment, and check that every surface picked them up.
+description: Put your own product name, logos, accent colour and typefaces on a deployment, and check that every surface picked them up.
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
-This guide takes a deployment from the default look to your brand: what to prepare, how to choose colours that the runtime accepts, where the configuration goes, and how to check the result. Every key it uses is described in the [Branding reference](/config/branding/).
+This guide takes a deployment from the default look to your brand: what to prepare, how to choose an accent colour that the runtime accepts, where the configuration goes, and how to check the result. Every key it uses is described in the [Branding reference](/config/branding/).
 
 ## What changes and what doesn't
 
@@ -13,7 +13,7 @@ A `brand` block changes what a person reads and sees:
 
 - **Product name**: the browser tab title, the agent's identity line ("You are a helpful assistant powered by …"), the "Leaving …" dialog before an external link, OAuth success and error pages, and error messages that name the product.
 - **Logo, mark and favicon**: the sign-in page, the sidebar, and the browser tab.
-- **Palette, typefaces and corner radius**: the shell, and every embedded app, through the theme tokens the shell injects.
+- **Accent colour and typefaces**: the shell, and every embedded app, through the theme tokens the shell injects.
 - **Default theme**: the colour theme a person starts in until they choose one.
 - **OAuth consent screens**: the name, homepage and logo a connector vendor shows when someone connects an account.
 
@@ -21,7 +21,7 @@ It does not change:
 
 - **Wire identifiers.** Tool namespaces (`nb__`), metadata keys (`ai.nimblebrain/*`), the `NB_` environment prefix and the `nimblebrain.json` filename identify the software to other software, not to a person.
 - **Your identity provider's hosted sign-in page.** The sign-in page links to your identity provider (WorkOS, or your OIDC provider) for the password or SSO step. Brand that page in the provider's own dashboard.
-- **Type scale and shadows.** Sizes, line heights and elevation stay as shipped, so layouts keep their proportions under any typeface.
+- **The rest of the palette, the code typeface, corner radius, type scale and shadows.** Backgrounds, text and status colours, the monospace face, corners, sizes and elevation stay as shipped, so every brand inherits a palette already checked for contrast and layouts keep their proportions under any typeface.
 
 ## Prepare your assets
 
@@ -34,7 +34,7 @@ Publish every file at a stable `https://` URL before you reference it. A URL tha
 | Mark (`logo.mark`) | Collapsed sidebar | Square. One file serves both modes, so use a mark that reads on light and dark. |
 | Raster mark (`logo.raster`) | OAuth consent screens at connector vendors | **PNG**, around 128×128. Several identity providers and vendors refuse to render an SVG logo there. |
 | Favicon (`favicon`) | Browser tab | PNG or ICO. |
-| Fonts | Shell and embedded apps | One `.woff2` file per face (a variable font is one file). |
+| Fonts (`fonts.sans`, `fonts.heading`, `fonts.reading`) | Shell and embedded apps | One `.woff2` file per role, typically a variable font covering every weight you use. |
 
 Set `name`, `logo` and `favicon` together. A brand with a name but no logo keeps the bundled NimbleBrain artwork, with your name as its alt text.
 
@@ -56,39 +56,27 @@ access-control-allow-origin: *
 
 A missing `access-control-allow-origin`, or one that names your domain instead of `*`, is the common failure: the shell renders your font, while every app silently falls back to the next family in its `stack`.
 
-## Choose colours that pass
+## Choose an accent that passes
 
-The runtime checks your palette at startup against every contrast pair the default palette is held to, in light and dark mode, and refuses to start if any pair falls below **4.5:1** (WCAG 2.2 AA for body text). Work through it in this order:
+A brand sets two colours, each a `[light, dark]` pair of `#rrggbb` values: `primary`, the accent on links, buttons and accent text, and `ring`, the focus ring. Set `ring` to the same pair as `primary` unless you want a distinct focus colour. The text on a `primary` fill is derived per mode as white or black, whichever contrasts more with your accent; you do not set it.
+
+The runtime merges your accent over the default palette at startup and checks the result against every contrast pair the default palette is held to, in light and dark mode. It refuses to start if any pair falls below **4.5:1** (WCAG 2.2 AA for body text).
 
 <Steps>
 
-1. **Start from the accent and the backgrounds.** Set `primary` (links, buttons, focus) and the grounds: `background`, `card`, `popover`, `muted`, `sidebar`. Each value is a `[light, dark]` pair of `#rrggbb` colours. Add `foreground` and `muted-foreground` if your grounds are tinted.
+1. **Start from your brand colour.** Use it as the light-mode value, and a lighter tint of it as the dark-mode value: the light value sits on a white page, the dark value on a black one.
 
-2. **Leave the `-foreground` partners out at first.** For any base token you set without its `<x>-foreground`, the runtime derives one per mode: white or black, whichever contrasts more with your base. Set one yourself only when you want a specific colour on that fill.
-
-3. **Start the runtime and read the error.** A failing palette stops startup with a message naming the mode, the pair, the ratio and both colours:
+2. **Start the runtime and read the error.** A failing accent stops startup with a message naming the mode, the pair, the ratio and both colours:
 
    ```text
-   Invalid brand in config: light mode: success on success/10 over background is 4.36:1 (#0f7a4f on #e3eade), below the 4.5:1 WCAG AA minimum
+   Invalid brand in config: light mode: primary on background (links, accent text) is 2.45:1 (#F28C28 on #ffffff), below the 4.5:1 WCAG AA minimum
    ```
 
-   Read it as: in light mode, `success` text over a 10% tint of itself on your `background` measures 4.36:1. The first colour is the text and the second the ground it was measured on, after compositing.
+   Read it as: in light mode, `primary` used as link or accent text on the page background measures 2.45:1. The first colour is the text and the second the ground it was measured on.
 
-4. **Adjust by the smallest step.** Move the token the error names first, and only by as much as it needs: darken text in light mode, lighten it in dark mode. Restart, and repeat until the runtime starts. Small steps keep the colour recognisably yours.
+3. **Adjust by the smallest step.** Darken the light-mode value, or lighten the dark-mode one, only as far as the error needs. Restart, and repeat until the runtime starts. Small steps keep the colour recognisably yours. The ACME orange in the [reference example](/config/branding/#example), `#B53707` in light mode and `#FF8A4C` in dark, passes every pair.
 
 </Steps>
-
-### Worked example
-
-The ACME brand in the [reference example](/config/branding/#example) uses a warm paper background, `#FAF6EE`, and leaves the status colours at their defaults. The runtime refuses it with the error above: the default green, `#0f7a4f`, clears 4.5:1 on white but only 4.36:1 over its own tint on the warmer, darker paper.
-
-The fix is one token, one mode. Darkening the light-mode green to `#0D6B45` brings the same pair to 5.25:1, and dark mode is already fine, so its dark value stays as shipped:
-
-```json
-"success": ["#0D6B45", "#3fbf85"]
-```
-
-The other status colours stay at their defaults. They carry meaning, so change them only when a pair requires it.
 
 ## Write the block
 
@@ -101,7 +89,7 @@ The other status colours stay at their defaults. They carry meaning, so change t
     "defaultTheme": "light",
     "logo": { "light": "…", "dark": "…", "mark": "…", "raster": "…" },
     "favicon": "…",
-    "colors": { "primary": ["#B53707", "#FF8A4C"] }
+    "colors": { "primary": ["#B53707", "#FF8A4C"], "ring": ["#B53707", "#FF8A4C"] }
   }
 }
 ```
@@ -120,9 +108,9 @@ The other status colours stay at their defaults. They carry meaning, so change t
    curl -s https://agents.example.com/v1/brand
    ```
 
-   You should see your block, with each font role's files listed under `faces`. `{}` means no brand is configured.
+   You should see your block as you wrote it. `{}` means no brand is configured, and a key missing from the answer is one the runtime does not accept: startup logs it as an unknown key.
 
-2. **The sign-in page, in both modes.** Open the deployment in a private window. The tab title, favicon, logo, colours and typefaces should all be yours. Press **Cmd+Shift+L** (Mac) or **Ctrl+Shift+L** to switch between light and dark mode and check the other logo and palette.
+2. **The sign-in page, in both modes.** Open the deployment in a private window. The tab title, favicon, logo, colours and typefaces should all be yours. Press **Cmd+Shift+L** (Mac) or **Ctrl+Shift+L** to switch between light and dark mode and check the other logo and accent.
 
 3. **An embedded app.** Sign in and open an app such as Files. Its buttons and links should use your accent, and its text your `sans` typeface. If the shell shows your font but the app does not, recheck the font host's `access-control-allow-origin` header.
 
