@@ -168,6 +168,12 @@ export interface SkillDetail {
         status?: string;
     };
     modifiedAt?: string;
+    /**
+     * Present when the body is longer than the platform delivers: how many
+     * characters past the limit it runs. Those trailing sections are cut when the
+     * skill loads, so a reader editing it knows what never reaches the model.
+     */
+    overLimitBy?: number;
 }
 /** `SkillsReadOutput` is the detail itself — no wrapper envelope. */
 export type SkillsReadOutput = SkillDetail;

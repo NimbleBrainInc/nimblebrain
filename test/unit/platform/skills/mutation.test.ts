@@ -28,6 +28,7 @@ import { runWithRequestContext } from "../../../../src/runtime/request-context.t
 import { parseSkillContent } from "../../../../src/skills/loader.ts";
 import { selectLayer3Skills } from "../../../../src/skills/select.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
+import { listSkillVersions } from "../../../../src/skills/versions.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { surfaceTools } from "../../../../src/tools/surfacing.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
@@ -1161,14 +1162,14 @@ describe("skills__read — full body (no prompt-cap leak)", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const body = `${"x".repeat(MAX_SKILL_BODY_CHARS * 2)}\nEND_MARKER_KEEP_ME`;
-    await client.callTool({
-      name: "create",
-      arguments: {
-        scope: "org",
-        manifest: { name: "oversized", description: "test", type: "skill" },
-        body,
-      },
-    });
+    // Seeded on disk: an authored write refuses a body this long, but files
+    // over the cap still exist (written before the rule, or by other means).
+    mkdirSync(join(workDir, "skills"), { recursive: true });
+    writeFileSync(
+      join(workDir, "skills", "oversized.md"),
+      `---\nname: oversized\ndescription: test\n---\n${body}\n`,
+      "utf-8",
+    );
     const result = await client.callTool({
       name: "read",
       arguments: { id: join(workDir, "skills", "oversized.md") },
@@ -1180,6 +1181,150 @@ describe("skills__read — full body (no prompt-cap leak)", () => {
     // skills__update would silently lose user-authored content.
     expect(text).toContain("END_MARKER_KEEP_ME");
     expect(text.length).toBeGreaterThan(MAX_SKILL_BODY_CHARS);
+    // The reader is told how much of it never reaches the model.
+    expect(text).toContain(`over-limit-by: ${body.length - MAX_SKILL_BODY_CHARS} characters`);
+    expect((result.structuredContent as { overLimitBy?: number }).overLimitBy).toBe(
+      body.length - MAX_SKILL_BODY_CHARS,
+    );
+  });
+});
+
+describe("skill body size — a skill the platform cannot deliver whole is not saved", () => {
+  const text = (r: unknown) =>
+    ((r as { content: Array<{ text?: string }> }).content ?? []).map((c) => c.text ?? "").join("");
+
+  function seedOversized(name: string, chars: number): string {
+    const path = join(workDir, "skills", `${name}.md`);
+    mkdirSync(join(workDir, "skills"), { recursive: true });
+    writeFileSync(
+      path,
+      `---\nname: ${name}\ndescription: test\n---\n${"y".repeat(chars)}\n`,
+      "utf-8",
+    );
+    return path;
+  }
+
+  test("create refuses a body over the limit and writes nothing", async () => {
+    const client = (await buildSource()).getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "too-long", description: "test" },
+        body: "z".repeat(MAX_SKILL_BODY_CHARS + 1),
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("Not saved");
+    expect(text(result)).toContain("split the skill into two");
+    expect(existsSync(join(workDir, "skills", "too-long.md"))).toBe(false);
+  });
+
+  test("a body of exactly the limit is saved", async () => {
+    const client = (await buildSource()).getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "at-limit", description: "test" },
+        body: "z".repeat(MAX_SKILL_BODY_CHARS),
+      },
+    });
+    expect(result.isError).toBeFalsy();
+  });
+
+  test("a pasted SKILL.md is measured without its frontmatter", async () => {
+    const client = (await buildSource()).getClient()!;
+    const frontmatter = `---\nname: pasted-at-limit\ndescription: ${"d".repeat(200)}\n---\n`;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "pasted-at-limit", description: "test" },
+        body: `${frontmatter}${"z".repeat(MAX_SKILL_BODY_CHARS)}`,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+  });
+
+  test("append past the limit is refused, leaving no file change and no snapshot", async () => {
+    const client = (await buildSource()).getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "growing", description: "test" },
+        body: "z".repeat(MAX_SKILL_BODY_CHARS - 10),
+      },
+    });
+    const id = join(workDir, "skills", "growing.md");
+    const before = readFileSync(id, "utf-8");
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, body: "One more rule, dated today.", body_mode: "append" },
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("rather than appending");
+    expect(readFileSync(id, "utf-8")).toBe(before);
+    const versions = join(workDir, "skills", "_versions");
+    const snapshots = existsSync(versions)
+      ? readdirSync(versions).filter((f) => f.startsWith("growing."))
+      : [];
+    expect(snapshots).toEqual([]);
+  });
+
+  test("an over-limit skill can be edited when the edit does not grow it, and is told it is still over", async () => {
+    const id = seedOversized("legacy-long", MAX_SKILL_BODY_CHARS + 500);
+    const client = (await buildSource()).getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, body: "y".repeat(MAX_SKILL_BODY_CHARS + 400), body_mode: "replace" },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(text(result)).toContain("still 400 characters over");
+  });
+
+  test("an over-limit skill cannot grow, by replace or by append", async () => {
+    const id = seedOversized("legacy-grow", MAX_SKILL_BODY_CHARS + 500);
+    const client = (await buildSource()).getClient()!;
+    const replaced = await client.callTool({
+      name: "update",
+      arguments: { id, body: "y".repeat(MAX_SKILL_BODY_CHARS + 501), body_mode: "replace" },
+    });
+    expect(replaced.isError).toBe(true);
+    const appended = await client.callTool({
+      name: "update",
+      arguments: { id, body: "x", body_mode: "append" },
+    });
+    expect(appended.isError).toBe(true);
+  });
+
+  test("restoring an over-limit snapshot succeeds and says it is over", async () => {
+    const id = seedOversized("legacy-restore", MAX_SKILL_BODY_CHARS + 300);
+    const client = (await buildSource()).getClient()!;
+    const shrunk = await client.callTool({
+      name: "update",
+      arguments: { id, body: "short now", body_mode: "replace" },
+    });
+    expect(shrunk.isError).toBeFalsy();
+    const [snapshot] = listSkillVersions(id);
+    expect(snapshot).toBeDefined();
+    const restored = await client.callTool({
+      name: "restore",
+      arguments: { id, version: snapshot!.version },
+    });
+    expect(restored.isError).toBeFalsy();
+    expect(text(restored)).toContain("still 300 characters over");
+  });
+
+  test("a manifest-only patch on an over-limit skill is not refused on size", async () => {
+    const id = seedOversized("legacy-manifest", MAX_SKILL_BODY_CHARS + 500);
+    const client = (await buildSource()).getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, manifest: { description: "new description" } },
+    });
+    expect(result.isError).toBeFalsy();
   });
 });
 

@@ -57,7 +57,11 @@ import {
 } from "../../skills/schemas/skill-manifest.ts";
 import { toolMatches } from "../../skills/select.ts";
 import { approxTokens } from "../../skills/tokens.ts";
-import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../../skills/truncate.ts";
+import {
+  MAX_SKILL_BODY_CHARS,
+  skillBodyChars,
+  truncateMarkdownToBudget,
+} from "../../skills/truncate.ts";
 import type { Skill, SkillManifest } from "../../skills/types.ts";
 import { validateSkill } from "../../skills/validator.ts";
 import {
@@ -68,6 +72,7 @@ import {
 } from "../../skills/versions.ts";
 import {
   deleteSkill,
+  mergeSkillBody,
   readSkill,
   type SkillBodyMode,
   updateSkill,
@@ -1192,6 +1197,9 @@ function buildReadResult(
       status: m.status,
     },
     ...(base.modifiedAt ? { modifiedAt: base.modifiedAt } : {}),
+    ...(skillBodyChars(skill.body) > MAX_SKILL_BODY_CHARS
+      ? { overLimitBy: skillBodyChars(skill.body) - MAX_SKILL_BODY_CHARS }
+      : {}),
   };
 }
 
@@ -1437,6 +1445,11 @@ function renderRead(skill: ReadResult): string {
   if (m.toolAffinity?.length) fields.push(`tool-affinity: ${m.toolAffinity.join(", ")}`);
   if (m.triggers?.length) fields.push(`triggers: ${m.triggers.join(", ")}`);
   if (skill.modifiedAt) fields.push(`modified: ${skill.modifiedAt}`);
+  if (skill.overLimitBy) {
+    fields.push(
+      `over-limit-by: ${skill.overLimitBy} characters past the ${MAX_SKILL_BODY_CHARS}-character limit; its last sections are cut when it loads`,
+    );
+  }
   return `${fields.join("\n")}\n\n---\n\n${skill.content}`;
 }
 
@@ -2011,6 +2024,8 @@ async function createSkill(
   if (!validation.valid) {
     return errorResult(new Error(`Validation failed — ${validation.errors.join("; ")}`));
   }
+  const sizeError = bodySizeError(pasted.body);
+  if (sizeError) return sizeError;
 
   // The writer canonically validates before touching disk and throws if the
   // manifest wouldn't load — surface that as a clean tool error, no file left
@@ -2114,6 +2129,62 @@ function bodyModeError(body: string | undefined, bodyMode: unknown): ToolResult 
 }
 
 /**
+ * Refuse a body the platform would not deliver whole.
+ *
+ * A body past `MAX_SKILL_BODY_CHARS` is cut from the end when it loads, so
+ * accepting one is accepting a silent loss, and the rules an author adds last
+ * are the ones dropped. A body already over the limit may still be saved when
+ * the save does not grow it: the editor sends the whole body on every save, so
+ * refusing those would stop an owner fixing one rule, or changing a trigger,
+ * until they had first cut the skill below the limit.
+ */
+function bodySizeError(next: string, current?: string): ToolResult | null {
+  const size = skillBodyChars(next);
+  if (size <= MAX_SKILL_BODY_CHARS) return null;
+  if (current !== undefined && size <= skillBodyChars(current)) return null;
+  return errorResult(
+    new Error(
+      `Not saved: the skill body would be ${size} characters. A skill is delivered up to ` +
+        `${MAX_SKILL_BODY_CHARS} characters and anything past that is cut from the end when it ` +
+        "loads. Edit the section the rule belongs in rather than appending, or split the skill " +
+        "into two. Do not summarise the rest of the skill to make room.",
+    ),
+  );
+}
+
+/**
+ * An update's body, ready to write: the pasted document absorbed, then the body
+ * the write would leave checked against the size rule. `nextBody` is undefined
+ * when the update sends no body (a manifest-only patch or a status change),
+ * which is never refused on size.
+ */
+function prepareUpdateBody(
+  dir: string,
+  name: string,
+  body: string | undefined,
+  mode: SkillBodyMode,
+  frontmatter: "apply" | "ignore" | undefined,
+): { error: ToolResult } | { pasted: PastedFields | null; nextBody: string | undefined } {
+  const absorbed = absorbForUpdate(body, mode, frontmatter);
+  if ("error" in absorbed) return absorbed;
+  const sentBody = absorbed.pasted ? absorbed.pasted.body : body;
+  if (sentBody === undefined) return { pasted: absorbed.pasted, nextBody: undefined };
+  const currentBody = readSkill(dir, name)?.body ?? "";
+  const nextBody = mergeSkillBody(currentBody, sentBody, mode);
+  const error = bodySizeError(nextBody, currentBody);
+  return error ? { error } : { pasted: absorbed.pasted, nextBody };
+}
+
+/** What a save that leaves the body over the limit owes the author: how far over it is. */
+function overLimitNote(body: string | undefined): string {
+  if (body === undefined) return "";
+  const over = skillBodyChars(body) - MAX_SKILL_BODY_CHARS;
+  return over > 0
+    ? ` It is still ${over} characters over the ${MAX_SKILL_BODY_CHARS}-character limit, so its last sections are cut when it loads.`
+    : "";
+}
+
+/**
  * Refuse a path that points into `_versions/` rather than at a live skill.
  * Mutating a snapshot would snapshot a snapshot, and the loader skips that
  * subtree, so the result would be unreachable by every reader.
@@ -2207,9 +2278,11 @@ async function updateSkillHandler(
   if (refusal) return refusal;
 
   const effectiveMode = bodyMode ?? "replace";
-  const absorbed = absorbForUpdate(body, effectiveMode, frontmatter);
-  if ("error" in absorbed) return absorbed.error;
-  const pasted = absorbed.pasted;
+  // The body is sized before the snapshot, so a refused update leaves neither a
+  // changed file nor a history entry.
+  const prepared = prepareUpdateBody(dir, name, body, effectiveMode, frontmatter);
+  if ("error" in prepared) return prepared.error;
+  const { pasted, nextBody } = prepared;
 
   snapshotSkillVersion(id);
 
@@ -2239,7 +2312,7 @@ async function updateSkillHandler(
   const loads = out.loading ? ` (loads: ${loadsNote(out.loading.mechanism)})` : "";
   return {
     content: textContent(
-      `Updated ${scope} skill "${name}"${loads}${frontmatterNote(pasted, name)}`,
+      `Updated ${scope} skill "${name}"${loads}${frontmatterNote(pasted, name)}${overLimitNote(nextBody)}`,
     ),
     // Cast at the wire boundary for the reason `listSkills` states.
     structuredContent: out as unknown as Record<string, unknown>,
@@ -2399,7 +2472,9 @@ async function restoreSkillHandler(
 
   eventSink.emit({ type: "skill.updated", data: { id: path, name, scope: gate.scope } });
   return {
-    content: textContent(`Restored ${gate.scope} skill "${name}" from version ${version}`),
+    content: textContent(
+      `Restored ${gate.scope} skill "${name}" from version ${version}.${overLimitNote(parsed.body)}`,
+    ),
     structuredContent: { id: path, name, scope: gate.scope, version },
     isError: false,
   };
