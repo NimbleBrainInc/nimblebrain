@@ -30,7 +30,7 @@ let rebootstrap: BootstrapResponse["workspaces"] = [];
 mock.module("../api/client", () => ({
   ...realClient,
   // The unread provider reads only `workspaces` from a re-bootstrap; `user` and `config` are not built.
-  tryBootstrap: mock(async () => ({ workspaces: rebootstrap }) as unknown as BootstrapResponse),
+  tryBootstrap: mock(async () => ({ workspaces: rebootstrap }) as BootstrapResponse),
 }));
 
 const ReactDOMClient = await import("react-dom/client");

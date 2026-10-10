@@ -12,13 +12,13 @@
  * names its mismatch".
  *
  * What this flags: an assertion (`x as T` or `<T>x`) whose operand, with
- * parentheses stripped, is an assertion to `unknown`, when no qualifying
+ * parentheses and non-null assertions stripped, is an assertion to `unknown`, when no qualifying
  * comment sits on the cast's line or on the line directly above it. A cast
  * that spans lines has two: the line holding `unknown`, and the line where the
  * asserted expression starts, so a comment may sit above a multi-line literal
  * as well as beside its closing `} as unknown as T`. A comment above may span
  * several lines (a block comment, or a run of `//` lines); the whole of it is
- * read.
+ * read. A comment above counts only when no code shares its lines.
  *
  * What qualifies: after the comment markers and any lint directive
  * (`biome-ignore …:`, `eslint-disable…`, `deno-lint-ignore…`,
@@ -51,6 +51,7 @@ const ROOT = join(import.meta.dirname ?? __dirname, "..");
  * `test/` entries once all of them have.
  */
 export const SCOPE: readonly string[] = [
+  "scripts",
   "src",
   "web/src",
   "test/conformance",
@@ -179,7 +180,12 @@ interface CommentSpan {
   text: string;
   /** True for a `//` comment, which can join a run of `//` lines. */
   single: boolean;
+  /** True when no code shares its lines: only punctuation (a JSX brace, a `?`). */
+  alone: boolean;
 }
+
+/** Text with no identifier, number, or string in it: punctuation and space only. */
+const CODE_FREE = /^[^\w"'`]*$/;
 
 /** Every comment in the file, in source order. */
 function collectComments(source: ts.SourceFile): CommentSpan[] {
@@ -190,11 +196,17 @@ function collectComments(source: ts.SourceFile): CommentSpan[] {
     for (const r of ranges ?? []) {
       if (seen.has(r.pos)) continue;
       seen.add(r.pos);
+      const startLine = source.getLineAndCharacterOfPosition(r.pos).line;
+      const endLine = source.getLineAndCharacterOfPosition(r.end).line;
+      const before = text.slice(source.getLineStarts()[startLine], r.pos);
+      const lineEnd = text.indexOf("\n", r.end);
+      const after = text.slice(r.end, lineEnd === -1 ? text.length : lineEnd);
       spans.push({
-        startLine: source.getLineAndCharacterOfPosition(r.pos).line,
-        endLine: source.getLineAndCharacterOfPosition(r.end).line,
+        startLine,
+        endLine,
         text: text.slice(r.pos, r.end),
         single: r.kind === ts.SyntaxKind.SingleLineCommentTrivia,
+        alone: CODE_FREE.test(before) && CODE_FREE.test(after),
       });
     }
   };
@@ -209,19 +221,24 @@ function collectComments(source: ts.SourceFile): CommentSpan[] {
   return spans.sort((a, b) => a.startLine - b.startLine);
 }
 
-/** The comment text on `line` (0-based), then the comment ending directly above it. */
+/**
+ * The comment text on `line` (0-based), then the comment ending directly above
+ * it. A comment above counts only when it stands alone on its lines, so a
+ * trailing comment on the previous line of code is not read as the cast's.
+ */
 function commentFor(line: number, comments: readonly CommentSpan[]): string | null {
   const parts: string[] = [];
   for (const c of comments) {
     if (c.startLine <= line && c.endLine >= line) parts.push(c.text);
   }
-  const above = comments.filter((c) => c.endLine === line - 1);
+  const standalone = comments.filter((c) => c.alone);
+  const above = standalone.filter((c) => c.endLine === line - 1);
   if (above.length > 0) {
     // A run of `//` lines reads as one comment.
     const run: string[] = [];
     let next = line - 1;
     for (;;) {
-      const onLine = comments.filter((c) => c.endLine === next);
+      const onLine = standalone.filter((c) => c.endLine === next);
       if (onLine.length === 0) break;
       run.unshift(...onLine.map((c) => c.text));
       const first = onLine[0]!;
@@ -237,8 +254,11 @@ function isAssertion(node: ts.Node): node is ts.AsExpression | ts.TypeAssertion 
   return ts.isAsExpression(node) || ts.isTypeAssertionExpression(node);
 }
 
+/** `node` with parentheses and non-null assertions (`(x as unknown)!`) stripped. */
 function stripParens(node: ts.Expression): ts.Expression {
-  return ts.isParenthesizedExpression(node) ? stripParens(node.expression) : node;
+  return ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)
+    ? stripParens(node.expression)
+    : node;
 }
 
 /** Every `as unknown as T` (or `<T><unknown>x`) in one file. */

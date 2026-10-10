@@ -216,7 +216,7 @@ function appSide(container: HTMLElement): AppSide {
     postMessage(data: Record<string, unknown>) {
       inbox.push(data);
     },
-  } as unknown as Window;
+  } as Window;
   Object.defineProperty(iframe, "contentWindow", { configurable: true, get: () => stubWindow });
   return {
     inbox,

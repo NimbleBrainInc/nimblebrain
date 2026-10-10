@@ -71,7 +71,7 @@ export function typedTool<S extends TSchema>(tool: TypedInProcessTool<S>): InPro
   // `InProcessTool.handler` takes the `Record<string, unknown>` the SDK hands
   // `tools/call`; the input has already passed validation against `S`, which
   // that parameter type cannot express. Identical at runtime: the same object.
-  return tool as unknown as InProcessTool;
+  return tool as InProcessTool;
 }
 
 /**

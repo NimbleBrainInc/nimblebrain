@@ -59,8 +59,9 @@ describe("findUnsafeCasts", () => {
       "const a = value as unknown as Foo;",
       "const b = (value as unknown) as Foo;",
       "const c = <Foo>(<unknown>value);",
+      "const d = (value as unknown)! as Foo;",
     ].join("\n");
-    expect(failing(text)).toEqual([1, 2, 3]);
+    expect(failing(text)).toEqual([1, 2, 3, 4]);
   });
 
   test("ignores a single assertion and an assertion to unknown alone", () => {
@@ -103,6 +104,14 @@ describe("findUnsafeCasts", () => {
       "const b = value as unknown as Foo; // cast",
     ].join("\n");
     expect(failing(text)).toEqual([3, 4]);
+  });
+
+  test("does not read a trailing comment on the line of code above", () => {
+    const text = [
+      "const limit = 10; // the default page size for every list",
+      "const a = value as unknown as Foo;",
+    ].join("\n");
+    expect(failing(text)).toEqual([2]);
   });
 
   test("passes a comment above a multi-line cast's first line", () => {

@@ -36,7 +36,7 @@ const violations: Violation[] = [];
 /** Recursively list .ts files under a directory, or an empty list if it can't be read. */
 function listTsFiles(dir: string): string[] {
   try {
-    const entries = readdirSync(dir, { recursive: true }) as unknown as string[];
+    const entries = readdirSync(dir, { recursive: true, encoding: "utf8" });
     return entries.filter((file) => file.endsWith(".ts"));
   } catch {
     return [];

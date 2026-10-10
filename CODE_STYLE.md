@@ -293,16 +293,18 @@ go: when the SDK types the result, when the stub grows the missing member.
 **Detection.** `bun run check:unsafe-casts` (wired into `verify:static`) flags
 an `as unknown as T` (or `<T><unknown>x`) under the check's scope with no
 qualifying comment on the line holding `unknown`, on the line where the asserted
-expression starts, or on the line directly above either. A comment qualifies
+expression starts, or on the line directly above either; a comment above counts
+only when no code shares its lines. A comment qualifies
 when, with its markers and any lint directive stripped, it holds at least three
 words outside a list of generic ones (`cast`, `type`, `hack`, `TODO`, `unsafe`,
 `sdk`, …). That floor rejects the empty and the placeholder comment; whether a
 passing comment is true is review's call.
 
 **Override.** None: no per-line marker and no file exemption. The scope (the
-`SCOPE` roots in `scripts/check-unsafe-casts.ts`) covers `src/` (the platform
-app UIs included), `web/src/`, and each `test/` directory whose casts are clean;
-a directory joins the scope when it is cleaned.
+`SCOPE` roots in `scripts/check-unsafe-casts.ts`) covers `scripts/`, `src/`
+(the platform app UIs included), `web/src/`, and each `test/` directory whose
+casts are clean; a directory joins the scope when it is cleaned, and `web/test/`
+joins the same way.
 
 ---
 
