@@ -321,18 +321,47 @@ export function sanitizeReportedVersion(raw: string): string | undefined {
 }
 
 /**
+ * How long a remote source's memoized `tools/list` is trusted before a read
+ * re-fetches it. A remote server redeployed at the same URL changes its tools
+ * with no signal to an already-connected client: a stateless server loses no
+ * session, and the new process cannot notify a client of the old one. Every
+ * read of a remote source's tools, the agent's run listing and the connector
+ * pages alike, is bounded by this one age.
+ */
+export const REMOTE_TOOL_LIST_MAX_AGE_MS = 60_000;
+
+/**
+ * How long {@link McpSource.tools} waits on a stale remote source's re-fetch
+ * before serving the memo. A run lists tools as it starts, so a source used
+ * less often than the max age would otherwise always start on its old list.
+ * The wait is paid once per max age per source, and only by the read that
+ * starts the re-fetch.
+ */
+export const REMOTE_TOOL_REFRESH_WAIT_MS = 1_500;
+
+/**
  * Whether two mapped tool lists differ in a way the LLM or UI would observe —
- * the set of tool names, or any tool's description / input schema / execution
- * metadata. Order-independent (`tools/list` ordering isn't guaranteed stable
- * across server restarts). Used to gate the `toolsChanged` fan-out so a
- * refresh that returns the identical surface doesn't needlessly invalidate
- * memoized tool unions downstream.
+ * the set of tool names, or any tool's description, input or output schema,
+ * annotations, `_meta` or execution metadata. Order-independent (`tools/list`
+ * ordering isn't guaranteed stable across server restarts). Used to keep the
+ * memo's array when a refresh returns the same surface, so the order the model
+ * sees (and the prompt cache) holds, and to gate the `toolsChanged` fan-out.
  */
 export function toolListChanged(a: readonly Tool[], b: readonly Tool[]): boolean {
   if (a.length !== b.length) return true;
   const signature = (tools: readonly Tool[]) =>
     tools
-      .map((t) => JSON.stringify([t.name, t.description, t.inputSchema, t.execution ?? null]))
+      .map((t) =>
+        JSON.stringify([
+          t.name,
+          t.description,
+          t.inputSchema,
+          t.outputSchema ?? null,
+          t.annotations ?? null,
+          t.meta ?? null,
+          t.execution ?? null,
+        ]),
+      )
       .sort()
       .join("\u0000");
   return signature(a) !== signature(b);
@@ -416,6 +445,9 @@ export class McpSource implements ToolSource {
   /** A {@link refreshTools} in progress, shared so concurrent refreshes reuse
    *  one round-trip AND emit the change signal at most once. */
   private refreshInFlight: Promise<Tool[]> | null = null;
+  /** Bumped by {@link stop}, so a refresh begun on the old connection cannot
+   *  write the new connection's memo when its answer lands. */
+  private toolListGeneration = 0;
   private dead = false;
   /** A restart in progress, shared so concurrent recoveries reuse one
    *  stop()/start() cycle instead of stacking. Resource reads are NOT serialized
@@ -431,6 +463,9 @@ export class McpSource implements ToolSource {
    *  `SESSION_RECOVERY_DELAYS_MS`; overridable so tests exercise the policy
    *  branches without real sleeps. */
   private recoveryDelaysMs?: readonly number[];
+  /** How long {@link tools} waits on a stale remote re-fetch. Defaults to
+   *  `REMOTE_TOOL_REFRESH_WAIT_MS`; overridable so tests need no real wait. */
+  private toolsRefreshWaitMs?: number;
   /** Timestamp of the last FAILED on-demand reconnect ({@link reconnectOnDemand}),
    *  or null when there is no unpaid failure — reset by any successful `start()`
    *  (so a heal via HealthMonitor / recover() clears it too, not just
@@ -1668,6 +1703,7 @@ export class McpSource implements ToolSource {
     this.toolsFetchedAt = null;
     this.toolsFetchInFlight = null;
     this.refreshInFlight = null;
+    this.toolListGeneration += 1;
     this._instructions = undefined;
     this._serverVersion = undefined;
   }
@@ -1840,7 +1876,12 @@ export class McpSource implements ToolSource {
   }
 
   async tools(): Promise<Tool[]> {
-    if (this.cachedTools) return this.cachedTools;
+    if (this.cachedTools) {
+      if (this.isRemote() && this.toolListOlderThan(REMOTE_TOOL_LIST_MAX_AGE_MS)) {
+        return this.revalidateTools(this.cachedTools);
+      }
+      return this.cachedTools;
+    }
     const fetched = await this.fetchToolList();
     this.cachedTools = fetched;
     this.toolsFetchedAt = Date.now();
@@ -1853,9 +1894,9 @@ export class McpSource implements ToolSource {
    * seam for picking up a remote server whose tool surface changed WITHOUT a
    * lifecycle event (redeployed at the same URL, no reconnect, no native
    * `tools/list_changed`). When the resulting surface actually differs from
-   * what was cached, fans out via `emitToolsChanged()` so the workspace tool
-   * union and the engine's LLM tool list converge in lockstep with the UI; a
-   * no-op refresh stays silent to avoid needless union invalidation.
+   * what was cached, fans out via `emitToolsChanged()` so the source's change
+   * listeners re-read it; a no-op refresh keeps the memo's array and stays
+   * silent.
    *
    * Note: does NOT refresh the reported handshake version
    * ({@link getReportedVersion}) — that comes from the `initialize` response,
@@ -1868,15 +1909,20 @@ export class McpSource implements ToolSource {
   async refreshTools(): Promise<Tool[]> {
     if (this.refreshInFlight) return this.refreshInFlight;
     const previous = this.cachedTools;
+    const generation = this.toolListGeneration;
     const p = (async () => {
       const fetched = await this.fetchToolList();
-      this.cachedTools = fetched;
+      // A stop() or restart while the request was out began a new generation:
+      // the memo now belongs to the new connection, so this answer is dropped.
+      if (generation !== this.toolListGeneration) return fetched;
       this.toolsFetchedAt = Date.now();
+      // An unchanged surface keeps the memo's array, so a server that lists the
+      // same tools in another order does not reorder what the model sees.
+      if (previous !== null && !toolListChanged(previous, fetched)) return previous;
+      this.cachedTools = fetched;
       // previous === null means the memo was empty; the connect seam already
       // emits on first population, so only a real surface change re-fans-out.
-      if (previous !== null && toolListChanged(previous, fetched)) {
-        this.emitToolsChanged();
-      }
+      if (previous !== null) this.emitToolsChanged();
       return fetched;
     })();
     this.refreshInFlight = p;
@@ -1912,6 +1958,48 @@ export class McpSource implements ToolSource {
       }
       throw err;
     }
+  }
+
+  /** Whether the memo was fetched more than `maxAgeMs` ago (or never). */
+  private toolListOlderThan(maxAgeMs: number): boolean {
+    return this.toolsFetchedAt === null || Date.now() - this.toolsFetchedAt > maxAgeMs;
+  }
+
+  /**
+   * Re-fetch a stale remote memo for {@link tools}, waiting at most
+   * {@link REMOTE_TOOL_REFRESH_WAIT_MS} before serving `memo`. Only the read
+   * that starts the re-fetch waits: while one is in flight every other read is
+   * served the memo at once, so a hung server costs one wait per max age, not
+   * one per listing. A slow re-fetch still lands in the memo for the next read.
+   *
+   * A failed re-fetch counts as a check, so a server that is down is asked
+   * again after the max age rather than on every listing. A stateful server
+   * redeployed behind the same URL answers with a lost session; that restarts
+   * the source, which reconnects and drops the memo.
+   */
+  private async revalidateTools(memo: Tool[]): Promise<Tool[]> {
+    if (this.refreshInFlight) return memo;
+    const refresh = this.refreshTools().catch((err: unknown) => {
+      this.toolsFetchedAt = Date.now();
+      log.debug(
+        "mcp",
+        `[${this.name}] tool-list revalidation failed, serving cached — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      if (classifyConnectionFailure(err) === "session-lost") void this.tryRestart();
+      return null;
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<null>((resolve) => {
+      timer = setTimeout(
+        () => resolve(null),
+        this.toolsRefreshWaitMs ?? REMOTE_TOOL_REFRESH_WAIT_MS,
+      );
+    });
+    const fresh = await Promise.race([refresh, waited]);
+    clearTimeout(timer);
+    return fresh ?? memo;
   }
 
   /**
