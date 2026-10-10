@@ -172,7 +172,7 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 | Setting | Value |
 |---------|-------|
 | `models.default` | `anthropic:claude-sonnet-4-6` |
-| `models.fast` | `anthropic:claude-haiku-4-5-20251001` |
+| `models.fast` | `anthropic:claude-sonnet-4-6` |
 | Max iterations | 25 (hard cap: 50) |
 | Max input tokens | 500,000 |
 | Max output tokens | the model's catalog output limit (16,384 for a model the catalog lacks) |

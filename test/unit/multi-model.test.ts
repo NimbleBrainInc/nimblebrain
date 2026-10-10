@@ -60,13 +60,11 @@ describe("multi-model routing", () => {
       expect(model.modelId).toContain("claude-sonnet");
     });
 
-    it("resolves bare model string with anthropic default", () => {
+    it("refuses a bare model string rather than guessing its provider", () => {
       const resolver = buildModelResolver({
         providers: { anthropic: {} },
       });
-      const model = resolver("claude-sonnet-4-6");
-      expect(model).toBeDefined();
-      expect(model.specificationVersion).toBe("v4");
+      expect(() => resolver("claude-sonnet-4-6")).toThrow("has no provider");
     });
   });
 
@@ -105,12 +103,6 @@ describe("multi-model routing", () => {
       expect(runStart!.data.model).toBe("my-custom-default");
     });
   });
-
-  // Direct semantics for resolveModelString live in
-  // test/unit/model-registry.test.ts (catalog lookup, fallback, qualified
-  // pass-through). Removed the legacy "bare string gets anthropic prefix"
-  // block from this file — it was duplicate AND mis-describing the
-  // function's actual behavior after the catalog-fallback fix.
 
   describe("engine works with LanguageModelV4 end-to-end", () => {
     it("engine processes multiple turns with echo model", async () => {

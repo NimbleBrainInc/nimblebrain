@@ -129,7 +129,8 @@ import {
   isModelAllowed,
   isModelInPolicy,
 } from "../model/catalog.ts";
-import { buildModelResolver, resolveModelString } from "../model/registry.ts";
+import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
+import { buildModelResolver } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { type ResolvedPollConfig, resolvePollConfig } from "../notifications/poll-config.ts";
 import { positionOutbox } from "../notifications/position.ts";
@@ -313,7 +314,7 @@ import {
 } from "./workspace-runtime.ts";
 
 const DEFAULT_WORK_DIR = join(homedir(), ".nimblebrain");
-const DEFAULT_MODEL = "claude-sonnet-4-6";
+const DEFAULT_MODEL = "anthropic:claude-sonnet-4-6";
 
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_ITERATIONS } from "../limits.ts";
 import { buildMidTurnCompaction } from "./mid-turn-compaction.ts";
@@ -331,6 +332,23 @@ import { isToolEligibleForPromotion } from "./tool-eligibility.ts";
  */
 function applyClearable<T>(current: T | undefined, patched: T | null | undefined): T | undefined {
   return patched === undefined ? current : (patched ?? undefined);
+}
+
+/**
+ * Refuse to start on a configured model id that is not `provider:model`.
+ *
+ * The CLI loader's schema already refuses one in `nimblebrain.json`; this is
+ * the same rule for a config handed to `Runtime.start` in code, which no schema
+ * sees. Checked after credential references resolve, since any string here may
+ * have been one.
+ */
+function assertQualifiedModelConfig(config: Pick<RuntimeConfig, "models" | "modelPolicy">): void {
+  for (const [slot, model] of Object.entries(config.models ?? {})) {
+    if (typeof model === "string") requireQualifiedModelId(model, `models.${slot}`);
+  }
+  for (const model of config.modelPolicy?.allowed ?? []) {
+    requireQualifiedModelId(model, "modelPolicy.allowed entry");
+  }
 }
 
 /**
@@ -709,6 +727,7 @@ export class Runtime {
     // legacy plaintext file would race the rewrite of that same file.
     await credentialStore.reconcile?.();
     let config = await resolveInstanceCredentialRefs(declaredConfig);
+    assertQualifiedModelConfig(config);
     // `loadConfig` already did this for a file-backed boot; a config built in
     // code reaches here without it, and the brand is process state every
     // reader below shares, so the composition root installs it too.
@@ -2336,16 +2355,15 @@ export class Runtime {
   // ── chat / task turn helpers (shared setup) ──────────────────────
 
   /**
-   * Resolve the request model string: resolve a slot name (bare or `alias:`-
-   * prefixed) to its configured model, then qualify the bare id.
+   * Resolve the request model string: a slot name (bare or `alias:`-prefixed)
+   * resolves to its configured model; anything else must already be
+   * `provider:model`, and a bare id is refused naming the qualified form.
    *
    * Slot reads go through `getModelSlot`, so a workspace's per-request model
-   * override (carried on the RequestContext) applies here too, and the value
-   * comes back already qualified. The `request.model` override bypasses that
-   * reader, so the qualify step covers both. Qualifying at the request-entry
-   * boundary lets the rest of the pipeline — cost aggregation, capability
-   * checks, the max-output and thinking resolvers, provider-options shape,
-   * log lines — read `engineConfig.model` and depend on it being qualified.
+   * override (carried on the RequestContext) applies here too. The rest of the
+   * pipeline — cost aggregation, capability checks, the max-output and
+   * thinking resolvers, provider-options shape, log lines — reads
+   * `engineConfig.model` and depends on it being qualified.
    *
    * Both request doors (chat and task) resolve through here; a second copy
    * is how the two drift.
@@ -2358,19 +2376,16 @@ export class Runtime {
     if (slot) return this.getModelSlot(slot);
 
     // A concrete model named by the caller is the one untrusted value here,
-    // and it is written to the conversation's immutable pin. An
-    // unchecked value would not overspend for a turn; it would seal the
-    // conversation to a disallowed model for life, past any later policy change.
-    // Checked before qualification, not after: `resolveModelString("")` is
-    // `"anthropic:"`, so a floor applied to the qualified form never sees an
-    // empty id at all.
+    // and it is written to the conversation's immutable pin. An unchecked value
+    // would not overspend for a turn; it would seal the conversation to a
+    // disallowed model for life, past any later policy change.
+    // An empty id is malformed rather than bare, and is refused as not
+    // permitted below.
+    if (requestModel.trim() !== "") requireQualifiedModelId(requestModel);
     if (!this.isModelPermitted(requestModel)) {
-      throw new ModelNotAllowedError(
-        resolveModelString(requestModel),
-        this.getConfiguredProviders(),
-      );
+      throw new ModelNotAllowedError(requestModel, this.getConfiguredProviders());
     }
-    return resolveModelString(requestModel);
+    return requestModel;
   }
 
   /**
@@ -4868,18 +4883,6 @@ export class Runtime {
     return this._instanceConfig;
   }
 
-  /** Get the resolved model slots (all three, with fallback logic).
-   *  When a workspace model override is active (set per-request in chat()),
-   *  workspace slots are merged over instance defaults.
-   *
-   *  All slot values are returned in fully-qualified `provider:id` form.
-   *  Stored config can contain bare ids (legacy state from older settings
-   *  UI saves); qualifying at the slot reader means every consumer of
-   *  this method — engine config, get_config tool (which feeds the
-   *  dropdown), telemetry, briefing — sees the same qualified shape
-   *  without each having to remember to call `resolveModelString`. The
-   *  per-request `request.model` override path (in `chat()`) qualifies
-   *  separately because it bypasses this reader. */
   /**
    * The slots as *configured* — no request-scoped overlay.
    *
@@ -4904,19 +4907,32 @@ export class Runtime {
       else if (value !== undefined) models[slot] = value;
     }
     return {
-      default: resolveModelString(models.default ?? DEFAULT_MODEL),
-      fast: resolveModelString(models.fast ?? DEFAULT_MODEL),
+      default: models.default ?? DEFAULT_MODEL,
+      fast: models.fast ?? DEFAULT_MODEL,
     };
   }
 
+  /**
+   * The slots in effect for the current request: the configured slots, then
+   * the workspace's overrides, then the person's own `default` choice.
+   *
+   * Every value is `provider:model`. Config and preferences are refused bare
+   * where they are written; `workspace.json` is hand-edited and has no writer
+   * to refuse at, so its overrides are checked here and a bare one fails the
+   * turn naming the qualified form.
+   */
   getModelSlots(): ModelSlots {
     const base = this.configuredModelSlots();
     // Merge workspace model overrides from request context (partial — only overrides specified slots)
     const wsModels = getRequestContext()?.workspaceModelOverride ?? null;
     const withWorkspace: ModelSlots = wsModels
       ? {
-          default: wsModels.default ? resolveModelString(wsModels.default) : base.default,
-          fast: wsModels.fast ? resolveModelString(wsModels.fast) : base.fast,
+          default: wsModels.default
+            ? requireQualifiedModelId(wsModels.default, "workspace.json models.default")
+            : base.default,
+          fast: wsModels.fast
+            ? requireQualifiedModelId(wsModels.fast, "workspace.json models.fast")
+            : base.fast,
         }
       : base;
 
@@ -4931,7 +4947,7 @@ export class Runtime {
     const chosen = getRequestContext()?.identity?.preferences?.models?.default;
     if (!chosen) return withWorkspace;
     if (!this.isModelPermitted(chosen)) return withWorkspace;
-    return { ...withWorkspace, default: resolveModelString(chosen) };
+    return { ...withWorkspace, default: chosen };
   }
 
   /**
@@ -4947,20 +4963,18 @@ export class Runtime {
    * a configured slot value is governed where it is written.
    */
   isModelPermitted(modelString: string): boolean {
-    // An empty id is not a model. `resolveModelString("")` returns
-    // `"anthropic:"` — the bare-id fallback applied to nothing — which a
-    // provider-less deployment would otherwise accept and, on the preference
-    // path, pin every future conversation to.
-    if (modelString.trim() === "") return false;
-    const qualified = resolveModelString(modelString);
+    // Only a `provider:model` id is a model. An empty or bare string would
+    // otherwise pass a provider-less deployment and, on the preference path,
+    // pin every future conversation to a model that names no provider.
+    if (!isQualifiedModelId(modelString)) return false;
     // Policy is checked before the provider guard and independently of it. The
     // guard below tolerates absent provider config because `getProviderConfigs`
     // reports a display default rather than a reachability claim — but an
     // allowlist is an explicit operator statement, so when one exists it binds
     // whether or not providers are configured.
-    if (!isModelInPolicy(qualified, this.config.modelPolicy?.allowed)) return false;
+    if (!isModelInPolicy(modelString, this.config.modelPolicy?.allowed)) return false;
     if (!this.config.providers) return true;
-    return isModelAllowed(qualified, this.getProviderConfigs());
+    return isModelAllowed(modelString, this.getProviderConfigs());
   }
 
   /** Which models this organization permits. Absent ⇒ permissive. */

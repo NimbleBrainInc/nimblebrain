@@ -196,7 +196,7 @@ rather than a flag that would be rejected or ignored:
 
 ## models
 
-The `models` object declares two role-based slots. Each value is a `provider:model-id` string (e.g. `"anthropic:claude-sonnet-4-6"`).
+The `models` object declares two role-based slots. Each value is a `provider:model-id` string (e.g. `"anthropic:claude-sonnet-4-6"`). The provider is part of the id: a value without one (`"claude-sonnet-4-6"`) is refused at startup, with an error naming the qualified form to write.
 
 ```json
 {
@@ -216,7 +216,7 @@ A slot left unset resolves to the built-in default model, `anthropic:claude-sonn
 
 A workspace can override individual slots via `workspace.json → models`. When a per-request model specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots. `"alias:fast"` is the same reference written explicitly; both spellings resolve identically.
 
-A bare model string that is **neither** a slot name nor a model in the catalog is passed through to the provider unchanged, with `anthropic:` prepended — the deliberate fallback for pinned or bespoke ids served under their own name (for example through an OpenAI-compatible proxy). That means a typo here is not rejected at config load; it fails at the provider on the first call that uses the slot, reporting a model you did not configure.
+A model the catalog does not list is still accepted when it names its provider (`"openai:my-fine-tune"`, or a model served under its own name through an OpenAI-compatible proxy). It is passed to that provider unchanged, so a typo in the model half is not rejected at config load; it fails at the provider on the first call that uses the slot.
 
 ### Changing a slot affects new conversations only
 
@@ -262,7 +262,7 @@ an existing deployment changes nothing and an org opts *into* restriction.
 
 | Field | Type | Description |
 |---|---|---|
-| `allowed` | `string[]` | Qualified `provider:model-id` strings. |
+| `allowed` | `string[]` | Qualified `provider:model-id` strings. An entry without a provider is refused at startup. |
 
 Policy can only **subtract**. It narrows what the configured providers can
 already reach — naming a model whose provider has no key does not make it

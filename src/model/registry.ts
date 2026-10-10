@@ -10,8 +10,8 @@ import {
   type Provider,
   wrapLanguageModel,
 } from "ai";
-import { findProviderForModelId } from "./catalog.ts";
 import { wrapFetchWithLiveness } from "./fetch-liveness.ts";
+import { requireQualifiedModelId } from "./model-id.ts";
 
 export interface ProvidersConfig {
   providers?: {
@@ -146,31 +146,7 @@ export function buildRegistry(config: ProvidersConfig): Provider {
 }
 
 /**
- * Resolve a model string to provider:model-id format.
- *
- * - `provider:model-id` strings pass through unchanged.
- * - Bare strings are looked up in the catalog and routed to whichever
- *   provider declares them. This rescues bare ids that the settings UI
- *   wrote before it started encoding the provider into option values
- *   (e.g., `gemini-3.1-pro-preview` saved by an older client) — without
- *   the catalog lookup, those ids would default to anthropic and 404.
- * - Bare strings not in the catalog fall back to `anthropic:` for
- *   backward compat with bespoke / pinned model ids that pre-date the
- *   catalog-driven UI.
- */
-export function resolveModelString(model: string): string {
-  if (model.includes(":")) {
-    return model;
-  }
-  const catalogProvider = findProviderForModelId(model);
-  if (catalogProvider) {
-    return `${catalogProvider}:${model}`;
-  }
-  return `anthropic:${model}`;
-}
-
-/**
- * Build a function that resolves model strings to LanguageModelV4 instances.
+ * Build a function that resolves `provider:model` ids to LanguageModelV4 instances.
  * If no providers configured, defaults to anthropic with env var fallback.
  */
 export function buildModelResolver(
@@ -178,8 +154,6 @@ export function buildModelResolver(
 ): (modelString: string) => LanguageModelV4 {
   const provider = buildRegistry(config);
 
-  return (modelString: string): LanguageModelV4 => {
-    const resolved = resolveModelString(modelString);
-    return provider.languageModel(resolved) as LanguageModelV4;
-  };
+  return (modelString: string): LanguageModelV4 =>
+    provider.languageModel(requireQualifiedModelId(modelString)) as LanguageModelV4;
 }

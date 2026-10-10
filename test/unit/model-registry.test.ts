@@ -1,44 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4, SharedV4ProviderOptions } from "@ai-sdk/provider";
-import { buildModelResolver, buildRegistry, resolveModelString } from "../../src/model/registry.ts";
-
-describe("resolveModelString", () => {
-  it("looks up bare anthropic model id in the catalog", () => {
-    expect(resolveModelString("claude-sonnet-4-6")).toBe("anthropic:claude-sonnet-4-6");
-  });
-
-  it("looks up bare google model id in the catalog (fixes UI sending bare gemini ids to anthropic)", () => {
-    // A saved value can be a bare `gemini-3.1-pro-preview` (no `google:`
-    // prefix). Without the catalog fallback, that id would default to
-    // `anthropic:` and 404 against the Anthropic API.
-    expect(resolveModelString("gemini-3.1-pro-preview")).toBe("google:gemini-3.1-pro-preview");
-  });
-
-  it("looks up bare openai model id in the catalog", () => {
-    expect(resolveModelString("gpt-4o")).toBe("openai:gpt-4o");
-  });
-
-  it("falls back to anthropic for bare ids not in the catalog (backward compat)", () => {
-    // Bespoke / pinned model ids that pre-date the catalog still default
-    // to anthropic — preserves the historical behavior for tenants who
-    // configured custom model strings.
-    expect(resolveModelString("custom-fine-tune-not-in-catalog")).toBe(
-      "anthropic:custom-fine-tune-not-in-catalog",
-    );
-  });
-
-  it("leaves already-qualified openai string unchanged", () => {
-    expect(resolveModelString("openai:gpt-4o")).toBe("openai:gpt-4o");
-  });
-
-  it("leaves already-qualified google string unchanged", () => {
-    expect(resolveModelString("google:gemini-2.5-flash")).toBe("google:gemini-2.5-flash");
-  });
-
-  it("keeps strings with multiple colons unchanged", () => {
-    expect(resolveModelString("openai:ft:gpt-4o:my-org")).toBe("openai:ft:gpt-4o:my-org");
-  });
-});
+import { ModelNotQualifiedError } from "../../src/model/model-id.ts";
+import { buildModelResolver, buildRegistry } from "../../src/model/registry.ts";
 
 describe("buildRegistry", () => {
   it("creates a provider that resolves anthropic models with correct spec version", () => {
@@ -126,11 +89,10 @@ describe("buildModelResolver", () => {
     expect(typeof resolver).toBe("function");
   });
 
-  it("resolves bare strings with anthropic prefix", () => {
+  it("refuses a bare id, naming the qualified form", () => {
     const resolver = buildModelResolver({ providers: { anthropic: {} } });
-    const model = resolver("claude-sonnet-4-6");
-    expect(model).toBeDefined();
-    expect(model.provider).toContain("anthropic");
+    expect(() => resolver("claude-sonnet-4-6")).toThrow(ModelNotQualifiedError);
+    expect(() => resolver("claude-sonnet-4-6")).toThrow('"anthropic:claude-sonnet-4-6"');
   });
 
   it("resolves qualified strings directly", () => {

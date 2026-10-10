@@ -39,13 +39,13 @@ describe("loadConfig", () => {
   it("loads instance fields from config file", () => {
     const configPath = writeTestConfig("load.json", {
       providers: { anthropic: {} },
-      models: { default: "claude-opus-4-6" },
+      models: { default: "anthropic:claude-opus-4-6" },
       maxIterations: 15,
     });
 
     const config = loadConfig({ config: configPath });
     expect(config.providers).toEqual({ anthropic: {} });
-    expect(config.models).toEqual({ default: "claude-opus-4-6" });
+    expect(config.models).toEqual({ default: "anthropic:claude-opus-4-6" });
     expect(config.maxIterations).toBe(15);
   });
 
@@ -111,7 +111,7 @@ describe("loadConfig", () => {
 
   it("strips workspace-owned fields from config", () => {
     const configPath = writeTestConfig("strip-workspace.json", {
-      models: { default: "claude-opus-4-6" },
+      models: { default: "anthropic:claude-opus-4-6" },
     });
     // Manually write workspace-owned fields into the JSON (bypasses schema)
     const fs = require("node:fs");
@@ -126,7 +126,7 @@ describe("loadConfig", () => {
     try {
       const config = loadConfig({ config: configPath });
       // Instance fields still loaded
-      expect(config.models).toEqual({ default: "claude-opus-4-6" });
+      expect(config.models).toEqual({ default: "anthropic:claude-opus-4-6" });
       // Workspace-owned fields stripped
       expect("agents" in config).toBe(false);
       expect(config.skillDirs).toBeUndefined();
@@ -235,11 +235,11 @@ describe("loadConfig", () => {
     const defaultDir = join(testDir, "workdir-test");
     mkdirSync(defaultDir, { recursive: true });
     const cfgPath = join(defaultDir, "nimblebrain.json");
-    writeFileSync(cfgPath, JSON.stringify({ models: { default: "from-workdir" } }));
+    writeFileSync(cfgPath, JSON.stringify({ models: { default: "test:from-workdir" } }));
 
     // Use explicit --config to test the loading behavior
     const config = loadConfig({ config: cfgPath });
-    expect(config.models?.default).toBe("from-workdir");
+    expect(config.models?.default).toBe("test:from-workdir");
     expect(config.configPath).toBe(cfgPath);
   });
 
@@ -256,10 +256,13 @@ describe("loadConfig", () => {
     expect(existsSync(expectedPath)).toBe(false);
 
     // Write and load to verify round-trip
-    writeFileSync(expectedPath, JSON.stringify({ models: { default: "test-model" } }, null, 2));
+    writeFileSync(
+      expectedPath,
+      JSON.stringify({ models: { default: "test:test-model" } }, null, 2),
+    );
     const config = loadConfig({ config: expectedPath });
     expect(config.configPath).toBe(expectedPath);
-    expect(config.models?.default).toBe("test-model");
+    expect(config.models?.default).toBe("test:test-model");
   });
 
   it("explicit --config takes precedence over defaultWorkDir config", () => {
@@ -267,15 +270,15 @@ describe("loadConfig", () => {
     mkdirSync(defaultDir, { recursive: true });
     writeFileSync(
       join(defaultDir, "nimblebrain.json"),
-      JSON.stringify({ models: { default: "from-workdir" } }),
+      JSON.stringify({ models: { default: "test:from-workdir" } }),
     );
 
     const explicitPath = writeTestConfig("explicit.json", {
-      models: { default: "from-explicit" },
+      models: { default: "test:from-explicit" },
     });
 
     const config = loadConfig({ config: explicitPath, defaultWorkDir: defaultDir });
-    expect(config.models?.default).toBe("from-explicit");
+    expect(config.models?.default).toBe("test:from-explicit");
     expect(config.configPath).toBe(explicitPath);
   });
 });
@@ -287,6 +290,16 @@ describe("config validation", () => {
     });
 
     expect(() => loadConfig({ config: configPath })).toThrow("Invalid config");
+  });
+
+  it("refuses a bare model id, naming the qualified form", () => {
+    const configPath = writeTestConfig("bare-model.json", {
+      models: { default: "claude-sonnet-4-6" },
+    });
+
+    expect(() => loadConfig({ config: configPath })).toThrow(
+      '/models/default: Model "claude-sonnet-4-6" has no provider. Write it as provider:model, e.g. "anthropic:claude-sonnet-4-6".',
+    );
   });
 
   it("loads a brand block and installs it", () => {
@@ -360,7 +373,7 @@ describe("config validation", () => {
   it("passes validation on a full valid config", () => {
     const configPath = writeTestConfig("valid-full.json", {
       providers: { anthropic: { apiKey: "sk-test" } },
-      models: { default: "claude-opus-4-6" },
+      models: { default: "anthropic:claude-opus-4-6" },
       maxIterations: 20,
       maxInputTokens: 100000,
       maxOutputTokens: 8192,

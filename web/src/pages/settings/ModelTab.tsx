@@ -47,24 +47,6 @@ interface ModelConfig {
   thinkingBudgetTokens?: number;
 }
 
-// Qualify bare model ids (legacy disk state from older UI versions that wrote
-// `m.id` without the `provider:` prefix). Without this, those bare ids don't
-// match any option value and the dropdown shows the placeholder even though
-// routing works at runtime via the catalog fallback in `resolveModelString`.
-// Re-saving with a qualified value also migrates the persisted state.
-/** Resolve a possibly-bare model id to a fully-qualified `provider:id` using the catalog. */
-function qualifyModelId(
-  id: string | undefined,
-  availableModels: Record<string, ModelEntry[]>,
-): string {
-  if (!id) return "";
-  if (id.includes(":")) return id;
-  for (const [provider, models] of Object.entries(availableModels)) {
-    if (models.some((m) => m.id === id)) return `${provider}:${id}`;
-  }
-  return id; // unknown — leave as-is so the field still shows the value
-}
-
 const EMPTY: ModelConfigValues = {
   defaultModel: "",
   fastModel: "",
@@ -93,11 +75,10 @@ const ALL_UNDO = Object.fromEntries(
 
 /** What the operator set, as the form's field values. An unset field is empty. */
 function toValues(config: ModelConfig): ModelConfigValues {
-  const qualify = (id: string | undefined) => qualifyModelId(id, config.availableModels ?? {});
   const text = (n: number | undefined) => (n === undefined ? "" : String(n));
   return {
-    defaultModel: qualify(config.models?.default),
-    fastModel: qualify(config.models?.fast),
+    defaultModel: config.models?.default ?? "",
+    fastModel: config.models?.fast ?? "",
     maxIterations: text(config.maxIterations),
     maxInputTokens: text(config.maxInputTokens),
     maxOutputTokens: text(config.maxOutputTokens),

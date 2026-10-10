@@ -93,8 +93,8 @@ describe("resolveThinking", () => {
 
   it("warns once when it drops an explicit override for an unknown model", () => {
     // A model absent from the catalog is a supported configuration — pinned
-    // ids and OpenAI-compatible proxies with their own names both land here
-    // (see resolveModelString). Dropping the operator's instruction silently
+    // ids and OpenAI-compatible proxies with their own names both land here.
+    // Dropping the operator's instruction silently
     // leaves no way to tell reasoning is off; the warning names the model,
     // which is the whole diagnosis.
     const warnings: string[] = [];
