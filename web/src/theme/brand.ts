@@ -96,7 +96,7 @@ export function mergePalette(brand?: Pick<Brand, "colors" | "fonts">): Palette {
   const merged: Record<string, Pair> = { ...colors };
   for (const token of BRAND_COLOR_TOKENS) {
     const pair = brand?.colors?.[token];
-    if (pair) merged[token] = pair;
+    if (pair !== undefined) merged[token] = pair;
   }
   const primary = brand?.colors?.primary;
   if (primary) merged["primary-foreground"] = [readableOn(primary[0]), readableOn(primary[1])];
@@ -104,7 +104,7 @@ export function mergePalette(brand?: Pick<Brand, "colors" | "fonts">): Palette {
   const stacks: Record<string, string> = { ...fonts };
   for (const role of BRAND_FONT_ROLES) {
     const font = brand?.fonts?.[role];
-    if (font) stacks[role] = font.stack;
+    if (font !== undefined) stacks[role] = font.stack;
   }
 
   return {
