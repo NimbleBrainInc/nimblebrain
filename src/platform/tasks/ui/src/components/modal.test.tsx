@@ -5,7 +5,7 @@
  */
 import { beforeAll, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
-import { act, createElement } from "react";
+import { act } from "react";
 import type * as ReactDOMClient from "react-dom/client";
 import type * as ModalModule from "./Modal.tsx";
 
@@ -32,11 +32,9 @@ test("the backdrop closes the dialog and the panel does not", async () => {
   const root = createRoot(container);
   await act(async () =>
     root.render(
-      createElement(Modal, {
-        title: "Run task",
-        onClose: () => closed++,
-        children: createElement("p", { id: "body" }, "Input"),
-      }),
+      <Modal title="Run task" onClose={() => closed++}>
+        <p id="body">Input</p>
+      </Modal>,
     ),
   );
 
