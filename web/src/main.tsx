@@ -25,10 +25,9 @@ initSentry(Sentry);
 // would otherwise white-screen the app. See stale-chunk-recovery.ts.
 registerStaleChunkRecovery();
 
-// Paint the tenant's brand before the first render, so the shell never shows
-// one brand and then another. Resolves at once from a cached brand, otherwise
-// after a short bounded wait for `/v1/brand`; never rejects. See brand.ts.
-await bootBrand();
+// Paint the tenant's brand before the first render, from the
+// window.__NB_BRAND__ that /v1/brand.js assigned before this module ran. See brand.ts.
+bootBrand();
 
 createRoot(document.getElementById("root")!, {
   // React 19 hooks: report render-time throws to Sentry (incl. ones the

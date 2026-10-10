@@ -94,7 +94,7 @@ The runtime merges your accent over the default palette at startup and checks th
 }
 ```
 
-**Helm.** The runtime chart exposes a `tenant.brand` value and renders it verbatim as the `brand` block of `nimblebrain.json`. Put the same object there in your values file.
+**Templated config.** A deployment that renders `nimblebrain.json` from a template (Helm, for one) should pass the `brand` block through verbatim, so the runtime validates it as written.
 
 `brand` is read at startup, so restart the runtime after a change. It is not read from `nimblebrain.overrides.json`.
 
@@ -105,10 +105,10 @@ The runtime merges your accent over the default palette at startup and checks th
 1. **The runtime serves your brand.** It answers without a session:
 
    ```bash
-   curl -s https://agents.example.com/v1/brand
+   curl -s https://agents.example.com/v1/brand.js
    ```
 
-   You should see your block as you wrote it. `{}` means no brand is configured, and a key missing from the answer is one the runtime does not accept: startup logs it as an unknown key.
+   You should see one line, `window.__NB_BRAND__ = {…};`, holding your block as you wrote it. `{}` means no brand is configured, and a key missing from the answer is one the runtime does not accept: startup logs it as an unknown key.
 
 2. **The sign-in page, in both modes.** Open the deployment in a private window. The tab title, favicon, logo, colours and typefaces should all be yours. Press **Cmd+Shift+L** (Mac) or **Ctrl+Shift+L** to switch between light and dark mode and check the other logo and accent.
 
@@ -118,6 +118,6 @@ The runtime merges your accent over the default palette at startup and checks th
 
 ## Known limits
 
-- **The default title shows briefly, and in link previews.** The page's static HTML carries the default tab title and favicon. A first visit shows them until the brand arrives, and a later one until the page's script starts, which then paints the brand from the browser's cache. Link previews in chat apps and social cards never run the script, so they always show the default.
-- **Apps already open keep the previous look.** An embedded app reads the theme when it loads. After a brand change, an app that was open shows the new look once it is reopened or the page reloads.
+- **Link previews show the default title.** The page's static HTML carries the default tab title and favicon. Link previews in chat apps and social cards, and crawlers that do not run scripts, read only that HTML, so they show the default.
+- **An open page keeps the previous look.** The shell and its embedded apps read the brand when the page loads. After a brand change, a page left open shows the new look once it is reloaded.
 - **Vendor consent screens update on reconnect.** A connector vendor stores the name, homepage and logo it received when the connection first registered. Existing connections show the old values until they are disconnected and connected again; new connections use the new ones.

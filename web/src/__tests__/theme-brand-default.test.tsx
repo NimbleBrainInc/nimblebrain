@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { ThemeProvider, useTheme, effectivePreference } = await import("../context/ThemeContext");
-const { applyBrand } = await import("../brand");
+const { applyBrand, bootBrand } = await import("../brand");
 
 let theme: ReturnType<typeof useTheme>;
 function Probe() {
@@ -67,6 +67,7 @@ afterEach(async () => {
   root = null;
   container = null;
   applyBrand({});
+  delete window.__NB_BRAND__;
   localStorage.removeItem("nb-theme");
   window.matchMedia = realMatchMedia;
 });
@@ -81,7 +82,8 @@ describe("effectivePreference", () => {
 
 describe("ThemeProvider with a brand default", () => {
   test("no stored choice, brand defaultTheme light, OS dark: light", async () => {
-    applyBrand({ defaultTheme: "light" });
+    window.__NB_BRAND__ = { defaultTheme: "light" };
+    bootBrand();
     await mount();
     expect(theme.mode).toBe("light");
     expect(document.documentElement.classList.contains("dark")).toBe(false);
@@ -99,12 +101,5 @@ describe("ThemeProvider with a brand default", () => {
   test("no brand default follows the OS", async () => {
     await mount();
     expect(theme.mode).toBe("dark");
-  });
-
-  test("a brand that arrives after the first render moves a person who never chose", async () => {
-    await mount();
-    expect(theme.mode).toBe("dark");
-    await act(async () => applyBrand({ defaultTheme: "light" }));
-    expect(theme.mode).toBe("light");
   });
 });

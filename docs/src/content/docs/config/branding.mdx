@@ -153,7 +153,7 @@ The web client loads it with a plain `<script>` before its bundle, so the brand 
 
 The served block is the configured one, holding only the keys on this page. A key the schema does not define is reported as an unknown key at startup and ignored; it is never served.
 
-The web client applies the brand before its first render and keeps the last answer in the browser, so a returning visitor sees the brand at once and a change reaches them on the next page load after the cache expires. Removing the `brand` block restores the default look the same way.
+A change reaches a visitor on their next page load once that minute of cache has passed. Removing the `brand` block restores the default look the same way.
 
 ## Changes and OAuth consent screens
 

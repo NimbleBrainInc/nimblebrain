@@ -94,15 +94,4 @@ describe("Logo", () => {
     expect(imgs).toHaveLength(2);
     for (const src of srcs(imgs)) expect(src).not.toContain("static.example.com");
   });
-
-  test("re-renders when the brand is applied after mount", async () => {
-    const imgs = await images();
-    expect(alts(imgs)[0]).toBe("NimbleBrain");
-    await act(async () => applyBrand({ name: "ACME", logo: BRAND_LOGO }));
-    const container = imgs[0]?.closest("span")?.parentElement;
-    expect(srcs([...(container?.querySelectorAll("img") ?? [])])).toEqual([
-      BRAND_LOGO.light,
-      BRAND_LOGO.dark,
-    ]);
-  });
 });
