@@ -1,3 +1,4 @@
+import { renderBrandName } from "../brand/index.ts";
 import type { SkillCatalogEntry } from "../skills/catalog.ts";
 import type { LoadedBy } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
@@ -20,7 +21,6 @@ export type ContainmentTag =
   | "app-resource-templates"
   | "app-guide"
   | "app-state"
-  | "workspace-instructions"
   | "layer3-skill"
   | "connector-skill"
   | "connector-instructions"
@@ -79,7 +79,7 @@ export interface TracedLayer {
   segment: "stable" | "volatile";
   /**
    * Stable identifier. Filesystem path for file-backed layers; `nb:<slug>`
-   * for runtime-derived layers; `instructions://<scope>` for overlays.
+   * for runtime-derived layers.
    */
   id: string;
   /** Human-readable origin (display string for the debug tool's row UI). */
@@ -109,7 +109,6 @@ export type TracedLayerKind =
   | "user_prefs"
   | "current_date"
   | "workspace_context"
-  | "workspace_overlay"
   | "layer3_skills"
   | "skill_catalog"
   | "apps"
@@ -140,7 +139,7 @@ export interface ComposedPrompt {
  * Volatility-tiered system composition.
  *
  * `stableSystem` is the cacheable system prefix (identity, scoped skills,
- * overlays, apps). `volatileHead` is the per-turn-volatile content (current
+ * apps). `volatileHead` is the per-turn-volatile content (current
  * date, app/focused-app state, matched skill) wrapped in a single
  * `<runtime-context>` block — the runtime prepends it to the latest user
  * message so a per-turn change does not rewrite the cached system prefix.
@@ -187,13 +186,22 @@ export function sanitizeLineField(value: string): string {
 /** Skills with priority ≤ this threshold are core context (identity layer). */
 export const CORE_PRIORITY_THRESHOLD = 10;
 
-export const DEFAULT_IDENTITY = `You are a helpful assistant powered by NimbleBrain.
+const DEFAULT_IDENTITY_TEMPLATE = `You are a helpful assistant powered by {{brand.name}}.
 
 You have access to tools provided via the API. When a user asks you to do something, use your tools to accomplish it. Do not guess or make up answers when you have tools that can find the real answer. If you're unsure, try using a tool first.
 
 Be concise and direct. Lead with actions, not explanations.
 
 IMPORTANT: Only use tools that are provided to you via the tools parameter. Never fabricate tool calls as XML, JSON, or any other text format.`;
+
+/**
+ * The fallback identity when no core-context skill produced content. Rendered
+ * with the same `{{brand.name}}` substitution as the vendored `soul.md`, so the
+ * two cannot disagree about whose assistant this is.
+ */
+export function defaultIdentity(): string {
+  return renderBrandName(DEFAULT_IDENTITY_TEMPLATE);
+}
 
 /**
  * Identity framing for task-mode invocations (e.g. scheduled tasks,
@@ -240,16 +248,6 @@ export interface PromptAppInfo {
    */
   resourceTemplates?: Array<{ uriTemplate: string; name: string }>;
   ui: { name: string } | null;
-}
-
-/**
- * Per-scope overlay text injected after the identity layer. Each scope
- * is independent: an empty string (or undefined) skips the layer entirely,
- * leaving no marker tag in the assembled prompt.
- */
-export interface OverlayLayers {
-  /** Workspace-level overlay. Empty or absent skips the layer entirely. */
-  workspace?: string;
 }
 
 /**
@@ -306,7 +304,7 @@ export interface WorkspaceContext {
  * Compose the system prompt from context skills and an optional matched skill.
  *
  * Context skills are sorted by priority (caller's responsibility).
- * If no context skills are provided, DEFAULT_IDENTITY is used as fallback.
+ * If no context skills are provided, `defaultIdentity()` is used as fallback.
  * The matched skill body is appended last.
  * If apps are provided and non-empty, an "## Installed Apps" section is injected.
  */
@@ -319,7 +317,6 @@ export function composeSystemPrompt(
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
   workspaceContext?: WorkspaceContext,
-  overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
   mode?: ComposeMode,
   skillCatalog?: SkillCatalogEntry[],
@@ -333,7 +330,6 @@ export function composeSystemPrompt(
     userPrefs,
     hasProxiedTools,
     workspaceContext,
-    overlays,
     layer3Skills,
     mode,
     skillCatalog,
@@ -362,7 +358,6 @@ export function composeSystemPromptTraced(
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
   workspaceContext?: WorkspaceContext,
-  overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
   mode: ComposeMode = "chat",
   skillCatalog?: SkillCatalogEntry[],
@@ -390,10 +385,9 @@ export function composeSystemPromptTraced(
 
   // No participants section: a conversation has exactly one owner.
 
-  // Layers 1.7 → 4, in prompt order: workspace context, workspace overlay,
-  // Layer 3 skills, installed apps, app state, focused app, matched skill.
+  // Layers 1.7 → 4, in prompt order: workspace context, Layer 3 skills,
+  // installed apps, app state, focused app, matched skill.
   layers.push(...workspaceContextLayers(workspaceContext));
-  layers.push(...overlayLayers(overlays));
   layers.push(...layer3SkillsLayers(layer3Skills));
   layers.push(...skillCatalogLayers(skillCatalog));
   layers.push(...appsLayers(apps, hasProxiedTools));
@@ -481,12 +475,17 @@ function coreContextLayers(coreContext: Skill[]): PendingLayer[] {
   const layers: PendingLayer[] = [];
   for (const ctx of coreContext) {
     if (!ctx.body) continue;
+    // `{{brand.name}}` is first-party templating: only the platform's own
+    // vendored skills are rendered. A tenant's core skill reaches the model
+    // exactly as its author wrote it.
+    const text =
+      ctx.manifest.provenance?.origin === "vendored" ? renderBrandName(ctx.body) : ctx.body;
     layers.push({
       kind: "core_skill",
       id: ctx.sourcePath || `core:${ctx.manifest.name}`,
       source: ctx.sourcePath || `core skill "${ctx.manifest.name}"`,
-      text: ctx.body,
-      tokens: approxTokens(ctx.body),
+      text,
+      tokens: approxTokens(text),
     });
   }
   return layers;
@@ -494,12 +493,13 @@ function coreContextLayers(coreContext: Skill[]): PendingLayer[] {
 
 /** Platform default identity — the fallback when no core-context skill produced content. */
 function defaultIdentityLayer(): PendingLayer {
+  const identity = defaultIdentity();
   return {
     kind: "default_identity",
     id: "nb:default-identity",
     source: "platform default (no core context skills loaded)",
-    text: DEFAULT_IDENTITY,
-    tokens: approxTokens(DEFAULT_IDENTITY),
+    text: identity,
+    tokens: approxTokens(identity),
   };
 }
 
@@ -593,27 +593,6 @@ function workspaceContextLayers(workspaceContext?: WorkspaceContext): PendingLay
       tokens: approxTokens(wsText),
     },
   ];
-}
-
-/**
- * Layer 1.8: the workspace instruction overlay, skipped when blank.
- *
- * Workspace-tier only. Org-wide standing guidance is an org-tier skill, which
- * reaches every workspace through the layer-3 channel below.
- */
-function overlayLayers(overlays?: OverlayLayers): PendingLayer[] {
-  const layers: PendingLayer[] = [];
-  if (overlays?.workspace && overlays.workspace.trim().length > 0) {
-    const text = formatScopeOverlay("Workspace Instructions", overlays.workspace);
-    layers.push({
-      kind: "workspace_overlay",
-      id: "instructions://workspace",
-      source: "workspace-tier instruction overlay",
-      text,
-      tokens: approxTokens(text),
-    });
-  }
-  return layers;
 }
 
 /**
@@ -819,7 +798,6 @@ export function composeSystemSegments(
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
   workspaceContext?: WorkspaceContext,
-  overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
   mode: ComposeMode = "chat",
   skillCatalog?: SkillCatalogEntry[],
@@ -833,7 +811,6 @@ export function composeSystemSegments(
     userPrefs,
     hasProxiedTools,
     workspaceContext,
-    overlays,
     layer3Skills,
     mode,
     skillCatalog,
@@ -985,19 +962,6 @@ function formatAppStateSection(appState: AppStateInfo): string | null {
   }
 
   return `## Current App State\nLast updated: ${appState.updatedAt}\n\n${wrapContained("app-state", inner)}`;
-}
-
-/**
- * Format the top-level workspace instruction overlay.
- *
- * The body sits in a containment tag, so a debug reader can attribute it to
- * its source. The escape pattern matches `<app-instructions>` — any literal
- * closing tag inside the body is rewritten to `&lt;/...>` before wrapping,
- * defending against prompt injection from a writer who tries to break out of
- * containment.
- */
-function formatScopeOverlay(heading: string, body: string): string {
-  return `## ${heading}\n\n${wrapContained("workspace-instructions", body)}`;
 }
 
 /**

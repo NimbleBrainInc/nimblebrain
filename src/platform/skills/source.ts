@@ -3,7 +3,7 @@
  *
  * Owns Layer 3 (cross-connector agent orchestration) skill visibility and
  * mutation, plus a single Layer 1 vendored resource: the platform-authored
- * guide for writing good skills. Mirrors `instructions.ts` structurally.
+ * guide for writing good skills.
  *
  * Tools surfaced (read-only):
  *   skills__list           — enumerate skills with scope/layer/status filters
@@ -50,7 +50,11 @@ import {
 } from "../../skills/load-ledger.ts";
 import { parseSkillContent, parseSkillFile, readSkillMtime } from "../../skills/loader.ts";
 import { resolveLoadingMechanism, type SkillLoadingMechanism } from "../../skills/loading.ts";
-import { SKILL_NAME_PATTERN } from "../../skills/schemas/skill-manifest.ts";
+import {
+  DEFAULT_LOADING_STRATEGY,
+  DEFAULT_SKILL_PRIORITY,
+  SKILL_NAME_PATTERN,
+} from "../../skills/schemas/skill-manifest.ts";
 import { toolMatches } from "../../skills/select.ts";
 import { approxTokens } from "../../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../../skills/truncate.ts";
@@ -145,7 +149,8 @@ const SKILLS_CREATE_DESCRIPTION =
 const SKILLS_UPDATE_DESCRIPTION =
   "Update an existing Layer 3 skill. The `id` is the filesystem path returned by `skills__list` " +
   "(call that first — bare names and scope-prefixed forms are NOT valid). Provide a partial " +
-  "`manifest` patch (any subset of the create-shape fields) and/or a `body`. When you pass a " +
+  "`manifest` patch (any subset of the create-shape fields) and/or a `body`. A field you omit " +
+  "keeps its value; `null` clears one (`description` cannot be cleared). When you pass a " +
   "`body` you MUST also pass `body_mode`: `append` adds it to the skill (use this to add a " +
   "rule — it keeps everything already there), `replace` overwrites the whole body. Snapshots " +
   "the current version to `_versions/` first; `skills__history` lists those snapshots and " +
@@ -226,9 +231,7 @@ const SKILLS_DEACTIVATE_DESCRIPTION =
  * untrusted content (email, web pages, tickets). A write from inside one would
  * put attacker-authored text into future interactive sessions with nothing
  * standing between them — a foothold that outlives the run and then loads
- * itself. That is the argument `createInstructionsSource` makes for the same
- * wall, and it is stronger here: instructions are one document a scope opts
- * into, while a skill can auto-load on a tool match and there can be many.
+ * itself.
  *
  * Reads stay open deliberately. A task that audits the catalog and
  * reports what it found — stale skills, overlapping guidance, a recommendation
@@ -481,8 +484,7 @@ export function createSkillsSource(
   // `unattended` rides the ambient request context (set by `executeTask`,
   // preserved across the per-call restamp), so the wall does not depend on
   // which router dispatched the call, or on the tool ever having been surfaced
-  // to the model. Same placement and reasoning as `createTasksSource` and
-  // `createInstructionsSource`.
+  // to the model. Same placement and reasoning as `createTasksSource`.
   const walled: InProcessTool[] = enabled.map((tool) =>
     SKILLS_TASK_SAFE_TOOLS.has(tool.name)
       ? tool
@@ -1803,8 +1805,8 @@ function buildCreateManifest(
   return {
     name,
     description: manifest.description,
-    loadingStrategy: manifest.loadingStrategy ?? "dynamic",
-    priority: manifest.priority ?? 50,
+    loadingStrategy: manifest.loadingStrategy ?? DEFAULT_LOADING_STRATEGY,
+    priority: manifest.priority ?? DEFAULT_SKILL_PRIORITY,
     // Always active. `status` is not a create-time field — see
     // `CreateManifestFields`; `set_status` is the one door to the durable off
     // switch, and it is internal.
@@ -2046,25 +2048,28 @@ async function createSkill(
 }
 
 /**
- * Build a `Partial<SkillManifest>` from an update patch, keeping only the
- * fields the caller actually provided. `name` in the patch is ignored since
- * it's derived from the path (renaming is a separate operation). Metadata
- * sub-fields (keywords, triggers) are required arrays in the domain type but
- * optional in the LLM-facing schema, so we default-to-empty when they're
- * omitted — same boundary normalization as createSkill.
+ * Build a `Partial<SkillManifest>` from an update patch. An omitted field is
+ * left out, so the writer keeps its current value. A `null` clears the field
+ * (platform/AGENTS.md §1.3): a list becomes absent, which the writer leaves
+ * out of the file, and `loadingStrategy` / `priority` take the default the
+ * loader gives a skill that declares none. Those two are always written, so
+ * their default is how "unset" is stored. `name` is not in the patch: it is
+ * derived from the path.
  */
 function buildUpdatePatch(
   patch: SkillsUpdateInput["manifest"],
 ): Partial<SkillManifest> | undefined {
   if (!patch) return undefined;
-  return {
-    ...(patch.description !== undefined ? { description: patch.description } : {}),
-    ...(patch.loadingStrategy !== undefined ? { loadingStrategy: patch.loadingStrategy } : {}),
-    ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
-    ...(patch.toolAffinity !== undefined ? { toolAffinity: patch.toolAffinity } : {}),
-    ...(patch.triggers !== undefined ? { triggers: patch.triggers } : {}),
-    ...(patch.allowedTools !== undefined ? { allowedTools: patch.allowedTools } : {}),
-  };
+  const out: Partial<SkillManifest> = {};
+  if (patch.description !== undefined) out.description = patch.description;
+  if (patch.loadingStrategy !== undefined) {
+    out.loadingStrategy = patch.loadingStrategy ?? DEFAULT_LOADING_STRATEGY;
+  }
+  if (patch.priority !== undefined) out.priority = patch.priority ?? DEFAULT_SKILL_PRIORITY;
+  for (const key of ["toolAffinity", "triggers", "allowedTools"] as const) {
+    if (patch[key] !== undefined) out[key] = patch[key] ?? undefined;
+  }
+  return out;
 }
 
 // Input shape for `skills__update`. `manifest` is a partial of the

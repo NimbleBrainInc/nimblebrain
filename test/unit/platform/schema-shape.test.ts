@@ -31,7 +31,6 @@ import { resolveTasksConfig } from "../../../src/config/tasks.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
 import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
 import { createFilesSource } from "../../../src/platform/files/source.ts";
-import { createInstructionsSource } from "../../../src/platform/instructions/source.ts";
 import { createNotificationsSource } from "../../../src/platform/notifications/source.ts";
 import { createSkillsSource } from "../../../src/platform/skills/source.ts";
 import { createTasksSource } from "../../../src/platform/tasks/source.ts";
@@ -56,10 +55,6 @@ function makeRuntimeStub(workDir: string): unknown {
     getIdentityProvider: () => null,
     requireWorkspaceId: () => "_dev",
     getCurrentWorkspaceId: () => "_dev",
-    getInstructionsStore: () => ({
-      read: async () => "",
-      write: async () => ({ updated_at: new Date().toISOString() }),
-    }),
     getWorkspaceStore: () => ({ get: async () => null }),
     getWorkspaceScopedDir: () => workDir,
     getRequestContext: () => null,
@@ -92,7 +87,6 @@ function makeRuntimeStub(workDir: string): unknown {
 
 const SOURCES = [
   { name: "skills", factory: createSkillsSource },
-  { name: "instructions", factory: createInstructionsSource },
   { name: "files", factory: createFilesSource },
   { name: "conversations", factory: createConversationsSource },
   { name: "tasks", factory: createTasksSource },

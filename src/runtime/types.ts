@@ -1,4 +1,5 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import type { Brand } from "../brand/index.ts";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
@@ -219,6 +220,12 @@ export interface RuntimeConfig {
    */
   secrets?: SecretsConfig;
 
+  /**
+   * White-label branding: name, logos, accent colour, fonts. Absent is
+   * NimbleBrain. Validated and installed by `loadBrand` (`src/brand/`).
+   */
+  brand?: Brand;
+
   /** Anonymous telemetry configuration. */
   telemetry?: {
     /** Enable anonymous telemetry. Default: true. */
@@ -291,7 +298,7 @@ export interface ChatRequest {
    * The workspace the chat is *focused* on (the `/w/:slug` the user is
    * viewing, plumbed from the workspace in the chat URL). Drives the
    * deterministic, workspace-scoped **briefing**: the Installed Apps
-   * section and the org/workspace instruction overlays reflect THIS
+   * section reflects THIS
    * workspace, identical for every member (no per-user generation).
    *
    * It is ALSO the tool scope: a session is walled to this one workspace —

@@ -27,6 +27,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/core";
 import type { Server } from "@modelcontextprotocol/server";
+import { brandName } from "../brand/index.ts";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import {
@@ -2093,7 +2094,7 @@ export class McpSource implements ToolSource {
     return (
       `Tool "${toolName}" on ${this.name} cannot be called: it requires a task ` +
       `(execution.taskSupport "required"), and this server offers tasks only through the ` +
-      `MCP 2025-11-25 tasks utility, which NimbleBrain does not speak (see ADR-0046). ` +
+      `MCP 2025-11-25 tasks utility, which ${brandName()} does not speak (see ADR-0046). ` +
       `It can be called once the server supports the 2026-07-28 tasks extension ` +
       `(${TASKS_EXTENSION_ID}).`
     );

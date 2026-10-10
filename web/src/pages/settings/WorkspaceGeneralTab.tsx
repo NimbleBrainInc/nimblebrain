@@ -7,32 +7,21 @@ import { useSession } from "../../context/SessionContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
 import { useAutosaveForm } from "../../hooks/useAutosaveForm";
 import { useFlashState } from "../../hooks/useFlashState";
-import { canManageWorkspaceMembers, useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
+import { canManageWorkspaceMembers } from "../../hooks/useScopedRole";
 import { MAX_WORKSPACE_NAME_LENGTH } from "../../lib/workspace-name";
-import {
-  AutosaveField,
-  RequireActiveWorkspace,
-  Section,
-  SettingsFormPage,
-  useWorkspaceInstructions,
-  WorkspaceInstructions,
-} from "./components";
+import { AutosaveField, RequireActiveWorkspace, Section, SettingsFormPage } from "./components";
 
 /**
- * Workspace "General" tab — the workspace's name and its custom instructions,
- * each saving as it changes, with the workspace ID as quiet metadata in the
- * header's top-right corner. Most members never need the ID, so it gets no
+ * Workspace "General" tab — the workspace's name, saving as it changes, with
+ * the workspace ID as quiet metadata in the header's top-right corner. Most members never need the ID, so it gets no
  * section of its own; it is here, not on the MCP tab, because it identifies
  * the workspace.
  *
  * Route: /w/:slug/settings/general (the workspace is the URL slug).
- * Permission: any workspace member can read. The two fields are gated
- * differently, as the server gates them:
- *   - The name is governance (`canRenameWorkspace`): a workspace admin member
- *     or an org admin may rename, so the web gate is `canManageWorkspaceMembers`.
- *   - The instructions are content (`canWriteWorkspaceScoped`): only a workspace
- *     admin member, with no org-admin bypass.
- * Each field disables itself when its gate is false; the backend re-checks.
+ * Permission: any workspace member can read. The name is governance
+ * (`canRenameWorkspace`): a workspace admin member or an org admin may rename,
+ * so the web gate is `canManageWorkspaceMembers`. The field disables itself
+ * when the gate is false; the backend re-checks.
  */
 export function WorkspaceGeneralTab() {
   return (
@@ -65,11 +54,7 @@ function Inner({
 }) {
   const session = useSession();
   const canRename = canManageWorkspaceMembers(session?.user?.orgRole, userRole);
-  // The instructions editor writes workspace-owned state, gated server-side by
-  // `canWriteWorkspaceScoped` — membership admin, no org bypass.
-  const canEdit = useCanWriteActiveWorkspace();
   const nameForm = useWorkspaceName(wsId, name);
-  const instructions = useWorkspaceInstructions(wsId);
 
   return (
     <SettingsFormPage
@@ -91,13 +76,6 @@ function Inner({
             {...nameForm.inputProps("name")}
           />
         </AutosaveField>
-      </Section>
-
-      <Section
-        title="Workspace instructions"
-        description="Guidance the assistant follows in every conversation in this workspace, on top of your organization's. Everyone here can see it."
-      >
-        <WorkspaceInstructions wsId={wsId} canEdit={canEdit} instructions={instructions} />
       </Section>
     </SettingsFormPage>
   );

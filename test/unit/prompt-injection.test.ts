@@ -775,7 +775,6 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
         undefined,
         undefined,
         undefined,
-        undefined,
         "chat",
         [
           {
@@ -799,7 +798,6 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       const prompt = composeSystemPrompt(
         [],
         null,
-        undefined,
         undefined,
         undefined,
         undefined,
@@ -832,7 +830,6 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       "app-resource-templates",
       "app-guide",
       "app-state",
-      "workspace-instructions",
       "layer3-skill",
       "connector-skill",
       "connector-instructions",
@@ -854,7 +851,6 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       "app-resource-templates": true,
       "app-guide": true,
       "app-state": true,
-      "workspace-instructions": true,
       "layer3-skill": true,
       "connector-skill": true,
       "connector-instructions": true,

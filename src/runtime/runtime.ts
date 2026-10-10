@@ -11,6 +11,7 @@ import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.ts";
+import { loadBrand } from "../brand/index.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
@@ -110,7 +111,6 @@ import { requireRequestIdentity, resolveRequestOwnerId } from "../identity/owner
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { createIdentityProvider } from "../identity/provider.ts";
 import { UserStore } from "../identity/user.ts";
-import { InstructionsStore } from "../instructions/index.ts";
 import {
   forgetLifecycleBinding,
   type LifecycleSourceLike,
@@ -193,7 +193,10 @@ import {
   discoveredSkillFromEntry,
   hydrateSkill,
   PUBLISHED_SKILL_SCOPE,
+  type PublishedSkillInfo,
+  parseConnectorSkillName,
   parseSkillMarkdown,
+  publishedSkillInfo,
   reportUnmatchedToolAffinity,
   synthesizeConnectorSkill,
 } from "../skills/connector-skills.ts";
@@ -203,6 +206,7 @@ import {
   loadScopedSkills,
   loadSkillDir,
   mergeScopedSkills,
+  parseSkillFile,
   partitionSkills,
 } from "../skills/loader.ts";
 import { type SkillMatch, SkillMatcher } from "../skills/matcher.ts";
@@ -724,6 +728,10 @@ export class Runtime {
     await credentialStore.reconcile?.();
     let config = await resolveInstanceCredentialRefs(declaredConfig);
     assertQualifiedModelConfig(config);
+    // `loadConfig` already did this for a file-backed boot; a config built in
+    // code reaches here without it, and the brand is process state every
+    // reader below shares, so the composition root installs it too.
+    loadBrand(config);
 
     // Register built-in transport credential providers (e.g. `minted`) at the
     // ONE composition root every entry point shares — serve, the no-subcommand
@@ -1879,6 +1887,14 @@ export class Runtime {
   }
 
   /**
+   * The installed apps the prompt narrates. `wsId` is the conversation's own
+   * (chat) or focused (task) workspace; `undefined` (an unfocused task) has none.
+   */
+  private async briefingApps(wsId: string | undefined): Promise<PromptAppInfo[]> {
+    return wsId ? this.buildAppsList(wsId) : [];
+  }
+
+  /**
    * The prompt a run reasons with, and the tool surface it reasons over.
    *
    * One phase, because the two are a cycle otherwise: the matched skill's
@@ -1919,9 +1935,7 @@ export class Runtime {
       ? collectSuppressedSkillNames(await binding.store.readEvents(binding.conversation.id))
       : new Set<string>();
 
-    // The briefing (installed apps + the instruction overlays) describes the
-    // workspace the prompt narrates; empty for a run that narrates none.
-    const { apps, liveOverlays } = await this.buildWorkspaceBriefing(briefingWsId);
+    const apps = await this.briefingApps(briefingWsId);
 
     // App scoping (§7 app-aware chat), resolved in the SAME single workspace
     // the run's tools are bound to.
@@ -2119,7 +2133,6 @@ export class Runtime {
       prefs,
       proxied.length > 0,
       workspaceContext,
-      liveOverlays,
       layer3Entries,
       attended ? "chat" : "task",
       skillCatalog,
@@ -2373,20 +2386,6 @@ export class Runtime {
       throw new ModelNotAllowedError(requestModel, this.getConfiguredProviders());
     }
     return requestModel;
-  }
-
-  /**
-   * The workspace briefing surfaces (apps + the workspace overlay) for a turn.
-   * `wsId` is the conversation's own (chat) or focused (task) workspace;
-   * `undefined` (an unfocused task) yields empty apps and an empty overlay.
-   */
-  private async buildWorkspaceBriefing(wsId: string | undefined): Promise<{
-    apps: PromptAppInfo[];
-    liveOverlays: { workspace: string };
-  }> {
-    const apps = wsId ? await this.buildAppsList(wsId) : [];
-    const liveOverlays = wsId ? await this.readPromptOverlays(wsId) : { workspace: "" };
-    return { apps, liveOverlays };
   }
 
   /**
@@ -3516,31 +3515,6 @@ export class Runtime {
    */
   getConnectorMcpDeps(wsId: string): ConnectorMcpDeps | undefined {
     return this._connectorMcpDepsFactory?.(wsId);
-  }
-
-  /**
-   * Get a per-workdir `InstructionsStore` for the workspace overlay.
-   * Per-connector instructions are NOT stored here — connectors own their storage
-   * and publish a `app://instructions` resource if and only if they
-   * support the convention. The store is stateless aside from the rooted
-   * workdir, so a fresh instance per call is fine.
-   */
-  getInstructionsStore(): InstructionsStore {
-    return new InstructionsStore(this.getWorkDir());
-  }
-
-  /**
-   * Read the workspace instruction overlay for a system-prompt
-   * assembly. Per-connector overlays are NOT read here — they're populated on
-   * `PromptAppInfo.customInstructions` directly in `buildAppsList`.
-   *
-   * Reads happen on every call (no caching) per the locked decision: edits
-   * must apply mid-conversation.
-   */
-  /** Public so the compose-effective-context debug tool can re-read the overlay
-   *  in live mode. Workspace-scoped; no caller-controlled escalation. */
-  async readPromptOverlays(wsId: string): Promise<{ workspace: string }> {
-    return { workspace: await this.getInstructionsStore().read({ wsId }) };
   }
 
   /** Get the ToolRegistry for a specific workspace. Throws if workspace registry not found. */
@@ -5534,6 +5508,53 @@ export class Runtime {
   listConnectorOverlays(wsId: string): ConnectorOverlayInfo[] {
     const dir = this.getWorkspaceContext(wsId).getDataPath(CONNECTOR_SKILLS_SUBDIR);
     return listConnectorOverlays(dir);
+  }
+
+  /**
+   * Every skill the workspace's connected servers publish, from the same pool
+   * prompt composition draws on ({@link loadConnectorSkills}), so the listing is
+   * what the runtime loads: a server whose curated overlay supersedes its
+   * published skills contributes none here, and its overlay is listed by
+   * {@link listConnectorOverlays}. Reads the servers' listings only; no body is
+   * fetched. Backs `manage_connectors list_bound_skills`.
+   */
+  async listPublishedSkills(wsId: string): Promise<PublishedSkillInfo[]> {
+    await this.ensureWorkspaceRegistry(wsId);
+    return (await this.loadConnectorSkills(wsId)).flatMap((skill) => {
+      const info = publishedSkillInfo(skill);
+      return info ? [info] : [];
+    });
+  }
+
+  /**
+   * The body of one skill a connector contributes to this workspace, as the
+   * model receives it: a curated overlay's materialized file, or a published
+   * skill's `SKILL.md` fetched, verified, and budget-capped by the same loader
+   * composition uses. `null` when the workspace has no such skill. Backs
+   * `manage_connectors read_bound_skill`.
+   */
+  async readConnectorSkill(
+    wsId: string,
+    serverName: string,
+    name: string,
+  ): Promise<({ kind: "overlay" | "published" } & SkillBodyLoad) | null> {
+    const overlay = this.listConnectorOverlays(wsId).find(
+      (o) => o.server === serverName && o.name === name,
+    );
+    if (overlay) {
+      const skill = parseSkillFile(overlay.path, { cap: false });
+      return skill ? { kind: "overlay", ok: true, body: skill.body } : null;
+    }
+    await this.ensureWorkspaceRegistry(wsId);
+    const published = (await this.loadConnectorSkills(wsId)).find((skill) => {
+      const id = parseConnectorSkillName(skill.manifest.name);
+      return id?.connector === serverName && id.name === name;
+    });
+    if (!published) return null;
+    const loaded = published.loadBody
+      ? await published.loadBody()
+      : { ok: true as const, body: published.body };
+    return { kind: "published", ...loaded };
   }
 
   /**

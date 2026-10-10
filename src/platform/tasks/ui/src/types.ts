@@ -214,6 +214,8 @@ export interface TaskRunResult {
     | "other";
   /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
   structured?: unknown;
+  /** Why the run failed or did not start. */
+  error?: string;
   execution?: RunExecution;
   label?: RunLabel;
   assessment?: RunAssessment;

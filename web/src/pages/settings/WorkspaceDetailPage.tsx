@@ -364,14 +364,6 @@ export function WorkspaceDetailPage() {
         />
       </Section>
 
-      {/*
-        Workspace Instructions are intentionally NOT shown here. The
-        instructions resource and write tool resolve the target workspace
-        from the request context (active workspace), so editing here
-        would silently affect the *active* workspace, not the slug-targeted
-        one. To edit a workspace's instructions, switch into it with the
-        sidebar's workspace switcher and open its settings → General.
-      */}
       <Section title="Installed connectors" icon={<Package className="h-4 w-4" />}>
         <ConnectorsList connectors={workspace?.connectors} />
       </Section>

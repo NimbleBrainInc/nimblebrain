@@ -27,7 +27,9 @@ import {
 import {
   appendRun,
   loadOwnerTasks,
+  readRunResult,
   readRuns,
+  saveRunResult,
   saveTask,
 } from "../../../../src/platform/tasks/store.ts";
 import type { Task, TaskRun } from "../../../../src/platform/tasks/types.ts";
@@ -3382,5 +3384,185 @@ describe("Scheduler — token budget applies to every run", () => {
     expect(updated.enabled).toBe(true);
     expect(updated.budgetResetAt).toBeDefined();
     scheduler.stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: Scheduler — every recorded run has a result
+// ---------------------------------------------------------------------------
+
+describe("Scheduler — every recorded run has a result", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function seedOne(overrides: Partial<Task> = {}): Task {
+    const auto = makeTask({ nextRunAt: new Date(Date.now() - 1000).toISOString(), ...overrides });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    return auto;
+  }
+
+  /** Every line of the task's run index, each with the result read back by its id. */
+  function linesWithResults(taskId: string) {
+    return readRuns(tmpDir, WS, OWNER, taskId).map((run) => ({
+      run,
+      result: readRunResult(tmpDir, WS, OWNER, taskId, run.id),
+    }));
+  }
+
+  it("a run whose executor throws has a result carrying its error", async () => {
+    const auto = seedOne();
+    const scheduler = new Scheduler(createThrowingExecutor(new Error("boom")), {
+      workDir: tmpDir,
+    });
+    scheduler.start();
+
+    const run = await scheduler.runNow(WS, OWNER, auto.id);
+    scheduler.stop();
+
+    expect(run!.status).toBe("failure");
+    const lines = linesWithResults(auto.id);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const { run: line, result } of lines) {
+      expect(result).not.toBeNull();
+      expect(result!.runId).toBe(line.id);
+      expect(result!.error).toBe(line.error);
+    }
+    const result = readRunResult(tmpDir, WS, OWNER, auto.id, run!.id)!;
+    expect(result.error).toBe("boom");
+    expect(result.output).toBe("");
+    expect(result.activityLog).toEqual([]);
+    expect(result.outputFiles).toEqual([]);
+  });
+
+  it("a membership-revoked run, recorded skipped, has a result with the reason", async () => {
+    const auto = seedOne();
+    const denied = Object.assign(new Error("owner is no longer a member"), {
+      code: "workspace_membership_revoked",
+    });
+    const scheduler = new Scheduler(createThrowingExecutor(denied), { workDir: tmpDir });
+    scheduler.start();
+
+    const run = await scheduler.runNow(WS, OWNER, auto.id);
+    scheduler.stop();
+
+    expect(run!.status).toBe("skipped");
+    const result = readRunResult(tmpDir, WS, OWNER, auto.id, run!.id);
+    expect(result?.error).toBe("owner is no longer a member");
+  });
+
+  it("a run refused because one is already running has a result with the reason", async () => {
+    const auto = seedOne();
+    const { executor, resolve } = createBlockingExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+    scheduler.onTimer();
+    await new Promise((r) => setTimeout(r, 50));
+
+    const run = await scheduler.runNow(WS, OWNER, auto.id);
+
+    expect(run!.status).toBe("skipped");
+    const result = readRunResult(tmpDir, WS, OWNER, auto.id, run!.id);
+    expect(result).not.toBeNull();
+    expect(result!.error).toBe(run!.error);
+    expect(result!.output).toBe("");
+    resolve(makeSuccessRun(auto.id));
+    await new Promise((r) => setTimeout(r, 20));
+    scheduler.stop();
+
+    for (const { result: each } of linesWithResults(auto.id)) expect(each).not.toBeNull();
+  });
+
+  it("a requested run lost with its process has a result when it is settled", () => {
+    const auto = seedOne();
+    const scheduler = new Scheduler(createMockExecutor(), { workDir: tmpDir });
+    const runId = "run_0123456789ab";
+    const settled = scheduler.settleLostRun(WS, OWNER, {
+      runId,
+      taskId: auto.id,
+      requestedAt: new Date().toISOString(),
+      run: {
+        id: runId,
+        taskId: auto.id,
+        startedAt: new Date().toISOString(),
+        status: "running",
+        inputTokens: 0,
+        outputTokens: 0,
+        toolCalls: 0,
+        iterations: 0,
+        trigger: "manual",
+      },
+    });
+
+    expect(settled.run.status).toBe("failure");
+    const result = readRunResult(tmpDir, WS, OWNER, auto.id, runId);
+    expect(result?.error).toBe(settled.run.error);
+  });
+
+  it("a lost requested run already in the index keeps its result and gets no second line", () => {
+    // The process recorded the run (result, then index line) and died before
+    // rewriting its ticket, which still says running.
+    const auto = seedOne();
+    const scheduler = new Scheduler(createMockExecutor(), { workDir: tmpDir });
+    const runId = "run_0123456789ab";
+    const recorded: TaskRun = { ...makeSuccessRun(auto.id), id: runId, trigger: "manual" };
+    saveRunResult(tmpDir, WS, OWNER, auto.id, {
+      runId,
+      taskId: auto.id,
+      completedAt: recorded.completedAt!,
+      output: "THE DELIVERABLE",
+      activityLog: [],
+      outputFiles: [],
+      usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
+    });
+    appendRun(tmpDir, WS, OWNER, auto.id, recorded);
+
+    const settled = scheduler.settleLostRun(WS, OWNER, {
+      runId,
+      taskId: auto.id,
+      requestedAt: recorded.startedAt,
+      run: { ...recorded, completedAt: undefined, status: "running" },
+    });
+
+    expect(readRunResult(tmpDir, WS, OWNER, auto.id, runId)?.output).toBe("THE DELIVERABLE");
+    expect(settled.run.status).toBe("success");
+    expect(readRuns(tmpDir, WS, OWNER, auto.id).filter((r) => r.id === runId)).toHaveLength(1);
+  });
+
+  it("a scheduled run interrupted by a stop has a result once the next process settles it", async () => {
+    const auto = seedOne({ schedule: { type: "interval", intervalMs: 3_600_000 } });
+    const first = new Scheduler(createBlockingExecutor().executor, { workDir: tmpDir });
+    first.start();
+    await new Promise((r) => setTimeout(r, 20));
+
+    const second = new Scheduler(createMockExecutor(), { workDir: tmpDir });
+    second.start();
+    second.stop();
+
+    const lines = linesWithResults(auto.id);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.result?.error).toBe(INTERRUPTED_RUN_ERROR);
+  });
+
+  it("a completed run's result lands with the run's error, when it has one", async () => {
+    const auto = seedOne();
+    const degraded: TaskRun = {
+      ...makeSuccessRun(auto.id),
+      status: "degraded",
+      error: "a tool failed",
+    };
+    const scheduler = new Scheduler(createMockExecutor(degraded), { workDir: tmpDir });
+    scheduler.start();
+
+    const run = await scheduler.runNow(WS, OWNER, auto.id);
+    scheduler.stop();
+
+    expect(readRunResult(tmpDir, WS, OWNER, auto.id, run!.id)?.error).toBe("a tool failed");
   });
 });

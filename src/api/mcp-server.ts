@@ -26,12 +26,17 @@ import type {
   CallToolRequest,
   CallToolResult,
   ClientCapabilities,
+  CompleteRequest,
+  CompleteResult,
+  GetPromptRequest,
+  GetPromptResult,
   InputRequiredResult,
   ListResourcesRequest,
   ListResourcesResult,
   ListResourceTemplatesRequest,
   ListResourceTemplatesResult,
   ListToolsResult,
+  Prompt,
   ReadResourceRequest,
   ReadResourceResult,
   Resource,
@@ -510,8 +515,12 @@ function createHandlers(
 
 const SkillsListParamsSchema = z.looseObject({ cursor: z.string().optional() }).optional();
 const SkillsGetParamsSchema = z.looseObject({ uri: z.string() });
-/** `skills/list` and `skills/get` are cacheable results: stale at once, never shared across callers. */
-const SKILL_CACHE_HINTS = { ttlMs: 0, cacheScope: "private" } as const;
+/**
+ * The cache hints on a listing the door assembles from the workspace's
+ * connectors (`skills/*`, `prompts/list`): stale at once, since a connector can
+ * change what it serves, and never shared across callers.
+ */
+const DOOR_CACHE_HINTS = { ttlMs: 0, cacheScope: "private" } as const;
 
 /**
  * The workspace's MCP connectors, in name order. The kernel's own apps sit in
@@ -590,6 +599,115 @@ async function workspaceSkills(
 }
 
 /**
+ * The prompts the workspace's connectors serve, each named
+ * `<source>__<prompt>` as its tools are, so two connectors' prompts of one name
+ * stay apart. A connector that declares no `prompts` capability is not asked,
+ * and one that fails to answer is left out of the listing.
+ */
+async function workspacePrompts(runtime: Runtime | null, wsId: string): Promise<Prompt[]> {
+  if (!runtime) return [];
+  const prompts: Prompt[] = [];
+  for (const source of await workspaceConnectors(runtime, wsId)) {
+    const client = source.getServerCapabilities()?.prompts ? source.getClient() : null;
+    if (!client) continue;
+    try {
+      for (const prompt of (await client.listPrompts()).prompts) {
+        prompts.push({ ...prompt, name: `${source.name}__${prompt.name}` });
+      }
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `prompts/list source=${source.name} error=${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return prompts;
+}
+
+/**
+ * The connector a `<source>__<prompt>` name reaches, and the name the connector
+ * knows the prompt by. A name no workspace connector serving prompts answers
+ * to is refused as an unknown prompt.
+ */
+async function promptConnector(
+  runtime: Runtime | null,
+  wsId: string,
+  name: string,
+): Promise<{
+  source: McpSource;
+  client: NonNullable<ReturnType<McpSource["getClient"]>>;
+  name: string;
+}> {
+  const { sourcePrefix, bareToolName: bare, hasSeparator } = splitInnerToolName(name);
+  const source =
+    runtime && hasSeparator && bare.length > 0
+      ? (await workspaceConnectors(runtime, wsId)).find((src) => src.name === sourcePrefix)
+      : undefined;
+  const client = source?.getServerCapabilities()?.prompts ? source.getClient() : null;
+  if (!source || !client) {
+    throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown prompt: ${name}`);
+  }
+  return { source, client, name: bare };
+}
+
+/**
+ * `prompts/get`: the prompt from the connector that serves it, carrying the
+ * caller's side of the protocol as a `tools/call` does: the caller's
+ * capabilities in place of the runtime's, and on a retry its answers and the
+ * connector's echoed state. An `input_required` answer comes back relayed
+ * (`relayInputRequired`), every other answer as the connector gave it.
+ */
+async function getPrompt(
+  runtime: Runtime | null,
+  wsId: string,
+  params: GetPromptRequest["params"],
+  caller: Pick<McpCaller, "capabilities" | "inputResponses" | "requestState">,
+): Promise<GetPromptResult | InputRequiredResult> {
+  const { source, client, name } = await promptConnector(runtime, wsId, params.name);
+  const result: GetPromptResult | InputRequiredResult = await client.getPrompt(
+    {
+      name,
+      ...(params.arguments ? { arguments: params.arguments } : {}),
+      ...(caller.inputResponses ? { inputResponses: caller.inputResponses } : {}),
+      ...(caller.requestState !== undefined ? { requestState: caller.requestState } : {}),
+      _meta: { [CLIENT_CAPABILITIES_META_KEY]: caller.capabilities },
+    },
+    { allowInputRequired: true },
+  );
+  if (!runtime || !isInputRequiredResult(result)) return result;
+  return relayInputRequired(result, source.name, runtime);
+}
+
+/** The answer for a reference that has nothing to complete. */
+const NO_COMPLETIONS: CompleteResult = { completion: { values: [], hasMore: false } };
+
+/**
+ * `completion/complete`: asked of the connector that owns the reference. A
+ * prompt reference names its connector, as `prompts/get` does; a resource
+ * template reference reaches the connector that lists that template. A
+ * connector that declares no `completions` capability has nothing to suggest.
+ */
+async function complete(
+  runtime: Runtime | null,
+  wsId: string,
+  params: CompleteRequest["params"],
+): Promise<CompleteResult> {
+  const { ref, ...rest } = params;
+  if (ref.type === "ref/prompt") {
+    const { source, client, name } = await promptConnector(runtime, wsId, ref.name);
+    if (!source.getServerCapabilities()?.completions) return NO_COMPLETIONS;
+    return client.complete({ ...rest, ref: { ...ref, name } });
+  }
+  for (const source of runtime ? await workspaceConnectors(runtime, wsId) : []) {
+    const templates = await source.resourceTemplates();
+    if (!templates.some((t) => t.uriTemplate === ref.uri)) continue;
+    const client = source.getServerCapabilities()?.completions ? source.getClient() : null;
+    return client ? client.complete(params) : NO_COMPLETIONS;
+  }
+  throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown resource template: ${ref.uri}`);
+}
+
+/**
  * The SDK v2 `Server` built for one request by `createMcpHandler`, which
  * answers `server/discover` and serves the request under its `_meta` envelope.
  * Tasks are the tasks extension (SEP-2663), advertised in `server/discover`: a
@@ -613,6 +731,8 @@ function createServer(
       capabilities: {
         tools: {},
         resources: {},
+        prompts: {},
+        completions: {},
         ...(runtime ? { extensions: { [TASKS_EXTENSION_ID]: {}, [SKILLS_EXTENSION_ID]: {} } } : {}),
       },
       ...(instructions ? { instructions } : {}),
@@ -629,12 +749,12 @@ function createServer(
       throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown cursor: ${params.cursor}`);
     }
     const skills = await workspaceSkills(runtime, requestCtx.workspaceId);
-    return { skills: [...skills.values()], ...SKILL_CACHE_HINTS };
+    return { skills: [...skills.values()], ...DOOR_CACHE_HINTS };
   });
   server.setRequestHandler("skills/get", { params: SkillsGetParamsSchema }, async (params) => {
     const skill = (await workspaceSkills(runtime, requestCtx.workspaceId)).get(params.uri);
     if (!skill) throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown skill URI: ${params.uri}`);
-    return { skill, ...SKILL_CACHE_HINTS };
+    return { skill, ...DOOR_CACHE_HINTS };
   });
   server.setRequestHandler("tools/call", async (request, ctx) => {
     // The SDK types the lifted envelope as `{}`; its keys are the reserved
@@ -643,7 +763,12 @@ function createServer(
     const capabilities = (envelope?.[CLIENT_CAPABILITIES_META_KEY] ?? {}) as ClientCapabilities;
     // Verified and bound to this (identity, workspace) by `rounds` before the
     // handler runs; the tool and arguments it names are checked here.
-    const round = roundForCall(ctx.mcpReq.requestState<CallerRound>(), request.params);
+    const round = roundFor(
+      ctx.mcpReq.requestState<CallerRound>(),
+      "tools/call",
+      request.params.name,
+      request.params.arguments,
+    );
     const progressToken = ctx.mcpReq._meta?.progressToken;
     const caller: McpCaller = {
       capabilities,
@@ -675,7 +800,8 @@ function createServer(
         ...rest,
         requestState: await rounds.mint(
           {
-            tool: request.params.name,
+            method: "tools/call",
+            name: request.params.name,
             args: argsDigest(request.params.arguments),
             ...(state !== undefined ? { state } : {}),
           },
@@ -689,6 +815,46 @@ function createServer(
     // is the other result the extension allows, and the SDK sends it as given.
     return result as CallToolResult;
   });
+  // The workspace's connectors' prompts, in one page, each under its source.
+  server.setRequestHandler("prompts/list", async (request) => {
+    if (request.params?.cursor !== undefined) {
+      throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown cursor: ${request.params.cursor}`);
+    }
+    const prompts = await workspacePrompts(runtime, requestCtx.workspaceId);
+    return { prompts, ...DOOR_CACHE_HINTS };
+  });
+  server.setRequestHandler("prompts/get", async (request, ctx) => {
+    const envelope = ctx.mcpReq.envelope as Record<string, unknown> | undefined;
+    const capabilities = (envelope?.[CLIENT_CAPABILITIES_META_KEY] ?? {}) as ClientCapabilities;
+    const { name, arguments: args } = request.params;
+    const round = roundFor(ctx.mcpReq.requestState<CallerRound>(), "prompts/get", name, args);
+    const result = await getPrompt(runtime, requestCtx.workspaceId, request.params, {
+      capabilities,
+      ...(ctx.mcpReq.inputResponses ? { inputResponses: ctx.mcpReq.inputResponses } : {}),
+      ...(round?.state !== undefined ? { requestState: round.state } : {}),
+    });
+    if (!isInputRequiredResult(result)) return result;
+    // Sealed as a tool call's round is, so it returns only on this caller's
+    // retry of this prompt with these arguments.
+    const { requestState: state, ...rest } = result;
+    return {
+      ...rest,
+      requestState: await rounds.mint(
+        {
+          method: "prompts/get",
+          name,
+          args: argsDigest(args),
+          ...(state !== undefined ? { state } : {}),
+        },
+        ctx,
+      ),
+      // The handler is typed to answer a `GetPromptResult`; an `input_required`
+      // answer is the other result 2026-07-28 allows, and the SDK sends it as given.
+    } as unknown as GetPromptResult;
+  });
+  server.setRequestHandler("completion/complete", (request) =>
+    complete(runtime, requestCtx.workspaceId, request.params),
+  );
   server.setRequestHandler("resources/list", (request) => handlers.listResources(request));
   server.setRequestHandler("resources/templates/list", (request) =>
     handlers.listResourceTemplates(request),
@@ -723,7 +889,10 @@ type TaskAsk = {
  * on a call with other arguments.
  */
 interface CallerRound {
-  tool: string;
+  /** The request the round belongs to, so a tool's round is never a prompt's. */
+  method: "tools/call" | "prompts/get";
+  /** The tool or prompt name the client called. */
+  name: string;
   /** `argsDigest` of the call's arguments. */
   args: string;
   state?: string;
@@ -731,14 +900,19 @@ interface CallerRound {
 
 /**
  * The verified round a retry presents, refused with `-32602` unless it was
- * minted for this tool and these arguments.
+ * minted for this request, name and arguments.
  */
-function roundForCall(
+function roundFor(
   round: CallerRound | undefined,
-  call: CallToolRequest["params"],
+  method: CallerRound["method"],
+  name: string,
+  args: Record<string, unknown> | undefined,
 ): CallerRound | undefined {
-  if (round && (round.tool !== call.name || round.args !== argsDigest(call.arguments))) {
-    throw mcpError(ProtocolErrorCode.InvalidParams, "requestState belongs to another tool call");
+  if (
+    round &&
+    (round.method !== method || round.name !== name || round.args !== argsDigest(args))
+  ) {
+    throw mcpError(ProtocolErrorCode.InvalidParams, "requestState belongs to another request");
   }
   return round;
 }
@@ -791,8 +965,25 @@ async function toToolCallAnswer(
   runtime: Runtime,
 ): Promise<CallToolResult | InputRequiredResult> {
   if (!result.inputRequired) return toCallToolResult(result);
-  const { inputRequests, requestState } = result.inputRequired;
-  if (!inputRequests) return { resultType: "input_required", ...result.inputRequired };
+  return relayInputRequired(
+    { resultType: "input_required", ...result.inputRequired },
+    connector,
+    runtime,
+  );
+}
+
+/**
+ * A connector's `input_required` answer as the outside client receives it:
+ * each elicitation names the connector by its display name
+ * (`relayInputRequests`), and the connector's state is left for the caller to seal.
+ */
+async function relayInputRequired(
+  result: InputRequiredResult,
+  connector: string,
+  runtime: Runtime,
+): Promise<InputRequiredResult> {
+  const { inputRequests, requestState } = result;
+  if (!inputRequests) return result;
   const label = (await runtime.connectorTitles()).get(connector) ?? connector;
   return {
     resultType: "input_required",

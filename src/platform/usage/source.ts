@@ -16,7 +16,7 @@
  *     `userId`.
  *   - `scope: "org"` — every user's spend, attributed by owner. Gated to org
  *     admin via `ORG_ADMIN_ROLES`, matching the
- *     `instructions__write_instructions` / `manage_users` precedent.
+ *     `manage_users` precedent.
  */
 
 import { textContent } from "../../engine/content-helpers.ts";

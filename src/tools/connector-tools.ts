@@ -1,4 +1,5 @@
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
+import { brandName } from "../brand/index.ts";
 import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
@@ -250,6 +251,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "remove_operator_setup",
             "get_redirect_uri",
             "list_bound_skills",
+            "read_bound_skill",
             "list_personal_connectors",
             "list_personal_catalog",
             "grant_connector",
@@ -286,7 +288,12 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         serverName: {
           type: "string",
           description:
-            "Connector server name (required for disconnect, list_tools, get_permissions, set_permissions, grant_connector, revoke_connector).",
+            "Connector server name (required for disconnect, list_tools, get_permissions, set_permissions, grant_connector, revoke_connector, read_bound_skill).",
+        },
+        skillName: {
+          type: "string",
+          description:
+            "For read_bound_skill: the skill's name as list_bound_skills reports it for that server.",
         },
         scope: {
           type: "string",
@@ -386,6 +393,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleGetRedirectUri(args.identity);
         case "list_bound_skills":
           return handleListBoundSkills(ctx, args.wsId);
+        case "read_bound_skill":
+          return handleReadBoundSkill(ctx, args.wsId, args.serverName, args.skillName);
         case "list_personal_connectors":
           return handleListPersonalConnectors(ctx, args.callerId);
         case "list_personal_catalog":
@@ -452,6 +461,8 @@ interface DispatchArgs {
   identity: UserIdentity | null;
   callerId: string | null;
   serverName: string;
+  /** For `read_bound_skill`: the skill's name on `serverName`. */
+  skillName: string;
   scope: string | undefined;
   listInstalledScope: string;
   catalogId: string;
@@ -487,6 +498,7 @@ function resolveDispatchArgs(
     identity,
     callerId: identity?.id ?? null,
     serverName: str(input.serverName),
+    skillName: str(input.skillName),
     scope: input.scope ? String(input.scope) : undefined,
     listInstalledScope: String(input.scope ?? "all"),
     catalogId: str(input.catalogId),
@@ -606,22 +618,67 @@ async function handleListDirectory(
 }
 
 /**
- * `list_bound_skills` — the curated connector-skill overlays materialized
- * in this workspace, with their bound server + provenance source. These are
- * surface-once-into-history candidates, not authored skills, so they don't
- * appear in `skills__list`; this is how an operator sees what's bound.
+ * `list_bound_skills` — every skill the workspace's connectors contribute to
+ * the model's context, without their bodies: the curated overlays materialized
+ * here (`overlays`, with provenance) and the skills connected servers publish
+ * through the Skills extension (`published`, with how each loads). A server
+ * with an overlay publishes none here, because the overlay supersedes them.
+ * Neither kind is an authored skill, so neither appears in `skills__list`.
  */
-function handleListBoundSkills(ctx: ManageConnectorsContext, wsId: string | null): ToolResult {
+async function handleListBoundSkills(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+): Promise<ToolResult> {
   if (!wsId) {
     return errResult("No workspace in scope — pass `wsId` or call from a workspace.");
   }
   const overlays = ctx.runtime.listConnectorOverlays(wsId);
-  const summary = overlays.length
-    ? overlays.map((o) => `- ${o.server}: ${o.name}${o.source ? ` (${o.source})` : ""}`).join("\n")
-    : "No connector-skill overlays bound in this workspace.";
+  const published = await ctx.runtime.listPublishedSkills(wsId);
+  const lines = [
+    ...overlays.map((o) => `- ${o.server}: ${o.name} (overlay${o.source ? `, ${o.source}` : ""})`),
+    ...published.map((p) => `- ${p.server}: ${p.name} (published, ${p.loadingStrategy})`),
+  ];
   return {
-    content: textContent(summary),
-    structuredContent: { wsId, overlays },
+    content: textContent(
+      lines.length ? lines.join("\n") : "No connector skills bound in this workspace.",
+    ),
+    structuredContent: { wsId, overlays, published },
+    isError: false,
+  };
+}
+
+/**
+ * `read_bound_skill` — one connector skill's body as the model receives it,
+ * by the server and name `list_bound_skills` reports.
+ */
+async function handleReadBoundSkill(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  serverName: string,
+  skillName: string,
+): Promise<ToolResult> {
+  if (!wsId) {
+    return errResult("No workspace in scope — pass `wsId` or call from a workspace.");
+  }
+  if (!serverName || !skillName) {
+    return errResult("`serverName` and `skillName` are required for read_bound_skill.");
+  }
+  const read = await ctx.runtime.readConnectorSkill(wsId, serverName, skillName);
+  if (!read) {
+    return errResult(
+      `No skill "${skillName}" from "${serverName}" in this workspace. Call list_bound_skills for the current set.`,
+    );
+  }
+  if (!read.ok) {
+    return errResult(
+      read.reason === "unverified"
+        ? `"${serverName}" served content for "${skillName}" that does not match its skills listing, so the runtime does not use it.`
+        : `"${serverName}" did not return "${skillName}". The server may be unreachable.`,
+    );
+  }
+  return {
+    content: textContent(read.body),
+    structuredContent: { serverName, skillName, kind: read.kind, body: read.body },
     isError: false,
   };
 }
@@ -1337,7 +1394,7 @@ async function handleInstallIdentity(
   // connectors.json.
   if (isReservedServerName(serverName)) {
     return errResult(
-      `"${entry.id}" resolves to "${serverName}", a name reserved for NimbleBrain system ` +
+      `"${entry.id}" resolves to "${serverName}", a name reserved for ${brandName()} system ` +
         `tools. Pick a connector with a different id.`,
     );
   }
