@@ -12,6 +12,7 @@
  * Zero runtime emission: type aliases erase, and this module compiles empty.
  */
 
+import type { ResolvedBrand } from "../../brand/index.ts";
 import type { PlacementEntry } from "../../connectors/runtime/types.ts";
 import type { ContentBlock } from "../../engine/types.ts";
 import type { FileEntry } from "../../files/types.ts";
@@ -63,3 +64,10 @@ export type DriftChatResultKeys = AssertNever<Exclude<keyof ChatResult, keyof Wi
 // The MCP SDK's content union must fit the loose wire block (one direction:
 // the wire type is a deliberate widening of an external union).
 export type DriftToolContent = AssertAssignable<ContentBlock, Wire.ToolContentBlock>;
+
+// The served brand must fit the wire type and the two must name the same fields.
+export type DriftBrand = AssertAssignable<ResolvedBrand, Wire.BrandResponse>;
+export type DriftBrandKeys = AssertNever<
+  | Exclude<keyof ResolvedBrand, keyof Wire.BrandResponse>
+  | Exclude<keyof Wire.BrandResponse, keyof ResolvedBrand>
+>;

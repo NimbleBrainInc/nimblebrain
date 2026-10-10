@@ -510,6 +510,65 @@ describe("Result", () => {
     expect(html).toContain("Uncertain");
     expect(html).not.toContain(">Accept<");
   });
+  /** The result a run that failed before the engine returned, or never started, leaves. */
+  const emptyResult = (error: string) => ({
+    runId: "run_10",
+    taskId: "research",
+    completedAt: "2026-10-02T20:52:11Z",
+    output: "",
+    activityLog: [],
+    outputFiles: [],
+    usage: { inputTokens: 0, outputTokens: 0, iterations: 0 },
+    error,
+  });
+  const ENDED_EARLY = {
+    id: "run_10",
+    taskId: "research",
+    trigger: "manual",
+    startedAt: "2026-10-02T20:51:00Z",
+    completedAt: "2026-10-02T20:51:01Z",
+  } as const;
+
+  test("a failed run shows its error and no deliverable, and takes no verdict", () => {
+    const html = body({
+      status: "ready",
+      run: { ...ENDED_EARLY, status: "failure", execution: "failed", error: "Connector gone" },
+      result: emptyResult("Connector gone"),
+    });
+    expect(html).toMatch(/Outcome<\/span><span class="tile-value">Failed/);
+    expect(html).toContain("Connector gone");
+    expect(html).toContain("No deliverable for this run.");
+    expect(html).not.toContain("Showing the preview");
+    expect(html).not.toContain(">Accept<");
+  });
+
+  test("a skipped run shows why it did not start", () => {
+    const html = body({
+      status: "ready",
+      run: {
+        ...ENDED_EARLY,
+        trigger: undefined,
+        status: "skipped",
+        execution: "skipped",
+        error: "Previous run still active",
+      },
+      result: emptyResult("Previous run still active"),
+    });
+    expect(html).toMatch(/Outcome<\/span><span class="tile-value">Did not start/);
+    expect(html).toContain("Previous run still active");
+    expect(html).toContain("This run did not start, so it left no deliverable.");
+    expect(html).not.toContain(">Accept<");
+  });
+
+  test("a run recorded with no result shows its preview and says so", () => {
+    const html = body({
+      status: "ready",
+      run: { ...RUN, assessment: undefined, resultPreview: "Three prospects found." },
+      result: null,
+    });
+    expect(html).toContain("Three prospects found.");
+    expect(html).toContain("Showing the preview; the full result could not be read.");
+  });
 });
 
 describe("InputEditor", () => {

@@ -17,12 +17,16 @@ describe("skillEditPatch", () => {
     expect(skillEditPatch(id, "priority", " 40 ")).toEqual({ id, manifest: { priority: 40 } });
   });
 
-  it("sends a list as its non-blank lines, and clears it with []", () => {
+  it("sends a list as its non-blank lines, and clears it with null", () => {
     expect(skillEditPatch(id, "triggers", "ship it\n\n  deploy  \n")).toEqual({
       id,
       manifest: { triggers: ["ship it", "deploy"] },
     });
-    expect(skillEditPatch(id, "toolAffinity", "")).toEqual({ id, manifest: { toolAffinity: [] } });
+    expect(skillEditPatch(id, "toolAffinity", "")).toEqual({
+      id,
+      manifest: { toolAffinity: null },
+    });
+    expect(skillEditPatch(id, "triggers", " \n\n ")).toEqual({ id, manifest: { triggers: null } });
   });
 
   it("refuses a priority outside the authorable band", () => {

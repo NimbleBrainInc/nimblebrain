@@ -25,7 +25,7 @@ import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspac
 import type { OAuthInitiateResponse } from "../schemas/responses.ts";
 import { type AppContext, type AppEnv, apiError, json } from "../types.ts";
 import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
-import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
+import { reinitiateParagraph, successPage } from "./oauth-success-page.ts";
 
 /**
  * OAuth integration routes for outbound flows where NimbleBrain is the
@@ -214,7 +214,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       logCallbackOutcome("unknown_flow", { flow: flowId(state) });
       return c.html(
         "<html><body><h3>Unknown or expired OAuth flow.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         404,
       );
     }
@@ -569,7 +569,7 @@ function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Call
       outcome: "envelope_missing",
       response: c.html(
         "<html><body><h3>Authorization state envelope missing.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         400,
       ),
     };
@@ -594,7 +594,7 @@ function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Call
       fields: { reason: code },
       response: c.html(
         "<html><body><h3>Authorization session invalid.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         400,
       ),
     };
@@ -625,7 +625,7 @@ function verifyStateCookie(c: Context<AppEnv>, state: string): CallbackFailure |
       fields: { binding: cookieValue ? "mismatched" : "absent" },
       response: c.html(
         "<html><body><h3>Authorization session mismatch.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         400,
       ),
     };
@@ -659,8 +659,9 @@ function renderSuccessPage(
   // it renders unstyled in any deployment that doesn't override
   // NB_CSP — i.e. all of them. The hash pins us to exactly the bytes
   // we serve.
-  c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
-  return c.html(successPageHtml("Authorization complete", returnUrl));
+  const page = successPage("Authorization complete", returnUrl);
+  c.header("Content-Security-Policy", page.csp);
+  return c.html(page.html);
 }
 
 function sha256Hex(input: string): string {
