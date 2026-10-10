@@ -91,7 +91,7 @@ function checkModelConfigAccess(runtime: Runtime): string | null {
     );
   }
   if (!ORG_ADMIN_ROLES.has(identity.orgRole)) {
-    return "Only org admins or owners can change model configuration. The model config affects every workspace.";
+    return "Only org admins can change model configuration. The model config affects every workspace.";
   }
   return null;
 }
@@ -522,7 +522,9 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                 // Absent when unset, as in /v1/bootstrap. The shell applies any
                 // theme it is given, so reporting "system" for a user who never
                 // chose one overrode the theme their browser holds whenever a
-                // `config.changed` event made it re-read this.
+                // `config.changed` event made it re-read this. A brand's
+                // `defaultTheme` reaches the shell through `/v1/brand.js` instead,
+                // so it is never mistaken for the person's own choice.
                 ...(preferences.theme ? { theme: preferences.theme } : {}),
                 // Empty when unset, so a client can tell "following the
                 // configured default" from "chose this model deliberately".

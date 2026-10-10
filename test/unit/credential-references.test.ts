@@ -83,7 +83,7 @@ describe("transport auth — literal and reference", () => {
     expect(headers).toEqual({ "x-trace": "t_stored", "x-plain": "kept" });
   });
 
-  test("`${VAR}` no longer resolves anywhere — it is sent verbatim", async () => {
+  test("`${VAR}` does not resolve anywhere — it is sent verbatim", async () => {
     process.env.NB_CREDREF_PROBE = "from-env";
     try {
       const config: RemoteTransportConfig = {
@@ -218,7 +218,7 @@ describe("instance config references", () => {
       // @ts-expect-error — a literal-union field takes no reference
       { thinking: ref },
       // @ts-expect-error — a nested literal-union field takes no reference
-      { sessionStore: { type: ref } },
+      { logging: { level: ref } },
       // @ts-expect-error — `workDir` is read before the credential store exists
       { workDir: ref },
     ];

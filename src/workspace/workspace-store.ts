@@ -7,10 +7,8 @@ import { scaffoldWorkspace } from "./scaffold.ts";
 import type { Workspace, WorkspaceMember, WorkspaceRole } from "./types.ts";
 import { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
 
-// Re-export so existing `import { WORKSPACE_ID_RE } from ".../workspace-store.ts"`
-// call sites keep working. The literal source string + flags live in
-// `workspace-id-pattern.ts` so the codegen step (and the web tier) can
-// consume the same contract — see that file's header for the why.
+// Re-export so `import { WORKSPACE_ID_RE } from ".../workspace-store.ts"`
+// call sites work; the pattern itself lives in `workspace-id-pattern.ts`.
 export { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
 
 // ── Errors ─────────────────────────────────────────────────────────
@@ -53,10 +51,7 @@ export type MembershipChangeHandler = (userId: string) => void;
 
 // ── Workspace ID validation ────────────────────────────────────────
 
-// `WORKSPACE_ID_RE` lives in `./workspace-id-pattern.ts` so the web
-// tier (which can't import from `src/`) can consume the same literal
-// via build-time codegen. Re-exported above. See the pattern module's
-// header for the full rationale.
+// `WORKSPACE_ID_RE` lives in `./workspace-id-pattern.ts`; re-exported above.
 
 // ── Opaque id generation ───────────────────────────────────────────
 
@@ -357,8 +352,7 @@ export class WorkspaceStore {
    *
    * From every other surface the workspace is gone the moment this
    * returns: `get`/`list` read `workspaces/`, which no longer holds the
-   * subtree. Membership-change notifications fire for each former member,
-   * exactly as before (the only change is on-disk: archive vs. destroy).
+   * subtree. Membership-change notifications fire for each former member.
    *
    * Returns `false` (idempotent no-op) when no such workspace dir exists.
    *

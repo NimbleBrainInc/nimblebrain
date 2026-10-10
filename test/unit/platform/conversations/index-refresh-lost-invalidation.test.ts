@@ -7,8 +7,8 @@
  * until an unrelated later write re-dirties the index.
  *
  * This is reachable on its own, but the platform source's refresh coalescing
- * is what makes it bite every concurrent reader: a second caller that used to
- * enter `refresh()`, see `dirty === true` and rebuild now piggybacks on the
+ * is what makes it bite every concurrent reader: a second caller does not
+ * enter `refresh()`, see `dirty === true` and rebuild — it piggybacks on the
  * in-flight rebuild and inherits its stale result.
  */
 
@@ -23,6 +23,7 @@ let dir: string;
 
 function writeConv(id: string): void {
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",

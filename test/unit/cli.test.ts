@@ -2,7 +2,9 @@ import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadBrand, resolvedBrand } from "../../src/brand/index.ts";
 import { loadConfig } from "../../src/cli/config.ts";
+import { ACME_BRAND } from "../helpers/acme-brand.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-cli-unit-${Date.now()}`);
 
@@ -86,7 +88,6 @@ describe("loadConfig", () => {
       http: {},
       workDir: testDir,
       usage: { ledger: { retentionMonths: 6 } },
-      sessionStore: { type: "memory", ttlSeconds: 60 },
       secrets: {},
       telemetry: {},
       features: {},
@@ -94,6 +95,7 @@ describe("loadConfig", () => {
       notifications: { poll: { intervalMs: 30000 } },
       tasks: {},
       files: {},
+      brand: { name: "ACME" },
     };
     const fileOnly = new Set(["$schema", "version"]);
     const configurable = Object.keys(schema.properties).filter((k) => !fileOnly.has(k));
@@ -101,9 +103,9 @@ describe("loadConfig", () => {
 
     const configPath = writeTestConfig("every-key.json", samples);
     const config = loadConfig({ config: configPath }) as unknown as Record<string, unknown>;
+    loadBrand({});
     expect(configurable.filter((k) => config[k] === undefined)).toEqual([]);
     expect(config.usage).toEqual({ ledger: { retentionMonths: 6 } });
-    expect(config.sessionStore).toEqual({ type: "memory", ttlSeconds: 60 });
     expect(config.notifications).toEqual({ poll: { intervalMs: 30000 } });
   });
 
@@ -287,6 +289,53 @@ describe("config validation", () => {
     expect(() => loadConfig({ config: configPath })).toThrow("Invalid config");
   });
 
+  it("loads a brand block and installs it", () => {
+    const configPath = writeTestConfig("brand-ok.json", { brand: ACME_BRAND });
+    try {
+      const config = loadConfig({ config: configPath });
+      expect(config.brand?.name).toBe("ACME");
+      expect(resolvedBrand().name).toBe("ACME");
+    } finally {
+      loadBrand({});
+    }
+  });
+
+  it("rejects at load a brand that fails a contrast pair", () => {
+    const configPath = writeTestConfig("brand-low-contrast.json", {
+      brand: { colors: { primary: ["#CCCCCC", "#6a8fe4"] } },
+    });
+    expect(() => loadConfig({ config: configPath })).toThrow(
+      "light mode: primary on background (links, accent text)",
+    );
+  });
+
+  it("warns on brand keys outside the schema and does not install them", () => {
+    const configPath = writeTestConfig("brand-unknown.json", {
+      brand: {
+        name: "ACME",
+        colors: { primary: ["#B53707", "#FF8A4C"], success: ["#0D6B45", "#3fbf85"] },
+        fonts: { mono: { stack: "ui-monospace, monospace" } },
+        radius: { md: "0.25rem" },
+      },
+    });
+    const spy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      loadConfig({ config: configPath });
+      const warnings = spy.mock.calls.map((c) => c[0] as string);
+      for (const key of ["success", "mono", "radius"]) {
+        expect(warnings.some((w) => w.includes(`Unknown key "${key}"`))).toBe(true);
+      }
+      expect(resolvedBrand()).toEqual({
+        name: "ACME",
+        colors: { primary: ["#B53707", "#FF8A4C"] },
+        fonts: {},
+      });
+    } finally {
+      spy.mockRestore();
+      loadBrand({});
+    }
+  });
+
   it("warns on unknown keys but does not throw", () => {
     const configPath = writeTestConfig("unknown-keys.json", {
       maxIterations: 7,
@@ -334,7 +383,7 @@ describe("config validation", () => {
     }
   });
 
-  // Keys the loader no longer reads take the unknown-key path like any other:
+  // Keys the loader does not read take the unknown-key path like any other:
   // warned by name, ignored, and never copied into the runtime config.
   for (const [key, value] of [
     ["model", { provider: "anthropic" }],

@@ -16,9 +16,10 @@ export function requestRateLimit<E extends AuthEnv = AppEnv>(
 ) {
   return createMiddleware<E>(async (c, next) => {
     const key = keyOf ? keyOf(c) : (c.var.identity?.id ?? "anon");
-    if (!limiter.consume(key)) {
+    const retryAfterSeconds = limiter.consumeWithRetryAfter(key);
+    if (retryAfterSeconds !== null) {
       return apiError(429, "rate_limited", "Rate limit exceeded", undefined, {
-        "Retry-After": String(limiter.windowSeconds),
+        "Retry-After": String(retryAfterSeconds),
       });
     }
     await next();

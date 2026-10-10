@@ -354,7 +354,7 @@ export async function routeToolCall(opts: {
   // second set of semantics for the same string forever. A caller presenting one
   // is working from a stale `tools/list` and needs to re-list, which is what the
   // error says. Rejecting is also what makes cross-workspace reach
-  // *unexpressible* rather than merely denied — there is no longer any name that
+  // *unexpressible* rather than merely denied — there is no name that
   // can address a workspace other than the session's own.
   if (scope.kind === "workspace") {
     throw new UnknownNamespacedToolName(
@@ -374,13 +374,13 @@ export async function routeToolCall(opts: {
   //      not claim (`isReservedServerName` / `validateServerName` at install);
   //   3. otherwise the session's own workspace.
   //
-  // Note what is NOT here: a cross-workspace check. It is gone because the
-  // caller can no longer NAME another workspace, so there is nothing to compare
-  // and nothing to deny. The old `ws_<id>-` tripwire only ever fired on a
-  // fabricated name — the tool list and the session's `workspaceId` derive from
-  // the same value, so it could never detect a mis-bound session. Removing the
-  // field makes fabrication unexpressible, which is strictly stronger than
-  // catching it after the fact.
+  // Note what is NOT here: a cross-workspace check. The caller cannot NAME
+  // another workspace, so there is nothing to compare and nothing to deny. A
+  // `ws_<id>-` tripwire would only ever fire on a fabricated name — the tool
+  // list and the session's `workspaceId` derive from the same value, so it
+  // could never detect a mis-bound session. Having no such field makes
+  // fabrication unexpressible, which is strictly stronger than catching it
+  // after the fact.
   const { sourcePrefix: sourceName } = splitInnerToolName(toolName);
   if (isIdentitySource(sourceName) || isPersonalConnectorName(sourceName)) {
     return routeIdentityCall(identityId, toolName, workspaceId, runtime);

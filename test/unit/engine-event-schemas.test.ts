@@ -31,6 +31,7 @@ describe("event schemas — accept representative payloads", () => {
       skills: [
         {
           id: "/data/skills/foo.md",
+          name: "foo",
           layer: 3 as const,
           scope: "workspace" as const,
           version: "1.0.0",
@@ -152,6 +153,7 @@ describe("event schemas — reject malformed payloads", () => {
       skills: [
         {
           id: "/data/skills/foo.md",
+          name: "foo",
           layer: 3 as const,
           scope: "workspace" as const,
           version: "1.0.0",
@@ -218,7 +220,7 @@ describe("event schemas — accept what the emitters produce", () => {
     ]);
 
     // Guard the guard: these are the values that must reach the checker, and
-    // they are exactly what the schema used to be too narrow to admit.
+    // they are exactly what a too-narrow schema would fail to admit.
     expect(payload.skills.map((s) => s.layer).sort()).toEqual([0, 3, 4]);
     expect(payload.skills[1]!.connector).toBe("acme-mcp");
     expect(Value.Check(SkillsLoadedPayload, payload)).toBe(true);

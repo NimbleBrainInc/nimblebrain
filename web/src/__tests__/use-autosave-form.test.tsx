@@ -10,6 +10,8 @@
 //   - Undo on a field's notice puts back the value the save replaced
 //   - an edit still pending when the form unmounts is saved then, including one
 //     typed while its field's own save was in flight
+//   - a failure the field can no longer show (it failed after the form left, or
+//     the form left with it failed) is raised as a notice, once
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -54,7 +56,9 @@ afterEach(async () => {
   saves = [];
 });
 
-function Form({ undo }: { undo: boolean }) {
+type Policy = Parameters<typeof useAutosaveForm<Values>>[1]["notices"];
+
+function Form({ undo, notices }: { undo: boolean; notices?: Policy }) {
   form = useAutosaveForm<Values>(
     { name: "a", limit: "10" },
     {
@@ -63,7 +67,7 @@ function Form({ undo }: { undo: boolean }) {
           saves.push({ field, value, resolve, reject });
         }),
       labels: { name: "Name", limit: "Limit" },
-      notices: undo ? { name: { undo: true } } : undefined,
+      notices: notices ?? (undo ? { name: { undo: true } } : undefined),
     },
   );
   return null;
@@ -71,17 +75,17 @@ function Form({ undo }: { undo: boolean }) {
 
 /** Lets a test take the form off the page while the notices stay, as navigating does. */
 let removeForm: () => void = () => {};
-function Harness({ undo }: { undo: boolean }) {
+function Harness({ undo, notices }: { undo: boolean; notices?: Policy }) {
   const [shown, setShown] = React.useState(true);
   removeForm = () => setShown(false);
-  return shown ? React.createElement(Form, { undo }) : null;
+  return shown ? React.createElement(Form, { undo, notices }) : null;
 }
 
 async function flush() {
   for (let i = 0; i < 4; i++) await act(async () => await Promise.resolve());
 }
 
-async function mount(undo = false) {
+async function mount(undo = false, notices?: Policy) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
@@ -91,7 +95,7 @@ async function mount(undo = false) {
         NoticeProvider,
         null,
         React.createElement(NoticeViewport),
-        React.createElement(Harness, { undo }),
+        React.createElement(Harness, { undo, notices }),
       ),
     );
   });
@@ -275,5 +279,49 @@ describe("useAutosaveForm", () => {
       ["name", "b"],
       ["name", "bc"],
     ]);
+  });
+
+  // A save refused while the form is on the page shows on the field. Leaving
+  // removes the field, so the refusal must reach the reader as a notice, or
+  // the edit is gone with nothing to say so.
+  test("a field whose save failed before the form left raises an error notice on leaving", async () => {
+    await mount();
+    await act(async () => form.commit("limit", "0"));
+    await act(async () => saves[0]!.reject(new Error("limit must be positive")));
+    await flush();
+    expect(status("limit")).toBe("error");
+    expect(document.body.querySelector("[data-testid='notice']")).toBeNull();
+
+    await act(async () => removeForm());
+    await flush();
+    const notices = Array.from(document.body.querySelectorAll("[data-testid='notice']"));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.textContent).toContain("Couldn't save Limit");
+    expect(notices[0]?.textContent).toContain("limit must be positive");
+  });
+
+  // A form whose policy already raised the failure as a notice has said it;
+  // leaving does not say it twice.
+  test("a failure already raised as a notice is not raised again on leaving", async () => {
+    await mount(false, { limit: { error: "notice" } });
+    await act(async () => form.commit("limit", "0"));
+    await act(async () => saves[0]!.reject(new Error("limit must be positive")));
+    await flush();
+    expect(document.body.querySelectorAll("[data-testid='notice']")).toHaveLength(1);
+    await act(async () => removeForm());
+    await flush();
+    expect(document.body.querySelectorAll("[data-testid='notice']")).toHaveLength(1);
+  });
+
+  // A failed field reverted, or retried into a save, no longer holds a lost edit.
+  test("a failed field reverted before leaving raises nothing", async () => {
+    await mount();
+    await act(async () => form.commit("limit", "0"));
+    await act(async () => saves[0]!.reject(new Error("limit must be positive")));
+    await flush();
+    await act(async () => form.revert("limit"));
+    await act(async () => removeForm());
+    await flush();
+    expect(document.body.querySelector("[data-testid='notice']")).toBeNull();
   });
 });

@@ -28,8 +28,8 @@ interface ConversationMetadata {
  */
 /**
  * Access-control metadata stored alongside each summary in the index.
- * Stage 1: single-owner only — `ownerId` is the entire authorization
- * surface. Stage 4 reintroduces sharing via explicit policy.
+ * Conversations are single-owner: `ownerId` is the entire authorization
+ * surface.
  */
 interface IndexedAccessMeta {
   ownerId?: string;
@@ -134,14 +134,13 @@ export class ConversationIndex {
 
     // Cursor pagination: skip entries up to and including the cursor ID.
     //
-    // Edge case (future hardening, not Stage 1): if the cursor names a
-    // conversation that no longer satisfies the current `access`
-    // filter — owner changed (Stage 4 sharing), or the conversation
-    // was deleted between calls — `findIndex` returns -1 and the
-    // slice is a no-op, so the caller re-sees page 1 instead of
-    // getting an empty / shifted page. Stage 1 single-owner doesn't
-    // hit this (ownership can't change), but the cursor model should
-    // be revisited when sharing returns. Options: opaque
+    // Edge case: if the cursor names a conversation that no longer
+    // satisfies the current `access` filter — the conversation was
+    // deleted between calls — `findIndex` returns -1 and the slice is a
+    // no-op, so the caller re-sees page 1 instead of getting an empty /
+    // shifted page. Ownership cannot change, so the filter itself never
+    // drops the cursor's entry; a model where access can change needs a
+    // cursor that does not depend on the filtered result. Options: opaque
     // ({createdAt}, last-id) cursors that don't depend on the filtered
     // result, or return an explicit `cursor_invalid` signal.
     if (options?.cursor) {
@@ -161,14 +160,13 @@ export class ConversationIndex {
 /**
  * Check if a user can access a conversation.
  *
- * Stage 1: single-owner. A conversation is accessible iff the caller
- * is its owner. Workspace-admin overrides and shared-with-participants
- * semantics are gone — Stage 4 reintroduces them with explicit policy
- * gates and audit trails.
+ * Conversations are single-owner. A conversation is accessible iff the
+ * caller is its owner; there is no workspace-admin override and no
+ * sharing with participants.
  *
  * A `meta` of `undefined` or one without `ownerId` is treated as
- * inaccessible — Stage 1 enforces "every conversation has an owner"
- * at write time, so unset means the index hasn't caught up.
+ * inaccessible — every conversation is given an owner at write time,
+ * so unset means the index hasn't caught up.
  */
 export function canAccess(
   meta: IndexedAccessMeta | undefined,
@@ -219,9 +217,13 @@ interface EventLine {
   type?: string;
   ts?: string;
   content?: unknown;
-  usage?: TokenUsage;
-  model?: string;
   title?: string | null;
+}
+
+/** The fields an `llm.response` line always carries (see `LlmResponseEvent`). */
+interface LlmResponseLine {
+  usage: TokenUsage;
+  model: string;
 }
 
 /** Zero-valued metrics accumulator. */
@@ -264,10 +266,11 @@ function applyEventLine(metrics: DerivedMetrics, line: string): void {
     }
   } else if (event.type === "run.done") {
     metrics.messageCount++;
-  } else if (event.type === "llm.response" && event.usage && event.model) {
-    metrics.inputTokens += event.usage.inputTokens;
-    metrics.outputTokens += event.usage.outputTokens;
-    metrics.costUsd += estimateCost(event.model, event.usage);
+  } else if (event.type === "llm.response") {
+    const { usage, model } = event as EventLine & LlmResponseLine;
+    metrics.inputTokens += usage.inputTokens;
+    metrics.outputTokens += usage.outputTokens;
+    metrics.costUsd += estimateCost(model, usage);
   } else if (event.type === "metadata.title") {
     metrics.title = event.title;
   }
@@ -289,7 +292,7 @@ export function parseFileHeader(
   // Totals are always derived from events; line-1 totals are never read.
   const metrics = scanLines(lines);
 
-  // Stage 1 invariant: every conversation has an ownerId. A file
+  // Invariant: every conversation has an ownerId. A file
   // without one is pre-migration data — load() already throws when
   // it encounters such a file directly, and the index honors the same
   // invariant by EXCLUDING ownerless entries entirely. Including them

@@ -660,7 +660,7 @@ async function handlePurgeArchive(
 /**
  * Check whether the requesting user may take a member action in the given
  * workspace. Listing is open to any member (`canReadWorkspaceMembers`);
- * changing the roster needs an org admin/owner or an `admin` member of this
+ * changing the roster needs an org admin or an `admin` member of this
  * workspace (`canManageWorkspaceMembers`).
  */
 async function memberActionAllowed(
@@ -782,7 +782,7 @@ async function handleAddMember(
  * Count workspace admins whose underlying user is still active (not
  * soft-deleted). The last-admin guards use this so a deactivated admin — who
  * can't actually act, since the auth layer denies them — never counts toward
- * the minimum. Mirrors `activeOwnerCount` in user-tools.ts at the workspace level.
+ * the minimum. Mirrors `activeAdminCount` in user-tools.ts at the workspace level.
  */
 async function activeAdminCount(members: WorkspaceMember[], userStore: UserStore): Promise<number> {
   const admins = members.filter((m) => m.role === "admin");

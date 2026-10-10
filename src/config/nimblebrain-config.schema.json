@@ -243,41 +243,6 @@
         }
       }
     },
-    "sessionStore": {
-      "description": "MCP session metadata store for /mcp. Tracks each Mcp-Session-Id and its idle TTL. Default: in-memory (process-local). Use 'redis' for multi-replica deploys; the same provider also gives single-replica deploys cluster-wide visibility for ops/admin tooling.",
-      "type": "object",
-      "properties": {
-        "type": {
-          "description": "Provider. 'memory' is process-local (default). 'redis' is cluster-shared (required for platform.replicas > 1).",
-          "type": "string",
-          "enum": ["memory", "redis"],
-          "default": "memory"
-        },
-        "ttlSeconds": {
-          "description": "Idle TTL for sessions in seconds. Each request resets the clock — actively-used sessions never expire. Default: 28800 (8 h).",
-          "type": "integer",
-          "minimum": 1,
-          "default": 28800
-        },
-        "redis": {
-          "description": "Redis-specific options. Required when type='redis'.",
-          "type": "object",
-          "properties": {
-            "url": {
-              "description": "Redis connection URL (redis:// or rediss://). Typically injected via environment from a secret.",
-              "type": "string"
-            },
-            "keyPrefix": {
-              "description": "Hash key prefix for session entries. Default: 'nb:mcp:session:'.",
-              "type": "string",
-              "default": "nb:mcp:session:"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
     "secrets": {
       "description": "Which backend holds the deployment's secrets. Omit the block for the default: one plaintext file per secret under the work directory. See /config/secrets/.",
       "type": "object",
@@ -526,9 +491,144 @@
         }
       },
       "additionalProperties": false
+    },
+    "brand": {
+      "description": "White-label branding: the product name, logos, accent colour and typefaces a tenant's users see in place of NimbleBrain's. Every key is optional, and an absent block is NimbleBrain. The runtime rejects at load a palette that fails any WCAG AA contrast pair the canonical palette is held to. Served unauthenticated at GET /v1/brand.js. See https://docs.nimblebrain.ai/config/branding/.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[^\\u0000-\\u001f<>{}]+$",
+          "description": "Product name shown in place of \"NimbleBrain\": the agent's identity line, OAuth consent screens, the OAuth success page, error pages. Default: \"NimbleBrain\"."
+        },
+        "defaultTheme": {
+          "type": "string",
+          "enum": ["light", "dark", "system"],
+          "description": "The colour theme a person starts in until they choose one. \"system\" follows the operating system. Default: \"system\"."
+        },
+        "homepageUrl": {
+          "$ref": "#/$defs/brandUrl",
+          "description": "Homepage sent as `client_uri` when registering OAuth clients with connector vendors."
+        },
+        "logo": {
+          "type": "object",
+          "description": "Logo artwork URLs. A URL that is set must resolve; a broken URL renders a broken image, not the default logo.",
+          "properties": {
+            "light": {
+              "$ref": "#/$defs/brandUrl",
+              "description": "Full logo for light mode."
+            },
+            "dark": {
+              "$ref": "#/$defs/brandUrl",
+              "description": "Full logo for dark mode."
+            },
+            "mark": {
+              "$ref": "#/$defs/brandUrl",
+              "description": "Square mark, used where the full logo does not fit."
+            },
+            "raster": {
+              "$ref": "#/$defs/brandUrl",
+              "description": "PNG mark sent as `logo_uri` in OAuth client registration. Raster because several identity providers refuse SVG there."
+            }
+          },
+          "additionalProperties": false
+        },
+        "favicon": {
+          "$ref": "#/$defs/brandUrl",
+          "description": "Favicon URL."
+        },
+        "colors": {
+          "type": "object",
+          "description": "Accent colours, each a [light, dark] pair of #rrggbb values. primary-foreground is derived from primary as white or black, whichever reads better.",
+          "properties": {
+            "primary": {
+              "$ref": "#/$defs/brandColorPair",
+              "description": "The accent: primary actions, links, accent text."
+            },
+            "ring": {
+              "$ref": "#/$defs/brandColorPair",
+              "description": "The focus ring. Usually the same value as primary."
+            }
+          },
+          "additionalProperties": false
+        },
+        "fonts": {
+          "type": "object",
+          "description": "Typeface overrides per role. A role with no url must name a system font.",
+          "properties": {
+            "sans": {
+              "$ref": "#/$defs/brandFont"
+            },
+            "heading": {
+              "$ref": "#/$defs/brandFont"
+            },
+            "reading": {
+              "$ref": "#/$defs/brandFont"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "$defs": {
+    "brandUrl": {
+      "type": "string",
+      "pattern": "^https?://[^\\s\"'()<>]+$"
+    },
+    "brandColorPair": {
+      "type": "array",
+      "description": "[light, dark]",
+      "items": {
+        "type": "string",
+        "pattern": "^#[0-9A-Fa-f]{6}$"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "brandFontUrl": {
+      "type": "string",
+      "description": "A woff2 font file. Not a stylesheet: Google Fonts CSS URLs are rejected.",
+      "pattern": "^https?://[^\\s\"'()<>]+\\.woff2(\\?[^\\s\"'()<>]*)?$"
+    },
+    "brandFontWeight": {
+      "type": "string",
+      "description": "CSS font-weight descriptor: \"400\", or a variable range \"400 700\".",
+      "pattern": "^[1-9][0-9]{0,2}( [1-9][0-9]{0,2})?$"
+    },
+    "brandFont": {
+      "type": "object",
+      "description": "One typeface role: a CSS stack, and optionally one woff2 file (typically a variable font) declared under family.",
+      "required": ["stack"],
+      "properties": {
+        "stack": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^;{}<>\\\\]+$",
+          "description": "CSS font-family value, fallbacks included."
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^;{}<>\\\\'\"]+$",
+          "description": "Family name the file is declared under. Required with url."
+        },
+        "url": {
+          "$ref": "#/$defs/brandFontUrl"
+        },
+        "weight": {
+          "$ref": "#/$defs/brandFontWeight"
+        }
+      },
+      "dependencies": {
+        "url": ["family"],
+        "weight": ["url"]
+      },
+      "additionalProperties": false
+    },
     "connectorRef": {
       "description": "One entry in a workspace's `connectors[]` — a remote MCP server, addressed by URL. Workspace records live at `<workDir>/workspaces/<wsId>/workspace.json`, not in this file.",
       "type": "object",

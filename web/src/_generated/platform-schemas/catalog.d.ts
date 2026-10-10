@@ -21,7 +21,7 @@ export declare const PlatformToolCatalog: {
         readonly list: {
             readonly input: import("@sinclair/typebox").TObject<{
                 scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"org" | "workspace" | "user" | "provided">>;
-                layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<3 | 1>>;
+                layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<1 | 3>>;
                 loading_strategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
                 tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
@@ -64,11 +64,11 @@ export declare const PlatformToolCatalog: {
                 id: import("@sinclair/typebox").TString;
                 manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                    loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
-                    priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                    toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-                    triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-                    allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                    loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"always" | "dynamic">, import("@sinclair/typebox").TNull]>>;
+                    priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>>;
+                    toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
+                    triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
+                    allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
                 }>>;
                 body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 body_mode: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"append">, import("@sinclair/typebox").TLiteral<"replace">]>>;
@@ -104,13 +104,6 @@ export declare const PlatformToolCatalog: {
                 userId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 origin: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"chat" | "task" | "system">>;
-            }>;
-        };
-    };
-    readonly instructions: {
-        readonly write_instructions: {
-            readonly input: import("@sinclair/typebox").TObject<{
-                body: import("@sinclair/typebox").TString;
             }>;
         };
     };

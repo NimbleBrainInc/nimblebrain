@@ -13,6 +13,7 @@ import {
   selectClientAuthMethod,
   UnauthorizedError,
 } from "@modelcontextprotocol/client";
+import { DEFAULT_OAUTH_CLIENT_IDENTITY, type OAuthClientIdentity } from "../brand/index.ts";
 import { validateConnectorUrl } from "../connectors/runtime/url-validator.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { buildTenantAssertion } from "../oauth/fleet-assertion.ts";
@@ -92,7 +93,7 @@ export interface WorkspaceOAuthProviderOptions {
   owner: OAuthOwnerContext;
   /**
    * Human-readable label for the owner, used verbatim in the OAuth
-   * `client_name` the vendor renders on its consent screen ("NimbleBrain
+   * `client_name` the vendor renders on its consent screen ("<brand name>
    * (<ownerDisplayName>) would like access…"). When omitted, the provider
    * falls back to the raw owner id (`owner.wsId` / `user:<userId>`), which
    * is an opaque token the end user can't read and a tenant identifier we'd
@@ -102,9 +103,18 @@ export interface WorkspaceOAuthProviderOptions {
    * regardless — so a missing name degrades gracefully to the id.
    */
   ownerDisplayName?: string;
+  /**
+   * The platform's name, homepage and logo, sent in dynamic client
+   * registration as `client_name` / `client_uri` / `logo_uri` so a vendor
+   * that honors RFC 7591 shows them on its consent screen. Callers pass the
+   * deployment's brand (`oauthClientIdentity()`); omitted, it is NimbleBrain's.
+   * A vendor keeps what it was sent at first registration, so a change reaches
+   * an existing connection only when it registers again.
+   */
+  clientIdentity?: OAuthClientIdentity;
   serverName: string;
   /**
-   * Workspace-bound context, optional. It no longer decides where anything
+   * Workspace-bound context, optional. It does not decide where anything
    * lands — the credential store resolves the owner's scope itself — but when
    * present the provider asserts `workspaceContext.workspaceId ===
    * owner.wsId`, so a caller cannot pair a context bound to ws_A with
@@ -227,8 +237,9 @@ export interface WorkspaceOAuthProviderOptions {
    * the token endpoint belongs to this issuer. It is NEVER attached to a vendor
    * authorization server (Granola, Google, …): a tenant key signature must not
    * leak to a third party. Leave unset for every provider except the one
-   * driving the fleet-token flow; the assertion also no-ops when the tenant key
-   * (`NB_MCP_AUTHORIZER_TENANT_KEY`) isn't provisioned (rollout phase 1).
+   * driving the fleet-token flow. The fleet authorizer refuses a token request
+   * without an assertion, so a missing tenant key (`NB_MCP_AUTHORIZER_TENANT_KEY`)
+   * fails the request here with that cause rather than sending it unasserted.
    */
   fleetAuthorizerIssuer?: string;
 }
@@ -479,22 +490,6 @@ function deferred<T>(): Deferred<T> {
 }
 
 /**
- * Brand metadata sent in the DCR registration so vendors that honor RFC 7591
- * `client_uri` / `logo_uri` render NimbleBrain's homepage link and logo on
- * their consent screen instead of a bare name. Hardcoded to match the
- * likewise-hardcoded "NimbleBrain" in `client_name`; a future white-label
- * effort would make all three configurable together. The logo is the
- * NimbleBrain brand mark from the platform's public asset CDN
- * (`static.nimblebrain.ai`), built by the logos pipeline into the canonical
- * per-brand path. We point at the 128px raster rather than the SVG variant
- * because several OAuth/identity providers refuse to render an SVG `logo_uri`
- * (scriptable-image hardening); the mark is transparent and reads on both
- * light and dark consent screens.
- */
-const NIMBLEBRAIN_CLIENT_URI = "https://nimblebrain.ai";
-const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain/light-128.png";
-
-/**
  * OAuthClientProvider scoped to an `(owner, serverName)` pair. It owns the
  * OAuth state machine; {@link McpOAuthRecords} owns where the records it
  * persists live — the credential store, at the owner's scope, under the keys
@@ -533,6 +528,7 @@ const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain/li
 export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly owner: OAuthOwnerContext;
   private readonly ownerDisplayName?: string;
+  private readonly clientIdentity: OAuthClientIdentity;
   private readonly serverName: string;
   /**
    * This connection's four records, at the owner's credential scope. Each
@@ -682,6 +678,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   constructor(opts: WorkspaceOAuthProviderOptions) {
     this.owner = opts.owner;
     this.ownerDisplayName = opts.ownerDisplayName;
+    this.clientIdentity = opts.clientIdentity ?? DEFAULT_OAUTH_CLIENT_IDENTITY;
     this.serverName = opts.serverName;
     this.callbackUrl = opts.callbackUrl;
     this.canonicalCallback = canonicalEndpoint(new URL(opts.callbackUrl));
@@ -723,7 +720,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // verify in depth, at the boundary.
     assertSafeOwnerId(opts.serverName);
     assertSafeOwnerId(opts.owner.type === "workspace" ? opts.owner.wsId : opts.owner.userId);
-    // A `workspaceContext` no longer decides where anything lands — the store
+    // A `workspaceContext` does not decide where anything lands — the store
     // resolves the owner's scope on its own — but pairing one with a
     // user-scoped owner is still a category error worth refusing, and a
     // context bound to ws_A alongside `owner: {wsId: ws_B}` is a caller bug
@@ -777,9 +774,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       this.ownerDisplayName ??
       (this.owner.type === "workspace" ? this.owner.wsId : `user:${this.owner.userId}`);
     const meta: OAuthClientMetadata = {
-      client_name: `NimbleBrain (${ownerLabel})`,
-      client_uri: NIMBLEBRAIN_CLIENT_URI,
-      logo_uri: NIMBLEBRAIN_LOGO_URI,
+      client_name: `${this.clientIdentity.name} (${ownerLabel})`,
+      ...(this.clientIdentity.clientUri ? { client_uri: this.clientIdentity.clientUri } : {}),
+      ...(this.clientIdentity.logoUri ? { logo_uri: this.clientIdentity.logoUri } : {}),
       redirect_uris: [this.callbackUrl],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -1412,8 +1409,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     if (!verifier) return;
     const inner = createHash("sha256").update(verifier).digest("base64url");
 
-    const assertion = buildTenantAssertion({ inner });
-    if (assertion) params.set("tenant_assertion", assertion);
+    params.set("tenant_assertion", buildTenantAssertion({ inner }));
   };
 
   async redirectToAuthorization(url: URL): Promise<void> {

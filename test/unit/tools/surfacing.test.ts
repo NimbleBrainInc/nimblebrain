@@ -355,15 +355,15 @@ describe("composeSystemPrompt — apps injection", () => {
   });
 });
 
-// --- Stage 2: namespaced (cross-workspace) tool names ---
+// --- Namespaced (cross-workspace) tool names ---
 //
 // The cross-workspace aggregator namespaces every tool as
 // `ws_<id>-<source>__<tool>` via `namespacedToolName`. System-tool
 // detection and skill-glob matching must see through that prefix. The
-// pre-existing tests above use only BARE names, which is exactly why the
-// regression shipped: in Tier 2, `direct` is the system-tool list, and a
-// raw `startsWith("nb__")` matches zero namespaced names — handing the
-// model an empty tool list and forcing it to hallucinate tool calls.
+// tests above use only BARE names, so they cannot catch it: in Tier 2,
+// `direct` is the system-tool list, and a raw `startsWith("nb__")` matches
+// zero namespaced names — handing the model an empty tool list and forcing
+// it to hallucinate tool calls.
 
 describe("surfaceTools — namespaced (cross-workspace) names", () => {
   const WS = "ws_003eba8844413cd9";
@@ -505,57 +505,7 @@ describe("surfaceTools — kernel identity tools always direct", () => {
   });
 });
 
-// --- The overlay write stays off the model's surface ---
-//
-// The workspace overlay is human-authored: the settings UI invokes
-// `instructions__write_instructions` by name over REST, and the tool carries
-// `ui.visibility: ["app"]` so the model never sees it — not direct, not
-// proxied. The agent's job on "remember this" is to draft the text and point
-// the user at settings (see bootstrap.md), never to write the overlay itself.
-
-describe("surfaceTools — instructions write is app-only", () => {
-  const internalWrite: ToolSchema = {
-    name: "instructions__write_instructions",
-    description: "Save workspace-wide custom instructions",
-    inputSchema: { type: "object", properties: {} },
-    meta: { ui: { visibility: ["app"] } },
-  };
-
-  it("never surfaces direct or proxied, even in a bare workspace", () => {
-    const system = makeSystemTools(4);
-
-    const result = surfaceTools([...system, internalWrite], null);
-
-    expect(result.direct.map((t) => t.name)).not.toContain("instructions__write_instructions");
-    expect(result.proxied.map((t) => t.name)).not.toContain("instructions__write_instructions");
-    expect(result.direct).toHaveLength(4); // only nb__*
-  });
-
-  it("stays invisible under a skill glob that names it", () => {
-    const system = makeSystemTools(4);
-    const tasks = makeAppTools("todos", 10);
-    const skill = makeSkill({ allowedTools: ["instructions__*", "todos__*"] });
-
-    const result = surfaceTools([...system, internalWrite, ...tasks], skill);
-
-    expect(result.direct.map((t) => t.name)).not.toContain("instructions__write_instructions");
-    expect(result.proxied.map((t) => t.name)).not.toContain("instructions__write_instructions");
-  });
-
-  it("an instructions source without the annotation gets no special tier", () => {
-    // No kernel special-case remains for the source name: an un-annotated
-    // instructions tool proxies like any other platform tool.
-    const system = makeSystemTools(4);
-    const plain = makeTool("instructions__write_instructions");
-    const app = makeAppTools("todos", 40);
-
-    const result = surfaceTools([...system, plain, ...app], null);
-
-    const directNames = new Set(result.direct.map((t) => t.name));
-    expect(directNames.has("instructions__write_instructions")).toBe(false);
-    expect(result.direct).toHaveLength(4); // only nb__*
-  });
-
+describe("surfaceTools — the skills authoring surface", () => {
   it("the skills authoring surface stays proxied", () => {
     // Nine tools for a surface reached deliberately, not reflexively — it is
     // named in the bootstrap briefing instead of spent from the direct tier.

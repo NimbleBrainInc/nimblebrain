@@ -45,7 +45,7 @@ function seedInstance(
   lifecycle: ConnectorLifecycleManager,
   serverName: string,
   wsId: string,
-  // Stage 2: only "workspace" is legal post-schema-cut.
+  // Only "workspace" is a legal scope.
   oauthScope: "workspace" = "workspace",
   ref?: ConnectorRef,
 ): ConnectorInstance {
@@ -108,7 +108,7 @@ describe("ConnectorLifecycleManager.startAuth — validation & idempotence", () 
     ).rejects.toThrow(/missing URL ref/);
   });
 
-  test("rejects when principal is not the workspace principal (Stage 2: user-scope removed)", async () => {
+  test("rejects a principal other than the workspace principal", async () => {
     seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
       serverName: "granola",

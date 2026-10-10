@@ -37,20 +37,20 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("creates conversations with format: events", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     expect(conv.format).toBe("events");
     expect(conv.id).toMatch(/^conv_/);
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
     const meta = JSON.parse(lines[0]);
     expect(meta.format).toBe("events");
-    // Token totals are no longer stored on Conversation; they're derived
+    // Token totals are not stored on Conversation; they're derived
     // from events at read time.
     expect(meta.totalInputTokens).toBeUndefined();
   });
 
   it("emit() writes engine events to conversation file", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
@@ -87,7 +87,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("persists the raw finish reason on llm.response next to the unified one", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     const llmDone = (
@@ -123,7 +123,7 @@ describe("EventSourcedConversationStore", () => {
     // Regression: the engine emits resource references on tool.done, but they
     // were dropped on persist — so a reopened conversation lost its artifact://
     // viewers (e.g. the deep_research report panel). They must round-trip.
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
@@ -154,7 +154,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("history() reconstructs messages from events", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
 
     // Write user message event
     store.appendEvent(conv.id, {
@@ -196,7 +196,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("skips non-conversation events", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({ type: "text.delta", data: { runId: "r1", text: "hi" } });
@@ -222,7 +222,10 @@ describe("EventSourcedConversationStore", () => {
       ...dirs,
       logLevel: "debug",
     });
-    const conv = await debugStore.create({ ownerId: "user_test" });
+    const conv = await debugStore.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: "user_test",
+    });
     debugStore.setActiveConversation(conv.id);
 
     debugStore.emit({
@@ -257,7 +260,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("normal logging strips verbose fields but keeps tool output", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
@@ -294,7 +297,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("tool output survives the full round-trip: emit → persist → reconstruct → history", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     // Simulate a complete run with a tool call that produces output
@@ -354,8 +357,14 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("routes events to the correct conversation", async () => {
-    const conv1 = await store.create({ ownerId: "user_test" });
-    const conv2 = await store.create({ ownerId: "user_test" });
+    const conv1 = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: "user_test",
+    });
+    const conv2 = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: "user_test",
+    });
 
     store.setActiveConversation(conv1.id);
     store.emit({
@@ -380,7 +389,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("load() and delete() work", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     const loaded = await store.load(conv.id);
     expect(loaded).not.toBeNull();
     expect(loaded!.id).toBe(conv.id);
@@ -393,7 +402,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("update() patches title", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     const updated = await store.update(conv.id, { title: "New Title" });
     expect(updated).not.toBeNull();
     expect(updated!.title).toBe("New Title");
@@ -403,7 +412,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("update() appends metadata event instead of rewriting line 1", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     const path = join(dirs.dir, `${conv.id}.jsonl`);
 
     const linesBefore = readLines(path);
@@ -421,7 +430,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("interleaved appends and title update preserves all events", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     // Turn 1
@@ -491,12 +500,8 @@ describe("EventSourcedConversationStore", () => {
     expect(totalIn).toBe(20);
   });
 
-  // Stage 1 removed share/unshare/addParticipant/removeParticipant —
-  // see the Stage 1 refactor. Sharing returns in
-  // Stage 4 with policy-gated primitives.
-
   it("list() reflects title from metadata events", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     await store.update(conv.id, { title: "Event-Derived Title" });
 
     const result = await store.list();
@@ -506,7 +511,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("list() filters by ownerId — non-owner cannot see another user's conversation", async () => {
-    const conv = await store.create({ ownerId: "owner" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "owner" });
 
     // Owner sees their conversation.
     const ownerView = await store.list(undefined, { userId: "owner" });
@@ -519,10 +524,11 @@ describe("EventSourcedConversationStore", () => {
 
   it("backward compat: old files with title in line 1 still work", async () => {
     // Simulate an old-format file with title baked into line 1 — but
-    // ownerId is required post-Stage-1 (the migration script stamps it).
+    // ownerId is required (the migration script stamps it).
     const id = "conv_1e9ac4c0000000a1";
     const path = join(dirs.dir, `${id}.jsonl`);
     const meta = {
+      model: "anthropic:claude-sonnet-4-6",
       id,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -543,12 +549,11 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("fork() preserves assistant turns through history() round-trip", async () => {
-    // Regression: fork() previously wrote llm.response events without
-    // run.start/run.done bookends. The reconstructor only emits assistant
-    // messages inside an active run scope, so history() on a forked
-    // event-format conversation returned only the user turns. Assistant
-    // turns silently disappeared.
-    const conv = await store.create({ ownerId: "user_test" });
+    // fork() must write llm.response events inside run.start/run.done
+    // bookends. The reconstructor only emits assistant messages inside an
+    // active run scope, so without them history() on a forked event-format
+    // conversation returns only the user turns.
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: "test-model" })));
@@ -613,7 +618,7 @@ describe("EventSourcedConversationStore", () => {
     // still shows. fork() must read the full verbatim history (ignore
     // compaction) so a fork copies the real turns the user sees.
     const T = (n: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString();
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
 
     const log: ConversationEvent[] = [
       { ts: T(1), type: "user.message", content: [{ type: "text", text: "FIRST QUESTION" }] },
@@ -626,6 +631,7 @@ describe("EventSourcedConversationStore", () => {
         content: [{ type: "text", text: "FIRST REPLY" }],
         usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 1,
+        finishReason: "stop",
       },
       { ts: T(4), type: "run.done", runId: "r1", stopReason: "complete", totalMs: 1 },
       { ts: T(5), type: "user.message", content: [{ type: "text", text: "SECOND QUESTION" }] },
@@ -638,6 +644,7 @@ describe("EventSourcedConversationStore", () => {
         content: [{ type: "text", text: "SECOND REPLY" }],
         usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 1,
+        finishReason: "stop",
       },
       { ts: T(8), type: "run.done", runId: "r2", stopReason: "complete", totalMs: 1 },
       {

@@ -225,6 +225,7 @@ export default defineConfig({
               { label: 'Connectors Catalog', slug: 'config/connectors-catalog' },
               { label: 'Logging', slug: 'config/logging' },
               { label: 'Feature Flags', slug: 'config/features' },
+              { label: 'Branding', slug: 'config/branding' },
               { label: 'Environment Variables', slug: 'config/environment' },
             ],
           },
@@ -244,6 +245,7 @@ export default defineConfig({
             icon: 'cloud-download',
             items: [
               { label: 'Docker Compose', slug: 'deploy/docker' },
+              { label: 'White-labeling', slug: 'deploy/white-label' },
               { label: 'Security', slug: 'deploy/security' },
               { label: 'Observability', slug: 'deploy/observability' },
             ],

@@ -126,12 +126,11 @@ function messagesContainOverlay(prompt: LanguageModelV4Message[]): boolean {
 describe("connector-skill surface-once (engine + event store)", () => {
   it("delivers the overlay in the SAME run, before the model's next action", async () => {
     // The point of surfacing on first use: the guidance has to arrive before
-    // the calls it governs. It used to be emitted as an event only, so the
-    // body first appeared on the NEXT turn's rehydration — after the writes it
-    // was meant to govern, and never at all for a conversation that ends in
-    // one run.
+    // the calls it governs. Emitted as an event only, the body would first
+    // appear on the NEXT turn's rehydration — after the writes it is meant to
+    // govern, and never at all for a conversation that ends in one run.
     const store = freshStore();
-    const conv = await store.create({ ownerId: "u1" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "u1" });
     store.setActiveConversation(conv.id);
 
     await appendUser(store, conv, "send an email to a@b.com");
@@ -158,7 +157,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     // turn would rebuild a history the model never actually ran against — a
     // silent prefix divergence, not a visible failure.
     const store = freshStore();
-    const conv = await store.create({ ownerId: "u1" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "u1" });
     store.setActiveConversation(conv.id);
 
     await appendUser(store, conv, "send an email to a@b.com");
@@ -190,7 +189,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     // user-visible output. The overlay lands last in the run that triggers it,
     // so its role decides whether that happens.
     const store = freshStore();
-    const conv = await store.create({ ownerId: "u1" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "u1" });
     store.setActiveConversation(conv.id);
 
     await appendUser(store, conv, "send an email to a@b.com");
@@ -213,7 +212,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     // land adjacent. Replay runs a role-alternation repair pass that the live
     // path does not, so this is where the two could silently drift apart.
     const store = freshStore();
-    const conv = await store.create({ ownerId: "u1" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "u1" });
     store.setActiveConversation(conv.id);
 
     const twoCandidates: EngineConfig = {
@@ -258,7 +257,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
 
   it("surfaces the overlay into history once, never into the system prefix, and holds across turns", async () => {
     const store = freshStore();
-    const conv = await store.create({ ownerId: "u1" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "u1" });
     store.setActiveConversation(conv.id);
 
     // --- Turn 1: user asks; model calls gmail__send then answers. ---
@@ -308,7 +307,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
 
   it("never surfaces a connector overlay when no candidate's affinity matches the called tool", async () => {
     const store = freshStore();
-    const conv = await store.create({ ownerId: "u1" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "u1" });
     store.setActiveConversation(conv.id);
 
     const calendarTool: ToolSchema = {

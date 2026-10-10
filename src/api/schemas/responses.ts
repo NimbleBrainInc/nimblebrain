@@ -31,7 +31,7 @@ export interface ApiErrorBody {
 // ── Shared shapes ───────────────────────────────────────────────────────────
 
 /** Mirrors `OrgRole` (`src/identity/types.ts`). */
-export type OrgRole = "owner" | "admin" | "member";
+export type OrgRole = "admin" | "member";
 
 /** Mirrors `WorkspaceRole` (`src/workspace/types.ts`). */
 export type WorkspaceRole = "admin" | "member";
@@ -173,6 +173,37 @@ export interface ChatToolCall {
 
 export interface HealthResponse {
   status: "ok";
+}
+
+// ── GET /v1/brand.js ────────────────────────────────────────────────────────
+
+/** One typeface role as served. Mirrors `BrandFont` (`web/src/theme/brand.ts`). */
+export interface BrandFontResponse {
+  stack: string;
+  family?: string;
+  url?: string;
+  weight?: string;
+}
+
+/**
+ * The deployment's validated brand block, `{}` when none is configured: the
+ * value `GET /v1/brand.js` assigns to `window.__NB_BRAND__`. Mirrors
+ * `ResolvedBrand` (`web/src/theme/brand.ts`); each colour is a `[light, dark]`
+ * hex pair.
+ */
+export interface BrandResponse {
+  name?: string;
+  homepageUrl?: string;
+  logo?: {
+    light?: string;
+    dark?: string;
+    mark?: string;
+    raster?: string;
+  };
+  favicon?: string;
+  defaultTheme?: "light" | "dark" | "system";
+  colors?: Partial<Record<"primary" | "ring", readonly [light: string, dark: string]>>;
+  fonts?: Partial<Record<"sans" | "heading" | "reading", BrandFontResponse>>;
 }
 
 // ── GET /v1/workspaces/:wsId/shell ──────────────────────────────────────────
@@ -351,7 +382,7 @@ export interface JsonRpcErrorBody {
   id: null;
 }
 
-/** The 2026-07-28 leg's answer to `tasks/get` or `tasks/cancel`, which the SDK does not route. */
+/** `/mcp`'s answer to `tasks/get` or `tasks/cancel`, which the SDK does not route. */
 export type McpTaskAnswer = { id: string | number } & (
   | { result: Record<string, unknown> }
   | { error: { code: number; message: string } }

@@ -1,3 +1,4 @@
+import { oauthClientIdentity } from "../../brand/index.ts";
 import type { EventSink } from "../../engine/types.ts";
 import type { HostResourcesRateLimit, HostResourcesResolver } from "../../host-resources/index.ts";
 import { resolveUserDisplayName } from "../../identity/user.ts";
@@ -81,13 +82,13 @@ interface StartConnectorOpts {
    *
    * Applies to EVERY boot failure mode, not only an unreachable endpoint — a
    * rejected credential is retained too. That is deliberate but worth stating,
-   * because it drops a brake: the old `removeSource` set `stopped`, which is what
-   * made `HealthMonitor` treat the source as terminal. Retained sources instead
+   * because it drops a brake: removing the source would set `stopped`, which is
+   * what makes `HealthMonitor` treat a source as terminal. Retained sources instead
    * get its exponential-backoff bursts followed by the slow re-probe cooldown,
    * which is what bounds the cost of a source that will not come back on its own.
-   * Classifying the failure here to keep only "retryable" ones was tried and
-   * removed: a 401 arrives as a `ServerError`, not `UnauthorizedError`, so the
-   * gate missed the common shape while implying a protection it did not provide.
+   * There is no classification here to keep only "retryable" failures: a 401
+   * arrives as a `ServerError`, not `UnauthorizedError`, so such a gate would miss
+   * the common shape while implying a protection it does not provide.
    */
   keepRegisteredOnStartFailure?: boolean;
   /**
@@ -191,11 +192,12 @@ async function buildUserOAuthProvider(
   onInteractiveAuthRequired: (authorizationUrl: string) => void,
 ): Promise<WorkspaceOAuthProvider> {
   const { workDir } = identityOwner;
-  // Human-readable owner for the vendor consent screen ("NimbleBrain (<name>)")
+  // Human-readable owner for the vendor consent screen ("<brand> (<name>)")
   // in place of the opaque `user:<id>`; mirrors the workspace arm's
   // `resolveWorkspaceDisplayName`. Best-effort — falls back to the id.
   const ownerDisplayName = await resolveUserDisplayName(workDir, identityOwner.userId);
   return new WorkspaceOAuthProvider({
+    clientIdentity: oauthClientIdentity(),
     owner: { type: "user", userId: identityOwner.userId },
     ...(ownerDisplayName ? { ownerDisplayName } : {}),
     serverName,
@@ -289,6 +291,7 @@ export async function buildUrlOAuthProvider(
   // place of the opaque wsId; best-effort, falls back to the id.
   const ownerDisplayName = await resolveWorkspaceDisplayName(workDir, wsId);
   return new WorkspaceOAuthProvider({
+    clientIdentity: oauthClientIdentity(),
     owner: { type: "workspace", wsId },
     ...(ownerDisplayName ? { ownerDisplayName } : {}),
     serverName,

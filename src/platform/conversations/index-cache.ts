@@ -50,8 +50,8 @@ export interface IndexEntry {
   preview: string;
   filePath: string;
   /**
-   * Single-owner principal. Stage 1 requires every conversation to
-   * carry an `ownerId`; legacy files written before the migration may
+   * Single-owner principal. Every conversation must carry an
+   * `ownerId`; legacy files written before the migration may
    * lack one — the index keeps `null` for those rather than guessing,
    * and the dispatcher treats `null` as inaccessible (no synthesis).
    */
@@ -139,9 +139,8 @@ export class ConversationIndex {
   private updating: Promise<void> | null = null;
   /**
    * Conversations whose header must be re-read, keyed by id so a burst of
-   * appends to one conversation collapses to a single re-read. This is the
-   * coalescing the old watch debounce was reaching for, on a signal that
-   * actually fires under the workspace layout.
+   * appends to one conversation collapses to a single re-read, on a signal
+   * that actually fires under the workspace layout.
    */
   private pending: Map<string, ConversationChange> = new Map();
   /** Set when the change could not name a conversation; the next read rebuilds in full. */

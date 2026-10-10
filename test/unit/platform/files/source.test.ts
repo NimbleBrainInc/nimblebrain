@@ -238,8 +238,8 @@ describe("files app", () => {
 
   test("create rejects a plain-text body under the base64 default", async () => {
     // `Buffer.from(s, "base64")` drops every character outside the alphabet, so
-    // an un-encoded body used to decode to garbage and save successfully. The
-    // caller only found out by opening the file.
+    // an un-encoded body would decode to garbage and save successfully, and the
+    // caller would only find out by opening the file.
     const result = await exec("create", {
       manifest: { filename: "notes.md", mimeType: "text/markdown" },
       body: "# Conventions\n\nAlways cite the source.",

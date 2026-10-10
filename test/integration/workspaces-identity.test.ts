@@ -64,12 +64,13 @@ describe("UC-W1: Private work with shared tools", () => {
     const store = new EventSourcedConversationStore({ dir: convDir });
 
     const matConv = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
       workspaceId: eng.id,
       ownerId: mat.id,
     });
 
     // Kai lists conversations -> Mat's conversation NOT visible.
-    // Stage 1: workspace role doesn't grant access; only ownership does.
+    // Workspace role doesn't grant access; only ownership does.
     const kaiAccess: ConversationAccessContext = { userId: kai.id };
     const kaiList = await store.list(undefined, kaiAccess);
     const kaiIds = kaiList.conversations.map((c) => c.id);
@@ -87,18 +88,15 @@ describe("UC-W1: Private work with shared tools", () => {
 // UC-W2: Collaborative conversation
 // ---------------------------------------------------------------------------
 
-describe("UC-W2: Single-owner conversation (Stage 1)", () => {
+describe("UC-W2: Single-owner conversation", () => {
   let workDir: string;
 
   afterEach(() => {
     if (workDir) rmSync(workDir, { recursive: true, force: true });
   });
 
-  // Stage 1 removed share/participant primitives. The collaborative-
-  // conversation use case (multi-user access to one conversation) is
-  // deferred to Stage 4 where it returns with policy gating. The
-  // surviving invariant in Stage 1: a conversation is owned by exactly
-  // one user; non-owners cannot read it.
+  // There are no share/participant primitives. The invariant: a
+  // conversation is owned by exactly one user; non-owners cannot read it.
   test("only the owner can load a conversation; other workspace members cannot", async () => {
     workDir = makeTmpDir();
 
@@ -115,14 +113,18 @@ describe("UC-W2: Single-owner conversation (Stage 1)", () => {
     const convDir = join(workDir, "workspaces", eng.id, "conversations");
     const store = new EventSourcedConversationStore({ dir: convDir });
 
-    const conv = await store.create({ workspaceId: eng.id, ownerId: mat.id });
+    const conv = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
+      workspaceId: eng.id,
+      ownerId: mat.id,
+    });
 
     // Mat (owner) can load it.
     const matLoaded = await store.load(conv.id, { userId: mat.id });
     expect(matLoaded).not.toBeNull();
 
-    // Kai (workspace member, not owner) cannot. No workspace-admin
-    // override in Stage 1 — sharing returns in Stage 4 with policy.
+    // Kai (workspace member, not owner) cannot. There is no
+    // workspace-admin override.
     const kaiLoaded = await store.load(conv.id, { userId: kai.id });
     expect(kaiLoaded).toBeNull();
   });
@@ -371,14 +373,14 @@ describe("Dev mode", () => {
     expect(identity).not.toBeNull();
     expect(identity!.id).toBe("usr_default");
     expect(identity!.email).toBe("dev@localhost");
-    expect(identity!.orgRole).toBe("owner");
+    expect(identity!.orgRole).toBe("admin");
 
     // Default user profile was auto-created
     const user = await userStore.get("usr_default");
     expect(user).not.toBeNull();
     expect(user!.displayName).toBe("Developer");
 
-    // DevIdentityProvider no longer creates workspaces — the runtime does.
+    // DevIdentityProvider does not create workspaces — the runtime does.
     // Verify we can create a workspace and add the dev user to it.
     const ws = await wsStore.create("Test Workspace");
     await wsStore.addMember(ws.id, "usr_default", "admin");

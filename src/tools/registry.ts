@@ -213,34 +213,34 @@ export class ToolRegistry implements ToolRouter {
   }
 
   async availableTools(): Promise<ToolSchema[]> {
-    const all: ToolSchema[] = [];
-    for (const source of this.sources.values()) {
-      // Per-source error containment. A connector in `starting` /
-      // `pending_auth` / `dead` state has no connected client and
-      // throws `"<name>" not started` from McpSource.tools(). Without
-      // this guard, ONE stuck connector's enumeration error rejects
-      // the whole call and every chat turn fails — exactly the
-      // platform-level outage shape we don't want from one bad
-      // workspace source. Surface the failure in the source's own
-      // status (Configure page renders it from ConnectorInstance.state)
-      // and leave the chat usable.
-      let tools: Tool[];
-      try {
-        tools = await source.tools();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(
-          `[registry] availableTools: skipping source "${source.name}" — ${msg}. ` +
-            `The connector's own state surface (Connectors page) reflects this; the chat list ` +
-            `omits its tools until the source recovers.`,
-        );
-        continue;
-      }
-      for (const tool of tools) {
-        all.push(toToolSchema(tool));
-      }
-    }
-    return all;
+    // Sources are listed concurrently: a stale remote source's listing may
+    // wait on a re-fetch (McpSource.tools), and those waits overlap rather than
+    // add up. Output keeps source order.
+    const perSource = await Promise.all(
+      [...this.sources.values()].map(async (source) => {
+        // Per-source error containment. A connector in `starting` /
+        // `pending_auth` / `dead` state has no connected client and
+        // throws `"<name>" not started` from McpSource.tools(). Without
+        // this guard, ONE stuck connector's enumeration error rejects
+        // the whole call and every chat turn fails — exactly the
+        // platform-level outage shape we don't want from one bad
+        // workspace source. Surface the failure in the source's own
+        // status (Configure page renders it from ConnectorInstance.state)
+        // and leave the chat usable.
+        try {
+          return (await source.tools()).map(toToolSchema);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn(
+            `[registry] availableTools: skipping source "${source.name}" — ${msg}. ` +
+              `The connector's own state surface (Connectors page) reflects this; the chat list ` +
+              `omits its tools until the source recovers.`,
+          );
+          return [];
+        }
+      }),
+    );
+    return perSource.flat();
   }
 
   async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {

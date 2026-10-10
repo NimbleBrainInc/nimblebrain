@@ -140,7 +140,7 @@ All system tools are prefixed with `nb__` (the `nb` source name + `__` separator
 |-----------|---------|
 | `nb__status` | Platform status: overview, connectors, skills, or config (scope param) |
 | `nb__search` | Unified search: installed tools or the connector catalog (scope param) |
-| `nb__read_resource` | Read a `skill://` / `ui://` resource from an installed app's MCP server |
+| `nb__read_resource` | Read a resource from an installed app's MCP server: a `skill://` or `ui://` resource, or one of the app's records by URI |
 | `nb__set_preferences` | Set user preferences (name, timezone, theme) |
 | `nb__manage_tools` | Promote/release tools in the active set |
 
@@ -300,8 +300,6 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 |----------|---------|
 | `NB_WORK_DIR` | Override working directory (takes precedence over config) |
 | `ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (for cookie-based auth) |
-| `MCP_MAX_SESSIONS` | Max concurrent MCP sessions before LRU eviction kicks in (default: 100) |
-| `MCP_SESSION_TTL_SECONDS` | MCP session idle TTL in seconds; drives both transport-map sweep and registry TTL (default: 28800, i.e. 8h) |
 | `NB_CHAT_RATE_LIMIT` | Chat requests per minute per user (default: 20) |
 | `NB_TOOL_RATE_LIMIT` | Tool calls per minute per user (default: 60) |
 | `NB_CONNECTOR_START_CONCURRENCY` | Max connectors started in parallel at boot (default: 4, set to 1 for sequential) |
@@ -516,7 +514,7 @@ User-uploaded files are persisted in the workspace `FileStore` and referenced fr
 
 Pluggable authentication via `IdentityProvider` interface (`src/identity/provider.ts`). Configured via `instance.json` in the work directory:
 
-- **`dev`** — No login: every request is one local developer (`usr_default`, org owner). Chosen only by writing `{"auth":{"adapter":"dev"}}`.
+- **`dev`** — No login: every request is one local developer (`usr_default`, org admin). Chosen only by writing `{"auth":{"adapter":"dev"}}`.
 - **`oidc`** — JWT verification via any OIDC provider. Auto-provisions users on first valid login.
 - **`workos`** — Full OAuth code flow with PKCE, token refresh, managed users via WorkOS. Supports MCP OAuth for external client access via AuthKit.
 
@@ -546,7 +544,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 **CORS:** The same under every identity provider: only `ALLOWED_ORIGINS` env var origins, with credentials support; with it unset, same-origin only.
 
-**MCP endpoint (`/mcp/<wsId>`):** Streamable HTTP, one per workspace; bare `/mcp` is refused. The bundled web UI's app bridge uses it, and external MCP clients (Claude, Claude Code, Cursor) connect to a workspace's URL (Workspace settings → MCP). A token from the authorization server is accepted only when its `aud` is exactly that URL, and membership of the workspace is checked on every request. 100 concurrent sessions (env: `MCP_MAX_SESSIONS`, LRU-evicted at the cap rather than 429'd), 8-hour idle TTL (env: `MCP_SESSION_TTL_SECONDS`). When `authkitDomain` is configured, returns `WWW-Authenticate` header on 401 for automatic OAuth discovery by MCP clients. Full setup guide: [MCP Endpoint](https://docs.nimblebrain.ai/api/mcp-endpoint/) and [Connecting External Clients](https://docs.nimblebrain.ai/guide/mcp-connect/) on docs.nimblebrain.ai.
+**MCP endpoint (`/mcp/<wsId>`):** Streamable HTTP, one per workspace, MCP `2026-07-28` only: each request is served on its own under its `_meta` envelope, with no session, and a request without the envelope (any 2025-era client) is refused with `400` / `-32022`; bare `/mcp` is refused. The bundled web UI's app bridge uses it, and external MCP clients (Claude, Claude Code, Cursor) connect to a workspace's URL (Workspace settings → MCP). A token from the authorization server is accepted only when its `aud` is exactly that URL, and membership of the workspace is checked on every request. When `authkitDomain` is configured, returns `WWW-Authenticate` header on 401 for automatic OAuth discovery by MCP clients. Full setup guide: [MCP Endpoint](https://docs.nimblebrain.ai/api/mcp-endpoint/) and [Connecting External Clients](https://docs.nimblebrain.ai/guide/mcp-connect/) on docs.nimblebrain.ai.
 
 **MCP resource URL:** built from the configured public origin (`NB_PUBLIC_ORIGIN`, or the forwarded custom domain / platform host), never from request headers. The authorization server needs a resource indicator covering `<origin>/mcp/*` for each public host, or it ignores the client's `resource` and every token is refused. See [MCP OAuth: the resource URL](https://docs.nimblebrain.ai/deploy/security/#mcp-oauth-the-resource-url).
 
@@ -692,7 +690,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | `@ai-sdk/openai` | OpenAI provider |
 | `@ai-sdk/google` | Google Gemini provider |
 | `@modelcontextprotocol/client` | MCP client to connectors: negotiates the 2026-07-28 or a 2025 protocol revision per connection (Streamable HTTP, SSE, in-memory) |
-| `@modelcontextprotocol/server` | MCP servers: platform apps (in-memory) and both legs of `/mcp/<wsId>` |
+| `@modelcontextprotocol/server` | MCP servers: platform apps (in-memory) and `/mcp/<wsId>` |
 | `ajv` + `ajv-formats` | JSON Schema validation for MCPB manifests |
 | `gray-matter` | YAML frontmatter parsing for skill files |
 | `posthog-node` | Anonymous product telemetry (server-side) |

@@ -196,9 +196,7 @@ describe("McpSource — resource notifications", () => {
    * `notifications/resources/*` to leave the server.
    */
   async function buildResourceSource(name: string): Promise<McpSource> {
-    const resources = new Map<string, InProcessResource>([
-      ["instructions://workspace", "<p>hi</p>"],
-    ]);
+    const resources = new Map<string, InProcessResource>([["notes://today", "<p>hi</p>"]]);
     const built = defineInProcessApp(
       {
         name,
@@ -274,7 +272,7 @@ describe("McpSource — resource notifications", () => {
     await expect(
       client!.request({
         method: "resources/subscribe",
-        params: { uri: "instructions://workspace" },
+        params: { uri: "notes://today" },
       }),
     ).rejects.toThrow(/Method not found/i);
   });
@@ -314,7 +312,7 @@ describe("defineInProcessApp — parametric resources", () => {
 
   test("listResources entries are merged into resources/list alongside static map entries", async () => {
     const staticMap = new Map<string, InProcessResource>([
-      ["instructions://workspace", { text: "ws body", mimeType: "text/markdown" }],
+      ["notes://today", { text: "ws body", mimeType: "text/markdown" }],
     ]);
     source = defineInProcessApp(
       {
@@ -334,7 +332,7 @@ describe("defineInProcessApp — parametric resources", () => {
     const result = await source.getClient()!.listResources();
     const uris = result.resources.map((r) => r.uri);
     expect(uris).toEqual([
-      "instructions://workspace",
+      "notes://today",
       "instructions://connectors/foo",
       "instructions://connectors/bar",
     ]);

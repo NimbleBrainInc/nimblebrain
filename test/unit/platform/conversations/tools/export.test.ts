@@ -21,6 +21,7 @@ function writeTmpFile(name: string, lines: string[]): string {
 }
 
 const META = {
+  model: "anthropic:claude-sonnet-4-6",
   id: "conv_export001",
   createdAt: "2025-06-01T10:00:00.000Z",
   updatedAt: "2025-06-01T10:10:00.000Z",

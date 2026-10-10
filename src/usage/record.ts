@@ -129,11 +129,6 @@ export function recordLlmCall(args: {
     // what it is holding. `runId` is the engine's, and it is the only one of the
     // three that is per-TURN, so it is what makes "what did this turn cost"
     // answerable at all.
-    //
-    // `sessionId` is deliberately not written any more. It held a
-    // conversation-or-run union discriminated by `origin`; the three fields
-    // here say the same things without the discriminator, and say one more.
-    // `aggregate.ts` still reads the old field for records already on disk.
     ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
     ...(ctx?.runId ? { taskRunId: ctx.runId } : {}),
     ...(typeof args.event?.runId === "string" ? { runId: args.event.runId } : {}),

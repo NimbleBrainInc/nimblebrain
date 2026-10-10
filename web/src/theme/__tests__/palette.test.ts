@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { getSpecThemeTokens } from "../../bridge/theme.ts";
+import { colors, pick } from "../palette.ts";
 import { paletteToExtAppsTokens, paletteToRootCss } from "../projections.ts";
 
 /**
@@ -89,51 +90,57 @@ describe("getSpecThemeTokens — protocol boundary", () => {
     // representative spec keys survive the filter
     expect(spec["--color-background-primary"]).toBe("#ffffff");
     expect(spec["--font-sans"]).toContain("Hanken Grotesk");
-    // out-of-spec tokens are injected into the iframe but do NOT cross the boundary
+    // out-of-spec tokens never go out on `styles.variables`; the mode-varying
+    // ones ride the `ai.nimblebrain/styles` extension instead
     expect(spec["--color-text-accent"]).toBeUndefined();
-    // the newly-added brand semantics do NOT cross the boundary
     expect(spec["--nb-color-processing"]).toBeUndefined();
   });
 });
 
 /**
- * Every colour and font the host sends as `--nb-*` also goes out under its MCP
- * Apps spec key, because the spec key is the only one that crosses the protocol
- * and the only one another host (Claude, ChatGPT) can send. An app reading the
- * spec key then gets the same value here as it would from the extension.
- *
- * A total partition: each `--nb-*` key either names its spec twin or is listed
- * as having none, so a new extension has to take one side.
+ * A value goes out under its MCP Apps spec key whenever the spec names one,
+ * because the spec key is the only one that crosses the protocol and the only
+ * one another host (Claude, ChatGPT) can send. A `--nb-*` key is for a value the
+ * spec has no key for, so the host sends exactly this set and no `--nb-*` twin
+ * of a spec key.
  */
-const SPEC_TWIN: Record<string, string> = {
-  "--nb-color-danger": "--color-text-danger",
-  "--nb-color-success": "--color-text-success",
-  "--nb-color-warning": "--color-text-warning",
-  "--nb-color-info-light": "--color-background-info",
-  "--nb-color-accent-foreground": "--color-text-inverse",
-  "--nb-color-danger-foreground": "--color-text-inverse",
-  "--nb-font-heading": "--font-sans",
-};
-const NO_SPEC_EQUIVALENT = new Set(["--nb-color-processing", "--nb-color-processing-light"]);
+const NB_EXTENSIONS = ["--nb-color-processing", "--nb-color-processing-light", "--nb-font-heading"];
 
-describe("every --nb-* colour and font has its spec key on the wire", () => {
+/** The spec keys that carry the status colours, the info ground and on-fill text. */
+const SPEC_STATUS_KEYS: Record<string, keyof typeof colors> = {
+  "--color-text-danger": "destructive",
+  "--color-text-success": "success",
+  "--color-text-warning": "warning",
+  "--color-background-info": "info-light",
+  "--color-text-inverse": "primary-foreground",
+};
+
+describe("the host sends spec keys, and --nb-* only where the spec has none", () => {
   for (const mode of ["light", "dark"] as const) {
     const map = paletteToExtAppsTokens(mode);
     const wire = getSpecThemeTokens(mode);
 
-    test(`${mode}: each --nb-* key names a spec twin or has none`, () => {
-      const unclassified = Object.keys(map).filter(
-        (k) => k.startsWith("--nb-") && !(k in SPEC_TWIN) && !NO_SPEC_EQUIVALENT.has(k),
-      );
-      expect(unclassified).toEqual([]);
+    test(`${mode}: the --nb-* keys are exactly the values with no spec equivalent`, () => {
+      expect(
+        Object.keys(map)
+          .filter((k) => k.startsWith("--nb-"))
+          .sort(),
+      ).toEqual([...NB_EXTENSIONS].sort());
     });
 
-    for (const [nb, spec] of Object.entries(SPEC_TWIN)) {
-      test(`${mode}: ${spec} crosses the wire with the value of ${nb}`, () => {
-        expect(map[nb]).toBeDefined();
-        expect(wire[spec]).toBe(map[nb] as string);
+    for (const [spec, color] of Object.entries(SPEC_STATUS_KEYS)) {
+      test(`${mode}: ${spec} crosses the wire with the palette's ${color}`, () => {
+        expect(wire[spec]).toBe(pick(colors[color], mode));
       });
     }
+
+    // `--color-text-inverse` is the text on both the accent and the danger fill,
+    // so the two foregrounds must be one colour.
+    test(`${mode}: the accent and danger foregrounds are one colour`, () => {
+      expect(pick(colors["destructive-foreground"], mode)).toBe(
+        pick(colors["primary-foreground"], mode),
+      );
+    });
   }
 });
 
@@ -202,7 +209,7 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
     expect(darkBlock).toContain("--nb-shadow-sm: 0 1px 2px rgba(0,0,0,0.3);");
   });
 
-  test("the --radius base is no longer emitted (vestigial after the radius convergence)", () => {
+  test("no --radius base is emitted", () => {
     expect(rootBlock).not.toContain("--radius:");
   });
 });

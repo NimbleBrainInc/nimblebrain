@@ -7,7 +7,8 @@
 //      count from the frame, with no read.
 //   2. A reconnect re-reads bootstrap, since the stream does not replay.
 //   3. The switcher marks each workspace with unread on its row, and marks
-//      the trigger only when the unread is in a workspace other than this one.
+//      the trigger only when the unread is in a workspace other than this one:
+//      on the chevrons, not beside the focused name, and naming that workspace.
 //
 // Drives the real events-client singleton through `setConnectorForTest`, as
 // notifications-provider.test.tsx does, rather than mocking `useEvents`.
@@ -38,7 +39,7 @@ const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { WorkspaceUnreadProvider, useWorkspaceUnread } = await import(
   "../context/WorkspaceUnreadContext"
 );
-const { WorkspaceSwitcher } = await import("../components/shell/WorkspaceSwitcher");
+const { WorkspaceSwitcher, unreadIn } = await import("../components/shell/WorkspaceSwitcher");
 
 class FakeConnection implements EventConnection {
   close(): void {}
@@ -158,8 +159,19 @@ describe("WorkspaceUnreadProvider", () => {
 describe("the switcher", () => {
   test("marks the trigger when another workspace has unread", async () => {
     await mount([bootstrapWs(HOME, "Home", 0), bootstrapWs(OTHER, "Other", 2)]);
-    expect(trigger()?.querySelector('[data-testid="unread-dot"]')).not.toBeNull();
-    expect(trigger()?.getAttribute("aria-label")).toContain("Another workspace has unread");
+    const dot = trigger()?.querySelector('[data-testid="unread-dot"]');
+    expect(dot).not.toBeNull();
+    // On the chevrons, not a sibling of the focused workspace's name.
+    expect(dot?.parentElement).not.toBe(trigger());
+    expect(dot?.parentElement?.querySelector("svg")).not.toBeNull();
+    expect(trigger()?.getAttribute("aria-label")).toContain("Unread in Other");
+  });
+
+  test("names one workspace, then counts the rest", () => {
+    expect(unreadIn([])).toBe("");
+    expect(unreadIn(["Acme"])).toBe("Unread in Acme");
+    expect(unreadIn(["Acme", "Beta"])).toBe("Unread in Acme and 1 other");
+    expect(unreadIn(["Acme", "Beta", "Gamma"])).toBe("Unread in Acme and 2 others");
   });
 
   test("does not mark the trigger for the workspace you are already in", async () => {

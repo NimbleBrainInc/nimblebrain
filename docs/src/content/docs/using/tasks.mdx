@@ -190,7 +190,7 @@ Opening a run opens its page under its task's, wherever you opened it from, so t
 
 ## Running from an MCP client
 
-A remote agent connected to `/mcp/<workspace-id>` runs a task with `tasks__run`. Every call answers with the run's id (`runId`). `tasks__run_result` with that `runId` says whether the run is still queued or running (an answer to poll again, not an error), and once it has ended returns its record and full result. `tasks__cancel` with the `runId` stops it. The server's `instructions` carry a guide to the task tools, the same one the agent in chat follows.
+A remote agent connected to `/mcp/<workspace-id>` runs a task with `tasks__run`. Every call answers with the run's id (`runId`). `tasks__run_result` with that `runId` says whether the run is still queued or running (an answer to poll again, not an error), and once it has ended returns its record and full result. Every run has a result: one that never started, or failed before doing any work, has an empty output and says why in its `error`. `tasks__cancel` with the `runId` stops it. The server's `instructions` carry a guide to the task tools, the same one the agent in chat follows.
 
 Every tool names a task by its id (`taskId`, as `tasks__list` returns it) and a run by its id (`runId`).
 
@@ -205,6 +205,8 @@ Every tool names a task by its id (`taskId`, as `tasks__list` returns it) and a 
 4. **Idempotency.** Pass `idempotencyKey` to make a call safe to repeat. A later call with the same key for the same task returns the run the first call started, whether it is still running or has ended, instead of starting another. For an inline one-off the key also names the one-off, so a repeat finds the same one-off and the same run.
 
 </Steps>
+
+When you create or update a task with `allowedTools`, the response warns if an entry matches no tool currently available to the task's owner in that workspace. The warning appears in the message and as `warnings` with code `allowed_tool_unavailable`, one per unmatched entry. The task is saved: you can connect or grant a tool later, or correct the entry. A run with an unmatched entry fails before its first model call. `tasks__run` and `tasks__run_batch` responses also carry the warning for saved tasks and inline one-off definitions. Granted personal connectors use `my_` names, such as `my_granola__*`.
 
 ### As an MCP task
 

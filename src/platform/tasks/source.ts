@@ -10,8 +10,10 @@ import { coreSkillBody } from "../../skills/loader.ts";
 import { isTaskForbiddenIdentityTool } from "../../tools/identity-sources.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
+import { unmatchedAllowedTools } from "../../tools/tool-pattern.ts";
 import { ledgerCostByTaskRun } from "../../usage/aggregate.ts";
 import { splitInnerToolName } from "../../util/tool-name.ts";
+import type { TaskWarning } from "../schemas/tasks.ts";
 import { BatchDriver, passRateOf } from "./batch.ts";
 import { listBatches, readBatchKey } from "./batch-store.ts";
 import { handleBatch, handleBatchControl, handleBatches, handleRunBatch } from "./batch-tools.ts";
@@ -554,17 +556,47 @@ export async function createTasksSource(
     };
   }
 
-  /** An answer with warnings about the judge its task's runs will find. */
-  async function withJudgeWarnings<T extends { message?: string }>(
+  /** Warn using the same reachable tools and matcher that guard a run. */
+  async function allowedToolWarnings(
+    task: Task,
+    about: "task" | "run" | "batch",
+  ): Promise<TaskWarning[]> {
+    if (!task.allowedTools?.length || !task.workspaceId || !task.ownerId) return [];
+    let tools: Awaited<ReturnType<Runtime["listToolsForWorkspace"]>>;
+    try {
+      tools = await runtime.listToolsForWorkspace(task.workspaceId, task.ownerId);
+    } catch {
+      // Tool discovery is advisory here; a failure must not undo the write.
+      return [];
+    }
+    return unmatchedAllowedTools(
+      task.allowedTools,
+      tools.map((tool) => tool.name),
+    ).map((name) => ({
+      code: "allowed_tool_unavailable",
+      message:
+        (about === "task" ? "Saved, but its" : `This ${about}'s`) +
+        ` allowedTools entry "${name}" matches no tool currently available to its owner in this workspace. ` +
+        "Runs fail until the tool is available or the entry is changed.",
+    }));
+  }
+
+  /** An answer with warnings about its judge and declared tools. */
+  async function withTaskWarnings<T extends { message?: string }>(
     out: T,
     task: Task | undefined,
     about: "task" | "run" | "batch" = "task",
   ): Promise<T> {
-    return task ? withWarnings(out, await judgeWarnings(task, judgePort, about)) : out;
+    if (!task) return out;
+    const [judge, tools] = await Promise.all([
+      judgeWarnings(task, judgePort, about),
+      allowedToolWarnings(task, about),
+    ]);
+    return withWarnings(out, [...judge, ...tools]);
   }
 
-  function warnAboutJudge<T extends { task: Task; message: string }>(out: T): Promise<T> {
-    return withJudgeWarnings(out, out.task);
+  function warnAboutTask<T extends { task: Task; message: string }>(out: T): Promise<T> {
+    return withTaskWarnings(out, out.task);
   }
 
   const tools: InProcessTool[] = TOOL_SCHEMAS.map((schema) => ({
@@ -583,9 +615,9 @@ export async function createTasksSource(
       const ctx = getToolContext();
       switch (schema.name) {
         case "create":
-          return warnAboutJudge(handleCreate(input, ctx));
+          return warnAboutTask(handleCreate(input, ctx));
         case "update":
-          return warnAboutJudge(handleUpdate(input, ctx));
+          return warnAboutTask(handleUpdate(input, ctx));
         case "delete":
           return handleDelete(input, ctx);
         case "list":
@@ -600,11 +632,11 @@ export async function createTasksSource(
         // disconnected since the task was written fails its runs the same way.
         case "run":
           return handleRun(input, ctx).then((out) =>
-            withJudgeWarnings(out, ctx.definitions().get(runOutputTaskId(out)), "run"),
+            withTaskWarnings(out, ctx.definitions().get(runOutputTaskId(out)), "run"),
           );
         case "run_batch": {
           const out = handleRunBatch(input, ctx);
-          return withJudgeWarnings(out, ctx.definitions().get(out.batch.taskId), "batch");
+          return withTaskWarnings(out, ctx.definitions().get(out.batch.taskId), "batch");
         }
         case "batch":
           return handleBatch(input, ctx);

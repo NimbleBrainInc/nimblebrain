@@ -128,6 +128,12 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
         "css": {
           "fonts": "@font-face { font-family: 'Hanken Grotesk'; src: url('https://app.example.com/assets/hanken-grotesk.woff2') format('woff2'); font-weight: 100 900; font-style: normal; font-display: swap; }"
         }
+      },
+      "ai.nimblebrain/styles": {
+        "variables": {
+          "--color-text-accent": "#818cf8",
+          "--nb-color-processing": "#a78bfa"
+        }
       }
     }
   }
@@ -147,7 +153,9 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
 
 The spec negotiates extensions under `capabilities.extensions`, not `experimental`. The ext-apps bridge capability object has no `extensions` field, so `experimental` carrying the extension identifier is as close as this channel reaches. When ext-apps adds one, the identifiers move there.
 
-**Theme colours arrive as the spec's `hostContext.styles.variables`**, and only under keys the spec's variable enum names: one key outside it makes a spec client reject the whole host context. Status colours go out as `--color-text-danger`, `--color-text-success`, `--color-text-warning` and `--color-background-info`, and text on a filled accent or danger surface as `--color-text-inverse`, the same keys any MCP Apps host sends. The `--nb-*` extensions reach the app only through the style block injected at load; see [Theming](/apps/theming/).
+**Theme colours arrive as the spec's `hostContext.styles.variables`**, and only under keys the spec's variable enum names: one key outside it makes a spec client reject the whole host context. Status colours go out as `--color-text-danger`, `--color-text-success`, `--color-text-warning` and `--color-background-info`, and text on a filled accent or danger surface as `--color-text-inverse`, the same keys any MCP Apps host sends. The host sends no `--nb-*` twin of a spec key: the `--nb-*` extensions carry only values the spec has no key for.
+
+**The other tokens that change between light and dark arrive as `hostContext["ai.nimblebrain/styles"].variables`**: `--color-text-accent`, `--nb-color-processing` and `--nb-color-processing-light`. The spec's host context keeps unknown top-level keys, so a strict client passes this field through where it would reject the same keys in `styles.variables`. The host sends it on `ui/initialize` and on every `host-context-changed`, so these follow a theme toggle. The style block injected at load is written once, so it carries only tokens that look the same in both modes, plus a load-time value for the spec keys; see [Theming](/apps/theming/).
 
 **Host fonts arrive as `hostContext.styles.css.fonts`**, a block of `@font-face` CSS the app injects into its own document — an iframe inherits none from the shell, so a `--font-*` variable alone names a typeface the app cannot render. It is read once, at the handshake.
 
@@ -174,7 +182,7 @@ Sent when the agent calls one of your app's tools during a conversation. The par
 
 ### `ui/notifications/host-context-changed`
 
-Sent when the user toggles themes, changes locale, or other host context changes. Theme tokens are nested under `styles.variables`.
+Sent when the user toggles themes, changes locale, or other host context changes. Theme tokens are nested under `styles.variables` (spec keys) and `ai.nimblebrain/styles.variables` (the NimbleBrain tokens that change with the mode).
 
 ```json
 {
@@ -186,6 +194,11 @@ Sent when the user toggles themes, changes locale, or other host context changes
       "variables": {
         "--color-background-primary": "#0f172a",
         "--color-text-primary": "#e2e8f0"
+      }
+    },
+    "ai.nimblebrain/styles": {
+      "variables": {
+        "--color-text-accent": "#818cf8"
       }
     }
   }
@@ -847,7 +860,7 @@ The bridge enforces four security boundaries:
 
 ## Applying theme tokens
 
-Synapse applies the host's theme tokens for you. Without it, apply them yourself: they arrive in the `ui/initialize` response as `hostContext.styles.variables`, and again in every `ui/notifications/host-context-changed`.
+Synapse applies the host's theme tokens for you. Without it, apply them yourself: they arrive in the `ui/initialize` response as `hostContext.styles.variables` and `hostContext["ai.nimblebrain/styles"].variables`, and again in every `ui/notifications/host-context-changed`.
 
 ```javascript
 window.addEventListener('message', (event) => {
@@ -857,11 +870,13 @@ window.addEventListener('message', (event) => {
   // The handshake response (the id your ui/initialize request used)
   if (msg.id === 'init-1' && msg.result) {
     applyTokens(msg.result.hostContext?.styles?.variables);
+    applyTokens(msg.result.hostContext?.['ai.nimblebrain/styles']?.variables);
   }
 
   // A later change (theme toggle and the like)
   if (msg.method === 'ui/notifications/host-context-changed') {
     applyTokens(msg.params?.styles?.variables);
+    applyTokens(msg.params?.['ai.nimblebrain/styles']?.variables);
   }
 });
 

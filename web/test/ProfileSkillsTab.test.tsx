@@ -120,7 +120,7 @@ describe("ProfileSkillsTab (the /profile/skills surface)", () => {
       bodyInput!.dispatchEvent(new WindowEvent("input", { bubbles: true }));
     });
     await act(async () => {
-      clickByText(mounted!.container, "Save");
+      clickByText(mounted!.container, "Create");
     });
     await act(async () => {
       await Promise.resolve();

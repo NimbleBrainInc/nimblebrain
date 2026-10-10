@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InstanceConfig } from "../../../src/identity/instance.ts";
 import { loadInstanceConfig, saveInstanceConfig } from "../../../src/identity/instance.ts";
+import {
+  _resetCredentialStoreForTest,
+  FileCredentialStore,
+  setCredentialStore,
+} from "../../../src/tools/credential-store.ts";
 
 let workDir: string;
 
@@ -24,7 +29,6 @@ describe("loadInstanceConfig", () => {
         clientId: "my-client",
         allowedDomains: ["example.com", "test.com"],
       },
-      orgName: "Acme Corp",
     };
     await writeFile(join(workDir, "instance.json"), JSON.stringify(config));
 
@@ -36,7 +40,6 @@ describe("loadInstanceConfig", () => {
         clientId: "my-client",
         allowedDomains: ["example.com", "test.com"],
       },
-      orgName: "Acme Corp",
     });
   });
 
@@ -75,6 +78,52 @@ describe("loadInstanceConfig", () => {
       clientId: "client_123",
       organizationId: "org_789",
     });
+  });
+
+  test("rejects workos auth with an empty or whitespace organizationId", async () => {
+    for (const organizationId of ["", "   "]) {
+      await writeFile(
+        join(workDir, "instance.json"),
+        JSON.stringify({ auth: { adapter: "workos", clientId: "client_123", organizationId } }),
+      );
+      await expect(loadInstanceConfig(workDir)).rejects.toThrow(
+        "workos auth 'organizationId' must not be empty",
+      );
+    }
+  });
+
+  test("rejects a workos organizationId reference that resolves to an empty value", async () => {
+    // References resolve before validation, so a seeded-but-blank secret meets
+    // the same check as a literal "".
+    const store = new FileCredentialStore(workDir);
+    setCredentialStore(store);
+    try {
+      await store.put({ kind: "instance" }, "workos.org", "");
+      await writeFile(
+        join(workDir, "instance.json"),
+        JSON.stringify({
+          auth: {
+            adapter: "workos",
+            clientId: "client_123",
+            organizationId: { ref: "credential", key: "workos.org" },
+          },
+        }),
+      );
+      await expect(loadInstanceConfig(workDir)).rejects.toThrow(
+        "workos auth 'organizationId' must not be empty",
+      );
+    } finally {
+      _resetCredentialStoreForTest();
+    }
+  });
+
+  test("loads workos auth with organizationId omitted (no organization scope)", async () => {
+    await writeFile(
+      join(workDir, "instance.json"),
+      JSON.stringify({ auth: { adapter: "workos", clientId: "client_123" } }),
+    );
+    const result = await loadInstanceConfig(workDir);
+    expect(result?.auth).toEqual({ adapter: "workos", clientId: "client_123" });
   });
 
   test("loads workos auth with custom adminRoleSlugs", async () => {
@@ -189,7 +238,6 @@ describe("saveInstanceConfig", () => {
         clientId: "client-1",
         allowedDomains: ["example.com"],
       },
-      orgName: "Test Org",
       orgId: "org-1",
       integrations: { github: { token: "ghp_xxx" } },
     };

@@ -55,7 +55,6 @@ import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
   CONNECTOR_SKILL_SYNTHETIC,
   type ConnectorSkillCandidate,
-  type EffortSource,
   type EngineConfig,
   type EngineResult,
   type EventSink,
@@ -205,9 +204,12 @@ function nearestSupported<T extends string>(
   return undefined;
 }
 
+/** Process-wide deduplication for explicit tier mismatches. */
+const warnedTierDivergence = new Set<string>();
+
 /**
  * Which tier to actually send, for any dialect carrying a per-model tier set.
- * Both Google's levels and OpenAI's efforts obey the same three-part rule:
+ * Google, OpenAI, and xAI tiers obey the same three-part rule:
  *
  *   - the model offers what was asked for → send it
  *   - it doesn't, and the tier is the platform's own fallback rather than
@@ -219,18 +221,31 @@ function nearestSupported<T extends string>(
  *     or below. Never up: reasoning harder than asked is a worse surprise than
  *     not honoring the tier.
  *
- * `undefined` means send no tier at all. Note the operator's choice can end up
- * silently unapplied where nothing at or below it exists — see #809.
+ * `undefined` means send no tier at all. A measured empty ladder (xAI models
+ * with no effort knob) is expected and stays silent; an unknown ladder is a
+ * coverage gap and warns when an operator's requested tier is dropped.
  */
 function pickTier<T extends string>(
+  model: string,
   wanted: T,
-  supported: ReadonlySet<string>,
+  supported: ReadonlySet<string> | undefined,
   ladder: readonly T[],
-  source: EffortSource,
+  thinking: Extract<ResolvedThinking, { mode: "effort" | "enabled" }>,
 ): T | undefined {
-  if (supported.has(wanted)) return wanted;
-  if (source !== "operator") return undefined;
-  return nearestSupported(wanted, supported, ladder);
+  if (supported?.has(wanted)) return wanted;
+  if (thinking.source !== "operator" || supported?.size === 0) return undefined;
+
+  const tier = supported ? nearestSupported(wanted, supported, ladder) : undefined;
+  const key = JSON.stringify([model, thinking.effort]);
+  if (!warnedTierDivergence.has(key)) {
+    warnedTierDivergence.add(key);
+    const reason = supported ? `does not support "${wanted}"` : "has no measured effort ladder";
+    log.warn(
+      `[thinking] Requested thinkingEffort="${thinking.effort}" for "${model}", but it ${reason}; ` +
+        `sending ${tier ? `"${tier}"` : "no tier (provider default)"}. Logged once per model and requested tier.`,
+    );
+  }
+  return tier;
 }
 
 /**
@@ -314,10 +329,11 @@ function buildOpenAIThinkingOptions(
       // `gpt-5-pro` rejects `medium` — the platform fallback — so without
       // this a stock install 400s on every call to it.
       const tier = pickTier(
+        model,
         toOpenAIEffort(thinking.effort),
         openaiSupportedEfforts(model),
         OPENAI_EFFORTS,
-        thinking.source,
+        thinking,
       );
       return tier ? { openai: { reasoningEffort: tier } } : {};
     }
@@ -378,19 +394,18 @@ function buildXaiThinkingOptions(
   thinking: ResolvedThinking,
 ): SharedV4ProviderOptions {
   const supported = xaiSupportedEfforts(model);
-  if (!supported || supported.size === 0) return {};
 
   switch (thinking.mode) {
     case "off":
       // Only where measured — `grok-4.5` rejects `none` while taking the rest,
       // so this cannot be assumed from the provider.
-      return supported.has("none") ? { xai: { reasoningEffort: "none" } } : {};
+      return supported?.has("none") ? { xai: { reasoningEffort: "none" } } : {};
     case "adaptive":
       // No adaptive equivalent; the model applies its own per-call default.
       return {};
     case "effort":
     case "enabled": {
-      const tier = pickTier(toXaiEffort(thinking.effort), supported, XAI_EFFORTS, thinking.source);
+      const tier = pickTier(model, toXaiEffort(thinking.effort), supported, XAI_EFFORTS, thinking);
       return tier ? { xai: { reasoningEffort: tier } } : {};
     }
   }
@@ -401,6 +416,7 @@ const warnedUnmappedGoogle = new Set<string>();
 
 /** Gemini 3's dialect: a named level, from the set this specific model accepts. */
 function googleLevelOptions(
+  model: string,
   thinking: ResolvedThinking,
   levels: ReadonlySet<GoogleThinkingLevel>,
 ): SharedV4ProviderOptions {
@@ -415,10 +431,11 @@ function googleLevelOptions(
       : {};
   }
   const level = pickTier(
+    model,
     toGoogleLevel(thinking.effort),
     levels,
     GOOGLE_THINKING_LEVELS,
-    thinking.source,
+    thinking,
   );
   return level ? { google: { thinkingConfig: { thinkingLevel: level } } } : {};
 }
@@ -496,7 +513,7 @@ function buildGoogleThinkingOptions(
     return {};
   }
   return support.dialect === "level"
-    ? googleLevelOptions(thinking, support.levels)
+    ? googleLevelOptions(model, thinking, support.levels)
     : googleBudgetOptions(thinking, support, maxOutputTokens);
 }
 
@@ -881,6 +898,20 @@ function notAvailableToAgent(toolCall: LanguageModelV4ToolCall, call: ToolCall):
     } as ToolResult,
     ms: 0,
   };
+}
+
+/**
+ * The refusal for a checked call that repeats the exact call its tool was
+ * tripped on, or null. Compared on the coerced input, which is what the
+ * supervisor observed when it tripped.
+ */
+function repeatOfTrip(
+  toolCall: LanguageModelV4ToolCall,
+  call: ToolCall,
+  ctx: ToolExecContext,
+): ToolExecResult | null {
+  const result = ctx.supervisor.repeatRefusal(call);
+  return result ? { toolCall, gatedCall: call, result, ms: 0 } : null;
 }
 
 /**
@@ -1569,10 +1600,10 @@ export class AgentEngine {
         // 7. Deliver any overlay surfaced while those tools ran, in the same
         // position the reconstructor will replay it into — after this
         // iteration's tool results. The model reads the guidance before its
-        // next action, which is what "surface on first use" was supposed to
-        // mean; previously the event was recorded here and the body only
-        // appeared on a later rehydration, so the calls it governs had already
-        // happened and a single-run conversation never saw it at all.
+        // next action, which is what "surface on first use" means. Recording
+        // the event here and leaving the body to a later rehydration would
+        // deliver it after the calls it governs had already happened, and a
+        // single-run conversation would never see it at all.
         //
         // The role is `user`, not `assistant`, and that is load-bearing: this
         // message ENDS the history for the next model call of this same run,
@@ -1735,8 +1766,8 @@ export class AgentEngine {
   }
 
   /**
-   * Emit the run-scope telemetry the runtime pre-computed (Phase 2:
-   * skills.loaded and context.assembled). Tied to the same `runId` as
+   * Emit the run-scope telemetry the runtime pre-computed
+   * (skills.loaded and context.assembled). Tied to the same `runId` as
    * `run.start` so the conversation log records what the prompt looked like for
    * this turn.
    */
@@ -2168,7 +2199,10 @@ export class AgentEngine {
    * input that is sent. An invalid call skips the gate and carries its error
    * result. Whatever the hook returns is checked the same way again: a hook
    * may rewrite the call, and the engine dispatches only what it checked.
-   * `refused` is a call that ends here, before tool.start.
+   * A valid call that repeats the exact call a tool was tripped on is refused
+   * here too, before the gate (see `RunSupervisor.repeatRefusal`); every other
+   * call to a tripped tool proceeds. `refused` is a call that ends here,
+   * before tool.start.
    */
   private async checkAndGate(
     toolCall: LanguageModelV4ToolCall,
@@ -2185,10 +2219,11 @@ export class AgentEngine {
     }
     const checked = coerceAndValidateToolInput(parsedInput, toolSchemaFor(ctx, offered.name));
     const validated: ToolCall = { ...offered, input: checked.input };
+    if (checked.errorResult) return { gatedCall: validated, result: checked.errorResult };
+    const repeat = repeatOfTrip(toolCall, validated, ctx);
+    if (repeat) return { refused: repeat };
     const beforeToolCall = ctx.config.hooks?.beforeToolCall;
-    if (checked.errorResult || !beforeToolCall) {
-      return { gatedCall: validated, result: checked.errorResult };
-    }
+    if (!beforeToolCall) return { gatedCall: validated };
 
     const hooked = await beforeToolCall(validated);
     if (hooked === null) {
@@ -2208,7 +2243,11 @@ export class AgentEngine {
       return { refused: notAvailableToAgent(toolCall, hooked) };
     }
     const rechecked = coerceAndValidateToolInput(hooked.input, toolSchemaFor(ctx, hooked.name));
-    return { gatedCall: { ...hooked, input: rechecked.input }, result: rechecked.errorResult };
+    const gatedCall: ToolCall = { ...hooked, input: rechecked.input };
+    if (rechecked.errorResult) return { gatedCall, result: rechecked.errorResult };
+    const hookedRepeat = repeatOfTrip(toolCall, gatedCall, ctx);
+    if (hookedRepeat) return { refused: hookedRepeat };
+    return { gatedCall };
   }
 
   /**
@@ -2312,7 +2351,10 @@ export class AgentEngine {
     // On a trip, the replacement directive flows downstream in place
     // of the original tool result. While it stays tripped the tool is
     // withheld from `modelTools` on subsequent iterations (see
-    // buildIterationTools), so the model is not offered it again.
+    // buildIterationTools), so the model is not offered it again. Withheld is
+    // not refused: a call naming the tool still runs, and that call is how a
+    // trip clears (see the supervisor's file header). checkAndGate refuses
+    // only the exact call a success trip was made of.
     const verdict = ctx.supervisor.observe(gatedCall, hookedResult);
     const finalResult = verdict.type === "synth" ? verdict.replacement : hookedResult;
 

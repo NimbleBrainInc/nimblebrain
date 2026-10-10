@@ -630,8 +630,7 @@ export async function initiateComposioOAuth(
  * Per-workspace installed view. Returns every connector visible in the
  * workspace. Personal connectors live on the caller's identity, not here.
  *
- * Stage 2: `scope` is always `"workspace"`. The legacy `"user"` arm was
- * removed in T008/T009.
+ * `scope` is always `"workspace"`.
  */
 export interface InstalledConnector {
   serverName: string;
@@ -759,6 +758,68 @@ export async function getInstalledConnector(
     serverName,
   });
   return unwrapStructured(result, "get_installed");
+}
+
+/** How a skill reaches the model, as the runtime's `resolveLoadingMechanism` decides it. */
+export type SkillLoadingMechanismName = "always" | "tool_affinity" | "trigger" | "none";
+
+/**
+ * A curated overlay materialized for a connector: surfaced into the
+ * conversation once, on the first call to a tool it is bound to.
+ */
+export interface ConnectorOverlaySkill {
+  server: string;
+  name: string;
+  description?: string;
+  /** Which curated overlay and pinned version the copy came from. */
+  source?: string;
+  toolAffinity: string[];
+}
+
+/** A skill a connected server publishes through the MCP Skills extension. */
+export interface PublishedConnectorSkill {
+  server: string;
+  name: string;
+  description: string;
+  /** The skill's `SKILL.md` URI on the server. */
+  uri: string;
+  loadingStrategy: "always" | "dynamic";
+  priority: number;
+  toolAffinity: string[];
+  triggers?: string[];
+  mechanism: SkillLoadingMechanismName;
+}
+
+/**
+ * Every skill the workspace's connectors contribute to the model's context,
+ * without bodies. A server with a curated overlay lists only the overlay: the
+ * runtime does not load that server's published skills.
+ */
+export async function listConnectorSkills(
+  workspaceId: string,
+): Promise<{ overlays: ConnectorOverlaySkill[]; published: PublishedConnectorSkill[] }> {
+  const result = await callTool(
+    "nb",
+    "manage_connectors",
+    { action: "list_bound_skills" },
+    { workspaceId },
+  );
+  return unwrapStructured(result, "list_bound_skills");
+}
+
+/** One connector skill's body, as the model receives it. */
+export async function readConnectorSkill(
+  workspaceId: string,
+  serverName: string,
+  skillName: string,
+): Promise<{ kind: "overlay" | "published"; body: string }> {
+  const result = await callTool(
+    "nb",
+    "manage_connectors",
+    { action: "read_bound_skill", serverName, skillName },
+    { workspaceId },
+  );
+  return unwrapStructured(result, "read_bound_skill");
 }
 
 /** A personal connector (a remote MCP connection owned by the caller's identity) + where it's granted. */

@@ -12,9 +12,9 @@
  * text, in a connector whose stylesheet spells the same token correctly 22 times.
  *
  * The docs half is the same failure aimed at app authors. `theming.mdx`
- * publishes the token *names* by hand (round 4 removed the values, which drift
- * fastest, but names drift too — a token deleted from the palette stays
- * published). An author who copies a name that is no longer emitted writes CSS
+ * publishes the token *names* by hand (not the values, which drift fastest,
+ * but names drift too — a token deleted from the palette stays published).
+ * An author who copies a name that is not emitted writes CSS
  * that silently uses its fallback forever.
  *
  * Both directions are asserted for the docs: no undocumented key, no documented
@@ -28,7 +28,7 @@ import { readFileSync } from "node:fs";
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
 import { REPO, sourceFiles, THEMING_DOC, themedTrees } from "./themed-trees.ts";
 
-/** The names `buildThemeStyleBlock` writes into every iframe's style block. */
+/** The names the host delivers to every iframe, over the protocol or its style block. */
 const INJECTED = new Set(Object.keys(paletteToExtAppsTokens("light")));
 
 describe("themed trees only read tokens the host injects", () => {

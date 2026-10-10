@@ -49,7 +49,7 @@ describe("DevIdentityProvider", () => {
       expect(identity!.id).toBe("usr_default");
       expect(identity!.email).toBe("dev@localhost");
       expect(identity!.displayName).toBe("Developer");
-      expect(identity!.orgRole).toBe("owner");
+      expect(identity!.orgRole).toBe("admin");
     });
 
     test("returns same identity for requests without auth headers", async () => {
@@ -72,10 +72,10 @@ describe("DevIdentityProvider", () => {
       expect(identity!.id).toBe("usr_default");
     });
 
-    test("default user has orgRole owner (can do everything)", async () => {
+    test("default user has orgRole admin (can do everything)", async () => {
       const adapter = new DevIdentityProvider(workDir, userStore);
       const identity = await adapter.verifyRequest(dummyRequest());
-      expect(identity!.orgRole).toBe("owner");
+      expect(identity!.orgRole).toBe("admin");
     });
   });
 
@@ -95,7 +95,7 @@ describe("DevIdentityProvider", () => {
       expect(after!.id).toBe("usr_default");
       expect(after!.email).toBe("dev@localhost");
       expect(after!.displayName).toBe("Developer");
-      expect(after!.orgRole).toBe("owner");
+      expect(after!.orgRole).toBe("admin");
     });
 
     test("does not recreate user if usr_default already exists", async () => {

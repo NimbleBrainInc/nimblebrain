@@ -55,8 +55,7 @@ describe("memberRoleFor → canManageWorkspaceMembers — the composed gate", ()
     expect(canManageWorkspaceMembers(undefined, memberRoleFor(MEMBERS, undefined))).toBe(false);
   });
 
-  test("an org admin or owner may manage members of a workspace they are not in", () => {
+  test("an org admin may manage members of a workspace they are not in", () => {
     expect(canManageWorkspaceMembers("admin", memberRoleFor(MEMBERS, "u_org_admin"))).toBe(true);
-    expect(canManageWorkspaceMembers("owner", memberRoleFor(MEMBERS, "u_org_owner"))).toBe(true);
   });
 });

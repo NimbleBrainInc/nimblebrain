@@ -143,7 +143,7 @@ describe("actionsSource", () => {
       ).not.toContain("action:org-settings");
     }
 
-    const admitted: ScopedRole[] = ["org_admin", "org_owner"];
+    const admitted: ScopedRole[] = ["org_admin"];
     for (const scopedRole of admitted) {
       expect(actionsSource.getItems("org", { ...baseCtx, scopedRole }).map((i) => i.id)).toContain(
         "action:org-settings",
@@ -157,7 +157,7 @@ describe("actionsSource", () => {
     // here. These are the literals a gate must never be handed directly —
     // `useScopedRole` maps them, and skipping it is what leaves the action
     // unreachable for the people it exists for.
-    for (const raw of ["owner", "admin", "member"]) {
+    for (const raw of ["admin", "member"]) {
       expect(
         actionsSource
           .getItems("org", { ...baseCtx, scopedRole: raw as ScopedRole })

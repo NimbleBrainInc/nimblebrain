@@ -1,89 +1,42 @@
 /**
  * MCP Server endpoint — exposes the platform as an MCP server via Streamable HTTP.
  *
- * Two protocol eras on one URL, and they are equivalent but for task
- * augmentation, which only the 2026-07-28 leg serves (ADR-0046). A request
- * carrying the 2026-07-28 `_meta` envelope is served per request by an SDK v2
- * server (`handleModern`); every other request is 2025-era traffic for the
- * sessionful leg this header describes, on the same SDK. Both legs mount the same
- * handlers (`createHandlers`), and `test/integration/mcp-era-parity.test.ts`
- * drives the same scenarios against both.
+ * `/mcp/<wsId>` speaks the 2026-07-28 revision, and nothing earlier. Each
+ * request is served on its own by an SDK v2 server (`createMcpHandler`) under
+ * the request's `_meta` envelope: there is no `initialize`, no session, and no
+ * per-process state, so any process can answer any request. A request without
+ * the envelope (2025-era traffic) gets the SDK's `-32022` naming the supported
+ * version.
  *
- * External MCP clients (Claude Code, Open WebUI, etc.) connect to
- * `/mcp/<wsId>` and reach that workspace's tools through the standard MCP
- * protocol.
+ * External MCP clients (Claude Code, Claude, etc.) connect to `/mcp/<wsId>` and
+ * reach that workspace's tools through the standard MCP protocol.
  *
- * **A session is bound to (identity, workspace).** The workspace is the one in
- * the URL, membership-validated by the route (`routes/mcp.ts`) before any
- * request reaches this host. `tools/list` returns that workspace's tools + the
- * caller's identity tools, all bare; `tools/call` is walled to it — a
- * `ws_<other>-…` name cannot address another workspace at all, because that
- * form is retired and refused as `invalid_tool_name`. A session id presented
- * under another workspace's URL, or by another identity, is refused exactly
- * like an unknown one (`ownsTransport`).
- *
- * Two-layer state architecture:
- *
- *   1. **Transport map** (per-process, in-memory, never abstracted) — owns
- *      the live `WebStandardStreamableHTTPServerTransport`, the SDK `Server`
- *      instance with its registered handlers, and any in-flight JSON-RPC
- *      state. Process-bound: holds open response streams and JS object
- *      references that cannot be serialized or moved.
- *
- *   2. **SessionRegistry** (pluggable; see `./session-store/`) — cluster-
- *      shared metadata. Tells us whether a session exists, when it was last
- *      touched, and which identity it's bound to. Deliberately deployment-
- *      vocabulary-free — no pod, no instance, no ownership. Routing
- *      requests to the process that owns a session's transport is the load
- *      balancer's job (cookie affinity), not the registry's.
- *
- * Reclamation policy on the transport map (the layer that holds the heap):
- *
- *   - **Idle TTL** — a periodic sweep closes any transport whose
- *     `lastAccessedAt` is older than the configured idle TTL. Same TTL the
- *     registry uses; one knob (`MCP_SESSION_TTL_SECONDS`). This releases
- *     orphaned transports from clients that vanish without sending DELETE
- *     (mobile backgrounding, closed tabs, abandoned OAuth flows). The
- *     registry's own TTL becomes redundant safety on the metadata layer.
- *
- *   - **LRU on capacity** — the map is ordered most-recently-used last.
- *     When a new initialize arrives at capacity, the least-recently-used
- *     transport is closed and replaced. Capacity overflow is **not** a
- *     client error; well-formed initializes always succeed. The cap
- *     (`MCP_MAX_SESSIONS`) is a memory-budget device, not a feature gate.
- *
- * Both reclamation paths funnel through `evict(sid, reason)`, which removes
- * the entry from the map *before* calling `close()` — preventing a
- * concurrent request from finding a half-dead transport between the close
- * call and the SDK's `onclose` cascade.
- *
- * On a request whose sessionId we don't have a local transport for:
- *
- *   - Registry says nothing exists → `not_found`. Session evicted or never
- *     created.
- *   - Registry says it exists      → `unavailable`. The live transport isn't
- *     on this process. Could be: process restart, sticky-routing miss,
- *     local transport closed, anything. Client's correct action is the
- *     same in either case: re-initialize.
- *
- * Both return 404 with a JSON-RPC envelope; `error.data.reason` lets
- * operators correlate logs without the registry having to know what an
- * "instance" is. During eviction there is a small window where the local
- * map has already removed the entry but the registry-side delete has not
- * yet landed — in that window the response carries `reason: "unavailable"`
- * instead of `"not_found"`. Not a bug; operators should be aware.
+ * **A request is bound to (identity, workspace).** The workspace is the one in
+ * the URL, membership-validated by the route (`routes/mcp.ts`) on every
+ * request before it reaches this host. `tools/list` returns that workspace's
+ * tools + the caller's identity tools, all bare; `tools/call` is walled to it —
+ * a `ws_<other>-…` name cannot address another workspace at all, because that
+ * form is retired and refused as `invalid_tool_name`.
  */
 
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type {
   CallToolRequest,
   CallToolResult,
+  ClientCapabilities,
+  CompleteRequest,
+  CompleteResult,
+  GetPromptRequest,
+  GetPromptResult,
+  InputRequiredResult,
   ListResourcesRequest,
   ListResourcesResult,
   ListResourceTemplatesRequest,
   ListResourceTemplatesResult,
   ListToolsResult,
+  Prompt,
   ReadResourceRequest,
   ReadResourceResult,
   Resource,
@@ -92,14 +45,15 @@ import type {
 import {
   CLIENT_CAPABILITIES_META_KEY,
   createMcpHandler,
-  isInitializeRequest,
+  createRequestStateCodec,
+  isInputRequiredResult,
   isLegacyRequest,
   MissingRequiredClientCapabilityError,
   ProtocolError,
   ProtocolErrorCode,
   Server,
-  WebStandardStreamableHTTPServerTransport,
 } from "@modelcontextprotocol/server";
+import { z } from "zod";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { isAppCallable, isModelVisible, type ToolResult } from "../engine/types.ts";
 import type { TokenGrant, UserIdentity } from "../identity/provider.ts";
@@ -113,16 +67,23 @@ import {
   WorkspaceAccessDenied,
 } from "../orchestrator/index.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
+import { wrapContained } from "../prompt/compose.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import {
+  parseSkillEntry,
+  SKILLS_EXTENSION_ID,
+  type SkillEntry,
+} from "../skills/skills-extension.ts";
 import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import type { IdentityTaskSource } from "../tools/identity-task-source.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
-import type { TaskOwnerContext, ToolSource } from "../tools/types.ts";
+import type { McpCaller, TaskOwnerContext, ToolSource } from "../tools/types.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import { toWireJson } from "../util/wire-json.ts";
+import { argsDigest, relayInputRequests } from "./mcp-input-relay.ts";
 import {
   answerModernTaskRequest,
   type ModernCreateTaskResult,
@@ -133,21 +94,17 @@ import {
   type TaskAwareSource,
   type TaskScope,
 } from "./mcp-modern-tasks.ts";
-import type { JsonRpcErrorBody } from "./schemas/responses.ts";
-import type { SessionRegistry } from "./session-store/index.ts";
-import { json } from "./types.ts";
 
 /**
  * JSON-RPC error code for a `resources/read` whose URI resolves nowhere:
- * `-32602` (Invalid Params), as the 2026-07-28 revision requires. The SDK sends
- * this code on every revision, a 2025 session included.
+ * `-32602` (Invalid Params), as the 2026-07-28 revision requires.
  */
 const RESOURCE_NOT_FOUND_CODE = ProtocolErrorCode.InvalidParams;
 
 /**
  * A JSON-RPC error a handler throws. The message carries the `MCP error <code>:`
  * prefix every `/mcp` error has always carried, so a client matching on the
- * text reads the same thing on either leg.
+ * text reads the same thing.
  */
 function mcpError(code: number, message: string, data?: unknown): ProtocolError {
   return new ProtocolError(code, `MCP error ${code}: ${message}`, data);
@@ -160,99 +117,14 @@ const mcpPkg = JSON.parse(readFileSync(mcpPkgPath, "utf-8")) as {
 // Prefer the build-time-injected git tag; fall back to package.json for local dev.
 const MCP_SERVER_VERSION = process.env.NB_VERSION || mcpPkg.version;
 
-/* ── Capacity limit (configurable via env) ──
- *
- * The cap is a memory ceiling on the local transport map. When a new
- * initialize lands at capacity, the least-recently-used transport is
- * evicted to make workspace — we never refuse a well-formed initialize.
- * Override via `MCP_MAX_SESSIONS`.
- *
- * Idle reclamation is independent: a periodic sweep closes transports
- * whose `lastAccessedAt` is past the idle TTL. Same TTL knob the
- * registry uses (`MCP_SESSION_TTL_SECONDS` / `sessionStore.ttlSeconds`),
- * applied in `Runtime.getSessionStoreTtlMs()` and threaded into the
- * host. Under normal load the cap should never bind; LRU is the safety
- * valve, idle TTL is the primary release path.
- */
-const MAX_MCP_SESSIONS = parsePositiveIntEnv("MCP_MAX_SESSIONS", 100);
-
-/** Sweep cadence for the idle reclamation loop. Matches the in-memory registry. */
-const DEFAULT_SWEEP_INTERVAL_MS = 60_000;
-/** Cap on distinct (era, User-Agent) pairs `logClientEra` remembers. */
-const MAX_SEEN_CLIENT_ERAS = 256;
+/** Cap on distinct User-Agents `logRefusedClient` remembers. */
+const MAX_SEEN_REFUSED_CLIENTS = 256;
 
 /**
- * Validate a positive-integer env var. Rejects NaN / non-positive values
- * (e.g. `8h` typo) and falls back loudly so silent eviction-disabled state
- * can't ship to prod undetected.
- *
- * Exported for unit testing.
+ * The (identity, workspace, grant) a request addresses. `workspaceId` is the
+ * membership-validated workspace from the URL.
  */
-export function parsePositiveIntEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
-    log.warn(`[mcp] ignoring invalid ${name}="${raw}" (not a positive integer); using ${fallback}`);
-    return fallback;
-  }
-  return parsed;
-}
-
-interface TransportEntry {
-  transport: WebStandardStreamableHTTPServerTransport;
-  /** Identity bound to this session at initialize time. */
-  identityId: string | null;
-  /** Workspace bound to this session at initialize time: the one in its URL. */
-  workspaceId: string;
-  /**
-   * Grant kind bound to this session at initialize time. The 2025 leg's
-   * handlers keep the initializing context, so a request under another kind of
-   * credential must not reach them.
-   */
-  grant: TokenGrant["kind"];
-  /**
-   * Wall-clock ms of the last request that touched this transport. Drives
-   * both idle eviction (sweep closes entries older than `idleTtlMs`) and
-   * LRU ordering (the Map is mutated on each touch so iteration order is
-   * least-recently-used first).
-   */
-  lastAccessedAt: number;
-}
-
-export interface McpServerHostOptions {
-  registry: SessionRegistry;
-  /**
-   * Runtime handle used by `tools/list` (the caller's identity tools, via
-   * `listIdentitySourceTools`) and `tools/call` (via the orchestrator's
-   * `routeToolCall`). Optional for legacy unit tests that exercise only
-   * reclamation / session-miss paths and never hit a tool handler; production
-   * callers always pass the live runtime. When absent, `tools/list` returns an
-   * empty list and `tools/call` rejects with `-32601 method not supported`.
-   */
-  runtime?: Runtime;
-  /**
-   * Idle TTL in ms. Transports with no activity past this window are
-   * evicted by the periodic sweep. Required: there is no sensible default
-   * that wouldn't silently disable eviction on misconfiguration.
-   */
-  idleTtlMs: number;
-  /** Soft cap on concurrent transports. Overflow evicts least-recently-used. */
-  maxSessions?: number;
-  /**
-   * Sweep cadence in ms. Internal knob; production uses
-   * `DEFAULT_SWEEP_INTERVAL_MS`. Tests override to advance faster than
-   * wall-clock so short-TTL assertions don't take seconds.
-   */
-  sweepIntervalMs?: number;
-}
-
-/**
- * The (identity, workspace, grant) a request addresses. At initialize it
- * becomes the session's binding; on every later request it must match that
- * binding. `workspaceId` is the membership-validated workspace from the URL.
- */
-export interface McpSessionContext {
+export interface McpRequestContext {
   identity: UserIdentity | null;
   workspaceId: string;
   /**
@@ -265,508 +137,108 @@ export interface McpSessionContext {
 }
 
 /**
- * Per-process MCP HTTP host. Owns the in-process transport map and delegates
- * cluster-shared session metadata to the injected `SessionRegistry`.
- *
- * One instance per process. Constructed in `startServer`, threaded through
+ * The `/mcp/<wsId>` door. It holds no per-request or per-client state: every
+ * request is served by a server built for it, bound to the request's own
+ * (identity, workspace, grant). Constructed in `startServer`, threaded through
  * `AppContext`, used by `routes/mcp.ts`.
  */
 export class McpServerHost {
-  private readonly transports = new Map<string, TransportEntry>();
-  /** (era, User-Agent) pairs already logged by `logClientEra`. */
-  private readonly seenClientEras = new Set<string>();
-  private readonly registry: SessionRegistry;
+  /** User-Agents already logged by `logRefusedClient`. */
+  private readonly seenRefusedClients = new Set<string>();
   private readonly runtime: Runtime | null;
-  private readonly idleTtlMs: number;
-  private readonly maxSessions: number;
-  private readonly sweepInterval: ReturnType<typeof setInterval>;
+  /**
+   * Seals each `requestState` the door hands a client ({@link CallerRound}).
+   * Per process: a restart ends the input rounds in flight, whose retries then
+   * get `-32602` and start the call again.
+   */
+  private readonly roundKey = randomBytes(32);
 
-  constructor(opts: McpServerHostOptions) {
-    this.registry = opts.registry;
-    this.runtime = opts.runtime ?? null;
-    this.idleTtlMs = opts.idleTtlMs;
-    this.maxSessions = opts.maxSessions ?? MAX_MCP_SESSIONS;
-
-    // Validate up-front: silent eviction-disabled state must not ship to
-    // prod. Mirrors the philosophy of `parsePositiveIntEnv` for the env path.
-    if (!Number.isFinite(this.idleTtlMs) || this.idleTtlMs <= 0) {
-      throw new Error(`McpServerHost: idleTtlMs must be a positive number, got ${this.idleTtlMs}`);
-    }
-    if (
-      !Number.isFinite(this.maxSessions) ||
-      this.maxSessions <= 0 ||
-      !Number.isInteger(this.maxSessions)
-    ) {
-      throw new Error(
-        `McpServerHost: maxSessions must be a positive integer, got ${this.maxSessions}`,
-      );
-    }
-
-    const intervalMs = opts.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS;
-    this.sweepInterval = setInterval(() => this.sweepIdle(Date.now()), intervalMs);
-    if (typeof this.sweepInterval === "object" && "unref" in this.sweepInterval) {
-      this.sweepInterval.unref();
-    }
+  /**
+   * `runtime` serves `tools/list` (the caller's identity tools, via
+   * `listIdentitySourceTools`) and `tools/call` (via the orchestrator's
+   * `routeToolCall`). Without one, `tools/list` returns an empty list and
+   * `tools/call` rejects with `-32601 method not supported`.
+   */
+  constructor(runtime?: Runtime) {
+    this.runtime = runtime ?? null;
   }
 
   /**
-   * Handle an incoming HTTP request on the /mcp path.
+   * Serve one request. The SDK answers every method and shape: a POST under the
+   * 2026-07-28 envelope is served, a request without it gets `-32022` naming the
+   * supported version, and GET or DELETE (no session, no standalone stream)
+   * gets `405`.
    *
-   * - POST: JSON-RPC messages (initialization or subsequent)
-   * - GET:  405 — see comment below
-   * - DELETE: Session termination
-   *
-   * GET /mcp is the spec's *optional* server→client SSE channel for
-   * notifications outside any in-flight request (broadcast notifications,
-   * sampling, elicitation). We don't push anything down it: tool responses
-   * and task progress flow on the POST that started them, and our own
-   * server→client signaling for the iframe app (relayed server notifications,
-   * conversation events, heartbeats) goes through `/v1/events`, not MCP.
-   *
-   * Holding the connection open with nothing to write meant Bun's
-   * `idleTimeout` (max 255s) — and any L7 proxy in front of the API (Vite
-   * dev proxy, ALB's 60s default, nginx) — would silently kill the socket,
-   * surfacing as `socket hang up` upstream and triggering the SDK's
-   * limited reconnect loop (default `maxRetries: 2`).
-   *
-   * Returning 405 is the spec-blessed escape hatch: the SDK explicitly
-   * treats it as "server doesn't offer GET-style listening" and gracefully
-   * runs POST-only (the Streamable HTTP client's `_startOrAuthSse`). If we ever start emitting standalone-stream
-   * notifications, switch this back to a real handler and add a keepalive
-   * that keeps a silent stream under the proxy idle timeout.
+   * `tasks/get` and `tasks/cancel` are answered ahead of the SDK, which routes
+   * no task method (`mcp-modern-tasks.ts`), but only under the envelope: a
+   * 2025-era task request gets the SDK's refusal like any other.
    */
   async handle(
     request: Request,
     features: ResolvedFeatures,
-    sessionCtx: McpSessionContext,
+    requestCtx: McpRequestContext,
   ): Promise<Response> {
-    const method = request.method;
-    if (method === "POST") return this.handlePost(request, features, sessionCtx);
-    if (method === "DELETE") return this.handleDelete(request, sessionCtx);
-    return new Response("Method Not Allowed", {
-      status: 405,
-      headers: { Allow: "POST, DELETE" },
-    });
-  }
-
-  /**
-   * Close every transport this pod owns and shut the registry down. Called
-   * during graceful server stop.
-   */
-  async shutdown(): Promise<void> {
-    clearInterval(this.sweepInterval);
-    for (const [sid, entry] of this.transports) {
-      try {
-        await entry.transport.close();
-      } catch {
-        // Ignore close errors during shutdown
-      }
-      this.transports.delete(sid);
-    }
-    await this.registry.shutdown();
-  }
-
-  /** Test-only: number of locally-held transports. */
-  transportCount(): number {
-    return this.transports.size;
-  }
-
-  // ─── private ──────────────────────────────────────────────────────
-
-  /**
-   * Log which protocol era each kind of client arrives on, once per (era,
-   * User-Agent) per process, so the door's traffic shows which clients still
-   * need the 2025 leg. Bounded: past the cap, new pairs go unlogged.
-   */
-  private logClientEra(era: "legacy" | "modern", request: Request): void {
-    const userAgent = (request.headers.get("user-agent") ?? "none").slice(0, 200);
-    const key = `${era}|${userAgent}`;
-    if (this.seenClientEras.has(key) || this.seenClientEras.size >= MAX_SEEN_CLIENT_ERAS) return;
-    this.seenClientEras.add(key);
-    log.info(`[mcp] client era=${era} userAgent=${JSON.stringify(userAgent)}`);
-  }
-
-  private async handlePost(
-    request: Request,
-    features: ResolvedFeatures,
-    sessionCtx: McpSessionContext,
-  ): Promise<Response> {
-    // A request carrying the 2026-07-28 `_meta` envelope claim is served per
-    // request, with no session: the SDK's own classifier decides, so this
-    // routing and the SDK's can never disagree. Everything else is 2025-era
-    // traffic for the sessionful leg below.
-    const legacy = await isLegacyRequest(request);
-    this.logClientEra(legacy ? "legacy" : "modern", request);
-    if (!legacy) return this.handleModern(request, features, sessionCtx);
-
-    const sessionId = request.headers.get("mcp-session-id");
-
-    if (sessionId) {
-      const local = this.transports.get(sessionId);
-      if (local) {
-        // A `/mcp` session is bound to the identity, workspace and grant kind
-        // that initialized it. The route proves the caller holds *some* valid
-        // identity and is a member of the URL's workspace, not that this
-        // session id is theirs there — so reject reuse by any other identity,
-        // under any other workspace's URL, or under another kind of credential. Without this check, a leaked
-        // `Mcp-Session-Id` lets a same-tenant user drive the owner's tools as
-        // the owner, and one workspace's session answers for another. Respond
-        // exactly like an unknown session id (`not_found`) so the caller can't
-        // even tell the session exists (`unavailable` would confirm it's live).
-        if (!this.ownsTransport(local, sessionCtx)) {
-          log.warn(
-            `[mcp] session binding mismatch ${fmtSessionContext(request, sessionId, sessionCtx)}`,
-          );
-          return this.sessionNotFoundResponse();
-        }
-        // Fast path: we own this transport. Touch + re-insert moves the
-        // entry to the MRU end of the Map so LRU eviction picks the oldest
-        // first. Best-effort registry touch keeps the cluster-shared TTL
-        // aligned without blocking the request.
-        const now = Date.now();
-        local.lastAccessedAt = now;
-        this.transports.delete(sessionId);
-        this.transports.set(sessionId, local);
-        this.registry.touch(sessionId, now).catch((err) => {
-          log.warn(`[mcp] registry touch failed: ${(err as Error).message}`);
-        });
-        return this.forwardToSession(local, request, sessionId, sessionCtx);
-      }
-      return this.localMissResponse(request, sessionId, sessionCtx);
-    }
-
-    // No session id — must be an initialize.
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return jsonRpcError(400, -32700, "Parse error");
-    }
-
-    if (!isInitializeRequest(body)) {
-      log.warn(
-        `[mcp] non-init request without session id ${fmtSessionContext(request, null, sessionCtx)}`,
+    if (request.method === "POST" && (await isLegacyRequest(request))) {
+      this.logRefusedClient(request);
+    } else {
+      const taskReply = await answerModernTaskRequest(
+        request,
+        modernTaskContext(this.runtime, requestCtx),
+        (meta) => taskScope(meta, requestCtx.workspaceId),
       );
-      return jsonRpcError(400, -32000, "Bad Request: No valid session ID provided");
+      if (taskReply) return taskReply;
     }
-
-    // At capacity, evict the least-recently-used transport (front of the
-    // Map iteration order) before admitting the new initialize. Well-formed
-    // initializes always succeed; the cap is a memory budget, not a 4xx.
-    while (this.transports.size >= this.maxSessions) {
-      const oldest = this.transports.keys().next();
-      if (oldest.done) break;
-      this.evict(oldest.value, "pressure");
-    }
-
-    return this.initializeSession(request, body, features, sessionCtx);
-  }
-
-  /**
-   * Hand a request to the session's own transport, with any `params.task`
-   * removed first (`withoutTaskParams`): this leg serves no task augmentation.
-   */
-  private async forwardToSession(
-    local: TransportEntry,
-    request: Request,
-    sessionId: string,
-    sessionCtx: McpSessionContext,
-  ): Promise<Response> {
-    const stripped = await withoutTaskParams(request);
-    if (stripped) {
-      log.info(
-        `[mcp] ignored params.task on a 2025-era tools/call ${fmtSessionContext(request, sessionId, sessionCtx)}`,
-      );
-    }
-    return local.transport.handleRequest(request, stripped);
-  }
-
-  /**
-   * Serve one 2026-07-28 request. There is no session to bind: the route has
-   * already authenticated the caller and checked membership of the URL's
-   * workspace on this very request, and the server built for it is walled to
-   * that (identity, workspace) exactly as a 2025 session is. `legacy: "reject"`
-   * because 2025 traffic never reaches this leg; `isLegacyRequest` routed it
-   * to the sessionful one.
-   *
-   * `tasks/get` and `tasks/cancel` are answered ahead of the SDK, which routes
-   * no task method (`mcp-modern-tasks.ts`).
-   */
-  private async handleModern(
-    request: Request,
-    features: ResolvedFeatures,
-    sessionCtx: McpSessionContext,
-  ): Promise<Response> {
-    const taskReply = await answerModernTaskRequest(
-      request,
-      modernTaskContext(this.runtime, sessionCtx),
-      (meta) => taskScope(meta, sessionCtx.workspaceId),
+    const handler = createMcpHandler(
+      async () =>
+        createServer(
+          this.runtime,
+          features,
+          requestCtx,
+          this.roundKey,
+          await doorInstructions(this.runtime, requestCtx.workspaceId),
+        ),
+      {
+        legacy: "reject",
+        onerror: (err) => log.warn(`[mcp] request failed: ${err.message}`),
+      },
     );
-    if (taskReply) return taskReply;
-    const handler = createMcpHandler(() => createModernServer(this.runtime, features, sessionCtx), {
-      legacy: "reject",
-      onerror: (err) => log.warn(`[mcp] modern request failed: ${err.message}`),
-    });
     return handler.fetch(request);
   }
 
-  private async handleDelete(request: Request, sessionCtx: McpSessionContext): Promise<Response> {
-    const sessionId = request.headers.get("mcp-session-id");
-    if (!sessionId) return new Response("Missing session ID", { status: 400 });
-    const local = this.transports.get(sessionId);
-    if (!local) {
-      // Thread the session context so the log line carries `identity=...`
-      // — exactly the cross-tenant correlation context operators need to
-      // distinguish noisy clients from real eviction.
-      log.info(`[mcp] delete session miss ${fmtSessionContext(request, sessionId, sessionCtx)}`);
-      // Mirror the POST cleanup: registry delete is best-effort so a stale
-      // entry doesn't linger after a client says "I'm done."
-      this.bestEffortDelete(sessionId);
-      return new Response("Session not found", { status: 404 });
+  /**
+   * Log each kind of client refused for speaking a revision before 2026-07-28,
+   * once per User-Agent per process, so a client that needs upgrading shows in
+   * the logs. Bounded: past the cap, new User-Agents go unlogged.
+   */
+  private logRefusedClient(request: Request): void {
+    const userAgent = (request.headers.get("user-agent") ?? "none").slice(0, 200);
+    if (
+      this.seenRefusedClients.has(userAgent) ||
+      this.seenRefusedClients.size >= MAX_SEEN_REFUSED_CLIENTS
+    ) {
+      return;
     }
-    // Only the owning (identity, workspace) may tear down its session (same binding as the
-    // POST fast path). A non-owner gets an unmodified 404 — no teardown, no
-    // registry delete, no existence signal — so a leaked session id can't be
-    // used to evict another user's live session.
-    if (!this.ownsTransport(local, sessionCtx)) {
-      log.info(
-        `[mcp] delete identity mismatch ${fmtSessionContext(request, sessionId, sessionCtx)}`,
-      );
-      return new Response("Session not found", { status: 404 });
-    }
-    return local.transport.handleRequest(request);
-  }
-
-  /**
-   * Build the 404 response when the local transport map doesn't contain the
-   * requested session ID. The `error.data.reason` distinguishes:
-   *
-   *   - `not_found` — the registry has no entry. Session evicted by TTL,
-   *     never existed, or already deleted.
-   *   - `unavailable` — the registry has an entry, but the live transport
-   *     isn't on this process. Could be a process restart (transport state
-   *     was lost) or a sticky-routing miss (the request landed on a process
-   *     that didn't initialize this session). Client should re-initialize
-   *     either way; operators distinguish via deploy timing, uptime, and
-   *     "registry size vs local transport count" signals.
-   */
-  private async localMissResponse(
-    request: Request,
-    sessionId: string,
-    sessionCtx: McpSessionContext,
-  ): Promise<Response> {
-    const meta = await this.safeRegistryGet(sessionId);
-    const ctx = fmtSessionContext(request, sessionId, sessionCtx);
-
-    // `unavailable` confirms the session is live somewhere, so it is only for
-    // the caller the session is bound to; anyone else gets `not_found`.
-    const reason: "not_found" | "unavailable" =
-      meta && this.bindingMatches(meta, sessionCtx) ? "unavailable" : "not_found";
-    log.warn(`[mcp] session miss reason=${reason} ${ctx}`);
-
-    return this.sessionMissResponse(reason);
-  }
-
-  /** Build the JSON-RPC 404 body shared by every `/mcp` session-miss path. */
-  private sessionMissResponse(reason: "not_found" | "unavailable"): Response {
-    return json<JsonRpcErrorBody>(
-      {
-        jsonrpc: "2.0",
-        error: { code: -32000, message: "Session not found", data: { reason } },
-        id: null,
-      },
-      404,
-    );
-  }
-
-  /**
-   * Opaque 404 for a caller who presents a session id they don't own. Always
-   * `not_found` (never `unavailable`), so a non-owner can't use the reason to
-   * confirm that someone else's session is live on this process.
-   */
-  private sessionNotFoundResponse(): Response {
-    return this.sessionMissResponse("not_found");
-  }
-
-  /**
-   * Whether `entry` is bound to the (identity, workspace) making this request.
-   * A `/mcp` session is bound to the identity that initialized it
-   * (`identityId`, normalized to `null` for the dev/no-auth case, matching how
-   * it's stored) and to the workspace whose URL it was initialized at.
-   *
-   * INVARIANT for any path that reaches a live transport: gate on this before
-   * dispatch, and turn a non-owner away WITHOUT letting them distinguish "not
-   * yours" from "no such session". The two branches must stay distinct — POST
-   * returns an opaque `not_found` (never `unavailable`, which would confirm the
-   * session is live) and DELETE returns 404 without `bestEffortDelete` (a
-   * non-owner must not evict the owner's registry entry). Today only
-   * `handlePost` (fast path) and `handleDelete` reach a transport; a future
-   * GET/SSE handler (see the class header) must add the same gate.
-   */
-  private ownsTransport(entry: TransportEntry, sessionCtx: McpSessionContext): boolean {
-    return this.bindingMatches(entry, sessionCtx) && entry.grant === sessionCtx.grant;
-  }
-
-  /** The (identity, workspace) comparison, shared by the transport map and the registry. */
-  private bindingMatches(
-    bound: { identityId: string | null; workspaceId: string | null },
-    sessionCtx: McpSessionContext,
-  ): boolean {
-    return (
-      bound.identityId === (sessionCtx.identity?.id ?? null) &&
-      bound.workspaceId === sessionCtx.workspaceId
-    );
-  }
-
-  /**
-   * Wrap `registry.get` so a registry outage degrades to "treat as missing"
-   * rather than killing the request. The local transport map already
-   * answered "I don't have it"; the worst case here is we report `not_found`
-   * instead of a more specific reason — still a useful 404.
-   */
-  private async safeRegistryGet(
-    sessionId: string,
-  ): Promise<Awaited<ReturnType<SessionRegistry["get"]>>> {
-    try {
-      return await this.registry.get(sessionId);
-    } catch (err) {
-      log.warn(`[mcp] registry get failed: ${(err as Error).message}`);
-      return null;
-    }
-  }
-
-  private async initializeSession(
-    request: Request,
-    parsedBody: unknown,
-    features: ResolvedFeatures,
-    sessionCtx: McpSessionContext,
-  ): Promise<Response> {
-    const identityId = sessionCtx.identity?.id ?? null;
-    const { workspaceId } = sessionCtx;
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: () => crypto.randomUUID(),
-      onsessioninitialized: (sid: string) => {
-        const now = Date.now();
-
-        // The session is bound to the identity, workspace and grant kind that
-        // initialized it; `ownsTransport` holds every later request to all three.
-        this.transports.set(sid, {
-          transport,
-          identityId,
-          workspaceId,
-          grant: sessionCtx.grant,
-          lastAccessedAt: now,
-        });
-        // The one line that names the client by its own declared `clientInfo`;
-        // later misses for this session carry only the user agent.
-        log.info(
-          `[mcp] session initialized ${fmtSessionContext(request, sid, sessionCtx)} client=${fmtClientInfo(parsedBody)}`,
-        );
-        // Fire-and-forget the registry write. The session is already live
-        // on this process; if the registry is down we still serve the client.
-        this.registry
-          .create({
-            sessionId: sid,
-            identityId,
-            workspaceId,
-            createdAt: now,
-            lastAccessedAt: now,
-          })
-          .catch((err) => {
-            log.warn(`[mcp] registry create failed: ${(err as Error).message}`);
-          });
-      },
-      onsessionclosed: (sid: string) => {
-        this.transports.delete(sid);
-        this.bestEffortDelete(sid);
-      },
-    });
-
-    transport.onclose = () => {
-      if (transport.sessionId) {
-        this.transports.delete(transport.sessionId);
-        this.bestEffortDelete(transport.sessionId);
-      }
-    };
-
-    const server = createLegacyServer(this.runtime, features, sessionCtx);
-    await server.connect(transport);
-    return transport.handleRequest(request, { parsedBody });
-  }
-
-  /**
-   * Close a transport and remove it from the lookup map. Used by both
-   * reclamation paths (`sweepIdle` and capacity-pressure eviction in
-   * `handlePost`).
-   *
-   * Order matters: remove from `this.transports` BEFORE calling `close()`.
-   * The SDK's `close()` fires `transport.onclose` synchronously inside its
-   * body, which would run the existing cleanup cascade (map delete +
-   * registry delete) — but during the window between the close call and
-   * onclose firing, a concurrent request to the fast path could still see
-   * the entry and dispatch into a half-dead transport. Deleting first
-   * closes that window. The cascade's second `transports.delete(sid)` then
-   * becomes an idempotent no-op.
-   *
-   * Registry cleanup is delegated to the existing `transport.onclose`
-   * handler so we don't double-call `bestEffortDelete` from both paths.
-   */
-  private evict(sessionId: string, reason: "idle" | "pressure"): void {
-    const entry = this.transports.get(sessionId);
-    if (!entry) return;
-    const idleMs = Date.now() - entry.lastAccessedAt;
-    log.info(`[mcp] evicting transport reason=${reason} sessionId=${sessionId} idleMs=${idleMs}`);
-    this.transports.delete(sessionId);
-    entry.transport.close().catch((err) => {
-      log.warn(`[mcp] evict close failed sessionId=${sessionId}: ${(err as Error).message}`);
-    });
-  }
-
-  /**
-   * Walk the transport map oldest-first and evict any entry whose idle
-   * window has elapsed. Map iteration order is LRU order (we re-insert on
-   * touch), so we can stop at the first entry that's still within TTL —
-   * everything after it is newer.
-   */
-  private sweepIdle(now: number): void {
-    for (const [sid, entry] of this.transports) {
-      if (now - entry.lastAccessedAt <= this.idleTtlMs) break;
-      this.evict(sid, "idle");
-    }
-  }
-
-  /**
-   * Best-effort registry delete on session teardown. Failures are not fatal
-   * (the local transport is already gone; the registry entry will TTL out)
-   * but we log them so a chronically-failing Redis surfaces in the same
-   * observability stream as `session miss` warnings rather than vanishing
-   * into a silent `.catch`.
-   */
-  private bestEffortDelete(sessionId: string): void {
-    this.registry.delete(sessionId).catch((err) => {
-      log.warn(`[mcp] registry delete failed: ${(err as Error).message}`);
-    });
+    this.seenRefusedClients.add(userAgent);
+    log.info(`[mcp] refused a pre-2026-07-28 client userAgent=${JSON.stringify(userAgent)}`);
   }
 }
+
 /**
- * The requests `/mcp` answers, bound to one (identity, workspace). Both eras
- * mount the same handlers, so the two cannot drift: the 2025 leg on a
- * sessionful SDK v2 `Server` (`createLegacyServer`), the 2026-07-28 leg on a
- * per-request one (`createModernServer`).
+ * The requests `/mcp` answers, bound to one (identity, workspace).
  *
- * The session is walled to its one workspace (`sessionCtx.workspaceId`, from
+ * The request is walled to its one workspace (`requestCtx.workspaceId`, from
  * the URL). `tools/list` serves that workspace's tools (bare) plus the caller's
  * identity tools (conversations / files / tasks). Every `tools/call`
  * routes through `routeToolCall`, and no name can address another workspace:
  * the `ws_<id>-` form is retired and refused as `invalid_tool_name`.
  *
- * Only the 2026 leg runs a call as a task, and holds no task table: a task it
- * starts is found again through the id it hands out (`mcp-modern-tasks.ts`).
- * `callTool` takes the era's own ask ({@link TaskAsk}).
+ * A call runs as a task when the request opts in to the tasks extension
+ * ({@link TaskAsk}), and the door holds no task table: a task it starts is
+ * found again through the id it hands out (`mcp-modern-tasks.ts`).
  *
- * When `runtime` is null (legacy unit-test path), tool handlers degrade
- * to safe no-ops: `tools/list` returns empty and `tools/call` rejects
- * with `-32601 Method not found`.
+ * When `runtime` is null (unit tests), tool handlers degrade to safe no-ops:
+ * `tools/list` returns empty and `tools/call` rejects with `-32601 Method not
+ * found`.
  */
 interface McpHandlers {
   listTools(): Promise<ListToolsResult>;
@@ -781,10 +253,10 @@ interface McpHandlers {
 function createHandlers(
   runtime: Runtime | null,
   features: ResolvedFeatures,
-  sessionCtx: McpSessionContext,
+  requestCtx: McpRequestContext,
 ): McpHandlers {
-  const identityId = sessionCtx.identity?.id ?? null;
-  const wsId = sessionCtx.workspaceId;
+  const identityId = requestCtx.identity?.id ?? null;
+  const wsId = requestCtx.workspaceId;
 
   const listTools = async (): Promise<ListToolsResult> => {
     if (!runtime || !identityId) {
@@ -792,11 +264,11 @@ function createHandlers(
       // requires a response.
       return { tools: [] };
     }
-    // Walled to the session's workspace: that workspace's tools + the caller's
+    // Walled to the request's workspace: that workspace's tools + the caller's
     // identity tools, all bare. A retired `ws_<id>-` name is refused at
     // `tools/call` as `invalid_tool_name`.
     const all = await runtime.listToolsForWorkspace(wsId, identityId);
-    const orgRole = sessionCtx.identity?.orgRole;
+    const orgRole = requestCtx.identity?.orgRole;
     return {
       tools: all
         // A tool without "model" in its `ui.visibility` is left out of an
@@ -833,7 +305,7 @@ function createHandlers(
     if (!runtime || !identityId) {
       throw mcpError(
         ProtocolErrorCode.MethodNotFound,
-        "tools/call not available on this session (runtime not wired)",
+        "tools/call not available (runtime not wired)",
       );
     }
 
@@ -841,7 +313,7 @@ function createHandlers(
     // Apps visibility). Naming a source only narrows reach, so it is checked
     // for any caller; whether the call is an app's is decided below.
     const appSource = scopedSourceName(request.params._meta);
-    logToolCall(name, appSource, sessionCtx, wsId, identityId);
+    logToolCall(name, appSource, requestCtx, wsId, identityId);
     if (appSource !== undefined) {
       const refused = await assertAppMayCall(
         name,
@@ -859,7 +331,7 @@ function createHandlers(
     // Strict invariant — no fallback to a "current workspace." Names are bare,
     // and the SOURCE SEGMENT picks the door: a kernel identity source or the
     // `my_` marker goes through the identity door (below); anything else
-    // dispatches into the session's own workspace, whose id comes from the
+    // dispatches into the request's own workspace, whose id comes from the
     // URL and never from the name. An identity-door name whose
     // source is not a kernel identity source surfaces as `-32602 Invalid
     // params` with `error.data.reason: "unknown_identity_source"`. Truly malformed names
@@ -881,7 +353,7 @@ function createHandlers(
     }
 
     // ── Stage 3: every call that is not an app's is an agent's, held to "model"
-    if (!isAppCall(appSource, sessionCtx)) {
+    if (!isAppCall(appSource, requestCtx)) {
       await assertAgentMayCall(routed.source, routed.toolName, name);
     }
 
@@ -894,9 +366,9 @@ function createHandlers(
         args,
         ask,
         features,
-        sessionCtx,
+        requestCtx,
         runtime,
-        isAppCall(appSource, sessionCtx),
+        isAppCall(appSource, requestCtx),
       );
     }
     return executeWorkspaceToolCall(
@@ -907,13 +379,13 @@ function createHandlers(
       ask,
       runtime,
       features,
-      sessionCtx,
+      requestCtx,
     );
   };
 
   // ── resources/list ────────────────────────────────────────────────
   //
-  // Walled to the session's workspace, exactly like `tools/list`: only that
+  // Walled to the request's workspace, exactly like `tools/list`: only that
   // one workspace's sources are enumerated. NEVER a sweep across every
   // workspace the identity belongs to — that was the cross-workspace read hole
   // the wall exists to close. Per-source errors are swallowed so one bad source
@@ -928,7 +400,7 @@ function createHandlers(
     const scoped = scopedSourceName(request.params?._meta);
     if (scoped !== undefined) {
       const empty: ListResourcesResult = { resources: [] };
-      return fromOneSource(runtime, sessionCtx, scoped, empty, (client) =>
+      return fromOneSource(runtime, requestCtx, scoped, empty, (client) =>
         // Page-level on purpose: the SDK's `listResources()` without a cursor
         // aggregates every page, and a scoped listing passes the source's own
         // pagination through.
@@ -964,7 +436,7 @@ function createHandlers(
     const empty: ListResourceTemplatesResult = { resourceTemplates: [] };
     const scoped = scopedSourceName(request.params?._meta);
     if (scoped !== undefined) {
-      return fromOneSource(runtime, sessionCtx, scoped, empty, (client) =>
+      return fromOneSource(runtime, requestCtx, scoped, empty, (client) =>
         client.request({
           method: "resources/templates/list",
           params: cursorParams(request.params?.cursor) ?? {},
@@ -1000,7 +472,7 @@ function createHandlers(
   // client, so the key is the only thing that says which app is reading.
   //
   // Without it, identity resources (files, conversations, tasks) resolve
-  // first (below), then the session's one workspace — never a sweep across
+  // first (below), then the request's one workspace — never a sweep across
   // every workspace the identity belongs to. We deliberately do not distinguish "doesn't exist" from "exists
   // but out of reach": per MCP spec guidance, avoid leaking existence.
   const readResource = async (request: ReadResourceRequest): Promise<ReadResourceResult> => {
@@ -1010,7 +482,7 @@ function createHandlers(
     }
 
     const scoped = scopedSourceName(request.params._meta);
-    if (scoped !== undefined) return readFromOneSource(runtime, sessionCtx, scoped, uri);
+    if (scoped !== undefined) return readFromOneSource(runtime, requestCtx, scoped, uri);
 
     // Identity sources (files, conversations, tasks) are owned by the
     // user and live OUTSIDE every workspace registry, so the workspace sweep
@@ -1019,7 +491,7 @@ function createHandlers(
     // caller's own data (the files source resolves its store via
     // `getCurrentIdentity()`, mirroring the identity-door tools/call path).
     const identityReqCtx: RequestContext = {
-      identity: sessionCtx.identity ?? null,
+      identity: requestCtx.identity ?? null,
       // Workspace-owned identity data (`files://` etc.) resolves in the
       // session's workspace.
       workspaceId: wsId,
@@ -1027,7 +499,7 @@ function createHandlers(
     const identityResult = await readResourceFromIdentitySources(runtime, uri, identityReqCtx);
     if (identityResult) return identityResult;
 
-    // Walled to the session's workspace. NEVER a sweep across every
+    // Walled to the request's workspace. NEVER a sweep across every
     // workspace the identity belongs to.
     const wsResult = await readResourceFromWorkspace(runtime, uri, wsId);
     if (wsResult) return wsResult;
@@ -1041,78 +513,348 @@ function createHandlers(
   return { listTools, callTool, listResources, listResourceTemplates, readResource };
 }
 
+const SkillsListParamsSchema = z.looseObject({ cursor: z.string().optional() }).optional();
+const SkillsGetParamsSchema = z.looseObject({ uri: z.string() });
 /**
- * The 2025 leg: a session's SDK v2 `Server`, on the 2025 era its `initialize`
- * negotiated. Its `instructions` are the platform apps' own
- * (`Runtime.platformInstructions`), since a remote client loads no skills. It serves no task augmentation (ADR-0046): it declares no `tasks`
- * capability, and every `tools/call` runs to completion and answers a
- * `CallToolResult`. A `params.task` a client sends anyway is removed and logged
- * at the door (`withoutTaskParams`), as the 2025-11-25 spec has a receiver that
- * does not declare tasks ignore it.
+ * The cache hints on a listing the door assembles from the workspace's
+ * connectors (`skills/*`, `prompts/list`): stale at once, since a connector can
+ * change what it serves, and never shared across callers.
  */
-function createLegacyServer(
-  runtime: Runtime | null,
-  features: ResolvedFeatures,
-  sessionCtx: McpSessionContext,
-): Server {
-  const instructions = runtime?.platformInstructions();
-  const server = new Server(
-    { name: "nimblebrain", version: MCP_SERVER_VERSION },
-    { capabilities: { tools: {}, resources: {} }, ...(instructions ? { instructions } : {}) },
-  );
+const DOOR_CACHE_HINTS = { ttlMs: 0, cacheScope: "private" } as const;
 
-  const handlers = createHandlers(runtime, features, sessionCtx);
-  server.setRequestHandler("tools/list", () => handlers.listTools());
-  server.setRequestHandler(
-    "tools/call",
-    // A legacy ask is never answered with a task.
-    (request) => handlers.callTool(request, { era: "legacy" }) as Promise<CallToolResult>,
-  );
-  server.setRequestHandler("resources/list", (request) => handlers.listResources(request));
-  server.setRequestHandler("resources/templates/list", (request) =>
-    handlers.listResourceTemplates(request),
-  );
-  server.setRequestHandler("resources/read", (request) => handlers.readResource(request));
-  return server;
+/**
+ * The workspace's MCP connectors, in name order. The kernel's own apps sit in
+ * every workspace registry too, and are not connectors: their instructions are
+ * `platformInstructions`.
+ */
+async function workspaceConnectors(runtime: Runtime, wsId: string): Promise<McpSource[]> {
+  let registry: ToolRegistry;
+  try {
+    registry = await runtime.ensureWorkspaceRegistry(wsId);
+  } catch {
+    return [];
+  }
+  return registry
+    .getSources()
+    .filter(
+      (src): src is McpSource =>
+        src instanceof McpSource && runtime.getKernelSource(src.name) !== src,
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
- * The 2026-07-28 leg: an SDK v2 `Server` built for one request by
- * `createMcpHandler`, which answers `server/discover` and serves the request
- * under the per-request `_meta` envelope. The same handlers as the 2025 leg.
+ * The instructions `/mcp/<wsId>` serves: the platform apps' own, then each of
+ * the workspace's connectors', under its source name and contained. A client
+ * reaches no connector directly, so this is the only place it learns how a
+ * connector's tools are meant to be used, and its model sees them as
+ * `<source>__<tool>`, not by the names the connector's text uses.
+ */
+async function doorInstructions(
+  runtime: Runtime | null,
+  wsId: string,
+): Promise<string | undefined> {
+  if (!runtime) return undefined;
+  const parts: string[] = [];
+  const platform = runtime.platformInstructions();
+  if (platform) parts.push(platform);
+  for (const source of await workspaceConnectors(runtime, wsId)) {
+    const text = source.getInstructions()?.trim();
+    if (!text) continue;
+    parts.push(
+      `## Connector \`${source.name}\`\n\nIts tools are named \`${source.name}__<tool>\` here.\n\n${wrapContained("connector-instructions", text)}`,
+    );
+  }
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
+/**
+ * The skills the workspace's connectors serve (SEP-2640), by `SKILL.md` URI. An
+ * entry the extension does not allow is dropped. A URI two connectors serve is
+ * left out: `resources/read` would answer it from whichever it reached first.
+ */
+async function workspaceSkills(
+  runtime: Runtime | null,
+  wsId: string,
+): Promise<Map<string, SkillEntry>> {
+  const skills = new Map<string, SkillEntry>();
+  if (!runtime) return skills;
+  const shared = new Set<string>();
+  for (const source of await workspaceConnectors(runtime, wsId)) {
+    if (source.skillsDiscovery() === "none") continue;
+    for (const raw of (await source.listSkills()).entries) {
+      const entry = parseSkillEntry(raw);
+      if (!entry) continue;
+      if (skills.has(entry.uri)) shared.add(entry.uri);
+      else skills.set(entry.uri, entry);
+    }
+  }
+  for (const uri of shared) {
+    skills.delete(uri);
+    log.warn(
+      `[mcp] skill served by more than one connector, left out uri=${JSON.stringify(uri)} ws=${wsId}`,
+    );
+  }
+  return skills;
+}
+
+/**
+ * The prompts the workspace's connectors serve, each named
+ * `<source>__<prompt>` as its tools are, so two connectors' prompts of one name
+ * stay apart. A connector that declares no `prompts` capability is not asked,
+ * and one that fails to answer is left out of the listing.
+ */
+async function workspacePrompts(runtime: Runtime | null, wsId: string): Promise<Prompt[]> {
+  if (!runtime) return [];
+  const prompts: Prompt[] = [];
+  for (const source of await workspaceConnectors(runtime, wsId)) {
+    const client = source.getServerCapabilities()?.prompts ? source.getClient() : null;
+    if (!client) continue;
+    try {
+      for (const prompt of (await client.listPrompts()).prompts) {
+        prompts.push({ ...prompt, name: `${source.name}__${prompt.name}` });
+      }
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `prompts/list source=${source.name} error=${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return prompts;
+}
+
+/**
+ * The connector a `<source>__<prompt>` name reaches, and the name the connector
+ * knows the prompt by. A name no workspace connector serving prompts answers
+ * to is refused as an unknown prompt.
+ */
+async function promptConnector(
+  runtime: Runtime | null,
+  wsId: string,
+  name: string,
+): Promise<{
+  source: McpSource;
+  client: NonNullable<ReturnType<McpSource["getClient"]>>;
+  name: string;
+}> {
+  const { sourcePrefix, bareToolName: bare, hasSeparator } = splitInnerToolName(name);
+  const source =
+    runtime && hasSeparator && bare.length > 0
+      ? (await workspaceConnectors(runtime, wsId)).find((src) => src.name === sourcePrefix)
+      : undefined;
+  const client = source?.getServerCapabilities()?.prompts ? source.getClient() : null;
+  if (!source || !client) {
+    throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown prompt: ${name}`);
+  }
+  return { source, client, name: bare };
+}
+
+/**
+ * `prompts/get`: the prompt from the connector that serves it, carrying the
+ * caller's side of the protocol as a `tools/call` does: the caller's
+ * capabilities in place of the runtime's, and on a retry its answers and the
+ * connector's echoed state. An `input_required` answer comes back relayed
+ * (`relayInputRequired`), every other answer as the connector gave it.
+ */
+async function getPrompt(
+  runtime: Runtime | null,
+  wsId: string,
+  params: GetPromptRequest["params"],
+  caller: Pick<McpCaller, "capabilities" | "inputResponses" | "requestState">,
+): Promise<GetPromptResult | InputRequiredResult> {
+  const { source, client, name } = await promptConnector(runtime, wsId, params.name);
+  const result: GetPromptResult | InputRequiredResult = await client.getPrompt(
+    {
+      name,
+      ...(params.arguments ? { arguments: params.arguments } : {}),
+      ...(caller.inputResponses ? { inputResponses: caller.inputResponses } : {}),
+      ...(caller.requestState !== undefined ? { requestState: caller.requestState } : {}),
+      _meta: { [CLIENT_CAPABILITIES_META_KEY]: caller.capabilities },
+    },
+    { allowInputRequired: true },
+  );
+  if (!runtime || !isInputRequiredResult(result)) return result;
+  return relayInputRequired(result, source.name, runtime);
+}
+
+/** The answer for a reference that has nothing to complete. */
+const NO_COMPLETIONS: CompleteResult = { completion: { values: [], hasMore: false } };
+
+/**
+ * `completion/complete`: asked of the connector that owns the reference. A
+ * prompt reference names its connector, as `prompts/get` does; a resource
+ * template reference reaches the connector that lists that template. A
+ * connector that declares no `completions` capability has nothing to suggest.
+ */
+async function complete(
+  runtime: Runtime | null,
+  wsId: string,
+  params: CompleteRequest["params"],
+): Promise<CompleteResult> {
+  const { ref, ...rest } = params;
+  if (ref.type === "ref/prompt") {
+    const { source, client, name } = await promptConnector(runtime, wsId, ref.name);
+    if (!source.getServerCapabilities()?.completions) return NO_COMPLETIONS;
+    return client.complete({ ...rest, ref: { ...ref, name } });
+  }
+  for (const source of runtime ? await workspaceConnectors(runtime, wsId) : []) {
+    const templates = await source.resourceTemplates();
+    if (!templates.some((t) => t.uriTemplate === ref.uri)) continue;
+    const client = source.getServerCapabilities()?.completions ? source.getClient() : null;
+    return client ? client.complete(params) : NO_COMPLETIONS;
+  }
+  throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown resource template: ${ref.uri}`);
+}
+
+/**
+ * The SDK v2 `Server` built for one request by `createMcpHandler`, which
+ * answers `server/discover` and serves the request under its `_meta` envelope.
  * Tasks are the tasks extension (SEP-2663), advertised in `server/discover`: a
  * `tools/call` whose client capabilities name it may be answered with a flat
- * task, and `handleModern` answers the polls.
+ * task, and `McpServerHost.handle` answers the polls.
  */
-function createModernServer(
+function createServer(
   runtime: Runtime | null,
   features: ResolvedFeatures,
-  sessionCtx: McpSessionContext,
+  requestCtx: McpRequestContext,
+  roundKey: Uint8Array,
+  instructions: string | undefined,
 ): Server {
-  const instructions = runtime?.platformInstructions();
+  const rounds = createRequestStateCodec<CallerRound>({
+    key: roundKey,
+    bind: () => `${requestCtx.identity?.id ?? ""}\0${requestCtx.workspaceId}`,
+  });
   const server = new Server(
     { name: "nimblebrain", version: MCP_SERVER_VERSION },
     {
       capabilities: {
         tools: {},
         resources: {},
-        ...(runtime ? { extensions: { [TASKS_EXTENSION_ID]: {} } } : {}),
+        prompts: {},
+        completions: {},
+        ...(runtime ? { extensions: { [TASKS_EXTENSION_ID]: {}, [SKILLS_EXTENSION_ID]: {} } } : {}),
       },
       ...(instructions ? { instructions } : {}),
+      requestState: { verify: (state, ctx) => rounds.verify(state, ctx) },
     },
   );
-  const handlers = createHandlers(runtime, features, sessionCtx);
+  const handlers = createHandlers(runtime, features, requestCtx);
   server.setRequestHandler("tools/list", () => handlers.listTools());
+  // SEP-2640: the workspace's connectors' skills, in one page, as cacheable
+  // results. Each file reads through `resources/read`, which reaches the
+  // connector that serves it.
+  server.setRequestHandler("skills/list", { params: SkillsListParamsSchema }, async (params) => {
+    if (params?.cursor !== undefined) {
+      throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown cursor: ${params.cursor}`);
+    }
+    const skills = await workspaceSkills(runtime, requestCtx.workspaceId);
+    return { skills: [...skills.values()], ...DOOR_CACHE_HINTS };
+  });
+  server.setRequestHandler("skills/get", { params: SkillsGetParamsSchema }, async (params) => {
+    const skill = (await workspaceSkills(runtime, requestCtx.workspaceId)).get(params.uri);
+    if (!skill) throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown skill URI: ${params.uri}`);
+    return { skill, ...DOOR_CACHE_HINTS };
+  });
   server.setRequestHandler("tools/call", async (request, ctx) => {
     // The SDK types the lifted envelope as `{}`; its keys are the reserved
     // `_meta` names, the client capabilities among them.
     const envelope = ctx.mcpReq.envelope as Record<string, unknown> | undefined;
-    const optedIn = optsInToTasks(envelope?.[CLIENT_CAPABILITIES_META_KEY]);
-    const result = await handlers.callTool(request, { era: "modern", optedIn });
+    const capabilities = (envelope?.[CLIENT_CAPABILITIES_META_KEY] ?? {}) as ClientCapabilities;
+    // Verified and bound to this (identity, workspace) by `rounds` before the
+    // handler runs; the tool and arguments it names are checked here.
+    const round = roundFor(
+      ctx.mcpReq.requestState<CallerRound>(),
+      "tools/call",
+      request.params.name,
+      request.params.arguments,
+    );
+    const progressToken = ctx.mcpReq._meta?.progressToken;
+    const caller: McpCaller = {
+      capabilities,
+      ...(ctx.mcpReq.inputResponses ? { inputResponses: ctx.mcpReq.inputResponses } : {}),
+      ...(round?.state !== undefined ? { requestState: round.state } : {}),
+      ...(progressToken !== undefined
+        ? {
+            onProgress: (progress) => {
+              ctx.mcpReq
+                .notify({
+                  method: "notifications/progress",
+                  params: { progressToken, ...progress },
+                })
+                .catch(() => {});
+            },
+          }
+        : {}),
+    };
+    const result = await handlers.callTool(request, {
+      optedIn: optsInToTasks(capabilities),
+      caller,
+    });
+    if (isInputRequiredResult(result)) {
+      // The connector's state goes back to the client sealed with the tool,
+      // its arguments and the caller, so it returns only on this caller's
+      // retry of this call.
+      const { requestState: state, ...rest } = result;
+      return {
+        ...rest,
+        requestState: await rounds.mint(
+          {
+            method: "tools/call",
+            name: request.params.name,
+            args: argsDigest(request.params.arguments),
+            ...(state !== undefined ? { state } : {}),
+          },
+          ctx,
+        ),
+        // The handler is typed to answer a `CallToolResult`; an `input_required`
+        // answer is the other result 2026-07-28 allows, and the SDK sends it as given.
+      } as unknown as CallToolResult;
+    }
     // The SDK types a `tools/call` result as the tool's own; a SEP-2663 task
     // is the other result the extension allows, and the SDK sends it as given.
     return result as CallToolResult;
   });
+  // The workspace's connectors' prompts, in one page, each under its source.
+  server.setRequestHandler("prompts/list", async (request) => {
+    if (request.params?.cursor !== undefined) {
+      throw mcpError(ProtocolErrorCode.InvalidParams, `Unknown cursor: ${request.params.cursor}`);
+    }
+    const prompts = await workspacePrompts(runtime, requestCtx.workspaceId);
+    return { prompts, ...DOOR_CACHE_HINTS };
+  });
+  server.setRequestHandler("prompts/get", async (request, ctx) => {
+    const envelope = ctx.mcpReq.envelope as Record<string, unknown> | undefined;
+    const capabilities = (envelope?.[CLIENT_CAPABILITIES_META_KEY] ?? {}) as ClientCapabilities;
+    const { name, arguments: args } = request.params;
+    const round = roundFor(ctx.mcpReq.requestState<CallerRound>(), "prompts/get", name, args);
+    const result = await getPrompt(runtime, requestCtx.workspaceId, request.params, {
+      capabilities,
+      ...(ctx.mcpReq.inputResponses ? { inputResponses: ctx.mcpReq.inputResponses } : {}),
+      ...(round?.state !== undefined ? { requestState: round.state } : {}),
+    });
+    if (!isInputRequiredResult(result)) return result;
+    // Sealed as a tool call's round is, so it returns only on this caller's
+    // retry of this prompt with these arguments.
+    const { requestState: state, ...rest } = result;
+    return {
+      ...rest,
+      requestState: await rounds.mint(
+        {
+          method: "prompts/get",
+          name,
+          args: argsDigest(args),
+          ...(state !== undefined ? { state } : {}),
+        },
+        ctx,
+      ),
+      // The handler is typed to answer a `GetPromptResult`; an `input_required`
+      // answer is the other result 2026-07-28 allows, and the SDK sends it as given.
+    } as unknown as GetPromptResult;
+  });
+  server.setRequestHandler("completion/complete", (request) =>
+    complete(runtime, requestCtx.workspaceId, request.params),
+  );
   server.setRequestHandler("resources/list", (request) => handlers.listResources(request));
   server.setRequestHandler("resources/templates/list", (request) =>
     handlers.listResourceTemplates(request),
@@ -1128,33 +870,69 @@ type WorkspaceRoute = Extract<Awaited<ReturnType<typeof routeToolCall>>, { kind:
 type TaskAwareSourceHandle = NonNullable<ReturnType<ToolRegistry["findTaskAwareSource"]>>;
 
 /**
- * What a `tools/call` asks of the task machinery. Only a 2026-07-28 request
- * can ask: it opts in to the tasks extension, and the door tasks a call to a
- * tool that can run as one. A 2025 request never runs as a task (ADR-0046).
+ * What a `tools/call` asks of the task machinery: whether the request opts in
+ * to the tasks extension, so the door tasks a call to a tool that can run as one.
  */
-type TaskAsk = { era: "legacy" } | { era: "modern"; optedIn: boolean };
-
-/** A `tools/call` answer: the tool's result, or the 2026 task it runs as. */
-type ToolCallAnswer = CallToolResult | ModernCreateTaskResult;
+type TaskAsk = {
+  optedIn: boolean;
+  /** The client's side of the protocol, forwarded to a connector the call runs inline on. */
+  caller?: McpCaller;
+};
 
 /**
- * Whether the call runs as a task: the request opted in to the tasks extension
- * and the tool can run as one. A 2025 request never does, so a `required` tool
- * it calls runs to completion like any other.
+ * The `requestState` the door hands a client with an `input_required` answer:
+ * the tool and argument digest it was minted for and the connector's own
+ * state, sealed and bound to the caller's (identity, workspace) by the
+ * per-request codec in `createServer`. Every connector shares one connection
+ * per workspace source, so the connector cannot tell whose state it minted;
+ * the seal is what keeps one caller's round from being replayed by another, or
+ * on a call with other arguments.
  */
+interface CallerRound {
+  /** The request the round belongs to, so a tool's round is never a prompt's. */
+  method: "tools/call" | "prompts/get";
+  /** The tool or prompt name the client called. */
+  name: string;
+  /** `argsDigest` of the call's arguments. */
+  args: string;
+  state?: string;
+}
+
+/**
+ * The verified round a retry presents, refused with `-32602` unless it was
+ * minted for this request, name and arguments.
+ */
+function roundFor(
+  round: CallerRound | undefined,
+  method: CallerRound["method"],
+  name: string,
+  args: Record<string, unknown> | undefined,
+): CallerRound | undefined {
+  if (
+    round &&
+    (round.method !== method || round.name !== name || round.args !== argsDigest(args))
+  ) {
+    throw mcpError(ProtocolErrorCode.InvalidParams, "requestState belongs to another request");
+  }
+  return round;
+}
+
+/**
+ * A `tools/call` answer: the tool's result, the task it runs as, or the input
+ * the connector needs from the client first.
+ */
+type ToolCallAnswer = CallToolResult | ModernCreateTaskResult | InputRequiredResult;
+
+/** Whether the call runs as a task: the request opted in and the tool can run as one. */
 function runsAsTask(
   ask: TaskAsk,
   taskSupport: "optional" | "required" | "forbidden" | undefined,
 ): boolean {
-  return (
-    ask.era === "modern" &&
-    ask.optedIn &&
-    (taskSupport === "optional" || taskSupport === "required")
-  );
+  return ask.optedIn && (taskSupport === "optional" || taskSupport === "required");
 }
 
 /**
- * Where a 2026 task request resolves: the request's (workspace, identity), and
+ * Where a task request resolves: the request's (workspace, identity), and
  * the task-aware sources it can reach: a kernel identity source's task surface
  * (`tasks` runs) by that name, else a connector in that workspace. Null
  * without a runtime or an identity, which reach no task. Either kind checks the
@@ -1162,17 +940,55 @@ function runsAsTask(
  */
 function modernTaskContext(
   runtime: Runtime | null,
-  sessionCtx: McpSessionContext,
+  requestCtx: McpRequestContext,
 ): ModernTaskContext | null {
-  const identityId = sessionCtx.identity?.id;
+  const identityId = requestCtx.identity?.id;
   if (!runtime || !identityId) return null;
-  const wsId = sessionCtx.workspaceId;
+  const wsId = requestCtx.workspaceId;
   return {
     workspaceId: wsId,
     identityId,
     findSource: (name) =>
       runtime.getIdentityTaskSource(name) ??
       (runtime.getRegistryForWorkspace(wsId).findTaskAwareSource(name) as TaskAwareSource | null),
+  };
+}
+
+/**
+ * A source's answer to a call: its result, or the `input_required` it carries,
+ * relayed for the outside client (`relayInputRequests`): each elicitation names
+ * the connector by its display name.
+ */
+async function toToolCallAnswer(
+  result: ToolResult,
+  connector: string,
+  runtime: Runtime,
+): Promise<CallToolResult | InputRequiredResult> {
+  if (!result.inputRequired) return toCallToolResult(result);
+  return relayInputRequired(
+    { resultType: "input_required", ...result.inputRequired },
+    connector,
+    runtime,
+  );
+}
+
+/**
+ * A connector's `input_required` answer as the outside client receives it:
+ * each elicitation names the connector by its display name
+ * (`relayInputRequests`), and the connector's state is left for the caller to seal.
+ */
+async function relayInputRequired(
+  result: InputRequiredResult,
+  connector: string,
+  runtime: Runtime,
+): Promise<InputRequiredResult> {
+  const { inputRequests, requestState } = result;
+  if (!inputRequests) return result;
+  const label = (await runtime.connectorTitles()).get(connector) ?? connector;
+  return {
+    resultType: "input_required",
+    inputRequests: relayInputRequests(inputRequests, label),
+    ...(requestState !== undefined ? { requestState } : {}),
   };
 }
 
@@ -1251,14 +1067,13 @@ export function mapRouteToolError(err: unknown): never {
 
 /**
  * Dispatch an identity-scoped `/mcp` tools/call (bare `<source>__<tool>`)
- * against the caller's identity, in the session's workspace. Entity reads are
+ * against the caller's identity, in the request's workspace. Entity reads are
  * gated by `canAccess` in the handler.
  *
  * A kernel identity source with a task surface (`tasks__run`) runs as a
- * task on the 2026-07-28 leg when the client opts in to the tasks extension:
+ * task when the client opts in to the tasks extension:
  * the answer is a flat task whose id names the source beside the source's own
- * task id (the run id). Every other call, including any 2025-era one, runs
- * inline.
+ * task id (the run id). Every other call runs inline.
  */
 async function executeIdentityToolCall(
   routed: IdentityRoute,
@@ -1266,7 +1081,7 @@ async function executeIdentityToolCall(
   args: Record<string, unknown> | undefined,
   ask: TaskAsk,
   features: ResolvedFeatures,
-  sessionCtx: McpSessionContext,
+  requestCtx: McpRequestContext,
   runtime: Runtime,
   /** Whether an app view in the first-party shell made the call (`isAppCall`). */
   appCall = false,
@@ -1283,7 +1098,7 @@ async function executeIdentityToolCall(
   // tools, so a crafted bare `tools/call` must not slip past. (No identity tool
   // is role-gated today; this closes the gap before files/tasks land an
   // admin-gated one.)
-  if (!isToolVisibleToRole(fullName, sessionCtx.identity?.orgRole)) {
+  if (!isToolVisibleToRole(fullName, requestCtx.identity?.orgRole)) {
     return {
       content: [{ type: "text" as const, text: `Tool "${name}" is not available` }],
       isError: true,
@@ -1307,31 +1122,33 @@ async function executeIdentityToolCall(
   }
 
   const identityCtx: RequestContext = {
-    identity: sessionCtx.identity ?? null,
-    // Workspace-owned identity data resolves in the session's workspace,
+    identity: requestCtx.identity ?? null,
+    // Workspace-owned identity data resolves in the request's workspace,
     // consistent with the resources wall.
-    workspaceId: sessionCtx.workspaceId,
+    workspaceId: requestCtx.workspaceId,
     ...(appCall ? { shellCall: true } : {}),
   };
 
-  if (ask.era === "modern" && !routed.policyOwner) {
+  if (!routed.policyOwner) {
     const tasked = await answerIdentityTask(
       runtime.getIdentityTaskSource(sourcePrefix),
       { name, bare, args, ask },
       identityCtx,
-      sessionCtx,
+      requestCtx,
     );
     if (tasked) return tasked;
   }
 
   const idResult = await runWithRequestContext(identityCtx, () =>
-    routed.source.execute(bare, (args ?? {}) as Record<string, unknown>),
+    routed.source.execute(bare, (args ?? {}) as Record<string, unknown>, undefined, {
+      ...(ask.caller ? { caller: ask.caller } : {}),
+    }),
   );
-  return toCallToolResult(idResult);
+  return toToolCallAnswer(idResult, routed.source.name, runtime);
 }
 
 /**
- * Run an identity tool call as a task on the 2026-07-28 leg, or null to run it
+ * Run an identity tool call as a task, or null to run it
  * inline: the source has no task surface, the tool cannot run as a task, or the
  * client did not opt in to the tasks extension. A `required` tool the client
  * did not opt in for is refused naming the extension, as on the workspace door.
@@ -1344,10 +1161,10 @@ async function answerIdentityTask(
     name: string;
     bare: string;
     args: Record<string, unknown> | undefined;
-    ask: Extract<TaskAsk, { era: "modern" }>;
+    ask: TaskAsk;
   },
   identityCtx: RequestContext,
-  sessionCtx: McpSessionContext,
+  requestCtx: McpRequestContext,
 ): Promise<ToolCallAnswer | null> {
   if (!taskSource) return null;
   const taskSupport = taskSource.taskSupport(call.bare);
@@ -1360,7 +1177,7 @@ async function answerIdentityTask(
   if (!runsAsTask(call.ask, taskSupport)) return null;
   const started = await runWithRequestContext(identityCtx, () =>
     taskSource.startToolAsTask(call.bare, call.args ?? {}, {
-      ownerContext: ownerContextFor(identityCtx.workspaceId ?? "", sessionCtx, taskSource.name),
+      ownerContext: ownerContextFor(identityCtx.workspaceId ?? "", requestCtx, taskSource.name),
     }),
   );
   if ("result" in started) {
@@ -1378,7 +1195,7 @@ async function answerIdentityTask(
  * Dispatch a workspace-scoped `/mcp` tools/call (bare `<source>__<tool>`):
  * feature + role gating, connector permission gate, tool-level task
  * negotiation, then the task-augmented or inline execution path. The workspace
- * is the session's own (carried on `routed.context`), never from the tool name.
+ * is the request's own (carried on `routed.context`), never from the tool name.
  */
 async function executeWorkspaceToolCall(
   routed: WorkspaceRoute,
@@ -1389,7 +1206,7 @@ async function executeWorkspaceToolCall(
   ask: TaskAsk,
   runtime: Runtime,
   features: ResolvedFeatures,
-  sessionCtx: McpSessionContext,
+  requestCtx: McpRequestContext,
 ): Promise<ToolCallAnswer> {
   const { context: workspaceContext, toolName: innerToolName, source } = routed;
 
@@ -1400,7 +1217,7 @@ async function executeWorkspaceToolCall(
       isError: true,
     };
   }
-  if (!isToolVisibleToRole(innerToolName, sessionCtx.identity?.orgRole)) {
+  if (!isToolVisibleToRole(innerToolName, requestCtx.identity?.orgRole)) {
     return {
       content: [{ type: "text" as const, text: `Tool "${name}" is not available` }],
       isError: true,
@@ -1426,7 +1243,7 @@ async function executeWorkspaceToolCall(
     const denied = await connectorGateDenial(
       runtime,
       wsId,
-      sessionCtx,
+      requestCtx,
       sourceName,
       localName,
       args,
@@ -1440,8 +1257,8 @@ async function executeWorkspaceToolCall(
   const taskSupport = await resolveTaskSupport(taskAwareSource, innerToolName);
   const asTask = runsAsTask(ask, taskSupport);
 
-  if (ask.era === "modern" && taskSupport === "required" && !asTask) {
-    // The 2026 answer for a call that needs a capability the request did not
+  if (taskSupport === "required" && !asTask) {
+    // The answer for a call that needs a capability the request did not
     // declare, naming it so the client can opt in and retry.
     throw new MissingRequiredClientCapabilityError(
       { requiredCapabilities: { extensions: { [TASKS_EXTENSION_ID]: {} } } },
@@ -1451,17 +1268,17 @@ async function executeWorkspaceToolCall(
 
   // Build per-request context for AsyncLocalStorage (concurrency-safe). The
   // workspace ID is derived from the parsed namespace — NOT from any
-  // session-level state. This is the per-call routing the orchestrator exists
+  // per-connection state. This is the per-call routing the orchestrator exists
   // to enforce.
   const reqCtx: RequestContext = {
-    identity: sessionCtx.identity ?? null,
+    identity: requestCtx.identity ?? null,
     workspaceId: wsId,
   };
 
   if (asTask && sourceName && taskAwareSource) {
     const created = await runWithRequestContext(reqCtx, () =>
       taskAwareSource.startToolAsTask(localName, (args ?? {}) as Record<string, unknown>, {
-        ownerContext: ownerContextFor(wsId, sessionCtx, sourceName),
+        ownerContext: ownerContextFor(wsId, requestCtx, sourceName),
       }),
     );
     return modernCreateTaskResult(sourceName, created.task);
@@ -1476,21 +1293,23 @@ async function executeWorkspaceToolCall(
   // returned as-is`. `_meta` propagation is a no-op today because the engine's
   // ToolResult shape doesn't carry `_meta`.
   const result = await runWithRequestContext(reqCtx, () =>
-    source.execute(localName, (args ?? {}) as Record<string, unknown>),
+    source.execute(localName, (args ?? {}) as Record<string, unknown>, undefined, {
+      ...(ask.caller ? { caller: ask.caller } : {}),
+    }),
   );
-  return toCallToolResult(result);
+  return toToolCallAnswer(result, source.name, runtime);
 }
 
 /**
  * The connector gates a workspace tool call passes before it runs: the
  * operator's permission policy, then the connector gate (`lifecycle` handlers,
- * `admin_tools`) against the workspace this URL is bound to and the session's
+ * `admin_tools`) against the workspace this URL is bound to and the request's
  * identity.
  */
 async function connectorGateDenial(
   runtime: Runtime,
   wsId: string,
-  sessionCtx: McpSessionContext,
+  requestCtx: McpRequestContext,
   sourceName: string,
   localName: string,
   args: Record<string, unknown> | undefined,
@@ -1507,7 +1326,7 @@ async function connectorGateDenial(
     input: (args ?? {}) as Record<string, unknown>,
     caller: appSource ? "app" : "mcp",
   } as const;
-  return runtime.connectorAdminDenial(wsId, sessionCtx.identity, sourceName, localName, call);
+  return runtime.connectorAdminDenial(wsId, requestCtx.identity, sourceName, localName, call);
 }
 
 /**
@@ -1532,12 +1351,12 @@ async function resolveTaskSupport(
  */
 function ownerContextFor(
   wsId: string,
-  sessionCtx: McpSessionContext,
+  requestCtx: McpRequestContext,
   sourceName: string,
 ): TaskOwnerContext {
   return {
     workspaceId: wsId,
-    ...(sessionCtx.identity?.id ? { identityId: sessionCtx.identity.id } : {}),
+    ...(requestCtx.identity?.id ? { identityId: requestCtx.identity.id } : {}),
     originApp: sourceName,
   };
 }
@@ -1625,8 +1444,8 @@ async function assertAppMayCall(
  * check: a provider that marks every credential first-party (`oidc`, `dev`)
  * leaves an external client able to name a source and be taken for a view.
  */
-function isAppCall(appSource: string | undefined, sessionCtx: McpSessionContext): boolean {
-  return appSource !== undefined && sessionCtx.grant === "first_party";
+function isAppCall(appSource: string | undefined, requestCtx: McpRequestContext): boolean {
+  return appSource !== undefined && requestCtx.grant === "first_party";
 }
 
 /**
@@ -1674,7 +1493,7 @@ function scopedSourceName(meta: Record<string, unknown> | undefined): string | u
 }
 
 /**
- * The scope of a task request: the source it names, in the session's
+ * The scope of a task request: the source it names, in the request's
  * workspace. A source name names a server only within one workspace.
  * Undefined when the request names no source.
  */
@@ -1703,18 +1522,18 @@ function cursorParams(cursor: unknown): { cursor: string } | undefined {
  */
 async function fromOneSource<T>(
   runtime: Runtime | null | undefined,
-  sessionCtx: McpSessionContext,
+  requestCtx: McpRequestContext,
   sourceName: string,
   absent: T,
   run: (client: NonNullable<ReturnType<McpSource["getClient"]>>) => Promise<T>,
 ): Promise<T> {
-  if (!runtime || !sessionCtx.identity?.id) return absent;
-  const wsId = sessionCtx.workspaceId;
+  if (!runtime || !requestCtx.identity?.id) return absent;
+  const wsId = requestCtx.workspaceId;
 
   if (IDENTITY_SOURCES.has(sourceName)) {
     const client = mcpClientOf(runtime.getIdentitySource(sourceName));
     if (!client) return absent;
-    const identityReqCtx: RequestContext = { identity: sessionCtx.identity, workspaceId: wsId };
+    const identityReqCtx: RequestContext = { identity: requestCtx.identity, workspaceId: wsId };
     try {
       return await runWithRequestContext(identityReqCtx, () => run(client));
     } catch {
@@ -1745,13 +1564,13 @@ async function fromOneSource<T>(
  */
 async function readFromOneSource(
   runtime: Runtime,
-  sessionCtx: McpSessionContext,
+  requestCtx: McpRequestContext,
   sourceName: string,
   uri: string,
 ): Promise<ReadResourceResult> {
   const result = await fromOneSource<ReadResourceResult | null>(
     runtime,
-    sessionCtx,
+    requestCtx,
     sourceName,
     null,
     (client) => client.readResource({ uri }),
@@ -1835,7 +1654,7 @@ async function readResourceFromIdentitySources(
 }
 
 /**
- * Sweep the session's workspace's MCP sources for `uri` — never a sweep across
+ * Sweep the request's workspace's MCP sources for `uri` — never a sweep across
  * every workspace the identity belongs to. Returns the first result that carries contents, or null.
  */
 async function readResourceFromWorkspace(
@@ -1854,39 +1673,6 @@ async function readResourceFromWorkspace(
     if (result) return result;
   }
   return null;
-}
-
-/**
- * A 2025-era body with `params.task` removed from every `tools/call`, or
- * undefined when none carries one (or the body is not JSON, which the
- * transport answers itself). The 2025 leg declares no `tasks` capability, and
- * the 2025-11-25 spec has a receiver that does not declare it process the
- * request normally, ignoring the task. Removing the field makes that ignore
- * explicit, and `forwardToSession` logs each one, so 2025 task traffic stays
- * visible.
- */
-async function withoutTaskParams(request: Request): Promise<{ parsedBody: unknown } | undefined> {
-  let body: unknown;
-  try {
-    body = await request.clone().json();
-  } catch {
-    return undefined;
-  }
-  let stripped = false;
-  for (const message of Array.isArray(body) ? body : [body]) {
-    if (typeof message !== "object" || message === null) continue;
-    const { method, params } = message as { method?: unknown; params?: unknown };
-    if (method !== "tools/call" || typeof params !== "object" || params === null) continue;
-    if (!("task" in params)) continue;
-    delete (params as { task?: unknown }).task;
-    stripped = true;
-  }
-  return stripped ? { parsedBody: body } : undefined;
-}
-
-/** JSON-RPC error response with the proper headers. */
-function jsonRpcError(status: number, code: number, message: string): Response {
-  return json<JsonRpcErrorBody>({ jsonrpc: "2.0", error: { code, message }, id: null }, status);
 }
 
 /** Cap on a client-supplied string written to a log line. */
@@ -1909,48 +1695,14 @@ function fmtClientField(value: string): string {
 function logToolCall(
   name: string,
   appSource: string | undefined,
-  sessionCtx: McpSessionContext,
+  requestCtx: McpRequestContext,
   wsId: string,
   identityId: string,
 ): void {
-  const caller = isAppCall(appSource, sessionCtx)
+  const caller = isAppCall(appSource, requestCtx)
     ? `app:${fmtClientField(appSource ?? "")}`
     : "agent";
   log.info(
-    `[mcp] tools/call tool=${fmtClientField(name)} caller=${caller} grant=${sessionCtx.grant} ws=${wsId} identity=${identityId}`,
+    `[mcp] tools/call tool=${fmtClientField(name)} caller=${caller} grant=${requestCtx.grant} ws=${wsId} identity=${identityId}`,
   );
-}
-
-/** The `clientInfo` an initialize request declares, as a quoted `name/version`. */
-function fmtClientInfo(body: unknown): string {
-  const info = isInitializeRequest(body) ? body.params.clientInfo : undefined;
-  if (!info?.name) return "none";
-  return fmtClientField(info.version ? `${info.name}/${info.version}` : info.name);
-}
-
-/**
- * Build a `key=value` log fragment with the request context that matters for
- * session-miss diagnosis: a sessionId prefix (UUIDs are not sensitive but the
- * prefix keeps lines greppable), identity (for cross-tenant correlation), the
- * client IP from `x-forwarded-for` (the ALB sets it), and the `User-Agent`,
- * which names the client on lines where no session (and so no `clientInfo`)
- * exists.
- *
- * The workspace is the one the request's URL names. The IP and user agent are
- * client-controlled (the left-most `x-forwarded-for` entry is whatever the
- * caller sent), so both go through `fmtClientField`.
- */
-function fmtSessionContext(
-  request: Request,
-  sessionId: string | null,
-  sessionCtx?: McpSessionContext,
-): string {
-  const sidPrefix = sessionId ? sessionId.slice(0, 8) : "none";
-  const identityId = sessionCtx?.identity?.id ?? "none";
-  const workspaceId = sessionCtx?.workspaceId ?? "none";
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const ua = request.headers.get("user-agent");
-  const ipField = ip ? fmtClientField(ip) : "direct";
-  const uaField = ua ? fmtClientField(ua) : "none";
-  return `sessionId=${sidPrefix} identity=${identityId} workspace=${workspaceId} ip=${ipField} ua=${uaField}`;
 }

@@ -4,6 +4,7 @@ import type { CatalogListing } from "../connectors/catalog/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { isModelVisible, NON_ADVANCING_META_KEY } from "../engine/types.ts";
+import { MAX_TOOL_RESULT_CHARS } from "../limits.ts";
 import { log } from "../observability/log.ts";
 import { createUseSkillToolDef } from "../platform/skills/source.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
@@ -171,10 +172,30 @@ export async function createSystemTools(
 /** Core skills ship with the package under src/skills/core/. */
 const CORE_SKILL_MARKER = "/skills/core/";
 
-/** Maximum characters returned from a single read_resource call.
- *  Matches the focused-app skill budget so a connector-advertised `skill://` resource
- *  fits into the LLM's context without blowing past it. */
-const READ_RESOURCE_MAX_CHARS = 12_000;
+/**
+ * Most characters a `skill://` read returns. Matches the focused-app skill
+ * budget: a skill is guidance loaded alongside other context, and one larger
+ * than this is a skill to split, not one to load whole.
+ */
+const SKILL_READ_MAX_CHARS = 12_000;
+
+/**
+ * Room left under {@link MAX_TOOL_RESULT_CHARS} for the truncation note, so a
+ * cut read stays under the engine's own bound and is never cut a second time
+ * under a note that says the rest is on the user's screen.
+ */
+const TRUNCATION_NOTE_RESERVE = 400;
+
+/**
+ * Most characters any other read returns: a connector's record (a contact with
+ * a long dossier, say) is read whole up to the limit every tool result has.
+ */
+const RECORD_READ_MAX_CHARS = MAX_TOOL_RESULT_CHARS - TRUNCATION_NOTE_RESERVE;
+
+/** The read limit for `uri`: the skill budget for `skill://`, the tool-result limit otherwise. */
+function readLimitFor(uri: string): number {
+  return uri.toLowerCase().startsWith("skill:") ? SKILL_READ_MAX_CHARS : RECORD_READ_MAX_CHARS;
+}
 
 /**
  * Creates the nb__read_resource system tool.
@@ -190,7 +211,7 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
   return {
     name: "read_resource",
     description:
-      "Read a resource published by an installed app or by the platform. Use this when an app's instructions tell you to load a specific resource, or when you need to inspect platform-published context (e.g. saved overlay instructions). Supported URI schemes include " +
+      "Read a resource published by an installed app or by the platform. Use this when an app's instructions tell you to load a specific resource, when you need to inspect platform-published context, or to read one of an app's records whole: the URI shapes an app serves are listed under it in an `app-resource-templates` block, and its tool results often carry a record's `uri`. Supported URI schemes include " +
       `${READ_RESOURCE_SCHEMES_PROSE}, and any connector-published scheme matching the connector's source name. ` +
       "Pass the full URI; the content comes back as text in the tool result.",
     inputSchema: {
@@ -241,7 +262,7 @@ async function readResourceFromSource(
     const data = await source.readResource(uri);
     if (data == null) return null;
     if (typeof data.text === "string") {
-      return formatResourceText(data.text);
+      return formatResourceText(data.text, readLimitFor(uri));
     }
     if (data.blob) {
       return {
@@ -258,12 +279,17 @@ async function readResourceFromSource(
   }
 }
 
-/** Format a text resource body, truncating past READ_RESOURCE_MAX_CHARS. */
-function formatResourceText(full: string): ToolResult {
-  const truncated = full.length > READ_RESOURCE_MAX_CHARS;
-  const body = truncated
-    ? `${full.slice(0, READ_RESOURCE_MAX_CHARS)}\n\n[truncated — resource exceeds ${READ_RESOURCE_MAX_CHARS} chars]`
-    : full;
+/**
+ * Format a text resource body, cutting it at `limit`. The note says what the
+ * model holds and where the rest is: this tool returns no more of the
+ * resource, and nothing else put the remainder in front of the user.
+ */
+function formatResourceText(full: string, limit: number): ToolResult {
+  if (full.length <= limit) return { content: textContent(full), isError: false };
+  const body =
+    `${full.slice(0, limit)}\n\n[truncated: showing the first ${limit} of ${full.length} chars. ` +
+    "read_resource returns no more of this resource; the rest is held only by the app that " +
+    "published it. For a field past this point, use that app's own tools.]";
   return { content: textContent(body), isError: false };
 }
 
@@ -422,8 +448,8 @@ async function handleSkillStatus(
 ): Promise<ToolResult> {
   // Report through the SAME per-request path `chat` composes with
   // (`describeRequestSkills` → `selectRequestLayer3`), so workspace- and
-  // user-tier skills that actually load into the prompt appear here — the old
-  // path read a boot-time cache and reported only platform/core skills.
+  // user-tier skills that actually load into the prompt appear here — a
+  // boot-time cache would report only platform/core skills.
   const { context, layer3 } = await runtime.describeRequestSkills(wsId);
   // Legacy trigger-matched skills still come from the boot matcher cache.
   const matchable = getSkills?.().matchable ?? [];

@@ -1,5 +1,5 @@
 /**
- * Phase 2 — multi-scope skill discovery.
+ * Multi-scope skill discovery.
  *
  * Verifies:
  *   - `loadScopedSkills(dir, scope)` stamps `manifest.scope` on every
@@ -67,8 +67,8 @@ describe("loadScopedSkills — stamping", () => {
   });
 
   test("a legacy frontmatter with stray top-level keys is rejected (fail-soft skip)", () => {
-    // `scope`/`type`/`version` are no longer top-level fields (scope is
-    // dir-stamped; the rest moved under metadata.nimblebrain). The strict schema
+    // `scope`/`type`/`version` are not top-level fields (scope is
+    // dir-stamped; the rest live under metadata.nimblebrain). The strict schema
     // rejects them, so such a file is skipped, not crashed.
     const dir = join(root, "stamp-precedence");
     mkdirSync(dir, { recursive: true });

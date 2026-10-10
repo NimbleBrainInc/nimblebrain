@@ -15,8 +15,8 @@
  *     malformed call can't widen it) that fails closed on a line with no
  *     `userId`.
  *   - `scope: "org"` — every user's spend, attributed by owner. Gated to org
- *     admin/owner via `ORG_ADMIN_ROLES`, matching the
- *     `instructions__write_instructions` / `manage_users` precedent.
+ *     admin via `ORG_ADMIN_ROLES`, matching the
+ *     `manage_users` precedent.
  */
 
 import { textContent } from "../../engine/content-helpers.ts";
@@ -51,7 +51,7 @@ interface UsageReportArgs {
 const USAGE_REPORT_DESCRIPTION =
   "Get aggregated usage (tokens, cost, LLM calls) recorded at the point of spend. " +
   'Defaults to `scope: "user"` — only your own spend. ' +
-  '`scope: "org"` reports every user\'s usage and requires org admin/owner; ' +
+  '`scope: "org"` reports every user\'s usage and requires org admin; ' +
   'pair it with `groupBy: "user"` for a per-user breakdown. ' +
   "`workspaceId`, `userId`, `model`, and `origin` narrow the calls counted.";
 
@@ -76,7 +76,7 @@ function resolveScope(
 
   if (requestedScope === "org") {
     if (!ORG_ADMIN_ROLES.has(identity.orgRole)) {
-      return { error: "Org-scope usage requires org admin or owner." };
+      return { error: "Org-scope usage requires org admin." };
     }
     return { scope: "org", ownerFilter: undefined };
   }

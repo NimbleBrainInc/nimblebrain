@@ -164,6 +164,15 @@ export interface Task {
   /** ISO timestamp of next scheduled run. */
   nextRunAt?: string;
 
+  /**
+   * The scheduled run in flight, written before the executor is called and
+   * cleared by the write that records the run and advances `nextRunAt`. Found
+   * at start, it names a run the process stopped under: the scheduler records
+   * it and moves to the next occurrence rather than running it again, since
+   * the run may already have done part of its work.
+   */
+  scheduledRunInFlight?: ScheduledRunInFlight;
+
   /** Total completed runs. */
   runCount: number;
 
@@ -448,6 +457,14 @@ export function onceRetirement(task: Pick<Task, "schedule" | "onceDone">): "ran"
   return task.onceDone?.outcome ?? null;
 }
 
+/** A scheduled run that has started and not yet been recorded ({@link Task.scheduledRunInFlight}). */
+export interface ScheduledRunInFlight {
+  runId: string;
+  startedAt: string;
+  /** The once occurrence the run is (`schedule.at` at dispatch), so settling it retires only that one. */
+  onceAt?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Task Run
 // ---------------------------------------------------------------------------
@@ -581,7 +598,7 @@ export interface RunFileRef {
 /**
  * The full result of a task run — what the run *produced*, persisted
  * once per run as a sidecar to the lightweight {@link TaskRun} summary.
- * A task run is no longer a conversation: instead of a chat trace, it
+ * A task run is not a conversation: instead of a chat trace, it
  * leaves a deliverable (the final output), the activity log of what it did,
  * and references to any files it wrote (in the workspace file store).
  */
@@ -604,6 +621,8 @@ export interface TaskRunResult {
    * whether it did (`TaskRun.outputSchemaValid`).
    */
   structured?: unknown;
+  /** Why the run failed or did not start, as its record says. */
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -633,6 +652,7 @@ export type CreateTaskInput = Omit<
   | "lastRunAt"
   | "lastRunStatus"
   | "nextRunAt"
+  | "scheduledRunInFlight"
   | "disabledAt"
   | "disabledReason"
   | "cumulativeInputTokens"

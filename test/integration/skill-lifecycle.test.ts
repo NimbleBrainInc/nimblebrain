@@ -179,13 +179,12 @@ describe("skill lifecycle (end-to-end)", () => {
   });
 
   it("skills__update on a bare/garbage id returns the unrecognized-id error, not the connector error", async () => {
-    // Regression: scopeOfPath used to fall through to "provided" for any
-    // path that didn't sit under workspaces/users/skills. That meant
-    // passing a bare name like "dl-production-memory" got back the
-    // misleading "Connector (Layer 1) skills are vendored" error, which
-    // pointed agents at the wrong fix path. After the fix, scopeOfPath
-    // returns null for unclassified inputs and the handler errors with
-    // a clear message describing the real input contract.
+    // scopeOfPath returns null for a path that doesn't sit under
+    // workspaces/users/skills, and the handler errors with a clear message
+    // describing the real input contract. Falling through to "provided"
+    // would answer a bare name like "dl-production-memory" with the
+    // misleading "Connector (Layer 1) skills are vendored" error, pointing
+    // agents at the wrong fix path.
     const workDir = join(testDir, "garbage-id");
     const { model } = createCapturingModel();
     const runtime = await Runtime.start({
@@ -213,10 +212,9 @@ describe("skill lifecycle (end-to-end)", () => {
   });
 
   it("skills__list textContent includes per-skill rows with ids", async () => {
-    // Regression: summarizeList used to emit only counts ("12 skills
-    // (12 org)"). Agents couldn't enumerate ids from text and were
-    // forced to guess paths. textContent now includes one row per
-    // skill so an LLM consumer can copy ids directly.
+    // textContent includes one row per skill so an LLM consumer can copy
+    // ids directly. With only counts ("12 skills (12 org)") agents cannot
+    // enumerate ids from text and are forced to guess paths.
     const workDir = join(testDir, "list-rows");
     const { model } = createCapturingModel();
     const runtime = await Runtime.start({

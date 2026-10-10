@@ -1,6 +1,6 @@
 ---
 title: The MCP Endpoint
-description: Reference for NimbleBrain's public programmatic surface — the per-workspace /mcp/<workspaceId> Streamable HTTP MCP endpoint, its session lifecycle, OAuth discovery, and the token audience rule.
+description: Reference for NimbleBrain's public programmatic surface — the per-workspace /mcp/<workspaceId> Streamable HTTP MCP endpoint, its protocol revision, OAuth discovery, and the token audience rule.
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
@@ -18,18 +18,17 @@ For end-user client setup walkthroughs, see [Connecting External Clients](/conne
 | | |
 |---|---|
 | **URL** | `<origin>/mcp/<workspaceId>` — for example `https://nb.example.com/mcp/ws_0123456789abcdef` |
-| **Methods** | `POST`, `DELETE` (`GET` returns `405`) |
-| **Protocol** | [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports) (MCP transport), revision `2026-07-28` and the 2025 revisions — see [Protocol versions](#protocol-versions) |
+| **Methods** | `POST` (`GET` and `DELETE` return `405`) |
+| **Protocol** | [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports) (MCP transport), revision `2026-07-28` only — see [Protocol versions](#protocol-versions) |
 | **Auth** | OAuth 2.0 bearer token bound to this URL (RFC 8707), discovered via RFC 9728 |
 | **Scope** | One workspace — the one in the URL — plus your identity tools |
 
 Every member sees the workspace's URL under **Workspace settings → MCP**, with a copy button. `<origin>` is the instance's configured public origin (its custom domain, when it has one), not whichever host you happen to reach it on.
 
-The methods, on each [protocol era](#protocol-versions):
+The methods:
 
-- **POST** — every JSON-RPC message. A 2025-era client opens a session with `initialize` and sends the rest of its messages in it. A `2026-07-28` client sends each request on its own.
-- **DELETE** — terminate a 2025-era session (with a valid `Mcp-Session-Id`). A `2026-07-28` client has no session to end.
-- **GET** — returns `405 Method Not Allowed` with `Allow: POST, DELETE` on either era. NimbleBrain does not offer the optional GET-style server-to-client SSE channel; progress flows over the POST that started the call. Spec-compliant clients fall back to POST-only automatically.
+- **POST** — every JSON-RPC message, each request on its own under the `2026-07-28` `_meta` envelope (see [Protocol versions](#protocol-versions)).
+- **GET**, **DELETE** — return `405 Method Not Allowed`. There is no session to end, and NimbleBrain does not offer the optional GET-style server-to-client SSE channel; progress flows over the POST that started the call.
 
 <Aside type="caution" title="Bare /mcp is refused">
 `/mcp` with no workspace is not an endpoint. It answers `404` with a JSON-RPC error naming the URL shape to use, and no workspace is ever chosen for you. A client configured with the bare URL must be reconfigured with its workspace's URL.
@@ -120,54 +119,29 @@ The authorization server honours a client's `resource` only for URLs it has been
 
 ## Protocol versions
 
-The endpoint serves both protocol eras on the same URL, and they are equivalent but for tasks: a client on `2026-07-28` can do everything a 2025-era client can, and run long-running tools as tasks. A request's own shape decides which era serves it:
+The endpoint speaks MCP `2026-07-28` and nothing earlier. Every request carries its protocol version, client info and client capabilities in its own `params._meta` envelope, and is authenticated, membership-checked and answered on its own: there is no `initialize`, no `Mcp-Session-Id` and no server-side session, so any process can answer any request. A client probes with `server/discover`, which answers the server's capabilities.
 
-| A client that… | Is served |
-|---|---|
-| Negotiates `2026-07-28` (its requests carry the per-request `_meta` envelope; it probes with `server/discover`) | Per request, with no session: each request is authenticated, membership-checked and answered on its own. `server/discover` answers the server's capabilities. |
-| Opens with the 2025 `initialize` handshake (`2025-11-25` or an earlier revision) | In a session, as below. |
-
-The tools, resources, workspace wall and error shapes are the same on both; a `resources/read` whose URI resolves nowhere answers `-32602` on either. On 2025, a tool whose `outputSchema` root is not an object is listed with that schema wrapped as the `result` property of an object schema, and its `structuredContent` is wrapped to match. Neither era advertises `listChanged` or `resources.subscribe`, so a `2026-07-28` client has nothing to open a `subscriptions/listen` stream for.
-
-Long-running tools run as tasks on `2026-07-28` only, through the MCP tasks extension. The 2025-11-25 tasks utility is not served:
-
-| Era | Tasks |
-|---|---|
-| 2025 | None. The session declares no `tasks` capability, every `tools/call` runs to completion and answers its result (a `params.task` on it is ignored), and `tasks/get`, `tasks/result`, `tasks/cancel` answer `-32601`. A call that outlasts a timeout between you and the endpoint fails the way any long request does. |
-| `2026-07-28` | The tasks extension (`io.modelcontextprotocol/tasks`), advertised in `server/discover`. A `tools/call` that names the extension in its request's client capabilities is answered with a task (`resultType: "task"`) when the tool can run as one. Poll with `tasks/get`, which inlines the result once the task ends, and cancel with `tasks/cancel`. Each poll is a request on its own, with the task id as its `Mcp-Name` header. |
-
-A task is reachable only by the identity that started it, at the workspace URL it was started at; any other poll is answered `-32602`, the same as a task that does not exist.
-
-## Sessions
-
-Sessions are a 2025-era mechanism; a `2026-07-28` client has none. Each `initialize` creates a new MCP session tracked server-side and addressed by the `Mcp-Session-Id` response header. Include that header on every subsequent request in the session.
-
-A session is bound to the identity that opened it **and** the workspace whose URL it was opened at. Presenting its id under another workspace's URL, or as another identity, is answered exactly like an unknown session id — the response does not reveal that the session exists.
-
-Sessions are closed on `DELETE /mcp/<workspaceId>` (with a valid `Mcp-Session-Id`), transport close, idle-TTL eviction, or server shutdown.
-
-### Session-miss reasons
-
-When the server can't serve a request because the session isn't available, the `404` response includes `error.data.reason`:
+A request without the envelope, including a 2025-era `initialize`, is refused with HTTP `400` and JSON-RPC error `-32022` (unsupported protocol version). `error.data.supported` names the revision served, and `error.data.requested` echoes the version the request named, when it named one. An `initialize` offering `2025-11-25` is answered:
 
 ```json
 {
   "jsonrpc": "2.0",
+  "id": 1,
   "error": {
-    "code": -32000,
-    "message": "Session not found",
-    "data": { "reason": "not_found" }
-  },
-  "id": null
+    "code": -32022,
+    "message": "Unsupported protocol version: 2025-11-25",
+    "data": { "supported": ["2026-07-28"], "requested": "2025-11-25" }
+  }
 }
 ```
 
-| Reason | Meaning |
-|--------|---------|
-| `not_found` | The session registry has no record for this caller at this URL. Most often idle-TTL eviction, the session never existed, or it belongs to someone or somewhere else. |
-| `unavailable` | The session exists in the registry for this caller, but the live transport isn't on this process. Possible causes: process restart since `initialize`, or a sticky-routing miss. |
+A client that only speaks a 2025 revision must be upgraded to connect. The runtime logs each refused client's `User-Agent` once per process (`[mcp] refused a pre-2026-07-28 client userAgent=…`), so the clients that need upgrading show in the logs.
 
-Spec-compliant clients re-initialize on either reason.
+The endpoint advertises neither `listChanged` nor `resources.subscribe`, so a client has nothing to open a `subscriptions/listen` stream for; a `resources/read` whose URI resolves nowhere answers `-32602`.
+
+Long-running tools run as tasks through the MCP tasks extension (`io.modelcontextprotocol/tasks`), advertised in `server/discover`. A `tools/call` that names the extension in its request's client capabilities is answered with a task (`resultType: "task"`) when the tool can run as one. Poll with `tasks/get`, which inlines the result once the task ends, and cancel with `tasks/cancel`. Each poll is a request on its own, with the task id as its `Mcp-Name` header. The 2025-11-25 tasks utility is not served.
+
+A task is reachable only by the identity that started it, at the workspace URL it was started at; any other poll is answered `-32602`, the same as a task that does not exist.
 
 ## What's exposed
 
@@ -175,44 +149,65 @@ For the workspace in the URL, the endpoint exposes:
 
 - **Workspace tools** — `<source>__<tool>`, from the connectors installed and running in that workspace. The workspace is not in the name: it is the one in the URL.
 - **Identity tools** — your conversations, files, and tasks (bare `<source>__<tool>`), over that workspace's data.
+- **Instructions** — `server/discover` answers the platform's own instructions, then each connector's, under its source name, so a client's model learns how the workspace's tools are meant to be used.
+- **Skills** — the skills the workspace's connectors serve, through the MCP Skills extension (`skills/list`, `skills/get`, and `resources/read` for each file).
 - **Tool execution** — `tools/call` runs a tool in that workspace or an identity tool. A name cannot address a **different** workspace; the retired `ws_<id>-` form is refused with `-32602 invalid_tool_name`. A bare name resolves against that workspace's sources; your personal connectors are reachable only under their `my_`-marked names. A bare name naming neither is refused with `-32602 unknown_tool_source`.
 
 Two filters apply to both `tools/list` and `tools/call`:
 
 - **Feature flags** — tools whose controlling flag is `false` are excluded (for example, the `skills__*` authoring tools when `skillManagement` is `false`). See [Feature Flags](/config/features).
 - **App-only tools** — tools whose visibility is `["app"]` (org administration such as `nb__manage_users` and `nb__manage_workspaces`, and model configuration) are excluded, and a `tools/call` naming one is refused unless an app view inside NimbleBrain makes it.
-- **Role** — a tool limited to org admins is excluded when the caller's role is not admin or owner.
+- **Role** — a tool limited to org admins is excluded when the caller's role is not admin.
 
 ## Testing manually
 
 With the `dev` adapter, you can hit the endpoint with curl. Take a workspace id from **Workspace settings → MCP**:
 
-```bash
-# Initialize a session
-curl -i -X POST http://localhost:27247/mcp/<workspaceId> \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": {
-      "protocolVersion": "2025-03-26",
-      "capabilities": {},
-      "clientInfo": { "name": "curl", "version": "1.0" }
-    }
-  }'
-```
-
-Extract the `Mcp-Session-Id` response header and use it on subsequent calls:
+Every request carries the `_meta` envelope in its params and the `MCP-Protocol-Version` and `Mcp-Method` headers. Discover the server's capabilities:
 
 ```bash
 curl -X POST http://localhost:27247/mcp/<workspaceId> \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -H "Mcp-Session-Id: <session-id>" \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":2}'
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: server/discover" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "server/discover",
+    "params": {
+      "_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": { "name": "curl", "version": "1.0" },
+        "io.modelcontextprotocol/clientCapabilities": {}
+      }
+    }
+  }'
 ```
+
+Then list the tools. Each request stands alone, so it carries the same envelope:
+
+```bash
+curl -X POST http://localhost:27247/mcp/<workspaceId> \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: tools/list" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/list",
+    "params": {
+      "_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": { "name": "curl", "version": "1.0" },
+        "io.modelcontextprotocol/clientCapabilities": {}
+      }
+    }
+  }'
+```
+
+A `tools/call` also sends the tool's name as the `Mcp-Name` header (for example `-H "Mcp-Name: <source>__<tool>"`), matching `params.name`.
 
 With auth enabled, include `Authorization: Bearer <jwt>` on every request.
 

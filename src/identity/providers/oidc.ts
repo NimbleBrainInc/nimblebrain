@@ -44,6 +44,7 @@ interface JwtPayload {
   exp?: number;
   sub?: string;
   email?: string;
+  email_verified?: unknown;
   name?: string;
   given_name?: string;
   family_name?: string;
@@ -113,13 +114,24 @@ function buildDisplayName(payload: JwtPayload): string {
   return payload.email ?? payload.sub ?? "Unknown";
 }
 
+/** The id prefix of a record auto-provisioned at sign-in; such an id already names its subject. */
+const OIDC_USER_ID_PREFIX = "usr_oidc_";
+
 async function oidcUserId(sub: string): Promise<string> {
   const data = new TextEncoder().encode(sub);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashHex = Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-  return `usr_oidc_${hashHex.slice(0, 12)}`;
+  return `${OIDC_USER_ID_PREFIX}${hashHex.slice(0, 12)}`;
+}
+
+/**
+ * The key a record is bound by. A subject is unique only within its issuer,
+ * and an issuer URL has no fragment, so `#` separates the two unambiguously.
+ */
+function subjectKey(issuer: string, sub: string): string {
+  return `${issuer}#${sub}`;
 }
 
 // ── OidcIdentityProvider ─────────────────────────────────────────
@@ -129,6 +141,11 @@ async function oidcUserId(sub: string): Promise<string> {
  *
  * Verifies Bearer token JWTs against a configurable JWKS endpoint.
  * Auto-provisions users into the local UserStore on first valid login.
+ *
+ * A token is accepted only when its `email_verified` claim is `true`. The
+ * email decides `allowedDomains` admission, which record a first sign-in
+ * claims, and what a new record is created with, so an email the provider
+ * has not verified is a claim anyone could make. A missing claim is unverified.
  * No auth code flow — providers that need redirect login (WorkOS, Clerk)
  * bring their own SDK and implement it in their own provider.
  */
@@ -139,6 +156,9 @@ export class OidcIdentityProvider implements IdentityProvider {
     managedUsers: false,
     // Verifies tokens minted elsewhere; this runtime is not the issuer.
     authorizationServer: false,
+    // Sign-in falls back to finding a user by email (below), so an editable
+    // email would let an admin point someone else's sign-in at a record.
+    providerOwnedUserFields: ["email"],
   };
 
   private issuer: string;
@@ -195,29 +215,87 @@ export class OidcIdentityProvider implements IdentityProvider {
     const verified = await this.verifySignature(header, signatureInput, signature, keys);
     if (!verified) return null;
 
+    // Checked after the signature, so only the provider's own tokens are logged.
+    if (payload.email_verified !== true) {
+      log.warn("[oidc] sign-in refused: the token's email is not verified", {
+        issuer: this.issuer,
+        emailVerified: payload.email_verified === undefined ? "missing" : "not true",
+      });
+      return null;
+    }
+
     const email = payload.email!;
     const sub = payload.sub ?? email;
-    const deterministicId = await oidcUserId(sub);
-
-    let user = await this.userStore.get(deterministicId);
-    if (!user) {
-      user = await this.userStore.getByEmail(email);
-    }
-
-    if (!user) {
-      user = await this.userStore.create({
-        id: deterministicId,
-        email,
-        displayName: buildDisplayName(payload),
-        orgRole: "member",
-      });
-    }
+    const user = await this.resolveUser(sub, email, payload);
+    if (!user) return null;
 
     // SECURITY: soft-deleted (deactivated) users are denied access. The record
     // is retained as a tombstone; access resumes only after an admin restores it.
     if (user.deletedAt) return null;
 
     return { ...toIdentity(user), grant: FIRST_PARTY_GRANT };
+  }
+
+  /**
+   * Find, bind, or create the record for a verified `iss`+`sub`.
+   *
+   * A record's `identity` holds the subject it is bound to. The subject is the
+   * account; an email is only how a pre-created record (random id, subject not
+   * yet known) is claimed the first time. So the order is:
+   *
+   * 1. the subject-derived id (users auto-provisioned at first sign-in);
+   * 2. a record bound to this subject;
+   * 3. the email, only on a pre-created record (no subject bound, and an id that
+   *    does not derive from a subject), which then binds;
+   * 4. otherwise a new record, bound at creation.
+   *
+   * A record bound to another subject, or auto-provisioned for one (its id
+   * derives from that subject), is never claimed by email: the provider has
+   * given that email to someone else, so the sign-in is refused rather than
+   * handing them the record or creating a second one for the same email.
+   */
+  private async resolveUser(sub: string, email: string, payload: JwtPayload): Promise<User | null> {
+    const subject = subjectKey(this.issuer, sub);
+    const deterministicId = await oidcUserId(sub);
+
+    const byId = await this.userStore.get(deterministicId);
+    if (byId) return this.claim(byId, subject);
+
+    const users = await this.userStore.list();
+    const bound = users.find((u) => u.identity === subject);
+    if (bound) return bound;
+
+    const byEmail = users.find((u) => u.email === email);
+    if (byEmail?.id.startsWith(OIDC_USER_ID_PREFIX)) {
+      log.warn("[oidc] sign-in refused: the matching user was provisioned for another subject", {
+        userId: byEmail.id,
+        issuer: this.issuer,
+      });
+      return null;
+    }
+    if (byEmail) return this.claim(byEmail, subject);
+
+    return this.userStore.create({
+      id: deterministicId,
+      email,
+      displayName: buildDisplayName(payload),
+      orgRole: "member",
+      identity: subject,
+    });
+  }
+
+  /** Bind `user` to `subject` if it has none; refuse it if bound to another. */
+  private async claim(user: User, subject: string): Promise<User | null> {
+    if (user.identity === subject) return user;
+    if (user.identity) {
+      log.warn("[oidc] sign-in refused: the matching user is bound to another subject", {
+        userId: user.id,
+        issuer: this.issuer,
+      });
+      return null;
+    }
+    if (user.deletedAt) return user;
+    return (await this.userStore.update(user.id, { identity: subject })) ?? user;
   }
 
   async listUsers(): Promise<User[]> {

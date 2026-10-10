@@ -9,7 +9,7 @@ import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { type ServerHandle, startServer } from "../../../src/api/server.ts";
 import { textContent } from "../../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
@@ -18,6 +18,7 @@ import { SharedSourceRef } from "../../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { newMcpClient } from "../../helpers/mcp-client.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 // ── Fake tool sources ───────────────────────────────────────────────
@@ -92,8 +93,8 @@ beforeAll(async () => {
     },
   ]);
 
-  // Sources are no longer registered on a global registry.
-  // They'll be added to the workspace registry below.
+  // Sources are registered on the workspace registry, not a global one.
+  // They'll be added below.
   const wsRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 
   // Protected source is shared via SharedSourceRef
@@ -124,7 +125,7 @@ async function createMcpClient(headers?: Record<string, string>): Promise<Client
     new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
     { requestInit: { headers: { ...headers } } },
   );
-  const client = new Client({ name: "ws-scope-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "ws-scope-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }
@@ -183,7 +184,7 @@ describe("MCP workspace scoping", () => {
   it("CallTool to non-workspace connector returns a JSON-RPC error (unknown_tool_source)", async () => {
     const client = await createMcpClient();
     try {
-      // Stage 2: a source not in the target workspace's registry
+      // A source not in the target workspace's registry
       // surfaces as the orchestrator's `UnknownToolSource` →
       // -32601 MethodNotFound with `data.reason: "unknown_tool_source"`.
       let errorCode: number | undefined;

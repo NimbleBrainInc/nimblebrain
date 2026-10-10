@@ -227,7 +227,7 @@ export function WorkspaceDetailPage() {
   const memberUserIds = new Set(members.map((m) => m.userId));
   const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id));
 
-  // Same rule as the server's `canManageWorkspaceMembers`: an org admin/owner,
+  // Same rule as the server's `canManageWorkspaceMembers`: an org admin,
   // or an admin member of this workspace. A gate that disagrees with the server
   // renders controls it refuses, and `handleAdd` doesn't inspect the result,
   // so the refusal would be silent (#749). This page addresses a workspace by
@@ -364,14 +364,6 @@ export function WorkspaceDetailPage() {
         />
       </Section>
 
-      {/*
-        Workspace Instructions are intentionally NOT shown here. The
-        instructions resource and write tool resolve the target workspace
-        from the request context (active workspace), so editing here
-        would silently affect the *active* workspace, not the slug-targeted
-        one. To edit a workspace's instructions, switch into it with the
-        sidebar's workspace switcher and open its settings → General.
-      */}
       <Section title="Installed connectors" icon={<Package className="h-4 w-4" />}>
         <ConnectorsList connectors={workspace?.connectors} />
       </Section>

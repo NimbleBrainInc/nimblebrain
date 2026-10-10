@@ -22,19 +22,11 @@ import {
   HOOK_BUCKET_WINDOW_MS,
   HOOK_WORKSPACE_BUCKET_MAX,
 } from "./routes/hooks.ts";
-import { InMemorySessionRegistry, type SessionRegistry } from "./session-store/index.ts";
 import type { AppContext } from "./types.ts";
 
 export interface ServerOptions {
   runtime: Runtime;
   port?: number;
-  /**
-   * Pluggable cluster-shared session metadata store. When omitted, a process-
-   * local in-memory registry is constructed with the runtime's configured TTL
-   * — equivalent to legacy single-pod behavior. Multi-replica deploys must
-   * pass a Redis-backed registry built via `createSessionRegistry`.
-   */
-  sessionRegistry?: SessionRegistry;
 }
 
 export interface ServerHandle {
@@ -187,22 +179,7 @@ export function startServer(options: ServerOptions): ServerHandle {
     sseManager.emit(event);
   };
 
-  // Construct the per-pod MCP host. The transport map lives here; the
-  // session-metadata registry is either supplied by the caller (production
-  // bootstrap building a Redis registry from config) or defaulted to an
-  // in-memory store using the runtime's configured TTL.
-  const sessionTtlMs = runtime.getSessionStoreTtlMs();
-  const sessionRegistry: SessionRegistry =
-    options.sessionRegistry ?? new InMemorySessionRegistry({ ttlMs: sessionTtlMs });
-  // The host's idle-eviction TTL mirrors the registry's TTL: both layers
-  // reclaim the same logical session on the same schedule, with the host's
-  // sweep being what actually frees the JS heap. The registry TTL is a
-  // backstop on the metadata layer for the cluster-shared view.
-  const mcpHost = new McpServerHost({
-    registry: sessionRegistry,
-    runtime,
-    idleTtlMs: sessionTtlMs,
-  });
+  const mcpHost = new McpServerHost(runtime);
 
   // Build shared context for all route groups
   const ctx: AppContext = {
@@ -228,7 +205,7 @@ export function startServer(options: ServerOptions): ServerHandle {
     // Post-login landing — a user-facing browser destination, so it uses
     // webOrigin() like the connectors return (one rule: browser-facing →
     // webOrigin, vendor-facing → publicOrigin). Identical to publicOrigin() in
-    // prod; decoupled from the CORS allowlist (no longer ALLOWED_ORIGINS[0]).
+    // prod; decoupled from the CORS allowlist (not ALLOWED_ORIGINS[0]).
     appOrigin: webOrigin(),
     mcpHost,
   };
@@ -259,7 +236,6 @@ export function startServer(options: ServerOptions): ServerHandle {
       conversationEventManager.stop();
       healthMonitor.stop();
       connectionRevalidator.stop();
-      mcpHost.shutdown().catch(() => {});
       server.stop(closeConnections);
     },
   };

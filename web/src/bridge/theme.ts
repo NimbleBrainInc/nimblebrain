@@ -1,22 +1,37 @@
 /**
- * Theme token map — the ext-apps projection of the canonical palette, plus the
- * bridge theme protocol helpers.
+ * Theme token map — the ext-apps projection of the palette, plus the bridge
+ * theme protocol helpers.
  *
  * Values are NOT defined here. They derive from `web/src/theme/palette.ts` via
  * `paletteToExtAppsTokens` so the shell (`index.css`) and the iframe-injected
  * tokens share one source of truth. Tokens follow the MCP ext-apps spec
  * (2026-01-26) where a standard equivalent exists; NimbleBrain-specific
  * extension tokens use the `--nb-` prefix.
+ *
+ * The palette is the canonical one until the browser entry installs a tenant's
+ * brand with {@link setThemePalette}. An iframe reads the tokens when it
+ * mounts, so a brand applied after boot reaches the next app mounted, not one
+ * already running.
  */
 
-import { paletteToExtAppsTokens } from "../theme/projections.ts";
+import type { Palette } from "../theme/brand.ts";
+import { canonicalPalette, paletteToExtAppsTokens } from "../theme/projections.ts";
 
 export type ThemeMode = "light" | "dark";
 export type ThemeTokens = Record<string, string>;
 
-export const LIGHT_TOKENS: ThemeTokens = paletteToExtAppsTokens("light");
+export let LIGHT_TOKENS: ThemeTokens = paletteToExtAppsTokens("light");
 
-export const DARK_TOKENS: ThemeTokens = paletteToExtAppsTokens("dark");
+export let DARK_TOKENS: ThemeTokens = paletteToExtAppsTokens("dark");
+
+/**
+ * Project `palette` into the iframe token maps. Called by the brand boot with
+ * the merged palette; called with no argument, restores the canonical tokens.
+ */
+export function setThemePalette(palette: Palette = canonicalPalette): void {
+  LIGHT_TOKENS = paletteToExtAppsTokens("light", palette);
+  DARK_TOKENS = paletteToExtAppsTokens("dark", palette);
+}
 
 export function getThemeTokens(mode: ThemeMode): ThemeTokens {
   return mode === "dark" ? DARK_TOKENS : LIGHT_TOKENS;
@@ -27,19 +42,17 @@ export function getThemeTokens(mode: ThemeMode): ThemeTokens {
  * field accepts. Mirrors `McpUiStyleVariableKey` from
  * `@modelcontextprotocol/ext-apps` (spec 2026-01-26). Strict clients like
  * Reboot's `@reboot-dev/reboot-react` (via ext-apps SDK) validate against this
- * set and reject unknown keys, so anything the host sends must be in here.
+ * set and reject unknown keys, so anything the host sends there must be in here.
  *
- * Everything the host injects that is *not* in this set — the `--nb-*`
- * extensions, plus NimbleBrain's own additions to spec-shaped families
- * (`--color-text-accent`, and the `3xs`/`2xs`/`base` steps of the type scale) —
- * still reaches the iframe's inline `<style>` block via `buildThemeStyleBlock`.
- * It just doesn't cross the protocol boundary. Iframe content that needs those
- * uses them as local CSS vars. Stated as the rule rather than a list: an
+ * Everything the host emits that is *not* in this set (the `--nb-*`
+ * extensions, plus NimbleBrain's own additions to spec-shaped families:
+ * `--color-text-accent`, and the `3xs`/`2xs`/`base` steps of the type scale)
+ * never crosses `styles.variables`. Where it goes depends on whether it varies
+ * with the mode: see {@link getModeExtensionTokens} and
+ * {@link buildThemeStyleBlock}. Stated as the rule rather than a list: an
  * enumeration here silently mis-classifies the next token added.
  *
- * If the spec's variable enum grows, add entries here. TypeScript catches the
- * need via the `satisfies` check below — any key absent from
- * `McpUiStyleVariableKey` becomes a compile error.
+ * If the spec's variable enum grows, add entries here.
  */
 const SPEC_ALLOWED_KEYS = new Set<string>([
   "--color-background-primary",
@@ -134,17 +147,56 @@ export function getSpecThemeTokens(mode: ThemeMode): ThemeTokens {
   return filtered;
 }
 
+/**
+ * The tokens outside the spec's enum whose value differs between light and
+ * dark: today `--color-text-accent` and the processing pair.
+ *
+ * A token that varies with the mode has to travel on a channel the host can
+ * update when the mode changes. The srcdoc style block is written once, at
+ * mount, and an iframe stays mounted across a theme toggle, so these go out as
+ * the `ai.nimblebrain/styles` host-context extension instead
+ * (`HOST_STYLES_EXTENSION`), on `ui/initialize` and on every
+ * `host-context-changed`, where `@nimblebrain/synapse` applies them inline like
+ * the spec's variables.
+ *
+ * Derived by comparing the two modes rather than listed, so a token added to
+ * the palette lands on the right channel without an edit here.
+ */
+export function getModeExtensionTokens(mode: ThemeMode): ThemeTokens {
+  const out: ThemeTokens = {};
+  for (const [key, value] of Object.entries(getThemeTokens(mode))) {
+    if (!SPEC_ALLOWED_KEYS.has(key) && LIGHT_TOKENS[key] !== DARK_TOKENS[key]) out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * The `<style>` block written into the app document's `<head>` at mount.
+ *
+ * It holds every token except the ones {@link getModeExtensionTokens} carries.
+ * It is unlayered, so it outranks an SDK's `@layer` defaults, and only an
+ * inline value beats it. A spec key here is a first-paint seed that any spec
+ * client overwrites inline from `styles.variables` on every theme change. A
+ * mode-varying non-spec key would be overwritten only by a client that reads
+ * the extension; in every other client it would stay at the mount's mode for
+ * the life of the frame, so it is left out, and such a client renders its own
+ * default instead. What remains outside the spec is mode-independent (the
+ * extra type-scale steps, `--nb-font-heading`), so it cannot go stale.
+ */
 export function buildThemeStyleBlock(mode: ThemeMode): string {
-  const tokens = getThemeTokens(mode);
-  const declarations = Object.entries(tokens)
+  const modeExtension = getModeExtensionTokens(mode);
+  const declarations = Object.entries(getThemeTokens(mode))
+    .filter(([key]) => !(key in modeExtension))
     .map(([key, value]) => `  ${key}: ${value};`)
     .join("\n");
 
   // `color-scheme` is what the browser draws its own parts with: scrollbars, form
   // controls, the canvas behind a transparent body. Without it an app in dark mode
-  // gets a dark page with light scrollbars. It is set here, at parse time, because
-  // the document has to start in the host's mode; a later mode change is the app
-  // SDK's to follow, as it is for the variables.
+  // gets a dark page with light scrollbars. Here it is only the first-paint seed:
+  // the frame is sandboxed, so the host cannot update it after a toggle.
+  // `@nimblebrain/synapse` keeps it current, setting it inline from
+  // `hostContext.theme` at the handshake and on every `host-context-changed`. An
+  // app on another client keeps the mount's mode for these parts.
   return `<style>
 :root {
   color-scheme: ${mode};

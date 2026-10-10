@@ -172,7 +172,7 @@ export function parseSkillFile(path: string, opts?: { cap?: boolean }): Skill | 
 
 /**
  * Read the file's mtime as ISO 8601. Returns the empty string if the file
- * cannot be statted (in-memory or non-existent paths). Used by Phase 2
+ * cannot be statted (in-memory or non-existent paths). Used by
  * `skills.loaded` events as a cheap version stamp.
  */
 export function readSkillMtime(path: string): string {
@@ -259,7 +259,7 @@ export function parseSkillParts(
           ? ` (${capped.sectionsOmitted} section${capped.sectionsOmitted === 1 ? "" : "s"} omitted)`
           : "";
       log.warn(
-        `[skill] body capped to ${MAX_SKILL_BODY_CHARS} chars${omitted} in ${sourcePath} — trim the skill or move depth into references/`,
+        `[skill] body capped to ${MAX_SKILL_BODY_CHARS} chars${omitted} in ${sourcePath} — fold its rules into existing sections, or split it into two skills`,
       );
     }
   }

@@ -28,11 +28,11 @@ export interface ConversationMeta {
   lastModel: string | null;
   /**
    * The model the conversation is bound to — the runtime stamps this on the
-   * line-1 header at create time and never mutates it. Absent on legacy files
-   * written before the binding. Distinct from `lastModel`, which is derived
-   * from events and describes what the last turn ran on.
+   * line-1 header at create time and never mutates it. Distinct from
+   * `lastModel`, which is derived from events and describes what the last turn
+   * ran on.
    */
-  model?: string;
+  model: string;
   ownerId?: string;
   /**
    * The workspace the conversation ran in — the breadcrumb the
@@ -120,8 +120,7 @@ interface LlmResponseEvent {
   runId: string;
   model: string;
   content: ContentPart[];
-  /** Absent on pre-unification legacy events. Reads must tolerate missing. */
-  usage?: UsageShape;
+  usage: UsageShape;
   llmMs: number;
 }
 
@@ -158,7 +157,7 @@ interface ToolDoneEvent {
   name: string;
   ok: boolean;
   ms: number;
-  output?: string;
+  output: string;
   resourceUri?: string;
   resourceLinks?: DisplayResourceLink[];
 }
@@ -243,6 +242,7 @@ function isRunError(e: { type: string }): e is RunErrorEvent {
 
 function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
   if (typeof raw.id !== "string" || typeof raw.createdAt !== "string") return null;
+  if (typeof raw.model !== "string" || raw.model.length === 0) return null;
   return {
     id: raw.id,
     createdAt: raw.createdAt,
@@ -252,7 +252,7 @@ function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
     totalOutputTokens: (raw.totalOutputTokens as number) ?? 0,
     totalCostUsd: (raw.totalCostUsd as number) ?? 0,
     lastModel: (raw.lastModel as string | null) ?? null,
-    ...(raw.model ? { model: raw.model as string } : {}),
+    model: raw.model,
     ...(raw.ownerId ? { ownerId: raw.ownerId as string } : {}),
     ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
   };
@@ -272,8 +272,8 @@ function accumulateEventMetrics(
 ): void {
   acc.lastEventTs = evt.ts;
   if (isLlmResponse(evt)) {
-    acc.totalInputTokens += evt.usage?.inputTokens ?? 0;
-    acc.totalOutputTokens += evt.usage?.outputTokens ?? 0;
+    acc.totalInputTokens += evt.usage.inputTokens;
+    acc.totalOutputTokens += evt.usage.outputTokens;
     acc.lastModel = evt.model;
   } else if (isAuxUsage(evt)) {
     // Forked fast-slot calls (compaction/title) emit no
@@ -434,30 +434,13 @@ interface RunScan {
   nextIndex: number;
 }
 
-/**
- * The skill's name from its id, for entries recorded before `name` was on the
- * event. Mirrors `src/skills/display-name.ts`; duplicated rather than imported
- * because this app is deployable independently of the runtime (see the file
- * header). Both id shapes put the name in the last path segment EXCEPT the
- * `skill://…/SKILL.md` entrypoint, where it is the directory holding it.
- *
- * Exported so `test/unit/skills/display-name-parity.test.ts` can hold this copy
- * and the other two to one answer.
- */
-export function skillNameFromId(id: string): string {
-  const segments = id.split("/").filter(Boolean);
-  const last = segments[segments.length - 1] ?? id;
-  if (/^SKILL\.md$/i.test(last) && segments.length >= 2) {
-    return segments[segments.length - 2] ?? last;
-  }
-  return last.replace(/\.md$/i, "");
-}
-
 /** One recorded entry → a display row, every field defaulted. */
-function projectSkill(s: NonNullable<SkillsLoadedEvent["skills"]>[number] & { id: string }) {
+function projectSkill(
+  s: NonNullable<SkillsLoadedEvent["skills"]>[number] & { id: string; name: string },
+) {
   return {
     id: s.id,
-    name: s.name || skillNameFromId(s.id),
+    name: s.name,
     ...(s.connector ? { connector: s.connector } : {}),
     scope: s.scope ?? "org",
     tokens: typeof s.tokens === "number" ? s.tokens : 0,
@@ -472,7 +455,10 @@ function projectSkill(s: NonNullable<SkillsLoadedEvent["skills"]>[number] & { id
  */
 function projectSkillsLoaded(evt: SkillsLoadedEvent): DisplaySkillsContext | undefined {
   const skills: DisplaySkill[] = (evt.skills ?? [])
-    .filter((s): s is { id: string } & NonNullable<typeof s> => typeof s?.id === "string")
+    .filter(
+      (s): s is { id: string; name: string } & NonNullable<typeof s> =>
+        typeof s?.id === "string" && typeof s.name === "string",
+    )
     .map(projectSkill);
   if (skills.length === 0) return undefined;
   const totalTokens =
@@ -611,7 +597,8 @@ function buildToolCall(
     ok,
     ms: done?.ms ?? 0,
     input,
-    result: wrapOutputAsResult(done?.output ?? "", !ok),
+    // No `tool.done` yet (still running, or cut short): nothing to show.
+    result: wrapOutputAsResult(done ? done.output : "", !ok),
     ...(done?.resourceUri ? { resourceUri: done.resourceUri } : {}),
     ...(done?.resourceLinks && done.resourceLinks.length > 0
       ? { resourceLinks: done.resourceLinks }
@@ -671,25 +658,24 @@ interface UsageAccumulator {
 }
 
 /**
- * Add one llm.response's usage into the accumulator. `usage` is optional on the
- * wire (absent on pre-unification legacy events), contributing zero when missing.
- * cacheWrite and reasoning are carried so fork() can round-trip them; the chat UI
- * doesn't render them per-message today.
+ * Add one llm.response's usage into the accumulator. cacheWrite and reasoning
+ * are carried so fork() can round-trip them; the chat UI doesn't render them
+ * per-message today.
  */
 function addLlmUsage(acc: UsageAccumulator, llm: LlmResponseEvent): void {
-  acc.inputTokens += llm.usage?.inputTokens ?? 0;
-  acc.outputTokens += llm.usage?.outputTokens ?? 0;
-  const llmCacheRead = llm.usage?.cacheReadTokens ?? 0;
+  acc.inputTokens += llm.usage.inputTokens;
+  acc.outputTokens += llm.usage.outputTokens;
+  const llmCacheRead = llm.usage.cacheReadTokens ?? 0;
   if (llmCacheRead > 0) {
     acc.hasCacheReads = true;
     acc.cacheReadTokens += llmCacheRead;
   }
-  const llmCacheWrite = llm.usage?.cacheWriteTokens ?? 0;
+  const llmCacheWrite = llm.usage.cacheWriteTokens ?? 0;
   if (llmCacheWrite > 0) {
     acc.hasCacheWrites = true;
     acc.cacheWriteTokens += llmCacheWrite;
   }
-  const llmReasoning = llm.usage?.reasoningTokens ?? 0;
+  const llmReasoning = llm.usage.reasoningTokens ?? 0;
   if (llmReasoning > 0) {
     acc.hasReasoning = true;
     acc.reasoningTokens += llmReasoning;

@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuthorizationServerMetadata } from "@modelcontextprotocol/server";
 import { signEnvelope, verifyEnvelopeAsTenant } from "../../src/oauth/envelope.ts";
-import { buildTenantAssertion } from "../../src/oauth/fleet-assertion.ts";
+import {
+  buildTenantAssertion,
+  fleetIssuerOption,
+  readFleetAuthorizer,
+} from "../../src/oauth/fleet-assertion.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import {
   installTestCredentialStore,
@@ -69,21 +73,20 @@ afterEach(() => setEnv(savedTid, savedKey));
 const s256 = (v: string) => createHash("sha256").update(v).digest("base64url");
 
 describe("buildTenantAssertion", () => {
-  it("returns null when the tenant id or key is not provisioned", () => {
+  it("throws when the tenant id or key is not provisioned", () => {
     setEnv(undefined, undefined);
-    expect(buildTenantAssertion({ inner: "chal" })).toBeNull();
+    expect(() => buildTenantAssertion({ inner: "chal" })).toThrow(/NB_TENANT_ID/);
     setEnv("tenant-x", undefined);
-    expect(buildTenantAssertion({ inner: "chal" })).toBeNull();
+    expect(() => buildTenantAssertion({ inner: "chal" })).toThrow(/NB_MCP_AUTHORIZER_TENANT_KEY/);
     setEnv(undefined, KEY_B64);
-    expect(buildTenantAssertion({ inner: "chal" })).toBeNull();
+    expect(() => buildTenantAssertion({ inner: "chal" })).toThrow(/NB_TENANT_ID/);
   });
 
   it("signs an assertion the tenant key verifies, carrying the bound inner", () => {
     setEnv("tenant-x", KEY_B64);
     const wire = buildTenantAssertion({ inner: "challenge-abc" });
-    expect(wire).not.toBeNull();
     const payload = verifyEnvelopeAsTenant({
-      wire: wire as string,
+      wire,
       tenantKey: KEY,
       expectedTid: "tenant-x",
     });
@@ -93,6 +96,91 @@ describe("buildTenantAssertion", () => {
   it("throws on a truncated key rather than minting a junk assertion", () => {
     setEnv("tenant-x", randomBytes(16).toString("base64"));
     expect(() => buildTenantAssertion({ inner: "chal" })).toThrow();
+  });
+});
+
+describe("readFleetAuthorizer", () => {
+  const env = (vars: Record<string, string>): NodeJS.ProcessEnv => ({ ...vars });
+
+  it("is null when no fleet issuer is set, whatever else is", () => {
+    expect(readFleetAuthorizer(env({}))).toBeNull();
+    expect(
+      readFleetAuthorizer(env({ NB_TENANT_ID: "tenant-x", NB_MCP_AUTHORIZER_TENANT_KEY: KEY_B64 })),
+    ).toBeNull();
+  });
+
+  it("returns the issuer, tenant id and key when all are provisioned", () => {
+    const fleet = readFleetAuthorizer(
+      env({
+        NB_FLEET_AUTHORIZER_ISSUER: FLEET_ISSUER,
+        NB_TENANT_ID: "tenant-x",
+        NB_MCP_AUTHORIZER_TENANT_KEY: KEY_B64,
+      }),
+    );
+    expect(fleet?.issuer).toBe(FLEET_ISSUER);
+    expect(fleet?.tid).toBe("tenant-x");
+    expect(fleet?.tenantKey.equals(KEY)).toBe(true);
+  });
+
+  it.each([
+    ["the key is missing", { NB_TENANT_ID: "tenant-x" }, /NB_MCP_AUTHORIZER_TENANT_KEY is not set/],
+    [
+      "the key is empty",
+      { NB_TENANT_ID: "tenant-x", NB_MCP_AUTHORIZER_TENANT_KEY: "" },
+      /is not set/,
+    ],
+    [
+      "the tenant id is missing",
+      { NB_MCP_AUTHORIZER_TENANT_KEY: KEY_B64 },
+      /NB_TENANT_ID is not set/,
+    ],
+    [
+      "the tenant id is not a DNS label",
+      { NB_TENANT_ID: "Tenant_X", NB_MCP_AUTHORIZER_TENANT_KEY: KEY_B64 },
+      /DNS-label grammar/,
+    ],
+    [
+      "the key is truncated",
+      {
+        NB_TENANT_ID: "tenant-x",
+        NB_MCP_AUTHORIZER_TENANT_KEY: randomBytes(16).toString("base64"),
+      },
+      /must decode to >= 32 bytes/,
+    ],
+    [
+      "the key is a placeholder",
+      {
+        NB_TENANT_ID: "tenant-x",
+        NB_MCP_AUTHORIZER_TENANT_KEY: Buffer.alloc(32).toString("base64"),
+      },
+      /placeholder pattern/,
+    ],
+  ])("refuses a fleet issuer when %s", (_case, vars, message) => {
+    expect(() =>
+      readFleetAuthorizer(env({ NB_FLEET_AUTHORIZER_ISSUER: FLEET_ISSUER, ...vars })),
+    ).toThrow(message);
+  });
+});
+
+describe("fleetIssuerOption", () => {
+  const savedIssuer = process.env.NB_FLEET_AUTHORIZER_ISSUER;
+  afterEach(() => {
+    if (savedIssuer === undefined) delete process.env.NB_FLEET_AUTHORIZER_ISSUER;
+    else process.env.NB_FLEET_AUTHORIZER_ISSUER = savedIssuer;
+  });
+
+  it("is empty with no fleet issuer, and carries the issuer when provisioned", () => {
+    delete process.env.NB_FLEET_AUTHORIZER_ISSUER;
+    expect(fleetIssuerOption()).toEqual({});
+    process.env.NB_FLEET_AUTHORIZER_ISSUER = FLEET_ISSUER;
+    setEnv("tenant-x", KEY_B64);
+    expect(fleetIssuerOption()).toEqual({ fleetAuthorizerIssuer: FLEET_ISSUER });
+  });
+
+  it("throws rather than building a provider that cannot assert its tenant", () => {
+    process.env.NB_FLEET_AUTHORIZER_ISSUER = FLEET_ISSUER;
+    setEnv("tenant-x", undefined);
+    expect(() => fleetIssuerOption()).toThrow(/NB_MCP_AUTHORIZER_TENANT_KEY/);
   });
 });
 
@@ -160,10 +248,16 @@ describe("WorkspaceOAuthProvider.addClientAuthentication", () => {
     expect(p.get("tenant_assertion")).toBeNull();
   });
 
-  it("no-ops gracefully when the tenant key is not provisioned (rollout phase 1)", async () => {
+  it("fails the fleet token request when the tenant key is not provisioned", async () => {
+    // The authorizer refuses an unasserted request, so sending one would only
+    // trade this cause for its generic invalid_grant.
     setEnv("tenant-x", undefined);
     const p = params();
-    await fleetHook(FLEET_ISSUER)(new Headers(), p, `${FLEET_ISSUER}/token`);
+    await expect(
+      Promise.resolve().then(() =>
+        fleetHook(FLEET_ISSUER)(new Headers(), p, `${FLEET_ISSUER}/token`),
+      ),
+    ).rejects.toThrow(/NB_MCP_AUTHORIZER_TENANT_KEY/);
     expect(p.get("tenant_assertion")).toBeNull();
   });
 });

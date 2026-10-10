@@ -4,15 +4,14 @@
 // `userRole` is load-bearing, and for two consumers, not one:
 //
 //   - `useScopedRole` — *reach*. Dropping it resolves any non-org-admin member
-//     to role="none" and filters their settings nav down to "About" only — a
-//     bug we shipped once and won't ship again.
+//     to role="none" and filters their settings nav down to "About" only.
 //   - `canWriteWorkspace` — *writes*. It reads the role directly, without going
 //     through `useScopedRole` at all; that split is deliberate, because the
 //     role ordering escalates org admins and the server does not.
 //
-// So dropping it no longer only hurts non-org-admins: an org admin used to sail
-// past a missing `userRole` via the early return in `resolveScopedRole`, and now
-// loses every workspace write too, org owners included. Anchor the mapping in
+// So dropping it hurts org admins too: the early return in `resolveScopedRole`
+// carries them past a missing `userRole`, but they lose every workspace write.
+// Anchor the mapping in
 // a tested helper so a future contributor can't accidentally re-introduce the
 // omission.
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/priv
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import { extractText, textContent } from "../../src/engine/content-helpers.ts";
 import { NON_ADVANCING_META_KEY } from "../../src/engine/types.ts";
+import { MAX_TOOL_RESULT_CHARS } from "../../src/limits.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { isToolEligibleForPromotion } from "../../src/runtime/tool-eligibility.ts";
 import type { Skill } from "../../src/skills/types.ts";
@@ -524,7 +525,7 @@ describe("System Tools", () => {
       { name: "test__tool.with.dot" },
     ]);
 
-    // search no longer mutates the active set (append-only — promoting a tool
+    // search does not mutate the active set (append-only — promoting a tool
     // would bust the cached prefix), so it added nothing; the manage_tools
     // call below is the only promotion (intent: it accepts the searched name).
     expect(calls).toEqual([]);
@@ -1107,6 +1108,46 @@ describe("nb__read_resource system tool", () => {
     expect(text.length).toBeLessThan(huge.length);
   });
 
+  it("reads a connector record whole past the skill budget", async () => {
+    const registry = new ToolRegistry();
+    const record = JSON.stringify({ id: "c1", dossier: "d".repeat(30_000) });
+    registry.addSource(await buildSource("acme-crm", { "crm://contacts/c1": { text: record } }));
+
+    const systemTools = await createSystemTools(() => registry);
+    const result = await systemTools.execute("read_resource", { uri: "crm://contacts/c1" });
+
+    expect(result.isError).toBe(false);
+    expect(extractText(result.content)).toBe(record);
+  });
+
+  it("cuts a record past the tool-result limit with a note the engine will not cut again", async () => {
+    const registry = new ToolRegistry();
+    const huge = "r".repeat(MAX_TOOL_RESULT_CHARS * 2);
+    registry.addSource(await buildSource("acme-crm", { "crm://contacts/big": { text: huge } }));
+
+    const systemTools = await createSystemTools(() => registry);
+    const result = await systemTools.execute("read_resource", { uri: "crm://contacts/big" });
+
+    const text = extractText(result.content);
+    expect(result.isError).toBe(false);
+    expect(text.length).toBeLessThanOrEqual(MAX_TOOL_RESULT_CHARS);
+    expect(text).toContain(`of ${huge.length} chars`);
+    expect(text).toContain("held only by the app that published it");
+    expect(text).not.toContain("on the user's screen");
+  });
+
+  it("keeps the skill budget for skill:// reads", async () => {
+    const registry = new ToolRegistry();
+    registry.addSource(
+      await buildSource("big", { "skill://big/huge": { text: "s".repeat(20_000) } }),
+    );
+
+    const systemTools = await createSystemTools(() => registry);
+    const result = await systemTools.execute("read_resource", { uri: "skill://big/huge" });
+
+    expect(extractText(result.content)).toContain("showing the first 12000 of 20000 chars");
+  });
+
   // Regression: issue #90. Pre-fix, `nb__read_resource` could not resolve
   // `ui://` URIs published by an InlineSource because the structural type
   // guard accepted both `string` and `ResourceData` shapes and the read
@@ -1128,16 +1169,16 @@ describe("nb__read_resource system tool", () => {
   });
 
   // Description signals the supported URI schemes so the agent can discover
-  // the platform-published `instructions://` resources and connector-published
-  // `<connector>://...` resources without having to be told about each one.
-  it("description references instructions:// and connector-scheme URIs alongside skill:// / ui://", async () => {
+  // connector-published `<connector>://...` resources without having to be
+  // told about each one.
+  it("description references connector-scheme URIs alongside skill:// / ui://", async () => {
     const registry = new ToolRegistry();
     const systemTools = await createSystemTools(() => registry);
     const tools = await systemTools.tools();
     const readResource = tools.find((t) => t.name === "nb__read_resource");
     expect(readResource).toBeDefined();
-    expect(readResource?.description).toContain("instructions://");
     expect(readResource?.description).toContain("skill://");
     expect(readResource?.description).toContain("ui://");
+    expect(readResource?.description).toContain("app-resource-templates");
   });
 });

@@ -1,4 +1,4 @@
-import type { ToolAnnotations } from "@modelcontextprotocol/server";
+import type { ClientCapabilities, ToolAnnotations } from "@modelcontextprotocol/server";
 import type { ToolResult, ToolSchema } from "../engine/types.ts";
 import type { ServerNotification } from "./server-notifications.ts";
 
@@ -81,6 +81,31 @@ export interface ToolExecuteOptions {
    * uninstall waits behind the call. A source with no task path ignores it.
    */
   inline?: boolean;
+  /**
+   * The outside client's side of the protocol, for a call `/mcp/<wsId>` makes
+   * on that client's behalf (`McpCaller`). A source with no MCP connection
+   * ignores it.
+   */
+  caller?: McpCaller;
+}
+
+/**
+ * What the `/mcp/<wsId>` door forwards from the client it serves to the
+ * connector, so the connector treats the call as that client's. A connector
+ * decides what to ask of the client by the client's capabilities, so the call
+ * carries them, and an `input_required` answer comes back to the door as it
+ * is (`ToolResult.inputRequired`) for the client to answer, with no state kept
+ * between rounds.
+ */
+export interface McpCaller {
+  /** The client's capabilities, sent in this call's `_meta` envelope in place of the runtime's. */
+  capabilities: ClientCapabilities;
+  /** The client's answers to the connector's last `inputRequests`, on a retry. */
+  inputResponses?: Record<string, unknown>;
+  /** The connector's own `requestState` from the last round, echoed back unchanged. */
+  requestState?: string;
+  /** Called with each progress notification the connector sends for this call. */
+  onProgress?: (progress: { progress: number; total?: number; message?: string }) => void;
 }
 
 /** Pluggable tool provider. Each source manages its own lifecycle. */

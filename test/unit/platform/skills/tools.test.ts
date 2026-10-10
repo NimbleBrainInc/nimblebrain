@@ -1,5 +1,5 @@
 /**
- * Phase 2 — read-tool behavior tests for `nb__skills`.
+ * Read-tool behavior tests for `nb__skills`.
  *
  * Exercises real handler logic against a stand-in Runtime:
  *   - `skills__list` filters (scope, layer, type, status, modified_since,
@@ -206,8 +206,8 @@ beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "skills-tools-test-"));
   runtime = new FakeRuntime(workDir);
   // Default identity matches the `ownerId: "user_test"` used by every
-  // `runtime.store().create({...})` call in this file. Stage 1 single-
-  // owner means tools that read conversation events require the caller
+  // `runtime.store().create({...})` call in this file. Single-owner
+  // conversations mean tools that read conversation events require the caller
   // to own the conversation; this seeds that match for the happy path.
   // Tests that need to assert ownership-mismatch should override.
   runtime.identity = { id: "user_test" };
@@ -703,7 +703,9 @@ describe("skills__read", () => {
 
 describe("skills__loading_log", () => {
   test("filters by conversation_id, since, until, skill, loaded_by", async () => {
-    const conv = await runtime.store().create({ ownerId: "user_test" });
+    const conv = await runtime
+      .store()
+      .create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     runtime.store().setActiveConversation(conv.id);
 
     const events = [
@@ -713,6 +715,7 @@ describe("skills__loading_log", () => {
         skills: [
           {
             id: "/skills/a.md",
+            name: "a",
             layer: 3,
             scope: "org",
             version: "",
@@ -730,6 +733,7 @@ describe("skills__loading_log", () => {
         skills: [
           {
             id: "/skills/b.md",
+            name: "b",
             layer: 3,
             scope: "org",
             version: "",
@@ -747,6 +751,7 @@ describe("skills__loading_log", () => {
         skills: [
           {
             id: "/skills/a.md",
+            name: "a",
             layer: 3,
             scope: "org",
             version: "",
@@ -757,6 +762,7 @@ describe("skills__loading_log", () => {
           },
           {
             id: "/skills/c.md",
+            name: "c",
             layer: 3,
             scope: "user",
             version: "",
@@ -813,12 +819,14 @@ describe("skills__loading_log", () => {
     });
     const affinityLoads = (affinity as { structuredContent?: { loads?: unknown[] } })
       .structuredContent?.loads as Array<{ skill: string }>;
-    // Display name, not the raw id — these fixtures predate the `name` field.
+    // The recorded display name, not the raw id.
     expect(affinityLoads.map((r) => r.skill)).toEqual(["c"]);
   });
 
   test("surfaces overlay and activation loads, which the skills.loaded-only read could not see", async () => {
-    const conv = await runtime.store().create({ ownerId: "user_test" });
+    const conv = await runtime
+      .store()
+      .create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     runtime.store().setActiveConversation(conv.id);
 
     runtime.store().appendEvent(conv.id, {
@@ -865,8 +873,12 @@ describe("skills__loading_log", () => {
   });
 
   test("workspace-wide scan (no conversation_id) covers the active workspace's conversations", async () => {
-    const conv1 = await runtime.store().create({ ownerId: "user_test" });
-    const conv2 = await runtime.store().create({ ownerId: "user_test" });
+    const conv1 = await runtime
+      .store()
+      .create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
+    const conv2 = await runtime
+      .store()
+      .create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     runtime.store().appendEvent(conv1.id, {
       type: "skills.loaded",
       ts: "2026-01-01T00:00:00.000Z",
@@ -914,7 +926,10 @@ describe("skills__loading_log", () => {
     );
     mkdirSync(otherDir, { recursive: true });
     const otherStore = new EventSourcedConversationStore({ dir: otherDir });
-    const convOther = await otherStore.create({ ownerId: SEED_OWNER_ID });
+    const convOther = await otherStore.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: SEED_OWNER_ID,
+    });
     otherStore.appendEvent(convOther.id, {
       type: "skills.loaded",
       ts: "2026-03-01T00:00:00.000Z",

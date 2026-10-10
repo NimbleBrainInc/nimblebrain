@@ -9,7 +9,6 @@
 
 import type { PlacementEntry } from "../types";
 import { identityAppSegment, isIdentityApp } from "./identity-apps";
-import { parseNamespacedToolName } from "./namespaced-tool";
 
 /** The router state an app route may carry. */
 export interface AppRouteState {
@@ -20,10 +19,9 @@ export interface AppRouteState {
 /** The agent's open-app tool: the `nb` system source's `open_app`. */
 const OPEN_APP_WIRE_NAME = "nb__open_app";
 
-/** True for a call to the agent's open-app tool, however its name is namespaced. */
+/** True for a call to the agent's open-app tool. */
 export function isOpenAppCall(wireName: string): boolean {
-  const parsed = parseNamespacedToolName(wireName);
-  return (parsed ? parsed.toolName : wireName) === OPEN_APP_WIRE_NAME;
+  return wireName === OPEN_APP_WIRE_NAME;
 }
 
 /** The target an app route's router state carries, if any. */

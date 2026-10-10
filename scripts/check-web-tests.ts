@@ -30,6 +30,7 @@
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { $, Glob } from "bun";
+import { tscBinary, unlistedSources } from "./lib/tsc-paths.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const WEB = join(ROOT, "web");
@@ -58,7 +59,7 @@ function fail(header: string, detail: string[]): never {
 }
 
 async function main(): Promise<void> {
-  const tsc = join(WEB, "node_modules", ".bin", "tsc");
+  const tsc = tscBinary(WEB);
   if (!(await Bun.file(tsc).exists())) {
     fail("web/ has no TypeScript installed. Run `cd web && bun install` first.", []);
   }
@@ -75,8 +76,7 @@ async function main(): Promise<void> {
     fail(`Found no .ts/.tsx under web/${TREES.join(", web/")} — nothing checked.`, []);
   }
 
-  const analyzed = new Set(lines.map((l) => l.trim()));
-  const unanalyzed = onDisk.filter((f) => !analyzed.has(f)).map((f) => relative(ROOT, f));
+  const unanalyzed = unlistedSources(onDisk, lines).map((f) => relative(ROOT, f));
   if (unanalyzed.length > 0) {
     fail(
       `web/${PROJECT} left ${unanalyzed.length} of ${onDisk.length} files unanalyzed — this gate did not check them.`,

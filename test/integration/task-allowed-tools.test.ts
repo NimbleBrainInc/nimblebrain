@@ -10,11 +10,21 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ToolResult } from "../../src/engine/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import type {
+  TasksBatchOutput,
+  TasksCreateOutput,
+  TasksRunBatchOutput,
+  TasksRunOutput,
+  TasksUpdateOutput,
+} from "../../src/platform/schemas/tasks.ts";
 import { DeclaredToolsUnavailableError } from "../../src/runtime/errors.ts";
+import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
+import type { ToolSource } from "../../src/tools/types.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import {
@@ -218,6 +228,7 @@ describe("an unattended run's allowedTools and the nb__ tools", () => {
 describe("an unattended run whose declared tools are unavailable", () => {
   const declDir = join(tmpdir(), `nimblebrain-task-declared-tools-${Date.now()}`);
   let declRuntime: Runtime;
+  let tasks: ToolSource;
   let personal: FakeConnectorServer;
   const recorded = recordingModel(createEchoModel({ responses: [{ text: "done" }] }));
 
@@ -250,6 +261,9 @@ describe("an unattended run whose declared tools are unavailable", () => {
     await declRuntime
       .getPermissionStore()
       .grantConnector(DEV_IDENTITY.id, "granola", TEST_WORKSPACE_ID);
+    const source = declRuntime.getIdentitySource("tasks");
+    if (!source) throw new Error("tasks source missing");
+    tasks = source;
   });
 
   afterAll(async () => {
@@ -280,5 +294,97 @@ describe("an unattended run whose declared tools are unavailable", () => {
     await run([]);
 
     expect(recorded.calls).toHaveLength(1);
+  });
+
+  async function callTask<T>(tool: string, args: Record<string, unknown>): Promise<T> {
+    const result: ToolResult = await runWithRequestContext(
+      { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID },
+      () => tasks.execute(tool, args),
+    );
+    const block = result.content?.[0];
+    const text = block?.type === "text" ? block.text : "";
+    if (result.isError) throw new Error(text);
+    return JSON.parse(text) as T;
+  }
+
+  it("warns once per unavailable entry when creating a task, but still saves it", async () => {
+    const out = await callTask<TasksCreateOutput>("create", {
+      manifest: {
+        name: "warn-missing-tools",
+        allowedTools: ["crm__*", "files__*", "mail__send", "my_granola__*"],
+      },
+      body: "Summarize contacts.",
+    });
+
+    expect(out.task.id).toBe("warn-missing-tools");
+    expect(out.warnings?.map((warning) => warning.code)).toEqual([
+      "allowed_tool_unavailable",
+      "allowed_tool_unavailable",
+    ]);
+    expect(out.warnings?.map((warning) => warning.message)).toEqual([
+      expect.stringContaining('"crm__*"'),
+      expect.stringContaining('"mail__send"'),
+    ]);
+    expect(out.message).toContain('Warning: Saved, but its allowedTools entry "crm__*"');
+    expect(out.message).toContain('Warning: Saved, but its allowedTools entry "mail__send"');
+  });
+
+  it("checks the updated task's full list, including a granted personal connector", async () => {
+    const out = await callTask<TasksUpdateOutput>("update", {
+      taskId: "warn-missing-tools",
+      manifest: { allowedTools: ["files__*", "my_granola__*", "nb__search"] },
+    });
+    expect(out.updated).toBe(true);
+    expect(out.warnings).toBeUndefined();
+  });
+
+  it("warns on update when a newly declared tool is unavailable", async () => {
+    const out = await callTask<TasksUpdateOutput>("update", {
+      taskId: "warn-missing-tools",
+      manifest: { allowedTools: ["files__*", "mail__send"] },
+    });
+    expect(out.updated).toBe(true);
+    expect(out.warnings?.map((warning) => warning.code)).toEqual(["allowed_tool_unavailable"]);
+    expect(out.warnings?.[0]?.message).toContain('"mail__send"');
+  });
+
+  it("warns on an inline run even when the missing tool makes the run fail", async () => {
+    recorded.calls.length = 0;
+    const out = await callTask<TasksRunOutput>("run", {
+      definition: {
+        body: "Summarize contacts.",
+        manifest: { allowedTools: ["crm__*", "my_granola__*"] },
+      },
+      idempotencyKey: "warn-inline-missing-tools",
+    });
+    if (!("run" in out)) throw new Error(`expected a finished run, got ${JSON.stringify(out)}`);
+    expect(out.run.status).toBe("failure");
+    expect(out.warnings?.map((warning) => warning.code)).toEqual(["allowed_tool_unavailable"]);
+    expect(out.warnings?.[0]?.message).toContain('"crm__*"');
+    expect(recorded.calls).toHaveLength(0);
+  });
+
+  it("warns when running a saved task whose declared tool is unavailable", async () => {
+    const out = await callTask<TasksRunOutput>("run", { taskId: "warn-missing-tools" });
+    expect(out.warnings?.map((warning) => warning.code)).toEqual(["allowed_tool_unavailable"]);
+    expect(out.warnings?.[0]?.message).toStartWith("This run's allowedTools");
+  });
+
+  it("warns for both saved and inline batches with unavailable tools", async () => {
+    for (const args of [
+      { taskId: "warn-missing-tools" },
+      { definition: { body: "Summarize contacts.", manifest: { allowedTools: ["mail__send"] } } },
+    ]) {
+      const out = await callTask<TasksRunBatchOutput>("run_batch", { ...args, items: [1] });
+      expect(out.warnings?.map((warning) => warning.code)).toEqual(["allowed_tool_unavailable"]);
+      expect(out.warnings?.[0]?.message).toStartWith("This batch's allowedTools");
+      const deadline = Date.now() + 5_000;
+      for (;;) {
+        const settled = await callTask<TasksBatchOutput>("batch", { batchId: out.batch.id });
+        if (settled.batch.state === "completed") break;
+        if (Date.now() > deadline) throw new Error(`batch never settled: ${out.batch.id}`);
+        await Bun.sleep(25);
+      }
+    }
   });
 });

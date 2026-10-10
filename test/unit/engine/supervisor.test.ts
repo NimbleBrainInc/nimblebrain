@@ -215,6 +215,43 @@ describe("supervisor — recovery from a trip", () => {
     expect(sup.snapshot().trippedTools).toEqual([]);
   });
 
+  it("a call on probation that fails reports no progress, without calling the tool disabled", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    const v = sup.observe(call("foo"), textResult("still broken", true));
+    expect(v.type).toBe("synth");
+    if (v.type === "synth") {
+      const text = textOf(v.replacement);
+      expect(text).toContain("made no progress, so the tool was still withheld");
+      expect(text).toContain("still broken");
+      expect(text).toContain("3 times in a row");
+      expect(text).not.toContain("disabled");
+      expect(text).not.toContain("corrected call");
+      expect(v.replacement.isError).toBe(true);
+    }
+  });
+
+  it("a landed write repeating the tripped content is not reported as a failure", () => {
+    // A write tool whose success text is constant trips on three identical
+    // calls. A later call with new input lands, but returns the same text, so
+    // it is no evidence of progress and the trip holds — yet the write
+    // happened, so the replacement quotes its output and does not flag an error.
+    const sup = createRunSupervisor();
+    for (const _ of [1, 2, 3]) sup.observe(call("save", { id: "a" }), textResult("ok"));
+    expect(sup.snapshot().trippedTools).toEqual(["save"]);
+
+    const v = sup.observe(call("save", { id: "b" }), textResult("ok"));
+    expect(v.type).toBe("synth");
+    if (v.type === "synth") {
+      const text = textOf(v.replacement);
+      expect(text).toContain("made no progress");
+      expect(text).toContain("Underlying output (this call):\nok");
+      expect(text).not.toContain("disabled");
+      expect(v.replacement.isError).toBe(false);
+    }
+    expect(sup.snapshot().trippedTools).toEqual(["save"]);
+  });
+
   it("stays armed after recovering — a fresh streak trips again", () => {
     const sup = createRunSupervisor();
     trip(sup);
@@ -256,6 +293,59 @@ describe("supervisor — recovery from a trip", () => {
       expect(v.type).toBe("pass");
     }
     expect(sup.snapshot().trippedTools).toEqual([]);
+  });
+});
+
+describe("supervisor — refusing a repeat of the tripped call", () => {
+  it("refuses the exact call a success trip was made of, in any key order", () => {
+    const sup = createRunSupervisor();
+    for (const _ of [1, 2, 3]) sup.observe(call("save", { id: "a", n: 1 }), textResult("ok"));
+    expect(sup.snapshot().trippedTools).toEqual(["save"]);
+
+    const refusal = sup.repeatRefusal(call("save", { n: 1, id: "a" }));
+    expect(refusal).not.toBeNull();
+    expect(refusal?.isError).toBe(true);
+    const text = textOf(refusal as ToolResult);
+    expect(text).toContain("was not run");
+    expect(text).toContain("3 times in a row");
+    expect(text).toContain("A call with different input is not refused");
+  });
+
+  it("does not refuse a call with different input, which can still recover", () => {
+    const sup = createRunSupervisor();
+    for (const _ of [1, 2, 3]) sup.observe(call("save", { id: "a" }), textResult("ok"));
+    expect(sup.repeatRefusal(call("save", { id: "b" }))).toBeNull();
+    expect(sup.observe(call("save", { id: "b" }), textResult("ok: b")).type).toBe("pass");
+    expect(sup.snapshot().trippedTools).toEqual([]);
+    // Recovered, so nothing is refused, the original input included.
+    expect(sup.repeatRefusal(call("save", { id: "a" }))).toBeNull();
+  });
+
+  it("refuses nothing after an error trip, so a corrected call still runs", () => {
+    const sup = createRunSupervisor();
+    for (const _ of [1, 2, 3]) sup.observe(call("log", { kind: "x" }), textResult("bad", true));
+    expect(sup.snapshot().trippedTools).toEqual(["log"]);
+    expect(sup.repeatRefusal(call("log", { kind: "x" }))).toBeNull();
+    expect(sup.repeatRefusal(call("log", { kind: "y" }))).toBeNull();
+  });
+
+  it("refuses nothing after a non-advancing trip", () => {
+    const sup = createRunSupervisor();
+    const miss: ToolResult = {
+      content: [{ type: "text", text: "no matches" }],
+      isError: false,
+      _meta: { [NON_ADVANCING_META_KEY]: true },
+    };
+    for (const _ of [1, 2, 3]) sup.observe(call("search", { q: "x" }), miss);
+    expect(sup.snapshot().trippedTools).toEqual(["search"]);
+    expect(sup.repeatRefusal(call("search", { q: "x" }))).toBeNull();
+  });
+
+  it("refuses nothing for an untripped tool", () => {
+    const sup = createRunSupervisor();
+    sup.observe(call("save", { id: "a" }), textResult("ok"));
+    sup.observe(call("save", { id: "a" }), textResult("ok"));
+    expect(sup.repeatRefusal(call("save", { id: "a" }))).toBeNull();
   });
 });
 
@@ -461,7 +551,7 @@ describe("supervisor — non-advancing results", () => {
   });
 
   it("trips on the non-advancing budget once every question comes back empty", () => {
-    // Varied queries no longer accumulate a streak, so the budget is what
+    // Varied queries do not accumulate a streak, so the budget is what
     // bounds the flail: six fruitless calls is enough evidence that the
     // surface does not hold what is being looked for.
     const sup = createRunSupervisor();
@@ -578,9 +668,9 @@ describe("supervisor — infrastructure errors are excluded from the strike coun
   it("never trips on repeated infrastructure failures, however many", () => {
     // The production shape: a batch of writes with DISTINCT arguments, all
     // refused by a gateway throttle. The ERROR fingerprint ignores input, so
-    // these collapse to one fingerprint and used to trip on the 3rd — disabling
-    // the tool for the rest of the run at exactly the moment the correct
-    // response was to retry more slowly.
+    // these collapse to one fingerprint. Tripping on the 3rd would disable the
+    // tool for the rest of the run at exactly the moment the correct response
+    // is to retry more slowly.
     const sup = createRunSupervisor();
     for (let i = 0; i < 25; i++) {
       const verdict = sup.observe(

@@ -31,10 +31,8 @@
  *
  * This is a name policy and nothing more, and it is only half the boundary. The
  * other half is ambient: a source refuses its own barred tools whenever
- * `RequestContext.unattended` is set, whatever router dispatched the call —
- * which is why `instructions__write_instructions` needs no entry here despite
- * matching the rule exactly (`checkWritePermission` refuses it before every
- * other gate). What the names buy is an answer of "denied" up front, from the
+ * `RequestContext.unattended` is set, whatever router dispatched the call.
+ * What the names buy is an answer of "denied" up front, from the
  * policy, instead of a source-specific error raised three layers down.
  */
 

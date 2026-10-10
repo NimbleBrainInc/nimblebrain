@@ -46,6 +46,7 @@ function writeConversation(id: string, title: string, message: string): void {
   const dir = join(workDir, "workspaces", WS_ID, "conversations", OWNER_ID);
   mkdirSync(dir, { recursive: true });
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -75,6 +76,7 @@ function writeAutoTitledConversation(id: string, autoTitle: string, message: str
   const dir = join(workDir, "workspaces", WS_ID, "conversations", OWNER_ID);
   mkdirSync(dir, { recursive: true });
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -356,7 +358,7 @@ describe("a task run has no conversation", () => {
   }
 
   test("a run id arriving in the conversation field is still refused", async () => {
-    // The reader-side forward guard. `executeTask` no longer produces this
+    // The reader-side forward guard. `executeTask` does not produce this
     // shape, so nothing else on this branch exercises the shape-check.
     const result = await withRunIdInConversationField("update", { title: "Doctrine" });
 

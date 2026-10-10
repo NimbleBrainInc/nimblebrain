@@ -118,9 +118,10 @@
  * between `error` and `TS2554:` even when the project sets `pretty`.
  */
 
-import { join, relative, sep } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { $, Glob } from "bun";
+import { normalizeTscPath, unlistedSources } from "./lib/tsc-paths.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PROJECT = "tsconfig.test.json";
@@ -132,7 +133,7 @@ const PROJECT = "tsconfig.test.json";
  * a loose match counts those as coverage — which greened a drifted `include` in
  * testing.
  */
-const TEST_ROOT = join(ROOT, "test") + sep;
+const TEST_ROOT = `${normalizeTscPath(join(ROOT, "test"))}/`;
 /**
  * Source suffixes under `test/`, and the half of the reconciliation this file
  * owns. The other half is `include` in `tsconfig.test.json` — the two must list
@@ -158,14 +159,13 @@ async function main(): Promise<void> {
   // What tsc actually analyzed, against what is actually there. `--listFiles`
   // emits one absolute path per file in the program, so this reads the real
   // program rather than inferring coverage from an absence of complaints.
-  const analyzed = new Set(lines.filter((l) => l.startsWith(TEST_ROOT)).map((l) => l.trim()));
   const onDisk: string[] = [];
   for await (const rel of new Glob(`**/*.{${TEST_EXTENSIONS.join(",")}}`).scan({
     cwd: join(ROOT, "test"),
   })) {
     onDisk.push(join(ROOT, "test", rel));
   }
-  const unanalyzed = onDisk.filter((f) => !analyzed.has(f));
+  const unanalyzed = unlistedSources(onDisk, lines);
 
   if (unanalyzed.length > 0) {
     console.error(
@@ -193,7 +193,11 @@ async function main(): Promise<void> {
   // "clean" or "the format moved" — the silent green this gate refuses. A path
   // under TEST_ROOT is unambiguously a test file, so accepting both costs nothing.
   const violations = lines
-    .filter((l) => (l.startsWith(`test${sep}`) || l.startsWith(TEST_ROOT)) && DIAGNOSTIC.test(l))
+    .filter(
+      (l) =>
+        (normalizeTscPath(l).startsWith("test/") || normalizeTscPath(l).startsWith(TEST_ROOT)) &&
+        DIAGNOSTIC.test(l),
+    )
     .map((l) => l.trim());
 
   if (violations.length > 0) {

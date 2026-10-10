@@ -11,6 +11,7 @@ import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.ts";
+import { loadBrand } from "../brand/index.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
@@ -110,7 +111,6 @@ import { requireRequestIdentity, resolveRequestOwnerId } from "../identity/owner
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { createIdentityProvider } from "../identity/provider.ts";
 import { UserStore } from "../identity/user.ts";
-import { InstructionsStore } from "../instructions/index.ts";
 import {
   forgetLifecycleBinding,
   type LifecycleSourceLike,
@@ -192,7 +192,10 @@ import {
   discoveredSkillFromEntry,
   hydrateSkill,
   PUBLISHED_SKILL_SCOPE,
+  type PublishedSkillInfo,
+  parseConnectorSkillName,
   parseSkillMarkdown,
+  publishedSkillInfo,
   reportUnmatchedToolAffinity,
   synthesizeConnectorSkill,
 } from "../skills/connector-skills.ts";
@@ -202,6 +205,7 @@ import {
   loadScopedSkills,
   loadSkillDir,
   mergeScopedSkills,
+  parseSkillFile,
   partitionSkills,
 } from "../skills/loader.ts";
 import { type SkillMatch, SkillMatcher } from "../skills/matcher.ts";
@@ -245,7 +249,7 @@ import {
 } from "../tools/instance-credentials.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
-import { APP_INSTRUCTIONS_URI } from "../tools/resource-schemes.ts";
+import { APP_INSTRUCTIONS_URI, readableRecordTemplates } from "../tools/resource-schemes.ts";
 import {
   announceResourceListChangedFor,
   relayIdentitySourceNotifications,
@@ -332,7 +336,7 @@ function applyClearable<T>(current: T | undefined, patched: T | null | undefined
 /**
  * Warn about a configured slot the org's own policy forbids.
  *
- * A config file can strand a slot the way `set_model_config` no longer can: it
+ * A config file can strand a slot the way `set_model_config` cannot: it
  * is written by hand, so nothing validates it against the policy beside it.
  *
  * Reported rather than refused — a deployment that boots with an error it can
@@ -705,6 +709,10 @@ export class Runtime {
     // legacy plaintext file would race the rewrite of that same file.
     await credentialStore.reconcile?.();
     let config = await resolveInstanceCredentialRefs(declaredConfig);
+    // `loadConfig` already did this for a file-backed boot; a config built in
+    // code reaches here without it, and the brand is process state every
+    // reader below shares, so the composition root installs it too.
+    loadBrand(config);
 
     // Register built-in transport credential providers (e.g. `minted`) at the
     // ONE composition root every entry point shares — serve, the no-subcommand
@@ -1387,11 +1395,8 @@ export class Runtime {
     // configured slot: a conversation runs on one model for its life, so a
     // slot change retargets new conversations only. `makeCreateOpts` above
     // carries the pin, so a conversation created on this path is already bound
-    // and this reads back what it was born with. Absent only on legacy records
-    // predating the binding, which resolve from current config as before.
-    const resolvedModelString =
-      conversation.model ??
-      runWithRequestContext(turnCtx, () => this.resolveRequestModelString(request.model));
+    // and this reads back what it was born with.
+    const resolvedModelString = conversation.model;
 
     const handle = await this.startRun({
       trigger: "chat",
@@ -1711,7 +1716,7 @@ export class Runtime {
     });
 
     // Evict the volatile head onto the latest user message so a per-run change
-    // (date, app/focused-app state, matched skill) no longer rewrites the
+    // (date, app/focused-app state, matched skill) does not rewrite the
     // 1h-cached system prefix. Telemetry above counts every segment via
     // `systemPrompt`; the prepend runs after it, so history isn't double-counted.
     // Falls back to folding the head into the system string when there's no user
@@ -1775,7 +1780,7 @@ export class Runtime {
     // `workspaceId`, which is the right answer for session-scoped reads
     // (overlays, file store) and the wrong one for per-call data. Per-call
     // handlers should take a `WorkspaceContext` argument from the dispatch
-    // path instead. T008 (credential rebinding) tightens this further.
+    // path instead.
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
     // ── The spend accounts ──────────────────────────────────────────────────
@@ -1863,6 +1868,14 @@ export class Runtime {
   }
 
   /**
+   * The installed apps the prompt narrates. `wsId` is the conversation's own
+   * (chat) or focused (task) workspace; `undefined` (an unfocused task) has none.
+   */
+  private async briefingApps(wsId: string | undefined): Promise<PromptAppInfo[]> {
+    return wsId ? this.buildAppsList(wsId) : [];
+  }
+
+  /**
    * The prompt a run reasons with, and the tool surface it reasons over.
    *
    * One phase, because the two are a cycle otherwise: the matched skill's
@@ -1903,9 +1916,7 @@ export class Runtime {
       ? collectSuppressedSkillNames(await binding.store.readEvents(binding.conversation.id))
       : new Set<string>();
 
-    // The briefing (installed apps + the instruction overlays) describes the
-    // workspace the prompt narrates; empty for a run that narrates none.
-    const { apps, liveOverlays } = await this.buildWorkspaceBriefing(briefingWsId);
+    const apps = await this.briefingApps(briefingWsId);
 
     // App scoping (§7 app-aware chat), resolved in the SAME single workspace
     // the run's tools are bound to.
@@ -2103,7 +2114,6 @@ export class Runtime {
       prefs,
       proxied.length > 0,
       workspaceContext,
-      liveOverlays,
       layer3Entries,
       attended ? "chat" : "task",
       skillCatalog,
@@ -2348,7 +2358,7 @@ export class Runtime {
     if (slot) return this.getModelSlot(slot);
 
     // A concrete model named by the caller is the one untrusted value here,
-    // and since #892 it is written to the conversation's immutable pin. An
+    // and it is written to the conversation's immutable pin. An
     // unchecked value would not overspend for a turn; it would seal the
     // conversation to a disallowed model for life, past any later policy change.
     // Checked before qualification, not after: `resolveModelString("")` is
@@ -2361,20 +2371,6 @@ export class Runtime {
       );
     }
     return resolveModelString(requestModel);
-  }
-
-  /**
-   * The workspace briefing surfaces (apps + the workspace overlay) for a turn.
-   * `wsId` is the conversation's own (chat) or focused (task) workspace;
-   * `undefined` (an unfocused task) yields empty apps and an empty overlay.
-   */
-  private async buildWorkspaceBriefing(wsId: string | undefined): Promise<{
-    apps: PromptAppInfo[];
-    liveOverlays: { workspace: string };
-  }> {
-    const apps = wsId ? await this.buildAppsList(wsId) : [];
-    const liveOverlays = wsId ? await this.readPromptOverlays(wsId) : { workspace: "" };
-    return { apps, liveOverlays };
   }
 
   /**
@@ -2537,13 +2533,10 @@ export class Runtime {
   private emitChatStart(
     requestSink: EventSink | undefined,
     conversationId: string,
-    model: string | undefined,
+    model: string,
   ): void {
     if (!requestSink) return;
-    requestSink.emit({
-      type: "chat.start",
-      data: { conversationId, ...(model ? { model } : {}) },
-    });
+    requestSink.emit({ type: "chat.start", data: { conversationId, model } });
   }
 
   /**
@@ -2652,7 +2645,7 @@ export class Runtime {
     };
   }
 
-  // ── Stage 2 (T006) — identity-bound chat helpers ─────────────────
+  // ── Identity-bound chat helpers ──────────────────────────────────
 
   /**
    * Construct the chat surface's identity-bound `ToolRouter`.
@@ -3413,10 +3406,22 @@ export class Runtime {
     // agent cannot discover that such resources exist.
     let instructions: string | undefined;
     let customInstructions: string | undefined;
+    let resourceTemplates: PromptAppInfo["resourceTemplates"] = [];
     const source = registry?.getSource(instance.serverName);
     if (source instanceof McpSource) {
       instructions = source.getInstructions();
-      customInstructions = await this.readAppCustomInstructions(source, instance.serverName);
+      // Read together: each is a round trip to the same server on a cold memo.
+      const [custom, templates] = await Promise.all([
+        this.readAppCustomInstructions(source, instance.serverName),
+        source.resourceTemplates(),
+      ]);
+      customInstructions = custom;
+      // The record shapes this connector serves, so the model knows
+      // `nb__read_resource` reads them (ADR-0049).
+      resourceTemplates = readableRecordTemplates(templates).map((t) => ({
+        uriTemplate: t.uriTemplate,
+        name: t.title ?? t.name,
+      }));
     }
 
     return {
@@ -3424,6 +3429,7 @@ export class Runtime {
       description: instance.description,
       instructions,
       ...(customInstructions !== undefined ? { customInstructions } : {}),
+      ...(resourceTemplates.length > 0 ? { resourceTemplates } : {}),
       ui,
     };
   }
@@ -3496,31 +3502,6 @@ export class Runtime {
     return this._connectorMcpDepsFactory?.(wsId);
   }
 
-  /**
-   * Get a per-workdir `InstructionsStore` for the workspace overlay.
-   * Per-connector instructions are NOT stored here — connectors own their storage
-   * and publish a `app://instructions` resource if and only if they
-   * support the convention. The store is stateless aside from the rooted
-   * workdir, so a fresh instance per call is fine.
-   */
-  getInstructionsStore(): InstructionsStore {
-    return new InstructionsStore(this.getWorkDir());
-  }
-
-  /**
-   * Read the workspace instruction overlay for a system-prompt
-   * assembly. Per-connector overlays are NOT read here — they're populated on
-   * `PromptAppInfo.customInstructions` directly in `buildAppsList`.
-   *
-   * Reads happen on every call (no caching) per the locked decision: edits
-   * must apply mid-conversation.
-   */
-  /** Public so the compose-effective-context debug tool can re-read the overlay
-   *  in live mode. Workspace-scoped; no caller-controlled escalation. */
-  async readPromptOverlays(wsId: string): Promise<{ workspace: string }> {
-    return { workspace: await this.getInstructionsStore().read({ wsId }) };
-  }
-
   /** Get the ToolRegistry for a specific workspace. Throws if workspace registry not found. */
   getRegistryForWorkspace(wsId: string): ToolRegistry {
     const reg = this._workspaceRegistries.get(wsId);
@@ -3558,8 +3539,9 @@ export class Runtime {
 
   /**
    * The platform apps' `initialize.instructions`: how to use their tools, for a
-   * remote MCP client, which reaches them through `/mcp` and loads no skills.
-   * Undefined when no app declares any.
+   * remote MCP client, which reaches them through `/mcp`. The door serves them
+   * ahead of the workspace's connectors' own (`doorInstructions`). Undefined
+   * when no app declares any.
    */
   platformInstructions(): string | undefined {
     const parts: string[] = [];
@@ -5268,7 +5250,7 @@ export class Runtime {
    * BOOT-TIME context skills (org/core/builtin) with any toggled Off
    * (`status: "disabled"`) removed. Audit/management helper only.
    *
-   * NOTE: the prompt composition path no longer reads this. Compose routes by
+   * NOTE: the prompt composition path does not read this. Compose routes by
    * ROLE via `partitionSkillsByRole(loadConversationSkills(...))`, whose
    * `context` set spans EVERY tier (boot + workspace + user) and applies the
    * same active-status filter. This method is the boot-only subset — use it for
@@ -5289,7 +5271,7 @@ export class Runtime {
   }
 
   /**
-   * Phase 2 — per-conversation Layer 3 skill overlay.
+   * Per-conversation Layer 3 skill overlay.
    *
    * Returns the merged platform-tier + workspace-tier + user-tier set,
    * deduplicated by `manifest.name` with later scopes overriding earlier
@@ -5515,6 +5497,53 @@ export class Runtime {
   }
 
   /**
+   * Every skill the workspace's connected servers publish, from the same pool
+   * prompt composition draws on ({@link loadConnectorSkills}), so the listing is
+   * what the runtime loads: a server whose curated overlay supersedes its
+   * published skills contributes none here, and its overlay is listed by
+   * {@link listConnectorOverlays}. Reads the servers' listings only; no body is
+   * fetched. Backs `manage_connectors list_bound_skills`.
+   */
+  async listPublishedSkills(wsId: string): Promise<PublishedSkillInfo[]> {
+    await this.ensureWorkspaceRegistry(wsId);
+    return (await this.loadConnectorSkills(wsId)).flatMap((skill) => {
+      const info = publishedSkillInfo(skill);
+      return info ? [info] : [];
+    });
+  }
+
+  /**
+   * The body of one skill a connector contributes to this workspace, as the
+   * model receives it: a curated overlay's materialized file, or a published
+   * skill's `SKILL.md` fetched, verified, and budget-capped by the same loader
+   * composition uses. `null` when the workspace has no such skill. Backs
+   * `manage_connectors read_bound_skill`.
+   */
+  async readConnectorSkill(
+    wsId: string,
+    serverName: string,
+    name: string,
+  ): Promise<({ kind: "overlay" | "published" } & SkillBodyLoad) | null> {
+    const overlay = this.listConnectorOverlays(wsId).find(
+      (o) => o.server === serverName && o.name === name,
+    );
+    if (overlay) {
+      const skill = parseSkillFile(overlay.path, { cap: false });
+      return skill ? { kind: "overlay", ok: true, body: skill.body } : null;
+    }
+    await this.ensureWorkspaceRegistry(wsId);
+    const published = (await this.loadConnectorSkills(wsId)).find((skill) => {
+      const id = parseConnectorSkillName(skill.manifest.name);
+      return id?.connector === serverName && id.name === name;
+    });
+    if (!published) return null;
+    const loaded = published.loadBody
+      ? await published.loadBody()
+      : { ok: true as const, body: published.body };
+    return { kind: "published", ...loaded };
+  }
+
+  /**
    * Discover the FOCUSED workspace's server-published skills and route them by
    * the strategy each DECLARES — the discovery half of {@link selectRequestLayer3},
    * split out because it is the half that has no dependency on the active
@@ -5679,45 +5708,6 @@ export class Runtime {
   /** Get the path to the nimblebrain.json config file (Helm-managed seed). */
   getConfigPath(): string | undefined {
     return this.config.configPath;
-  }
-
-  /**
-   * Loose session-store config for the API host to resolve. The actual
-   * defaulting + validation lives in `api/session-store/factory.ts` so this
-   * returns whatever was put in `nimblebrain.json`, untouched.
-   */
-  getSessionStoreConfig(): RuntimeConfig["sessionStore"] {
-    return this.config.sessionStore;
-  }
-
-  /**
-   * Resolved idle TTL for sessions, in milliseconds. Two operator surfaces,
-   * one currency:
-   *
-   *   - `MCP_SESSION_TTL_SECONDS` env var (highest priority — env wins so
-   *     ops can flip TTL without redeploying the configmap)
-   *   - `sessionStore.ttlSeconds` in `nimblebrain.json`
-   *   - 8 h fallback
-   *
-   * Internal callers (registry constructors, sweep math) take ms; the
-   * conversion happens once here so the rest of the runtime never deals
-   * in mixed units. `parsePositiveIntEnv`-style validation lives in
-   * `mcp-server.ts`; this accessor only consumes the parsed env value.
-   */
-  getSessionStoreTtlMs(): number {
-    const envRaw = process.env.MCP_SESSION_TTL_SECONDS;
-    if (envRaw !== undefined && envRaw !== "") {
-      const parsed = Number(envRaw);
-      if (Number.isFinite(parsed) && parsed > 0 && Number.isInteger(parsed)) {
-        return parsed * 1000;
-      }
-      // Invalid env value — fall through to config / default. We don't
-      // log here because the chart-rendered config path is the typical
-      // source of truth; an unset/typo'd env should be a quiet fallback,
-      // not a noise generator on every cold start.
-    }
-    const seconds = this.config.sessionStore?.ttlSeconds ?? 8 * 60 * 60;
-    return seconds * 1000;
   }
 
   /**
@@ -6636,8 +6626,8 @@ export function buildContextAssembledPayload(input: {
   const historyTokens = input.messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
   // NOTE: `skills` is an ANNOTATION of what the composed skills cost, NOT a
   // disjoint bucket — those skill bodies are already inside `system_prompt`, so
-  // `totalTokens` intentionally double-counts them (unchanged from Phase 1, now
-  // spanning always-on/trigger too since the payload widened). Don't "fix" the
+  // `totalTokens` intentionally double-counts them (always-on and trigger
+  // skills included). Don't "fix" the
   // total by subtracting; the disjoint budget is system_prompt + tools + history.
   const sources: ContextAssembledSource[] = [
     { kind: "system_prompt", tokens: promptTokens },

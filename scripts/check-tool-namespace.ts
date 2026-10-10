@@ -29,19 +29,17 @@
  *      and throws on malformed input.
  *
  * What it allows:
- *   - `src/tools/namespace.ts` and its web mirror
- *     `web/src/lib/namespaced-tool.ts` — the primitives define the
- *     format and are the only legal construction/parse sites.
+ *   - `src/tools/namespace.ts` — the primitive defines the format and is
+ *     the only legal construction/parse site.
  *   - A `// lint-ok:tool-namespace` marker on the line immediately
  *     above the construction, for the rare future case where the
  *     helper genuinely can't be used (e.g. a wire-format adapter that
  *     must accept the legacy shape unchanged).
  *
- * Scope: `src/**\/*.ts` and `web/src/**\/*.{ts,tsx}`. The web client
- * mirrors the same contract (it can't import from `src/`), so the same
- * discipline applies there — a web-side hand-parse is exactly what
- * slipped through when this lint scanned `src/` only. Tests are out of
- * scope (fixtures construct the shape deliberately).
+ * Scope: `src/**\/*.ts` and `web/src/**\/*.{ts,tsx}`. The web client has
+ * no parser for the form (its wire names are bare), so neither tier may
+ * build or split one by hand. Tests are out of scope (fixtures construct
+ * the shape deliberately).
  *
  * Known gap: this catches `ws_<id>-` *construction* and `.split("-")`
  * *parsing*. It does NOT catch slicing the bare source out of a wire
@@ -64,19 +62,15 @@ import * as ts from "typescript";
 const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
 const WEB_SRC_ROOT = join(ROOT, "web", "src");
-// Both the platform `src/` and the web client `web/src/` are scanned. The
-// web tier mirrors the namespaced-tool contract in
-// `web/src/lib/namespaced-tool.ts` (it can't import from `src/`), so the same
-// construction/parse discipline applies — and a web-side hand-parse is exactly
-// the regression that slipped through when this lint scanned `src/` only.
+// Both the platform `src/` and the web client `web/src/` are scanned: a
+// web-side hand-parse is the regression that slipped through when this lint
+// scanned `src/` only.
 const SCAN_ROOTS = [SRC_ROOT, WEB_SRC_ROOT];
 const ALLOW_MARKER = "lint-ok:tool-namespace";
 
-// Relative to their respective scan root: the platform primitive and the web
-// mirror are the only legal construction/parse sites.
-const ALLOWED_FILES = new Set(
-  ["tools/namespace.ts", "lib/namespaced-tool.ts"].map((f) => f.split("/").join(sep)),
-);
+// Relative to its scan root: the platform primitive is the only legal
+// construction/parse site.
+const ALLOWED_FILES = new Set(["tools/namespace.ts"].map((f) => f.split("/").join(sep)));
 
 /**
  * Identifiers whose name suggests "this is a namespaced tool name."
@@ -314,8 +308,7 @@ function reportViolations(violations: Violation[]): never {
     console.error(`    ${v.snippet}\n`);
   }
   console.error("Cross-workspace tool names must flow through `namespacedToolName(wsId, name)` /");
-  console.error("`parseNamespacedToolName(s)` — `src/tools/namespace.ts` (platform) or");
-  console.error("`web/src/lib/namespaced-tool.ts` (web mirror).");
+  console.error("`parseNamespacedToolName(s)` — `src/tools/namespace.ts`.");
   console.error(
     `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above the construction.`,
   );

@@ -1,4 +1,5 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import type { Brand } from "../brand/index.ts";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
@@ -172,23 +173,6 @@ export interface RuntimeConfig {
   confirmationGate?: ConfirmationGate;
 
   /**
-   * MCP session metadata store. Controls how sessions for `/mcp` are tracked
-   * across the cluster. Defaults to `memory` (process-local) — fine for any
-   * single-replica deploy. Set `type: "redis"` with a `redis.url` for
-   * multi-replica deploys; the registry shares session metadata across
-   * processes. See `src/api/session-store/`.
-   */
-  sessionStore?: {
-    type?: "memory" | "redis";
-    /** Idle TTL in seconds. Default: 28800 (8 h). */
-    ttlSeconds?: number;
-    redis?: {
-      url?: string;
-      keyPrefix?: string;
-    };
-  };
-
-  /**
    * Durable usage ledger — one JSONL line per priced LLM call, under
    * `{workDir}/usage/`. See `src/usage/ledger.ts`.
    */
@@ -235,6 +219,12 @@ export interface RuntimeConfig {
    * `workDir`. See {@link SecretsConfig}.
    */
   secrets?: SecretsConfig;
+
+  /**
+   * White-label branding: name, logos, accent colour, fonts. Absent is
+   * NimbleBrain. Validated and installed by `loadBrand` (`src/brand/`).
+   */
+  brand?: Brand;
 
   /** Anonymous telemetry configuration. */
   telemetry?: {
@@ -308,7 +298,7 @@ export interface ChatRequest {
    * The workspace the chat is *focused* on (the `/w/:slug` the user is
    * viewing, plumbed from the workspace in the chat URL). Drives the
    * deterministic, workspace-scoped **briefing**: the Installed Apps
-   * section and the org/workspace instruction overlays reflect THIS
+   * section reflects THIS
    * workspace, identical for every member (no per-user generation).
    *
    * It is ALSO the tool scope: a session is walled to this one workspace —
@@ -388,9 +378,9 @@ export interface ChatResult {
    * carrying the reserved `my_` marker. Stored raw; display name and friendly
    * name are rendered on the fly. The workspace is NOT in the name — it is the
    * session's, resolved from the conversation. There is no top-level
-   * `ChatResult.workspaceId` field (removed by T006 — different tool
-   * calls in the same turn can land in different workspaces, so a
-   * single result-level workspaceId would be misleading).
+   * `ChatResult.workspaceId` field (different tool calls in the same
+   * turn can land in different workspaces, so a single result-level
+   * workspaceId would be misleading).
    */
   toolCalls: Array<{
     id: string;
@@ -527,7 +517,7 @@ export interface TaskRequest {
  * Modeled on `ChatResult` but with chat-specific fields removed:
  *  - No `skillName` — task mode does not perform skill matching on the
  *    prompt; connector-affined skills still surface via Layer 3.
- *  - `response` renamed to `output` to reflect the deliverable contract.
+ *  - `output` rather than `response`, to reflect the deliverable contract.
  *  - `runId` is a traceability anchor — the id of the run, under which the
  *    caller (the tasks app) persists the run result (output +
  *    activity log + output-file refs). No conversation is created.

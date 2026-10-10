@@ -7,8 +7,8 @@
  *     usage aggregates regardless of which workspace the spend happened in.
  *   - `scope: "user"` (default) is gated to the caller's own spend via the
  *     aggregator's ownerFilter — a member can't see peers' usage.
- *   - `scope: "org"` requires org admin/owner; a member is denied.
- *   - The dev user is an org owner: it reads the org scope on its role, and
+ *   - `scope: "org"` requires org admin; a member is denied.
+ *   - The dev user is an org admin: it reads the org scope on its role, and
  *     its user scope is its own spend.
  *   - The response echoes the resolved `scope`.
  */
@@ -28,7 +28,7 @@ import type { UsageLedgerEntry } from "../../../../src/usage/types.ts";
 
 interface FakeIdentity {
   id: string;
-  orgRole: "owner" | "admin" | "member";
+  orgRole: "admin" | "member";
 }
 
 class FakeRuntime {
@@ -50,9 +50,7 @@ const AT = "2026-04-10T12:00:00Z";
 /**
  * Seed one user's spend into the ledger.
  *
- * The tool used to walk every workspace's conversation files to find a user's
- * usage across workspaces; the ledger carries `userId` and `workspaceId` on the
- * line, so there is nothing to walk and the owner scoping is a field predicate.
+ * The ledger carries `userId` and `workspaceId` on the line, so there is nothing to walk and the owner scoping is a field predicate.
  * The `workspaceId` is kept on the fixture because the calls really did happen
  * in different workspaces — that a cross-workspace read still aggregates by
  * owner is the property these tests exist for.
@@ -61,7 +59,7 @@ async function seedSpend(
   workDir: string,
   wsId: string,
   ownerId: string,
-  sessionId: string,
+  conversationId: string,
   input: number,
   output: number,
 ): Promise<void> {
@@ -76,7 +74,7 @@ async function seedSpend(
     llmMs: 100,
     userId: ownerId,
     workspaceId: wsId,
-    sessionId,
+    conversationId,
   };
   await appendFile(join(dir, "test.jsonl"), `${JSON.stringify(entry)}\n`);
 }
@@ -211,9 +209,9 @@ describe("usage source — scope: org", () => {
 });
 
 describe("usage source — the dev user", () => {
-  const DEV_USER: FakeIdentity = { id: "usr_default", orgRole: "owner" };
+  const DEV_USER: FakeIdentity = { id: "usr_default", orgRole: "admin" };
 
-  test("reads the org scope as an org owner", async () => {
+  test("reads the org scope as an org admin", async () => {
     const src = await buildSource();
     runtime.identity = DEV_USER;
 

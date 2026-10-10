@@ -43,11 +43,6 @@ This section reflects the workspace you're currently focused on. Switch workspac
 The workspace ID sits in the page's top-right corner; click it to copy.
 
 - **Name** — what the workspace is called in the sidebar, the switcher, and everywhere else. An admin member of this workspace or an organization admin can rename it; it saves when you press Enter or click away, with **Undo** in the notice. Renaming never changes the workspace's ID or URL.
-- **Workspace instructions** — custom instructions, up to 8,192 characters, injected into every conversation focused on this workspace. Only an **admin member of this workspace** can edit; everyone else reads — an organization admin who is not an admin member here gets no bypass. Guidance meant for every workspace in the organization belongs in an org-tier skill (Organization → Skills), not here. The instructions save when you click away from the editor, not as you pause while typing; a save shows a notice with **Undo**, and a save that fails shows one too.
-
-<Aside type="tip">
-  Workspace instructions are great for team conventions: tone for shared documents, default triage priorities, citation policies. The agent picks them up on every turn — no need to repeat them in chat.
-</Aside>
 
 ### Members (`/w/<id>/settings/members`)
 
@@ -78,7 +73,7 @@ Everything shaping your agent in this workspace, in one list, grouped into tiers
 - **On trigger "&lt;phrase&gt;"** — loaded when the phrase appears in the conversation.
 - **Won't auto-load yet** — authored but no loading path reaches it, so it stays inert until you give it one.
 
-Toggle any skill you own on or off, or expand a row to read and edit its body. Tiers you don't edit here are read-only (shown with a lock) and link to where they're managed — personal skills to your profile, organization skills to org settings, system skills are fixed. **+ Add a skill** writes to the tier you own on this page.
+Toggle any skill you own on or off, or expand a row to read and edit it. Tiers you don't edit here are read-only (shown with a lock) and link to where they're managed — personal skills to your profile, organization skills to org settings, system skills are fixed. **+ Add a skill** writes to the tier you own on this page, when you click **Create**. Editing a skill that exists has no Save button: each field saves on its own, as described in [Editing a skill in settings](/using/skills/#editing-a-skill-in-settings).
 
 ### MCP (`/w/<id>/settings/mcp`)
 
@@ -86,7 +81,7 @@ The workspace's MCP URL, `<origin>/mcp/<workspaceId>`, with a copy button. Add i
 
 ## Organization (admin only)
 
-Visible only to organization admins and owners. Hidden from regular members. These settings live under `/org/*`, outside any workspace URL.
+Visible only to organization admins. Hidden from regular members. These settings live under `/org/*`, outside any workspace URL.
 
 ### Workspaces (`/org/workspaces`)
 
@@ -98,7 +93,7 @@ To edit a workspace's instructions, switch into it via the navigator and use **T
 
 ### Users (`/org/users`)
 
-Manage user accounts at the organization level: create a user with a Member or Admin role, deactivate one, or restore a deactivated one. See [User Management](/using/users/).
+Manage user accounts at the organization level: create a user with a Member or Admin role, edit a user's display name, email, and role, deactivate one, or restore a deactivated one. Edits save as each field changes. See [User Management](/using/users/).
 
 ### Models (`/org/model`)
 
@@ -120,7 +115,7 @@ The extended thinking modes are:
 Reasoning is billed as output tokens, and the agent's reasoning shows up in chat as a collapsible **Thought** chip. See [Chat](/using/chat#the-thoughts-panel).
 
 <Aside type="caution">
-  Model configuration is platform-wide. Changes affect every workspace and every user immediately. Restrict to org admins/owners.
+  Model configuration is platform-wide. Changes affect every workspace and every user immediately. Restrict to org admins.
 </Aside>
 
 ### Usage (`/org/usage`)
@@ -146,7 +141,7 @@ Deleting a workspace archives its data rather than destroying it. This tab lists
 Custom instructions stack from broad to narrow, and the agent reads them on every turn:
 
 1. **Organization** policy applies everywhere.
-2. **Workspace Instructions** (This Workspace → General) layer on top for the focused workspace.
+2. **Workspace skills** set to always on (This Workspace → Skills) layer on top for the focused workspace. Use one for team conventions: tone for shared documents, default triage priorities, citation policies.
 3. **App custom instructions** (This Workspace → Connectors → the connector) apply when you're using that app.
 
 ## Sidebar layout

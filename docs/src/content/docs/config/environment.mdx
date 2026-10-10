@@ -40,6 +40,8 @@ A provider's API key can be supplied here or in `nimblebrain.json` under `provid
 | `NB_CONNECTOR_START_CONCURRENCY` | No | `4` | How many connectors the boot loop starts in parallel, across every workspace. The default keeps peak memory and CPU bounded on a small pod while capturing most of the serial→parallel win; raise it when a deployment has many fast connectors and boot time matters, set it to `1` for a sequential start. Values below 1 and unparseable values fall back to the default. Read once at startup. |
 | `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` | No | `300` | Sweep interval for the connection-revalidation monitor, which re-checks connectors whose upstream credential can lapse without a transport 401 (e.g. Composio). Provider-agnostic. Blank, non-positive, or unparseable values fall back to the default. Capped at `1789569` (~20.7 days), the largest interval the runtime can schedule; a higher value logs a warning and uses the cap. To stop the sweep entirely set `connectors.providers.composio.monitorEnabled: false` rather than a very large interval. |
 
+When one of the chat, tool, or MCP request limits is exceeded, the API returns `429` with a `Retry-After` header containing the seconds remaining in that caller's fixed one-minute window, rounded up.
+
 ### Public origin and callbacks
 
 The platform builds every outward-facing URL (OAuth callbacks, post-login landing) from a single canonical public origin. Resolution order: `NB_PUBLIC_ORIGIN` → derived from `NB_PLATFORM_HOST` / `NB_CUSTOM_DOMAIN` → `http://localhost:27247` (dev).
@@ -57,13 +59,6 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `NB_CURATED_CATALOG_DIR` | No | in-image example | The connector catalog — a directory of `ServerDetail` YAML/JSON files (the intended use, hence the name), or a single such file. Every `*.yaml`/`*.yml`/`*.json` in it is read in sorted filename order and re-read on each lookup, so editing a mounted ConfigMap takes effect without a restart. Replaces `src/connectors/catalog/curated/` wholesale. This is where `auth: static` and brokered (`composio`, `smithery`) entries belong; the in-image example is DCR-only. See [Connectors Catalog](/config/connectors-catalog/). |
-
-### MCP sessions
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `MCP_MAX_SESSIONS` | No | `100` | Max concurrent live MCP sessions on `/mcp` per process. A well-formed initialize at capacity evicts the least-recently-used session and is admitted — it is never a 4xx. Non-positive / non-integer values are rejected with a warning and the default is used. |
-| `MCP_SESSION_TTL_SECONDS` | No | `28800` (8 h) | MCP session inactivity TTL in seconds. Each request resets the clock — actively-used sessions never expire. **Highest priority**, overriding [`sessionStore.ttlSeconds`](/config/nimblebrain-json/#sessionstore) in `nimblebrain.json`. Non-positive / non-integer values fall back to the default. |
 
 ### Secrets
 
@@ -193,6 +188,8 @@ export ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
 
 Separate multiple origins with commas. Whitespace around each origin is trimmed.
 
+The same list decides which browser origins may call `/mcp/<workspaceId>`. See [browser origins](/deploy/security/#browser-origins-at-mcpwsid).
+
 ## Telemetry variables
 
 Either variable disables anonymous telemetry:
@@ -216,7 +213,6 @@ When the same setting can be configured in multiple places, this is the resoluti
 |---------|---------|----------|-------------|---------|
 | Working directory | `NB_WORK_DIR` (beats all) | `--workdir` | `workDir` | `~/.nimblebrain` |
 | Port | `PORT` (beats `--port`) | `--port` | `http.port` | `27247` |
-| MCP session TTL | `MCP_SESSION_TTL_SECONDS` (beats all) | — | `sessionStore.ttlSeconds` | `28800` |
 | Public origin | `NB_PUBLIC_ORIGIN` | — | derived from host facts | `http://localhost:27247` |
 | Anthropic key | `ANTHROPIC_API_KEY` | — | `providers.anthropic.apiKey` | — |
 | Telemetry | `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK` | — | `telemetry.enabled` | Enabled |

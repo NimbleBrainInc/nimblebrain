@@ -39,6 +39,7 @@ function writeUnterminated(id: string): void {
   const dir = join(workDir, "workspaces", WS_ID, "conversations", OWNER_ID);
   mkdirSync(dir, { recursive: true });
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",

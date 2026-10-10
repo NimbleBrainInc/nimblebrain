@@ -1090,3 +1090,36 @@ describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
     await expect(flowPromise).resolves.toBe("code-1");
   });
 });
+
+describe("fleet authorizer: startup validation", () => {
+  const FLEET_ENV_VARS = [
+    "NB_FLEET_AUTHORIZER_ISSUER",
+    "NB_MCP_AUTHORIZER_TENANT_KEY",
+    "NB_TENANT_ID",
+  ] as const;
+  let savedEnv: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    savedEnv = Object.fromEntries(FLEET_ENV_VARS.map((k) => [k, process.env[k]]));
+    process.env.NB_FLEET_AUTHORIZER_ISSUER = "http://fleet-authorizer.internal";
+    process.env.NB_TENANT_ID = "tenant-a";
+  });
+
+  afterEach(() => {
+    for (const k of FLEET_ENV_VARS) {
+      const v = savedEnv[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  test("refuses to build the routes when the fleet issuer is set without a tenant key", () => {
+    delete process.env.NB_MCP_AUTHORIZER_TENANT_KEY;
+    expect(() => makeApp(makeStubLifecycle())).toThrow(/NB_MCP_AUTHORIZER_TENANT_KEY/);
+  });
+
+  test("builds the routes when the tenant key is provisioned", () => {
+    process.env.NB_MCP_AUTHORIZER_TENANT_KEY = randomBytes(32).toString("base64");
+    expect(() => makeApp(makeStubLifecycle())).not.toThrow();
+  });
+});

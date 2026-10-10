@@ -58,11 +58,11 @@ export interface UsageRates {
 /**
  * One priced LLM call, as written to the durable usage ledger.
  *
- * Usage used to be derived from a storage side effect — a conversation JSONL
- * happening to exist, in a workspace still on disk — so any call path that did
- * not write one was invisible by default, and four such paths existed. A line
- * here is a *fact recorded at the point of spend*, which is what makes the next
- * non-conversation call path visible without anyone remembering to wire it.
+ * Usage derived from a storage side effect — a conversation JSONL happening to
+ * exist, in a workspace still on disk — misses every call path that does not
+ * write one. A line here is a *fact recorded at the point of spend*, which is
+ * what makes a non-conversation call path visible without anyone remembering
+ * to wire it.
  *
  * Written only by `src/usage/record.ts`; read only by `src/usage/aggregate.ts`.
  */
@@ -100,31 +100,6 @@ export interface UsageLedgerEntry {
    * to a stored run.
    */
   taskRunId?: string;
-  /**
-   * @deprecated Legacy read-only. Held whichever id correlated the work — a
-   * conversation for chat, a task run for a task — discriminated by
-   * `origin`. No longer written; `conversationId` / `taskRunId` carry those
-   * two facts under their own names, and `runId` adds the per-turn grain the
-   * single field could not express.
-   *
-   * Readers must keep honouring it until every retained record predating the
-   * split has aged out (see `retentionMonths`, default 24). `aggregate.ts`
-   * normalizes it; nothing else should read it.
-   */
-  sessionId?: string;
-  /**
-   * @deprecated Legacy read-only. Set on records written while the runtime
-   * could spawn a sub-agent from inside a turn: `delegated` marked such a
-   * call and `parentRunId` named the top-level run it belonged to. Neither is
-   * written any more — a run starts one way, and its calls carry `runId`.
-   *
-   * `aggregate.ts` still reads `parentRunId` so a retained record from that
-   * era rolls onto the turn that spawned it (see `retentionMonths`, default
-   * 24). Nothing else should read either field.
-   */
-  delegated?: boolean;
-  /** @deprecated Legacy read-only. See {@link delegated}. */
-  parentRunId?: string;
   /** Resolved unit prices. Absent when the catalog did not know the model. */
   rates?: UsageRates;
 }

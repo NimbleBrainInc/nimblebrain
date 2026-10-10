@@ -28,9 +28,8 @@ export const TEST_WORKSPACE_ID = "ws_0076759dbbe19fcc";
  * so tests can point at a `mkdtempSync(...)` directory without
  * bootstrapping the whole platform.
  *
- * Use this anywhere a test fixture previously passed `(wsId, workDir)`
- * pairs to free functions — the resulting context is the same
- * production code uses today.
+ * Use this anywhere a test fixture needs a `(wsId, workDir)` context —
+ * the resulting context is the same one production code uses.
  */
 export function makeTestWorkspaceContext(
   workDir: string,

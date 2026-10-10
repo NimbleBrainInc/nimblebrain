@@ -15,14 +15,14 @@ NimbleBrain uses pluggable authentication adapters configured via `instance.json
 
 | Adapter | Use case | Configuration |
 |---------|----------|--------------|
-| **dev** | Local development | `adapter: "dev"`: every request is one built-in owner, no login |
+| **dev** | Local development | `adapter: "dev"`: every request is one built-in admin, no login |
 | **oidc** | Enterprise / SSO | Authorization-code flow against any OIDC provider |
 | **workos** | Enterprise / SSO via WorkOS | AuthKit-hosted login (`adapter: "workos"`) |
 
 The adapter is selected by the `auth.adapter` field in `instance.json`. The server does not start without the file: a missing identity config never selects an adapter.
 
 <Aside type="danger">
-The `dev` adapter checks no credential. Anyone who can reach the server is its org owner, with full access to the agent and every connector installed in its workspaces.
+The `dev` adapter checks no credential. Anyone who can reach the server is its org admin, with full access to the agent and every connector installed in its workspaces.
 </Aside>
 
 ### How authentication works
@@ -102,18 +102,27 @@ If you use a custom domain with the web UI, that domain must be in `ALLOWED_ORIG
 These headers are always permitted in CORS requests:
 
 ```
-Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version
+Content-Type, Authorization, Last-Event-ID, Mcp-Protocol-Version, Mcp-Method, Mcp-Name
 ```
 
 These headers are exposed to client JavaScript:
 
 ```
-Mcp-Session-Id, Mcp-Protocol-Version
+Mcp-Protocol-Version
 ```
 
 ### Cross-origin writes
 
 CORS stops a script on another origin from reading a response, but a plain form or `text/plain` POST needs no preflight, and `SameSite=Lax` sends the session cookie on it when the other origin is on the same site. So any write (a method other than `GET`, `HEAD` or `OPTIONS`, on any route: `/v1/*`, `/mcp/<wsId>`, webhook deliveries) that the browser marks `Sec-Fetch-Site: same-site` or `cross-site` is refused with `403 cross_site_request`, unless its `Origin` is in `ALLOWED_ORIGINS`. Same-origin requests, and clients that are not browsers (MCP clients, webhook senders, services calling the API), send no such header and are unaffected. A browser request that CORS admits after a preflight comes from an allowed origin, so it is unaffected too.
+
+### Browser origins at `/mcp/<wsId>`
+
+A request to `/mcp/<workspaceId>` that carries an `Origin` header is refused with `403 untrusted_origin` unless that origin is one of:
+
+- the instance's public origin, platform host or custom domain, or an origin in `ALLOWED_ORIGINS`;
+- the address the request was sent to, when that address is `localhost` or an IP address (a self-hosted instance opened at its own address).
+
+This is the MCP transport's DNS-rebinding protection: a page on another hostname whose DNS was pointed at your instance sends requests the browser treats as same-origin, and its `Origin` names that hostname. If you reach the web UI by a hostname that is not your public origin (for example, a LAN name for a self-hosted instance), add it to `ALLOWED_ORIGINS`, or apps in the UI cannot call their tools. MCP clients send no `Origin` and are unaffected.
 
 ## Network architecture
 

@@ -165,8 +165,8 @@ function completeHandshake(): void {
  * Let the SDK's outbound envelope reach the capture.
  *
  * `connect()` runs on the spec's own client, which posts through its transport
- * over several async hops rather than the single microtask the SDK used to
- * take. A macrotask turn covers both, so every site waits the same way instead
+ * over several async hops rather than a single microtask. A macrotask turn
+ * covers any number of them, so every site waits the same way instead
  * of each one guessing how many `Promise.resolve()`s its call needs.
  */
 async function flush(): Promise<void> {
@@ -233,10 +233,9 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
   });
 
   it("app.updateModelContext emits a schema-valid request (carries an id)", async () => {
-    // Regression: the host previously required `id` on
-    // `ui/update-model-context`, dropping every model-context push from every
-    // synapse-app. The spec defines it as a **request**, so the SDK sends it
-    // with an `id` and the host answers it. Schema must admit that shape.
+    // The spec defines `ui/update-model-context` as a **request**, so the SDK
+    // sends it with an `id` and the host answers it. Schema must admit that
+    // shape, or every model-context push from every synapse-app is dropped.
     const app = await connectAndHandshake();
 
     // Sends immediately; the 250ms debounce moved into `useModelContext`.

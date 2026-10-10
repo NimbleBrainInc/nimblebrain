@@ -131,7 +131,7 @@ export interface ComposioConnectField {
 /**
  * Composio connector config. Single source of truth for the shape carried in
  * the connector `_meta` and threaded verbatim through the install action and
- * directory entry (previously duplicated inline across three files).
+ * directory entry.
  *
  * - `toolkit`: Composio's slug for the upstream (`gmail`, `posthog`, …).
  *   Passed as the `authConfigs` key to `composio.create(...)` at install and

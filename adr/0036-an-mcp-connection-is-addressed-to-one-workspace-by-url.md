@@ -1,6 +1,6 @@
 # 0036. An MCP connection is addressed to one workspace by URL
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0048
 - Date: 2026-09-25
 - Serves: secure RBAC, orchestrate remote MCP
 
@@ -36,6 +36,8 @@ minted for, but not who may use a workspace.
   as it answers an unknown workspace.
 - **A session is bound to (identity, workspace).** A session id presented at
   another workspace's URL, or by another identity, is answered as unknown.
+- *Amended by ADR-0048:* `/mcp/<wsId>` has no sessions. Every request is bound
+  to (identity, workspace) on its own, so there is no session id to present.
 - **Discovery is per workspace.** Each endpoint's metadata lives at the RFC 9728
   path for its URL, and a 401 points there. The root document is absent: the
   origin is no resource that accepts a token.

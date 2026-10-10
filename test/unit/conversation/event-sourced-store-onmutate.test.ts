@@ -53,14 +53,14 @@ function forId(id: string): ConversationMutation[] {
 
 describe("EventSourcedConversationStore onMutate", () => {
   test("create announces the new conversation and its path", async () => {
-    const conv = await store.create({ ownerId: "usr_a" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "usr_a" });
 
     expect(forId(conv.id).length).toBeGreaterThan(0);
     expect(forId(conv.id)[0]!.filePath).toBe(join(dir, `${conv.id}.jsonl`));
   });
 
   test("append announces the conversation it appended to", async () => {
-    const conv = await store.create({ ownerId: "usr_a" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "usr_a" });
     seen = [];
 
     store.appendEvent!(conv.id, userEvent("hello"));
@@ -69,7 +69,7 @@ describe("EventSourcedConversationStore onMutate", () => {
   });
 
   test("update announces the conversation it patched", async () => {
-    const conv = await store.create({ ownerId: "usr_a" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "usr_a" });
     seen = [];
 
     await store.update(conv.id, { title: "Renamed" });
@@ -78,7 +78,7 @@ describe("EventSourcedConversationStore onMutate", () => {
   });
 
   test("delete announces the conversation it removed", async () => {
-    const conv = await store.create({ ownerId: "usr_a" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "usr_a" });
     seen = [];
 
     await store.delete(conv.id);
@@ -87,7 +87,7 @@ describe("EventSourcedConversationStore onMutate", () => {
   });
 
   test("fork announces the copy AFTER its messages are written", async () => {
-    const source = await store.create({ ownerId: "usr_a" });
+    const source = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "usr_a" });
     store.appendEvent!(source.id, userEvent("one"));
     store.appendEvent!(source.id, userEvent("two"));
     seen = [];
@@ -112,7 +112,7 @@ describe("EventSourcedConversationStore onMutate", () => {
   });
 
   test("every announcement names a path inside the store's own directory", async () => {
-    const conv = await store.create({ ownerId: "usr_a" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "usr_a" });
     store.appendEvent!(conv.id, userEvent("hello"));
     await store.update(conv.id, { title: "T" });
     await store.fork(conv.id);

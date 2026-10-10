@@ -27,7 +27,6 @@ import { EventSourcedConversationStore } from "../../../src/conversation/event-s
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { workspaceFilesDir } from "../../../src/files/paths.ts";
 import { createFileStore } from "../../../src/files/store.ts";
-import { InstructionsStore } from "../../../src/instructions/storage.ts";
 import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
 import { NotificationStore } from "../../../src/notifications/store.ts";
 import type { NotificationEnvelope } from "../../../src/notifications/types.ts";
@@ -116,7 +115,7 @@ Confirm the recipient before calling gmail__send.
 
 /**
  * One entry per workspace-scoped writer the delete path leaves holding a stale
- * path. Each `write` is the first touch — the call that used to mkdir its way
+ * path. Each `write` is the first touch — the call that could mkdir its way
  * back into a workspace that had just been archived.
  */
 const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [
@@ -173,15 +172,9 @@ const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [
       });
     },
   },
-  // The four below keep their own `mkdir` (mode 0o700, or the async form) and
+  // The three below keep their own `mkdir` (mode 0o700, or the async form) and
   // call `assertWorkspaceRootExists` directly ahead of it. Two write secret
   // material the delete path destroys rather than archives.
-  {
-    name: "instructions — the overlay at the workspace root",
-    write: async () => {
-      await new InstructionsStore(workDir).write({ wsId: WS, text: "be brief", updatedBy: "ui" });
-    },
-  },
   {
     name: "permissions — permissions.json at the workspace root",
     write: () =>

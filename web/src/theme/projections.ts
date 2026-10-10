@@ -1,15 +1,21 @@
 /**
- * Pure projections of the canonical {@link palette} into the two
- * representations the host needs:
+ * Pure projections of a palette into the two representations the host needs:
  *
  *  - {@link paletteToExtAppsTokens} → the MCP ext-apps token map injected into
  *    embedded-app iframes (consumed by `bridge/theme.ts`).
  *  - {@link paletteToRootCss} → the `:root`/`.dark` CSS blocks the shell renders
  *    from (generated into `tokens.generated.css`, imported by `index.css`).
  *
+ * Both take the palette to project and default to the canonical one. The
+ * generator calls them with the default; the browser entry calls them with a
+ * tenant's brand merged over it (`brand.ts`). Colours and fonts come from the
+ * argument; the radius scale, type scale, shadows and layout constants are not
+ * brand-overridable and always come from `palette.ts`.
+ *
  * No DOM, no side effects. Given the palette, return data.
  */
 
+import type { Palette } from "./brand.ts";
 import {
   colors,
   extOnlyColors,
@@ -22,21 +28,27 @@ import {
   typeScale,
 } from "./palette.ts";
 
+/** The canonical palette in the shape a brand merge produces. */
+export const canonicalPalette: Palette = { colors, extOnlyColors, fonts };
+
 /**
  * Build the ext-apps token map for a mode.
  *
- * Spec keys follow the MCP ext-apps contract. Anything with no spec equivalent
- * rides as a `--nb-*` extension, and so does each colour and font an older
- * Synapse reads only by its `--nb-*` name — the prefix *is* the rule, so there is no list
- * to keep in step: `--nb-*` keys are injected into the iframe's style block and
- * filtered off the protocol boundary by `getSpecThemeTokens`. (Note the
- * converse does not hold: a few spec-shaped keys are also filtered, because
- * NimbleBrain emits more of a family than the spec enumerates. `theme.ts` has
- * that rule.)
+ * Spec keys follow the MCP ext-apps contract. A value goes out under its spec
+ * key whenever the spec names one; only a value with no spec equivalent rides as
+ * a `--nb-*` extension. The prefix *is* the rule, so there is no list to keep in
+ * step: `--nb-*` keys are filtered off `styles.variables` by
+ * `getSpecThemeTokens`. (Note the converse does not hold: a few spec-shaped
+ * keys are also filtered, because NimbleBrain emits more of a family than the
+ * spec enumerates.) How a filtered key reaches the app depends on whether it
+ * varies with the mode; `theme.ts` has that rule.
  */
-export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
-  const c = (name: keyof typeof colors) => pick(colors[name], mode);
-  const ext = (name: keyof typeof extOnlyColors) => pick(extOnlyColors[name], mode);
+export function paletteToExtAppsTokens(
+  mode: Mode,
+  palette: Palette = canonicalPalette,
+): Record<string, string> {
+  const c = (name: keyof typeof colors) => pick(palette.colors[name], mode);
+  const ext = (name: keyof typeof extOnlyColors) => pick(palette.extOnlyColors[name], mode);
 
   return {
     // ── ext-apps spec: Colors ──
@@ -62,8 +74,8 @@ export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
     "--color-text-inverse": c("primary-foreground"),
 
     // ── ext-apps spec: Typography ──
-    "--font-sans": fonts.sans,
-    "--font-mono": fonts.mono,
+    "--font-sans": palette.fonts.sans,
+    "--font-mono": palette.fonts.mono,
     ...typeScale,
 
     // ── ext-apps spec: Layout ──
@@ -73,20 +85,11 @@ export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
     ...shadows[mode],
 
     // ── NimbleBrain extensions ──
-    // `processing` and `processing-light` have no spec equivalent. Every other
-    // key here repeats a spec key above, for apps on a Synapse that reads the
-    // `--nb-*` name: `danger`/`success`/`warning` are `--color-text-*`,
-    // `info-light` is `--color-background-info`, both foregrounds are
-    // `--color-text-inverse`, and `font-heading` is `--font-sans`.
-    "--nb-color-accent-foreground": c("primary-foreground"),
-    "--nb-color-danger": c("destructive"),
-    "--nb-color-danger-foreground": c("destructive-foreground"),
-    "--nb-color-success": c("success"),
-    "--nb-color-warning": c("warning"),
+    // Values the spec has no key for, read by `@nimblebrain/synapse`'s tokens:
+    // the processing hue and its tint, and a heading family of its own.
     "--nb-color-processing": c("processing"),
     "--nb-color-processing-light": c("processing-light"),
-    "--nb-color-info-light": c("info-light"),
-    "--nb-font-heading": fonts.heading,
+    "--nb-font-heading": palette.fonts.heading,
   };
 }
 
@@ -99,10 +102,10 @@ export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
  * `.dark` redefines colors and shadows (both mode-dependent), the rest cascade
  * from `:root`.
  */
-export function paletteToRootCss(): string {
-  const names = Object.keys(colors) as (keyof typeof colors)[];
+export function paletteToRootCss(palette: Palette = canonicalPalette): string {
+  const names = Object.keys(palette.colors) as (keyof typeof colors)[];
 
-  const lightDecls = names.map((n) => `  --${n}: ${pick(colors[n], "light")};`);
+  const lightDecls = names.map((n) => `  --${n}: ${pick(palette.colors[n], "light")};`);
   for (const [k, v] of Object.entries(layout)) lightDecls.push(`  ${k}: ${v};`);
   // Radius scale — the ONE radius source, shared with the iframe apps. Emitted
   // as `--border-radius-*` (the ext-apps / synapse-ui names) and aliased to
@@ -113,9 +116,8 @@ export function paletteToRootCss(): string {
   // in index.css. Same single-source path as colors/radius/layout.
   for (const [k, v] of Object.entries(typeScale)) lightDecls.push(`  ${k}: ${v};`);
   // Font stacks — single-sourced into the shell as `--nb-font-*`, aliased to
-  // Tailwind's `--font-*` in index.css (the shell previously restated these as
-  // literals). Mode-independent, :root only.
-  for (const [k, v] of Object.entries(fonts)) lightDecls.push(`  --nb-font-${k}: ${v};`);
+  // Tailwind's `--font-*` in index.css. Mode-independent, :root only.
+  for (const [k, v] of Object.entries(palette.fonts)) lightDecls.push(`  --nb-font-${k}: ${v};`);
   // Shadows — mode-dependent, so emitted into both :root and .dark. Renamed to
   // `--nb-shadow-*` (Tailwind owns the `--shadow-*` key) and aliased to it in
   // index.css. The shell shares the design system's shadow ramp the iframe apps
@@ -124,7 +126,7 @@ export function paletteToRootCss(): string {
   const shadowDecl = (k: string, v: string) => `  ${k.replace("--shadow-", "--nb-shadow-")}: ${v};`;
   for (const [k, v] of Object.entries(shadows.light)) lightDecls.push(shadowDecl(k, v));
 
-  const darkDecls = names.map((n) => `  --${n}: ${pick(colors[n], "dark")};`);
+  const darkDecls = names.map((n) => `  --${n}: ${pick(palette.colors[n], "dark")};`);
   for (const [k, v] of Object.entries(shadows.dark)) darkDecls.push(shadowDecl(k, v));
 
   return `:root {\n${lightDecls.join("\n")}\n}\n\n.dark {\n${darkDecls.join("\n")}\n}\n`;

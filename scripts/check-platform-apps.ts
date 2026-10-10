@@ -34,6 +34,7 @@
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { $, Glob } from "bun";
+import { tscBinary, unlistedSources } from "./lib/tsc-paths.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -62,7 +63,7 @@ async function listSources(pkg: string): Promise<string[]> {
 
 async function checkProject(pkg: string, project: Project, sources: string[]): Promise<string[]> {
   const name = relative(ROOT, pkg);
-  const tsc = join(pkg, "node_modules", ".bin", "tsc");
+  const tsc = tscBinary(pkg);
   if (!(await Bun.file(tsc).exists())) {
     return [`${name}: no TypeScript installed. Run \`bun run install:platform-apps\` first.`];
   }
@@ -77,9 +78,8 @@ async function checkProject(pkg: string, project: Project, sources: string[]): P
   const lines = `${result.stdout.toString()}${result.stderr.toString()}`.split("\n");
   const failures: string[] = [];
 
-  const analyzed = new Set(lines.map((l) => l.trim()));
   const expected = sources.filter((f) => project.covers(relative(pkg, f)));
-  const unanalyzed = expected.filter((f) => !analyzed.has(f));
+  const unanalyzed = unlistedSources(expected, lines);
   if (unanalyzed.length > 0) {
     failures.push(
       `${name}/${project.config} left ${unanalyzed.length} of ${expected.length} files unanalyzed:`,

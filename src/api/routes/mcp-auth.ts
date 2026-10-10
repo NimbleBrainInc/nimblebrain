@@ -10,6 +10,7 @@ import {
   signEnvelope,
   verifyEnvelopeAsTenant,
 } from "../../oauth/envelope.ts";
+import { readFleetAuthorizer } from "../../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { log } from "../../observability/log.ts";
 import {
@@ -24,7 +25,7 @@ import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspac
 import type { OAuthInitiateResponse } from "../schemas/responses.ts";
 import { type AppContext, type AppEnv, apiError, json } from "../types.ts";
 import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
-import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
+import { reinitiateParagraph, successPage } from "./oauth-success-page.ts";
 
 /**
  * OAuth integration routes for outbound flows where NimbleBrain is the
@@ -63,12 +64,16 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // hitting a generic 500. Idempotent: returns the cached value on
   // subsequent calls in the route handlers below.
   getBouncerMode();
+  // Same for the fleet authorizer: with its issuer set, a missing or malformed
+  // tenant key refuses startup, since the authorizer refuses every unasserted
+  // token request.
+  readFleetAuthorizer();
 
   const app = new Hono<AppEnv>();
 
   // ── POST /v1/workspaces/:wsId/mcp-auth/initiate ───────────────────
   //
-  // Workspace-authed. Body: { serverName }. Stage 2: every URL connector
+  // Workspace-authed. Body: { serverName }. Every URL connector
   // is workspace-scoped, so the principal is always `WORKSPACE_PRINCIPAL_ID`.
   // Personal connectors live on the identity plane, not here. Calls
   // `lifecycle.startAuth`, which is idempotent on double-click and tears
@@ -209,7 +214,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       logCallbackOutcome("unknown_flow", { flow: flowId(state) });
       return c.html(
         "<html><body><h3>Unknown or expired OAuth flow.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         404,
       );
     }
@@ -564,7 +569,7 @@ function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Call
       outcome: "envelope_missing",
       response: c.html(
         "<html><body><h3>Authorization state envelope missing.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         400,
       ),
     };
@@ -589,7 +594,7 @@ function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Call
       fields: { reason: code },
       response: c.html(
         "<html><body><h3>Authorization session invalid.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         400,
       ),
     };
@@ -620,7 +625,7 @@ function verifyStateCookie(c: Context<AppEnv>, state: string): CallbackFailure |
       fields: { binding: cookieValue ? "mismatched" : "absent" },
       response: c.html(
         "<html><body><h3>Authorization session mismatch.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         400,
       ),
     };
@@ -654,8 +659,9 @@ function renderSuccessPage(
   // it renders unstyled in any deployment that doesn't override
   // NB_CSP — i.e. all of them. The hash pins us to exactly the bytes
   // we serve.
-  c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
-  return c.html(successPageHtml("Authorization complete", returnUrl));
+  const page = successPage("Authorization complete", returnUrl);
+  c.header("Content-Security-Policy", page.csp);
+  return c.html(page.html);
 }
 
 function sha256Hex(input: string): string {

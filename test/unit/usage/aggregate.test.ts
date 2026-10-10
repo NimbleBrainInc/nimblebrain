@@ -60,7 +60,9 @@ function writeCalls(
       model: ev.model,
       usage: ev.usage,
       llmMs: ev.llmMs ?? 0,
-      sessionId: meta.id,
+      ...((meta.origin ?? "chat") === "task"
+        ? { taskRunId: meta.id }
+        : { conversationId: meta.id }),
       ...(meta.ownerId !== undefined ? { userId: meta.ownerId } : {}),
       ...(rates ? { rates } : {}),
     };
@@ -624,7 +626,7 @@ describe("breakdown rows make the same split as totals", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The id split: new-shape records, legacy records, and the two mixed
+// The id split: a conversation and a task run, each under its own name
 // ---------------------------------------------------------------------------
 
 /** Write one record in whichever shape the caller spells out. */
@@ -644,11 +646,6 @@ function writeRecord(dir: string, fields: Partial<UsageLedgerEntry>): void {
 }
 
 describe("the ledger's id split", () => {
-  // Every OTHER test in this file writes the legacy `sessionId` shape, so the
-  // back-compat read is already under test by the whole suite above. These
-  // cover the new shape, and the mixture that a retention window spanning the
-  // split actually contains.
-
   it("counts a new-shape chat record as a conversation", async () => {
     const dir = makeTmpDir();
     writeRecord(dir, { conversationId: "conv_new", runId: "turn-1" });
@@ -665,27 +662,6 @@ describe("the ledger's id split", () => {
     const report = await aggregateUsage(dir, "all", "day");
     expect(report.totals.runs).toBe(1);
     expect(report.totals.conversations).toBe(0);
-  });
-
-  it("does not double-count one conversation written in both shapes", async () => {
-    // The mixture inside one retention window: the same conversation before
-    // and after the split. Both spellings must resolve to one id, or every
-    // conversation straddling the change reads as two.
-    const dir = makeTmpDir();
-    writeRecord(dir, { sessionId: "conv_same" });
-    writeRecord(dir, { conversationId: "conv_same", runId: "turn-2" });
-
-    const report = await aggregateUsage(dir, "all", "day");
-    expect(report.totals.conversations).toBe(1);
-  });
-
-  it("counts legacy and new task records as one run", async () => {
-    const dir = makeTmpDir();
-    writeRecord(dir, { origin: "task", sessionId: "run_same" });
-    writeRecord(dir, { origin: "task", taskRunId: "run_same", runId: "turn-2" });
-
-    const report = await aggregateUsage(dir, "all", "day");
-    expect(report.totals.runs).toBe(1);
   });
 
   it("keeps a task out of the conversation breakdown", async () => {
@@ -716,40 +692,11 @@ describe("the ledger's id split", () => {
     expect(report.totals.conversations).toBe(1);
   });
 
-  it("bills a legacy sub-agent record to the turn that spawned it", async () => {
-    // Records retained from when a turn could spawn a sub-agent carry the
-    // sub-agent's own `runId` and the spawning turn's `parentRunId`. Keying the
-    // dimension on `runId` alone would split one turn into a row per agent —
-    // the parent understating what the turn cost, and children sitting beside
-    // top-level turns with nothing to tell them apart.
+  it("groups a record with no engine run under `none` rather than inventing one", async () => {
+    // A forked fast-slot call (title, compaction) carries no engine run id. It
+    // must be legible as "not attributable to a turn", not folded into another's.
     const dir = makeTmpDir();
-    writeRecord(dir, { conversationId: "conv_d", runId: "turn-top" });
-    writeRecord(dir, {
-      conversationId: "conv_d",
-      runId: "child-1",
-      parentRunId: "turn-top",
-      delegated: true,
-    });
-    writeRecord(dir, {
-      conversationId: "conv_d",
-      runId: "grandchild-1",
-      parentRunId: "turn-top",
-      delegated: true,
-    });
-
-    const report = await aggregateUsage(dir, "all", "turn");
-    const rows = report.breakdowns.turn ?? [];
-    expect(rows.map((r) => r.key)).toEqual(["turn-top"]);
-    // The whole turn's spend, not the top-level agent's share of it.
-    expect(rows[0]!.llmCalls).toBe(3);
-    expect(rows[0]!.cost.total).toBeCloseTo(report.totals.cost.total, 10);
-  });
-
-  it("groups a legacy record's turn under `none` rather than inventing one", async () => {
-    // Records predating the split carry no engine run id. They must be legible
-    // as "not attributable to a turn", not silently folded into another's.
-    const dir = makeTmpDir();
-    writeRecord(dir, { sessionId: "conv_old" });
+    writeRecord(dir, { conversationId: "conv_old", source: "title" });
 
     const report = await aggregateUsage(dir, "all", "turn");
     expect((report.breakdowns.turn ?? []).map((r) => r.key)).toEqual(["none"]);

@@ -143,7 +143,9 @@ describe("chat rate limiting", () => {
     const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("rate_limited");
     expect(body.message).toBe("Rate limit exceeded");
-    expect(res.headers.get("Retry-After")).toBe("60");
+    const retryAfter = Number(res.headers.get("Retry-After"));
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeLessThanOrEqual(60);
   });
 
   it("does not rate-limit unrelated endpoints when chat is exhausted", async () => {

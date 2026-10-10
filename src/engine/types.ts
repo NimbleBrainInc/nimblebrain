@@ -1,6 +1,11 @@
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { McpUiToolVisibility } from "@modelcontextprotocol/ext-apps";
-import type { ContentBlock, TextContent, ToolAnnotations } from "@modelcontextprotocol/server";
+import type {
+  ContentBlock,
+  InputRequests,
+  TextContent,
+  ToolAnnotations,
+} from "@modelcontextprotocol/server";
 import type { TokenUsage } from "../usage/types.ts";
 import type { EngineEventPayloads } from "./schemas/events.ts";
 
@@ -130,6 +135,12 @@ export interface ToolResult {
    * connector, can opt into a `_meta` hint and have it reach the engine.
    */
   _meta?: Record<string, unknown>;
+  /**
+   * The connector needs input from the client before it can answer (an MCP
+   * `input_required` result). Only a call made with `ToolExecuteOptions.caller`
+   * can come back this way; `content` is then empty.
+   */
+  inputRequired?: { inputRequests?: InputRequests; requestState?: string };
 }
 
 /**
@@ -478,8 +489,8 @@ export interface EngineConfig {
    * fires these immediately after `run.start` and before the first LLM call,
    * so the conversation log records what the prompt looked like.
    *
-   * Phase 2: `skills.loaded` and `context.assembled` payloads. Future phases
-   * may add more entries here without touching the engine signature.
+   * `skills.loaded` and `context.assembled` payloads. More entries can be
+   * added here without touching the engine signature.
    */
   runMetadata?: RunMetadata;
   /**
@@ -589,16 +600,13 @@ export interface ContextAssembledPayload {
 export interface SkillsLoadedEntry {
   id: string;
   /**
-   * The skill's own name, for display. Always set by
-   * `buildSkillsLoadedPayload`; optional because events recorded before the
-   * field existed are read back through this same type — read it through
-   * `skillDisplayName` (`src/skills/display-name.ts`), never bare.
+   * The skill's own name, for display. Set by `buildSkillsLoadedPayload`.
    *
    * Carried on the event so no consumer derives a name from `id`: a connector
    * skill's id is its `skill://…/SKILL.md` entrypoint, whose last path segment
    * is the literal `SKILL`.
    */
-  name?: string;
+  name: string;
   /**
    * The MCP server that published this skill, when it came from one. Absent for
    * filesystem skills (org / workspace / user tiers), which have no publisher.
@@ -635,12 +643,6 @@ export interface ContextAssembledSource {
   userId?: string;
   /** `history`: how many messages the windowed history holds. */
   messages?: number;
-  /**
-   * `history`, as recorded before `messages` existed. Carried the same message
-   * count under a name that read as conversational turns; kept so historical
-   * events still render. Emitters set `messages`.
-   */
-  turns?: number;
   compacted?: boolean;
 }
 

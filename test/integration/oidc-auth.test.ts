@@ -108,6 +108,8 @@ interface TokenOptions {
   exp?: number;
   sub?: string;
   email?: string;
+  /** Defaults to `true`; pass `undefined` explicitly to omit the claim. */
+  email_verified?: unknown;
   name?: string;
   kid?: string;
 }
@@ -126,6 +128,7 @@ async function buildJwt(opts: TokenOptions = {}): Promise<string> {
     exp: opts.exp ?? nowSec + 3600,
     sub: opts.sub ?? "integ-user-sub",
     email: opts.email ?? "alice@acme.com",
+    email_verified: "email_verified" in opts ? opts.email_verified : true,
     name: opts.name,
   };
 
@@ -232,7 +235,7 @@ describe("OIDC integration: full flow", () => {
     // Create a default workspace first
     const ws = await wsStore.create("Default");
 
-    // OidcIdentityProvider no longer auto-adds to workspaces — that is handled
+    // OidcIdentityProvider does not auto-add to workspaces — that is handled
     // by the runtime layer. Verify the user is provisioned and can be manually added.
     const adapter = new OidcIdentityProvider(
       { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },

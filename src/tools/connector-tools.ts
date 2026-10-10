@@ -1,4 +1,5 @@
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
+import { brandName } from "../brand/index.ts";
 import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
@@ -54,7 +55,7 @@ import type { CredentialStore } from "./credential-store.ts";
 import { CREDENTIAL_PROVIDER } from "./credential-transport-credential.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { hasMcpOAuthTokens, McpOAuthRecords } from "./mcp-oauth-records.ts";
-import { McpSource } from "./mcp-source.ts";
+import { McpSource, REMOTE_TOOL_LIST_MAX_AGE_MS } from "./mcp-source.ts";
 import type { Tool, ToolSource } from "./types.ts";
 import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
@@ -64,7 +65,7 @@ import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
  * MCP-tool-call surface is the canonical first-party API for the web
  * shell, and keeping one tool minimizes route bloat.
  *
- * Stage 2: every install is workspace-scoped. The `install` action
+ * Every install is workspace-scoped. The `install` action
  * targets the request's active workspace (`ctx.getWorkspaceId()`, set
  * from the `/w/<slug>` route); an explicit `wsId` arg overrides it for
  * direct API callers. Any workspace is a valid target.
@@ -250,6 +251,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "remove_operator_setup",
             "get_redirect_uri",
             "list_bound_skills",
+            "read_bound_skill",
             "list_personal_connectors",
             "list_personal_catalog",
             "grant_connector",
@@ -286,7 +288,12 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         serverName: {
           type: "string",
           description:
-            "Connector server name (required for disconnect, list_tools, get_permissions, set_permissions, grant_connector, revoke_connector).",
+            "Connector server name (required for disconnect, list_tools, get_permissions, set_permissions, grant_connector, revoke_connector, read_bound_skill).",
+        },
+        skillName: {
+          type: "string",
+          description:
+            "For read_bound_skill: the skill's name as list_bound_skills reports it for that server.",
         },
         scope: {
           type: "string",
@@ -386,6 +393,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           return handleGetRedirectUri(args.identity);
         case "list_bound_skills":
           return handleListBoundSkills(ctx, args.wsId);
+        case "read_bound_skill":
+          return handleReadBoundSkill(ctx, args.wsId, args.serverName, args.skillName);
         case "list_personal_connectors":
           return handleListPersonalConnectors(ctx, args.callerId);
         case "list_personal_catalog":
@@ -452,6 +461,8 @@ interface DispatchArgs {
   identity: UserIdentity | null;
   callerId: string | null;
   serverName: string;
+  /** For `read_bound_skill`: the skill's name on `serverName`. */
+  skillName: string;
   scope: string | undefined;
   listInstalledScope: string;
   catalogId: string;
@@ -487,6 +498,7 @@ function resolveDispatchArgs(
     identity,
     callerId: identity?.id ?? null,
     serverName: str(input.serverName),
+    skillName: str(input.skillName),
     scope: input.scope ? String(input.scope) : undefined,
     listInstalledScope: String(input.scope ?? "all"),
     catalogId: str(input.catalogId),
@@ -498,7 +510,7 @@ function resolveDispatchArgs(
     // Default the install target to the request's workspace — the same
     // `ctx.getWorkspaceId()` (the workspace in the request URL) every other
     // action on this tool uses. The web shell installs into the
-    // workspace the user is viewing; it no longer carries a separately-picked
+    // workspace the user is viewing; it does not carry a separately-picked
     // target. An explicit `wsId` arg still wins for direct API callers. Keeping
     // install on the same workspace selector as connect / list / status is what
     // closes the "Connector not installed" scope mismatch (an install seeded under
@@ -606,22 +618,67 @@ async function handleListDirectory(
 }
 
 /**
- * `list_bound_skills` — the curated connector-skill overlays materialized
- * in this workspace, with their bound server + provenance source. These are
- * surface-once-into-history candidates, not authored skills, so they don't
- * appear in `skills__list`; this is how an operator sees what's bound.
+ * `list_bound_skills` — every skill the workspace's connectors contribute to
+ * the model's context, without their bodies: the curated overlays materialized
+ * here (`overlays`, with provenance) and the skills connected servers publish
+ * through the Skills extension (`published`, with how each loads). A server
+ * with an overlay publishes none here, because the overlay supersedes them.
+ * Neither kind is an authored skill, so neither appears in `skills__list`.
  */
-function handleListBoundSkills(ctx: ManageConnectorsContext, wsId: string | null): ToolResult {
+async function handleListBoundSkills(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+): Promise<ToolResult> {
   if (!wsId) {
     return errResult("No workspace in scope — pass `wsId` or call from a workspace.");
   }
   const overlays = ctx.runtime.listConnectorOverlays(wsId);
-  const summary = overlays.length
-    ? overlays.map((o) => `- ${o.server}: ${o.name}${o.source ? ` (${o.source})` : ""}`).join("\n")
-    : "No connector-skill overlays bound in this workspace.";
+  const published = await ctx.runtime.listPublishedSkills(wsId);
+  const lines = [
+    ...overlays.map((o) => `- ${o.server}: ${o.name} (overlay${o.source ? `, ${o.source}` : ""})`),
+    ...published.map((p) => `- ${p.server}: ${p.name} (published, ${p.loadingStrategy})`),
+  ];
   return {
-    content: textContent(summary),
-    structuredContent: { wsId, overlays },
+    content: textContent(
+      lines.length ? lines.join("\n") : "No connector skills bound in this workspace.",
+    ),
+    structuredContent: { wsId, overlays, published },
+    isError: false,
+  };
+}
+
+/**
+ * `read_bound_skill` — one connector skill's body as the model receives it,
+ * by the server and name `list_bound_skills` reports.
+ */
+async function handleReadBoundSkill(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  serverName: string,
+  skillName: string,
+): Promise<ToolResult> {
+  if (!wsId) {
+    return errResult("No workspace in scope — pass `wsId` or call from a workspace.");
+  }
+  if (!serverName || !skillName) {
+    return errResult("`serverName` and `skillName` are required for read_bound_skill.");
+  }
+  const read = await ctx.runtime.readConnectorSkill(wsId, serverName, skillName);
+  if (!read) {
+    return errResult(
+      `No skill "${skillName}" from "${serverName}" in this workspace. Call list_bound_skills for the current set.`,
+    );
+  }
+  if (!read.ok) {
+    return errResult(
+      read.reason === "unverified"
+        ? `"${serverName}" served content for "${skillName}" that does not match its skills listing, so the runtime does not use it.`
+        : `"${serverName}" did not return "${skillName}". The server may be unreachable.`,
+    );
+  }
+  return {
+    content: textContent(read.body),
+    structuredContent: { serverName, skillName, kind: read.kind, body: read.body },
     isError: false,
   };
 }
@@ -741,24 +798,12 @@ function resolveInstanceCatalog(
 }
 
 /**
- * How long a remote connector's memoized `tools/list` is trusted before the
- * connector read surfaces (Configure page, installed list) force a re-fetch.
- * A remote server redeployed at the same URL changes its advertised tools with
- * no lifecycle signal to an already-connected source — no `stop`, no restart,
- * no native `tools/list_changed` — so without this the surface the UI shows
- * (and the agent's callable set) stays pinned to the first-connect snapshot.
- * Short enough that a redeploy surfaces within a page reload or two; long
- * enough that a burst of reads coalesces onto one round-trip.
- */
-const REMOTE_TOOL_LIST_MAX_AGE_MS = 30_000;
-
-/**
  * Tools for a connector's read surface, kept fresh for remote sources. Local /
  * stdio sources change their tool set only via respawn (which already drops
  * the memo), so they read the memo directly; only remote sources need the
- * age-gated re-fetch. A refresh that finds a changed surface fans out through
- * the source's `toolsChanged` seam, so the agent's tool union and the LLM tool
- * list converge with what the UI now shows (never one without the other).
+ * age-gated re-fetch. Here it waits for the answer, where the agent's run
+ * listing serves the memo past a short wait; both use one max age
+ * (`REMOTE_TOOL_LIST_MAX_AGE_MS`).
  */
 async function readConnectorTools(source: ToolSource): Promise<Tool[]> {
   if (source instanceof McpSource && source.isRemote()) {
@@ -1047,9 +1092,8 @@ async function buildInstalledEntry(
 async function handleListInstalled(
   ctx: ManageConnectorsContext,
   wsId: string | null,
-  // Stage 2: callerId no longer disambiguates between workspace-scope
-  // and user-scope views (the latter was removed). Kept for signature
-  // stability across `handleGetInstalled`; ignored.
+  // Ignored: every view is workspace-scoped, so the caller does not
+  // select one. Kept for signature parity with `handleGetInstalled`.
   _callerId: string | null,
   scope: string,
   /**
@@ -1203,7 +1247,7 @@ async function handleInstall(
   // `wsId` is REQUIRED for every install, but it resolves to the request's
   // workspace by default (the workspace in the request URL) — the dispatcher
   // passes `ctx.getWorkspaceId()` when no explicit arg is given. There is still no default-to-personal fallback
-  // (Stage 1 precedent: `startConnectorSource` hard-errors on missing wsId;
+  // (`startConnectorSource` hard-errors on missing wsId too;
   // pooling credentials across tenants via a silent default is the failure
   // mode this guard forecloses). A call bound to no workspace and carrying
   // no `wsId` arg hits the guard below.
@@ -1338,7 +1382,7 @@ async function handleInstallIdentity(
   // connectors.json.
   if (isReservedServerName(serverName)) {
     return errResult(
-      `"${entry.id}" resolves to "${serverName}", a name reserved for NimbleBrain system ` +
+      `"${entry.id}" resolves to "${serverName}", a name reserved for ${brandName()} system ` +
         `tools. Pick a connector with a different id.`,
     );
   }
@@ -2439,13 +2483,12 @@ interface RemoteInstallMessageParts {
  * Success `content` string for a remote-OAuth install.
  *
  * **All three parts belong in this sentence, and they are separate because they
- * mean different things.** A contract violation used to be folded into the
- * eager-start clause and rendered as "Source eager-start failed" for a connector
- * whose source was up, sending the operator to click Connect on a live
- * connection. Splitting them fixed the label — and then dropping the contract
- * warning from here made it invisible, which is worse: the engine feeds the
- * model a tool result's `content` and never its `structuredContent`, and the web
- * client's install call types its return without `warning`. So `content` is the
+ * mean different things.** A contract violation folded into the eager-start
+ * clause would render as "Source eager-start failed" for a connector whose source
+ * is up, sending the operator to click Connect on a live connection. Dropping the
+ * contract warning from here would make it invisible, which is worse: the engine
+ * feeds the model a tool result's `content` and never its `structuredContent`,
+ * and the web client's install call types its return without `warning`. So `content` is the
  * only surface either audience reads, and a check nobody can see is not a check.
  *
  * `structuredContent.warning` still carries the combined string for anything
@@ -2764,13 +2807,13 @@ async function handleListTools(
   scopeHint: string | undefined,
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
-  void scopeHint; // Stage 2: scopeHint is workspace-only and informational
-  void callerId; // unused post-Stage-2; kept for caller signature stability
+  void scopeHint; // workspace-only and informational
+  void callerId; // unused; kept for caller signature stability
   const lifecycle = ctx.runtime.getLifecycle();
 
-  // Stage 2: every connector is workspace-scoped. The caller must
+  // Every connector is workspace-scoped. The caller must
   // disambiguate the workspace (the UI selects it via the sidebar
-  // navigator — see Q1 in STAGE_2_DESIGN_DECISIONS.md).
+  // navigator).
   if (!wsId) return errResult("Workspace context required.");
   if (!lifecycle.getInstance(serverName, wsId)) {
     return errResult(`Connector "${serverName}" not installed in workspace.`);
@@ -3688,7 +3731,7 @@ async function handleListSecretKeys(
  *
  * Delegates to the single source of truth, `canWriteWorkspaceScoped`:
  * the identity must be a workspace member with the `admin` role. There
- * is no org-admin bypass — an org admin / owner who is not a workspace
+ * is no org-admin bypass — an org admin who is not a workspace
  * admin member cannot install connectors. The helper fails closed on a
  * malformed workspace record (non-array `members`).
  */

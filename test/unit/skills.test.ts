@@ -394,18 +394,16 @@ describe("loadCoreSkills", () => {
   it("capabilities names both persistence surfaces, and neither as an agent write", () => {
     // Nothing else in the always-on prompt says the runtime can persist
     // anything, so a workspace with no connectors installed reads as having no
-    // memory at all unless the briefing names these surfaces. The overlay is
-    // human-authored: the briefing must teach draft-and-point, never name the
-    // internal write tool — a named tool reads as callable.
+    // memory at all unless the briefing names these surfaces. A standing rule
+    // is human-authored: the briefing teaches draft-and-point to the Skills
+    // settings.
     const skills = loadCoreSkills();
     const bs = skills.find((s) => s.manifest.name === "capabilities")!;
-    expect(bs.body).toContain("Instructions");
-    expect(bs.body).toContain("workspace settings");
-    expect(bs.body).not.toContain("instructions__write_instructions");
+    expect(bs.body).toContain("Standing rules");
+    expect(bs.body).toContain("Skills settings");
     expect(bs.body).toContain("Skills");
-    // The overlay is workspace-only; org-wide guidance is an org-tier skill,
-    // and the briefing has to say so or the agent reaches for a scope that
-    // no longer exists.
+    // Org-wide guidance is an org-tier skill, and the briefing has to say so
+    // or the agent reaches for a scope that does not exist.
     expect(bs.body).toContain("org-tier skill");
   });
 
@@ -414,7 +412,7 @@ describe("loadCoreSkills", () => {
     const soul = skills.find((s) => s.manifest.name === "soul")!;
     expect(soul.manifest.loadingStrategy).toBe("always");
     expect(soul.manifest.priority).toBe(0);
-    expect(soul.body).toContain("NimbleBrain");
+    expect(soul.body).toContain("powered by {{brand.name}}.");
   });
 
   it("stamps provenance.origin = vendored on core skills (the ledger excludes them by it)", () => {

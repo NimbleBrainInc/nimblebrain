@@ -53,13 +53,14 @@ interface ConvOptions {
 
 function writeConv(opts: ConvOptions): void {
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id: opts.id,
     createdAt: opts.createdAt,
     updatedAt: opts.updatedAt ?? opts.createdAt,
     title: opts.title ?? null,
     lastModel: opts.lastModel ?? null,
   };
-  // Connector no longer reads line-1 totals — synthesize an assistant
+  // The connector does not read line-1 totals — synthesize an assistant
   // message carrying the requested usage IF the supplied messages don't
   // already declare their own. Tests that want explicit per-message
   // usage just include it in `messages`; tests that just want a top-line

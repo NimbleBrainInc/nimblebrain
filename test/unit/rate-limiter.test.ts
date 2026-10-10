@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { RequestRateLimiter } from "../../src/api/rate-limiter.ts";
 
 describe("RequestRateLimiter", () => {
@@ -46,9 +46,21 @@ describe("RequestRateLimiter", () => {
     expect(limiter.consume("user-1")).toBe(true);
   });
 
-  it("exposes windowSeconds", () => {
-    expect(new RequestRateLimiter(10, 60_000).windowSeconds).toBe(60);
-    expect(new RequestRateLimiter(10, 30_000).windowSeconds).toBe(30);
+  it("returns the remaining fixed-window time without extending it on rejection", () => {
+    const now = spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      const limiter = new RequestRateLimiter(1, 60_000);
+      expect(limiter.consumeWithRetryAfter("user-1")).toBeNull();
+
+      now.mockReturnValue(31_001);
+      expect(limiter.consumeWithRetryAfter("user-1")).toBe(30);
+      now.mockReturnValue(60_999);
+      expect(limiter.consumeWithRetryAfter("user-1")).toBe(1);
+      now.mockReturnValue(61_000);
+      expect(limiter.consumeWithRetryAfter("user-1")).toBeNull();
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("removes expired entries on cleanup", () => {

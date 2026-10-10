@@ -242,9 +242,9 @@ describe("FileBackedHostResourcesResolver.list", () => {
   });
 
   // Tag-shape validation. A buggy connector sending `tags: "draft"` (string)
-  // instead of `tags: ["draft"]` (array) used to throw `TypeError: .every
-  // is not a function` and surface as a generic dispatch failure — no
-  // useful diagnostic. Now: reject with `-32602`, mirroring the
+  // instead of `tags: ["draft"]` (array) would otherwise throw `TypeError:
+  // .every is not a function` and surface as a generic dispatch failure —
+  // no useful diagnostic. So: reject with `-32602`, mirroring the
   // scheme-filter branch. Silently treating non-array as "no filter"
   // was rejected as misleading (the connector gets all files back instead
   // of a clear error).

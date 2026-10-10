@@ -18,7 +18,7 @@ import { type Static } from "@sinclair/typebox";
 export declare const SkillPriority: import("@sinclair/typebox").TNumber;
 export declare const SkillsListInput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"org" | "workspace" | "user" | "provided">>;
-    layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<3 | 1>>;
+    layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<1 | 3>>;
     loading_strategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
     tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
@@ -57,11 +57,11 @@ export declare const SkillsUpdateInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
     manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
-        priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-        triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-        allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+        loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"always" | "dynamic">, import("@sinclair/typebox").TNull]>>;
+        priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>>;
+        toolAffinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
+        triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
+        allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
     }>>;
     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     body_mode: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"append">, import("@sinclair/typebox").TLiteral<"replace">]>>;
@@ -168,6 +168,12 @@ export interface SkillDetail {
         status?: string;
     };
     modifiedAt?: string;
+    /**
+     * Present when the body is longer than the platform delivers: how many
+     * characters past the limit it runs. Those trailing sections are cut when the
+     * skill loads, so a reader editing it knows what never reaches the model.
+     */
+    overLimitBy?: number;
 }
 /** `SkillsReadOutput` is the detail itself — no wrapper envelope. */
 export type SkillsReadOutput = SkillDetail;

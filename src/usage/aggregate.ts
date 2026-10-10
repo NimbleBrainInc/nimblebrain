@@ -2,14 +2,13 @@
  * Usage aggregation — the ONE reader of tenant-level spend.
  *
  * Source of truth: the durable usage ledger (`src/usage/ledger.ts`), one line
- * per priced LLM call. It used to be `llm.response` events scanned out of
- * conversation JSONL files, which made usage a function of whether a
- * conversation file happened to exist — so task runs, sub-agent runs, the
- * background briefing and archived workspaces all spent money this never saw.
+ * per priced LLM call. Scanning `llm.response` events out of conversation
+ * JSONL files would make usage a function of whether a conversation file
+ * happened to exist — so task runs, sub-agent runs, the background briefing
+ * and archived workspaces would all spend money it never saw.
  *
- * **There is exactly one reader, deliberately.** The codebase previously had
- * two that disagreed, which is how the undercount survived; a third would
- * repeat it. Per-conversation display still reads `llm.response` from the
+ * **There is exactly one reader, deliberately.** Two readers can disagree,
+ * and the disagreement hides an undercount. Per-conversation display still reads `llm.response` from the
  * conversation log, because "what happened in this conversation" is a different
  * question from "what did this tenant spend" — but neither side may sum the
  * other's source.
@@ -287,54 +286,18 @@ function normalizeGroupBys(groupBy: string | string[]): UsageGroupBy[] {
   return [...new Set(valid.length > 0 ? valid : fallback)];
 }
 
-// ── Legacy `sessionId` normalization ─────────────────────────────────────
-//
-// Records written before the id split carry one `sessionId` holding either a
-// conversation or a task run, told apart by `origin`. Records written
-// since carry `conversationId` / `taskRunId` under their own names. Both shapes
-// are in the retention window at once, so every read goes through these two
-// helpers rather than touching either field directly.
-//
-// These are the whole compatibility surface, and they expire: when the oldest
-// retained month postdates the split (see `retentionMonths`, default 24), no
-// record on disk has `sessionId` and both `?? legacy` arms become dead code.
-
-/** The chat conversation a record belongs to, new shape or old. */
-function conversationOf(record: LlmCallRecord): string | undefined {
-  if (record.conversationId) return record.conversationId;
-  // Legacy: `sessionId` was a conversation only when the call was not a task.
-  return record.origin === "task" ? undefined : record.sessionId;
-}
-
-/** The task run a record belongs to, new shape or old. */
-function taskRunOf(record: LlmCallRecord): string | undefined {
-  if (record.taskRunId) return record.taskRunId;
-  // Legacy: `sessionId` was a task run only when the call was a task.
-  return record.origin === "task" ? record.sessionId : undefined;
-}
-
 function groupKeyFor(record: LlmCallRecord, groupBy: UsageGroupBy, modelKey: string): string {
   switch (groupBy) {
     case "model":
       return modelKey;
     case "conversation":
-      // A task run has no conversation, so it groups under "none" rather than
-      // contributing its run id to a conversation breakdown — which is what the
-      // undiscriminated `sessionId` read did, putting `run_…` rows in a
-      // dimension the schema calls "conversation".
-      return conversationOf(record) ?? "none";
+      // A task run has no conversation, so it groups under "none".
+      return record.conversationId ?? "none";
     case "turn":
-      // One assistant turn, which is one engine run.
-      //
-      // Legacy: a record written while a turn could spawn a sub-agent carries
-      // the spawning turn's id in `parentRunId` and the sub-agent's own in
-      // `runId`. Preferring `parentRunId` rolls those rows onto the turn that
-      // spawned them rather than billing one turn as several.
-      //
-      // The forked fast-slot calls (title, compaction) carry no
-      // engine run at all, and neither do records predating `runId`; both
-      // group under "none".
-      return record.parentRunId ?? record.runId ?? "none";
+      // One assistant turn, which is one engine run. The forked fast-slot calls
+      // (title, compaction) carry no engine run at all, and neither do records
+      // predating `runId`; both group under "none".
+      return record.runId ?? "none";
     case "user":
       return record.userId ?? "unknown";
     case "origin":
@@ -701,12 +664,9 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
   addTokens(sink.totals.tokens, tokens);
   addCost(sink.totals.cost, cost);
   sink.totals.llmMs += record.llmMs;
-  // `conversationOf` / `taskRunOf` decide which of the two a record belongs to,
-  // so a task is never counted as a conversation.
-  const conversationId = conversationOf(record);
-  const taskRunId = taskRunOf(record);
-  if (conversationId) sink.conversationIds.add(conversationId);
-  if (taskRunId) sink.runIds.add(taskRunId);
+  // Each id under its own name, so a task is never counted as a conversation.
+  if (record.conversationId) sink.conversationIds.add(record.conversationId);
+  if (record.taskRunId) sink.runIds.add(record.taskRunId);
   // Unpriced is not free. A line the catalog cannot price contributes tokens
   // and zero dollars, and this is the count that says the dollar figure is
   // incomplete rather than the spend being zero.
@@ -727,10 +687,10 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
     addTokens(bucket.tokens, tokens);
     addCost(bucket.cost, cost);
     bucket.llmCalls++;
-    // Same split as `totals`, through the same two helpers, so a breakdown row
-    // cannot report a task as a conversation while the totals disagree.
-    if (conversationId) bucket.sids.add(conversationId);
-    if (taskRunId) bucket.runIds.add(taskRunId);
+    // Same split as `totals`, so a breakdown row cannot report a task as a
+    // conversation while the totals disagree.
+    if (record.conversationId) bucket.sids.add(record.conversationId);
+    if (record.taskRunId) bucket.runIds.add(record.taskRunId);
     if (!priced) bucket.unpricedCalls++;
     if (dimension === "day" && sink.stackBy) {
       addToStack(bucket, groupKeyFor(record, sink.stackBy, modelKey), cost.total);
@@ -854,7 +814,7 @@ export function ledgerCostByTaskRun(
     const dir = usageMonthDir(workDir, month);
     for (const shard of shardsForMonth(dir)) {
       for (const record of parseShard(readShardSync(join(dir, shard)), range, undefined, filters)) {
-        const runId = taskRunOf(record);
+        const runId = record.taskRunId;
         if (runId && taskRunIds.has(runId)) {
           const cost = costBreakdown(record.model, record.usage, record.rates).total;
           costs.set(runId, (costs.get(runId) ?? 0) + cost);

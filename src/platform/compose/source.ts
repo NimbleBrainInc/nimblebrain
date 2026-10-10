@@ -54,7 +54,6 @@ import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
 import { collectActivatableSkills, toCatalogEntries } from "../../skills/catalog.ts";
-import { skillDisplayName } from "../../skills/display-name.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../skills/select.ts";
 import type { InProcessTool } from "../../tools/in-process-app.ts";
@@ -247,8 +246,6 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  *     tier.
  *   - `apps` = `runtime.buildAppsList(wsId)` — workspace-scoped, includes
  *     each connector's `app://instructions` overlay.
- *   - `overlays` = `runtime.readPromptOverlays(wsId)` — the workspace
- *     instruction overlay.
  *   - `layer3Skills` = `loadConversationSkills` ∩ `selectLayer3Skills`
  *     against the role-filtered active tool set, less the skills this
  *     conversation has muted.
@@ -283,11 +280,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
     runtime.loadConversationSkills(wsId, userId).filter((sk) => !suppressed.has(sk.manifest.name)),
   );
 
-  // Gather inputs in parallel where possible.
-  const [apps, overlays] = await Promise.all([
-    runtime.buildAppsList(wsId),
-    runtime.readPromptOverlays(wsId),
-  ]);
+  const apps = await runtime.buildAppsList(wsId);
 
   // Replicate `runtime.chat()`'s tool-set construction so the trace
   // matches reality:
@@ -356,7 +349,6 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
       : undefined,
     proxied.length > 0,
     workspaceContext,
-    overlays,
     layer3Entries,
     "chat",
     skillCatalog,
@@ -523,33 +515,26 @@ function findLatestContextAssembled(
 
 /**
  * Project a recorded context source onto the wire shape (drops unknown extras).
- * A history row recorded before the field was renamed carries its message count
- * as `turns`; normalize it so readers only handle `messages`. `annotation` is
- * stamped from the same set `windowTokens` is summed over, so a renderer's row
- * layout and the total under it can't be derived from different rules.
+ * `annotation` is stamped from the same set `windowTokens` is summed over, so a
+ * renderer's row layout and the total under it can't be derived from different
+ * rules.
  */
 function toAssembledSource(s: ContextAssembledEvent["sources"][number]): AssembledContextSource {
-  const messages = typeof s.messages === "number" ? s.messages : s.turns;
   return {
     kind: s.kind,
     tokens: s.tokens,
     ...(typeof s.count === "number" ? { count: s.count } : {}),
-    ...(typeof messages === "number" ? { messages } : {}),
+    ...(typeof s.messages === "number" ? { messages: s.messages } : {}),
     ...(typeof s.compacted === "boolean" ? { compacted: s.compacted } : {}),
     ...(ANNOTATION_KINDS.has(s.kind) ? { annotation: true } : {}),
   };
 }
 
-/**
- * Project a recorded skill entry onto the wire shape. `name` is resolved here
- * rather than passed through, so every consumer of this tool — the web
- * surfaces and any agent reading `structuredContent` — gets a usable name even
- * for runs recorded before the field existed.
- */
+/** Project a recorded skill entry onto the wire shape. */
 function toAssembledSkill(s: SkillsLoadedEvent["skills"][number]): AssembledContextSkill {
   return {
     id: s.id,
-    name: skillDisplayName(s),
+    name: s.name,
     ...(s.connector ? { connector: s.connector } : {}),
     scope: s.scope,
     tokens: s.tokens,
@@ -861,7 +846,7 @@ async function readConvEvents(
   // Mirrors the helper in skills.ts. Inlined here rather than imported so
   // this source doesn't take a dep on a sibling tool's private API.
   //
-  // Stage 1 single-owner: gate the read on ownership BEFORE touching
+  // Conversations are single-owner: gate the read on ownership BEFORE touching
   // the event log. The conversation id is a tool input — any
   // authenticated caller could pass an arbitrary id; without this
   // check, `effective_context` would happily read peer conversations'

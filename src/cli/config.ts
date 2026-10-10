@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { loadBrand } from "../brand/index.ts";
 import { getValidator } from "../config/index.ts";
 import { deriveOverridePath, mergeConfigs, OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
 import { log } from "../observability/log.ts";
@@ -219,7 +220,6 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     files: fileConfig.files as RuntimeConfig["files"],
     tasks: fileConfig.tasks as RuntimeConfig["tasks"],
     usage: fileConfig.usage as RuntimeConfig["usage"],
-    sessionStore: fileConfig.sessionStore as RuntimeConfig["sessionStore"],
     notifications: fileConfig.notifications as RuntimeConfig["notifications"],
     // Pass config path for connector install/uninstall persistence
     configPath,
@@ -227,7 +227,13 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     workDir: absoluteWorkDir(fileConfig, flags),
     telemetry: fileConfig.telemetry as RuntimeConfig["telemetry"],
     secrets: fileConfig.secrets as RuntimeConfig["secrets"],
+    brand: fileConfig.brand as RuntimeConfig["brand"],
   };
+
+  // Contrast is checked here, at load, so a brand that would paint an
+  // unreadable interface stops the boot with the failing pair named rather
+  // than shipping.
+  loadBrand(config);
 
   return config;
 }

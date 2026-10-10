@@ -33,7 +33,7 @@ const SRC_ROOT = join(ROOT, "src");
  * own conventions, and its own vendored `node_modules` when it has been built.
  */
 function isAppUi(rel: string): boolean {
-  return /^src\/platform\/[^/]+\/ui\//.test(rel);
+  return /^src\/platform\/[^/]+\/ui\//.test(rel.replaceAll("\\", "/"));
 }
 
 interface CheckResult {

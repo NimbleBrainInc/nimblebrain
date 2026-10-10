@@ -4,9 +4,9 @@
  *
  * A fleet service rolling at the same moment as the runtime loses this race
  * routinely: the runtime POSTs to it seconds before its pod is ready, the start
- * throws, and the connector used to be dropped from the inventory entirely — which
- * cost it its lifecycle instance and its placements, so the app disappeared from
- * the shell and stayed gone until the pod restarted.
+ * throws. Dropping the connector from the inventory would cost it its lifecycle
+ * instance and its placements, so the app would disappear from the shell and stay
+ * gone until the pod restarted.
  *
  * `startWorkspaceConnectors` reaches the network, so this is integration-tier.
  * Port 1 is reserved and closed, giving a fast, deterministic connection
@@ -214,10 +214,10 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
 
   test("failedUrlConnector_isRegisteredButNotLive", async () => {
     // The boot loop keeps the source REGISTERED so the connector stays visible to
-    // every registry-enumerating surface and HealthMonitor can heal it. What
-    // used to make that unsafe was the self-heal gating on membership; those
-    // gates now test whether a source was ever ESTABLISHED, so a retained-but-down source
-    // still reads "unavailable" to callers and still gets recovered.
+    // every registry-enumerating surface and HealthMonitor can heal it. That is
+    // safe because the self-heal gates test whether a source was ever
+    // ESTABLISHED, not membership, so a retained-but-down source still reads
+    // "unavailable" to callers and still gets recovered.
     const store = new WorkspaceStore(workDir);
     const ws = await store.create("Fleet");
     await store.update(ws.id, { connectors: [unreachableConnector("unreachable")] });

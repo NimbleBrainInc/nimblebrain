@@ -22,16 +22,11 @@
  * forbids importing from outside `src/platform/schemas/`.
  */
 
-import { type Static, type TProperties, type TSchema, Type } from "@sinclair/typebox";
-import { StringEnum } from "./_shared.ts";
+import { type Static, type TProperties, Type } from "@sinclair/typebox";
+import { clearable, StringEnum } from "./_shared.ts";
 import { NotificationRouteMatch } from "./notifications.ts";
 
 // ── Shared sub-schemas ───────────────────────────────────────────────────
-
-/** An optional field an update clears with `null` (src/platform/AGENTS.md §1.3). */
-function clearable<T extends TSchema>(schema: T, description: string) {
-  return Type.Optional(Type.Union([schema, Type.Null()], { description }));
-}
 
 const TaskIdField = Type.String({
   minLength: 1,
@@ -1166,6 +1161,8 @@ export interface TaskRunResultBody {
     | "other";
   /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
   structured?: unknown;
+  /** Why the run failed or did not start, as its record says. */
+  error?: string;
 }
 
 /**
@@ -1184,7 +1181,11 @@ export type TasksRunResultOutput =
   | {
       status: "ended";
       run: TaskRunView;
-      /** Absent when the run left no deliverable (skipped, cancelled before it began, failed early). */
+      /**
+       * Every recorded run has one: a run that failed before the engine
+       * returned, or never started, has an empty output and activity log and
+       * its `error`. Absent only for a run recorded before every run wrote one.
+       */
       result?: TaskRunResultBody;
     };
 
@@ -1290,13 +1291,15 @@ export interface TasksRunsOutput {
 
 /**
  * A warning a write returns about the task it saved, which it saved anyway.
+ * `allowed_tool_unavailable`: one allowedTools entry matches no tool the owner
+ * can reach in this workspace; a run will fail until that changes.
  * `no_judge`, `judge_ambiguous`, `judge_not_found`: the task has criteria and
  * its workspace has no judge server it can use (none connected, several and
  * none named, or the named one is not a connected judge), so its runs are
  * `uncertain` (Needs review) until one is connected or named.
  */
 export interface TaskWarning {
-  code: "no_judge" | "judge_ambiguous" | "judge_not_found";
+  code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
   message: string;
 }
 

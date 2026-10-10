@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  Client,
+  type Client,
   ResourceNotFoundError,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
@@ -14,8 +14,10 @@ import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { buildMcpRequest, readMcpAnswer } from "../../web/src/mcp-bridge-client.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { textOf } from "../helpers/resource-contents.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -197,7 +199,7 @@ afterAll(async () => {
 
 async function createMcpClient(workspaceId: string = TEST_WORKSPACE_ID): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${workspaceId}`));
-  const client = new Client({ name: "mcp-resources-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "mcp-resources-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }
@@ -206,7 +208,7 @@ async function createMcpClient(workspaceId: string = TEST_WORKSPACE_ID): Promise
 // Tests
 // ---------------------------------------------------------------------------
 describe("MCP /mcp — resources", () => {
-  it("advertises the resources capability in InitializeResult", async () => {
+  it("advertises the resources capability in server/discover", async () => {
     const client = await createMcpClient();
     try {
       const caps = client.getServerCapabilities();
@@ -274,62 +276,17 @@ describe("MCP /mcp — resources", () => {
 
     // Drive the request at the raw HTTP layer too to confirm the transport
     // surfaces a JSON-RPC `error` envelope instead of a 500.
-    const initRes = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-06-18",
-          capabilities: {},
-          clientInfo: { name: "raw", version: "1.0.0" },
-        },
-      }),
+    const { headers, body } = buildMcpRequest("2", "resources/read", {
+      uri: "ui://fixture/does-not-exist",
     });
-    expect(initRes.status).toBe(200);
-    const sessionId = initRes.headers.get("mcp-session-id");
-    expect(sessionId).toBeTruthy();
-
-    // The SDK requires an `initialized` notification before further requests.
-    await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        "mcp-session-id": sessionId!,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "notifications/initialized",
-      }),
-    });
-
     const readRes = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        "mcp-session-id": sessionId!,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "resources/read",
-        params: { uri: "ui://fixture/does-not-exist" },
-      }),
+      headers,
+      body,
     });
-    // Transport returns 200 with an error envelope (not 500).
-    expect(readRes.status).toBe(200);
-    const raw = await readRes.text();
-    const payload = parseJsonOrSsePayload(raw);
-    expect(payload.error).toBeDefined();
-    // -32602, not -32002: the SDK answers a resource miss -32602 on every revision, 2025 included.
-    expect(payload.error?.code).toBe(-32602);
+    expect(readRes.status).toBeLessThan(500);
+    const answer = await readMcpAnswer(readRes);
+    expect("error" in answer && answer.error.code).toBe(-32602);
   });
 
   it("SECURITY: a walled session cannot list or read another workspace's resources", async () => {
@@ -438,30 +395,3 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * The streamable-HTTP transport may return either a JSON body or an SSE
- * stream for a single JSON-RPC response. Parse both.
- */
-function parseJsonOrSsePayload(raw: string): {
-  error?: { code: number; message: string };
-  result?: unknown;
-} {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("{")) {
-    return JSON.parse(trimmed) as { error?: { code: number; message: string } };
-  }
-  // SSE: find the data: lines.
-  for (const line of trimmed.split("\n")) {
-    if (line.startsWith("data:")) {
-      return JSON.parse(line.slice(5).trim()) as {
-        error?: { code: number; message: string };
-      };
-    }
-  }
-  throw new Error(`Unexpected response body: ${raw}`);
-}

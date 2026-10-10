@@ -29,7 +29,7 @@ import { realClient } from "../../test/setup";
   }
 }
 
-/** The pin `conversations__get` reports. `null` ⇒ a record with no binding. */
+/** The pin `conversations__get` reports; `null` omits it from the mock. */
 let mockConversationModel: string | null = null;
 
 mock.module("../api/client", () => ({
@@ -158,16 +158,5 @@ describe("the composer's model control", () => {
     mockConversationModel = "anthropic:claude-haiku-4-5";
     await mountPanel("conv_existing");
     expect(modelControl()?.textContent).toContain("Haiku 4.5");
-  });
-
-  test("renders nothing on a conversation with no binding", async () => {
-    // Not "shows the default": naming a model here would assert a binding the
-    // conversation does not have, and picking one would really change it.
-    mockConversationModel = null;
-    await mountPanel("conv_existing");
-    // Metadata did arrive — it just carries no model, which is the branch
-    // under test rather than "nothing loaded yet".
-    expect(chatStore.getSnapshot("conv_existing").meta).not.toBeNull();
-    expect(modelControl()).toBeNull();
   });
 });

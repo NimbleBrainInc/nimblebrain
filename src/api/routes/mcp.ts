@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { TokenGrant } from "../../identity/provider.ts";
-import { publicOrigin } from "../../oauth/public-origin.ts";
+import { canonicalOrigins, publicOrigin, webOrigin } from "../../oauth/public-origin.ts";
 import { authenticateRequest, isAuthError } from "../auth-middleware.ts";
 import { MCP_PATH_PREFIX, mcpResourceMetadataUrl, mcpResourceUrl } from "../mcp-resource.ts";
-import type { McpSessionContext } from "../mcp-server.ts";
+import type { McpRequestContext } from "../mcp-server.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
+import { rejectUntrustedOrigin } from "../middleware/origin.ts";
 import { requestRateLimit } from "../middleware/rate-limit.ts";
 import type { JsonRpcErrorBody } from "../schemas/responses.ts";
 import { type AppContext, type AuthEnv, apiError, json } from "../types.ts";
@@ -102,8 +103,12 @@ function bareMcpRefused(): Response {
   );
 }
 
-export function mcpRoutes(ctx: AppContext) {
+export function mcpRoutes(ctx: AppContext, allowedOrigins: Set<string> | null) {
   const app = new Hono<McpAuthEnv>();
+  // The origins a browser page may call `/mcp` from: this deployment's own and
+  // the CORS allowlist. Checked before authentication, so a DNS-rebinding page
+  // gets `403`, never a challenge to sign in.
+  const trustedOrigins = new Set([...canonicalOrigins(), webOrigin(), ...(allowedOrigins ?? [])]);
 
   app.all(MCP_PATH_PREFIX, bareMcpRefused);
   app.all(`${MCP_PATH_PREFIX}/`, bareMcpRefused);
@@ -118,6 +123,7 @@ export function mcpRoutes(ctx: AppContext) {
   // client), that caller shares the shell's bucket.
   app.all(
     `${MCP_PATH_PREFIX}/:wsId`,
+    rejectUntrustedOrigin(trustedOrigins),
     requireMcpAuth(ctx),
     requestRateLimit<McpAuthEnv>(
       ctx.mcpLimiter,
@@ -146,12 +152,12 @@ export function mcpRoutes(ctx: AppContext) {
         return workspaceNotFound();
       }
 
-      const sessionCtx: McpSessionContext = {
+      const requestCtx: McpRequestContext = {
         identity,
         workspaceId: wsId,
         grant: c.var.grant.kind,
       };
-      return ctx.mcpHost.handle(c.req.raw, features, sessionCtx);
+      return ctx.mcpHost.handle(c.req.raw, features, requestCtx);
     },
   );
 

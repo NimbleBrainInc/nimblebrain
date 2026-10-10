@@ -20,7 +20,7 @@ import type { SessionInfo } from "../src/context/SessionContext";
 import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
 import { resolveScopedRole, roleAtLeast } from "../src/hooks/useScopedRole";
 
-function makeSession(orgRole: "owner" | "admin" | "member" | undefined): SessionInfo {
+function makeSession(orgRole: "admin" | "member" | undefined): SessionInfo {
   return {
     authenticated: true,
     ...(orgRole
@@ -30,11 +30,6 @@ function makeSession(orgRole: "owner" | "admin" | "member" | undefined): Session
 }
 
 describe("org-admin gate for /org/skills (and every other /org/* route)", () => {
-  it("resolves org_owner from session.user.orgRole=owner regardless of workspace context", () => {
-    const role = resolveScopedRole(makeSession("owner"), null);
-    expect(role).toBe("org_owner");
-  });
-
   it("resolves org_admin from session.user.orgRole=admin regardless of workspace context", () => {
     const role = resolveScopedRole(makeSession("admin"), null);
     expect(role).toBe("org_admin");
@@ -43,7 +38,7 @@ describe("org-admin gate for /org/skills (and every other /org/* route)", () => 
   it("never resolves to org_admin from workspace-admin alone", () => {
     // Workspace admins must not bypass the org-admin gate. Org-tier writes
     // (org skills, org users, org registries) are reserved to identities
-    // the IDP marked admin/owner, not to any workspace's admin.
+    // the IDP marked admin, not to any workspace's admin.
     const session = makeSession("member");
     const wsAdmin: Partial<WorkspaceInfo> = { id: "ws_008bd230f095f38a", userRole: "admin" };
     const role = resolveScopedRole(session, wsAdmin as WorkspaceInfo);
@@ -65,8 +60,7 @@ describe("org-admin gate for /org/skills (and every other /org/* route)", () => 
     expect(roleAtLeast(role, "org_admin")).toBe(false);
   });
 
-  it("admits org_admin and org_owner against the org_admin minimum", () => {
+  it("admits org_admin against the org_admin minimum", () => {
     expect(roleAtLeast("org_admin", "org_admin")).toBe(true);
-    expect(roleAtLeast("org_owner", "org_admin")).toBe(true);
   });
 });

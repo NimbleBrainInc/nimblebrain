@@ -288,7 +288,7 @@ describe("a caller's own choice never becomes everyone's default", () => {
         id: "usr_admin",
         email: "a@example.com",
         displayName: "A",
-        orgRole: "owner",
+        orgRole: "admin",
         preferences: { models: { default: CHOSEN } },
       } as unknown as UserIdentity;
 
@@ -324,7 +324,7 @@ describe("the settings view is the configured one", () => {
         id: "usr_admin",
         email: "a@example.com",
         displayName: "A",
-        orgRole: "owner",
+        orgRole: "admin",
         preferences: { models: { default: CHOSEN } },
       } as unknown as UserIdentity;
 

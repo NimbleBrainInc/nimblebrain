@@ -164,7 +164,10 @@ describe("Runtime", () => {
     const wsId = ws!.id;
     expect(wsId).toMatch(/^ws_[0-9a-f]{16}$/);
     const store = runtime.workspaceConversationStore(wsId, "user_alice");
-    const conv = await store.create({ ownerId: "user_alice" });
+    const conv = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: "user_alice",
+    });
 
     // The conversation lives under the workspace's owner partition:
     // {workDir}/workspaces/<wsId>/conversations/user_alice/{convId}.jsonl
