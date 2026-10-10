@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { listModels, listProviders } from "../../src/model/catalog.ts";
-import { resolveModelString } from "../../src/model/registry.ts";
+import { isQualifiedModelId } from "../../src/model/model-id.ts";
 import { isModelSlot, MODEL_SLOTS, parseModelSlotRef } from "../../src/model/slots.ts";
 
 describe("parseModelSlotRef", () => {
@@ -56,19 +56,11 @@ describe("slot names vs the model catalog", () => {
     }
   });
 
-  // The mechanism behind the bug: a bare string with no catalog entry is NOT
-  // rejected, it is stamped with `anthropic:`. That fallback is deliberate
-  // (pinned/bespoke ids served under their own name), which is why slot
-  // resolution must happen BEFORE it rather than inside it.
-  test.each([...MODEL_SLOTS])(
-    "resolveModelString would stamp anthropic: on bare %s — the failure slot parsing prevents",
-    (slot) => {
-      expect(resolveModelString(slot)).toBe(`anthropic:${slot}`);
-    },
-  );
-
-  test("resolveModelString leaves a qualified id alone", () => {
-    expect(resolveModelString("nebius:openai/gpt-oss-120b")).toBe("nebius:openai/gpt-oss-120b");
+  // A bare slot name is not a model id: it names no provider, so read as one it
+  // would be refused. Slot resolution therefore has to happen before the
+  // qualified-id check, never inside it.
+  test.each([...MODEL_SLOTS])("bare %s is not a qualified model id", (slot) => {
+    expect(isQualifiedModelId(slot)).toBe(false);
   });
 });
 

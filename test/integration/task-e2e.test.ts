@@ -216,7 +216,7 @@ describe("task e2e: create -> run -> verify", () => {
           skill: "reporting",
           maxIterations: 8,
           maxInputTokens: 100_000,
-          model: "claude-sonnet-4-5-20250929",
+          model: "anthropic:claude-sonnet-4-5-20250929",
         },
         body: "Generate the weekly report",
       },
@@ -233,7 +233,7 @@ describe("task e2e: create -> run -> verify", () => {
     expect(received.skill).toBe("reporting");
     expect(received.maxIterations).toBe(8);
     expect(received.maxInputTokens).toBe(100_000);
-    expect(received.model).toBe("claude-sonnet-4-5-20250929");
+    expect(received.model).toBe("anthropic:claude-sonnet-4-5-20250929");
     expect(received.schedule.type).toBe("interval");
     expect(received.schedule.intervalMs).toBe(3_600_000);
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { ModelNotQualifiedError } from "../../../src/model/model-id.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
@@ -15,150 +16,110 @@ afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
-describe("model qualification at runtime boundary", () => {
-  it("qualifies a bare gemini id before propagating to engine config", async () => {
-    // Regression guard: a tenant whose disk has a legacy bare model id
-    // (`gemini-3.1-pro-preview`, written by an older settings UI) needs
-    // the qualified form to reach every downstream consumer — cost
-    // aggregation, capability checks, max-output and thinking resolvers,
-    // provider-options shape, log lines. Without qualification at the
-    // request-entry boundary, the resolver-side rescue inside
-    // `buildModelResolver` only fixes routing; everything else still
-    // sees the bare string and misbehaves (e.g., the usage aggregator
-    // looking up the bare id under anthropic, finding nothing, and
-    // reporting $0 cost).
-    const workDir = join(testDir, "qualify-bare-gemini");
-    mkdirSync(workDir, { recursive: true });
-
-    const runtime = await Runtime.start({
-      identityProvider: devProvider,
-      languageModel: createEchoModel(),
-      workDir,
-    });
-    await provisionTestWorkspace(runtime);
-
-    const events: EngineEvent[] = [];
-    const sink: EventSink = { emit: (e) => events.push(e) };
-
-    await runtime.chat(
-      {
-        identity: DEV_IDENTITY,
-        message: "hello",
-        workspaceId: TEST_WORKSPACE_ID,
-        // Bare id, as it would be on disk for a legacy tenant.
-        model: "gemini-3.1-pro-preview",
-      },
-      sink,
-    );
-
-    // run.start.data.model is sourced from `engineConfig.model` after
-    // the runtime's resolution step. If qualification is in place, this
-    // is "google:gemini-3.1-pro-preview"; if not, it leaks the bare id
-    // to every downstream consumer.
-    const runStart = events.find((e) => e.type === "run.start");
-    expect(runStart).toBeDefined();
-    expect(runStart!.data.model).toBe("google:gemini-3.1-pro-preview");
-
-    await runtime.shutdown();
+async function startRuntime(
+  name: string,
+  extra: Partial<Parameters<typeof Runtime.start>[0]> = {},
+) {
+  const workDir = join(testDir, name);
+  mkdirSync(workDir, { recursive: true });
+  return Runtime.start({
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
+    workDir,
+    ...extra,
   });
+}
 
-  it("leaves an already-qualified id unchanged", async () => {
-    const workDir = join(testDir, "qualify-already-qualified");
-    mkdirSync(workDir, { recursive: true });
+async function runStartModel(runtime: Runtime, model: string | undefined): Promise<unknown> {
+  const events: EngineEvent[] = [];
+  const sink: EventSink = { emit: (e) => events.push(e) };
+  await runtime.chat(
+    { identity: DEV_IDENTITY, message: "hello", workspaceId: TEST_WORKSPACE_ID, model },
+    sink,
+  );
+  return events.find((e) => e.type === "run.start")?.data.model;
+}
 
-    const runtime = await Runtime.start({
-      identityProvider: devProvider,
-      languageModel: createEchoModel(),
-      workDir,
-    });
-    await provisionTestWorkspace(runtime);
-
-    const events: EngineEvent[] = [];
-    const sink: EventSink = { emit: (e) => events.push(e) };
-
-    await runtime.chat(
-      {
-        identity: DEV_IDENTITY,
-        message: "hello",
-        workspaceId: TEST_WORKSPACE_ID,
-        model: "google:gemini-3.1-pro-preview",
-      },
-      sink,
-    );
-
-    const runStart = events.find((e) => e.type === "run.start");
-    expect(runStart).toBeDefined();
-    expect(runStart!.data.model).toBe("google:gemini-3.1-pro-preview");
-
-    await runtime.shutdown();
-  });
-
-  it("getModelSlots() returns qualified ids when stored config has bare strings", async () => {
-    // Ensures the slot reader qualifies — get_config (which feeds the
-    // settings UI dropdown), telemetry, and any other consumer that
-    // reads slots directly all see fully-qualified `provider:id`.
-    const workDir = join(testDir, "qualify-slot-reader");
-    mkdirSync(workDir, { recursive: true });
-
-    const runtime = await Runtime.start({
-      identityProvider: devProvider,
-      languageModel: createEchoModel(),
-      workDir,
-      // Stored config simulates the legacy state: bare ids saved by an
-      // older settings UI that didn't encode the provider into option
-      // values.
-      models: {
-        default: "claude-sonnet-4-6",
-        fast: "gpt-4o",
-      },
-    });
+describe("model ids are provider:model at every runtime boundary", () => {
+  // The built-in default is what every unset slot resolves to, and it reaches
+  // the conversation pin, the ledger and the picker unchanged, so it has to be
+  // in the one form those accept.
+  it("resolves unset slots to the qualified built-in default", async () => {
+    const runtime = await startRuntime("builtin-default");
     try {
-      const slots = runtime.getModelSlots();
-      expect(slots.default).toBe("anthropic:claude-sonnet-4-6");
-      expect(slots.fast).toBe("openai:gpt-4o");
+      expect(runtime.getModelSlots()).toEqual({
+        default: "anthropic:claude-sonnet-4-6",
+        fast: "anthropic:claude-sonnet-4-6",
+      });
     } finally {
       await runtime.shutdown();
     }
   });
 
-  it("resolves a bare slot name on the request door and qualifies the slot's value", async () => {
-    // The two spellings of a slot reference must land on the same model,
-    // and the slot's stored value must arrive qualified. Without slot
-    // parsing, "fast" is not a catalog id, so `resolveModelString` stamps
-    // it `anthropic:fast` — a model that does not exist.
-    const workDir = join(testDir, "slot-ref-request-door");
-    mkdirSync(workDir, { recursive: true });
+  it("refuses a bare request model, naming the qualified form, and starts no run", async () => {
+    const runtime = await startRuntime("request-bare");
+    await provisionTestWorkspace(runtime);
+    try {
+      const attempt = runStartModel(runtime, "gemini-3.1-pro-preview");
+      await expect(attempt).rejects.toThrow(ModelNotQualifiedError);
+      await expect(runStartModel(runtime, "gemini-3.1-pro-preview")).rejects.toThrow(
+        '"google:gemini-3.1-pro-preview"',
+      );
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 
-    const runtime = await Runtime.start({
-      identityProvider: devProvider,
-      languageModel: createEchoModel(),
-      workDir,
-      models: {
-        default: "anthropic:claude-sonnet-4-6",
-        fast: "gpt-4o", // bare on purpose — the slot read must qualify it
-      },
+  it("passes a qualified request model through unchanged", async () => {
+    const runtime = await startRuntime("request-qualified");
+    await provisionTestWorkspace(runtime);
+    try {
+      expect(await runStartModel(runtime, "google:gemini-3.1-pro-preview")).toBe(
+        "google:gemini-3.1-pro-preview",
+      );
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  // A config handed to `Runtime.start` in code never passes the CLI loader's
+  // schema, so the runtime holds the same rule itself.
+  it.each([
+    [{ models: { default: "claude-sonnet-4-6" } }, 'models.default "claude-sonnet-4-6"'],
+    [{ models: { fast: "gpt-4o" } }, 'models.fast "gpt-4o"'],
+    [{ modelPolicy: { allowed: ["gpt-4o"] } }, 'modelPolicy.allowed entry "gpt-4o"'],
+  ])("refuses to start on a bare configured id (%#)", async (config, subject) => {
+    await expect(startRuntime(`start-bare-${subject.length}`, config)).rejects.toThrow(
+      `${subject} has no provider`,
+    );
+  });
+
+  it("resolves both spellings of a slot name on the request door", async () => {
+    const runtime = await startRuntime("slot-ref-request-door", {
+      models: { default: "anthropic:claude-sonnet-4-6", fast: "openai:gpt-4o" },
     });
     await provisionTestWorkspace(runtime);
-
     try {
       for (const spelling of ["fast", "alias:fast"]) {
-        const events: EngineEvent[] = [];
-        const sink: EventSink = { emit: (e) => events.push(e) };
-
-        await runtime.chat(
-          {
-            identity: DEV_IDENTITY,
-            message: "hello",
-            workspaceId: TEST_WORKSPACE_ID,
-            model: spelling,
-          },
-          sink,
-        );
-
-        const runStart = events.find((e) => e.type === "run.start");
-        expect(runStart).toBeDefined();
-        expect(runStart!.data.model).toBe("openai:gpt-4o");
+        expect(await runStartModel(runtime, spelling)).toBe("openai:gpt-4o");
       }
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  // `workspace.json` has no writer that could refuse a bare override, so the
+  // slot read refuses it, naming the file and the form to write.
+  it("fails a turn on a bare workspace.json model override", async () => {
+    const runtime = await startRuntime("workspace-bare");
+    await provisionTestWorkspace(runtime);
+    await runtime
+      .getWorkspaceStore()
+      .update(TEST_WORKSPACE_ID, { models: { default: "claude-sonnet-4-6" } });
+    try {
+      await expect(runStartModel(runtime, undefined)).rejects.toThrow(
+        'workspace.json models.default "claude-sonnet-4-6" has no provider. Write it as provider:model, e.g. "anthropic:claude-sonnet-4-6".',
+      );
     } finally {
       await runtime.shutdown();
     }

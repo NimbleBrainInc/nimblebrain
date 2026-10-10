@@ -119,8 +119,16 @@
       "type": "object",
       "description": "Role-based model slots.",
       "properties": {
-        "default": { "type": "string", "description": "Primary model for chat." },
-        "fast": { "type": "string", "description": "Cheap/fast model for auxiliary tasks." }
+        "default": {
+          "type": "string",
+          "nbQualifiedModelId": true,
+          "description": "Primary model for chat, as provider:model-id (e.g. anthropic:claude-sonnet-4-6)."
+        },
+        "fast": {
+          "type": "string",
+          "nbQualifiedModelId": true,
+          "description": "Cheap/fast model for auxiliary tasks, as provider:model-id."
+        }
       },
       "additionalProperties": false
     },
@@ -130,7 +138,7 @@
       "properties": {
         "allowed": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": { "type": "string", "nbQualifiedModelId": true },
           "description": "Qualified provider:model-id strings. Can only subtract from what the configured providers can reach."
         }
       },

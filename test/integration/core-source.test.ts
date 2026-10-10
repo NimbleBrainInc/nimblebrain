@@ -165,7 +165,7 @@ describe("Core Source", () => {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await asDevUser(() =>
         source.execute("set_model_config", {
-          models: { default: "claude-haiku-4-5-20251001" },
+          models: { default: "anthropic:claude-haiku-4-5-20251001" },
         }),
       );
       expect(result.isError).toBe(false);
@@ -176,7 +176,7 @@ describe("Core Source", () => {
       const raw = JSON.parse(
         require("node:fs").readFileSync(deriveOverridePath(configPath), "utf-8"),
       );
-      expect(raw.models).toEqual({ default: "claude-haiku-4-5-20251001" });
+      expect(raw.models).toEqual({ default: "anthropic:claude-haiku-4-5-20251001" });
     } finally {
       await runtime.shutdown();
     }
@@ -198,7 +198,7 @@ describe("Core Source", () => {
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await source.execute("set_model_config", {
-        models: { default: "claude-haiku-4-5-20251001" },
+        models: { default: "anthropic:claude-haiku-4-5-20251001" },
       });
       expect(result.isError).toBe(true);
       expect(extractText(result.content)).toContain("requires an authenticated identity");
@@ -1062,9 +1062,9 @@ describe("Core Source", () => {
       expect(stranded).toEqual([]);
     });
 
-    it("accepts a bare model id that policy allows in qualified form", async () => {
-      // Bare ids are legal input; the policy check is an exact match, so it
-      // has to compare resolved forms.
+    it("refuses a bare model id even when policy allows its qualified form", async () => {
+      // The provider is part of the id, so a bare one is refused before policy
+      // is consulted, with the form to write instead.
       const { runtime, source } = await startWithPolicy("bare-id", [
         "anthropic:claude-sonnet-5",
         "anthropic:claude-haiku-4-5-20251001",
@@ -1076,7 +1076,7 @@ describe("Core Source", () => {
           }),
         );
         expect(`isError: ${res.isError} — ${extractText(res.content)}`).toBe(
-          "isError: false — Configuration updated: models.",
+          'isError: true — models.fast "claude-haiku-4-5-20251001" has no provider. Write it as provider:model, e.g. "anthropic:claude-haiku-4-5-20251001".',
         );
       } finally {
         await runtime.shutdown();
@@ -1286,7 +1286,7 @@ describe("Core Source", () => {
       configPath,
       JSON.stringify({
         version: "1",
-        models: { default: "claude-opus-4-7" },
+        models: { default: "anthropic:claude-opus-4-7" },
         maxIterations: 10,
       }),
     );
@@ -1303,7 +1303,7 @@ describe("Core Source", () => {
       const source = await makeInProcessSource("nb", createCoreToolDefs(r1));
       const result = await asDevUser(() =>
         source.execute("set_model_config", {
-          models: { default: "claude-haiku-4-5-20251001" },
+          models: { default: "anthropic:claude-haiku-4-5-20251001" },
           thinking: "off",
         }),
       );
@@ -1314,10 +1314,10 @@ describe("Core Source", () => {
 
     // Override file written, seed file untouched.
     const overrideAfterWrite = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
-    expect(overrideAfterWrite.models).toEqual({ default: "claude-haiku-4-5-20251001" });
+    expect(overrideAfterWrite.models).toEqual({ default: "anthropic:claude-haiku-4-5-20251001" });
     expect(overrideAfterWrite.thinking).toBe("off");
     const seedAfterWrite = JSON.parse(require("node:fs").readFileSync(configPath, "utf-8"));
-    expect(seedAfterWrite.models).toEqual({ default: "claude-opus-4-7" }); // unchanged
+    expect(seedAfterWrite.models).toEqual({ default: "anthropic:claude-opus-4-7" }); // unchanged
     expect(seedAfterWrite.thinking).toBeUndefined();
 
     // Second runtime: load via loadConfig (the production path that
@@ -1332,13 +1332,9 @@ describe("Core Source", () => {
       logging: { disabled: true },
     });
     try {
-      // Two readers because they answer two questions. The resolved
-      // default qualifies bare ids in the catalog — the override on
-      // disk is bare (`claude-haiku-4-5-20251001`) and the runtime
-      // returns the catalog-qualified form, so downstream consumers
-      // (cost, capabilities, providerOptions shape, log lines) see a
-      // consistent shape. `thinking` is read back operator-set, exactly
-      // as written.
+      // Two readers because they answer two questions: the resolved default
+      // is the override's model, and `thinking` is read back operator-set,
+      // exactly as written.
       expect(r2.getDefaultModel()).toBe("anthropic:claude-haiku-4-5-20251001");
       expect(r2.getOperatorConfig().thinking).toBe("off");
     } finally {

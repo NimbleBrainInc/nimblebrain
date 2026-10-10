@@ -23,10 +23,8 @@ export function isModelSlot(s: string): s is ModelSlot {
  *
  * Two spellings, both slots: the explicit `alias:fast`, and the bare `fast`
  * that `workspace.json`'s agent profiles document (`"model": "fast"`).
- * The bare form is the one authors actually write. Falling through to
- * `resolveModelString`, it would find no catalog entry and apply the
- * pinned-id fallback — turning `"fast"` into `anthropic:fast`, a model that
- * does not exist, and failing at the provider rather than here.
+ * The bare form is the one authors actually write. Read as a model id it has
+ * no provider and would be refused, so it is matched as a slot first.
  *
  * A slot name cannot collide with a real model id — the catalog is keyed by
  * vendor ids (`claude-sonnet-4-6`) — so accepting the bare form shadows
