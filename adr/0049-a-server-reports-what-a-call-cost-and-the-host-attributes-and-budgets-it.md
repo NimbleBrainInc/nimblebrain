@@ -162,9 +162,11 @@ The source that knows what a run is about sets them. A task names its task and
 its batch, and a task definition may map fields of its input to labels, so every
 run over one customer record carries the same value and the cost of that record
 is one filtered sum over the ledger, across any number of runs and tasks. A
-definition that maps a field is refused when it is written unless the field's
-input schema bounds it to a string within the value limit, so no input that
-passes the task's schema can produce a run the door refuses. A conversation
+definition that maps fields is refused when it is written unless each mapped
+key meets the key rule, the mapped keys and the labels the task sets itself fit
+within the count, and each field's input schema bounds it to a string within the
+value limit, so no input that passes the task's schema can produce a run the
+door refuses. A conversation
 names none. Totals are computed on read by filtering and grouping
 on labels; nothing is rolled up in advance.
 
