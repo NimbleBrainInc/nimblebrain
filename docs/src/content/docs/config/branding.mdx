@@ -7,6 +7,8 @@ import { Aside } from '@astrojs/starlight/components';
 
 The `brand` block in `nimblebrain.json` white-labels a deployment: your users see your product name, your logos, your accent colour and your typefaces in place of NimbleBrain's. Every key is optional. Without a `brand` block the deployment is NimbleBrain, unchanged.
 
+This page is the reference for every key. To brand a deployment step by step (preparing assets, choosing colours that pass, and checking the result), follow [White-labeling](/deploy/white-label/).
+
 `brand` is a top-level key of `nimblebrain.json`, not a preference, and it is not read from `nimblebrain.overrides.json`. Changing it needs a restart.
 
 ## What it changes
@@ -17,7 +19,19 @@ The `brand` block in `nimblebrain.json` white-labels a deployment: your users se
 | OAuth consent screens at connector vendors (dynamic client registration) | `name`, `homepageUrl`, `logo.raster` |
 | The OAuth "You're in." success page and the OAuth error pages | `name`, `colors` |
 | Connector-tool error messages | `name` |
+| The logo on the sign-in page and in the expanded sidebar | `logo.light`, `logo.dark` |
+| The logo in the collapsed sidebar | `logo.mark` |
+| The browser tab title | `name` |
+| The favicon | `favicon` |
+| The shell's accent, focus ring and typefaces | `colors`, `fonts` |
+| Embedded apps' accent, focus ring and typefaces (the theme tokens the shell injects) | `colors`, `fonts` |
+| The "Leaving …" dialog shown before an external link opens | `name` |
+| The notification route help text in workspace settings | `name` |
+| The sidebar's home link, as a screen reader names it | `name` |
+| The colour theme a person starts in | `defaultTheme` |
 | `GET /v1/brand.js`, which the web client loads before its bundle | the whole block |
+
+A brand that sets `name` but no `logo` or `favicon` keeps the bundled NimbleBrain artwork in those places, with your name as the logo's alt text, so set them together.
 
 Wire identifiers do not change: MCP client and server names, the `nb__` tool namespace, `ai.nimblebrain/*` metadata keys, the `NB_` environment prefix, the `nimblebrain.json` filename. They identify the software to other software, not to a person.
 
@@ -49,7 +63,7 @@ When `name` is set, OAuth registration sends only your values: without a `homepa
 | `primary` | The accent: primary buttons, links, accent text. |
 | `ring` | The focus ring. Usually the same value as `primary`. |
 
-The text on a `primary` fill is not set: it is derived per mode as white or black, whichever has the higher contrast against your `primary`. Every other colour stays canonical.
+Two colours follow `primary` and are not set. The text on a `primary` fill is, per mode, white or black, whichever has the higher contrast against your `primary`. The ground of info notices is a tint of your `primary` over the page background: 10% in light mode, 20% in dark, and your `primary` must read on it. Every other colour stays canonical.
 
 ### The contrast rule
 
@@ -77,6 +91,8 @@ Each role takes a CSS `stack` (required) and, optionally, one file to load:
 The roles are `sans` (interface text), `heading` and `reading` (the agent's prose in chat). Code keeps the canonical monospace face.
 
 **A font URL is a `.woff2` file, never a stylesheet.** Google Fonts CSS URLs (`https://fonts.googleapis.com/css2?…`) are rejected. Embedded apps load faces from the file URL directly, so a stylesheet that points at files cannot reach them. Self-host the woff2 files, and make sure their license allows redistribution.
+
+**The server hosting the font files must send `Access-Control-Allow-Origin: *`.** Browsers fetch fonts in CORS mode, and an embedded app runs in an opaque origin, so its requests arrive with `Origin: null` and no narrower value matches them. Without the header the shell may still render the font while apps silently fall back to the next family in `stack`.
 
 **A role with no `url` must name a font your users already have** — a system font such as `Georgia`. Nothing is downloaded for it.
 
@@ -136,6 +152,8 @@ window.__NB_BRAND__ = {"name":"ACME","defaultTheme":"light"};
 The web client loads it with a plain `<script>` before its bundle, so the brand is in place before the first paint. It is public because the sign-in page shows the brand before anyone has signed in, and nothing in it is private. Without a `brand` block it assigns `{}`.
 
 The served block is the configured one, holding only the keys on this page. A key the schema does not define is reported as an unknown key at startup and ignored; it is never served.
+
+A change reaches a visitor on their next page load once that minute of cache has passed. Removing the `brand` block restores the default look the same way.
 
 ## Changes and OAuth consent screens
 

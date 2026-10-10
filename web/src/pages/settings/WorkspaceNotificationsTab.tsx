@@ -15,6 +15,7 @@ import {
   setNotificationRoutes,
   setNotificationSourceLevel,
 } from "../../api/notifications";
+import { useBrandName } from "../../brand";
 import { useNotice } from "../../components/notices";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -601,6 +602,7 @@ function TargetEditor({
   onChange: (next: NotificationDeliverTarget, text?: string) => void;
   onRemove?: () => void;
 }) {
+  const brandName = useBrandName();
   const placeholders = (settings?.placeholders ?? []).map((p) => `{{${p}}}`).join(", ");
   // A route can outlive the thing it names — the connector was uninstalled, the
   // task deleted. Dropping the stored value from the picker would silently
@@ -692,7 +694,7 @@ function TargetEditor({
           <p className="text-2xs text-muted-foreground">
             The tool's own arguments. {placeholders} are replaced when the route fires; any other{" "}
             {"{{…}}"} is refused, because it would be delivered as literal text. For a tool a person
-            reads outside NimbleBrain, link with {"{{inbox.url}}"} — {"{{link.resource}}"} is the
+            reads outside {brandName}, link with {"{{inbox.url}}"} — {"{{link.resource}}"} is the
             connector's own URI, which Slack and mail cannot open.
           </p>
         </div>

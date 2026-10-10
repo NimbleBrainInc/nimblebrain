@@ -19,6 +19,10 @@ The `<style>` block is written once, when the iframe loads, and the iframe stays
 
 Your CSS references these variables with `var(--token)`. Inside the platform, with Synapse, the token always has a value — the `<style>` block lands before your HTML renders, and Synapse applies the rest at the handshake, backed by its own defaults until then — so no fallback is needed. Without Synapse, apply both fields yourself (see **Handling dark mode**). If your app also has to render where nothing injects tokens, see **Running outside the platform** below.
 
+<Aside>
+The values are not fixed. A deployment can set its own brand, and the tokens your app reads then carry that brand's accent and typefaces. Read the accent from `--color-text-accent` and never assume NimbleBrain blue; a hardcoded hex that matches the default palette will clash with every branded deployment.
+</Aside>
+
 ## Using tokens in CSS
 
 ```css
