@@ -27,10 +27,10 @@ type RawTool = { name: string; description?: string; inputSchema?: Record<string
 /** A remote McpSource wired to a scripted `listTools` whose result can be
  *  swapped between calls (simulating an upstream redeploy) and whose
  *  invocation count is observable. */
-function buildRemoteSource(initial: RawTool[]) {
+function buildRemoteSource(initial: RawTool[], name = "enrich") {
   const source = new McpSource(
-    "enrich",
-    { type: "remote", url: new URL("http://mcp-enrich.example/mcp") },
+    name,
+    { type: "remote", url: new URL(`http://mcp-${name}.example/mcp`) },
     noopSink,
   );
   let current: RawTool[] = initial;
@@ -245,6 +245,20 @@ describe("McpSource.tools() revalidates a stale remote memo", () => {
     expect(calls).toBe(1);
   });
 
+  it("serves a read during an in-flight re-fetch the memo without waiting", async () => {
+    const { source } = buildRemoteSource([{ name: "validate_email" }]);
+    const first = await source.tools();
+    setWait(source, 5);
+    setListTools(source, () => new Promise(() => {}));
+    ageMemo(source);
+    expect(await source.tools()).toBe(first); // starts the re-fetch; the 5 ms wait runs out
+
+    // A second read joining the re-fetch would wait this long.
+    setWait(source, 10_000);
+    const tooLate = new Promise<"waited">((r) => setTimeout(() => r("waited"), 100));
+    expect(await Promise.race([source.tools(), tooLate])).toBe(first);
+  });
+
   it("serves the memo on a failed re-fetch and does not retry it before the max age", async () => {
     const { source } = buildRemoteSource([{ name: "validate_email" }]);
     const first = await source.tools();
@@ -361,6 +375,28 @@ describe("McpSource.tools() revalidates a stale remote memo", () => {
     expect(Object.keys((schema?.inputSchema.properties ?? {}) as object)).toContain(
       "include_content",
     );
+  });
+
+  it("lists stale sources concurrently, so their waits overlap", async () => {
+    const registry = new ToolRegistry();
+    let asked = 0;
+    for (const name of ["alpha", "beta"]) {
+      const { source } = buildRemoteSource([{ name: "x" }], name);
+      registry.addSource(source);
+      await source.tools();
+      setWait(source, 50);
+      setListTools(source, () => {
+        asked += 1;
+        return new Promise(() => {});
+      });
+      ageMemo(source);
+    }
+
+    const listing = registry.availableTools();
+    await new Promise((r) => setTimeout(r, 0));
+    // Listed one after another, beta would not be asked until alpha's wait ran out.
+    expect(asked).toBe(2);
+    expect((await listing).map((t) => t.name)).toEqual(["alpha__x", "beta__x"]);
   });
 });
 
