@@ -255,6 +255,62 @@ drift guard (`src/platform/files/output-types-drift-guard.ts`).
 
 ---
 
+## Lint suppressions
+
+### A biome-ignore states why the rule does not apply here
+
+A suppression's reason names the specific fact that makes the rule wrong at
+this line. It never just says the suppression is wanted, and never points at
+another comment.
+
+```ts
+// BAD — says the suppression is wanted, not why the dependency can be left out.
+// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally runs only on mount
+useEffect(() => {
+  if (chatId) openPanel(chatId);
+}, []);
+
+// BAD — true only while the comment it points at stays put.
+// biome-ignore lint/suspicious/noArrayIndexKey: same as above
+```
+
+```ts
+// GOOD — no suppression: `useEffectEvent` reads the latest `openPanel`
+// without making it a dependency.
+const openFromUrl = useEffectEvent(() => {
+  if (chatId) openPanel(chatId);
+});
+useEffect(() => {
+  openFromUrl();
+}, []);
+
+// GOOD — the reason is the fact that makes the extra dependency right.
+// biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the stats are re-read
+```
+
+Before writing a reason, try removing the need for one. For
+`useExhaustiveDependencies`: list a dependency that is stable (a `useCallback`
+or memoized result, a state setter); read a value without re-running through
+`useEffectEvent`; reset state when a key changes while rendering rather than
+in an effect; key a list by something other than its position.
+
+**Rationale.** A suppression switches a check off for one line, so its reason
+is the only record of why the check is wrong there. A reason that only
+asserts intent cannot be checked against the code, so a stale closure or a
+list that started reordering hides behind it until someone re-derives the
+reason from scratch.
+
+**Detection.** Mostly review: whether a reason holds takes a reader. `bun run
+check:code-style` (wired into `verify:static`) catches the placeholder forms
+under `src/` and `web/src/`: a whole reason such as `intentional`, `safe`,
+`stable`, or `one-shot on mount`, and one that starts `see above`, `as above`,
+or `same as above`. It matches the whole reason, so a placeholder followed by
+the real reason passes the script and is left to review.
+
+**Override.** None.
+
+---
+
 ## Adding a new rule
 
 1. **Pick the smallest possible rule.** One pattern, one example, one

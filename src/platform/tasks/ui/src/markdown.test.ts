@@ -27,16 +27,13 @@ let renderMarkdown: (text: string) => string;
 beforeAll(async () => {
   const { window } = new JSDOM("", { url: "http://localhost" });
   // Minimum globals DOMPurify needs to construct its hook tree at
-  // import time. Loosely typed because jsdom's window type differs
-  // from the lib.dom subset Bun ships.
-  // biome-ignore lint/suspicious/noExplicitAny: test-only DOM shim
-  (globalThis as any).window = window;
-  // biome-ignore lint/suspicious/noExplicitAny: test-only DOM shim
-  (globalThis as any).document = window.document;
-  // biome-ignore lint/suspicious/noExplicitAny: test-only DOM shim
-  (globalThis as any).HTMLElement = window.HTMLElement;
-  // biome-ignore lint/suspicious/noExplicitAny: test-only DOM shim
-  (globalThis as any).Node = window.Node;
+  // import time.
+  Object.assign(globalThis, {
+    window,
+    document: window.document,
+    HTMLElement: window.HTMLElement,
+    Node: window.Node,
+  });
   ({ renderMarkdown } = await import("./markdown.ts"));
 });
 

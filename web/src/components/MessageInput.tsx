@@ -132,7 +132,7 @@ export function MessageInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: auto-resize only depends on text content changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the textarea's `scrollHeight` follows `text` once it renders, so `text` is when to re-measure the DOM
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -261,7 +261,7 @@ export function MessageInput({
 
   return (
     <div ref={composerRef} className="py-3 shrink-0">
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop container for file uploads */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: a drop target, not a control: the attach button is the keyboard way to add the same files */}
       <div
         // The raised card + blue ring follows focus alone. A running turn does
         // not dim the composer: writing the next message while the agent works

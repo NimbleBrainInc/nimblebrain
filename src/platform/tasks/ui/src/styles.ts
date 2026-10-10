@@ -460,7 +460,8 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
 
 /* ---------- Dialogs ---------- */
 .confirm-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--color-text-primary) 30%, transparent); }
-.confirm-panel { background: var(--color-background-primary); border-radius: var(--border-radius-md); padding: 20px; max-width: 380px; width: calc(100% - 32px); max-height: calc(100% - 32px); overflow-y: auto; box-shadow: var(--shadow-lg); }
+.modal-backdrop { position: absolute; inset: 0; border: none; padding: 0; background: none; cursor: default; }
+.confirm-panel { position: relative; background: var(--color-background-primary); border-radius: var(--border-radius-md); padding: 20px; max-width: 380px; width: calc(100% - 32px); max-height: calc(100% - 32px); overflow-y: auto; box-shadow: var(--shadow-lg); }
 .modal-wide { max-width: 560px; }
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .confirm-title { font-family: var(--nb-font-heading); font-size: var(--font-text-base-size); line-height: var(--font-text-base-line-height); font-weight: var(--font-weight-medium); }

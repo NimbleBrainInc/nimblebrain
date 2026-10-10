@@ -215,13 +215,12 @@ export function BatchDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: statusTool.call is stable
   useEffect(() => {
     statusTool
       .call({ taskId, limit: 0 })
       .then((res) => setDetail((asDict(res.data).task as TaskDetail) ?? null))
       .catch((err) => setError(toolErrorText(err)));
-  }, [taskId]);
+  }, [taskId, statusTool]);
 
   const parsed = parseItems(text, detail?.inputSchema);
   const assessable = !!(detail?.criteria?.length || detail?.outputSchema);

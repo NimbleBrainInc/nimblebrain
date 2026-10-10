@@ -119,7 +119,7 @@ export function ArtifactPanel() {
 
   // artifact?.mimeType is captured only as a fallback at fetch time; the
   // (appName, uri) pair is the identity of the resource being fetched.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fetch keyed on resource identity
+  // biome-ignore lint/correctness/useExhaustiveDependencies: (appName, uri) names the resource; `artifact.mimeType` is only a fallback for a response that carries none, so a change to it alone must not reload the same text
   useEffect(() => {
     if (!appName || !uri) return;
     let cancelled = false;

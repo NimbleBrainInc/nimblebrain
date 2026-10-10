@@ -641,7 +641,6 @@ function useEditorData(taskId: string | undefined) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [judges, setJudges] = useState<JudgesData | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable
   useEffect(() => {
     judgesTool
       .call({})
@@ -656,7 +655,7 @@ function useEditorData(taskId: string | undefined) {
         setDetail(d);
       })
       .catch((err) => setLoadError(toolErrorText(err)));
-  }, [taskId]);
+  }, [taskId, judgesTool, statusTool]);
   return { detail, loadError, judges };
 }
 

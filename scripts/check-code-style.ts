@@ -17,7 +17,9 @@
  *
  * Scope: `src/**\/*.ts` only. Tests and the platform app UIs are out of
  * scope (tests deliberately exercise edge cases; an app UI is a separate
- * Vite package with its own conventions and its own vendored deps).
+ * Vite package with its own conventions and its own vendored deps). The
+ * suppression-reason pass is the exception: it reads every source file
+ * under `src/` (app UIs included) and `web/src/`.
  */
 
 import { readFileSync } from "node:fs";
@@ -276,11 +278,80 @@ function checkNoControlBytes(): CheckResult {
   return { rule: "no-control-bytes", violations };
 }
 
+/**
+ * Rule: a biome-ignore states why the rule does not apply here.
+ *
+ * Whether a reason holds needs a reader, so review owns this rule. What a
+ * script can catch reliably is a reason that says nothing: one that only
+ * asserts the suppression is wanted ("intentional", "safe"), or points at
+ * another comment ("see above"), which stops making sense once either moves.
+ * The match is on the whole reason, so a real reason that merely starts with
+ * one of these words passes.
+ */
+const PLACEHOLDER_REASONS = new Set([
+  "as designed",
+  "by design",
+  "deliberate",
+  "expected",
+  "false positive",
+  "fine",
+  "intended",
+  "intentional",
+  "intentionally",
+  "needed",
+  "not needed",
+  "ok",
+  "on purpose",
+  "once",
+  "one-shot",
+  "one-shot on mount",
+  "only on mount",
+  "required",
+  "runs once",
+  "safe",
+  "stable",
+]);
+const POINTS_ELSEWHERE = /^(?:see|as|same as) (?:above|below)\b/;
+
+/** The reason after a `biome-ignore <rule>:`, normalised, or null when the line has none. */
+export function suppressionReason(line: string): string | null {
+  const match = /biome-ignore(?:-all|-start|-end)?\s+[^:]*:(.*)$/.exec(line);
+  if (!match?.[1]) return null;
+  return match[1]
+    .replace(/\*\/\s*\}?\s*$/, "")
+    .trim()
+    .replace(/[.\s]+$/, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+export function isPlaceholderReason(reason: string): boolean {
+  return reason === "" || PLACEHOLDER_REASONS.has(reason) || POINTS_ELSEWHERE.test(reason);
+}
+
+function checkSuppressionReasons(): CheckResult {
+  const violations: string[] = [];
+  const glob = new Glob("{src,web/src}/**/*.{ts,tsx}");
+  for (const file of glob.scanSync({ cwd: ROOT, absolute: true })) {
+    const rel = relative(ROOT, file);
+    if (rel.split(/[\\/]/).includes("node_modules")) continue;
+    const lines = readFileSync(file, "utf-8").split("\n");
+    lines.forEach((text, i) => {
+      const reason = suppressionReason(text);
+      if (reason !== null && isPlaceholderReason(reason)) {
+        violations.push(`  ${rel}:${i + 1}  ${text.trim()}`);
+      }
+    });
+  }
+  return { rule: "specific-suppression-reasons", violations };
+}
+
 function main(): void {
   const checks: CheckResult[] = [
     checkNoInlineTypeImports(),
     checkContainmentTagOpens(),
     checkNoControlBytes(),
+    checkSuppressionReasons(),
   ];
 
   let totalViolations = 0;
@@ -301,4 +372,4 @@ function main(): void {
   }
 }
 
-main();
+if (import.meta.main) main();

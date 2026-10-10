@@ -32,12 +32,14 @@ export function useFileList(params: Record<string, unknown>): FileListState {
   const key = JSON.stringify(params);
   const seq = useRef(0);
 
-  // A new query starts at its first page.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is the trigger
-  useEffect(() => {
+  // A new query starts at its first page. Reset while rendering, so the first
+  // read of the new query already asks for page 0.
+  const [shownKey, setShownKey] = useState(key);
+  if (shownKey !== key) {
+    setShownKey(key);
     setPage(0);
     setResult(null);
-  }, [key]);
+  }
 
   const reload = useCallback(async () => {
     const mine = ++seq.current;

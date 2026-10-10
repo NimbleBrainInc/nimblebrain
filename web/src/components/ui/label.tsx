@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 
 function Label({ className, htmlFor, ...props }: React.ComponentProps<"label">) {
   return (
-    // biome-ignore lint/a11y/noLabelWithoutControl: generic Label component — htmlFor passed by consumer
+    // biome-ignore lint/a11y/noLabelWithoutControl: a shared wrapper; each caller passes `htmlFor` or nests the control, which the rule cannot see from here
     <label
       htmlFor={htmlFor}
       data-slot="label"

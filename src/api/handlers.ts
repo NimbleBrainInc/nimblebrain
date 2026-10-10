@@ -1415,7 +1415,7 @@ export async function handleOidcRefresh(
 
 /** Strip characters that could break or inject Content-Disposition headers. */
 export function sanitizeFilename(name: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional security sanitization
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: a control byte in the name could split or inject the Content-Disposition header, so matching them is the point
   return name.replace(/["\r\n\x00-\x1f]/g, "_");
 }
 

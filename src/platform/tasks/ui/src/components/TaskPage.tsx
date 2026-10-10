@@ -711,7 +711,7 @@ export function TaskPage({
   const [runsError, setRunsError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable; refreshKey is the signal
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the task is re-read
   useEffect(() => {
     let cancelled = false;
     statusTool
@@ -734,37 +734,36 @@ export function TaskPage({
     return () => {
       cancelled = true;
     };
-  }, [taskId, refreshKey]);
+  }, [taskId, statusTool, statsTool, runsTool, refreshKey]);
 
   // The latest run's full result, for its preview: structured output when it has one.
   const latestId = runs?.[0] && !isOpenRun(runs[0]) ? runs[0].id : null;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resultTool.call is stable
+  const detailId = detail?.id;
   useEffect(() => {
     setLatestResult(undefined);
-    if (!latestId || !detail) return;
+    if (!latestId || !detailId) return;
     let cancelled = false;
-    void readResult(resultTool.call, latestId, detail.id).then((read) => {
+    void readResult(resultTool.call, latestId, detailId).then((read) => {
       if (!cancelled) setLatestResult(read.result);
     });
     return () => {
       cancelled = true;
     };
-  }, [latestId, detail?.id]);
+  }, [latestId, detailId, resultTool]);
 
   // A run in flight changes the page when it ends; poll until it does.
   const live = runs?.[0] && isOpenRun(runs[0]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable
   useEffect(() => {
-    if (!live || !detail) return;
+    if (!live || !detailId) return;
     const timer = setInterval(() => {
-      void readRecent(statsTool.call, runsTool.call, detail.id).then((o) => {
+      void readRecent(statsTool.call, runsTool.call, detailId).then((o) => {
         setStats(o.stats);
         setRuns(o.runs);
         setRunsError(o.runsError);
       });
     }, 5000);
     return () => clearInterval(timer);
-  }, [live, detail]);
+  }, [live, detailId, statsTool, runsTool]);
 
   const d = detail;
   async function setEnabled(v: boolean) {

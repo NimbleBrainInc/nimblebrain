@@ -199,7 +199,7 @@ export function BlockTimeline({
         const isTailDelta = isCurrentMessage && isLast && streamingState === "streaming";
         if (item.kind === "text") {
           return (
-            // biome-ignore lint/suspicious/noArrayIndexKey: items derived from append-only blocks; identity by position is stable
+            // biome-ignore lint/suspicious/noArrayIndexKey: items fold append-only blocks, so a streamed block grows the last item or adds one and never moves an earlier one
             <div key={`text:${idx}`} className="min-h-[1em]">
               <Streamdown
                 className="streamdown-container presence-assistant-message"
@@ -213,7 +213,7 @@ export function BlockTimeline({
           );
         }
         return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: same as above
+          // biome-ignore lint/suspicious/noArrayIndexKey: items fold append-only blocks, so a streamed block grows the last item or adds one and never moves an earlier one
           <div key={`activity:${idx}`} className="flex flex-col gap-3">
             <ActivityChip
               rows={item.rows}
@@ -377,7 +377,7 @@ function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: Activit
           <SingleRowBody row={smoothedRows[0]} />
         ) : (
           smoothedRows.map((row, idx) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: rows within a segment are append-only and don't reorder
+            // biome-ignore lint/suspicious/noArrayIndexKey: a segment's rows come from append-only blocks, so rows are only added at the end
             <ActivityRowView key={`row:${idx}`} row={row} />
           ))
         )
