@@ -1,4 +1,4 @@
-# 0048. A connector principal runs the scheduled prompts its server declares
+# 0051. A connector principal runs the scheduled prompts its server declares
 
 - Status: Proposed
 - Date: 2026-10-06
