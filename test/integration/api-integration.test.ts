@@ -331,6 +331,16 @@ describe("integration: auth boundary", () => {
     const healthRes = await fetch(`${baseUrl}/v1/health`);
     expect(healthRes.status).toBe(200);
 
+    // So does the brand: the sign-in page paints it before anyone signs in.
+    const brandRes = await fetch(`${baseUrl}/v1/brand.js`);
+    expect(brandRes.status).toBe(200);
+    expect(await brandRes.text()).toBe("window.__NB_BRAND__ = {};\n");
+    // A JavaScript type, so the app-wide nosniff lets a <script> run it. The
+    // app-wide CSP rides on the response too; a CSP on a script resource does
+    // not govern whether the document that loads it runs it.
+    expect(brandRes.headers.get("Content-Type")).toBe("text/javascript; charset=utf-8");
+    expect(brandRes.headers.get("X-Content-Type-Options")).toBe("nosniff");
+
     // Chat requires auth
     const chatNoAuth = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",

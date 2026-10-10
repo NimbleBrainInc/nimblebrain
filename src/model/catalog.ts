@@ -118,7 +118,11 @@ export function getModel(provider: string, modelId: string): CatalogModel | unde
 
 /**
  * Look up a model by its full "provider:model-id" string.
- * Bare strings (no colon) are treated as anthropic.
+ *
+ * A string with no colon reads as Anthropic. Nothing writes one now (every
+ * input refuses it, `model-id.ts`), but stored history does carry them: usage
+ * ledger lines and conversation events recorded before ids were always
+ * qualified, and those are priced and displayed through here.
  */
 export function getModelByString(modelString: string): CatalogModel | undefined {
   const { provider, modelId } = parseModelString(modelString);
@@ -126,9 +130,8 @@ export function getModelByString(modelString: string): CatalogModel | undefined 
 }
 
 /**
- * Find which provider in the catalog owns the given bare model id.
- * Used by the resolver to rescue bare ids written to disk before the
- * settings UI started encoding `provider:` into option values.
+ * Find which provider in the catalog owns the given bare model id. Used to
+ * suggest the qualified form when an input names a model without its provider.
  *
  * Returns null when the id isn't in any provider's catalog. O(1) via
  * the precomputed `idToProvider` map; duplicates surface as warnings
@@ -268,9 +271,9 @@ function parseModelString(modelString: string): { provider: string; modelId: str
 }
 
 /**
- * Extract the provider name from a model string. Bare strings (no `:`)
- * are treated as `"anthropic"` — same rule as `getModelByString`.
- * Single source of truth for that convention.
+ * Extract the provider name from a model string. A string with no `:` reads
+ * as `"anthropic"`, the same rule as `getModelByString` and for the same
+ * stored history.
  */
 export function getProviderFromModel(modelString: string): string {
   return parseModelString(modelString).provider;

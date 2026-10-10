@@ -451,3 +451,37 @@ describe("updateTask — a schedule with no next run", () => {
     expect(loadOwnerTasks(workDir, WS, OWNER).get("morning")?.nextRunAt).toBeUndefined();
   });
 });
+
+describe("a task's model", () => {
+  // Refused where the definition is written, so the author hears it instead of
+  // every scheduled run failing later.
+  test("create refuses a bare id, naming the qualified form, and saves nothing", () => {
+    const ctx = makeCtx();
+    expect(() =>
+      createTask({ name: "Bare", prompt: "p", model: "claude-sonnet-4-6" }, ctx),
+    ).toThrow(
+      'Task model "claude-sonnet-4-6" has no provider. Write it as provider:model, e.g. "anthropic:claude-sonnet-4-6".',
+    );
+    expect(ctx.definitions().size).toBe(0);
+  });
+
+  test("update refuses a bare id and leaves the stored model alone", () => {
+    const ctx = makeCtx();
+    createTask({ name: "Pinned", prompt: "p", model: "anthropic:claude-sonnet-4-6" }, ctx);
+    expect(() => updateTask("pinned", { model: "gpt-4o" }, ctx)).toThrow('"openai:gpt-4o"');
+    expect(ctx.definitions().get("pinned")?.model).toBe("anthropic:claude-sonnet-4-6");
+  });
+
+  test.each(["anthropic:claude-sonnet-4-6", "fast", "alias:fast"])("accepts %s", (model) => {
+    const ctx = makeCtx();
+    createTask({ name: "Ok", prompt: "p", model }, ctx);
+    expect(ctx.definitions().get("ok")?.model).toBe(model);
+  });
+
+  test("update clears the model with null", () => {
+    const ctx = makeCtx();
+    createTask({ name: "Clear", prompt: "p", model: "anthropic:claude-sonnet-4-6" }, ctx);
+    updateTask("clear", { model: null }, ctx);
+    expect(ctx.definitions().get("clear")?.model).toBeUndefined();
+  });
+});

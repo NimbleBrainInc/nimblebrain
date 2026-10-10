@@ -13,6 +13,7 @@
 
 import { PanelLeft, PanelLeftOpen, Search } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useBrandName } from "../../brand";
 import { usePalette } from "../../context/PaletteContext";
 import { useSidebar } from "../../context/SidebarContext";
 import { ariaKeyShortcuts, SHORTCUTS } from "../../lib/shortcuts";
@@ -25,6 +26,7 @@ const iconButton =
 export function SidebarHeader({ collapsed = false }: { collapsed?: boolean }) {
   const { toggle } = useSidebar();
   const { openPalette } = usePalette();
+  const brandName = useBrandName();
 
   const search = (
     <Tooltip label="Search" shortcut={SHORTCUTS.search} side={collapsed ? "right" : "bottom"}>
@@ -71,7 +73,7 @@ export function SidebarHeader({ collapsed = false }: { collapsed?: boolean }) {
 
   return (
     <div className="flex h-14 shrink-0 items-center justify-between pr-2.5 pl-3">
-      <Link to="/" aria-label="NimbleBrain home" className="flex min-w-0 rounded-md">
+      <Link to="/" aria-label={`${brandName} home`} className="flex min-w-0 rounded-md">
         <Logo variant="full" height={24} />
       </Link>
       <div className="flex items-center gap-0.5">

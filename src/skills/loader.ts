@@ -259,7 +259,7 @@ export function parseSkillParts(
           ? ` (${capped.sectionsOmitted} section${capped.sectionsOmitted === 1 ? "" : "s"} omitted)`
           : "";
       log.warn(
-        `[skill] body capped to ${MAX_SKILL_BODY_CHARS} chars${omitted} in ${sourcePath} — trim the skill or move depth into references/`,
+        `[skill] body capped to ${MAX_SKILL_BODY_CHARS} chars${omitted} in ${sourcePath} — fold its rules into existing sections, or split it into two skills`,
       );
     }
   }

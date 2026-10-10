@@ -1,4 +1,5 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import type { Brand } from "../brand/index.ts";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
@@ -218,6 +219,12 @@ export interface RuntimeConfig {
    * `workDir`. See {@link SecretsConfig}.
    */
   secrets?: SecretsConfig;
+
+  /**
+   * White-label branding: name, logos, accent colour, fonts. Absent is
+   * NimbleBrain. Validated and installed by `loadBrand` (`src/brand/`).
+   */
+  brand?: Brand;
 
   /** Anonymous telemetry configuration. */
   telemetry?: {

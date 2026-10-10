@@ -60,6 +60,8 @@ RUN set -e; \
     for p in $pids; do wait "$p"; done
 
 COPY --chown=1000:1000 src/ src/
+# The palette and contrast modules the brand loader imports (`src/brand/`).
+COPY --chown=1000:1000 web/src/theme/ web/src/theme/
 COPY --chown=1000:1000 scripts/ scripts/
 # Out-of-kernel Sentry preload + its bunfig wiring. bunfig.toml must sit at the
 # WORKDIR (the runtime's cwd) so Bun applies `preload` to `bun run src/cli/...`.

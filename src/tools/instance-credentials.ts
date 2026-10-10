@@ -132,8 +132,9 @@ type Opaque =
  * `T` takes any string, which is the rule the walk implements. A field typed as
  * a set of literals (`provider: "anthropic" | ...`) takes no reference: a
  * resolved secret is an arbitrary string, which such a field does not accept.
- * Like the walk it descends into arrays and objects; the type cannot tell a
- * plain object from a class instance, so it is looser than the walk there.
+ * Like the walk it descends into arrays and objects, keeping a tuple a tuple
+ * (a brand colour is a `[light, dark]` pair); the type cannot tell a plain
+ * object from a class instance, so it is looser than the walk there.
  */
 export type WithCredentialRefs<T> = T extends string
   ? string extends T
@@ -141,8 +142,8 @@ export type WithCredentialRefs<T> = T extends string
     : T
   : T extends Opaque
     ? T
-    : T extends readonly (infer U)[]
-      ? WithCredentialRefs<U>[]
+    : T extends readonly unknown[]
+      ? { [K in keyof T]: WithCredentialRefs<T[K]> }
       : T extends object
         ? { [K in keyof T]: WithCredentialRefs<T[K]> }
         : T;
@@ -152,8 +153,8 @@ export type ResolvedCredentialRefs<T> = T extends CredentialRef
   ? string
   : T extends string | Opaque
     ? T
-    : T extends readonly (infer U)[]
-      ? ResolvedCredentialRefs<U>[]
+    : T extends readonly unknown[]
+      ? { [K in keyof T]: ResolvedCredentialRefs<T[K]> }
       : T extends object
         ? { [K in keyof T]: ResolvedCredentialRefs<T[K]> }
         : T;

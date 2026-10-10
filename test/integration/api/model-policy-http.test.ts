@@ -75,6 +75,20 @@ describe("/v1/workspaces/:wsId/chat/start refuses a disallowed model", () => {
   });
 });
 
+// A bare id names no provider. It is refused before the allowlist is
+// consulted, with the qualified form to send instead.
+describe("/v1/workspaces/:wsId/chat/start refuses a bare model id", () => {
+  it("answers 400 model_not_qualified, naming the qualified form", async () => {
+    const res = await post("chat/start", { message: "hi", model: "claude-sonnet-4-6" });
+    expect(res.status).toBe(400);
+
+    const body = await readJson<ApiErrorBody & { details?: { model?: string } }>(res);
+    expect(body.error).toBe("model_not_qualified");
+    expect(body.message).toContain('"anthropic:claude-sonnet-4-6"');
+    expect(body.details?.model).toBe("claude-sonnet-4-6");
+  });
+});
+
 // The gate skips a resume, because the pin wins and the request's model is
 // discarded. The door builds its create options lazily to get that.
 describe("/v1/workspaces/:wsId/chat/start resumes a pinned conversation without gating the request model", () => {

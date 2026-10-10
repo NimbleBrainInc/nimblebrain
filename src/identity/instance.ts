@@ -69,7 +69,6 @@ export type AuthConfig = OidcAuth | WorkosAuth | DevAuth;
 export interface InstanceConfig {
   auth: AuthConfig;
   integrations?: Record<string, unknown>;
-  orgName?: string;
   orgId?: string;
 }
 
@@ -203,10 +202,6 @@ function validateInstanceConfig(raw: unknown): InstanceConfig {
       throw new Error("instance.json: integrations must be an object");
     }
     config.integrations = obj.integrations as Record<string, unknown>;
-  }
-  if (obj.orgName !== undefined) {
-    if (typeof obj.orgName !== "string") throw new Error("instance.json: orgName must be a string");
-    config.orgName = obj.orgName as string;
   }
   if (obj.orgId !== undefined) {
     if (typeof obj.orgId !== "string") throw new Error("instance.json: orgId must be a string");

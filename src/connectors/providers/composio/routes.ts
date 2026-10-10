@@ -6,7 +6,7 @@ import {
   profileConnectorsUrl,
   workspaceConnectorsUrl,
 } from "../../../api/routes/connectors-redirect.ts";
-import { SUCCESS_PAGE_CSP, successPageHtml } from "../../../api/routes/oauth-success-page.ts";
+import { reinitiateParagraph, successPage } from "../../../api/routes/oauth-success-page.ts";
 import type { ComposioInitiateResponse } from "../../../api/schemas/responses.ts";
 import { type AppContext, type AppEnv, apiError, json } from "../../../api/types.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../../connectors/runtime/connection.ts";
@@ -225,8 +225,9 @@ export function composioAuthRoutes(ctx: AppContext) {
     c.header("Set-Cookie", buildComposioStateCookie("", 0, ctx.secureCookies));
 
     const returnUrl = connectorsReturnUrl(owner);
-    c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
-    return c.html(successPageHtml("Connection complete", returnUrl));
+    const page = successPage("Connection complete", returnUrl);
+    c.header("Content-Security-Policy", page.csp);
+    return c.html(page.html);
   });
 
   // ── GET /v1/composio-auth/proxy ───────────────────────────────────
@@ -574,7 +575,7 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
     return c.html(
       `<html><body><h3>Connection failed</h3><pre>${escapeHtml(status)}</pre>` +
-        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+        `${reinitiateParagraph()}</body></html>`,
       400,
     );
   }
@@ -594,7 +595,7 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
     return c.html(
       "<html><body><h3>Authorization session mismatch.</h3>" +
-        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+        `${reinitiateParagraph()}</body></html>`,
       400,
     );
   }
@@ -609,7 +610,7 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
     return c.html(
       "<html><body><h3>Unknown or expired authorization flow.</h3>" +
-        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+        `${reinitiateParagraph()}</body></html>`,
       400,
     );
   }

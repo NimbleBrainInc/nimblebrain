@@ -16,6 +16,11 @@
          the deferred app module, so the global exists when initSentry() runs.
          Filled per tenant at container start; see web/Dockerfile + config.ts. -->
     <script src="/config.js"></script>
+    <!-- Deployment brand (window.__NB_BRAND__), served by the runtime. Loaded the
+         same way, so main.tsx paints the brand before the first render. If it
+         fails to load, window.__NB_BRAND__ stays undefined and the shell paints
+         the default brand. See brand.ts. -->
+    <script src="/v1/brand.js"></script>
   </head>
   <body>
     <div id="root"></div>

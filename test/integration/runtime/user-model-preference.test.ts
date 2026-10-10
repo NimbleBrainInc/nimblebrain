@@ -210,6 +210,20 @@ describe("saving a choice", () => {
     }
   });
 
+  it("refuses a bare model id, naming the qualified form, and stores nothing", async () => {
+    const runtime = await start("save-bare");
+    try {
+      const userId = await seedUser(runtime);
+      const res = await setPreference(runtime, userId, "claude-opus-4-6");
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.content)).toContain('\\"anthropic:claude-opus-4-6\\"');
+      const user = await runtime.getUserStore().get(userId);
+      expect(user?.preferences.models?.default).toBeUndefined();
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("clears the choice on null", async () => {
     const runtime = await start("save-clear", ["claude-sonnet-4-6", "claude-opus-4-6"]);
     try {
@@ -226,8 +240,7 @@ describe("saving a choice", () => {
 
 describe("an empty model id is not a choice", () => {
   // `get_config` reports an unset preference as `""`, so a client that reads
-  // preferences and writes them back sends `""`. Storing it would resolve to
-  // `anthropic:` — the bare-id fallback applied to nothing — and pin every
+  // preferences and writes them back sends `""`. Storing it would pin every
   // conversation that user starts to a model that cannot answer, which they
   // could not correct from chat because correcting it needs a turn.
   it("clears rather than storing, round-tripping the unset sentinel", async () => {

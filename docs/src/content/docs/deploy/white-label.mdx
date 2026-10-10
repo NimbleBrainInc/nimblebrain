@@ -1,0 +1,123 @@
+---
+title: White-labeling
+description: Put your own product name, logos, accent colour and typefaces on a deployment, and check that every surface picked them up.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This guide takes a deployment from the default look to your brand: what to prepare, how to choose an accent colour that the runtime accepts, where the configuration goes, and how to check the result. Every key it uses is described in the [Branding reference](/config/branding/).
+
+## What changes and what doesn't
+
+A `brand` block changes what a person reads and sees:
+
+- **Product name**: the browser tab title, the agent's identity line ("You are a helpful assistant powered by …"), the "Leaving …" dialog before an external link, OAuth success and error pages, and error messages that name the product.
+- **Logo, mark and favicon**: the sign-in page, the sidebar, and the browser tab.
+- **Accent colour and typefaces**: the shell, and every embedded app, through the theme tokens the shell injects.
+- **Default theme**: the colour theme a person starts in until they choose one.
+- **OAuth consent screens**: the name, homepage and logo a connector vendor shows when someone connects an account.
+
+It does not change:
+
+- **Wire identifiers.** Tool namespaces (`nb__`), metadata keys (`ai.nimblebrain/*`), the `NB_` environment prefix and the `nimblebrain.json` filename identify the software to other software, not to a person.
+- **Your identity provider's hosted sign-in page.** The sign-in page links to your identity provider (WorkOS, or your OIDC provider) for the password or SSO step. Brand that page in the provider's own dashboard.
+- **The rest of the palette, the code typeface, corner radius, type scale and shadows.** Backgrounds, text and status colours, the monospace face, corners, sizes and elevation stay as shipped, so every brand inherits a palette already checked for contrast and layouts keep their proportions under any typeface.
+
+## Prepare your assets
+
+Publish every file at a stable `https://` URL before you reference it. A URL that returns 404 shows a broken image, not the default artwork.
+
+| Asset | Used for | Notes |
+|---|---|---|
+| Full logo, light mode (`logo.light`) | Sign-in page, expanded sidebar | SVG or PNG. Dark artwork for a light background. |
+| Full logo, dark mode (`logo.dark`) | The same places in dark mode | Light artwork for a dark background. |
+| Mark (`logo.mark`) | Collapsed sidebar | Square. One file serves both modes, so use a mark that reads on light and dark. |
+| Raster mark (`logo.raster`) | OAuth consent screens at connector vendors | **PNG**, around 128×128. Several identity providers and vendors refuse to render an SVG logo there. |
+| Favicon (`favicon`) | Browser tab | PNG or ICO. |
+| Fonts (`fonts.sans`, `fonts.heading`, `fonts.reading`) | Shell and embedded apps | One `.woff2` file per role, typically a variable font covering every weight you use. |
+
+Set `name`, `logo` and `favicon` together. A brand with a name but no logo keeps the bundled NimbleBrain artwork, with your name as its alt text.
+
+**Fonts must be files you may redistribute.** You serve them to every visitor's browser, so check the licence. Self-host the `.woff2` files; a Google Fonts stylesheet URL (`https://fonts.googleapis.com/css2?…`) is rejected, because embedded apps load faces from the file URL and cannot follow a stylesheet.
+
+**The font host must answer every origin.** Embedded apps run in sandboxed iframes with an opaque origin, so their font requests arrive with `Origin: null`. The only response header that admits them is `Access-Control-Allow-Origin: *`. Check each font URL:
+
+```bash
+curl -sI -H "Origin: null" https://static.example.com/brands/acme/fonts/instrument-sans.woff2
+```
+
+Look for these lines in the response:
+
+```text
+HTTP/2 200
+content-type: font/woff2
+access-control-allow-origin: *
+```
+
+A missing `access-control-allow-origin`, or one that names your domain instead of `*`, is the common failure: the shell renders your font, while every app silently falls back to the next family in its `stack`.
+
+## Choose an accent that passes
+
+A brand sets two colours, each a `[light, dark]` pair of `#rrggbb` values: `primary`, the accent on links, buttons and accent text, and `ring`, the focus ring. Set `ring` to the same pair as `primary` unless you want a distinct focus colour. The text on a `primary` fill is derived per mode as white or black, whichever contrasts more with your accent, and the ground of info notices is a tint of your accent; you set neither.
+
+The runtime merges your accent over the default palette at startup and checks the result against every contrast pair the default palette is held to, in light and dark mode. It refuses to start if any pair falls below **4.5:1** (WCAG 2.2 AA for body text).
+
+<Steps>
+
+1. **Start from your brand colour.** Use it as the light-mode value, and a lighter tint of it as the dark-mode value: the light value sits on a white page, the dark value on a black one.
+
+2. **Start the runtime and read the error.** A failing accent stops startup with a message naming the mode, the pair, the ratio and both colours:
+
+   ```text
+   Invalid brand in config: light mode: primary on background (links, accent text) is 2.45:1 (#F28C28 on #ffffff), below the 4.5:1 WCAG AA minimum
+   ```
+
+   Read it as: in light mode, `primary` used as link or accent text on the page background measures 2.45:1. The first colour is the text and the second the ground it was measured on.
+
+3. **Adjust by the smallest step.** Darken the light-mode value, or lighten the dark-mode one, only as far as the error needs. Restart, and repeat until the runtime starts. Small steps keep the colour recognisably yours. The ACME orange in the [reference example](/config/branding/#example), `#B53707` in light mode and `#FF8A4C` in dark, passes every pair.
+
+</Steps>
+
+## Write the block
+
+**Self-hosted.** Add a top-level `brand` key to `nimblebrain.json` in the runtime's working directory (`/data` in the container image, so the `workspace` volume under [Docker Compose](/deploy/docker/)). The [reference example](/config/branding/#example) is a complete block to start from. To start everyone in light mode, set `defaultTheme`; a person can still switch, and their choice wins from then on:
+
+```json title="nimblebrain.json"
+{
+  "brand": {
+    "name": "ACME",
+    "defaultTheme": "light",
+    "logo": { "light": "…", "dark": "…", "mark": "…", "raster": "…" },
+    "favicon": "…",
+    "colors": { "primary": ["#B53707", "#FF8A4C"], "ring": ["#B53707", "#FF8A4C"] }
+  }
+}
+```
+
+**Templated config.** A deployment that renders `nimblebrain.json` from a template (Helm, for one) should pass the `brand` block through verbatim, so the runtime validates it as written.
+
+`brand` is read at startup, so restart the runtime after a change. It is not read from `nimblebrain.overrides.json`.
+
+## Verify
+
+<Steps>
+
+1. **The runtime serves your brand.** It answers without a session:
+
+   ```bash
+   curl -s https://agents.example.com/v1/brand.js
+   ```
+
+   You should see one line, `window.__NB_BRAND__ = {…};`, holding your block as you wrote it. `{}` means no brand is configured, and a key missing from the answer is one the runtime does not accept: startup logs it as an unknown key.
+
+2. **The sign-in page, in both modes.** Open the deployment in a private window. The tab title, favicon, logo, colours and typefaces should all be yours. Press **Cmd+Shift+L** (Mac) or **Ctrl+Shift+L** to switch between light and dark mode and check the other logo and accent.
+
+3. **An embedded app.** Sign in and open an app such as Files. Its buttons and links should use your accent, and its text your `sans` typeface. If the shell shows your font but the app does not, recheck the font host's `access-control-allow-origin` header.
+
+</Steps>
+
+## Known limits
+
+- **Link previews show the default title.** The page's static HTML carries the default tab title and favicon. Link previews in chat apps and social cards, and crawlers that do not run scripts, read only that HTML, so they show the default.
+- **An open page keeps the previous look.** The shell and its embedded apps read the brand when the page loads. After a brand change, a page left open shows the new look once it is reloaded.
+- **Vendor consent screens update on reconnect.** A connector vendor stores the name, homepage and logo it received when the connection first registered. Existing connections show the old values until they are disconnected and connected again; new connections use the new ones.

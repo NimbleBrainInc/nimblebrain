@@ -2,13 +2,14 @@ import { ArrowUpRight, Check, Copy, Link2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LinkSafetyModalProps } from "streamdown";
+import { useBrandName } from "../brand";
 
 /**
  * First-party replacement for Streamdown's stock link-safety modal.
  *
  * Streamdown ships a confirmation dialog styled for its own (Vercel/Geist)
  * design language; wired through `linkSafety.renderModal` this renders the
- * NimbleBrain modal instead — on-brand tokens, lucide icons, and a
+ * shell's own modal instead — on-brand tokens, lucide icons, and a
  * domain-forward hierarchy. The domain is the headline (the thing a reader
  * actually decides on); the path is demoted to a quiet chip. Warm is the
  * "you're leaving the app" accent.
@@ -42,6 +43,7 @@ export function parseUrl(raw: string): ParsedUrl {
 }
 
 export function LinkSafetyModal({ isOpen, onClose, onConfirm, url }: LinkSafetyModalProps) {
+  const brandName = useBrandName();
   const [copied, setCopied] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const copyRef = useRef<HTMLButtonElement>(null);
@@ -118,7 +120,7 @@ export function LinkSafetyModal({ isOpen, onClose, onConfirm, url }: LinkSafetyM
           </div>
           <div className="min-w-0 flex flex-col gap-0.5">
             <span className="text-2xs font-mono uppercase tracking-wider text-muted-foreground">
-              Leaving NimbleBrain
+              Leaving {brandName}
             </span>
             <span className="text-base font-semibold leading-tight truncate" title={domain}>
               {domain}

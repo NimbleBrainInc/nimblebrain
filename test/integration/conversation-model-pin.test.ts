@@ -236,19 +236,18 @@ describe("what the pin stores", () => {
     expect(await modelsUsed(conv.conversationId)).toEqual([FAST_MODEL]);
   });
 
-  test("the stored pin is provider-qualified", async () => {
-    // A bare id resolves to `anthropic:<id>`; an immutable bare pin is
-    // unrepairable, so qualification is asserted on what reached disk.
-    const conv = await runtime.chat({
-      message: "bare",
-      model: "claude-sonnet-5",
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: USER,
-    });
-
-    const pin = await pinOf(conv.conversationId);
-    expect(pin).toContain(":");
-    expect(pin).toBe("anthropic:claude-sonnet-5");
+  test("a bare request model is refused, so no pin is written without a provider", async () => {
+    // The pin is immutable, so a pin naming no provider could never be
+    // repaired. The request door refuses the bare id before a conversation
+    // exists, naming the qualified form.
+    await expect(
+      runtime.chat({
+        message: "bare",
+        model: "claude-sonnet-5",
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: USER,
+      }),
+    ).rejects.toThrow('"anthropic:claude-sonnet-5"');
   });
 });
 

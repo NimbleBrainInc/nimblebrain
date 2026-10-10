@@ -143,6 +143,33 @@ export interface ChatToolCall {
 export interface HealthResponse {
     status: "ok";
 }
+/** One typeface role as served. Mirrors `BrandFont` (`web/src/theme/brand.ts`). */
+export interface BrandFontResponse {
+    stack: string;
+    family?: string;
+    url?: string;
+    weight?: string;
+}
+/**
+ * The deployment's validated brand block, `{}` when none is configured: the
+ * value `GET /v1/brand.js` assigns to `window.__NB_BRAND__`. Mirrors
+ * `ResolvedBrand` (`web/src/theme/brand.ts`); each colour is a `[light, dark]`
+ * hex pair.
+ */
+export interface BrandResponse {
+    name?: string;
+    homepageUrl?: string;
+    logo?: {
+        light?: string;
+        dark?: string;
+        mark?: string;
+        raster?: string;
+    };
+    favicon?: string;
+    defaultTheme?: "light" | "dark" | "system";
+    colors?: Partial<Record<"primary" | "ring", readonly [light: string, dark: string]>>;
+    fonts?: Partial<Record<"sans" | "heading" | "reading", BrandFontResponse>>;
+}
 export interface ShellResponse {
     placements: PlacementEntry[];
     eventsEndpoint: string;
