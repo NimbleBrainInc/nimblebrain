@@ -16,7 +16,7 @@ import {
   BRAND_FONT_ROLES,
   mergePalette,
 } from "../../../web/src/theme/brand.ts";
-import { contrastRatio } from "../../../web/src/theme/contrast.ts";
+import { contrastRatio, deltaEOk, over } from "../../../web/src/theme/contrast.ts";
 import { colors, extOnlyColors, fonts } from "../../../web/src/theme/palette.ts";
 import { ACME_BRAND } from "../../helpers/acme-brand.ts";
 
@@ -126,6 +126,24 @@ describe("mergePalette", () => {
   test("derives primary-foreground as white or black by contrast against the brand primary", () => {
     const merged = mergePalette({ colors: { primary: ["#1d4ed8", "#bfdbfe"] } });
     expect(merged.colors["primary-foreground"]).toEqual(["#ffffff", "#000000"]);
+  });
+
+  test("derives info-light as a 10% (light) / 20% (dark) tint of the brand primary", () => {
+    const merged = mergePalette({ colors: { primary: ACME_BRAND.colors!.primary! } });
+    const [light, dark] = merged.colors["info-light"];
+    expect(light).toBe(over("#B53707", colors.background[0], 10));
+    expect(dark).toBe(over("#FF8A4C", colors.background[1], 20));
+    expect(light).not.toBe(colors["info-light"][0]);
+    // The accent on its own tint, the turn-pill hover, still clears AA.
+    expect(contrastRatio("#B53707", light)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio("#FF8A4C", dark)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test("the canonical primary's tint stays close to the canonical info-light", () => {
+    const merged = mergePalette({ colors: { primary: colors.primary } });
+    const [light, dark] = merged.colors["info-light"];
+    expect(deltaEOk(light, colors["info-light"][0])).toBeLessThan(0.03);
+    expect(deltaEOk(dark, colors["info-light"][1])).toBeLessThan(0.05);
   });
 
   test("ignores tokens and roles a brand may not set", () => {

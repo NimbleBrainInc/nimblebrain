@@ -8,13 +8,15 @@
  *
  * A brand sets the accent (`primary`) and focus ring (`ring`) as `[light, dark]`
  * pairs, the shape `palette.ts` uses, and the `sans`, `heading` and `reading`
- * stacks. Every other token, the mono stack and the radius scale stay canonical.
+ * stacks. `primary-foreground` and `info-light` are derived from `primary`
+ * ({@link mergePalette}); every other token, the mono stack and the radius
+ * scale stay canonical.
  *
  * Leaf module: no DOM, no React. The runtime imports it without `web/`
  * dependencies installed.
  */
 
-import { contrastRatio } from "./contrast.ts";
+import { contrastRatio, over } from "./contrast.ts";
 import type { ColorPalette } from "./contrast-pairs.ts";
 import { colors, extOnlyColors, fonts, type Pair } from "./palette.ts";
 
@@ -83,12 +85,21 @@ function readableOn(base: string): string {
 }
 
 /**
+ * `info-light` as a tint of `primary` over the page ground, `[light, dark]`
+ * percent: the 10% / 20% of the tinted family (`contrast-pairs.ts`), which is
+ * how the canonical `info-light` sits against the canonical blue.
+ */
+const INFO_TINT_PCT = [10, 20] as const;
+
+/**
  * Lay `brand` over the canonical palette.
  *
- * `primary-foreground` follows a brand `primary`: per mode, white or black,
- * whichever has the higher contrast against the new accent. The canonical
- * foreground was chosen for the canonical accent and says nothing about the
- * brand's. Only the tokens and roles a brand may set are read; anything else
+ * Two tokens follow a brand `primary`. `primary-foreground` is, per mode, white
+ * or black, whichever has the higher contrast against the new accent: the
+ * canonical foreground was chosen for the canonical accent and says nothing
+ * about the brand's. `info-light`, the ground of info notices and the
+ * turn-pill hover, is a tint of the new accent ({@link INFO_TINT_PCT}), so
+ * those surfaces carry the brand's hue rather than the canonical blue. Only the tokens and roles a brand may set are read; anything else
  * on the object is ignored. With no brand, the result equals the canonical
  * palette.
  */
@@ -99,7 +110,13 @@ export function mergePalette(brand?: Pick<Brand, "colors" | "fonts">): Palette {
     if (pair !== undefined) merged[token] = pair;
   }
   const primary = brand?.colors?.primary;
-  if (primary) merged["primary-foreground"] = [readableOn(primary[0]), readableOn(primary[1])];
+  if (primary) {
+    merged["primary-foreground"] = [readableOn(primary[0]), readableOn(primary[1])];
+    merged["info-light"] = [
+      over(primary[0], colors.background[0], INFO_TINT_PCT[0]),
+      over(primary[1], colors.background[1], INFO_TINT_PCT[1]),
+    ];
+  }
 
   const stacks: Record<string, string> = { ...fonts };
   for (const role of BRAND_FONT_ROLES) {

@@ -58,7 +58,7 @@ A missing `access-control-allow-origin`, or one that names your domain instead o
 
 ## Choose an accent that passes
 
-A brand sets two colours, each a `[light, dark]` pair of `#rrggbb` values: `primary`, the accent on links, buttons and accent text, and `ring`, the focus ring. Set `ring` to the same pair as `primary` unless you want a distinct focus colour. The text on a `primary` fill is derived per mode as white or black, whichever contrasts more with your accent; you do not set it.
+A brand sets two colours, each a `[light, dark]` pair of `#rrggbb` values: `primary`, the accent on links, buttons and accent text, and `ring`, the focus ring. Set `ring` to the same pair as `primary` unless you want a distinct focus colour. The text on a `primary` fill is derived per mode as white or black, whichever contrasts more with your accent, and the ground of info notices is a tint of your accent; you set neither.
 
 The runtime merges your accent over the default palette at startup and checks the result against every contrast pair the default palette is held to, in light and dark mode. It refuses to start if any pair falls below **4.5:1** (WCAG 2.2 AA for body text).
 
