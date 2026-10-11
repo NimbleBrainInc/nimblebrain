@@ -1,0 +1,11 @@
+// A raw C0 control byte in a literal makes rg and git grep treat the file as
+// binary, and git's diff may not show it. Write the escape (`\u0000`, `\t`)
+// (CODE_STYLE.md, "No raw control bytes"). Tab, newline, and carriage return
+// are allowed.
+or { JsStringLiteralExpression(), JsTemplateExpression(), JsRegexLiteralExpression(), JsLiteralMemberName(), TsStringLiteralType(), JsxString() } as $literal where {
+  $literal <: r"(?s).*[\x00-\x08\x0B\x0C\x0E-\x1F\x7F].*",
+  register_diagnostic(
+    span=$literal,
+    message="Raw control byte in a literal. Write its escape, such as `\\u0000`."
+  )
+}
