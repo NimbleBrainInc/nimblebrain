@@ -1,0 +1,8 @@
+// `import("x").T` in a type position reads as a runtime dynamic import. Use a
+// top-level `import type` (CODE_STYLE.md, "No inline type imports").
+TsImportType() as $import where {
+  register_diagnostic(
+    span=$import,
+    message="Inline type import. Use a top-level `import type`."
+  )
+}

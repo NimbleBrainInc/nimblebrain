@@ -203,6 +203,14 @@
       }
     },
     {
+      "includes": ["scripts/**", "src/**"],
+      "plugins": [
+        "./biome-plugins/inline-type-import.grit",
+        "./biome-plugins/containment-tag.grit",
+        "./biome-plugins/control-byte.grit"
+      ]
+    },
+    {
       "includes": ["test/**"],
       "linter": {
         "rules": {
