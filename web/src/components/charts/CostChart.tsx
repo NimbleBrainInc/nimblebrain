@@ -53,6 +53,15 @@ const COST_BUCKET_SERIES: ChartSeries[] = [
   { key: "cacheWrite", label: "Cache write", value: (d) => d.cost.cacheWrite },
 ];
 
+/** A bar's figures as one sentence, the same ones its tooltip shows. */
+function barLabel(d: DayData, segments: ChartSeries[]): string {
+  const parts = segments
+    .filter(({ value }) => value(d) > 0)
+    .map(({ label, value }) => `${label} ${formatUsd(value(d))}`);
+  const breakdown = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+  return `${formatShortDate(d.key)}: ${formatUsd(d.cost.total)}${breakdown}, ${d.llmCalls} calls`;
+}
+
 /** Most x-axis labels drawn; past it every k-th day is labelled so they never overlap. */
 const MAX_X_LABELS = 12;
 
@@ -108,12 +117,8 @@ export function CostChart({ data, series = COST_BUCKET_SERIES }: CostChartProps)
 
   return (
     <div className="relative">
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="w-full"
-        style={{ maxHeight: 220 }}
-        aria-hidden="true"
-      >
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ maxHeight: 220 }}>
+        <title>Daily cost</title>
         {/* Y-axis gridlines + labels */}
         {Array.from({ length: yTicks + 1 }, (_, i) => {
           const value = yStep * i;
@@ -147,11 +152,19 @@ export function CostChart({ data, series = COST_BUCKET_SERIES }: CostChartProps)
           let yOffset = 0;
 
           return (
-            // biome-ignore lint/a11y/noStaticElementInteractions: SVG hover for tooltip, no keyboard equivalent needed
+            // Focusable so the keyboard reaches the tooltip; the label carries
+            // the same figures for a screen reader.
+            // biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: SVG has no interactive element to use for a bar, and `img` with its label is what a screen reader should announce
             <g
               key={d.key}
+              role="img"
+              aria-label={barLabel(d, segments)}
+              tabIndex={0}
               onMouseEnter={() => setHoveredIndex(i)}
               onMouseLeave={() => setHoveredIndex(null)}
+              onFocus={() => setHoveredIndex(i)}
+              onBlur={() => setHoveredIndex(null)}
+              className="outline-none focus-visible:[&>rect:first-child]:stroke-ring"
               style={{ cursor: "default" }}
             >
               {/* Invisible hit area for hover */}

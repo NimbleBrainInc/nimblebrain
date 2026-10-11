@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 /**
  * Selected rows, by id. Shift extends from the last row toggled. `resetKey`
@@ -8,11 +8,13 @@ export function useSelection(rowIds: string[], resetKey: string) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `resetKey` is the trigger
-  useEffect(() => {
+  // Cleared while rendering, so new rows never paint with the old selection.
+  const [selectedKey, setSelectedKey] = useState(resetKey);
+  if (selectedKey !== resetKey) {
+    setSelectedKey(resetKey);
     setSelected(new Set());
     setAnchor(null);
-  }, [resetKey]);
+  }
 
   const toggle = useCallback(
     (id: string, range: boolean) => {

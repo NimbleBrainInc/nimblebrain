@@ -30,7 +30,7 @@
 
 import { Popover } from "@base-ui/react/popover";
 import { Check, ChevronsUpDown, Plus, Search, Settings } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
 import { useWorkspaceUnread } from "../../context/WorkspaceUnreadContext";
@@ -96,12 +96,14 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
     document.getElementById(optionId(active))?.scrollIntoView({ block: "nearest" });
   });
 
-  // On open, show where the member is: the focused workspace may sit below the fold.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per open; the list is read from the DOM
-  useEffect(() => {
-    if (!open) return;
+  // On open, show where the member is: the focused workspace may sit below the
+  // fold. Once per open, so typing a filter never scrolls the list back.
+  const revealFocused = useEffectEvent(() => {
     const index = matches.findIndex((ws) => ws.id === focused?.id);
     if (index >= 0) document.getElementById(optionId(index))?.scrollIntoView({ block: "nearest" });
+  });
+  useEffect(() => {
+    if (open) revealFocused();
   }, [open]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {

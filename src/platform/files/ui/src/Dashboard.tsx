@@ -55,7 +55,7 @@ export function Dashboard() {
   const selection = useSelection(rowIds, `${JSON.stringify(browse.params)}#${list.page}`);
   const contentRef = useRef<HTMLDivElement>(null);
   // A new page starts at its top.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `list.page` is the trigger
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a page change is the event: the new rows replace the old in the same scroll box, which otherwise keeps its offset
   useEffect(() => {
     contentRef.current?.scrollTo({ top: 0 });
   }, [list.page]);

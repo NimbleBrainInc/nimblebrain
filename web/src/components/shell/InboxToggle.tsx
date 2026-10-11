@@ -63,7 +63,7 @@ function useUnreadPreview(workspaceId: string | undefined, open: boolean, revisi
   const [error, setError] = useState(false);
   const seq = useRef(0);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is the re-read signal
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `revision` moves when the inbox changes, which is when the open preview re-reads
   useEffect(() => {
     const mine = ++seq.current;
     if (!open || !workspaceId) {

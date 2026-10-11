@@ -19,12 +19,12 @@ let structured: Mod<ReturnType<typeof importStructured>>;
 
 beforeAll(async () => {
   const { window } = new JSDOM("", { url: "http://localhost" });
-  // biome-ignore lint/suspicious/noExplicitAny: test-only DOM shim
-  const g = globalThis as any;
-  g.window = window;
-  g.document = window.document;
-  g.HTMLElement = window.HTMLElement;
-  g.Node = window.Node;
+  Object.assign(globalThis, {
+    window,
+    document: window.document,
+    HTMLElement: window.HTMLElement,
+    Node: window.Node,
+  });
   [page, activity, chrome, menu, structured] = await Promise.all([
     importPage(),
     importActivity(),

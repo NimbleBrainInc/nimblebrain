@@ -185,8 +185,12 @@ async function extractDocx(
   options: { truncatedSuffix?: (kb: number) => string } = {},
 ): Promise<{ text: string; truncated: boolean } | null> {
   try {
-    // biome-ignore lint/suspicious/noExplicitAny: mammoth types don't expose convertToMarkdown
-    const result = await (mammoth as any).convertToMarkdown({ buffer: data });
+    // mammoth exports `convertToMarkdown` beside `convertToHtml`, with the same
+    // signature, but its type declarations name only the latter.
+    const { convertToMarkdown } = mammoth as typeof mammoth & {
+      convertToMarkdown: typeof mammoth.convertToHtml;
+    };
+    const result = await convertToMarkdown({ buffer: data });
     return truncate(result.value, maxSize, options);
   } catch (err) {
     log.error("[files/extract] DOCX extraction failed", {

@@ -95,8 +95,7 @@ export function RowMenu({
   }
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: keyboard handling for the menu inside
-    <div className="row-menu" ref={rootRef} onKeyDown={onKeyDown}>
+    <div className="row-menu" ref={rootRef}>
       <button
         ref={buttonRef}
         type="button"
@@ -106,11 +105,12 @@ export function RowMenu({
         aria-controls={open ? id : undefined}
         aria-label={label}
         onClick={toggle}
+        onKeyDown={onKeyDown}
       >
         {text}
       </button>
       {style && (
-        <div className="row-menu-list" role="menu" id={id} style={style}>
+        <div className="row-menu-list" role="menu" id={id} style={style} onKeyDown={onKeyDown}>
           {items.map((item) => (
             <button
               key={item.label}

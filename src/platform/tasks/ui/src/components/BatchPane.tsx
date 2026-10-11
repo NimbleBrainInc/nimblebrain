@@ -54,7 +54,6 @@ export function BatchPane({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: batchTool.call is stable
   const loadPage = useCallback(
     async (cursor?: number) => {
       const result = await batchTool.call({
@@ -69,12 +68,12 @@ export function BatchPane({
       setRows((prev) => (cursor === undefined ? page : [...prev, ...page]));
       setNextCursor(data.nextCursor as number | undefined);
     },
-    [batch.id, failingOnly],
+    [batch.id, failingOnly, batchTool],
   );
 
   // Reload the first page when the batch moves on (its `updatedAt`) or the
   // filter changes (a new `loadPage`).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: updatedAt is the refresh signal, not a value read here
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `batch.updatedAt` moves when the batch's results do, which is when the first page must be re-read
   useEffect(() => {
     setError(null);
     loadPage().catch((err) => setError(err instanceof Error ? err.message : String(err)));
@@ -374,7 +373,6 @@ function BatchRunOutput({
   const [result, setResult] = useState<TaskRunResult | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [raw, setRaw] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runResultTool.call is stable
   useEffect(() => {
     let cancelled = false;
     void readResult(runResultTool.call, runId, undefined).then((read) => {
@@ -385,7 +383,7 @@ function BatchRunOutput({
     return () => {
       cancelled = true;
     };
-  }, [runId]);
+  }, [runId, runResultTool]);
   const structured = !!result && readsStructured(result.structured, result.output);
   return (
     <div className="batch-run-output">
@@ -432,7 +430,7 @@ export function BatchScreen({
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: batchTool.call is stable; refreshKey and tick are signals
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` (a data change) and `tick` (a control taken here) are re-read signals; the read takes only `batchId`
   useEffect(() => {
     let cancelled = false;
     batchTool
@@ -446,7 +444,7 @@ export function BatchScreen({
     return () => {
       cancelled = true;
     };
-  }, [batchId, refreshKey, tick]);
+  }, [batchId, batchTool, refreshKey, tick]);
 
   if (!batch) {
     return (

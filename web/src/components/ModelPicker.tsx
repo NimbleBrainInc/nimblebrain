@@ -389,10 +389,7 @@ export function ModelPicker({
                 // children of the listbox, no wrapper to reason about.
                 if (!grouped) return rows;
                 return (
-                  // The rule's suggested <fieldset> is for form controls.
-                  // Grouped options inside a listbox are `role="group"` per the
-                  // ARIA listbox pattern; a fieldset would break that structure.
-                  // biome-ignore lint/a11y/useSemanticElements: see above
+                  // biome-ignore lint/a11y/useSemanticElements: options in a listbox group under `role="group"` (the ARIA listbox pattern); a <fieldset> groups form controls and would break the listbox
                   <div key={group.provider} role="group" aria-labelledby={groupId(group.provider)}>
                     {/* Sticky because the list is far taller than its window;
                           without it the group you are reading goes unnamed

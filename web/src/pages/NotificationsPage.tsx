@@ -105,6 +105,11 @@ function hasFilters(f: InboxFilters): boolean {
   return f.unreadOnly || !!f.level || !!f.app || !!f.within || !!f.q;
 }
 
+/** The filters a key names. A key is only ever `JSON.stringify` of an `InboxFilters`. */
+function filtersOf(key: string): InboxFilters {
+  return JSON.parse(key) as InboxFilters;
+}
+
 /** The filters as `notifications__list` arguments, leaving out what is "any". */
 function listArgsFrom(filters: InboxFilters): NotificationsListInput {
   const args: NotificationsListInput = { limit: INBOX_PAGE_SIZE };
@@ -146,9 +151,11 @@ function useInboxList(workspaceId: string | undefined, filters: InboxFilters, re
   const scope = useRef<{ workspaceId?: string; key?: string }>({});
   const pagesRef = useRef(pages);
   pagesRef.current = pages;
+  // The filters by content: a new object with the same filters is not a new
+  // view. The reads below take the filters from it.
   const key = JSON.stringify(filters);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `filters`, and `revision` is the re-read signal
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `revision` moves when the inbox changes, which is when the first page is re-read
   useEffect(() => {
     if (!workspaceId) return;
     let fresh = false;
@@ -162,7 +169,7 @@ function useInboxList(workspaceId: string | undefined, filters: InboxFilters, re
       scope.current = { workspaceId, key };
     }
     const mine = ++seq.current;
-    listNotifications(listArgsFrom(filters), workspaceId)
+    listNotifications(listArgsFrom(filtersOf(key)), workspaceId)
       .then((out) => {
         if (mine !== seq.current) return;
         setPages((current) =>
@@ -189,7 +196,6 @@ function useInboxList(workspaceId: string | undefined, filters: InboxFilters, re
    * only when walking down to a linked item. Resolves to the new oldest `seq`,
    * or `undefined` when nothing was appended.
    */
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `filters`
   const loadOlder = useCallback(
     async (limit: number = INBOX_PAGE_SIZE): Promise<number | undefined> => {
       const anchor = oldestSeq(pagesRef.current);
@@ -197,7 +203,7 @@ function useInboxList(workspaceId: string | undefined, filters: InboxFilters, re
       const mine = view.current;
       setLoadingOlder(true);
       const out = await listNotifications(
-        { ...listArgsFrom(filters), limit, before: anchor },
+        { ...listArgsFrom(filtersOf(key)), limit, before: anchor },
         workspaceId,
       ).catch((err: unknown) => (err instanceof Error ? err : new Error(String(err))));
       setLoadingOlder(false);
@@ -253,7 +259,7 @@ function advancedBelow(pages: InboxPages, anchor: number): number | undefined {
 function useNeedsAttention(workspaceId: string | undefined, revision: number) {
   const [state, setState] = useState<{ count: number; more: boolean } | null>(null);
   const seq = useRef(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is the re-read signal
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `revision` moves when the inbox changes, which is when the count is re-read
   useEffect(() => {
     if (!workspaceId) return;
     const mine = ++seq.current;

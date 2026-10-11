@@ -213,8 +213,6 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
             />
             <input
               ref={inputRef}
-              // biome-ignore lint/a11y/noAutofocus: palette is a modal opened on demand
-              autoFocus
               type="text"
               role="combobox"
               aria-expanded="true"

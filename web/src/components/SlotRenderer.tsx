@@ -248,7 +248,7 @@ export function SlotRenderer({
   // Stable key: only re-mount iframes when the actual placements change
   const placementKey = filtered.map((p) => p.resourceUri).join(",");
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-mount iframes only when placementKey changes — `filtered` is read at run time but changes identity every render (depending on it would thrash iframes), mode is read through a ref, and `fitContent` is fixed per mount site
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `placementKey` stands for `filtered`, a new array every render, so depending on it would remount every iframe each render; `fitContent` is fixed per mount site, and `deliverTarget`, `onLocationReport` and `nameApp` keep one identity for the component's life
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;

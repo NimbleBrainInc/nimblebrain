@@ -61,7 +61,7 @@ export function SearchResults({ loading, results, query, onOpen }: Props) {
           <button type="button" key={r.id} className="search-result" onClick={() => onOpen(r.id)}>
             <div className="search-result-title">{r.title || r.id}</div>
             {r.matches?.map((m, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: match snippets within a result have no stable id
+              // biome-ignore lint/suspicious/noArrayIndexKey: snippets have no id, and each search replaces a result's snippets whole
               <div key={i} className="search-result-snippet">
                 {highlight(m.snippet, query)}
               </div>

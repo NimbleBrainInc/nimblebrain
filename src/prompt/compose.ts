@@ -177,7 +177,7 @@ const VOLATILE_KINDS: ReadonlySet<TracedLayerKind> = new Set([
 export function sanitizeLineField(value: string): string {
   return (
     String(value)
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — stripping control chars is the security mitigation
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: a newline or control byte in a field could open a forged prompt line, so matching them is the mitigation
       .replace(/[\n\r\x00-\x1f\x7f]/g, " ")
       .trim()
   );

@@ -153,7 +153,7 @@ export function MoveDialog({
   const [naming, setNaming] = useState(false);
   const [refresh, setRefresh] = useState(0);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `refresh` re-reads after a folder is made
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refresh` is bumped after a folder is made here, so the listing re-reads to show it
   useEffect(() => {
     let live = true;
     setLoading(true);

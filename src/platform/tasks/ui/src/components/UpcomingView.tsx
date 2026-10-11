@@ -250,7 +250,6 @@ export function UpcomingView({
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<WindowDays>(7);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -271,9 +270,9 @@ export function UpcomingView({
     } finally {
       setLoading(false);
     }
-  }, [days]);
+  }, [days, upcomingTool, batchesTool]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is the signal
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the window is re-read
   useEffect(() => {
     void load();
     const timer = setInterval(() => void load(), REFRESH_MS);
