@@ -33,7 +33,7 @@ describe("Event-sourced integration", () => {
     store.emit(
       engineEvent(
         "run.start",
-        runStartPayload({ runId: "r1", model: "claude-sonnet-4-5-20250929" }),
+        runStartPayload({ runId: "r1", model: "anthropic:claude-sonnet-4-5-20250929" }),
       ),
     );
     store.emit(
@@ -41,7 +41,7 @@ describe("Event-sourced integration", () => {
         "llm.done",
         llmDonePayload({
           runId: "r1",
-          model: "claude-sonnet-4-5-20250929",
+          model: "anthropic:claude-sonnet-4-5-20250929",
           content: [{ type: "text", text: "Hi there!" }],
           usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: 0 },
           llmMs: 200,
@@ -77,7 +77,7 @@ describe("Event-sourced integration", () => {
     );
     expect(messages[1].metadata?.usage?.inputTokens).toBe(100);
     expect(messages[1].metadata?.usage?.outputTokens).toBe(20);
-    expect(messages[1].metadata?.model).toBe("claude-sonnet-4-5-20250929");
+    expect(messages[1].metadata?.model).toBe("anthropic:claude-sonnet-4-5-20250929");
   });
 
   it("debug vs normal logging: verbose fields persisted only in debug mode", async () => {
@@ -146,13 +146,13 @@ describe("Event-sourced integration", () => {
         ts: "2026-04-11T00:00:01Z",
         type: "run.start",
         runId: "r1",
-        model: "claude-sonnet-4-5-20250929",
+        model: "anthropic:claude-sonnet-4-5-20250929",
       } as ConversationEvent,
       {
         ts: "2026-04-11T00:00:02Z",
         type: "llm.response",
         runId: "r1",
-        model: "claude-sonnet-4-5-20250929",
+        model: "anthropic:claude-sonnet-4-5-20250929",
         content: [{ type: "text", text: "Hello!" }],
         usage: { inputTokens: 200, outputTokens: 50, cacheReadTokens: 100, cacheWriteTokens: 0 },
         llmMs: 150,
@@ -161,7 +161,7 @@ describe("Event-sourced integration", () => {
         ts: "2026-04-11T00:00:03Z",
         type: "llm.response",
         runId: "r1",
-        model: "claude-sonnet-4-5-20250929",
+        model: "anthropic:claude-sonnet-4-5-20250929",
         content: [{ type: "text", text: "More text" }],
         usage: { inputTokens: 300, outputTokens: 80, cacheReadTokens: 200, cacheWriteTokens: 0 },
         llmMs: 200,
@@ -178,7 +178,7 @@ describe("Event-sourced integration", () => {
     const metrics = deriveUsageMetrics(events);
     expect(metrics.totalInputTokens).toBe(500); // 200 + 300
     expect(metrics.totalOutputTokens).toBe(130); // 50 + 80
-    expect(metrics.lastModel).toBe("claude-sonnet-4-5-20250929");
+    expect(metrics.lastModel).toBe("anthropic:claude-sonnet-4-5-20250929");
     expect(metrics.totalCostUsd).toBeGreaterThan(0); // computed from catalog
   });
 });

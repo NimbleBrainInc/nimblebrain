@@ -1,0 +1,13 @@
+// A containment tag is opened, closed, and escaped only inside `wrapContained`
+// (src/prompt/compose.ts), so the three cannot diverge and let a body break out
+// of its fence (CODE_STYLE.md, "Containment tags open only through
+// wrapContained"). The tag list is the `ContainmentTag` union;
+// test/unit/containment-tag-plugin.test.ts fails when the two differ.
+or { JsStringLiteralExpression(), JsTemplateExpression(), JsRegexLiteralExpression(), JsLiteralMemberName(), TsStringLiteralType(), JsxString() } as $literal where {
+  $literal <: r"(?is).*<\\?\s*/?\s*(?:context-skill|runtime-context|app-instructions|app-custom-instructions|app-description|app-resource-templates|app-guide|app-state|layer3-skill|connector-skill|connector-instructions|activated-skill|skill-instructions|run-input|judge-feedback)\b.*",
+  not $literal <: within JsFunctionDeclaration(id=`wrapContained`),
+  register_diagnostic(
+    span=$literal,
+    message="Containment tag outside `wrapContained`. Build the fenced block with `wrapContained(tag, body)`."
+  )
+}

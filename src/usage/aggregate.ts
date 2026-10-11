@@ -245,14 +245,13 @@ function addCost(target: CostBreakdown, cost: CostBreakdown): void {
  * copies in the usage UIs). Exported for the drift-pinning test.
  */
 /**
- * The provider a qualified model string names — the segment before the first
- * colon. Ledger lines written before model ids were always qualified can carry
- * a bare Anthropic id, so a string with no colon reads as Anthropic, matching
- * `getModelByString`.
+ * The provider a model string names — the segment before the first colon. A
+ * line with no provider (a backfilled task line records `model: "unknown"`)
+ * groups under "none", the word the id-keyed dimensions use for an absent id.
  */
 export function providerOf(model: string): string {
   const i = model.indexOf(":");
-  return i < 0 ? "anthropic" : model.slice(0, i);
+  return i < 0 ? "none" : model.slice(0, i);
 }
 
 /**

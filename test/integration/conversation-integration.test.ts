@@ -52,7 +52,7 @@ describe("Conversation full lifecycle (store-level)", () => {
       conv,
       assistantMsg("Deployment pipelines automate releases...", {
         usage: { inputTokens: 200, outputTokens: 80 },
-        model: "claude-sonnet-4-5-20250929",
+        model: "anthropic:claude-sonnet-4-5-20250929",
       }),
     );
     await store.append(conv, msg("user", "Can you show me an example?"));
