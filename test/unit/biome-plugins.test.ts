@@ -19,12 +19,35 @@ const PLUGINS = join(ROOT, "biome-plugins");
 const BIOME = join(ROOT, "node_modules", ".bin", "biome");
 
 const CASES: Record<string, string> = {
+  "containment-tag.grit": `
+const a = "<app-state>"; // flagged
+const b = \`</skill-instructions>\`; // flagged
+const c = /<\\/run-input>/; // flagged
+const d = "<app-states-list>";
+const e = "<div>";
+function wrapContained(): string { return "<app-state>"; }
+export { a, b, c, d, e, wrapContained };
+`,
+  "control-byte.grit": `
+const a = "x\u0001y"; // flagged
+const b = \`\u007f\`; // flagged
+const c = "x\\u0001y";
+const d = "a\tb";
+export { a, b, c, d };
+`,
   "double-cast.grit": `
 const a = 1 as unknown as string; // flagged
 const b = (1 as unknown) as string; // flagged
 const c = 1 as unknown;
 const d = "x" as string;
 export { a, b, c, d };
+`,
+  "inline-type-import.grit": `
+import type { Hono } from "hono";
+export type A = import("hono").Hono; // flagged
+export function f(x: import("hono").Context): void { void x; } // flagged
+export type B = Hono;
+export const g = () => import("hono");
 `,
   "router-use.grit": `
 import { Hono } from "hono";
