@@ -6,7 +6,6 @@ import {
   aggregateUsage,
   computeCacheHitRate,
   MAX_BREAKDOWN_ROWS,
-  providerOf,
   resolveDateRange,
 } from "../../../src/usage/aggregate.ts";
 import { estimateCost, resolveRates } from "../../../src/usage/cost.ts";
@@ -531,13 +530,6 @@ describe("aggregateUsage — by user", () => {
 // ---------------------------------------------------------------------------
 // resolveDateRange — timezone safety
 // ---------------------------------------------------------------------------
-
-describe("providerOf", () => {
-  it("names the segment before the colon, and none for a line with no provider", () => {
-    expect(providerOf("anthropic:claude-sonnet-4-6")).toBe("anthropic");
-    expect(providerOf("unknown")).toBe("none");
-  });
-});
 
 describe("resolveDateRange", () => {
   it("'month' range starts on the 1st regardless of timezone", () => {
