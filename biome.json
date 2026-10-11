@@ -94,7 +94,7 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["@sentry/*"],
+                    "group": ["@sentry/**"],
                     "message": "The kernel stays vendor-neutral OpenTelemetry. A Sentry SDK belongs in web/."
                   }
                 ]
@@ -118,7 +118,7 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["@sentry/*"],
+                    "group": ["@sentry/**"],
                     "message": "The kernel stays vendor-neutral OpenTelemetry. A Sentry SDK belongs in web/."
                   },
                   {
@@ -145,7 +145,7 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["@sentry/*"],
+                    "group": ["@sentry/**"],
                     "message": "The kernel stays vendor-neutral OpenTelemetry. A Sentry SDK belongs in web/."
                   },
                   {
@@ -173,7 +173,7 @@
               "options": {
                 "patterns": [
                   {
-                    "group": ["@sentry/*"],
+                    "group": ["@sentry/**"],
                     "message": "The kernel stays vendor-neutral OpenTelemetry. A Sentry SDK belongs in web/."
                   },
                   {

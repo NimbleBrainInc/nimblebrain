@@ -68,7 +68,7 @@ if (sentryEnabled(process.env)) {
     if (tenantId) Sentry.setTag("tenant_id", tenantId);
   } else {
     // Explicitly enabled but no endpoint — surface the misconfig rather than
-    // silently staying off. (Not in src/, so the no-raw-console rule is N/A.)
+    // silently staying off. (Not in src/, so the noConsole rule is N/A.)
     console.warn(
       "[sentry] NB_SENTRY_ENABLED is set but NB_SENTRY_DSN is empty — error reporting is disabled.",
     );
