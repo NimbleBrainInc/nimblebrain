@@ -6,8 +6,8 @@
  *
  * Why a preload and not `src/`:
  *   The kernel's observability is vendor-neutral OpenTelemetry — `the wire is
- *   the interface` — and `check-no-sentry-in-kernel` fails CI on any `@sentry/*`
- *   import under `src/`. Sentry is a branded SDK and additive, operator-opt-in
+ *   the interface` — and `bun run lint` fails on any `@sentry/*` import under
+ *   `src/` (`noRestrictedImports` in `biome.json`). Sentry is a branded SDK and additive, operator-opt-in
  *   deployment glue, so it lives here (outside `src/`), exactly as `@sentry/react`
  *   lives only in `web/`. The kernel never couples to it.
  *
@@ -37,7 +37,7 @@
  * The only identity on backend events is the deployment-constant `tenant_id`
  * (from `NB_TENANT_ID`, never a request header), tagged below. Unlike the web
  * client, the runtime does NOT attach per-request `workspace_id` / `user_id`:
- * the kernel can't import Sentry (`check-no-sentry-in-kernel`), so that
+ * the kernel can't import Sentry (`noRestrictedImports` in `biome.json`), so that
  * verified identity stays on the OTel spans (`src/observability/identity.ts`),
  * which Sentry doesn't ingest. A neutral kernel→Sentry scope seam could bridge
  * it later; today it's tenant-level only.

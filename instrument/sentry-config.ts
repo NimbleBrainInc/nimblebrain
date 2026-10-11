@@ -4,7 +4,7 @@
  * scrub can be unit-tested without importing the SDK or running the preload.
  *
  * This module lives OUTSIDE `src/` on purpose: the kernel is vendor-neutral
- * OpenTelemetry and `check-no-sentry-in-kernel` forbids any `@sentry/*` import
+ * OpenTelemetry and Biome's `noRestrictedImports` forbids any `@sentry/*` import
  * under `src/`. Sentry is additive, opt-in deployment glue (mirrors how
  * `@sentry/react` lives only in `web/`). See `instrument/sentry.ts`.
  */
@@ -103,7 +103,7 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
  * client's `beforeBreadcrumb` (`web/src/sentry.ts`):
  *
  * - Drop `console`-category crumbs entirely — dependency logs (the AI SDK, MCP
- *   libs, …) aren't bound by `check:no-raw-console` and can carry prompts / PII.
+ *   libs, …) aren't bound by the `noConsole` lint and can carry prompts / PII.
  * - Strip query strings from any crumb URL — they can carry tokens, ids, and
  *   prompts. The path is left intact (endpoint, not content; within the same
  *   trust boundary as the tagged ids).
