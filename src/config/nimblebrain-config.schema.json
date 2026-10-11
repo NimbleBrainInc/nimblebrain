@@ -549,15 +549,23 @@
         },
         "colors": {
           "type": "object",
-          "description": "Accent colours, each a [light, dark] pair of #rrggbb values. primary-foreground is derived from primary as white or black, whichever reads better.",
+          "description": "Colour roles, each a [light, dark] pair of #rrggbb values. Each role derives a family of tokens; the merged palette must clear WCAG AA in both modes.",
           "properties": {
             "primary": {
               "$ref": "#/$defs/brandColorPair",
-              "description": "The accent: primary actions, links, accent text."
+              "description": "The accent: primary actions, links, accent text. Its hue also tints the neutrals (text, borders, grey surfaces) at their canonical lightness."
             },
             "ring": {
               "$ref": "#/$defs/brandColorPair",
               "description": "The focus ring. Usually the same value as primary."
+            },
+            "highlight": {
+              "$ref": "#/$defs/brandColorPair",
+              "description": "The fill of the active sidebar row, under white or black text, whichever reads better."
+            },
+            "sidebar": {
+              "$ref": "#/$defs/brandColorPair",
+              "description": "Light: the light-mode sidebar ground; a dark colour renders the sidebar under the dark palette. Dark: the deepest dark-mode surface, from which the page, card, muted and border surfaces are derived as lighter steps."
             }
           },
           "additionalProperties": false

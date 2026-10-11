@@ -56,15 +56,31 @@ access-control-allow-origin: *
 
 A missing `access-control-allow-origin`, or one that names your domain instead of `*`, is the common failure: the shell renders your font, while every app silently falls back to the next family in its `stack`.
 
-## Choose an accent that passes
+Check it with the headers a browser sends, not a bare request. A browser's font request carries headers such as `Priority`, and some CDN CORS policies drop `access-control-allow-origin` from any request with a header they do not list: a plain `curl` passes while every browser is refused. On CloudFront, use a response headers policy that allows all request headers. To test:
 
-A brand sets two colours, each a `[light, dark]` pair of `#rrggbb` values: `primary`, the accent on links, buttons and accent text, and `ring`, the focus ring. Set `ring` to the same pair as `primary` unless you want a distinct focus colour. The text on a `primary` fill is derived per mode as white or black, whichever contrasts more with your accent, and the ground of info notices is a tint of your accent; you set neither.
+```sh
+curl -sI -H 'Origin: https://your-deployment.example' -H 'Priority: u=0' \
+  https://cdn.example.com/brands/acme/fonts/your-font.woff2 | grep -i access-control-allow-origin
+```
+
+## Choose colours that pass
+
+A brand sets up to four colour roles, each a `[light, dark]` pair of `#rrggbb` values (the [reference](/config/branding/#colours) lists what each derives). Read them off the brand's own site:
+
+| Role | Where to find it on the brand's site |
+|---|---|
+| `primary` | The colour of its buttons and links. |
+| `ring` | The same pair as `primary`, unless you want a distinct focus colour. |
+| `highlight` | Its second, brighter accent: a call-to-action colour, a badge, a band of colour. |
+| `sidebar` | Light: its darkest brand surface (a footer or header band) for a bold sidebar, or a pale tint for a quiet one. Dark: a deeper shade of the same hue, which becomes dark mode's ground. |
+
+Start with `primary` alone, then add roles while the result still looks like the brand. The text on a `primary` or `highlight` fill is derived per mode as white or black, whichever contrasts more; you set neither.
 
 The runtime merges your accent over the default palette at startup and checks the result against every contrast pair the default palette is held to, in light and dark mode. It refuses to start if any pair falls below **4.5:1** (WCAG 2.2 AA for body text).
 
 <Steps>
 
-1. **Start from your brand colour.** Use it as the light-mode value, and a lighter tint of it as the dark-mode value: the light value sits on a white page, the dark value on a black one.
+1. **Start from your brand colour.** Use it as the light-mode value, and a lighter tint of it as the dark-mode value: the light value sits on a white page, the dark value on a dark one (black, or the ground your `sidebar` derives).
 
 2. **Start the runtime and read the error.** A failing accent stops startup with a message naming the mode, the pair, the ratio and both colours:
 
@@ -89,7 +105,12 @@ The runtime merges your accent over the default palette at startup and checks th
     "defaultTheme": "light",
     "logo": { "light": "…", "dark": "…", "mark": "…", "raster": "…" },
     "favicon": "…",
-    "colors": { "primary": ["#B53707", "#FF8A4C"], "ring": ["#B53707", "#FF8A4C"] }
+    "colors": {
+      "primary": ["#B53707", "#FF8A4C"],
+      "ring": ["#B53707", "#FF8A4C"],
+      "highlight": ["#FFC94A", "#FFC94A"],
+      "sidebar": ["#2A1710", "#1C0F0A"]
+    }
   }
 }
 ```

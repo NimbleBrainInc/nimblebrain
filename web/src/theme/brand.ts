@@ -6,25 +6,35 @@
  * boot. Both call {@link mergePalette}, so the palette the runtime checked for
  * contrast is exactly the palette the shell paints.
  *
- * A brand sets the accent (`primary`) and focus ring (`ring`) as `[light, dark]`
- * pairs, the shape `palette.ts` uses, and the `sans`, `heading` and `reading`
- * stacks. `primary-foreground` and `info-light` are derived from `primary`
- * ({@link mergePalette}); every other token, the mono stack and the radius
+ * A brand sets up to four colours as `[light, dark]` pairs, the shape
+ * `palette.ts` uses, and the `sans`, `heading` and `reading` stacks. The
+ * colours are roles, not tokens: each one derives a family of tokens
+ * ({@link mergePalette}), so a brand names the few colours its identity is made
+ * of and the shell stays coherent around them. The mono stack and the radius
  * scale stay canonical.
  *
  * Leaf module: no DOM, no React. The runtime imports it without `web/`
  * dependencies installed.
  */
 
-import { contrastRatio, over } from "./contrast.ts";
-import type { ColorPalette } from "./contrast-pairs.ts";
+import { AA_TEXT, contrastRatio, over } from "./contrast.ts";
+import type { ColorPalette, SidebarIsland } from "./contrast-pairs.ts";
+import { hexToOklch, oklchToHex } from "./oklch.ts";
 import { colors, extOnlyColors, fonts, type Pair } from "./palette.ts";
 
 /** A typeface role of the canonical palette. */
 export type FontRole = keyof typeof fonts;
 
-/** The colour tokens a brand may set. */
-export const BRAND_COLOR_TOKENS = ["primary", "ring"] as const;
+/**
+ * The colour roles a brand may set.
+ *
+ * - `primary`: actions, links, accent text. Its hue also tints the neutrals.
+ * - `ring`: the focus ring, usually equal to `primary`.
+ * - `highlight`: the fill of the active sidebar row.
+ * - `sidebar`: the sidebar ground in light mode, and the anchor of the whole
+ *   dark-mode surface family.
+ */
+export const BRAND_COLOR_TOKENS = ["primary", "ring", "highlight", "sidebar"] as const;
 export type BrandColorToken = (typeof BRAND_COLOR_TOKENS)[number];
 
 /** The typeface roles a brand may set. */
@@ -91,42 +101,273 @@ function readableOn(base: string): string {
  */
 const INFO_TINT_PCT = [10, 20] as const;
 
+type Token = keyof typeof colors | keyof typeof extOnlyColors;
+
 /**
- * Lay `brand` over the canonical palette.
+ * Chroma a neutral takes on toward the brand's hue, by role and mode. Lightness
+ * stays canonical, so each neutral keeps its contrast; only its cast changes.
+ * Surfaces and lines take a trace, text a little more, so ink reads as the
+ * brand's dark colour rather than grey.
+ */
+const NEUTRAL_TINT: readonly [tokens: Token[], light: number, dark: number][] = [
+  [
+    ["sidebar", "sidebar-hover", "secondary", "muted", "accent", "background-tertiary"],
+    0.014,
+    0.012,
+  ],
+  [["border", "input", "sidebar-border"], 0.02, 0.018],
+  [
+    [
+      "foreground",
+      "card-foreground",
+      "popover-foreground",
+      "secondary-foreground",
+      "accent-foreground",
+      "sidebar-active-foreground",
+    ],
+    0.06,
+    0.012,
+  ],
+  [["muted-foreground", "sidebar-foreground", "text-tertiary"], 0.04, 0.03],
+];
+
+/**
+ * The dark-mode surface family, as lightness steps above the brand's dark
+ * `sidebar` colour, which is the deepest surface. Every step keeps the
+ * anchor's hue and chroma, so dark mode reads as one coloured ground rather
+ * than the brand's colours on black.
+ */
+const DARK_SURFACE_STEPS: readonly [tokens: Token[], lift: number][] = [
+  [["background"], 0.03],
+  [["card", "popover"], 0.05],
+  [["sidebar-active"], 0.07],
+  [["secondary", "muted", "accent", "background-tertiary", "sidebar-hover"], 0.095],
+  [["border", "input", "sidebar-border"], 0.145],
+];
+
+/**
+ * Canonical colours painted as text on the page and card grounds, alone and on
+ * a 20% tint of themselves (`contrast-pairs.ts`). They were chosen for the
+ * canonical near-black, so on a brand's coloured dark ground each is lightened,
+ * hue and chroma kept, until it clears AA there. A brand's own colours are
+ * never adjusted: one that fails is rejected at load.
+ */
+const DARK_GROUND_TEXT: readonly Token[] = [
+  "destructive",
+  "success",
+  "warning",
+  "processing",
+  "scope-org",
+  "scope-workspace",
+  "scope-user",
+  "scope-connector",
+  "chart-1",
+  "chart-2",
+  "chart-3",
+  "chart-4",
+  "chart-5",
+];
+
+/** `hex`, lightened in OKLCH until it reads at AA on each ground and on its own 20% tint over it. */
+function liftToRead(hex: string, grounds: readonly string[]): string {
+  const reads = (fg: string) =>
+    grounds.every(
+      (g) => contrastRatio(fg, g) >= AA_TEXT && contrastRatio(fg, over(fg, g, 20)) >= AA_TEXT,
+    );
+  const color = hexToOklch(hex);
+  let out = hex;
+  while (!reads(out) && color.l < 0.98) {
+    color.l += 0.01;
+    out = oklchToHex(color);
+  }
+  return out;
+}
+
+/** Text on the dark surface family: lightness and chroma at the anchor's hue. */
+const DARK_SURFACE_TEXT: readonly [tokens: Token[], l: number, c: number][] = [
+  [
+    [
+      "foreground",
+      "card-foreground",
+      "popover-foreground",
+      "secondary-foreground",
+      "accent-foreground",
+      "sidebar-active-foreground",
+    ],
+    0.97,
+    0.012,
+  ],
+  [["muted-foreground", "sidebar-foreground"], 0.8, 0.04],
+  [["text-tertiary"], 0.74, 0.035],
+];
+
+/** An island's hover and border, as lightness lifts over its ground, and its text. */
+const ISLAND = { hover: 0.06, border: 0.08, text: { l: 0.86, c: 0.04 } } as const;
+
+const isPair = (v: unknown): v is Pair =>
+  Array.isArray(v) &&
+  v.length === 2 &&
+  v.every((x) => typeof x === "string" && /^#[0-9a-f]{6}$/i.test(x));
+
+/** `hex` with its lightness kept and its hue and chroma replaced. */
+function recast(hex: string, h: number, c: number): string {
+  return oklchToHex({ l: hexToOklch(hex).l, c, h });
+}
+
+/**
+ * Whether the light-mode sidebar is a dark island: a `sidebar` light colour
+ * that reads best under white text. The shell then renders the sidebar under
+ * the dark palette ({@link Palette.sidebarIsland} holds its ground).
+ */
+export function sidebarIsIsland(brand?: Pick<Brand, "colors">): boolean {
+  const ground = brand?.colors?.sidebar?.[0];
+  return ground !== undefined && readableOn(ground) === WHITE;
+}
+
+/**
+ * Lay `brand` over the canonical palette. Each colour role derives a family:
  *
- * Two tokens follow a brand `primary`. `primary-foreground` is, per mode, white
- * or black, whichever has the higher contrast against the new accent: the
- * canonical foreground was chosen for the canonical accent and says nothing
- * about the brand's. `info-light`, the ground of info notices and the
- * turn-pill hover, is a tint of the new accent ({@link INFO_TINT_PCT}), so
- * those surfaces carry the brand's hue rather than the canonical blue. Only the tokens and roles a brand may set are read; anything else
- * on the object is ignored. With no brand, the result equals the canonical
- * palette.
+ * - `primary` sets the accent, and its hue recasts the neutrals
+ *   ({@link NEUTRAL_TINT}) at their canonical lightness, so text, borders and
+ *   grey surfaces carry the brand's cast. `primary-foreground` is, per mode,
+ *   white or black, whichever reads better on the accent.
+ * - `sidebar`'s dark colour anchors dark mode: every surface is a lightness
+ *   step above it ({@link DARK_SURFACE_STEPS}), and text takes its hue. Its
+ *   light colour is the light-mode sidebar ground; a dark one makes the
+ *   sidebar an island under the dark palette ({@link sidebarIsIsland}).
+ * - `highlight` fills the active sidebar row, under white or black text.
+ *
+ * `info-light`, the ground of info notices and the turn-pill hover, is a tint
+ * of the accent over the page ground ({@link INFO_TINT_PCT}). Only the roles
+ * above and the font roles are read; anything else on the object is ignored.
+ * With no brand, the result equals the canonical palette.
  */
 export function mergePalette(brand?: Pick<Brand, "colors" | "fonts">): Palette {
-  const merged: Record<string, Pair> = { ...colors };
-  for (const token of BRAND_COLOR_TOKENS) {
-    const pair = brand?.colors?.[token];
-    if (pair !== undefined) merged[token] = pair;
-  }
-  const primary = brand?.colors?.primary;
-  if (primary) {
-    merged["primary-foreground"] = [readableOn(primary[0]), readableOn(primary[1])];
-    merged["info-light"] = [
-      over(primary[0], colors.background[0], INFO_TINT_PCT[0]),
-      over(primary[1], colors.background[1], INFO_TINT_PCT[1]),
-    ];
+  const brandColors = brand?.colors ?? {};
+  assertPairs(brandColors);
+  const { primary, ring, highlight, sidebar } = brandColors;
+  const modes: Modes = { light: {}, dark: {} };
+  for (const [name, pair] of Object.entries({ ...colors, ...extOnlyColors })) {
+    modes.light[name] = pair[0];
+    modes.dark[name] = pair[1];
   }
 
+  if (primary) applyPrimary(modes, primary);
+  if (ring) set(modes, "ring", ring);
+  const island = sidebar ? applySidebar(modes, sidebar) : undefined;
+  if (highlight) applyHighlight(modes, highlight);
+  else if (primary || sidebar) recomputeActiveRow(modes, !sidebar);
+  if (primary || sidebar) recomputeInfoLight(modes);
+
+  const pairs = (names: readonly string[]) =>
+    Object.fromEntries(names.map((n) => [n, [modes.light[n], modes.dark[n]] as Pair]));
+  return {
+    colors: pairs(Object.keys(colors)) as ColorPalette["colors"],
+    extOnlyColors: pairs(Object.keys(extOnlyColors)) as ColorPalette["extOnlyColors"],
+    ...(island ? { sidebarIsland: island } : {}),
+    fonts: brandStacks(brand),
+  };
+}
+
+/** Throw unless every colour role the brand sets is a `[light, dark]` pair of hex colours. */
+function assertPairs(brandColors: NonNullable<Brand["colors"]>): void {
+  for (const role of BRAND_COLOR_TOKENS) {
+    const pair: unknown = brandColors[role];
+    if (pair !== undefined && !isPair(pair)) {
+      throw new Error(`colors.${role} is not a [light, dark] pair`);
+    }
+  }
+}
+
+/** The canonical stacks with the brand's roles laid over them. */
+function brandStacks(brand?: Pick<Brand, "fonts">): Record<FontRole, string> {
   const stacks: Record<string, string> = { ...fonts };
   for (const role of BRAND_FONT_ROLES) {
     const font = brand?.fonts?.[role];
     if (font !== undefined) stacks[role] = font.stack;
   }
+  return stacks as Record<FontRole, string>;
+}
 
-  return {
-    colors: merged as ColorPalette["colors"],
-    extOnlyColors: { ...extOnlyColors },
-    fonts: stacks as Record<FontRole, string>,
-  };
+/** The palette being merged, one value per token per mode. */
+interface Modes {
+  light: Record<string, string>;
+  dark: Record<string, string>;
+}
+
+function set(modes: Modes, token: Token, pair: Pair): void {
+  modes.light[token] = pair[0];
+  modes.dark[token] = pair[1];
+}
+
+const read = (map: Record<string, string>, token: Token): string => map[token] as string;
+
+/** The accent, the text on it, and the neutrals recast to its hue. */
+function applyPrimary(modes: Modes, primary: Pair): void {
+  set(modes, "primary", primary);
+  modes.light["primary-foreground"] = readableOn(primary[0]);
+  modes.dark["primary-foreground"] = readableOn(primary[1]);
+  const [hueLight, hueDark] = [hexToOklch(primary[0]).h, hexToOklch(primary[1]).h];
+  for (const [tokens, cLight, cDark] of NEUTRAL_TINT) {
+    for (const token of tokens) {
+      modes.light[token] = recast(read(modes.light, token), hueLight, cLight);
+      modes.dark[token] = recast(read(modes.dark, token), hueDark, cDark);
+    }
+  }
+}
+
+/** The dark surface family from the dark colour; the light sidebar, or its island, from the light. */
+function applySidebar(modes: Modes, sidebar: Pair): SidebarIsland | undefined {
+  const { dark, light } = modes;
+  const anchor = hexToOklch(sidebar[1]);
+  dark.sidebar = sidebar[1];
+  for (const [tokens, lift] of DARK_SURFACE_STEPS) {
+    for (const token of tokens) dark[token] = oklchToHex({ ...anchor, l: anchor.l + lift });
+  }
+  for (const [tokens, l, c] of DARK_SURFACE_TEXT) {
+    for (const token of tokens) dark[token] = oklchToHex({ l, c, h: anchor.h });
+  }
+  const grounds = [read(dark, "background"), read(dark, "card")];
+  for (const token of DARK_GROUND_TEXT) dark[token] = liftToRead(read(dark, token), grounds);
+
+  const ground = hexToOklch(sidebar[0]);
+  if (readableOn(sidebar[0]) === WHITE) {
+    return {
+      sidebar: sidebar[0],
+      "sidebar-hover": oklchToHex({ ...ground, l: ground.l + ISLAND.hover }),
+      "sidebar-border": oklchToHex({ ...ground, l: ground.l + ISLAND.border }),
+      "sidebar-foreground": oklchToHex({ ...ISLAND.text, h: ground.h }),
+    };
+  }
+  light.sidebar = sidebar[0];
+  light["sidebar-hover"] = oklchToHex({ ...ground, l: ground.l - 0.03 });
+  light["sidebar-border"] = oklchToHex({ ...ground, l: ground.l - 0.07 });
+  return undefined;
+}
+
+function applyHighlight(modes: Modes, highlight: Pair): void {
+  set(modes, "sidebar-active", highlight);
+  modes.light["sidebar-active-foreground"] = readableOn(highlight[0]);
+  modes.dark["sidebar-active-foreground"] = readableOn(highlight[1]);
+}
+
+/**
+ * The canonical active row is `sidebar-foreground` at 10% over `sidebar`; keep
+ * that relation over a brand's recast sidebar. Dark mode keeps it too unless
+ * the dark surfaces were derived, which set the row as a surface step.
+ */
+function recomputeActiveRow(modes: Modes, includeDark: boolean): void {
+  const row = (m: Record<string, string>) =>
+    over(read(m, "sidebar-foreground"), read(m, "sidebar"), 10);
+  modes.light["sidebar-active"] = row(modes.light);
+  if (includeDark) modes.dark["sidebar-active"] = row(modes.dark);
+}
+
+function recomputeInfoLight(modes: Modes): void {
+  for (const [map, pct] of [
+    [modes.light, INFO_TINT_PCT[0]],
+    [modes.dark, INFO_TINT_PCT[1]],
+  ] as const) {
+    map["info-light"] = over(read(map, "primary"), read(map, "background"), pct);
+  }
 }

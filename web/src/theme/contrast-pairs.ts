@@ -35,10 +35,21 @@ export type ColorToken = keyof typeof colors;
 export type ExtColorToken = keyof typeof extOnlyColors;
 export type TokenName = ColorToken | ExtColorToken;
 
+/**
+ * The light-mode sidebar of a brand whose sidebar ground is dark: the sidebar
+ * renders under the dark palette, on this ground, with these hover, border and
+ * text colours.
+ */
+export type SidebarIsland = Record<
+  "sidebar" | "sidebar-hover" | "sidebar-border" | "sidebar-foreground",
+  string
+>;
+
 /** The colour half of a palette: the shape `palette.ts` exports and a merged brand returns. */
 export interface ColorPalette {
   colors: Record<ColorToken, Pair>;
   extOnlyColors: Record<ExtColorToken, Pair>;
+  sidebarIsland?: SidebarIsland;
 }
 
 /** Read one token for a mode from either colour map. */
@@ -233,6 +244,29 @@ export function contrastChecks(palette: ColorPalette, mode: Mode): ContrastCheck
     sidebarText,
     over(sidebarText, sidebar, 10),
   );
+
+  // A dark light-mode sidebar renders its rows under the dark palette, on the
+  // island's own ground.
+  const island = palette.sidebarIsland;
+  if (island && mode === "light") {
+    const d = (name: TokenName) => tokenValue(palette, name, "dark");
+    add(
+      "island sidebar-foreground on island sidebar",
+      island["sidebar-foreground"],
+      island.sidebar,
+    );
+    add(
+      "island sidebar-foreground on island hover",
+      island["sidebar-foreground"],
+      island["sidebar-hover"],
+    );
+    add(
+      "dark foreground on island sidebar (the active row's label)",
+      d("foreground"),
+      island.sidebar,
+    );
+    add("dark muted-foreground on island sidebar", d("muted-foreground"), island.sidebar);
+  }
 
   // `hover:bg-primary/90` composited over the page ground, under its label.
   add(

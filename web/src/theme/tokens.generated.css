@@ -41,6 +41,8 @@
   --sidebar-foreground: #5c5c66;
   --sidebar-border: #e4e4e7;
   --sidebar-hover: #f4f4f5;
+  --sidebar-active: #eaeaeb;
+  --sidebar-active-foreground: #09090b;
   --tooltip: #18181b;
   --tooltip-foreground: #fafafa;
   --sidebar-width: 240px;
@@ -123,6 +125,8 @@
   --sidebar-foreground: #9b9ba4;
   --sidebar-border: #232326;
   --sidebar-hover: #0e0e10;
+  --sidebar-active: #171719;
+  --sidebar-active-foreground: #fafafa;
   --tooltip: #2e2e33;
   --tooltip-foreground: #fafafa;
   --nb-shadow-hairline: 0 0 0 1px rgba(255,255,255,0.06);

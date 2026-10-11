@@ -116,6 +116,11 @@ export const colors = {
   "sidebar-foreground": ["#5c5c66", "#9b9ba4"],
   "sidebar-border": ["#e4e4e7", "#232326"],
   "sidebar-hover": ["#f4f4f5", "#0e0e10"],
+  // The active sidebar row: `sidebar-foreground` at 10% over `sidebar`, the
+  // look of a selected row, as an opaque token so a brand can fill the row
+  // with its highlight colour.
+  "sidebar-active": ["#eaeaeb", "#171719"],
+  "sidebar-active-foreground": ["#09090b", "#fafafa"],
   // The tooltip pill (`components/ui/tooltip.tsx`): a dark chip in both modes,
   // lifted off the black ground in dark mode so it still reads as a surface.
   tooltip: ["#18181b", "#2e2e33"],

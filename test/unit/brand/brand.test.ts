@@ -15,8 +15,10 @@ import {
   BRAND_COLOR_TOKENS,
   BRAND_FONT_ROLES,
   mergePalette,
+  sidebarIsIsland,
 } from "../../../web/src/theme/brand.ts";
 import { contrastRatio, deltaEOk, over } from "../../../web/src/theme/contrast.ts";
+import { hexToOklch } from "../../../web/src/theme/oklch.ts";
 import { colors, extOnlyColors, fonts } from "../../../web/src/theme/palette.ts";
 import { ACME_BRAND } from "../../helpers/acme-brand.ts";
 
@@ -146,6 +148,73 @@ describe("mergePalette", () => {
     expect(deltaEOk(dark, colors["info-light"][1])).toBeLessThan(0.05);
   });
 
+  test("primary recasts the neutrals to its hue at their canonical lightness", () => {
+    const merged = mergePalette({ colors: { primary: ["#1d4ed8", "#93b4f5"] } });
+    const hue = hexToOklch("#1d4ed8").h;
+    for (const token of ["foreground", "border", "muted", "sidebar"] as const) {
+      const before = hexToOklch(colors[token][0]);
+      const after = hexToOklch(merged.colors[token][0]);
+      expect(after.l).toBeCloseTo(before.l, 2);
+      // Within 8-bit rounding of the brand's hue at a near-grey chroma.
+      expect(Math.abs(after.h - hue)).toBeLessThan(6);
+    }
+    // The page and card grounds stay white.
+    expect(merged.colors.background[0]).toBe(colors.background[0]);
+    expect(merged.colors.card[0]).toBe(colors.card[0]);
+  });
+
+  test("highlight fills the active sidebar row under whichever of white or black reads", () => {
+    const merged = mergePalette({ colors: { highlight: ["#FFC94A", "#2563eb"] } });
+    expect(merged.colors["sidebar-active"]).toEqual(["#FFC94A", "#2563eb"]);
+    expect(merged.colors["sidebar-active-foreground"]).toEqual(["#000000", "#ffffff"]);
+  });
+
+  test("sidebar's dark colour anchors the dark surfaces as lighter steps of one hue", () => {
+    const merged = mergePalette({ colors: { sidebar: ["#f4f1ec", "#1C0F0A"] } });
+    const anchor = hexToOklch("#1C0F0A");
+    expect(merged.colors.sidebar[1]).toBe("#1C0F0A");
+    const steps = (["background", "card", "muted", "border"] as const).map((t) =>
+      hexToOklch(merged.colors[t][1]),
+    );
+    let previous = anchor.l;
+    for (const step of steps) {
+      expect(step.l).toBeGreaterThan(previous);
+      expect(Math.abs(step.h - anchor.h)).toBeLessThan(6);
+      previous = step.l;
+    }
+  });
+
+  test("a light sidebar colour is the light-mode ground; a dark one makes an island", () => {
+    const light = mergePalette({ colors: { sidebar: ["#f4f1ec", "#1C0F0A"] } });
+    expect(light.colors.sidebar[0]).toBe("#f4f1ec");
+    expect(light.sidebarIsland).toBeUndefined();
+
+    const brand = { colors: { sidebar: ["#2A1710", "#1C0F0A"] as [string, string] } };
+    expect(sidebarIsIsland(brand)).toBe(true);
+    const island = mergePalette(brand);
+    expect(island.sidebarIsland?.sidebar).toBe("#2A1710");
+    expect(
+      contrastRatio(island.sidebarIsland!["sidebar-foreground"], "#2A1710"),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test("on a brand's dark ground, canonical status colours lighten to read; the brand's own do not move", () => {
+    const merged = mergePalette(ACME_BRAND);
+    const [bg, card] = [merged.colors.background[1], merged.colors.card[1]];
+    for (const token of ["destructive", "processing", "success", "warning"] as const) {
+      const fg = merged.colors[token][1];
+      expect(hexToOklch(fg).l).toBeGreaterThanOrEqual(hexToOklch(colors[token][1]).l - 1e-6);
+      for (const ground of [bg, card]) {
+        expect(contrastRatio(fg, over(fg, ground, 20))).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    expect(merged.colors.primary[1]).toBe("#FF8A4C");
+  });
+
+  test("a malformed colour throws, so the client paints canonical rather than half a brand", () => {
+    expect(() => mergePalette({ colors: { highlight: null } } as never)).toThrow();
+  });
+
   test("ignores tokens and roles a brand may not set", () => {
     const merged = mergePalette({
       colors: { success: ["#000000", "#ffffff"] },
@@ -213,6 +282,14 @@ describe("loadBrand", () => {
     );
     // A rejected brand installs nothing.
     expect(resolvedBrand()).toEqual({});
+  });
+
+  test("rejects a dark primary that fails on the brand's own dark ground", () => {
+    expect(() =>
+      loadBrand({
+        brand: { colors: { primary: ["#B53707", "#7a3a1a"], sidebar: ["#2A1710", "#1C0F0A"] } },
+      }),
+    ).toThrow(BrandConfigError);
   });
 
   test("rejects a non-woff2 url, and a url without a family", () => {
