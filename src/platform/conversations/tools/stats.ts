@@ -6,6 +6,7 @@
  * tool data.
  */
 
+import type { ConversationsStatsInput } from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex, WorkspaceScope } from "../index-cache.ts";
 import {
   type ConversationFile,
@@ -13,10 +14,6 @@ import {
   type DisplayToolCall,
   readConversation,
 } from "../jsonl-reader.ts";
-
-export interface StatsInput {
-  period?: "day" | "week" | "month" | "all";
-}
 
 interface ModelStats {
   inputTokens: number;
@@ -117,7 +114,7 @@ function accumulateConversation(conv: ConversationFile, acc: StatsAccumulator): 
 }
 
 export async function handleStats(
-  input: StatsInput,
+  input: ConversationsStatsInput,
   index: ConversationIndex,
   scope: WorkspaceScope,
   access?: AccessContext,

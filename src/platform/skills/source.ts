@@ -538,15 +538,6 @@ export function createSkillsSource(
 
 // ── Internal handler logic ───────────────────────────────────────────────
 
-interface ListInput {
-  scope?: string;
-  layer?: number;
-  loading_strategy?: "always" | "dynamic";
-  tool_affinity?: string;
-  status?: string;
-  modified_since?: string;
-}
-
 // Local aliases for the canonical output shapes from `schemas/skills.ts`.
 // Server and web both import from there — this alias just keeps the
 // historical local name in this file's body so the diff stays small.
@@ -596,10 +587,8 @@ function resolveCallContext(runtime: Runtime): { wsId: string | null; userId: st
 async function listSkills(
   runtime: Runtime,
   authoringGuidePath: string,
-  input: Record<string, unknown>,
+  filter: SkillsListInput,
 ): Promise<ListedSkill[]> {
-  const filter = input as ListInput;
-
   const out: ListedSkill[] = [];
   const includeLayer3 = filter.layer === undefined || filter.layer === 3;
   const includeLayer1 = filter.layer === undefined || filter.layer === 1;
@@ -684,7 +673,7 @@ function buildAuthoringGuideEntry(authoringGuidePath: string): ListedSkill | nul
 }
 
 /** Scalar + tool-affinity filter for `skills__list`: true when `s` passes every provided filter. */
-function matchesListFilters(s: ListedSkill, filter: ListInput): boolean {
+function matchesListFilters(s: ListedSkill, filter: SkillsListInput): boolean {
   if (filter.scope && s.scope !== filter.scope) return false;
   if (filter.loading_strategy && s.loadingStrategy !== filter.loading_strategy) return false;
   if (filter.status && s.status !== filter.status) return false;
@@ -1216,14 +1205,6 @@ function inferScopeFromPath(
   return "provided";
 }
 
-interface LoadingLogInput {
-  conversation_id?: string;
-  skill?: string;
-  loaded_by?: SkillLoadedBy;
-  since?: string;
-  until?: string;
-}
-
 /**
  * Replay the skill-load ledger — every channel, not just `skills.loaded`.
  *
@@ -1236,10 +1217,8 @@ interface LoadingLogInput {
  */
 async function loadingLog(
   runtime: Runtime,
-  input: Record<string, unknown>,
+  filter: SkillsLoadingLogInput,
 ): Promise<SkillLoadRow[]> {
-  const filter = input as LoadingLogInput;
-
   // Conversations are single-owner: every conversation read here must belong to
   // the caller. Without an identity we refuse rather than scan — the
   // top-level store holds every user's conversations and an
@@ -1268,7 +1247,7 @@ async function loadingLog(
 /** Resolve the conversation ids to scan for `skills__loading_log`, scoped to the caller. */
 async function resolveLoadingLogConvIds(
   runtime: Runtime,
-  filter: LoadingLogInput,
+  filter: SkillsLoadingLogInput,
   access: { userId: string },
 ): Promise<string[]> {
   if (filter.conversation_id) {
@@ -1290,7 +1269,7 @@ async function resolveLoadingLogConvIds(
  * `activation` row — the two channels this tool exists to surface — and make a
  * per-skill query look like the skill never loaded.
  */
-function matchesLoadingLogFilter(row: SkillLoadRow, filter: LoadingLogInput): boolean {
+function matchesLoadingLogFilter(row: SkillLoadRow, filter: SkillsLoadingLogInput): boolean {
   if (filter.since && row.ts < filter.since) return false;
   if (filter.until && row.ts > filter.until) return false;
   if (filter.loaded_by && row.loaded_by !== filter.loaded_by) return false;

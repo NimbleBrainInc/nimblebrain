@@ -8,6 +8,7 @@
  * sorting, date filtering, and search.
  */
 
+import type { ConversationsListInput } from "../../schemas/conversations.ts";
 import type {
   AccessContext,
   ConversationIndex,
@@ -15,17 +16,8 @@ import type {
   WorkspaceScope,
 } from "../index-cache.ts";
 
-export interface ListInput {
-  limit?: number;
-  cursor?: string;
-  search?: string;
-  sortBy?: "created" | "updated";
-  dateFrom?: string;
-  dateTo?: string;
-}
-
 export async function handleList(
-  input: ListInput,
+  input: ConversationsListInput,
   index: ConversationIndex,
   scope: WorkspaceScope,
   access?: AccessContext,

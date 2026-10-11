@@ -10,17 +10,18 @@
  */
 
 import { appendFile, readFile } from "node:fs/promises";
-import type { ConversationsUpdateOutput } from "../../schemas/conversations.ts";
+import type {
+  ConversationsUpdateInput,
+  ConversationsUpdateOutput,
+} from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import { readConversationHeader } from "../jsonl-reader.ts";
 
-export interface UpdateInput {
-  id: string;
-  title: string;
-}
+/** `ConversationsUpdateInput` once the source has resolved an omitted or "current" `id`. */
+type ResolvedInput = ConversationsUpdateInput & { id: string };
 
 export async function handleUpdate(
-  input: UpdateInput,
+  input: ResolvedInput,
   index: ConversationIndex,
   access?: AccessContext,
 ): Promise<ConversationsUpdateOutput> {

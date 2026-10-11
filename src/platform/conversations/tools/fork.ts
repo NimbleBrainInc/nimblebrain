@@ -9,15 +9,13 @@
 
 import { rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ConversationsForkOutput } from "../../schemas/conversations.ts";
+import type {
+  ConversationsForkInput,
+  ConversationsForkOutput,
+} from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import type { DisplayMessage, DisplayToolCall, DisplayUsage } from "../jsonl-reader.ts";
 import { readConversation } from "../jsonl-reader.ts";
-
-export interface ForkInput {
-  id: string;
-  atMessage?: number;
-}
 
 /** Recalculated token totals across copied assistant messages. */
 interface CopiedTotals {
@@ -202,8 +200,11 @@ function derivePreview(messages: DisplayMessage[]): string {
   return "";
 }
 
+/** `ConversationsForkInput` once the source has resolved an omitted or "current" `id`. */
+type ResolvedInput = ConversationsForkInput & { id: string };
+
 export async function handleFork(
-  input: ForkInput,
+  input: ResolvedInput,
   index: ConversationIndex,
   access?: AccessContext,
 ): Promise<ConversationsForkOutput> {

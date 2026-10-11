@@ -90,14 +90,7 @@ function filterEntries(
   return out;
 }
 
-interface SearchInput {
-  query: string;
-  tags?: string[];
-  mimeType?: string;
-  limit?: number;
-}
-
-async function handleSearch(store: FileStore, args: SearchInput): Promise<FilesSearchOutput> {
+async function handleSearch(store: FileStore, args: FilesSearchInput): Promise<FilesSearchOutput> {
   const limit = args.limit ?? 20;
   const query = args.query.toLowerCase();
 
@@ -301,24 +294,6 @@ async function handleReadPdfPages(
   };
 }
 
-/**
- * Strict input shape for `files__create`. Mirrors the JSON Schema:
- * `manifest` holds the file metadata; `body` is the content, read
- * according to `encoding`. Field names match `FileEntry` (camelCase) —
- * no kebab/snake acceptance.
- */
-interface CreateInput {
-  manifest: {
-    filename: string;
-    folder?: string;
-    mimeType: string;
-    tags?: string[];
-    description?: string;
-  };
-  body: string;
-  encoding?: "base64" | "text";
-}
-
 /** The standard base64 alphabet with padding. Not base64url — see below. */
 const BASE64_BODY = /^[A-Za-z0-9+/]*={0,2}$/;
 
@@ -376,7 +351,7 @@ function decodeCreateBody(body: string, encoding: "base64" | "text"): Buffer {
 /** `placeIn` resolves `manifest.folder` to a folder id, creating missing levels. */
 async function handleCreate(
   store: FileStore,
-  args: CreateInput,
+  args: FilesCreateInput,
   placeIn: (path: string) => Promise<string | null>,
 ): Promise<FilesCreateOutput> {
   // TODO: apply the same MIME allowlist as chat-multipart ingest
@@ -423,13 +398,7 @@ async function handleInfo(store: FileStore, args: { id: string }): Promise<Files
   return entry;
 }
 
-interface TagInput {
-  id: string;
-  add?: string[];
-  remove?: string[];
-}
-
-async function handleTag(store: FileStore, args: TagInput): Promise<FilesTagOutput> {
+async function handleTag(store: FileStore, args: FilesTagInput): Promise<FilesTagOutput> {
   const entry = await store.findEntry(args.id);
   if (!entry) {
     throw new Error(`File not found: ${args.id}`);

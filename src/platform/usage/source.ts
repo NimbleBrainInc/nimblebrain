@@ -23,30 +23,11 @@ import { structuredContent, textContent } from "../../engine/content-helpers.ts"
 import type { EventSink, ToolResult } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
+import { defineInProcessApp, type InProcessTool, typedTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { WORKSPACE_OPTIONAL_META } from "../../tools/workspace-optional.ts";
 import { aggregateUsage } from "../../usage/aggregate.ts";
-import {
-  type UsageGroupBy,
-  type UsageOrigin,
-  UsageReportInput,
-  type UsageReportOutput,
-  type UsageStackBy,
-} from "../schemas/usage.ts";
-
-interface UsageReportArgs {
-  scope?: "user" | "org";
-  period?: string;
-  groupBy?: UsageGroupBy | UsageGroupBy[];
-  from?: string;
-  to?: string;
-  stackBy?: UsageStackBy;
-  workspaceId?: string;
-  userId?: string;
-  model?: string;
-  origin?: UsageOrigin;
-}
+import { UsageReportInput, type UsageReportOutput } from "../schemas/usage.ts";
 
 const USAGE_REPORT_DESCRIPTION =
   "Get aggregated usage (tokens, cost, LLM calls) recorded at the point of spend. " +
@@ -87,14 +68,13 @@ function resolveScope(
 
 export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSource {
   const tools: InProcessTool[] = [
-    {
+    typedTool({
       name: "report",
       description: USAGE_REPORT_DESCRIPTION,
       meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: UsageReportInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (args): Promise<ToolResult> => {
         try {
-          const args = input as UsageReportArgs;
           const requestedScope = args.scope ?? "user";
 
           const resolved = resolveScope(runtime, requestedScope);
@@ -149,7 +129,7 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
           };
         }
       },
-    },
+    }),
   ];
 
   // No UI resource. Usage has one rendering, the `/org/usage` settings page,

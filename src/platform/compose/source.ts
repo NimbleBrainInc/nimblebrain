@@ -57,7 +57,7 @@ import { collectActivatableSkills, toCatalogEntries } from "../../skills/catalog
 import { parseSkillContent } from "../../skills/loader.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../skills/select.ts";
 import type { InProcessTool } from "../../tools/in-process-app.ts";
-import { defineInProcessApp } from "../../tools/in-process-app.ts";
+import { defineInProcessApp, typedTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { surfaceTools } from "../../tools/surfacing.ts";
 import {
@@ -101,12 +101,6 @@ const ASSEMBLED_CONTEXT_DESCRIPTION =
   "recomposition. Read-only. Use this to answer 'what entered this turn's " +
   "context, and how big was each part?'";
 
-interface ComposeArgs {
-  conversation_id?: string;
-  run_id?: string;
-  connector?: string;
-}
-
 /** Exported for unit testing. */
 export interface ComposeResponse {
   mode: "live" | "historical";
@@ -134,12 +128,11 @@ export interface ComposeResponse {
  */
 export function createComposeSource(runtime: Runtime, eventSink: EventSink): McpSource {
   const tools: InProcessTool[] = [
-    {
+    typedTool({
       name: "effective_context",
       description: COMPOSE_DESCRIPTION,
       inputSchema: ComposeEffectiveContextInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
-        const args = input as ComposeArgs;
+      handler: async (args): Promise<ToolResult> => {
         try {
           // Resolve conv id — explicit arg wins; fall back to the current
           // conversation in scope (set by `runtime.chat()` via RequestContext).
@@ -182,13 +175,12 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
           return errorResult(errorMessage(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "assembled_context",
       description: ASSEMBLED_CONTEXT_DESCRIPTION,
       inputSchema: ComposeAssembledContextInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
-        const args = input as { conversation_id?: string; run_id?: string };
+      handler: async (args): Promise<ToolResult> => {
         try {
           const convId = resolveConvId(args);
           if (!convId) {
@@ -212,7 +204,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
           return errorResult(errorMessage(err));
         }
       },
-    },
+    }),
   ];
 
   return defineInProcessApp(
@@ -916,7 +908,7 @@ function errorResult(message: string): ToolResult {
 }
 
 /** Resolve the target conversation id: a non-empty `conversation_id` arg wins, else the in-scope conversation. */
-function resolveConvId(args: ComposeArgs): string | undefined {
+function resolveConvId(args: { conversation_id?: string }): string | undefined {
   const argConvId =
     typeof args.conversation_id === "string" && args.conversation_id.length > 0
       ? args.conversation_id
