@@ -162,9 +162,10 @@ a route mounted after the router authenticates once per such router, and
 depend on mount order in `app.ts`. Per-route middleware scopes it to the route
 by construction.
 
-**Detection.** `bun run check:route-middleware` (wired into `verify:static`)
-flags any `.use(...)` call in a file under `src/` that imports from `hono`,
-except `src/api/app.ts`.
+**Detection.** The Biome plugin `biome-plugins/router-use.grit` (run by
+`bun run lint`) flags any `.use(...)` call in a `.ts` file under `src/` except
+`src/api/app.ts`. `test/integration/route-middleware-scope.test.ts` walks the
+mounted route table.
 
 **Override.** None. The global middleware in `src/api/app.ts` (tracing,
 metrics, CORS, security headers, the cross-site guard) is app-wide by design
@@ -242,8 +243,8 @@ changes. A named type in `schemas/` is compiled against the handler and, through
 codegen, shared with the web client, so a changed shape fails the build at each
 consumer.
 
-**Detection.** `bun run check:platform-output-types` (wired into
-`verify:static`) flags any function implementation in a `.ts` file under
+**Detection.** The Biome plugin `biome-plugins/platform-object-return.grit`
+(run by `bun run lint`) flags any function implementation in a `.ts` file under
 `src/platform/`, outside the app UI packages, whose declared return type is
 `object`, `Promise<object>`, or a union with either as a member. A function type
 is not flagged, so a registration signature that accepts a handler

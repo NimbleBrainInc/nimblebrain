@@ -1,0 +1,10 @@
+// Every router is mounted at "/", and Hono turns a sub-app's `.use()` into a
+// `/*` matcher on the parent app, so its middleware runs for every request the
+// app handles. Chain middleware on each route; only `src/api/app.ts` mounts
+// app-wide middleware (CODE_STYLE.md, "Router middleware is chained per route").
+`$router.use($middleware)` as $call where {
+  register_diagnostic(
+    span=$call,
+    message="`.use()` outside `src/api/app.ts`. Chain the middleware on each route: `.get(path, requireAuth(...), handler)`."
+  )
+}

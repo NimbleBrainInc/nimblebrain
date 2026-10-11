@@ -1,0 +1,27 @@
+// A platform tool handler's return type is its tool's contract. Declared as
+// `object`, the result reaches every caller untyped. Return a named `XxxOutput`
+// from `src/platform/schemas/` (CODE_STYLE.md, "Platform tool handlers return a
+// named output type"). A function type is not flagged: a registration signature
+// bounds what it accepts, and the handler passed in carries its own type.
+pattern bare_object() {
+  or {
+    TsNonPrimitiveType(),
+    TsParenthesizedType(ty=bare_object()),
+    TsUnionType(types=some bare_object()),
+    TsReferenceType(name=`Promise`, type_arguments=TsTypeArguments(ts_type_argument_list=[bare_object()]))
+  }
+}
+
+or {
+  JsFunctionDeclaration(return_type_annotation=TsReturnTypeAnnotation(ty=$type)),
+  JsFunctionExpression(return_type_annotation=TsReturnTypeAnnotation(ty=$type)),
+  JsArrowFunctionExpression(return_type_annotation=TsReturnTypeAnnotation(ty=$type)),
+  JsMethodClassMember(return_type_annotation=TsReturnTypeAnnotation(ty=$type)),
+  JsMethodObjectMember(return_type_annotation=TsReturnTypeAnnotation(ty=$type))
+} where {
+  $type <: bare_object(),
+  register_diagnostic(
+    span=$type,
+    message="Return type `object`. Declare a named `XxxOutput` in `src/platform/schemas/<app>.ts` and return it."
+  )
+}
