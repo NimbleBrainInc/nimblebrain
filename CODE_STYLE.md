@@ -1,11 +1,10 @@
 # Code Style
 
 Project-specific code-style and quality-control rules that go beyond what
-Biome and `tsc` enforce automatically. CI's `bun run verify` catches the
-tool-level rules; this file is the home for the human-level ones — patterns
-worth enforcing in review, ideally with a check script wired into
-`verify:static` so the enforcement becomes structural rather than
-aspirational.
+Biome's built-in rules and `tsc` enforce. Each is enforced in review and, where
+it can be automated, by a Grit plugin in `biome-plugins/` (run by `bun run
+lint`) or a `check:*` script under `verify:static`, so a regression fails CI,
+not review.
 
 Each rule documents:
 
@@ -15,9 +14,7 @@ Each rule documents:
 - The **detection** approach — grep query, lint config, or check script
 
 When you find yourself enforcing a convention in code review more than
-once, add it here. When you can express the rule as an automated check,
-wire it into `scripts/check-code-style.ts` (or a sibling script) and run
-it under `verify:static` so future regressions fail CI, not review.
+once, add it here.
 
 ---
 
@@ -50,7 +47,8 @@ the cycle-avoidance argument doesn't hold. What's left is a syntax that
 reads exactly like a runtime dynamic `import()` and trips every reader who
 hasn't seen it before. The readability tax isn't worth the shortcut.
 
-**Detection.** `bun run check:code-style` (wired into `verify:static`).
+**Detection.** The Biome plugin `biome-plugins/inline-type-import.grit`
+(run by `bun run lint`) on `src/` and `scripts/`.
 
 **Override.** None. The rule is absolute; refactor to top-level
 `import type` before merge.
@@ -80,8 +78,45 @@ the first ~8 KB). So the artifact ships a byte the diff never showed the
 reviewer, and code search over a core file goes dark. The escape yields the
 identical runtime string with none of that.
 
-**Detection.** `bun run check:code-style` (wired into `verify:static`) —
-flags any byte in 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, or 0x7F under `src/`.
+**Detection.** The Biome plugin `biome-plugins/control-byte.grit` (run by
+`bun run lint`) flags any byte in 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, or 0x7F
+inside a string, template, or regex literal under `src/` and `scripts/`. A
+Grit pattern cannot see comments, so a control byte in a comment is left to
+review.
+
+**Override.** None.
+
+---
+
+## Prompt composition
+
+### Containment tags open only through wrapContained
+
+Fence untrusted content in the system prompt with
+`wrapContained(tag, body)` from `src/prompt/compose.ts`. Never write a
+containment tag's open, close, or escape by hand.
+
+```ts
+// BAD — the escape and the close are written separately and can drift.
+const text = `<app-state>\n${body.replaceAll("</app-state>", "")}\n</app-state>`;
+```
+
+```ts
+// GOOD — the open, the escaped close, and the close all derive from one tag.
+const text = wrapContained("app-state", body);
+```
+
+**Rationale.** A body that contains its own fence's close tag ends the fence
+early, and what follows reads as trusted prompt. `wrapContained` builds the
+open, the escape of every close variant in the body, and the close from the
+single `tag` argument, so they cannot diverge.
+
+**Detection.** The Biome plugin `biome-plugins/containment-tag.grit` (run by
+`bun run lint`) flags any string, template, or regex literal under `src/` and
+`scripts/` that opens, closes, or escapes a containment tag outside
+`wrapContained`. The plugin carries its own copy of the `ContainmentTag`
+union, and `test/unit/containment-tag-plugin.test.ts` fails when the two
+differ.
 
 **Override.** None.
 
@@ -300,12 +335,8 @@ asserts intent cannot be checked against the code, so a stale closure or a
 list that started reordering hides behind it until someone re-derives the
 reason from scratch.
 
-**Detection.** Mostly review: whether a reason holds takes a reader. `bun run
-check:code-style` (wired into `verify:static`) catches the placeholder forms
-under `src/` and `web/src/`: a whole reason such as `intentional`, `safe`,
-`stable`, or `one-shot on mount`, and one that starts `see above`, `as above`,
-or `same as above`. It matches the whole reason, so a placeholder followed by
-the real reason passes the script and is left to review.
+**Detection.** Review: whether a reason holds takes a reader. Biome refuses a
+suppression with no reason at all.
 
 **Override.** None.
 
@@ -366,10 +397,10 @@ A directory joins when it is cleaned. `web/test/` joins once Biome lints it.
    rationale. Multi-clause rules turn into multi-clause exceptions.
 2. **Add a section above** describing the rule with the same shape
    (anti-example, good example, rationale, detection, override).
-3. **Wire enforcement.** Extend `scripts/check-code-style.ts` with a
-   detection pass. The script aggregates findings across all rules and
-   fails the run on any match. CI runs it as part of `verify:static` via
-   the `check:code-style` script in `package.json`.
+3. **Wire enforcement.** Add a Grit plugin to `biome-plugins/` and list
+   it in a `biome.json` override with the paths it covers; `bun run lint`
+   runs it in CI. A rule no syntax pattern can express gets its own
+   `check:*` script under `verify:static`.
 4. **Land all three artifacts in one PR** — the rule doc, the check, and
    the cleanup of any existing violations. Otherwise the rule lands
    without teeth and the next reviewer has to do the cleanup.
