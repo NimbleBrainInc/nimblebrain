@@ -80,9 +80,9 @@ identical runtime string with none of that.
 
 **Detection.** The Biome plugin `biome-plugins/control-byte.grit` (run by
 `bun run lint`) flags any byte in 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, or 0x7F
-inside a string, template, or regex literal under `src/` and `scripts/`. A
-Grit pattern cannot see comments, so a control byte in a comment is left to
-review.
+inside a string, template, or regex literal, a quoted key, a string literal
+type, or a JSX attribute string under `src/` and `scripts/`. A Grit pattern
+cannot see comments, so a control byte in a comment is left to review.
 
 **Override.** None.
 
@@ -112,8 +112,9 @@ open, the escape of every close variant in the body, and the close from the
 single `tag` argument, so they cannot diverge.
 
 **Detection.** The Biome plugin `biome-plugins/containment-tag.grit` (run by
-`bun run lint`) flags any string, template, or regex literal under `src/` and
-`scripts/` that opens, closes, or escapes a containment tag outside
+`bun run lint`) flags any string, template, or regex literal, quoted key,
+string literal type, or JSX attribute string under `src/` and `scripts/`
+that opens, closes, or escapes a containment tag outside
 `wrapContained`. The plugin carries its own copy of the `ContainmentTag`
 union, and `test/unit/containment-tag-plugin.test.ts` fails when the two
 differ.
