@@ -8,10 +8,10 @@
  * same question differently and the divergence is a misroute.
  *
  * **Why `src/util/` and not `src/tools/`.** Both `src/tools/` and `src/runtime/`
- * need this, and `check:cycles` forbids `src/runtime/**` from importing
+ * need this, and the layering lint forbids `src/runtime/**` from importing
  * `src/tools/**` (only the composition roots are exempt). `src/util/` is the
  * layer both may import — the same reason `util/concurrency.ts` exists, and the
- * arrangement `scripts/check-cycles.ts` names in its own rationale. A home under
+ * arrangement AGENTS.md's Layering rule names. A home under
  * `src/tools/` does not admit one shared definition: it forces `src/runtime/` to
  * carry its own copy, which is the drift this module exists to remove.
  *
