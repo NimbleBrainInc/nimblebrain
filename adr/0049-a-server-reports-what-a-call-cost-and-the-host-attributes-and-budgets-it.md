@@ -59,7 +59,7 @@ credentials the caller supplied.
 "_meta": {
   "ai.nimblebrain/usage": {
     "id": "01JZ8Q4M7T3W5K9X2B6D0HVRNC",
-    "usage": [
+    "items": [
       { "meter": "search.request", "quantity": "1", "unit": "request",
         "status": "estimated", "payer": "server",
         "amount": { "value": "0.0050", "currency": "USD", "basis": "cost" } },
@@ -75,11 +75,11 @@ credentials the caller supplied.
 | Field | Rule |
 |---|---|
 | `id` | Server-minted, unique per server, and the same whenever the same work is reported again. The host ignores a report whose `id` it has already recorded from that server for the same run, so the check reads one run's lines, not the ledger. No current path delivers a report twice; the `id` is what keeps a later one safe, such as resuming a task-augmented call, which ADR-0029 leaves undecided. |
-| `usage` | One or more entries. |
-| `usage[].meter`, `quantity`, `unit` | `meter` is a name the server chooses for what was consumed, and never names an upstream vendor, a vendor's product, or a vendor's unit. `quantity` is a non-negative decimal string; `"0"` is a valid report of something that consumed nothing, and is different from no report. |
-| `usage[].status` | Required. `final`, or `estimated` when the entry's source says its figure is not a bill. |
-| `usage[].payer` | Required, with no default: a defaulted payer would debit usage that ran on the caller's own credentials. `server` when the server paid on its own account; `caller` when it ran on credentials the caller supplied. A `caller` entry is shown and never debited. |
-| `usage[].amount` | Optional. `value` is a non-negative decimal string, `currency` an ISO 4217 code with no default. `basis` is `cost` when it is what the server paid, or `price` when it is what the server charges its caller; either way it is what the entry cost the host, and the host records it as cost. A server may withhold `amount` on any entry and report units only. |
+| `items` | One or more entries. |
+| `items[].meter`, `quantity`, `unit` | `meter` is a name the server chooses for what was consumed, and never names an upstream vendor, a vendor's product, or a vendor's unit. `quantity` is a non-negative decimal string; `"0"` is a valid report of something that consumed nothing, and is different from no report. |
+| `items[].status` | Required. `final`, or `estimated` when the entry's source says its figure is not a bill. |
+| `items[].payer` | Required, with no default: a defaulted payer would debit usage that ran on the caller's own credentials. `server` when the server paid on its own account; `caller` when it ran on credentials the caller supplied. A `caller` entry is shown and never debited. |
+| `items[].amount` | Optional. `value` is a non-negative decimal string, `currency` an ISO 4217 code with no default. `basis` is `cost` when it is what the server paid, or `price` when it is what the server charges its caller; either way it is what the entry cost the host, and the host records it as cost. A server may withhold `amount` on any entry and report units only. |
 
 A report never carries a negative number. A refund or a correction is a separate
 decision (below), and a report that tries to express one is malformed. A call's
@@ -153,6 +153,20 @@ client that did not may put `_meta` where a model reads it.
   and the entry's position in it, the entry as received, its cost (reported, or
   from an operator rate, or none), the receipt time, and the same attribution a
   model call's line carries. A call's cost is the sum of its report's lines.
+- **It is auditable through the trace, without naming the provider.** The
+  ledger line keeps the call's trace id, which the host already propagates to
+  the server. The server logs, with that trace id, the provider's reference for
+  each item: the request or run id the provider returned, or, when the provider
+  returns none but accepts one from its client, an id the server set on the
+  request. It never sends that reference to the host, because a provider's
+  reference identifies the provider. An operator follows a ledger line to the
+  server's log by trace id, and from there to the provider's records. The
+  report's `id` is for de-duplication, not audit.
+- **Telemetry gets a copy, never the record.** The host also records each item
+  as attributes on the call's span and in its metrics, so traces and dashboards
+  show spend. Traces are sampled and expire, so nothing reads cost back from
+  them. Labels never travel as trace baggage, which reaches every server
+  downstream.
 - **No report is unknown, not zero.** The host records nothing for a call
   without one, and shows, per server, whether it reports at all.
 
