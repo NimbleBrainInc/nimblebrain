@@ -72,21 +72,21 @@ function storeV2Tests(
         conv,
         assistantMsg("Hi there", {
           usage: { inputTokens: 100, outputTokens: 50 },
-          model: "claude-sonnet-4-5-20250929",
+          model: "anthropic:claude-sonnet-4-5-20250929",
         }),
       );
       await store.append(
         conv,
         assistantMsg("More", {
           usage: { inputTokens: 200, outputTokens: 75 },
-          model: "claude-sonnet-4-5-20250929",
+          model: "anthropic:claude-sonnet-4-5-20250929",
         }),
       );
 
       // lastModel is the only display field still maintained on the
       // Conversation; tokens are derived at read time (see the
       // summary assertions below).
-      expect(conv.lastModel).toBe("claude-sonnet-4-5-20250929");
+      expect(conv.lastModel).toBe("anthropic:claude-sonnet-4-5-20250929");
 
       const result = await store.list();
       const summary = result.conversations.find((c) => c.id === conv.id);
@@ -151,7 +151,7 @@ function storeV2Tests(
             },
           ],
           usage: { inputTokens: 100, outputTokens: 50 },
-          model: "claude-sonnet-4-5-20250929",
+          model: "anthropic:claude-sonnet-4-5-20250929",
         }),
       );
 
@@ -161,7 +161,7 @@ function storeV2Tests(
       expect(history[0]!.metadata!.skill).toBe("test-skill");
       expect(history[0]!.metadata!.toolCalls).toHaveLength(1);
       expect(history[0]!.metadata!.usage?.inputTokens).toBe(100);
-      expect(history[0]!.metadata!.model).toBe("claude-sonnet-4-5-20250929");
+      expect(history[0]!.metadata!.model).toBe("anthropic:claude-sonnet-4-5-20250929");
     });
 
     // --- delete() ---
@@ -241,7 +241,7 @@ function storeV2Tests(
         conv,
         assistantMsg("Second", {
           usage: { inputTokens: 100, outputTokens: 50 },
-          model: "claude-sonnet-4-5-20250929",
+          model: "anthropic:claude-sonnet-4-5-20250929",
         }),
       );
       await store.append(conv, msg("user", "Third"));
@@ -304,7 +304,7 @@ function storeV2Tests(
         conv,
         assistantMsg("Reply 1", {
           usage: { inputTokens: 100, outputTokens: 50 },
-          model: "claude-sonnet-4-5-20250929",
+          model: "anthropic:claude-sonnet-4-5-20250929",
         }),
       );
       await store.append(conv, msg("user", "More"));
@@ -312,7 +312,7 @@ function storeV2Tests(
         conv,
         assistantMsg("Reply 2", {
           usage: { inputTokens: 200, outputTokens: 75 },
-          model: "claude-sonnet-4-5-20250929",
+          model: "anthropic:claude-sonnet-4-5-20250929",
         }),
       );
 

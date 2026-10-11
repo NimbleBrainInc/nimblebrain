@@ -117,12 +117,8 @@ export function getModel(provider: string, modelId: string): CatalogModel | unde
 }
 
 /**
- * Look up a model by its full "provider:model-id" string.
- *
- * A string with no colon reads as Anthropic. Nothing writes one now (every
- * input refuses it, `model-id.ts`), but stored history does carry them: usage
- * ledger lines and conversation events recorded before ids were always
- * qualified, and those are priced and displayed through here.
+ * Look up a model by its full "provider:model-id" string. A string with no
+ * colon names no provider, so it finds nothing.
  */
 export function getModelByString(modelString: string): CatalogModel | undefined {
   const { provider, modelId } = parseModelString(modelString);
@@ -264,17 +260,17 @@ export function getAvailableModels(
 // Helpers
 // ============================================================================
 
+/**
+ * Split `provider:model`. A string with no colon has an empty provider, which
+ * no catalog entry or dialect matches.
+ */
 function parseModelString(modelString: string): { provider: string; modelId: string } {
   const idx = modelString.indexOf(":");
-  if (idx === -1) return { provider: "anthropic", modelId: modelString };
+  if (idx === -1) return { provider: "", modelId: modelString };
   return { provider: modelString.slice(0, idx), modelId: modelString.slice(idx + 1) };
 }
 
-/**
- * Extract the provider name from a model string. A string with no `:` reads
- * as `"anthropic"`, the same rule as `getModelByString` and for the same
- * stored history.
- */
+/** Extract the provider name from a model string: empty when it has no `:`. */
 export function getProviderFromModel(modelString: string): string {
   return parseModelString(modelString).provider;
 }

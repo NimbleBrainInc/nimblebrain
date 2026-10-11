@@ -25,17 +25,11 @@ describe("estimateCost", () => {
       expect(cost).toBeGreaterThan(0);
     });
 
-  it("bare model string defaults to anthropic provider", () => {
-    const withPrefix = estimateCost("anthropic:claude-sonnet-4-6", {
-      inputTokens: 1000,
-      outputTokens: 500,
-    });
-    const withoutPrefix = estimateCost("claude-sonnet-4-6", {
-      inputTokens: 1000,
-      outputTokens: 500,
-    });
-    expect(withPrefix).toBe(withoutPrefix);
-    expect(withPrefix).toBeGreaterThan(0);
+  it("a model string with no provider is unpriced", () => {
+    expect(
+      estimateCost("anthropic:claude-sonnet-4-6", { inputTokens: 1000, outputTokens: 500 }),
+    ).toBeGreaterThan(0);
+    expect(estimateCost("claude-sonnet-4-6", { inputTokens: 1000, outputTokens: 500 })).toBe(0);
   });
 
   it("returns 0 for unknown model", () => {
