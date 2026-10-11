@@ -48,19 +48,26 @@ ledger, and debits it from the run's spend accounts.**
 
 ### The report
 
-A tool result, success or `isError`, may carry one report:
+A tool result, success or `isError`, may carry one report. A report is a list of
+entries, one for each thing the call consumed, and each entry carries its own
+money, status, and payer, because one call can draw on several providers that
+bill differently: one returns dollars, another only credits; one figure is
+final, another estimated; one runs on the server's account, another on
+credentials the caller supplied.
 
 ```jsonc
 "_meta": {
   "ai.nimblebrain/usage": {
     "id": "01JZ8Q4M7T3W5K9X2B6D0HVRNC",
-    "status": "estimated",
-    "payer": "server",
     "usage": [
-      { "meter": "search.request", "quantity": "1",  "unit": "request" },
-      { "meter": "search.result",  "quantity": "10", "unit": "result" }
-    ],
-    "amount": { "value": "0.0070", "currency": "USD", "basis": "cost" }
+      { "meter": "search.request", "quantity": "1", "unit": "request",
+        "status": "estimated", "payer": "server",
+        "amount": { "value": "0.0050", "currency": "USD", "basis": "cost" } },
+      { "meter": "page.render", "quantity": "3", "unit": "credit",
+        "status": "final", "payer": "server" },
+      { "meter": "model.input", "quantity": "4210", "unit": "token",
+        "status": "final", "payer": "caller" }
+    ]
   }
 }
 ```
@@ -68,13 +75,16 @@ A tool result, success or `isError`, may carry one report:
 | Field | Rule |
 |---|---|
 | `id` | Server-minted, unique per server, and the same whenever the same work is reported again. The host ignores a report whose `id` it has already recorded from that server for the same run, so the check reads one run's lines, not the ledger. No current path delivers a report twice; the `id` is what keeps a later one safe, such as resuming a task-augmented call, which ADR-0029 leaves undecided. |
-| `status` | `final`, or `estimated` when the server's own source says its figure is not a bill. |
-| `payer` | `server` when the server paid on its own account; `caller` when it ran on credentials the caller supplied. A `caller` report is shown and never debited. |
-| `usage` | One or more `{meter, quantity, unit}`. `meter` is a name the server chooses for what was consumed, and never names an upstream vendor, a vendor's product, or a vendor's unit. `quantity` is a non-negative decimal string; `"0"` is a valid report of a call that consumed nothing, and is different from no report. |
-| `amount` | Optional. `value` is a non-negative decimal string, `currency` an ISO 4217 code with no default. `basis` is `cost` when it is what the server paid for this call, or `price` when it is what the server charges its caller; either way it is what the call cost the host, and the host records it as cost. A server may withhold `amount` and report units only. |
+| `usage` | One or more entries. |
+| `usage[].meter`, `quantity`, `unit` | `meter` is a name the server chooses for what was consumed, and never names an upstream vendor, a vendor's product, or a vendor's unit. `quantity` is a non-negative decimal string; `"0"` is a valid report of something that consumed nothing, and is different from no report. |
+| `usage[].status` | Required. `final`, or `estimated` when the entry's source says its figure is not a bill. |
+| `usage[].payer` | Required, with no default: a defaulted payer would debit usage that ran on the caller's own credentials. `server` when the server paid on its own account; `caller` when it ran on credentials the caller supplied. A `caller` entry is shown and never debited. |
+| `usage[].amount` | Optional. `value` is a non-negative decimal string, `currency` an ISO 4217 code with no default. `basis` is `cost` when it is what the server paid, or `price` when it is what the server charges its caller; either way it is what the entry cost the host, and the host records it as cost. A server may withhold `amount` on any entry and report units only. |
 
 A report never carries a negative number. A refund or a correction is a separate
-decision (below), and a report that tries to express one is malformed.
+decision (below), and a report that tries to express one is malformed. A call's
+cost is the sum of its entries' costs; the report carries no total, so a total
+can never disagree with its entries.
 
 ### Credits, prepaid balances, and what nobody here can see
 
@@ -86,21 +96,22 @@ what was paid. What each side can know:
 - **At the call, the units are always knowable.** A server knows what it asked
   for (one request, ten results, one lookup), and many providers also return
   what the call drew (credits, tokens). A call that draws on a prepaid balance
-  reports it in `usage`: `{"meter": "email.validation", "quantity": "1",
-  "unit": "credit"}`. **A credit is a unit, never a currency.**
+  reports it as an entry: `{"meter": "email.validation", "quantity": "1",
+  "unit": "credit", ...}`. **A credit is a unit, never a currency.**
 - **Money is knowable at the call only when the provider says so.** Some
-  providers return a per-call dollar figure; the server passes it on as
-  `amount`, `status: estimated`. A server never derives `amount` from a rate it
-  was not given: a credit's price is a fact of a purchase the server never saw.
+  providers return a per-call dollar figure; the server passes it on as that
+  entry's `amount`, `status: estimated`. A server never derives `amount` from a
+  rate it was not given: a credit's price is a fact of a purchase the server
+  never saw.
 - **The rate is an operator's estimate, held by the host.** An operator who
   knows roughly what a credit costs (from the provider's dashboard or invoice)
   sets a cost rate per server and meter in the host's operator configuration.
   It lives there because it describes an account the host's operator manages,
   it can change without redeploying any server, and it prices a third-party
   server's units the same way as ours. The host applies it when the line is
-  written, to a line that carries units and no `amount`, and marks the line's
-  cost as estimated from that rate. A provider-reported `amount` takes
-  precedence.
+  written, entry by entry, to an entry that carries units and no `amount`, and
+  marks that line's cost as estimated from that rate. A provider-reported
+  `amount` takes precedence. One call can therefore be priced in part.
 - **With no amount and no rate, a line is unpriced, not free.** It shows its
   units ("1,240 credits") and counts as unpriced spend on every total it is part
   of, and it debits no money account.
@@ -126,8 +137,8 @@ client that did not may put `_meta` where a model reads it.
 - **It is accepted from the wire, and bounded.** By ADR-0024's test, accepting
   it widens nothing: with every number non-negative, a server that over-reports
   makes its own tenant's budget stricter and its own cost higher, both through a
-  server the workspace chose to connect; one that under-reports or claims
-  `payer: caller` is no worse than reporting nothing. The host validates the
+  server the workspace chose to connect; one that under-reports or marks an
+  entry `payer: caller` is no worse than reporting nothing. The host validates the
   report whole (entry count, string lengths, non-negative decimal grammar,
   currency) and drops a malformed one entirely. Every string in it is the
   server's, displayed as text, never interpreted.
@@ -136,11 +147,12 @@ client that did not may put `_meta` where a model reads it.
   endpoint does not forward a server's `_meta` to the client that called it.
   Both hold today by omission, so tests pin them: a report appears in neither
   the model's view of a result nor the endpoint's response.
-- **It becomes a ledger line.** The ledger entry gains a discriminator between a
-  model call and a tool report, and a line written before it reads as a model
-  call. A tool line carries the server and tool names, the report as received,
-  its cost (reported, or from an operator rate), the receipt time, and the same
-  attribution a model call's line carries.
+- **Each entry becomes a ledger line.** The ledger entry gains a discriminator
+  between a model call and a tool report, and a line written before it reads as
+  a model call. A tool line carries the server and tool names, the report's `id`
+  and the entry's position in it, the entry as received, its cost (reported, or
+  from an operator rate, or none), the receipt time, and the same attribution a
+  model call's line carries. A call's cost is the sum of its report's lines.
 - **No report is unknown, not zero.** The host records nothing for a call
   without one, and shows, per server, whether it reports at all.
 
@@ -175,7 +187,10 @@ deliverable, carries that run's labels.
 
 ### Budgets
 
-**A `usd` spend account is debited a tool line's cost after the call. A tool
+**A `usd` spend account is debited, after the call, the cost of each tool line its
+runs produce whose payer is `server` and whose cost is in USD. A cost in another
+currency is recorded as reported and debits no `usd` account, so it counts as
+unpriced for the budget; converting it is not decided here. A tool
 call is not sent while any `usd` account its run holds is at or below zero; the
 run ends with the spend-limit stop reason naming the account, as it does when the
 door cannot pay for a model call.** Nothing is reserved before a tool call,
