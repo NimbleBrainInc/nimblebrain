@@ -75,7 +75,7 @@ credentials the caller supplied.
 | Field | Rule |
 |---|---|
 | `id` | Server-minted, unique per server, and the same whenever the same work is reported again. The host ignores a report whose `id` it has already recorded from that server for the same run, so the check reads one run's lines, not the ledger. No current path delivers a report twice; the `id` is what keeps a later one safe, such as resuming a task-augmented call, which ADR-0029 leaves undecided. |
-| `items` | One or more entries. |
+| `items` | One to 16 entries. |
 | `items[].meter`, `quantity`, `unit` | `meter` is a name the server chooses for what was consumed, and never names an upstream vendor, a vendor's product, or a vendor's unit. `quantity` is a non-negative decimal string; `"0"` is a valid report of something that consumed nothing, and is different from no report. |
 | `items[].status` | Required. `final`, or `estimated` when the entry's source says its figure is not a bill. |
 | `items[].payer` | Required, with no default: a defaulted payer would debit usage that ran on the caller's own credentials. `server` when the server paid on its own account; `caller` when it ran on credentials the caller supplied. A `caller` entry is shown and never debited. |
@@ -85,6 +85,13 @@ A report never carries a negative number. A refund or a correction is a separate
 decision (below), and a report that tries to express one is malformed. A call's
 cost is the sum of its entries' costs; the report carries no total, so a total
 can never disagree with its entries.
+
+**The report's shape is a published JSON Schema, canonical in this repo, and the
+host validates every report against it**, so the rules above and the host's
+check cannot drift apart. Types for the host and for servers are generated from
+the same file. The host ignores a field the schema does not know, so a newer
+server works against an older host; a malformed known field drops the whole
+report; a change that breaks either side takes a new identifier (ADR-0024).
 
 ### Credits, prepaid balances, and what nobody here can see
 
@@ -139,8 +146,8 @@ client that did not may put `_meta` where a model reads it.
   makes its own tenant's budget stricter and its own cost higher, both through a
   server the workspace chose to connect; one that under-reports or marks an
   entry `payer: caller` is no worse than reporting nothing. The host validates the
-  report whole (entry count, string lengths, non-negative decimal grammar,
-  currency) and drops a malformed one entirely. Every string in it is the
+  report against its schema (entry count, string lengths, non-negative decimal
+  grammar, currency) and drops a malformed one entirely. Every string in it is the
   server's, displayed as text, never interpreted.
 - **It never reaches a model.** The model's view of a result is built from
   `content`, and the report is read only by the host. The host's own MCP
