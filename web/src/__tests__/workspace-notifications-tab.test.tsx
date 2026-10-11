@@ -14,20 +14,13 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom doesn't expose SyntaxError/TypeError on its Window stub; any
-// querySelectorAll trips it. Same patch the other component tests carry.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 interface ToolCall {
   tool: string;
@@ -156,7 +149,7 @@ async function click(el: HTMLElement): Promise<void> {
 }
 
 /** The shim's own Event constructor — a global `Event` is a different class to it. */
-const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+const WindowEvent = window.Event;
 
 /**
  * Set a form control's value the way React's onChange sees it.

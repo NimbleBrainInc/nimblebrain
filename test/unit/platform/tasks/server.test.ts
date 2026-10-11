@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { effectiveRunLimits, resolveTasksConfig } from "../../../../src/config/tasks.ts";
+import type { TasksCreateInput, TasksUpdateInput } from "../../../../src/platform/schemas/tasks.ts";
 import type { RunNowTicket } from "../../../../src/platform/tasks/scheduler.ts";
 import {
   estimateRunsPerDay,
@@ -66,16 +67,19 @@ function seedRun(taskId: string, run: TaskRun): void {
 function createArgs(
   name: string,
   prompt: string,
-  schedule: { type: string; [k: string]: unknown },
-  extra: Record<string, unknown> = {},
-): Record<string, unknown> {
+  schedule: TasksCreateInput["manifest"]["schedule"],
+  extra: Omit<TasksCreateInput["manifest"], "name" | "schedule"> = {},
+): TasksCreateInput {
   return { manifest: { name, schedule, ...extra }, body: prompt };
 }
 
 /** Build the {taskId, manifest?, body?} shape for handleUpdate. */
-function updateArgs(taskId: string, patch: Record<string, unknown> = {}): Record<string, unknown> {
-  const { body, ...manifest } = patch as { body?: string } & Record<string, unknown>;
-  const out: Record<string, unknown> = { taskId };
+function updateArgs(
+  taskId: string,
+  patch: NonNullable<TasksUpdateInput["manifest"]> & { body?: string } = {},
+): TasksUpdateInput {
+  const { body, ...manifest } = patch;
+  const out: TasksUpdateInput = { taskId };
   if (Object.keys(manifest).length > 0) out.manifest = manifest;
   if (body !== undefined) out.body = body;
   return out;

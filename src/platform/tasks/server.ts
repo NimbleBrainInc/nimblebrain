@@ -17,22 +17,29 @@ import {
 import { MAX_ITERATIONS, TASKS_LIST_DEFAULT_LIMIT, TASKS_LIST_MAX_LIMIT } from "../../limits.ts";
 import type {
   TaskEffectiveLimits,
-  TaskRunLabel,
   TaskRunResultBody,
   TaskRunStats,
   TaskSummary,
+  TasksAssessInput,
   TasksAssessOutput,
+  TasksCancelInput,
   TasksCancelOutput,
+  TasksCreateInput,
   TasksCreateOutput,
+  TasksDeleteInput,
   TasksDeleteOutput,
   TasksJudgesOutput,
   TasksListOutput,
   TasksRunOutput,
+  TasksRunResultInput,
   TasksRunResultOutput,
+  TasksRunsInput,
   TasksRunsOutput,
   TasksStatsOutput,
+  TasksStatusInput,
   TasksStatusOutput,
   TasksUpcomingOutput,
+  TasksUpdateInput,
   TasksUpdateOutput,
   TaskUpcomingEventTask,
   TaskUpcomingFire,
@@ -49,13 +56,7 @@ import {
   validateAssessmentFields,
 } from "./assessment.ts";
 import type { BatchAction, BatchControlResult } from "./batch.ts";
-import {
-  createTask,
-  type DomainUpdatePatch,
-  deleteTask,
-  requireTask,
-  updateTask,
-} from "./domain.ts";
+import { createTask, deleteTask, requireTask, updateTask } from "./domain.ts";
 import { containsRecursiveTool } from "./executor.ts";
 import { assertJsonSchema, checkAgainstSchema } from "./json-schema.ts";
 import { type JudgeSourceView, judgeServersOf } from "./judge.ts";
@@ -661,44 +662,18 @@ function validateNumericLimits(args: ValidatableTaskFields): void {
   }
 }
 
-/**
- * Strict input shape for `tasks__create`. The validator has already
- * enforced shape — handler reads typed fields directly. The operator-only
- * field `source` is NOT in this shape; the LLM-facing handler hardcodes
- * `source: "agent"`. An internal caller bypasses this handler and calls
- * `createTask` from `domain.ts` directly with the full shape.
- */
-interface CreateInput {
-  manifest: {
-    name: string;
-    description?: string;
-    schedule?: ScheduleSpec;
-    enabled?: boolean;
-    skill?: string;
-    model?: string;
-    maxIterations?: number;
-    maxInputTokens?: number;
-    maxRunDurationMs?: number;
-    allowedTools?: string[];
-    tokenBudget?: Task["tokenBudget"];
-    kind?: TaskKind;
-    inputSchema?: Record<string, unknown>;
-    outputSchema?: Record<string, unknown>;
-    criteria?: Criterion[];
-    confidenceThreshold?: number;
-    judge?: TaskJudge;
-    onPoorResult?: OnPoorResult;
-  };
-  body: string;
-}
-
 /** The IANA timezone a task's schedule is read in: its own, else the instance's. */
 function timezoneOf(task: Task, ctx: ToolContext): string {
   return task.schedule?.timezone ?? ctx.defaultTimezone;
 }
 
-export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): TasksCreateOutput {
-  const { manifest, body } = args as unknown as CreateInput;
+/**
+ * `tasks__create`. The operator-only field `source` is not in its input; this
+ * LLM-facing handler stamps `source: "agent"`. An internal caller bypasses it
+ * and calls `createTask` from `domain.ts` directly with the full shape.
+ */
+export function handleCreate(args: TasksCreateInput, ctx: ToolContext): TasksCreateOutput {
+  const { manifest, body } = args;
 
   validateTaskFields(manifest);
 
@@ -749,19 +724,8 @@ function withEffectiveLimits<T extends { task: Task; message: string }>(
   return { ...result, message, effectiveLimits };
 }
 
-/**
- * Strict input shape for `tasks__update`. `manifest` is a patch of the
- * create-shape in which `null` clears a field; `body` is an optional new
- * prompt. `name` and `kind` are not patchable (a rename would move the id).
- */
-interface UpdateInput {
-  taskId: string;
-  manifest?: Omit<DomainUpdatePatch, "prompt">;
-  body?: string;
-}
-
-export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): TasksUpdateOutput {
-  const { taskId, manifest: patch, body } = args as unknown as UpdateInput;
+export function handleUpdate(args: TasksUpdateInput, ctx: ToolContext): TasksUpdateOutput {
+  const { taskId, manifest: patch, body } = args;
   if (patch) validateTaskFields(patch);
   const result = updateTask(
     taskId,
@@ -775,8 +739,8 @@ export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): T
   return { ...withEffectiveLimits(result, ctx), timezone: timezoneOf(result.task, ctx) };
 }
 
-export function handleDelete(args: Record<string, unknown>, ctx: ToolContext): TasksDeleteOutput {
-  const { taskId } = args as unknown as { taskId: string };
+export function handleDelete(args: TasksDeleteInput, ctx: ToolContext): TasksDeleteOutput {
+  const { taskId } = args;
   return deleteTask(taskId, ctx);
 }
 
@@ -874,8 +838,8 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Tas
   };
 }
 
-export function handleStatus(args: Record<string, unknown>, ctx: ToolContext): TasksStatusOutput {
-  const { taskId, limit = 5 } = args as unknown as { taskId: string; limit?: number };
+export function handleStatus(args: TasksStatusInput, ctx: ToolContext): TasksStatusOutput {
+  const { taskId, limit = 5 } = args;
   const task = requireTask(ctx.definitions(), taskId);
   const runs = limit > 0 ? ctx.readRuns(task.id, { limit }) : [];
   const cost = estimateCost(task, ctx.defaultModel);
@@ -901,27 +865,8 @@ const FILTER_SCAN_PAGE = 500;
 /** Most runs one filtered `tasks__runs` call reads before it answers with `nextBefore`. */
 const FILTER_SCAN_CAP = 5_000;
 
-/** `tasks__runs`' arguments, already shape-checked by its input schema. */
-interface RunsInput {
-  taskId?: string;
-  label?: TaskRunLabel;
-  verdict?: "pass" | "fail" | "uncertain" | "not_assessed";
-  since?: string;
-  before?: string;
-  limit?: number;
-  excludeBatchRuns?: boolean;
-}
-
-export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): TasksRunsOutput {
-  const {
-    taskId,
-    label,
-    verdict,
-    since,
-    before,
-    limit = 20,
-    excludeBatchRuns,
-  } = args as unknown as RunsInput;
+export function handleRuns(args: TasksRunsInput, ctx: ToolContext): TasksRunsOutput {
+  const { taskId, label, verdict, since, before, limit = 20, excludeBatchRuns } = args;
   if (before !== undefined && Number.isNaN(new Date(before).getTime())) {
     throw new Error(`Invalid before timestamp: "${before}"`);
   }
@@ -1354,11 +1299,8 @@ function resultBody(result: TaskRunResult): TaskRunResultBody {
  * deliverable: the untruncated output, the activity log, file refs, usage,
  * and the parsed `structured` output.
  */
-export function handleRunResult(
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-): TasksRunResultOutput {
-  const { runId, taskId: givenTaskId } = args as unknown as { runId: string; taskId?: string };
+export function handleRunResult(args: TasksRunResultInput, ctx: ToolContext): TasksRunResultOutput {
+  const { runId, taskId: givenTaskId } = args;
   const { taskId, run } = locateRun(ctx, runId, givenTaskId);
   // Recorded but not yet judged: its label would read Succeeded until the
   // verdict lands, so it is not ended yet.
@@ -1822,8 +1764,8 @@ function disabledState(ctx: ToolContext, task: Task): { enabled: boolean; disabl
  * (recorded cancelled). A batch's runs are cancelled with the batch
  * (`tasks__batch_control`), but one of them can be cancelled here too.
  */
-export function handleCancel(args: Record<string, unknown>, ctx: ToolContext): TasksCancelOutput {
-  const { runId } = args as unknown as { runId: string };
+export function handleCancel(args: TasksCancelInput, ctx: ToolContext): TasksCancelOutput {
+  const { runId } = args;
   const taskId =
     ctx.queueView?.().find((e) => e.runId === runId)?.taskId ?? ctx.readRunTicket?.(runId)?.taskId;
   const cancelled = ctx.cancelRun(runId);
@@ -1837,15 +1779,6 @@ export function handleCancel(args: Record<string, unknown>, ctx: ToolContext): T
   };
 }
 
-/** `tasks__assess`'s arguments, already shape-checked by its input schema. */
-interface AssessInput {
-  runId: string;
-  taskId?: string;
-  verdict?: "pass" | "fail";
-  note?: string;
-  reassess?: boolean;
-}
-
 /**
  * Set a person's verdict on a run, or judge it again. A person's verdict is
  * recorded beside the judge's (`assessment.human`) and replaces it in how the
@@ -1853,10 +1786,10 @@ interface AssessInput {
  * Only a run that left a deliverable has an assessment to set.
  */
 export async function handleAssess(
-  args: Record<string, unknown>,
+  args: TasksAssessInput,
   ctx: ToolContext,
 ): Promise<TasksAssessOutput> {
-  const { runId, taskId, verdict, note, reassess } = args as unknown as AssessInput;
+  const { runId, taskId, verdict, note, reassess } = args;
   if ((verdict === undefined) === (reassess !== true)) {
     throw new Error("Give `verdict` (pass or fail) or `reassess: true`: one of the two.");
   }

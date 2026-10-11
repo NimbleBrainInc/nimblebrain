@@ -38,6 +38,18 @@ export function textContent(text: string): ContentBlock[] {
   return [{ type: "text" as const, text }];
 }
 
+/**
+ * A named output type as a tool result's `structuredContent`. The shape stays
+ * pinned by the caller's declared `XxxOutput`; this only widens it to the wire
+ * type. Returns `value` itself.
+ */
+export function structuredContent<T extends object>(value: T): Record<string, unknown> {
+  // An `interface` gets no implicit index signature, so TS will not assign a
+  // named output interface to `Record<string, unknown>`, though at runtime it
+  // is a plain object keyed by strings.
+  return value as Record<string, unknown>;
+}
+
 /** Extract all text from ContentBlock[], joining with newline. Skips non-text blocks. */
 export function extractText(blocks: ContentBlock[]): string {
   return blocks

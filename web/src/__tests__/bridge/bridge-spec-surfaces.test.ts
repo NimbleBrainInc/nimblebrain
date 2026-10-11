@@ -80,8 +80,7 @@ function makeTestIframe(): TestIframe {
   });
 
   function send(data: unknown): void {
-    const WindowMessageEvent = (window as unknown as { MessageEvent: typeof MessageEvent })
-      .MessageEvent;
+    const WindowMessageEvent = window.MessageEvent;
     const event = new WindowMessageEvent("message", { data });
     Object.defineProperty(event, "source", {
       configurable: true,
@@ -660,7 +659,7 @@ describe("ai.nimblebrain/request-file", () => {
         picker = el;
         // The bridge calls click() to open the dialog; dismiss it instead.
         el.click = () => {
-          el.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("cancel"));
+          el.dispatchEvent(new window.Event("cancel"));
         };
       }
       return el;
@@ -696,7 +695,7 @@ describe("ai.nimblebrain/request-file", () => {
       params: { multiple: false },
     });
 
-    window.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("focus"));
+    window.dispatchEvent(new window.Event("focus"));
 
     await expect(frame.waitFor(isReplyTo("pick-focus"), 600)).rejects.toThrow();
   });
@@ -718,7 +717,7 @@ describe("ai.nimblebrain/request-file", () => {
       Object.defineProperty(el, "files", { configurable: true, get: () => [file] });
       // The bridge calls click() to open the picker; fire the selection instead.
       el.click = () => {
-        el.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("change"));
+        el.dispatchEvent(new window.Event("change"));
       };
       return el;
     }) as typeof document.createElement;
@@ -762,7 +761,7 @@ describe("ai.nimblebrain/request-file", () => {
       if (tag !== "input") return el;
       Object.defineProperty(el, "files", { configurable: true, get: () => picked });
       el.click = () => {
-        el.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("change"));
+        el.dispatchEvent(new window.Event("change"));
       };
       return el;
     }) as typeof document.createElement;
@@ -808,7 +807,7 @@ describe("ai.nimblebrain/request-file", () => {
       if (tag !== "input") return el;
       Object.defineProperty(el, "files", { configurable: true, get: () => picked });
       el.click = () => {
-        el.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("change"));
+        el.dispatchEvent(new window.Event("change"));
       };
       return el;
     }) as typeof document.createElement;

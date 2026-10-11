@@ -32,21 +32,13 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 import type * as ApiClient from "../api/client";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom builds its selector errors from `window.SyntaxError`, which it
-// does not define; the ConfirmDialog behind Disconnect runs selectors that
-// reach that path. Same shim as uninstall-connector-dialog.test.tsx.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 // ── api/client mocks ────────────────────────────────────────────────
 // Every section calls into one or two helpers from api/client. We
@@ -156,8 +148,7 @@ function dialogButton(text: string): HTMLButtonElement | null {
 }
 
 async function click(el: Element | null): Promise<void> {
-  const MouseEventCtor = (globalThis as unknown as { window: { MouseEvent: typeof MouseEvent } })
-    .window.MouseEvent;
+  const MouseEventCtor = window.MouseEvent;
   await act(async () => {
     el?.dispatchEvent(new MouseEventCtor("click", { bubbles: true }));
   });
@@ -890,7 +881,7 @@ const POSTHOG_FIELDS: ComposioField[] = [
 ];
 
 function setInputValue(input: HTMLInputElement, value: string): void {
-  const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+  const WindowEvent = window.Event;
   const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   setVal?.call(input, value);
   input.dispatchEvent(new WindowEvent("input", { bubbles: true }));

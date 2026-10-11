@@ -14,7 +14,7 @@ import { realClient, realMcpBridgeClient } from "../../test/setup";
 import { HOST_STYLES_EXTENSION } from "../bridge/extensions";
 import { getModeExtensionTokens, getSpecThemeTokens, type ThemeMode } from "../bridge/theme";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 mock.module("../api/client", () => ({
   ...realClient,
@@ -91,8 +91,7 @@ async function mountInline(from: ThemeMode): Promise<{
   Object.defineProperty(iframe, "contentWindow", { configurable: true, get: () => stubWindow });
 
   function send(data: unknown): void {
-    const WindowMessageEvent = (window as unknown as { MessageEvent: typeof MessageEvent })
-      .MessageEvent;
+    const WindowMessageEvent = window.MessageEvent;
     const event = new WindowMessageEvent("message", { data });
     Object.defineProperty(event, "source", { configurable: true, get: () => stubWindow });
     window.dispatchEvent(event);

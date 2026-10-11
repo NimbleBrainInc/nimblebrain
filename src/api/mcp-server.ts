@@ -796,6 +796,9 @@ function createServer(
       // its arguments and the caller, so it returns only on this caller's
       // retry of this call.
       const { requestState: state, ...rest } = result;
+      // The handler is typed to answer a `CallToolResult`; an `input_required`
+      // answer is the other result 2026-07-28 allows, and the SDK sends it as given.
+      // biome-ignore lint/plugin/double-cast: an `input_required` result, which `CallToolResult` does not admit
       return {
         ...rest,
         requestState: await rounds.mint(
@@ -807,8 +810,6 @@ function createServer(
           },
           ctx,
         ),
-        // The handler is typed to answer a `CallToolResult`; an `input_required`
-        // answer is the other result 2026-07-28 allows, and the SDK sends it as given.
       } as unknown as CallToolResult;
     }
     // The SDK types a `tools/call` result as the tool's own; a SEP-2663 task
@@ -837,6 +838,9 @@ function createServer(
     // Sealed as a tool call's round is, so it returns only on this caller's
     // retry of this prompt with these arguments.
     const { requestState: state, ...rest } = result;
+    // The handler is typed to answer a `GetPromptResult`; an `input_required`
+    // answer is the other result 2026-07-28 allows, and the SDK sends it as given.
+    // biome-ignore lint/plugin/double-cast: an `input_required` result, which `GetPromptResult` does not admit
     return {
       ...rest,
       requestState: await rounds.mint(
@@ -848,8 +852,6 @@ function createServer(
         },
         ctx,
       ),
-      // The handler is typed to answer a `GetPromptResult`; an `input_required`
-      // answer is the other result 2026-07-28 allows, and the SDK sends it as given.
     } as unknown as GetPromptResult;
   });
   server.setRequestHandler("completion/complete", (request) =>

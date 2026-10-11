@@ -1,4 +1,4 @@
-import { textContent } from "../../engine/content-helpers.ts";
+import { structuredContent, textContent } from "../../engine/content-helpers.ts";
 import type { EventSink, ToolResult } from "../../engine/types.ts";
 import {
   DEFAULT_SOURCE_MAX_LEVEL,
@@ -22,7 +22,7 @@ import { notificationId, parseNotificationId } from "../../notifications/types.t
 import { toNotificationView } from "../../notifications/view.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
+import { defineInProcessApp, type InProcessTool, typedTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import {
@@ -173,9 +173,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
    * shape is pinned by the named `XxxOutput` declaration at each call site,
    * which is what the output-type convention actually rests on.
    */
-  function withErrorHandling(
-    fn: (input: Record<string, unknown>) => object,
-  ): (input: Record<string, unknown>) => Promise<ToolResult> {
+  function withErrorHandling<I>(fn: (input: I) => object): (input: I) => Promise<ToolResult> {
     return async (input) => {
       try {
         return { content: textContent(JSON.stringify(fn(input), null, 2)), isError: false };
@@ -307,7 +305,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     const out = await readSettings(wsId);
     return {
       content: textContent(JSON.stringify(out, null, 2)),
-      structuredContent: out as unknown as Record<string, unknown>,
+      structuredContent: structuredContent(out),
       isError: false,
     };
   }
@@ -326,12 +324,11 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
   });
 
   const tools: InProcessTool[] = [
-    {
+    typedTool({
       name: "list",
       description: LIST_DESCRIPTION,
       inputSchema: NotificationsListInput,
-      handler: withErrorHandling((input) => {
-        const args = input as unknown as NotificationsListInput;
+      handler: withErrorHandling((args) => {
         if (args.since !== undefined && Number.isNaN(Date.parse(args.since))) {
           throw new Error(`"since" is not an ISO 8601 instant: ${args.since}`);
         }
@@ -348,13 +345,13 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
         };
         return out;
       }),
-    },
-    {
+    }),
+    typedTool({
       name: "mark_read",
       description: MARK_READ_DESCRIPTION,
       inputSchema: NotificationsMarkReadInput,
       handler: withErrorHandling((input) => {
-        const { ids } = input as unknown as NotificationsMarkReadInput;
+        const { ids } = input;
         const refs: NotificationRef[] = [];
         for (const id of ids) {
           const ref = parseNotificationId(id);
@@ -377,7 +374,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
         };
         return out;
       }),
-    },
+    }),
     {
       name: "settings",
       description: SETTINGS_DESCRIPTION,
@@ -389,20 +386,20 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
         const out = await readSettings(auth.wsId);
         return {
           content: textContent(JSON.stringify(out, null, 2)),
-          structuredContent: out as unknown as Record<string, unknown>,
+          structuredContent: structuredContent(out),
           isError: false,
         };
       },
     },
-    {
+    typedTool({
       name: "set_source_level",
       description: SET_SOURCE_LEVEL_DESCRIPTION,
       meta: { ui: { visibility: ["app"] } },
       inputSchema: NotificationsSetSourceLevelInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         const auth = await requireAdmin();
         if (!auth.ok) return refuse(auth.reason);
-        const { source, maxLevel } = input as unknown as NotificationsSetSourceLevelInput;
+        const { source, maxLevel } = input;
         const stored = readNotificationsConfig(
           await runtime.getWorkspaceStore().get(auth.wsId),
         ).sources;
@@ -425,16 +422,16 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
           "notifications.sources",
         );
       },
-    },
-    {
+    }),
+    typedTool({
       name: "set_routes",
       description: SET_ROUTES_DESCRIPTION,
       meta: { ui: { visibility: ["app"] } },
       inputSchema: NotificationsSetRoutesInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         const auth = await requireAdmin();
         if (!auth.ok) return refuse(auth.reason);
-        const { routes } = input as unknown as NotificationsSetRoutesInput;
+        const { routes } = input;
 
         const registry = await runtime.ensureWorkspaceRegistry(auth.wsId);
         const validated = validateRoutes(routes, {
@@ -450,16 +447,16 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
           "notifications.routes",
         );
       },
-    },
-    {
+    }),
+    typedTool({
       name: "send_test",
       description: SEND_TEST_DESCRIPTION,
       meta: { ui: { visibility: ["app"] } },
       inputSchema: NotificationsSendTestInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      handler: async (input): Promise<ToolResult> => {
         const auth = await requireAdmin();
         if (!auth.ok) return refuse(auth.reason);
-        const { routeId } = input as unknown as NotificationsSendTestInput;
+        const { routeId } = input;
         const config = readNotificationsConfig(await runtime.getWorkspaceStore().get(auth.wsId));
         const route = (config.routes ?? []).find((r) => r.id === routeId);
         if (!route) return refuse(`This workspace has no route "${routeId}".`);
@@ -475,11 +472,11 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
         });
         return {
           content: textContent(JSON.stringify(out, null, 2)),
-          structuredContent: out as unknown as Record<string, unknown>,
+          structuredContent: structuredContent(out),
           isError: false,
         };
       },
-    },
+    }),
   ];
 
   const source = defineInProcessApp({ name: "notifications", version: "1.0.0", tools }, eventSink);

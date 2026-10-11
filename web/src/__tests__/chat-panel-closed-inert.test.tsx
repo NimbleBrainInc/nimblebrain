@@ -10,19 +10,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses, setHappyDomViewport } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom's Window stub doesn't expose SyntaxError/TypeError; querySelector's
-// selector parser constructs one and trips on the gap.
-{
-  const win = (globalThis as unknown as { window?: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 mock.module("../api/client", () => ({
   ...realClient,
@@ -117,7 +110,7 @@ function toggleButton(): HTMLButtonElement | null {
 
 // happy-dom's `dispatchEvent` accepts only its own window's event classes, not
 // the runtime's globals.
-const win = window as unknown as { KeyboardEvent: typeof KeyboardEvent };
+const win = window;
 
 async function press(key: string, init: KeyboardEventInit = {}): Promise<void> {
   await act(async () => {
@@ -185,20 +178,15 @@ describe("opening the chat panel", () => {
   });
 
   test("on the phone layout clears inert but leaves the composer unfocused", async () => {
-    const viewport = window as unknown as {
-      innerWidth: number;
-      innerHeight: number;
-      happyDOM: { setViewport(v: { width: number; height: number }): void };
-    };
-    const desktop = { width: viewport.innerWidth, height: viewport.innerHeight };
-    viewport.happyDOM.setViewport({ width: 390, height: 844 });
+    const desktop = { width: window.innerWidth, height: window.innerHeight };
+    setHappyDomViewport({ width: 390, height: 844 });
     try {
       await mountChrome();
       await act(async () => toggleButton()?.click());
       expectOpen();
       expect(document.activeElement).not.toBe(textarea());
     } finally {
-      viewport.happyDOM.setViewport(desktop);
+      setHappyDomViewport(desktop);
     }
   });
 });

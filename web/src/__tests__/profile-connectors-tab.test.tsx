@@ -14,7 +14,7 @@ import type * as ApiClient from "../api/client";
 import type { CatalogListing, PersonalConnector } from "../api/client";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 let nextConnectors: PersonalConnector[] = [];
 let nextCatalog: CatalogListing[] = [];

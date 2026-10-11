@@ -644,6 +644,9 @@ function useEditorData(taskId: string | undefined) {
   useEffect(() => {
     judgesTool
       .call({})
+      // `tasks__judges` answers JSON read as `JudgesData`, this package's
+      // hand-kept mirror of `TasksJudgesOutput`; nothing checks it at runtime.
+      // biome-ignore lint/plugin/double-cast: tool JSON read as the hand-kept `JudgesData` mirror
       .then((res) => setJudges(asDict(res.data) as unknown as JudgesData))
       .catch(() => setJudges({ servers: [] }));
     if (!taskId) return;

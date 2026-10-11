@@ -427,6 +427,9 @@ export function HomeView({
       const list = (asDict(s.value.data).tasks as TaskStats[]) ?? [];
       setStats(new Map(list.map((x) => [x.taskId, x])));
     }
+    // `tasks__upcoming` answers JSON this package reads as `UpcomingData`, its
+    // hand-kept mirror of `TasksUpcomingOutput`; nothing checks it at runtime.
+    // biome-ignore lint/plugin/double-cast: tool JSON read as the hand-kept `UpcomingData` mirror
     if (u.status === "fulfilled") setUpcoming(asDict(u.value.data) as unknown as UpcomingData);
     const failed = [s, u].find((r) => r.status === "rejected");
     setReadError(failed?.status === "rejected" ? toolErrorText(failed.reason) : null);

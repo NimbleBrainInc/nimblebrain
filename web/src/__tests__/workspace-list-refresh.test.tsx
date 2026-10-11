@@ -14,7 +14,7 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import type { BootstrapResponse } from "../types";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const A = "ws_00a1b2c3d4e5f607";
 const B = "ws_00f7e6d5c4b3a291";
