@@ -27,7 +27,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 // The workspace the mocked `conversations__get` reports for a loaded
 // conversation — how a test says "this conversation lives in workspace X". null

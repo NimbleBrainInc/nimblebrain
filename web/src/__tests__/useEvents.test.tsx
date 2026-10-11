@@ -27,7 +27,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { __internal__ } from "../api/events-client";
 import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 // The options the singleton handed to the connector on open. The
 // connector-level `onReconnect` is the singleton's internal fan-out to

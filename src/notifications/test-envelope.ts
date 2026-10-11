@@ -63,16 +63,18 @@ export function testEnvelopeFor(
   opts: { requestedBy: string; now: Date; nonce: string },
 ): NotificationEnvelope {
   const level: NotificationLevel = route.match?.level ?? "info";
-  const data: TestNotificationData = {
+  // `satisfies` keeps the literal's own type, which (unlike the interface)
+  // fits the envelope's `Record<string, unknown>` data.
+  const data = {
     test: true,
     routeId: route.id,
     requestedBy: opts.requestedBy,
-  };
+  } satisfies TestNotificationData;
   return {
     eventId: `notifications.test:${route.id}:${opts.nonce}`,
     name: nameForGlob(route.match?.name),
     timestamp: opts.now.toISOString(),
-    data: data as unknown as Record<string, unknown>,
+    data,
     _meta: {
       "ai.nimblebrain/notification": {
         level,

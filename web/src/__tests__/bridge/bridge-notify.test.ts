@@ -55,8 +55,7 @@ function mount(callbacks: BridgeCallbacks) {
     iframe.remove();
   };
   const send = (data: unknown) => {
-    const WindowMessageEvent = (window as unknown as { MessageEvent: typeof MessageEvent })
-      .MessageEvent;
+    const WindowMessageEvent = window.MessageEvent;
     const event = new WindowMessageEvent("message", { data });
     Object.defineProperty(event, "source", { configurable: true, get: () => stubWindow });
     window.dispatchEvent(event);

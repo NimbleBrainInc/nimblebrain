@@ -29,23 +29,16 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 import type { InstalledConnector } from "../api/client";
 import type { NotificationView } from "../api/notifications";
 import type { NotificationsValue } from "../context/NotificationsContext";
 import type { PlacementEntry } from "../types";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom doesn't expose SyntaxError/TypeError on its Window stub; any
-// querySelectorAll trips it. Same patch the other component tests carry.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 let listed: NotificationView[] = [];
 let listArgs: Array<Record<string, unknown>> = [];

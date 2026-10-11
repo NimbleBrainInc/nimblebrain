@@ -16,7 +16,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const callToolSpy = mock(realClient.callTool);
 mock.module("../api/client", () => ({ ...realClient, callTool: callToolSpy }));

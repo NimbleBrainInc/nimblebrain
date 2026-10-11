@@ -27,20 +27,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom builds its selector-parse errors from `window.SyntaxError`, which
-// its Window does not define, and Base UI's popover probes selectors on open.
-// Same shim as confirm-dialog.test.tsx.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 let mockedActiveId: string | null = null;
 const setActiveSpy = mock((id: string | null) => {
@@ -272,7 +264,7 @@ function switcherInput(): HTMLInputElement {
 
 // Events built from happy-dom's own window: its dispatchEvent rejects Bun's
 // global Event classes.
-const win = (globalThis as unknown as { window: typeof globalThis }).window;
+const win = globalThis.window;
 
 async function type(input: HTMLInputElement, value: string) {
   await act(async () => {

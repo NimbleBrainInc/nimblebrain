@@ -1,0 +1,13 @@
+// A cast through `unknown` switches the compiler off for one value. Retype the
+// value; where no typed path exists, suppress with a reason naming the mismatch
+// (CODE_STYLE.md, "A double cast names its mismatch").
+or {
+  `$x as unknown as $t`,
+  `($x as unknown) as $t`,
+  `($x as unknown)! as $t`
+} as $cast where {
+  register_diagnostic(
+    span=$cast,
+    message="Double cast through `unknown`. Retype the value (a type guard, a schema parse, a typed helper, the SDK's own type), or suppress with `// biome-ignore lint/plugin/double-cast: <what the value is, and what the code claims>`."
+  )
+}

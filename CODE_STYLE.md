@@ -255,6 +255,55 @@ drift guard (`src/platform/files/output-types-drift-guard.ts`).
 
 ---
 
+## Types
+
+### A double cast names its mismatch
+
+Reach a type through a typed path: a type guard, a schema parse, a typed
+helper, or the SDK's own input or output type. When none exists, an
+`as unknown as T` carries a suppression whose reason names what the value is and
+what the code claims it is.
+
+```ts
+// BAD — nothing says why the compiler is wrong, or when it stops being wrong.
+const { taskId } = args as unknown as { taskId: string };
+const stub = { postMessage() {} } as unknown as Window;
+```
+
+```ts
+// GOOD — a typed path: `typedTool` gives the handler its schema's static type.
+typedTool({
+  name: "delete",
+  inputSchema: TasksDeleteInput,
+  handler: async ({ taskId }) => ok(await deleteTask(taskId)),
+});
+
+// GOOD — no typed path, so the reason names the mismatch.
+// biome-ignore lint/plugin/double-cast: the app's window, reduced to the `postMessage` the bridge calls
+const stub = { postMessage() {} } as unknown as Window;
+```
+
+**Rationale.** A cast through `unknown` switches the compiler off for one
+value, and nothing records why. A typed path removes the hole: the type comes
+from where the value is made or checked (the validator, the schema, the SDK), so
+a change on that side fails the build at the use. Where no typed path exists,
+the reason is the only record of the mismatch, and it says when the cast can
+go: when the SDK types the result, when the stub grows the missing member.
+
+**Detection.** The Biome plugin `biome-plugins/double-cast.grit` (run by
+`bun run lint`) flags `x as unknown as T`, `(x as unknown) as T`, and `(x as unknown)! as T`. Biome
+refuses a suppression with an empty reason and reports one that no longer
+suppresses anything. Whether a reason is true is review's call. The repo has no
+`<T>x` assertions, and the plugin does not look for them.
+
+**Override.** The suppression above, on the line directly above the line where
+the cast expression starts; a longer explanation may sit above it. The plugin
+runs on the paths in its `biome.json` override: `scripts/`, `src/` (the platform
+app UIs included), `web/src/`, and each `test/` directory whose casts are clean.
+A directory joins when it is cleaned. `web/test/` joins once Biome lints it.
+
+---
+
 ## Adding a new rule
 
 1. **Pick the smallest possible rule.** One pattern, one example, one

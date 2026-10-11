@@ -10,15 +10,13 @@
  * single tool call.
  */
 
-import type { ConversationsGetOutput, DisplayMessage } from "../../schemas/conversations.ts";
+import type {
+  ConversationsGetInput,
+  ConversationsGetOutput,
+  DisplayMessage,
+} from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import { readConversation } from "../jsonl-reader.ts";
-
-export interface GetInput {
-  id: string;
-  expand?: "metadata" | "messages" | "full";
-  limit?: number;
-}
 
 /** Default number of trailing messages returned in "messages" mode. */
 export const DEFAULT_GET_LIMIT = 20;
@@ -68,8 +66,11 @@ function selectByCharCap(messages: DisplayMessage[], cap: number): GetMessagesRe
   return { messages: kept, droppedOlderMessages: dropped, truncated: dropped > 0 };
 }
 
+/** `ConversationsGetInput` once the source has resolved an omitted or "current" `id`. */
+type ResolvedInput = ConversationsGetInput & { id: string };
+
 export async function handleGet(
-  input: GetInput,
+  input: ResolvedInput,
   index: ConversationIndex,
   access?: AccessContext,
   /**

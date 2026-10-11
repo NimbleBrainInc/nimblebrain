@@ -54,6 +54,37 @@
   },
   "overrides": [
     {
+      "includes": [
+        "scripts/**",
+        "src/**",
+        "web/src/**",
+        "test/conformance/**",
+        "test/eval/**",
+        "test/fixtures/**",
+        "test/helpers/**",
+        "test/integration/api/**",
+        "test/integration/identity/**",
+        "test/integration/security/**",
+        "test/scripts/**",
+        "test/unit/__golden__/**",
+        "test/unit/brand/**",
+        "test/unit/bridge/**",
+        "test/unit/docs/**",
+        "test/unit/engine/**",
+        "test/unit/fixtures/**",
+        "test/unit/lifecycle/**",
+        "test/unit/middleware/**",
+        "test/unit/oauth/**",
+        "test/unit/orchestrator/**",
+        "test/unit/platform/compose/**",
+        "test/unit/scripts/**",
+        "test/unit/services/**",
+        "test/unit/usage/**",
+        "test/unit/util/**"
+      ],
+      "plugins": ["./biome-plugins/double-cast.grit"]
+    },
+    {
       "includes": ["test/**"],
       "linter": {
         "rules": {

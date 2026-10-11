@@ -194,25 +194,30 @@ to "make it work" — exactly what (1.4) forbids.
 
 ## 2. Handler contract
 
-Handlers receive `Record<string, unknown>` from the MCP framework but read
-typed fields immediately. The validator (`validateToolInput`) has already
-enforced the schema before dispatch.
+A handler reads its input as the static type of its TypeBox `inputSchema`.
+Register the tool with `typedTool` (`src/tools/in-process-app.ts`): `tools/call`
+runs the validator (`validateToolInput`) against the schema before dispatch, so
+the handler's input is `Static<typeof XxxInput>` and it reads typed fields with
+no cast.
 
 ```ts
-interface CreateInput {
-  scope: WritableScope;
-  manifest: { name: string; description: string; loadingStrategy: SkillLoadingStrategy; ... };
-  body: string;
-}
+typedTool({
+  name: "create",
+  description: SKILLS_CREATE_DESCRIPTION,
+  inputSchema: SkillsCreateInput,
+  handler: async (input): Promise<ToolResult> => createSkill(runtime, input, eventSink),
+});
 
-async function createSkill(args: Record<string, unknown>): Promise<ToolResult> {
-  const { scope, manifest, body } = args as unknown as CreateInput;
+async function createSkill(runtime: Runtime, input: SkillsCreateInput, ...): Promise<ToolResult> {
+  const { scope, manifest, body } = input;
   // ... handler logic, no defensive re-validation
 }
 ```
 
-- DO declare a typed `interface XxxInput` matching the schema 1:1.
-- DO cast once at the top via `args as unknown as XxxInput`.
+- DO take the input type from the schema (`XxxInput = Static<typeof XxxInput>`
+  in `schemas/<app>.ts`), never a hand-written interface that restates it.
+- DO register through `typedTool`, or (the tasks app) a handler table typed from
+  each tool's schema; never cast `args as unknown as XxxInput` in a handler.
 - DO NOT accept multiple input shapes "for compat" — the LLM sees one
   schema; honor exactly that.
 - DO NOT plick fields off `args` with manual `if (typeof args.foo === "string")`
@@ -298,10 +303,9 @@ handler: async (input): Promise<ToolResult> => {
   const out: SkillsListOutput = { skills: list };  // ← shape pinned here
   return {
     content: textContent(summarizeList(list)),
-    // Wire-format cast: `structuredContent` is `Record<string, unknown>`
-    // and TS doesn't structurally widen interfaces into it. The named
-    // `out` declaration above is the load-bearing assertion.
-    structuredContent: out as unknown as Record<string, unknown>,
+    // `structuredContent()` widens a named output interface to the wire's
+    // `Record<string, unknown>`; the `out` declaration above is what is checked.
+    structuredContent: structuredContent(out),
     isError: false,
   };
 },
@@ -391,14 +395,15 @@ passed, production stayed broken. Match the production type strictly.
    Strong types throughout (1.2). For shared fields (skills' manifest,
    tasks' schedule), pull into a top-of-file const so create + update
    reference the same definition.
-2. **Define `interface XxxInput`.** Match the schema 1:1.
+2. **Export `type XxxInput = Static<typeof XxxInput>`** beside the schema.
 3. **Define output types.** Named `XxxOutput` exports in the same
    `schemas/<source>.ts` file (§2.1). Discriminated unions for handlers
    that return multiple shapes. Type-only is the floor; add TypeBox only
    if you need wire validation.
-4. **Write the handler.** Cast input via `as unknown as XxxInput` at the
-   top. **Annotate the return type** with the named `XxxOutput` — that's
-   what makes consumer drift a compile error. No `: object`.
+4. **Write the handler.** Register it with `typedTool`, so its input is the
+   schema's static type with no cast. **Annotate the return type** with the
+   named `XxxOutput` — that's what makes consumer drift a compile error. No
+   `: object`.
 5. **Add a unit test.** One happy path. One validator rejection (schema
    should reject malformed input before the handler runs). Test direct
    handler calls — not the full MCP roundtrip — for speed. For
@@ -423,8 +428,9 @@ update by grep is the discipline; the type system is the safety net.
 - **Lint**: `test/unit/platform/schema-shape.test.ts` walks every
   source's `tools/list`, the core `nb` tools included, and rejects bare
   object/array shapes, `clear<Field>` flags, and a `null` inside an `enum`.
-- **Type system**: typed `interface XxxInput` per handler — drift between
-  the schema and the type surfaces at compile.
+- **Type system**: each handler's input is `Static<typeof XxxInput>` of the
+  schema it is registered with (`typedTool`), so the schema and the type
+  cannot drift.
 - **Type system, output side (§2.1)**: handler return types are the named
   `XxxOutput` exports from `schemas/`; consumers import and narrow, and
   consumer drift, tests included, surfaces at compile.

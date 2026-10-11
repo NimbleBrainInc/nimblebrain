@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 import type { PlacementEntry } from "../types";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const getResources = mock(
   async (_appName: string, _path: string): Promise<{ html: string }> => ({ html: "<p>ok</p>" }),
@@ -45,7 +45,7 @@ function placement(serverName: string, label?: string): PlacementEntry {
     resourceUri: `ui://${serverName}/main`,
     priority: 0,
     ...(label ? { label } : {}),
-  } as unknown as PlacementEntry;
+  };
 }
 
 interface Mounted {

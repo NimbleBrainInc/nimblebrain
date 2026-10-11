@@ -16,17 +16,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 const HOUR_AGO = new Date(Date.now() - 3_600_000).toISOString();
 
@@ -54,10 +49,11 @@ const { WorkspaceSecretsSection } = await import(
 import type { InstalledConnector } from "../api/client";
 
 /** An installed connector carrying a catalog entry, shaped by the test's needs. */
-function installed(overrides: {
-  auth?: string;
-  secretHeaders?: Record<string, unknown>;
-}): InstalledConnector {
+type CatalogEntry = NonNullable<InstalledConnector["catalog"]>;
+
+function installed(
+  overrides: Partial<Pick<CatalogEntry, "auth" | "secretHeaders" | "providerAuth">>,
+): InstalledConnector {
   return {
     serverName: "com-acme-db-query",
     connectorName: "https://mcp.acme.test/mcp",
@@ -77,10 +73,12 @@ function installed(overrides: {
       auth: overrides.auth ?? "provider",
       ...(overrides.secretHeaders ? { secretHeaders: overrides.secretHeaders } : {}),
     },
-  } as unknown as InstalledConnector;
+  };
 }
 
-const DECLARED = { "X-Db-Url": { ref: "credential", key: "acme.db_url" } };
+const DECLARED: CatalogEntry["secretHeaders"] = {
+  "X-Db-Url": { ref: "credential", key: "acme.db_url" },
+};
 
 interface Mounted {
   container: HTMLDivElement;
@@ -137,7 +135,7 @@ function dialogButton(text: string): HTMLButtonElement | null {
 }
 
 function setInputValue(input: HTMLInputElement, value: string): void {
-  const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+  const WindowEvent = window.Event;
   const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   setVal?.call(input, value);
   input.dispatchEvent(new WindowEvent("input", { bubbles: true }));

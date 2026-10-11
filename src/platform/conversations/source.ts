@@ -8,6 +8,7 @@ import {
   defineInProcessApp,
   type InProcessTool,
   MCP_APP_MIME_TYPE,
+  typedTool,
 } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import {
@@ -23,9 +24,9 @@ import { type AccessContext, ConversationIndex, type WorkspaceScope } from "./in
 import { handleExport } from "./tools/export.ts";
 import { handleFork } from "./tools/fork.ts";
 import { handleGet } from "./tools/get.ts";
-import { handleList, type ListInput } from "./tools/list.ts";
-import { handleSearch, type SearchInput } from "./tools/search.ts";
-import { handleStats, type StatsInput } from "./tools/stats.ts";
+import { handleList } from "./tools/list.ts";
+import { handleSearch } from "./tools/search.ts";
+import { handleStats } from "./tools/stats.ts";
 import { handleUpdate } from "./tools/update.ts";
 import { loadConversationsUi } from "./ui-resource.ts";
 
@@ -190,11 +191,9 @@ export async function createConversationsSource(
   }
 
   /** Shared error handler — catches, formats, returns isError result. */
-  function withErrorHandling(
-    fn: (input: Record<string, unknown>) => Promise<object>,
-  ): (
-    input: Record<string, unknown>,
-  ) => Promise<{ content: ReturnType<typeof textContent>; isError: boolean }> {
+  function withErrorHandling<I>(
+    fn: (input: I) => Promise<object>,
+  ): (input: I) => Promise<{ content: ReturnType<typeof textContent>; isError: boolean }> {
     return async (input) => {
       try {
         const result = await fn(input);
@@ -213,7 +212,7 @@ export async function createConversationsSource(
   }
 
   const tools: InProcessTool[] = [
-    {
+    typedTool({
       name: "list",
       description:
         "List conversations in the current workspace, with pagination, sorting, and filtering. Returns conversation metadata (title, timestamps, token counts, preview, and whether a reply is still generating as `active`). Scoped to the workspace you are in — there is no cross-workspace listing, and no workspace argument to pass.",
@@ -221,12 +220,7 @@ export async function createConversationsSource(
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const access = currentAccess();
-        const result = await handleList(
-          input as unknown as ListInput,
-          index,
-          currentScope(),
-          access,
-        );
+        const result = await handleList(input, index, currentScope(), access);
         // `active` is read per request from the RunBus, never cached in the
         // index: a turn starting or ending does not rewrite the file header the
         // index holds. The runtime announces both moments, so a view refetches
@@ -239,20 +233,19 @@ export async function createConversationsSource(
           })),
         };
       }),
-    },
-    {
+    }),
+    typedTool({
       name: "get",
       description:
         'Load a conversation by ID — omit `id` for the conversation you are in. Returns metadata plus, by default, the most recent ~20 messages (with the message payload capped to ~30 KB; the full pretty-printed response stays under ~50 KB). Use expand:"metadata" for just the metadata or expand:"full" when you actually need the entire transcript — long conversations can run hundreds of thousands of tokens and full reads are recorded in tool history.',
       inputSchema: ConversationsGetInput,
-      handler: withErrorHandling(async (input) => {
+      handler: withErrorHandling(async (get) => {
         const { index } = await getIndex();
-        const get = input as unknown as ConversationsGetInput;
         const id = resolveConversationId(get.id);
         return handleGet({ ...get, id }, index, currentAccess(), runtime.isTurnActive(id));
       }),
-    },
-    {
+    }),
+    typedTool({
       name: "search",
       description:
         "Full-text search across message content in the current workspace's conversations. Returns matching conversations with context snippets around each match. Scoped to the workspace you are in — it does not reach other workspaces.",
@@ -260,17 +253,16 @@ export async function createConversationsSource(
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const access = currentAccess();
-        return handleSearch(input as unknown as SearchInput, index, currentScope(), access);
+        return handleSearch(input, index, currentScope(), access);
       }),
-    },
-    {
+    }),
+    typedTool({
       name: "update",
       description:
         "Update a conversation's title. Omit `id` to retitle the conversation you are in.",
       inputSchema: ConversationsUpdateInput,
-      handler: withErrorHandling(async (input) => {
+      handler: withErrorHandling(async (update) => {
         const { index } = await getIndex();
-        const update = input as unknown as ConversationsUpdateInput;
         const access = currentAccess();
         const updated = await handleUpdate(
           { ...update, id: resolveConversationId(update.id) },
@@ -282,15 +274,14 @@ export async function createConversationsSource(
         runtime.announceIdentitySourceChange("conversations", access.userId);
         return capSummary(updated);
       }),
-    },
-    {
+    }),
+    typedTool({
       name: "fork",
       description:
         "Fork a conversation at a specific message index, creating a new conversation with messages up to that point. Omit `id` to fork the conversation you are in.",
       inputSchema: ConversationsForkInput,
-      handler: withErrorHandling(async (input) => {
+      handler: withErrorHandling(async (fork) => {
         const { index } = await getIndex();
-        const fork = input as unknown as ConversationsForkInput;
         const access = currentAccess();
         const forked = await handleFork(
           { ...fork, id: resolveConversationId(fork.id) },
@@ -301,8 +292,8 @@ export async function createConversationsSource(
         runtime.announceIdentitySourceChange("conversations", access.userId);
         return capSummary(forked);
       }),
-    },
-    {
+    }),
+    typedTool({
       name: "stats",
       description:
         "Token usage analytics for the current workspace. Returns total tokens, breakdown by model and skill, and top tools used.",
@@ -310,20 +301,19 @@ export async function createConversationsSource(
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const access = currentAccess();
-        return handleStats(input as unknown as StatsInput, index, currentScope(), access);
+        return handleStats(input, index, currentScope(), access);
       }),
-    },
-    {
+    }),
+    typedTool({
       name: "export",
       description:
         "Export a conversation as markdown or JSON — omit `id` for the conversation you are in. Markdown renders messages as a readable document; JSON returns raw JSONL content as a JSON array.",
       inputSchema: ConversationsExportInput,
-      handler: withErrorHandling(async (input) => {
+      handler: withErrorHandling(async (exp) => {
         const { index } = await getIndex();
-        const exp = input as unknown as ConversationsExportInput;
         return handleExport({ ...exp, id: resolveConversationId(exp.id) }, index, currentAccess());
       }),
-    },
+    }),
   ];
 
   const resources = new Map([

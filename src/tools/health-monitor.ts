@@ -285,13 +285,12 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Duck-type check for remote sources. If McpSource has isRemote(), use it.
- * Otherwise fall back to checking for a remoteConfig property.
+ * Whether a source connects to a remote server. The `typeof` guard reads a
+ * stand-in source that lacks `isRemote` (a test double) as local.
  */
 function isRemoteSource(source: McpSource): boolean {
-  const s = source as unknown as { isRemote?: () => boolean };
-  if (typeof s.isRemote === "function") {
-    return s.isRemote();
+  if (typeof source.isRemote === "function") {
+    return source.isRemote();
   }
   return false;
 }

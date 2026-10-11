@@ -31,7 +31,7 @@ import { realClient } from "../../test/setup";
 // Tell React 19 we're inside an act-aware test environment. Without this
 // flag, every awaited setState inside an async useEffect logs a warning
 // (the rendered output is still correct, the noise is just ugly).
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const readResourceMock = mock(
   async (_server: string, _uri: string): Promise<{ contents: unknown[] }> => ({ contents: [] }),
@@ -56,11 +56,11 @@ beforeEach(() => {
   // happy-dom: createObjectURL / revokeObjectURL exist but produce ad-hoc
   // strings. Stabilise the value so assertions on `src` are deterministic.
   let counter = 0;
-  (globalThis as unknown as { URL: typeof URL }).URL.createObjectURL = (() => {
+  URL.createObjectURL = (() => {
     counter += 1;
     return `blob:http://localhost/fake-${counter}`;
   }) as typeof URL.createObjectURL;
-  (globalThis as unknown as { URL: typeof URL }).URL.revokeObjectURL = (() => {
+  URL.revokeObjectURL = (() => {
     /* noop */
   }) as typeof URL.revokeObjectURL;
 });

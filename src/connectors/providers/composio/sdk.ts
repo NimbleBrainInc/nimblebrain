@@ -203,8 +203,9 @@ let _vendorLoadCount = 0;
 async function loadComposioCore(): Promise<ComposioCoreModule> {
   _vendorLoadCount += 1;
   // The runtime dynamic import (a call expression, not a top-level `from`
-  // import) is the only reference to the vendor. Narrow it to the local slice.
-  return (await import("@composio/core")) as unknown as ComposioCoreModule;
+  // import) is the only reference to the vendor; the local `ComposioCoreModule`
+  // slice is the part of it this file uses.
+  return await import("@composio/core");
 }
 
 /**
@@ -368,12 +369,14 @@ export async function connectComposioApiKey(opts: {
   const composioCore = await loadComposioCore();
   // SDK types the `config` as a broad ConnectionData union; `AuthScheme.APIKey`
   // builds the API_KEY-shaped member ({ authScheme, val: { status, ...fields } }).
+  // The local `ComposioClient` slice declares the request `unknown`; read it
+  // with every field `unknown` (each checked below) and the one method called.
   const connRequest = (await withTimeout("connectedAccounts.initiate(apikey)", () =>
     composio.connectedAccounts.initiate(opts.userId, opts.authConfigId, {
       config: composioCore.AuthScheme.APIKey(opts.fields),
       allowMultiple: true,
     }),
-  )) as unknown as {
+  )) as {
     id?: unknown;
     connectedAccountId?: unknown;
     waitForConnection: (
@@ -451,6 +454,8 @@ export async function findActiveComposioConnection(opts: {
   authConfigId: string;
 }): Promise<{ id: string; status: string; displayName?: string } | null> {
   const composio = await composioClient(opts.apiKey);
+  // The local `ComposioClient` slice declares the page `unknown`; read it with
+  // every item field `unknown`, each checked below before use.
   const list = (await withTimeout("connectedAccounts.list", () =>
     composio.connectedAccounts.list({
       userIds: [opts.userId],
@@ -458,7 +463,7 @@ export async function findActiveComposioConnection(opts: {
       statuses: ["ACTIVE"],
       limit: 1,
     }),
-  )) as unknown as { items?: Array<{ id?: unknown; status?: unknown; state?: unknown }> };
+  )) as { items?: Array<{ id?: unknown; status?: unknown; state?: unknown }> };
   const first = list.items?.[0];
   if (!first) return null;
   if (typeof first.id !== "string" || first.id.length === 0) return null;
@@ -650,9 +655,11 @@ export async function createComposioSession(opts: {
     // array form is the simplest match for "these tools, full stop."
     config.tools = { [opts.toolkit]: opts.tools };
   }
+  // The local `ComposioClient` slice declares the session `unknown`; read it
+  // with every field `unknown`, each checked below before use.
   const session = (await withTimeout("create-session", () =>
-    composio.create(opts.userId, config as unknown as Parameters<typeof composio.create>[1]),
-  )) as unknown as {
+    composio.create(opts.userId, config),
+  )) as {
     mcp?: { type?: unknown; url?: unknown; headers?: unknown };
   };
   const mcp = session.mcp;

@@ -16,17 +16,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 // One ordered log of every server call the flow makes, so the test can assert
 // the sequence rather than each call in isolation — the sequence is the fix.
@@ -160,7 +155,7 @@ function findButton(container: HTMLElement, text: string): HTMLButtonElement | n
 }
 
 function setInputValue(input: HTMLInputElement, value: string): void {
-  const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+  const WindowEvent = window.Event;
   const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   setVal?.call(input, value);
   input.dispatchEvent(new WindowEvent("input", { bubbles: true }));
@@ -208,7 +203,7 @@ describe("a Browse entry that declares secretHeaders", () => {
       setInputValue(input, "postgres://a.acme.test/db");
     });
     await act(async () => {
-      findButton(document.body as unknown as HTMLElement, "Save and install")?.click();
+      findButton(document.body, "Save and install")?.click();
     });
     await act(async () => {
       await Promise.resolve();
@@ -226,7 +221,7 @@ describe("a Browse entry that declares secretHeaders", () => {
   test("cancelling installs nothing and stores nothing", async () => {
     mounted = await openDialog();
     await act(async () => {
-      findButton(document.body as unknown as HTMLElement, "Cancel")?.click();
+      findButton(document.body, "Cancel")?.click();
     });
     await act(async () => {
       await Promise.resolve();
@@ -238,7 +233,7 @@ describe("a Browse entry that declares secretHeaders", () => {
 
   test("a blank required value leaves submit disabled, so nothing runs", async () => {
     mounted = await openDialog();
-    const submit = findButton(document.body as unknown as HTMLElement, "Save and install");
+    const submit = findButton(document.body, "Save and install");
     expect(submit?.disabled).toBe(true);
 
     // Clicking a disabled control is a no-op; assert the flow stayed put rather
@@ -254,15 +249,11 @@ describe("a Browse entry that declares secretHeaders", () => {
 
   test("filling the required value enables submit", async () => {
     mounted = await openDialog();
-    expect(findButton(document.body as unknown as HTMLElement, "Save and install")?.disabled).toBe(
-      true,
-    );
+    expect(findButton(document.body, "Save and install")?.disabled).toBe(true);
     const input = document.body.getElementsByTagName("input")[1] as HTMLInputElement;
     await act(async () => {
       setInputValue(input, "postgres://a.acme.test/db");
     });
-    expect(findButton(document.body as unknown as HTMLElement, "Save and install")?.disabled).toBe(
-      false,
-    );
+    expect(findButton(document.body, "Save and install")?.disabled).toBe(false);
   });
 });

@@ -64,8 +64,7 @@ function makeApp(): { iframe: HTMLIFrameElement; app: AppSide } {
   Object.defineProperty(iframe, "contentWindow", { configurable: true, get: () => stubWindow });
 
   function send(data: unknown): void {
-    const WindowMessageEvent = (window as unknown as { MessageEvent: typeof MessageEvent })
-      .MessageEvent;
+    const WindowMessageEvent = window.MessageEvent;
     const event = new WindowMessageEvent("message", { data });
     Object.defineProperty(event, "source", { configurable: true, get: () => stubWindow });
     window.dispatchEvent(event);
