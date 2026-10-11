@@ -155,6 +155,36 @@ describe("TaskPageBody", () => {
     expect(html).toContain("What it does");
   });
 
+  test("the latest result while it loads, when the run left none, and when it could not be read", () => {
+    const failed = { ...run("r4", "Failed", new Date().toISOString()), status: "failure" as const };
+    const body = (latest: TaskRun, extra: Record<string, unknown>) =>
+      renderToStaticMarkup(
+        createElement(page.TaskPageBody, {
+          detail: DETAIL,
+          health: page.taskHealth(undefined, DETAIL, null, [latest]),
+          stats: null,
+          runs: [latest],
+          runsError: null,
+          actions: SHEET_ACTIONS,
+          ...extra,
+        }),
+      );
+    expect(body(failed, {})).toContain('class="skel skel-card"');
+    expect(body({ ...failed, error: "The model refused." }, { latestResult: null })).toContain(
+      "The model refused.",
+    );
+    expect(body(failed, { latestResult: null })).toContain("This run left no result.");
+    const unread = body(run("r5", "Succeeded", new Date().toISOString()), {
+      latestResult: null,
+      latestError: "",
+    });
+    expect(unread).toContain("This run&#x27;s result could not be read.");
+    expect(unread).not.toContain("left no result");
+    expect(body(failed, { latestResult: null, latestError: "Permission denied." })).toContain(
+      "Permission denied.",
+    );
+  });
+
   test("no runs yet, and a run in flight reads Running", () => {
     const quiet = page.taskHealth(undefined, DETAIL, null, []);
     const html = renderToStaticMarkup(

@@ -20,7 +20,7 @@ import { isOpenRun } from "./ResultView.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { RunBadge, StatusBadge } from "./RunBadge.tsx";
 import { Section, Sections, SummaryStrip, type Tile } from "./Section.tsx";
-import { asJson, ResultPreview, readsStructured } from "./StructuredView.tsx";
+import { ResultPreview, readsStructured } from "./StructuredView.tsx";
 
 /** Runs listed on the page; the rest are behind "See all runs". */
 const RECENT_RUNS = 6;
@@ -302,45 +302,47 @@ export function SetupSections({ d, onEdit }: { d: TaskDetail; onEdit?: () => voi
 }
 
 /**
- * The latest result's body: the full result once read (structured output as
- * values, text as prose); the run's preview only when the result cannot be
- * read and the preview is not cut-off JSON.
+ * The latest result's body once read: structured output as values, text as
+ * prose, why the run left none, or why it could not be read.
  */
 function LatestBody({
   run,
   result,
+  error,
   raw,
 }: {
   run: TaskRun;
   result: TaskRunResult | null | undefined;
+  error?: string;
   raw: boolean;
 }) {
-  if (result === undefined && run.resultPreview) {
-    return <div className="skel skel-card" aria-busy="true" />;
+  if (error !== undefined) {
+    return (
+      <div className="error-banner" role="alert">
+        {error || "This run's result could not be read."}
+      </div>
+    );
   }
-  const text = result?.output ?? run.resultPreview;
-  if (result?.structured !== undefined || (result && text)) {
+  if (result === undefined) return <div className="skel skel-card" aria-busy="true" />;
+  const text = result?.output ?? "";
+  if (result?.structured !== undefined || text) {
     return <ResultPreview structured={result?.structured} text={text} raw={raw} />;
   }
-  if (text && typeof asJson(text) !== "object" && !/^\s*(```|[[{])/.test(text)) {
-    return <ResultPreview text={text} />;
-  }
-  return (
-    <p className="muted">
-      {run.error ?? (text ? "Open the run to read its result." : "This run left no result.")}
-    </p>
-  );
+  return <p className="muted">{run.error ?? "This run left no result."}</p>;
 }
 
 /** The latest result as a section: its label and time, Show raw and Open the run in the header. */
 function LatestRun({
   run,
   result,
+  error,
   onOpenRun,
 }: {
   run?: TaskRun;
-  /** The latest run's full result: undefined while it loads, null when unreadable. */
+  /** The latest run's full result: undefined while it loads, null when the run left none. */
   result: TaskRunResult | null | undefined;
+  /** Why the result could not be read, when it could not. */
+  error?: string;
   onOpenRun: (run: TaskRun) => void;
 }) {
   const [raw, setRaw] = useState(false);
@@ -395,7 +397,7 @@ function LatestRun({
         </>
       }
     >
-      <LatestBody run={run} result={result} raw={raw} />
+      <LatestBody run={run} result={result} error={error} raw={raw} />
     </Section>
   );
 }
@@ -529,6 +531,7 @@ export function TaskPageBody({
   runs,
   runsError,
   latestResult,
+  latestError,
   actions,
 }: {
   detail: TaskDetail;
@@ -536,8 +539,10 @@ export function TaskPageBody({
   stats: TaskStats | null;
   runs: TaskRun[] | null;
   runsError: string | null;
-  /** The latest run's full result: undefined while it loads, null when unreadable. */
+  /** The latest run's full result: undefined while it loads, null when the run left none. */
   latestResult?: TaskRunResult | null;
+  /** Why the latest run's result could not be read, when it could not. */
+  latestError?: string;
   actions: TaskPageActions;
 }) {
   const latest = runs?.[0];
@@ -560,7 +565,12 @@ export function TaskPageBody({
         </div>
       )}
       <TaskSummaryStrip detail={detail} stats={stats} last={latest} />
-      <LatestRun run={latest} result={latestResult} onOpenRun={actions.onOpenRun} />
+      <LatestRun
+        run={latest}
+        result={latestResult}
+        error={latestError}
+        onOpenRun={actions.onOpenRun}
+      />
       <RecentRuns
         runs={runs}
         runsError={runsError}
@@ -699,8 +709,9 @@ export function TaskPage({
   onBack: () => void;
 }) {
   const resultTool = useTool<string>("run_result");
-  /** undefined while it loads; null when it could not be read. */
+  /** undefined while it loads; null when the run left none. */
   const [latestResult, setLatestResult] = useState<TaskRunResult | null | undefined>(undefined);
+  const [latestError, setLatestError] = useState<string | undefined>(undefined);
   const statusTool = useTool<string>("status");
   const statsTool = useTool<string>("stats");
   const runsTool = useTool<string>("runs");
@@ -741,10 +752,13 @@ export function TaskPage({
   // biome-ignore lint/correctness/useExhaustiveDependencies: resultTool.call is stable
   useEffect(() => {
     setLatestResult(undefined);
+    setLatestError(undefined);
     if (!latestId || !detail) return;
     let cancelled = false;
     void readResult(resultTool.call, latestId, detail.id).then((read) => {
-      if (!cancelled) setLatestResult(read.result);
+      if (cancelled) return;
+      setLatestResult(read.result);
+      setLatestError(read.error);
     });
     return () => {
       cancelled = true;
@@ -826,6 +840,7 @@ export function TaskPage({
             runs={runs}
             runsError={runsError}
             latestResult={latestResult}
+            latestError={latestError}
             actions={actions}
           />
         )}
