@@ -160,20 +160,23 @@ client that did not may put `_meta` where a model reads it.
   and the entry's position in it, the entry as received, its cost (reported, or
   from an operator rate, or none), the receipt time, and the same attribution a
   model call's line carries. A call's cost is the sum of its report's lines.
-- **It is auditable through the trace, without naming the provider.** The
-  ledger line keeps the call's trace id, which the host already propagates to
-  the server. The server logs, with that trace id, the provider's reference for
-  each item: the request or run id the provider returned, or, when the provider
-  returns none but accepts one from its client, an id the server set on the
-  request. It never sends that reference to the host, because a provider's
-  reference identifies the provider. An operator follows a ledger line to the
-  server's log by trace id, and from there to the provider's records. The
-  report's `id` is for de-duplication, not audit.
+- **It is auditable without naming the provider.** The ledger line keeps the
+  report's `id` and the call's trace id. For each item, the server logs the
+  provider's reference (the request or run id the provider returned, or, when
+  the provider returns none but accepts one from its client, an id the server
+  set on the request) with the report's `id`, and with the trace id when the
+  connection carried trace context, which not every connection does. It never
+  sends that reference to the host, because a provider's reference
+  identifies the provider. An operator follows a ledger line to the server's
+  log by report `id` or trace id, and from there to the provider's records.
+  That path exists only for servers whose logs the operator can read; for any
+  other server, audit ends at the ledger line.
 - **Telemetry gets a copy, never the record.** The host also records each item
-  as attributes on the call's span and in its metrics, so traces and dashboards
-  show spend. Traces are sampled and expire, so nothing reads cost back from
-  them. Labels never travel as trace baggage, which reaches every server
-  downstream.
+  as attributes on the call's span, and counts it in its metrics by server and
+  status only: `meter` and `unit` are the server's strings, so they go on the
+  span and never become metric labels. Traces are sampled and expire, so nothing
+  reads cost back from them. Labels never travel as trace baggage, which
+  reaches every server downstream.
 - **No report is unknown, not zero.** The host records nothing for a call
   without one, and shows, per server, whether it reports at all.
 
@@ -211,7 +214,8 @@ deliverable, carries that run's labels.
 **A `usd` spend account is debited, after the call, the cost of each tool line its
 runs produce whose payer is `server` and whose cost is in USD. A cost in another
 currency is recorded as reported and debits no `usd` account, so it counts as
-unpriced for the budget; converting it is not decided here. A tool
+unpriced for the budget even where an operator rate in USD exists, because a
+reported amount takes precedence over a rate; converting it is not decided here. A tool
 call is not sent while any `usd` account its run holds is at or below zero; the
 run ends with the spend-limit stop reason naming the account, as it does when the
 door cannot pay for a model call.** Nothing is reserved before a tool call,
@@ -254,7 +258,7 @@ needs other implementations first.
   adds up depends on authors labelling consistently: two tasks that name the same
   record under different keys produce two costs that never meet. The task
   authoring guide has to say so.
-- The ledger grows by one line per reported tool call. It stays a display
+- The ledger grows by one line per reported entry. It stays a display
   surface, not a billing record.
 - Every report is the server's claim. Over-reporting by a server the tenant
   connected is answered by disconnecting it; nothing in this design proves a
