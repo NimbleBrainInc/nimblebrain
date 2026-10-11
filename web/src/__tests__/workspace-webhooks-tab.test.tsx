@@ -80,7 +80,7 @@ async function mount(
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
-  // Each `installed` entry carries only the `serverName` and `displayName` the tab reads, not a full InstalledConnector.
+  // biome-ignore lint/plugin/double-cast: Each `installed` entry carries only the `serverName` and `displayName` the tab reads, not a full InstalledConnector.
   const icons = {
     iconFor: () => undefined,
     connectors: { workspaceId: WS.id, installed },

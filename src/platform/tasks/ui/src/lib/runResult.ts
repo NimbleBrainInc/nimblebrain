@@ -22,6 +22,7 @@ export async function readResult(
     const res = await call({ runId, ...(taskId ? { taskId } : {}) });
     // `tasks__run_result` answers JSON read as `RunResultAnswer`, this package's
     // hand-kept mirror of `TasksRunResultOutput`; nothing checks it at runtime.
+    // biome-ignore lint/plugin/double-cast: tool JSON read as the hand-kept `RunResultAnswer` mirror
     const answer = asDict(res.data) as unknown as RunResultAnswer;
     const { run } = answer;
     if (answer.status !== "ended") return { run, result: null, open: true };

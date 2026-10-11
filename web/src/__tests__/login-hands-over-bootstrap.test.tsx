@@ -23,7 +23,7 @@ const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { Login } = await import("../components/Login");
 
-// No `config`: Login hands the body on without reading it, and the test asserts it arrives as sent.
+// biome-ignore lint/plugin/double-cast: No `config`: Login hands the body on without reading it, and the test asserts it arrives as sent.
 const BOOTSTRAP = {
   user: {
     id: "usr_1",

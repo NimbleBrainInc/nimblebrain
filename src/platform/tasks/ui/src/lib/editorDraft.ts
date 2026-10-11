@@ -103,6 +103,7 @@ function triggerOf(
       trigger: "schedule",
       // The UI's `Task` mirror types a stored schedule as a plain record; any
       // type but `event` is one of the `ScheduleSpec` shapes the picker edits.
+      // biome-ignore lint/plugin/double-cast: the UI mirror types a stored schedule as a plain record
       schedule: schedule as unknown as ScheduleSpec,
       event: emptyDraft().event,
     };

@@ -95,7 +95,7 @@ describe("bootBrand", () => {
 
 describe("applyBrand", () => {
   test("a brand the merge cannot read falls back to canonical", () => {
-    // A `null` color, which `ResolvedBrand` does not admit, is the unreadable brand under test.
+    // biome-ignore lint/plugin/double-cast: A `null` color, which `ResolvedBrand` does not admit, is the unreadable brand under test.
     applyBrand({ name: "Broken", colors: { primary: null } } as unknown as ResolvedBrand);
     expect(getBrand()).toEqual({});
     expect(brandStyle()).toBeNull();

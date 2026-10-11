@@ -40,11 +40,12 @@ function chunkedResponse(chunks: string[]): Response {
 
 test("a frame whose event and data lines arrive in separate reads is delivered", async () => {
   const data = { conversationId: "conv_1", title: "Plans", ownerId: "usr_1" };
+  // biome-ignore lint/plugin/double-cast: Bun's `fetch` type also declares `preconnect`, absent here
   globalThis.fetch = (async () =>
     chunkedResponse([
       "event: conversation.title\n",
       `data: ${JSON.stringify(data)}\n\n`,
-    ])) as unknown as typeof fetch; // Bun's `fetch` type also declares `preconnect`, absent here
+    ])) as unknown as typeof fetch;
 
   const received: Array<{ type: string; data: unknown }> = [];
   const conn = connectEvents({

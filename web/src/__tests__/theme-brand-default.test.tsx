@@ -27,7 +27,7 @@ const realMatchMedia = window.matchMedia;
 
 /** Report the OS as dark mode. */
 function osPrefersDark() {
-  // A MediaQueryList with only what the theme reads; no `onchange`, `addListener`, or `dispatchEvent`.
+  // biome-ignore lint/plugin/double-cast: A MediaQueryList with only what the theme reads; no `onchange`, `addListener`, or `dispatchEvent`.
   window.matchMedia = ((query: string) => ({
     matches: query.includes("dark"),
     media: query,

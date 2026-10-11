@@ -257,6 +257,7 @@ export function UpcomingView({
       const res = await upcomingTool.call({ days });
       // `tasks__upcoming` answers JSON this package reads as `UpcomingData`, its
       // hand-kept mirror of `TasksUpcomingOutput`; nothing checks it at runtime.
+      // biome-ignore lint/plugin/double-cast: tool JSON read as the hand-kept `UpcomingData` mirror
       const next = asDict(res.data) as unknown as UpcomingData;
       setData(next);
       setError(null);

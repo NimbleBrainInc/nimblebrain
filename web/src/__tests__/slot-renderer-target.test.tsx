@@ -63,7 +63,7 @@ async function connectFrame(container: HTMLElement, serverName: string) {
   const iframe = container.getElementsByTagName("iframe")[0];
   if (!iframe) throw new Error("no iframe mounted");
   const inbox: unknown[] = [];
-  // The app's window, reduced to the `postMessage` the bridge calls on it.
+  // biome-ignore lint/plugin/double-cast: The app's window, reduced to the `postMessage` the bridge calls on it.
   const stub = { postMessage: (data: unknown) => inbox.push(data) } as unknown as Window;
   Object.defineProperty(iframe, "contentWindow", { configurable: true, get: () => stub });
   const send = (data: unknown) => {

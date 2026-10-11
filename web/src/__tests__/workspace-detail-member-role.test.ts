@@ -35,7 +35,7 @@ describe("memberRoleFor", () => {
     expect(memberRoleFor(MEMBERS, undefined)).toBeUndefined();
     const withBlank = [
       ...MEMBERS,
-      // A record missing the `userId` its type requires, as a malformed member list carries.
+      // biome-ignore lint/plugin/double-cast: A record missing the `userId` its type requires, as a malformed member list carries.
       { userId: undefined as unknown as string, role: "admin" as const },
     ];
     expect(memberRoleFor(withBlank, undefined)).toBeUndefined();

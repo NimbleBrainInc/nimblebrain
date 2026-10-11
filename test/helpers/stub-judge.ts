@@ -66,6 +66,7 @@ export async function createStubJudge(name = "judge"): Promise<StubJudge> {
   const judgeTool = async (input: Record<string, unknown>): Promise<ToolResult> => {
     // The `judge` input schema checks only that `criteria` and `state` are
     // there; the runtime's judge port sends the whole `StubJudgeCall`.
+    // biome-ignore lint/plugin/double-cast: the judge port sends the whole `StubJudgeCall`, the schema checks two fields
     const call = input as unknown as StubJudgeCall;
     stub.calls.push(call);
     const out = stub.answer(call);
