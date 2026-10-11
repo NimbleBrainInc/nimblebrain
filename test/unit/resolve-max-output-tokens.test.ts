@@ -59,8 +59,9 @@ describe("resolveMaxOutputTokens", () => {
     ).toBe(getModelByString("anthropic:claude-opus-4-7")!.limits.output);
   });
 
-  it("bare model strings (no provider prefix) are treated as anthropic", () => {
-    const opus = getModelByString("anthropic:claude-opus-4-7");
-    expect(resolveMaxOutputTokens({ model: "claude-opus-4-7" })).toBe(opus!.limits.output);
+  it("a model string with no provider gets the uncatalogued ceiling", () => {
+    expect(resolveMaxOutputTokens({ model: "claude-opus-4-7" })).toBe(
+      resolveMaxOutputTokens({ model: "nope:not-a-model" }),
+    );
   });
 });

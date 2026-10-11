@@ -6,6 +6,7 @@ import {
   aggregateUsage,
   computeCacheHitRate,
   MAX_BREAKDOWN_ROWS,
+  providerOf,
   resolveDateRange,
 } from "../../../src/usage/aggregate.ts";
 import { estimateCost, resolveRates } from "../../../src/usage/cost.ts";
@@ -93,7 +94,7 @@ function llmEvent(
   return {
     type: "llm.response",
     ts: overrides.ts ?? "2026-04-10T12:00:00Z",
-    model: overrides.model ?? "claude-sonnet-4-5-20250929",
+    model: overrides.model ?? "anthropic:claude-sonnet-4-5-20250929",
     usage: {
       inputTokens: overrides.inputTokens ?? 1000,
       outputTokens: overrides.outputTokens ?? 500,
@@ -133,14 +134,14 @@ describe("aggregateUsage", () => {
       {
         ts: "2026-04-10T12:05:00Z",
         source: "compaction",
-        model: "claude-haiku-4-5-20251001",
+        model: "anthropic:claude-haiku-4-5-20251001",
         usage: { inputTokens: 400, outputTokens: 60, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 120,
       },
       {
         ts: "2026-04-10T12:06:00Z",
         source: "title",
-        model: "claude-haiku-4-5-20251001",
+        model: "anthropic:claude-haiku-4-5-20251001",
         usage: { inputTokens: 50, outputTokens: 8, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 40,
       },
@@ -202,7 +203,7 @@ describe("aggregateUsage", () => {
     // So 2_000_000 total = 500K noCache + 500K cacheRead + 1M cacheWrite.
     writeCalls(dir, { id: "cost-conv" }, [
       llmEvent({
-        model: "claude-sonnet-4-5-20250929",
+        model: "anthropic:claude-sonnet-4-5-20250929",
         inputTokens: 2_000_000,
         outputTokens: 1_000_000,
         cacheReadTokens: 500_000,
@@ -338,12 +339,12 @@ describe("aggregateUsage", () => {
     };
     writeCalls(dir, { id: "drift" }, [
       llmEvent({
-        model: "claude-sonnet-4-5-20250929",
+        model: "anthropic:claude-sonnet-4-5-20250929",
         ...usage,
       }),
     ]);
     const report = await aggregateUsage(dir, "all", "day");
-    const expectedTotal = estimateCost("claude-sonnet-4-5-20250929", usage);
+    const expectedTotal = estimateCost("anthropic:claude-sonnet-4-5-20250929", usage);
     expect(report.totals.cost.total).toBeCloseTo(expectedTotal, 8);
   });
 
@@ -357,7 +358,7 @@ describe("aggregateUsage", () => {
     const dir = makeTmpDir();
     writeCalls(dir, { id: "shape" }, [
       llmEvent({
-        model: "claude-sonnet-4-5-20250929",
+        model: "anthropic:claude-sonnet-4-5-20250929",
         inputTokens: 1000,
         outputTokens: 500,
         cacheReadTokens: 100,
@@ -425,7 +426,7 @@ describe("aggregateUsage", () => {
     // hit rate = 700 / (100 + 700 + 200) = 0.7
     writeCalls(dir, { id: "hit" }, [
       llmEvent({
-        model: "claude-sonnet-4-5-20250929",
+        model: "anthropic:claude-sonnet-4-5-20250929",
         inputTokens: 1000,
         outputTokens: 10,
         cacheReadTokens: 700,
@@ -531,6 +532,13 @@ describe("aggregateUsage — by user", () => {
 // resolveDateRange — timezone safety
 // ---------------------------------------------------------------------------
 
+describe("providerOf", () => {
+  it("names the segment before the colon, and none for a line with no provider", () => {
+    expect(providerOf("anthropic:claude-sonnet-4-6")).toBe("anthropic");
+    expect(providerOf("unknown")).toBe("none");
+  });
+});
+
 describe("resolveDateRange", () => {
   it("'month' range starts on the 1st regardless of timezone", () => {
     // Bug: new Date("2026-04-30") in PDT = April 29 local.
@@ -635,7 +643,7 @@ function writeRecord(dir: string, fields: Partial<UsageLedgerEntry>): void {
     ts: "2026-04-10T12:00:00Z",
     source: "main",
     origin: "chat",
-    model: "claude-sonnet-4-5-20250929",
+    model: "anthropic:claude-sonnet-4-5-20250929",
     usage: { inputTokens: 1000, outputTokens: 500 },
     llmMs: 200,
     ...fields,

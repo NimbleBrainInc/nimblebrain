@@ -61,10 +61,8 @@ describe("Model Catalog", () => {
     expect(model!.id).toBe("gpt-4o");
   });
 
-  it("getModelByString defaults bare strings to anthropic", () => {
-    const model = getModelByString("claude-sonnet-4-6");
-    expect(model).toBeDefined();
-    expect(model!.provider).toBe("anthropic");
+  it("getModelByString finds nothing for a string with no provider", () => {
+    expect(getModelByString("claude-sonnet-4-6")).toBeUndefined();
   });
 
   it("listModels returns all models for a provider", () => {
@@ -139,8 +137,8 @@ describe("isModelAllowed", () => {
     ).toBe(false);
   });
 
-  it("bare string defaults to anthropic", () => {
-    expect(isModelAllowed("claude-sonnet-4-6", { anthropic: {} })).toBe(true);
+  it("a string with no provider is allowed by none", () => {
+    expect(isModelAllowed("claude-sonnet-4-6", { anthropic: {} })).toBe(false);
     expect(isModelAllowed("claude-sonnet-4-6", { openai: {} })).toBe(false);
   });
 });
@@ -278,16 +276,15 @@ describe("supportsEnabledThinking", () => {
   it("returns false for adaptive-only Anthropic models", () => {
     // These reject thinking.type=enabled with a 400; the engine must
     // translate to thinking.type=adaptive + output_config.effort.
-    expect(supportsEnabledThinking("claude-opus-4-7")).toBe(false);
-    expect(supportsEnabledThinking("claude-opus-4-8")).toBe(false);
-    expect(supportsEnabledThinking("claude-opus-5")).toBe(false);
-    expect(supportsEnabledThinking("claude-sonnet-5")).toBe(false);
+    expect(supportsEnabledThinking("anthropic:claude-opus-4-7")).toBe(false);
     expect(supportsEnabledThinking("anthropic:claude-opus-4-8")).toBe(false);
+    expect(supportsEnabledThinking("anthropic:claude-opus-5")).toBe(false);
+    expect(supportsEnabledThinking("anthropic:claude-sonnet-5")).toBe(false);
   });
 
   it("returns true for Anthropic models that accept the enabled shape", () => {
-    expect(supportsEnabledThinking("claude-sonnet-4-6")).toBe(true);
-    expect(supportsEnabledThinking("claude-haiku-4-5-20251001")).toBe(true);
+    expect(supportsEnabledThinking("anthropic:claude-sonnet-4-6")).toBe(true);
+    expect(supportsEnabledThinking("anthropic:claude-haiku-4-5-20251001")).toBe(true);
   });
 
   it("returns true for non-Anthropic providers", () => {
@@ -322,7 +319,9 @@ describe("supportsEnabledThinking", () => {
     const unclassified = listModels("anthropic")
       .filter((m) => m.capabilities.reasoning)
       .map((m) => m.id)
-      .filter((id) => supportsEnabledThinking(id) && !ACCEPTS_ENABLED_THINKING.has(id));
+      .filter(
+        (id) => supportsEnabledThinking(`anthropic:${id}`) && !ACCEPTS_ENABLED_THINKING.has(id),
+      );
 
     expect(unclassified).toEqual([]);
   });

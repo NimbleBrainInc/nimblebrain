@@ -3348,6 +3348,9 @@ describe("AgentEngine", () => {
 // ---------------------------------------------------------------------------
 
 describe("prompt caching", () => {
+  // Cache markers are Anthropic's dialect, chosen by the model's provider.
+  const anthropicConfig: EngineConfig = { ...defaultConfig, model: "anthropic:test-model" };
+
   it("sets cacheControl on the system message", async () => {
     let capturedPrompt: LanguageModelV4Message[] = [];
     const model = createMockModel((options) => {
@@ -3366,7 +3369,7 @@ describe("prompt caching", () => {
     );
 
     await engine.run(
-      defaultConfig,
+      anthropicConfig,
       "You are a test.",
       [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
       [],
@@ -3397,7 +3400,7 @@ describe("prompt caching", () => {
     );
 
     await engine.run(
-      defaultConfig,
+      anthropicConfig,
       "You are a test.",
       [
         { role: "user", content: [{ type: "text", text: "First" }] },
@@ -3444,7 +3447,7 @@ describe("prompt caching", () => {
       new NoopEventSink(),
     );
 
-    await engine.run(defaultConfig, "", messages, []);
+    await engine.run(anthropicConfig, "", messages, []);
 
     // Original message should not have providerOptions added
     expect((originalMsg as Record<string, unknown>).providerOptions).toBeUndefined();
