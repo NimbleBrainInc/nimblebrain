@@ -428,6 +428,19 @@ function DirectoryResults({
 }
 
 /**
+ * What Set up hands the operator dialog. A catalog listing carries the vendor
+ * portal and secret key under `install`, only on a remote-OAuth install; the
+ * dialog reads a top-level `operatorSetup` and renders nothing without one.
+ */
+export function operatorSetupTarget(entry: CatalogListing): OperatorSetupTarget {
+  return {
+    id: entry.id,
+    name: entry.name,
+    operatorSetup: entry.install.kind === "remote-oauth" ? entry.install.operatorSetup : undefined,
+  };
+}
+
+/**
  * One card in the Browse grid. Layout:
  *
  *   ┌────────────────────────────────────────────┐
@@ -453,19 +466,6 @@ function DirectoryResults({
  * Belt and suspenders. Either alone would work; together they're
  * resilient to future content shifts.
  */
-/**
- * What Set up hands the operator dialog. A catalog listing carries the vendor
- * portal and secret key under `install`, only on a remote-OAuth install; the
- * dialog reads a top-level `operatorSetup` and renders nothing without one.
- */
-export function operatorSetupTarget(entry: CatalogListing): OperatorSetupTarget {
-  return {
-    id: entry.id,
-    name: entry.name,
-    operatorSetup: entry.install.kind === "remote-oauth" ? entry.install.operatorSetup : undefined,
-  };
-}
-
 function DirectoryCard({
   entry,
   busy,
