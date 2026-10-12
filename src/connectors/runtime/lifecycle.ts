@@ -475,7 +475,7 @@ export class ConnectorLifecycleManager {
       if (!materialized) return [];
 
       log.debug("mcp", `[connector-skills] bound overlay "${identity}" → ${serverName} (${wsId})`);
-      return [{ identity, version: config.version, sha: resolved.sha, path: materialized.path }];
+      return [{ identity, version: config.version, sha: resolved.sha }];
     } catch (err) {
       // Non-fatal: the connector is installed regardless. Surface the reason so
       // an operator can see why an expected overlay didn't bind.

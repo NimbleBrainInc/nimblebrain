@@ -108,8 +108,6 @@ export interface ConnectorSkillLockEntry {
     version: string;
     /** sha256 (hex) of the fetched overlay body — tamper-evidence. */
     sha: string;
-    /** Materialized skill file location — recorded for traceability / debugging. */
-    path: string;
 }
 /**
  * Reference to a remote MCP server. One shape: a URL plus the transport,
