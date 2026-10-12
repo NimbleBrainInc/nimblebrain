@@ -97,9 +97,9 @@
     "@nimblebrain/synapse": "0.32.0",
     "@types/bun": "latest",
     "happy-dom": "^20.0.0",
-    "mcp-sdk-v1-0": "npm:@modelcontextprotocol/sdk@1.0.4",
-    "mcp-sdk-v1-10": "npm:@modelcontextprotocol/sdk@1.10.2",
-    "mcp-sdk-v1-13": "npm:@modelcontextprotocol/sdk@1.13.3",
+    "mcp-sdk-v1-0": "npm:@modelcontextprotocol/sdk@1.30.1",
+    "mcp-sdk-v1-10": "npm:@modelcontextprotocol/sdk@1.30.1",
+    "mcp-sdk-v1-13": "npm:@modelcontextprotocol/sdk@1.30.1",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
