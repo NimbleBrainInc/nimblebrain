@@ -9,11 +9,11 @@ import { type Static } from "@sinclair/typebox";
  * guard (`src/usage/aggregate.ts`) all derive from this array
  * so a new dimension is added in exactly one place.
  */
-export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "turn", "model", "user", "origin", "provider", "workspace"];
+export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "model", "user", "origin", "provider", "workspace"];
 /**
  * The dimensions a `day` row can be split by (`stackBy`). Only the
  * low-cardinality ones: a day row carries one entry per key, so an id-keyed
- * dimension (`conversation`, `turn`) would multiply the row count by the
+ * dimension (`conversation`) would multiply the row count by the
  * tenant's whole history.
  */
 export declare const USAGE_STACK_BYS: readonly ["model", "user", "origin", "provider", "workspace"];
@@ -24,7 +24,7 @@ export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
     period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
     from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "model" | "conversation" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "model" | "conversation" | "turn" | "origin" | "provider">>]>>;
+    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "model" | "conversation" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "model" | "conversation" | "origin" | "provider">>]>>;
     stackBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "model" | "origin" | "provider">>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     userId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;

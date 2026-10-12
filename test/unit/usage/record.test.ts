@@ -12,6 +12,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { llmCallsTotal, llmTokensTotal } from "../../../src/api/metrics.ts";
+import type { UserIdentity } from "../../../src/identity/provider.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { UsageLedger } from "../../../src/usage/ledger.ts";
 import { usageMonthOf, usageShardPath } from "../../../src/usage/paths.ts";
@@ -24,6 +25,17 @@ import {
 import type { TokenUsage } from "../../../src/usage/types.ts";
 
 const USAGE: TokenUsage = { inputTokens: 10, outputTokens: 5 };
+
+const USER: UserIdentity = {
+  id: "usr_1",
+  email: "a@example.com",
+  displayName: "A",
+  orgRole: "member",
+  preferences: {},
+};
+
+/** The workspace and user every recorded call is spent in. */
+const OWNER = { identity: USER, workspaceId: "ws_0076759dbbe19fcc" };
 
 /** The `nb_llm_calls_total` sample matching every label in `want`, if any. */
 async function callSample(want: Record<string, string>) {
@@ -68,15 +80,15 @@ describe("each id in the ledger lands under its own name", () => {
   // apart by `origin`, and `runId` — the engine's, per turn — is one such a
   // union could not express at all.
   function fieldsFor(
-    ctx: Parameters<typeof runWithRequestContext>[0],
+    ctx: Partial<Parameters<typeof runWithRequestContext>[0]>,
     event?: Record<string, unknown>,
-  ): Record<string, unknown> {
+  ): Record<string, unknown> | undefined {
     const dir = mkdtempSync(join(tmpdir(), "nb-session-"));
     const month = usageMonthOf(new Date().toISOString());
     const ledger = new UsageLedger(dir, "inst", { retentionMonths: 0 });
     setUsageLedger(ledger);
     try {
-      runWithRequestContext(ctx, () => {
+      runWithRequestContext({ ...OWNER, ...ctx }, () => {
         recordLlmCall({
           source: "main",
           model: "test-model-session",
@@ -88,55 +100,65 @@ describe("each id in the ledger lands under its own name", () => {
       clearUsageLedger(ledger);
     }
     const path = usageShardPath(dir, month, "inst");
+    if (!existsSync(path)) return undefined;
     const line = readFileSync(path, "utf-8").split("\n").filter(Boolean)[0]!;
     return JSON.parse(line) as Record<string, unknown>;
   }
 
   test("a chat's conversation id lands in conversationId", () => {
-    const rec = fieldsFor({ identity: null, conversationId: "conv-42" });
-    expect(rec.conversationId).toBe("conv-42");
-    expect(rec.taskRunId).toBeUndefined();
+    const rec = fieldsFor({ conversationId: "conv-42" });
+    expect(rec?.conversationId).toBe("conv-42");
+    expect(rec?.taskRunId).toBeUndefined();
   });
 
   test("a task's run id lands in taskRunId, not conversationId", () => {
     // The original defect one layer up: a run id occupying a conversation
     // field. It must not reappear as a conversation under a new name.
-    const rec = fieldsFor({ identity: null, runId: "run-42", unattended: true });
-    expect(rec.taskRunId).toBe("run-42");
-    expect(rec.conversationId).toBeUndefined();
+    const rec = fieldsFor({ runId: "run-42", unattended: true });
+    expect(rec?.taskRunId).toBe("run-42");
+    expect(rec?.conversationId).toBeUndefined();
   });
 
   test("the engine's run id lands in runId — the per-turn grain", () => {
     // Read off the emitting event, where it already was.
-    const rec = fieldsFor({ identity: null, conversationId: "conv-42" }, { runId: "engine-run-7" });
-    expect(rec.runId).toBe("engine-run-7");
-    expect(rec.conversationId).toBe("conv-42");
+    const rec = fieldsFor({ conversationId: "conv-42" }, { runId: "engine-run-7" });
+    expect(rec?.runId).toBe("engine-run-7");
+    expect(rec?.conversationId).toBe("conv-42");
   });
 
   test("a chat and its turn are recorded together, not as one id", () => {
-    const rec = fieldsFor({ identity: null, conversationId: "conv-42" }, { runId: "engine-run-7" });
-    expect([rec.conversationId, rec.runId]).toEqual(["conv-42", "engine-run-7"]);
+    const rec = fieldsFor({ conversationId: "conv-42" }, { runId: "engine-run-7" });
+    expect([rec?.conversationId, rec?.runId]).toEqual(["conv-42", "engine-run-7"]);
   });
 
   test("a forked fast-slot call has no turn of its own", () => {
     // Title and compaction emit no event, so there is no engine run to
     // attribute them to — they belong to the scope they ran in.
-    const rec = fieldsFor({ identity: null, conversationId: "conv-42" });
-    expect(rec.runId).toBeUndefined();
+    const rec = fieldsFor({ conversationId: "conv-42" });
+    expect(rec?.runId).toBeUndefined();
   });
 
   test("sessionId is not written", () => {
-    expect(fieldsFor({ identity: null, conversationId: "conv-42" }).sessionId).toBeUndefined();
-    expect(
-      fieldsFor({ identity: null, runId: "run-42", unattended: true }).sessionId,
-    ).toBeUndefined();
+    expect(fieldsFor({ conversationId: "conv-42" })?.sessionId).toBeUndefined();
+    expect(fieldsFor({ runId: "run-42", unattended: true })?.sessionId).toBeUndefined();
   });
 
-  test("nothing in scope leaves all three unset", () => {
-    const rec = fieldsFor({ identity: null });
-    expect(rec.conversationId).toBeUndefined();
-    expect(rec.taskRunId).toBeUndefined();
-    expect(rec.runId).toBeUndefined();
+  test("every line names the workspace and the user the call was spent for", () => {
+    const rec = fieldsFor({ conversationId: "conv-42" });
+    expect([rec?.workspaceId, rec?.userId]).toEqual(["ws_0076759dbbe19fcc", "usr_1"]);
+  });
+
+  test("a background job in a workspace leaves all three ids unset", () => {
+    const rec = fieldsFor({});
+    expect(rec?.origin).toBe("system");
+    expect(rec?.conversationId).toBeUndefined();
+    expect(rec?.taskRunId).toBeUndefined();
+    expect(rec?.runId).toBeUndefined();
+  });
+
+  test("a call with no workspace or no user in scope writes no line", () => {
+    expect(fieldsFor({ workspaceId: undefined })).toBeUndefined();
+    expect(fieldsFor({ identity: null })).toBeUndefined();
   });
 });
 
@@ -241,12 +263,16 @@ describe("ledger ownership", () => {
     setUsageLedger(b); // a second runtime starts and takes the global
     clearUsageLedger(a); // the first one shuts down
 
-    recordLlmCall({ source: "main", model: "test-model-own-1", usage: USAGE });
+    runWithRequestContext(OWNER, () =>
+      recordLlmCall({ source: "main", model: "test-model-own-1", usage: USAGE }),
+    );
     expect(existsSync(usageShardPath(dirB, month, "inst-b"))).toBe(true);
     expect(existsSync(usageShardPath(dirA, month, "inst-a"))).toBe(false);
 
     clearUsageLedger(b); // now the owner releases it
-    recordLlmCall({ source: "main", model: "test-model-own-2", usage: USAGE });
+    runWithRequestContext(OWNER, () =>
+      recordLlmCall({ source: "main", model: "test-model-own-2", usage: USAGE }),
+    );
     const lines = readFileSync(usageShardPath(dirB, month, "inst-b"), "utf-8")
       .split("\n")
       .filter(Boolean);

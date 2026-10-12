@@ -277,32 +277,40 @@ function normalizeGroupBys(groupBy: string | string[]): UsageGroupBy[] {
   return [...new Set(valid.length > 0 ? valid : fallback)];
 }
 
-function groupKeyFor(record: LlmCallRecord, groupBy: UsageGroupBy, modelKey: string): string {
-  switch (groupBy) {
+/** The row a record belongs to in a dimension that describes every record. */
+function keyFor(
+  record: LlmCallRecord,
+  dimension: Exclude<UsageGroupBy, "conversation">,
+  modelKey: string,
+): string {
+  switch (dimension) {
     case "model":
       return modelKey;
-    case "conversation":
-      // A task run has no conversation, so it groups under "none".
-      return record.conversationId ?? "none";
-    case "turn":
-      // One assistant turn, which is one engine run. The forked fast-slot calls
-      // (title, compaction) carry no engine run at all, and neither do records
-      // predating `runId`; both group under "none".
-      return record.runId ?? "none";
     case "user":
-      return record.userId ?? "unknown";
+      return record.userId;
     case "origin":
       return record.origin;
     case "provider":
       return getProviderFromModel(record.model);
     case "workspace":
-      // A call made outside any workspace (a detached background call) has no
-      // binding, and groups under "none" — the same word the id-keyed
-      // dimensions use for an absent id.
-      return record.workspaceId ?? "none";
+      return record.workspaceId;
     case "day":
       return record.ts.slice(0, 10);
   }
+}
+
+/**
+ * The row a record belongs to in one dimension, or `undefined` when the
+ * dimension does not describe it. Only `conversation` can be undefined: a task
+ * run or a background job has no conversation, so its calls are in the totals
+ * and in no conversation row, rather than in a row standing for "no conversation".
+ */
+function groupKeyFor(
+  record: LlmCallRecord,
+  groupBy: UsageGroupBy,
+  modelKey: string,
+): string | undefined {
+  return groupBy === "conversation" ? record.conversationId : keyFor(record, groupBy, modelKey);
 }
 
 function getBreakdownAccumulator(
@@ -395,9 +403,9 @@ function finalizeBreakdown(
     }))
     .sort((a, b) => a.key.localeCompare(b.key));
 
-  // Cap the rows. `conversation` and `turn` are keyed on ids the ledger mints
-  // per thread and per turn, so their cardinality grows with every turn the
-  // tenant ever takes — over the retention window that is tens of thousands of
+  // Cap the rows. `conversation` is keyed on an id the ledger mints per
+  // thread, so its cardinality grows with every conversation the tenant ever
+  // has — over the retention window that is tens of thousands of
   // rows, and the whole report is serialized twice (the text the model reads
   // and the structured copy) before anything trims it. The engine bounds what
   // reaches the MODEL at `MAX_TOOL_RESULT_CHARS`, but the full string is built
@@ -499,14 +507,7 @@ export function resolveDateRange(
 export interface AggregateUsageOptions {
   from?: string;
   to?: string;
-  /**
-   * Restrict to calls made by this user id. Omit for every user.
-   *
-   * **Fails closed.** `userId` is optional on a ledger line — a call recorded
-   * outside any request scope has none — and such a line is excluded from an
-   * owner-filtered read rather than included. The alternative leaks one user's
-   * spend into another's view on exactly the lines whose owner is unknown.
-   */
+  /** Restrict to calls made by this user id. Omit for every user. */
   ownerFilter?: string;
   /**
    * Narrow the records before aggregation, so totals, rows and models all
@@ -519,9 +520,9 @@ export interface AggregateUsageOptions {
 }
 
 export interface UsageFilters {
-  /** Only calls bound to this workspace; `"none"` selects calls bound to none. */
+  /** Only calls bound to this workspace. */
   workspaceId?: string;
-  /** Only calls made by this user. Fails closed like `ownerFilter`. */
+  /** Only calls made by this user. */
   userId?: string;
   /** Only calls to this model, matched as the qualified string or its short name. */
   model?: string;
@@ -533,14 +534,12 @@ export interface UsageFilters {
  *
  * Each filter reads the field through the same derivation its `groupBy`
  * dimension uses, so selecting a row's key as a filter returns exactly that
- * row's records: a call with no workspace is `"none"` to both, and a model
- * matches by the short name the `models` rows carry.
+ * row's records: a model matches by the short name the `models` rows carry.
  */
 function matchesFilters(record: LlmCallRecord, filters: UsageFilters): boolean {
-  if (filters.workspaceId !== undefined) {
-    if ((record.workspaceId ?? "none") !== filters.workspaceId) return false;
+  if (filters.workspaceId !== undefined && record.workspaceId !== filters.workspaceId) {
+    return false;
   }
-  // Fails closed, like `ownerFilter`: a line with no `userId` never matches.
   if (filters.userId !== undefined && record.userId !== filters.userId) return false;
   if (filters.model !== undefined) {
     if (record.model !== filters.model && normalizeModel(record.model) !== filters.model) {
@@ -569,8 +568,6 @@ function parseShard(
       continue;
     }
     if (!entry.ts || !isDateInRange(entry.ts.slice(0, 10), range)) continue;
-    // Fails closed: a line with no `userId` is excluded from a filtered read,
-    // never included. See `AggregateUsageOptions.ownerFilter`.
     if (ownerFilter !== undefined && entry.userId !== ownerFilter) continue;
     if (!matchesFilters(entry, filters)) continue;
     out.push(entry);
@@ -674,6 +671,7 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
   for (const dimension of sink.groupBys) {
     const map = sink.breakdownMaps.get(dimension)!;
     const key = groupKeyFor(record, dimension, modelKey);
+    if (key === undefined) continue;
     const bucket = getBreakdownAccumulator(map, key);
     addTokens(bucket.tokens, tokens);
     addCost(bucket.cost, cost);
@@ -684,7 +682,7 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
     if (record.taskRunId) bucket.runIds.add(record.taskRunId);
     if (!priced) bucket.unpricedCalls++;
     if (dimension === "day" && sink.stackBy) {
-      addToStack(bucket, groupKeyFor(record, sink.stackBy, modelKey), cost.total);
+      addToStack(bucket, keyFor(record, sink.stackBy, modelKey), cost.total);
     }
   }
 }
