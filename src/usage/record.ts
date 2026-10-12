@@ -71,8 +71,10 @@ export function clearUsageLedger(owned: UsageLedger): void {
  * depend on which other fields a context happens to hold.
  *
  * `system` is the honest answer for a call in a workspace with no conversation
- * and no task run — a background job. It is not a fallback for "we could not
- * tell"; the three sources of scope are exhaustive.
+ * and no task run — a background job. A call with no scope at all also reads
+ * `system`, but only the counters see it: the ledger refuses it (see
+ * `recordLlmCall`). It is not a fallback for "we could not tell"; the three
+ * sources of scope are exhaustive.
  */
 export function originOf(): LlmCallOrigin {
   const ctx = getRequestContext();
