@@ -85,6 +85,14 @@
       "plugins": ["./biome-plugins/double-cast.grit"]
     },
     {
+      "includes": ["src/**/*.ts", "!src/api/app.ts"],
+      "plugins": ["./biome-plugins/router-use.grit"]
+    },
+    {
+      "includes": ["src/platform/**/*.ts", "!src/platform/*/ui/**"],
+      "plugins": ["./biome-plugins/platform-object-return.grit"]
+    },
+    {
       "includes": ["src/**/*.ts"],
       "linter": {
         "rules": {

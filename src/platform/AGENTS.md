@@ -434,10 +434,11 @@ update by grep is the discipline; the type system is the safety net.
 - **Type system, output side (§2.1)**: handler return types are the named
   `XxxOutput` exports from `schemas/`; consumers import and narrow, and
   consumer drift, tests included, surfaces at compile.
-- **Check, output side (§2.1)**: `bun run check:platform-output-types`
-  (in `verify:static`) fails on any function under `src/platform/` declared
-  to return `object` or `Promise<object>`. Rule doc: `CODE_STYLE.md`,
-  "Platform tool handlers return a named output type".
+- **Lint, output side (§2.1)**: the Biome plugin
+  `biome-plugins/platform-object-return.grit` (run by `bun run lint`) fails on
+  any function under `src/platform/` declared to return `object` or
+  `Promise<object>`. Rule doc: `CODE_STYLE.md`, "Platform tool handlers return
+  a named output type".
 - **Code review**: section 3 (anti-patterns) — flag in PRs explicitly.
 
 If you're tempted to violate any of section 1, ask whether the underlying
