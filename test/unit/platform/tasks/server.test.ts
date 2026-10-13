@@ -1590,9 +1590,7 @@ describe("event schedules", () => {
       debounceMs: 60_000,
       maxFiresPerHour: 6,
     });
-    expect(status.task.scheduleHuman).toBe(
-      "On notifications from acme-outbound, matching reply.*",
-    );
+    expect(status.task.scheduleHuman).toBe("On notifications from acme-outbound, matching reply.*");
     expect(status.task.nextRunAt).toBeUndefined();
     expect(status.task.estimatedCostPerDay).toBe(0);
   });
