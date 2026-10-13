@@ -8,13 +8,15 @@
 
 An app's view, and the agent, regularly need to take the person somewhere: to
 a file the view lists, a conversation, another view of the same app, a record
-the agent just found. Each of those places already has an address. MCP names
-everything a server serves with a resource URI, a server advertises the URI
-shapes it serves as resource templates (`resources/templates/list`), which
-the agent already reads records by (ADR-0049), an app's
-own screen is its `ui://` resource, and a view already reports where it is as
+the agent just found. Most of those places already have an address. MCP names
+everything a server serves with a resource URI, and a server can advertise the
+URI shapes it serves as resource templates (`resources/templates/list`), as the
+agent already relies on to read records
+([ADR-0049](./0049-the-agent-reads-a-connectors-records-as-resources.md)). An
+app's own screen is its `ui://` resource, and a view reports where it is as
 resource URIs in its trail (`ai.nimblebrain/location`), which the host hands
-back as `ai.nimblebrain/navigate` when the person picks one.
+back as `ai.nimblebrain/navigate` when the person picks one. A conversation has
+no address yet; this decision gives it one.
 
 What a view lacks is a way to ask for one of those addresses. A request named
 per kind of place (open an app, open a conversation, open a file) grows a
@@ -32,25 +34,40 @@ cannot show with nothing to tell the person.
 ## Decision
 
 **One request opens anything: `ai.nimblebrain/open` with `{ uri }`.** A view
-names what it wants shown; the host decides what shows it. The host declares
-the method in `hostCapabilities.experimental` (ADR-0024), and answers `{}` once
-the place is on screen or an error naming the URI when nothing here shows it.
+names what it wants shown; the host decides what shows it. The method is named
+under the private namespace (ADR-0024) and declared in
+`hostCapabilities.experimental`, as every NimbleBrain extension is
+(`web/src/bridge/extensions.ts`).
+
+**The answer says what the host did, not what the app did.** `{}` means the
+host found what shows the URI, put it on screen, and handed it the URI. Whether
+an app then shows that view is the app's: `ai.nimblebrain/navigate` expects no
+reply, and reaches an app only after its first location report. A view that
+needs to know learns it the way the host does, from the app's next trail. An
+error names the URI when nothing here shows it.
 
 **The host resolves the URI by ownership, in this order, and never by trying
 reads:**
 
-1. **Kernel addresses.** A scheme the kernel owns and shows itself opens in
-   the kernel's own surface. `conversation://<id>` is one: a conversation is
-   kernel state, and it opens in the chat panel. Each such scheme is recorded
-   in `src/tools/resource-schemes.ts`, which the build already holds complete.
+1. **Kernel surfaces.** A scheme the shell shows in its own chrome, rather
+   than in an app, opens there. It is a set of its own, kept beside the
+   resolver: the schemes in `src/tools/resource-schemes.ts` are the ones the
+   runtime resolves for *reading*, which is a different question. This
+   decision adds `conversation://<id>`, which opens the chat panel; the build's
+   scheme check records it as not read-resolved.
 2. **An app's own screen.** An app's `ui://` resource opens that app at its
    home.
-3. **A served resource.** Otherwise the URI goes to the one app in the
-   workspace that has a screen and advertises a resource template matching it.
-   The app opens and receives the URI as `ai.nimblebrain/navigate`. A scheme
-   the kernel resolves for reading, such as `files://`, is opened by the
-   platform app that serves it, which advertises the template like any other
-   app.
+3. **A served resource.** Otherwise the URI goes to the one app the person can
+   open that advertises a resource template matching it: the workspace's apps
+   with a screen, and the kernel's own per-person apps (`IDENTITY_SOURCES`),
+   which sit in no workspace registry. A template matches when the URI is one
+   of its expansions (RFC 6570). The app opens and is handed the URI as
+   `ai.nimblebrain/navigate`. Files are reached this way: the Files app
+   advertises `files://{id}` like any other app.
+
+`artifact://` opens nothing. An artifact renders inline in the conversation
+that produced it and has no screen of its own, so `open` refuses it until
+something shows artifacts and advertises their shape.
 
 No match, or more than one, is refused with the URI in the error. Two servers
 claiming one URI shape is a workspace defect for an operator to fix, not a tie
@@ -93,6 +110,12 @@ a refusal, as `notify` does.
   Standardizing it is a rename (ADR-0024).
 - A deep link into the shell is a route over the same resolver, added when
   something needs it.
+- `ai.nimblebrain/action` goes in the same release, with no period where the
+  host serves both. Its only callers are first-party apps, and they move to
+  the new requests in that release. A bundle built against an older SDK fails
+  silently rather than loudly: its `action()` checks the declaration, finds
+  none, and sends nothing. So an app's rebuild ships with the host change, not
+  after it.
 
 ## Alternatives considered
 
