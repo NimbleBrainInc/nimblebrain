@@ -3515,13 +3515,55 @@ async function handleSetupOperator(
     configuredAt: new Date().toISOString(),
     configuredBy: identity.id,
   };
-  await persistOperatorApp(ctx, wsId, apps, credStore, clientSecretKey, hadPriorSecret);
+  const rotated = rotateInstalledOAuthClients(ws.connectors, entry.url, clientId.trim());
+  await persistOperatorApp(
+    ctx,
+    wsId,
+    {
+      oauthOperatorApps: apps,
+      ...(rotated.refs.length > 0 ? { connectors: rotated.connectors } : {}),
+    },
+    credStore,
+    clientSecretKey,
+    hadPriorSecret,
+  );
+  // The install copied the client id onto its ref, and every connection reads
+  // its client from there. A new client invalidates whatever the old one signed
+  // in, so each rotated connection drops its OAuth records and asks for sign-in.
+  for (const ref of rotated.refs) {
+    await ctx.runtime.getLifecycle().replaceOAuthClient(ref.serverName, wsId, ref);
+  }
 
   return {
     content: textContent(`Configured OAuth app for "${entry.name}".`),
     structuredContent: { ok: true, catalogId, clientId: apps[catalogId]?.clientId },
     isError: false,
   };
+}
+
+/**
+ * The installed connectors of a static-auth catalog entry whose pre-registered
+ * client is not `clientId`, rewritten to it.
+ *
+ * Install copies the operator app's client id onto the connector's ref, because
+ * the ref is what boot and `startAuth` build the connection from, and neither
+ * reaches the workspace record. Setup is the only writer of the operator app, so
+ * it rewrites the copies in the same write: the copy and its source never
+ * disagree. The secret needs no rewrite; the ref holds a reference to it.
+ */
+export function rotateInstalledOAuthClients(
+  connectors: readonly ConnectorRef[],
+  url: string,
+  clientId: string,
+): { connectors: ConnectorRef[]; refs: ConnectorRef[] } {
+  const refs: ConnectorRef[] = [];
+  const next = connectors.map((ref) => {
+    if (ref.url !== url || !ref.oauthClient || ref.oauthClient.clientId === clientId) return ref;
+    const rotated: ConnectorRef = { ...ref, oauthClient: { ...ref.oauthClient, clientId } };
+    refs.push(rotated);
+    return rotated;
+  });
+  return { connectors: next, refs };
 }
 
 /**
@@ -3534,13 +3576,13 @@ async function handleSetupOperator(
 async function persistOperatorApp(
   ctx: ManageConnectorsContext,
   wsId: string,
-  apps: NonNullable<Workspace["oauthOperatorApps"]>,
+  patch: Pick<Workspace, "oauthOperatorApps"> & Partial<Pick<Workspace, "connectors">>,
   credStore: CredentialStore,
   clientSecretKey: string,
   hadPriorSecret: boolean,
 ): Promise<void> {
   try {
-    await ctx.runtime.getWorkspaceStore().update(wsId, { oauthOperatorApps: apps });
+    await ctx.runtime.getWorkspaceStore().update(wsId, patch);
   } catch (err) {
     if (!hadPriorSecret) {
       try {
