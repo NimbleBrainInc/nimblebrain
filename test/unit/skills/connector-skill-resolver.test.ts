@@ -8,6 +8,7 @@ import {
   CONNECTOR_SKILLS_VERSION_DEFAULT,
 } from "../../../src/config/connector-skills.ts";
 import { overlayUrl, resolveOverlay } from "../../../src/skills/connector-skill-resolver.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
 
@@ -24,17 +25,17 @@ afterEach(() => {
 });
 
 /** A fetch stand-in driven by a `url -> {status, body}` map, with a call counter. */
-function fakeFetch(
+function routedFetch(
   routes: Record<string, { status: number; body?: string }>,
   counter?: { n: number },
 ): typeof fetch {
-  return (async (url: string | URL | Request) => {
+  return fakeFetch(async (url) => {
     if (counter) counter.n++;
     const u = typeof url === "string" ? url : url.toString();
     const r = routes[u];
     if (!r) return new Response("", { status: 404 });
     return new Response(r.body ?? "", { status: r.status });
-  }) as unknown as typeof fetch;
+  });
 }
 
 describe("overlayUrl", () => {
@@ -57,7 +58,7 @@ describe("resolveOverlay", () => {
       cacheDir: tmpCache(),
       repo,
       version,
-      fetchImpl: fakeFetch({ [url]: { status: 200, body } }),
+      fetchImpl: routedFetch({ [url]: { status: 200, body } }),
     });
     expect(res).not.toBeNull();
     expect(res?.body).toBe(body);
@@ -69,7 +70,7 @@ describe("resolveOverlay", () => {
       cacheDir: tmpCache(),
       repo,
       version,
-      fetchImpl: fakeFetch({ [url]: { status: 404 } }),
+      fetchImpl: routedFetch({ [url]: { status: 404 } }),
     });
     expect(res).toBeNull();
   });
@@ -80,7 +81,7 @@ describe("resolveOverlay", () => {
         cacheDir: tmpCache(),
         repo,
         version,
-        fetchImpl: fakeFetch({ [url]: { status: 500, body: "boom" } }),
+        fetchImpl: routedFetch({ [url]: { status: 500, body: "boom" } }),
       }),
     ).rejects.toThrow(/HTTP 500/);
   });
@@ -93,7 +94,7 @@ describe("resolveOverlay", () => {
       cacheDir,
       repo,
       version,
-      fetchImpl: fakeFetch({ [url]: { status: 200, body } }, counter),
+      fetchImpl: routedFetch({ [url]: { status: 200, body } }, counter),
     };
     const a = await resolveOverlay(identity, opts);
     const b = await resolveOverlay(identity, opts);
@@ -109,7 +110,7 @@ describe("resolveOverlay", () => {
       cacheDir,
       repo,
       version,
-      fetchImpl: fakeFetch({ [url]: { status: 404 } }, counter),
+      fetchImpl: routedFetch({ [url]: { status: 404 } }, counter),
     };
     expect(await resolveOverlay(identity, opts)).toBeNull();
     expect(await resolveOverlay(identity, opts)).toBeNull();
@@ -123,7 +124,7 @@ describe("resolveOverlay", () => {
         cacheDir: tmpCache(),
         repo,
         version,
-        fetchImpl: fakeFetch({ [url]: { status: 200, body } }),
+        fetchImpl: routedFetch({ [url]: { status: 200, body } }),
         expectedSha: "deadbeef",
       }),
     ).rejects.toThrow(/integrity mismatch/);
@@ -135,7 +136,7 @@ describe("resolveOverlay", () => {
       cacheDir: tmpCache(),
       repo,
       version,
-      fetchImpl: fakeFetch({ [url]: { status: 200, body } }),
+      fetchImpl: routedFetch({ [url]: { status: 200, body } }),
       expectedSha: sha(body),
     });
     expect(res?.body).toBe(body);
@@ -147,7 +148,7 @@ describe("resolveOverlay", () => {
     const v2Body = "new";
     const v1Url = overlayUrl(repo, "v1.0.0", identity);
     const v2Url = overlayUrl(repo, "v2.0.0", identity);
-    const fetchImpl = fakeFetch({
+    const fetchImpl = routedFetch({
       [v1Url]: { status: 200, body: v1Body },
       [v2Url]: { status: 200, body: v2Body },
     });

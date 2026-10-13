@@ -1,8 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
+import type {
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4Message,
+} from "@ai-sdk/provider";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { type ConfirmationGate, createPrivilegeHook } from "../../src/config/privilege.ts";
+import type { StoredMessage } from "../../src/conversation/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import type {
@@ -27,6 +32,9 @@ import {
 import { synthesizeConnectorSkill } from "../../src/skills/connector-skills.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
+
+/** A provider message carrying the `metadata` a reconstructed StoredMessage holds. */
+type HistoryMessage = LanguageModelV4Message & Pick<StoredMessage, "metadata">;
 
 // Fixture schemas declare the arguments the tests send: the engine rejects a
 // key a closed `properties` list does not name.
@@ -1871,13 +1879,13 @@ describe("AgentEngine", () => {
       // the Anthropic-specific shape without leaking through other layers.
       // Sonnet 4.6 supports the `enabled` shape directly — the engine
       // passes the budget through verbatim.
-      const capturedOptions: Array<Record<string, unknown>> = [];
+      const capturedOptions: LanguageModelV4CallOptions[] = [];
       const recordingModel: LanguageModelV4 = {
         ...createEchoModel({ responses: [{ text: "ok" }] }),
       };
       const orig = recordingModel.doStream.bind(recordingModel);
       recordingModel.doStream = async (callOptions) => {
-        capturedOptions.push(callOptions as unknown as Record<string, unknown>);
+        capturedOptions.push(callOptions);
         return orig(callOptions);
       };
 
@@ -1911,11 +1919,11 @@ describe("AgentEngine", () => {
         thinking: EngineConfig["thinking"],
         maxOutputTokens?: number,
       ): Promise<Record<string, Record<string, unknown>>> {
-        const captured: Array<Record<string, unknown>> = [];
+        const captured: LanguageModelV4CallOptions[] = [];
         const m: LanguageModelV4 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
         const orig = m.doStream.bind(m);
         m.doStream = async (o) => {
-          captured.push(o as unknown as Record<string, unknown>);
+          captured.push(o);
           return orig(o);
         };
         await new AgentEngine(
@@ -2444,11 +2452,11 @@ describe("AgentEngine", () => {
     });
 
     it("translates thinking=adaptive without budget", async () => {
-      const captured: Array<Record<string, unknown>> = [];
+      const captured: LanguageModelV4CallOptions[] = [];
       const model: LanguageModelV4 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
       const orig = model.doStream.bind(model);
       model.doStream = async (o) => {
-        captured.push(o as unknown as Record<string, unknown>);
+        captured.push(o);
         return orig(o);
       };
 
@@ -2470,11 +2478,11 @@ describe("AgentEngine", () => {
     });
 
     it("does NOT set providerOptions when thinking is undefined", async () => {
-      const captured: Array<Record<string, unknown>> = [];
+      const captured: LanguageModelV4CallOptions[] = [];
       const model: LanguageModelV4 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
       const orig = model.doStream.bind(model);
       model.doStream = async (o) => {
-        captured.push(o as unknown as Record<string, unknown>);
+        captured.push(o);
         return orig(o);
       };
 
@@ -3497,7 +3505,7 @@ describe("audience filtering", () => {
         content: [
           { type: "text", text: "Rendered 3 pages" },
           { type: "text", text: "huge-base64-data-here", annotations: { audience: ["user"] } },
-        ] as unknown as ToolResult["content"],
+        ],
         isError: false,
       }),
     };
@@ -3605,7 +3613,7 @@ describe("audience filtering", () => {
             text: "shared content",
             annotations: { audience: ["user", "assistant"] },
           },
-        ] as unknown as ToolResult["content"],
+        ],
         isError: false,
       }),
     };
@@ -3664,7 +3672,7 @@ describe("audience filtering", () => {
         content: [
           { type: "text", text: "summary" },
           { type: "text", text: "user-data", annotations: { audience: ["user"] } },
-        ] as unknown as ToolResult["content"],
+        ],
         isError: false,
       })),
       sink,
@@ -5114,13 +5122,13 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
     );
 
     // A prior turn's reconstructed synthetic message rides the incoming
-    // history. Typed as a bare provider message; the engine reads `.metadata`
-    // through a cast, mirroring the runtime where these are StoredMessages.
-    const priorInjection = {
+    // history: a provider message carrying a StoredMessage's `metadata`, which
+    // the engine reads as the runtime's StoredMessages carry it.
+    const priorInjection: HistoryMessage = {
       role: "assistant",
       content: [{ type: "text", text: "<connector-skill>...</connector-skill>" }],
       metadata: { synthetic: "connector_skill_injected", skill: "gmail" },
-    } as unknown as LanguageModelV4Message;
+    };
 
     await engine.run(
       { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },
@@ -5449,7 +5457,7 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
     // A prior turn's reconstructed activation tool-result carries the marker
     // in message metadata (the runtime normally lifts it into
     // `alreadyInjectedConnectorSkills`; the engine's own scan is the fallback).
-    const priorActivation = {
+    const priorActivation: HistoryMessage = {
       role: "tool",
       content: [
         {
@@ -5460,7 +5468,7 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
         },
       ],
       metadata: { synthetic: "skill_activated", skill: "gmail" },
-    } as unknown as LanguageModelV4Message;
+    };
 
     await engine.run(
       { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },

@@ -24,6 +24,7 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { asDevUser, devProvider, devWorkspace } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { firstStoredEvent } from "../helpers/stored-events.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const SHARED_SKILL_NAME = "shared-voice-rules";
@@ -75,17 +76,8 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
 
     const store = await runtime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
-
-    const payload = skillsLoaded as unknown as {
-      skills: Array<{
-        id: string;
-        scope: string;
-        loadedBy: string;
-        reason: string;
-      }>;
-    };
 
     // Match by the file path the loader records as id — workspace-tier
     // skills carry their on-disk path, NOT a `skill://` URI (that's the
@@ -97,7 +89,7 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
       "skills",
       `${SHARED_SKILL_NAME}.md`,
     );
-    const entry = payload.skills.find((s) => s.id === expectedPath);
+    const entry = skillsLoaded.skills.find((s) => s.id === expectedPath);
     expect(entry).toBeDefined();
     expect(entry?.scope).toBe("workspace");
     expect(entry?.loadedBy).toBe("tool_affinity");
@@ -151,12 +143,8 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
 
     const store = await runtime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
-
-    const payload = skillsLoaded as unknown as {
-      skills: Array<{ id: string }>;
-    };
     const expectedPath = join(
       testDir,
       "workspaces",
@@ -164,7 +152,7 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
       "skills",
       `${SHARED_SKILL_NAME}.md`,
     );
-    const entry = payload.skills.find((s) => s.id === expectedPath);
+    const entry = skillsLoaded.skills.find((s) => s.id === expectedPath);
     expect(entry).toBeUndefined();
   });
 

@@ -11,18 +11,23 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import type { EventSink } from "../../src/engine/types.ts";
 import { NON_ADVANCING_META_KEY } from "../../src/engine/types.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { mcpSourceInternals } from "../helpers/mcp-source-internals.ts";
+import { stub } from "../helpers/stub.ts";
 
 const noopSink: EventSink = { emit: () => {} };
+
+type CallToolParams = Parameters<Client["callTool"]>[0];
 
 interface Harness {
   source: McpSource;
   /** The full `tools/call` params the client was handed. */
-  lastParams: () => Record<string, unknown> | undefined;
+  lastParams: () => CallToolParams | undefined;
 }
 
 /**
@@ -39,9 +44,9 @@ function buildSource(
 ): Harness {
   const source = new McpSource("crm", mode, noopSink);
 
-  let captured: Record<string, unknown> | undefined;
-  const fakeClient = {
-    callTool: async (req: Record<string, unknown>) => {
+  let captured: CallToolParams | undefined;
+  const fakeClient = stub<Client>({
+    callTool: async (req) => {
       captured = req;
       const result: CallToolResult = {
         content: [{ type: "text", text: "ok" }],
@@ -51,9 +56,9 @@ function buildSource(
       return result;
     },
     close: async () => {},
-  };
+  });
 
-  const internals = source as unknown as { client: unknown; cachedTools: unknown };
+  const internals = mcpSourceInternals(source);
   internals.client = fakeClient;
   internals.cachedTools = [
     {

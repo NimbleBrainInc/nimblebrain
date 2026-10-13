@@ -35,6 +35,7 @@ import {
 } from "../../../src/platform/tasks/event-trigger.ts";
 import type { RunInput } from "../../../src/platform/tasks/scheduler.ts";
 import type { ScheduleSpec, Task } from "../../../src/platform/tasks/types.ts";
+import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
@@ -44,6 +45,7 @@ import {
   makeOutboxFixture,
   type OutboxFixture,
 } from "../../helpers/outbox-fixture.ts";
+import { stub } from "../../helpers/stub.ts";
 
 /** Longer than any backoff a default-configured source reaches. */
 const PAST_ANY_BACKOFF_MS = 600_000;
@@ -124,15 +126,16 @@ function dispatchRuntime(): UnattendedDispatchRuntime {
       events.push(event);
     },
   };
-  return {
+  return stub<UnattendedDispatchRuntime>({
     async isPrincipalWorkspaceMember(_wsId: string, principalId: string): Promise<boolean> {
       return members.includes(principalId);
     },
     getEventSink: () => sink,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getRegistryForWorkspace: () => ({
-      getSource: (name: string) => (name === "slack" ? slack : undefined),
-    }),
+    getRegistryForWorkspace: () =>
+      stub<ToolRegistry>({
+        getSource: (name: string) => (name === "slack" ? slack : undefined),
+      }),
     getIdentitySource: () => undefined,
     async getIdentityConnectorSource() {
       return undefined;
@@ -142,7 +145,7 @@ function dispatchRuntime(): UnattendedDispatchRuntime {
     async listToolsForWorkspace() {
       return [];
     },
-  } as unknown as UnattendedDispatchRuntime;
+  });
 }
 
 function storeFor(id: string): NotificationStore {

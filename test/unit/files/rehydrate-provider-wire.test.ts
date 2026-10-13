@@ -4,6 +4,8 @@ import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { StoredMessage } from "../../../src/conversation/types.ts";
 import { rehydrateUserResources } from "../../../src/files/rehydrate.ts";
 import type { FileStore } from "../../../src/files/store.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import { stub } from "../../helpers/stub.ts";
 
 // Every other test in the suite hands the engine a hand-written mock model, so
 // no real provider converter ever runs. That is why an attachment could stop
@@ -25,7 +27,7 @@ function storeWith(id: string, data: Buffer, mimeType: string, filename: string)
     tags: [],
     createdAt: "2026-05-07T00:00:00.000Z",
   };
-  return {
+  return stub<FileStore>({
     saveFile: () => Promise.reject(new Error("not used")),
     readFile: async (wanted) => {
       if (wanted !== id) throw new Error(`File not found: ${wanted}`);
@@ -35,9 +37,7 @@ function storeWith(id: string, data: Buffer, mimeType: string, filename: string)
     appendRegistry: () => Promise.reject(new Error("not used")),
     readRegistry: () => Promise.reject(new Error("not used")),
     findEntry: async (wanted) => (wanted === id ? (entry as never) : null),
-    readSidecar: async () => null,
-    writeSidecar: async () => {},
-  } as unknown as FileStore;
+  });
 }
 
 /** Runs one prompt through the real Anthropic adapter, returning the request body it would send. */
@@ -47,8 +47,8 @@ async function anthropicRequestBody(prompt: LanguageModelV4Message[]): Promise<{
   let captured: unknown;
   const model = createAnthropic({
     apiKey: "sk-test",
-    fetch: (async (_url: string, init: { body: string }) => {
-      captured = JSON.parse(init.body);
+    fetch: fakeFetch(async (_url, init) => {
+      captured = JSON.parse(String(init?.body));
       return new Response(
         JSON.stringify({
           id: "msg_test",
@@ -61,12 +61,10 @@ async function anthropicRequestBody(prompt: LanguageModelV4Message[]): Promise<{
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
-    }) as unknown as typeof fetch,
+    }),
   }).languageModel("claude-sonnet-4-5");
 
-  await (model as unknown as { doGenerate: (o: unknown) => Promise<unknown> }).doGenerate({
-    prompt,
-  });
+  await model.doGenerate({ prompt });
   return captured as never;
 }
 

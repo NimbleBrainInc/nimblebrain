@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult, Task } from "@modelcontextprotocol/server";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import {
   type TaskStreamMessage as ProductionTaskStreamMessage,
   TASKS_EXTENSION_ID,
+  type TaskClient,
 } from "../../src/tools/mcp-task-client.ts";
 import {
   TaskAlreadyTerminalError,
@@ -12,6 +14,8 @@ import {
   type TaskOwnerContext,
 } from "../../src/tools/types.ts";
 import { payloadsOf } from "../helpers/engine-events.ts";
+import { mcpSourceInternals, mockTryRestart } from "../helpers/mcp-source-internals.ts";
+import { stub } from "../helpers/stub.ts";
 
 // Unit coverage for McpSource's task-augmented surface.
 //
@@ -54,7 +58,7 @@ type TaskStreamMessage = ProductionTaskStreamMessage;
  * a terminal `result`/`error` message.
  */
 interface StreamDriver {
-  stream: AsyncGenerator<unknown, void, void>;
+  stream: AsyncGenerator<TaskStreamMessage, void, void>;
   emit(message: TaskStreamMessage): void;
   throwNext(err: Error): void;
   end(): void;
@@ -66,7 +70,7 @@ function streamDriver(): StreamDriver {
   > = [];
   let resolveNext: (() => void) | null = null;
 
-  async function* gen(): AsyncGenerator<unknown, void, void> {
+  async function* gen(): AsyncGenerator<TaskStreamMessage, void, void> {
     while (true) {
       while (queue.length === 0) {
         await new Promise<void>((r) => {
@@ -126,31 +130,24 @@ function buildTaskAugmentedSource(sink: EventSink, opts: BuildOptions): McpSourc
     sink,
   );
 
-  const fakeTaskClient = {
-    callToolStream: (_params: unknown, _opts: unknown) =>
-      opts.driver ? opts.driver.stream : (opts.stream?.() ?? emptyStream()),
+  const fakeTaskClient = stub<TaskClient>({
+    callToolStream: () => (opts.driver ? opts.driver.stream : (opts.stream?.() ?? emptyStream())),
     getTask: opts.getTaskImpl ?? (() => Promise.reject(new Error("getTask not mocked"))),
-  };
+  });
   // McpSource.stop() awaits client.close(); without a no-op the stop()
   // path that's exercised by the cleanup test (and any flush in
   // afterEach under suite load) throws TypeError mid-teardown. The server
   // advertises the 2026-07-28 tasks extension, which is what puts every call
   // on the task path.
-  const fakeClient = {
+  const fakeClient = stub<Client>({
     close: async () => {},
     getServerCapabilities: () => ({ extensions: { [TASKS_EXTENSION_ID]: {} } }),
-  };
+  });
 
   // Test-only: inject a fake 2026-07-28 client and task client, and pre-seed
   // the tool cache so findTool() resolves without having to hit
   // start()/tools().
-  const internals = source as unknown as {
-    client: unknown;
-    taskClient: unknown;
-    protocolEra: "legacy" | "modern";
-    cachedTools: unknown;
-    tryRestart: () => Promise<boolean>;
-  };
+  const internals = mcpSourceInternals(source);
   internals.client = fakeClient;
   internals.taskClient = fakeTaskClient;
   internals.protocolEra = "modern";
@@ -158,13 +155,13 @@ function buildTaskAugmentedSource(sink: EventSink, opts: BuildOptions): McpSourc
     { name: "test__do_work", description: "", inputSchema: {}, source: "mcp:test" },
   ];
   if (opts.onTryRestart) {
-    internals.tryRestart = opts.onTryRestart;
+    mockTryRestart(source).mockImplementation(opts.onTryRestart);
   }
 
   return source;
 }
 
-async function* emptyStream(): AsyncGenerator<unknown, void, void> {
+async function* emptyStream(): AsyncGenerator<TaskStreamMessage, void, void> {
   // no-op
 }
 
@@ -606,12 +603,10 @@ describe("McpSource TTL sweeper", () => {
     await source.startToolAsTask("do_work", {}, { ownerContext: OWNER });
 
     // Sanity: the handle exists right now.
-    const internals = source as unknown as { _taskHandleCountForTesting(): number };
-    expect(internals._taskHandleCountForTesting()).toBe(1);
+    expect(source._taskHandleCountForTesting()).toBe(1);
 
     // Force a sweep.
-    const testMethod = source as unknown as { _sweepExpiredTasksForTesting(): number };
-    const remaining = testMethod._sweepExpiredTasksForTesting();
+    const remaining = source._sweepExpiredTasksForTesting();
     expect(remaining).toBe(0);
 
     // Post-sweep lookups fail as TaskNotFoundError.
@@ -642,8 +637,7 @@ describe("McpSource.stop() cleanup", () => {
     await expect(awaiting).rejects.toThrow(/source stopped/);
 
     // Map is cleared.
-    const internals = source as unknown as { _taskHandleCountForTesting(): number };
-    expect(internals._taskHandleCountForTesting()).toBe(0);
+    expect(source._taskHandleCountForTesting()).toBe(0);
   });
 });
 
@@ -657,34 +651,29 @@ describe("McpSource.stop() cleanup", () => {
  * opened. The task client fails the test if it is ever used.
  */
 function buildLegacySource(taskSupport: "optional" | "required") {
-  const sent: unknown[] = [];
+  const sent: Parameters<Client["callTool"]>[0][] = [];
   let streamsOpened = 0;
   const source = new McpSource(
     "test",
     { type: "remote", url: new URL("http://localhost:0/mcp") },
     recordingSink().sink,
   );
-  const internals = source as unknown as {
-    client: unknown;
-    taskClient: unknown;
-    protocolEra: "legacy" | "modern";
-    cachedTools: unknown;
-  };
-  internals.client = {
+  const internals = mcpSourceInternals(source);
+  internals.client = stub<Client>({
     close: async () => {},
     getServerCapabilities: () => ({ tools: {} }),
-    callTool: async (params: unknown) => {
+    callTool: async (params) => {
       sent.push(params);
       return { content: [{ type: "text", text: "inline answer" }] };
     },
-  };
-  internals.taskClient = {
+  });
+  internals.taskClient = stub<TaskClient>({
     callToolStream: () => {
       streamsOpened++;
       return emptyStream();
     },
     getTask: () => Promise.reject(new Error("no task on a 2025-era connection")),
-  };
+  });
   internals.protocolEra = "legacy";
   internals.cachedTools = [
     {

@@ -380,7 +380,7 @@ describe("reconstructMessages", () => {
   it("accepts tool-call input stored as an already-parsed object", () => {
     // The stream persists input as a JSON string (the other fixtures here);
     // `parseToolInput` also takes an object, which the event type does not
-    // admit, so this one fixture casts.
+    // admit.
     const objectInput: LlmResponseEvent = {
       ...llmToolCall("run-1", "tc-1", "lookup"),
       content: [
@@ -388,6 +388,7 @@ describe("reconstructMessages", () => {
           type: "tool-call",
           toolCallId: "tc-1",
           toolName: "lookup",
+          // biome-ignore lint/plugin/double-cast: a tool-call input stored as a parsed object, where the event type promises a JSON string
           input: { id: "x" } as unknown as string,
         },
       ],

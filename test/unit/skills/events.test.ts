@@ -37,6 +37,7 @@ import type {
   ToolResult,
 } from "../../../src/engine/types.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { firstPayloadOf } from "../../helpers/engine-events.ts";
 
 class CollectingSink implements EventSink {
   events: EngineEvent[] = [];
@@ -170,8 +171,7 @@ describe("engine.runMetadata — skills.loaded + context.assembled emission", ()
       [],
     );
 
-    const event = sink.events.find((e) => e.type === "skills.loaded")!;
-    const payload = event.data as unknown as SkillsLoadedEvent;
+    const payload = firstPayloadOf(sink.events, "skills.loaded")!;
     expect(payload.skills).toHaveLength(2);
     expect(payload.skills[0]!.loadedBy).toBe("always");
     expect(payload.skills[0]!.scope).toBe("org");
@@ -190,8 +190,7 @@ describe("engine.runMetadata — skills.loaded + context.assembled emission", ()
       [],
     );
 
-    const event = sink.events.find((e) => e.type === "context.assembled")!;
-    const payload = event.data as unknown as ContextAssembledEvent;
+    const payload = firstPayloadOf(sink.events, "context.assembled")!;
     const skillsSource = payload.sources.find((s) => s.kind === "skills");
     expect(skillsSource).toBeDefined();
     expect(skillsSource!.count).toBe(2);
@@ -239,8 +238,7 @@ describe("engine.runMetadata — skills.loaded + context.assembled emission", ()
       [],
     );
 
-    const ev = sink.events.find((e) => e.type === "skills.loaded")!;
-    const payload = ev.data as unknown as SkillsLoadedEvent;
+    const payload = firstPayloadOf(sink.events, "skills.loaded")!;
     expect(payload.skills).toEqual([]);
     expect(payload.totalTokens).toBe(0);
   });

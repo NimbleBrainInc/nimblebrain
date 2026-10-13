@@ -1,22 +1,17 @@
 import { describe, expect, it, spyOn } from "bun:test";
+import type { Client, Transport } from "@modelcontextprotocol/client";
 import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { mcpSourceInternals } from "../helpers/mcp-source-internals.ts";
+import { stub } from "../helpers/stub.ts";
 
 /**
  * A restart runs stop() then start(), and stop() sets `stopped` before it awaits
  * the transport's close. A HealthMonitor check that lands in that window must not
  * read the restart as a deliberate teardown and mark a live source dead for good.
  */
-
-interface Internals {
-  client: unknown;
-  transport: unknown;
-  dead: boolean;
-  stopped: boolean;
-  start: () => Promise<void>;
-}
 
 /** Resolves when `release()` is called, so a test can hold stop() mid-close. */
 function gate() {
@@ -34,14 +29,14 @@ function crashedSource(closed: Promise<void>) {
     { type: "remote", url: new URL("https://svc.example.com/mcp") },
     new NoopEventSink(),
   );
-  const internal = source as unknown as Internals;
-  internal.client = { close: () => closed };
-  internal.transport = { close: () => Promise.resolve() };
+  const internal = mcpSourceInternals(source);
+  internal.client = stub<Client>({ close: () => closed });
+  internal.transport = stub<Transport>({ close: () => Promise.resolve() });
   internal.dead = true;
-  internal.start = async () => {
+  source.start = async () => {
     internal.stopped = false;
-    internal.client = { close: () => Promise.resolve() };
-    internal.transport = { close: () => Promise.resolve() };
+    internal.client = stub<Client>({ close: () => Promise.resolve() });
+    internal.transport = stub<Transport>({ close: () => Promise.resolve() });
   };
   return { source, internal };
 }
@@ -134,19 +129,19 @@ describe("a restart asked for mid-connect or mid-restart is joined", () => {
       { type: "remote", url: new URL("https://svc.example.com/mcp") },
       new NoopEventSink(),
     );
-    const internal = source as unknown as Internals;
-    const okClient = {
+    const internal = mcpSourceInternals(source);
+    const okClient = stub<Client>({
       callTool: () => Promise.resolve({ content: [{ type: "text", text: "ok" }], isError: false }),
       close: () => Promise.resolve(),
-    };
+    });
     internal.client = okClient;
-    internal.transport = { close: () => Promise.resolve() };
+    internal.transport = stub<Transport>({ close: () => Promise.resolve() });
     internal.dead = true;
-    internal.start = async () => {
+    source.start = async () => {
       await started;
       internal.stopped = false;
       internal.client = okClient;
-      internal.transport = { close: () => Promise.resolve() };
+      internal.transport = stub<Transport>({ close: () => Promise.resolve() });
     };
 
     const restarting = source.restart();

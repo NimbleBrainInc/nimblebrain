@@ -1,22 +1,26 @@
 import { describe, expect, it } from "bun:test";
+import type { Client } from "@modelcontextprotocol/client";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { mcpSourceInternals } from "../helpers/mcp-source-internals.ts";
+import { stub } from "../helpers/stub.ts";
 
 /**
  * Mock the MCP Client's `readResource` by reaching into the McpSource's
  * private client field. Keeps the test focused on the `_meta` passthrough
  * logic inside `readResource()` without spinning up a real MCP server.
  */
-function makeSourceWithStubClient(stubResponse: unknown): McpSource {
+function makeSourceWithStubClient(
+  stubResponse: Awaited<ReturnType<Client["readResource"]>>,
+): McpSource {
   const source = new McpSource(
     "stub",
     { type: "remote", url: new URL("http://localhost:0/mcp") },
     new NoopEventSink(),
   );
-  // deno-lint-ignore no-explicit-any
-  (source as unknown as { client: { readResource: () => Promise<unknown> } }).client = {
+  mcpSourceInternals(source).client = stub<Client>({
     readResource: async () => stubResponse,
-  };
+  });
   return source;
 }
 

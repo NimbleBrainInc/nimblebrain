@@ -31,6 +31,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { firstPayloadOf } from "../helpers/engine-events.ts";
 import { makeIdentity } from "../helpers/identity.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
@@ -637,12 +638,9 @@ describe("runtime.executeTask", () => {
       captureSink,
     );
 
-    const skillsLoaded = captured.find((e) => e.type === "skills.loaded");
-    expect(skillsLoaded).toBeDefined();
+    const payload = firstPayloadOf(captured, "skills.loaded");
+    expect(payload).toBeDefined();
 
-    const payload = skillsLoaded!.data as unknown as {
-      skills: Array<{ id: string; scope: string; loadedBy: string }>;
-    };
     const expectedPath = join(sharedSkillsDir, `${SKILL_NAME}.md`);
     const entry = payload.skills.find((s) => s.id === expectedPath);
     expect(entry).toBeDefined();
