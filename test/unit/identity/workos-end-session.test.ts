@@ -15,6 +15,7 @@ import type { webcrypto } from "node:crypto";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import { stubWorkosUserManagement, workosAuthentication } from "../../helpers/workos-sdk.ts";
 
 // ── Key generation helpers (mirror workos-org-scope.test.ts) ────────
 
@@ -95,14 +96,13 @@ function createProvider(
 } {
   const provider = new WorkosIdentityProvider(CONFIG, undefined);
   const revoked: string[] = [];
-  const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-  workos.userManagement = {
-    revokeSession: async ({ sessionId }: { sessionId: string }) => {
+  stubWorkosUserManagement(provider, {
+    revokeSession: async ({ sessionId }) => {
       revoked.push(sessionId);
     },
-    authenticateWithRefreshToken: ({ refreshToken }: { refreshToken: string }) =>
-      refresh(refreshToken),
-  };
+    authenticateWithRefreshToken: async ({ refreshToken }) =>
+      workosAuthentication(await refresh(refreshToken)),
+  });
   provider.fetcher = fakeFetch(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url !== `https://api.workos.com/sso/jwks/${CONFIG.clientId}`) {
