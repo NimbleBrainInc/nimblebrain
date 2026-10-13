@@ -46,9 +46,7 @@ function slotsFor(runtime: Runtime, model?: string) {
     orgRole: "member",
     preferences: model === undefined ? {} : { models: { default: model } },
   });
-  return runWithRequestContext({ identity }, () =>
-    runtime.getModelSlots(),
-  );
+  return runWithRequestContext({ identity }, () => runtime.getModelSlots());
 }
 
 describe("a person's model choice applies to their turns", () => {
@@ -173,9 +171,7 @@ async function setPreference(runtime: Runtime, userId: string, model: string | n
   if (!identity) throw new Error(`user ${userId} not found`);
   const tool = createCoreToolDefs(runtime).find((d) => d.name === "set_preferences");
   if (!tool) throw new Error("set_preferences tool not found");
-  return runWithRequestContext({ identity }, () =>
-    tool.handler({ model }),
-  );
+  return runWithRequestContext({ identity }, () => tool.handler({ model }));
 }
 
 async function seedUser(runtime: Runtime) {
@@ -345,16 +341,13 @@ describe("the settings view is the configured one", () => {
 
       const tool = createCoreToolDefs(runtime).find((d) => d.name === "get_config");
       if (!tool) throw new Error("get_config not found");
-      const { config, slots } = await runWithRequestContext(
-        { identity },
-        async () => ({
-          config: (await tool.handler({})).structuredContent as {
-            models: { default: string };
-            newConversationModel: string;
-          },
-          slots: runtime.getModelSlots(),
-        }),
-      );
+      const { config, slots } = await runWithRequestContext({ identity }, async () => ({
+        config: (await tool.handler({})).structuredContent as {
+          models: { default: string };
+          newConversationModel: string;
+        },
+        slots: runtime.getModelSlots(),
+      }));
 
       // The same caller, in the same context, sees both: their own choice on
       // the turn, and the untinted configured value on the settings surface.
