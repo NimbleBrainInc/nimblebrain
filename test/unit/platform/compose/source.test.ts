@@ -25,8 +25,8 @@ import type {
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import { hashSkillBody } from "../../../../src/runtime/skills-loaded-payload.ts";
-import type { ToolRegistry } from "../../../../src/tools/registry.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { ToolRegistry } from "../../../../src/tools/registry.ts";
 import { makeIdentity } from "../../../helpers/identity.ts";
 import { stub } from "../../../helpers/stub.ts";
 import { resultText, structuredOutput } from "../../../helpers/tool-result.ts";
