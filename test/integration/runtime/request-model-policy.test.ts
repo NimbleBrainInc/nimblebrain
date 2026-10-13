@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ModelNotAllowedError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import type { ModelSlots } from "../../../src/runtime/types.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
@@ -16,14 +17,14 @@ afterAll(() => {
 });
 
 /** A runtime whose anthropic provider allows exactly one model. */
-async function startWithAllowlist(name: string, models: string[], slots?: Record<string, string>) {
+async function startWithAllowlist(name: string, models: string[], slots?: Partial<ModelSlots>) {
   const workDir = join(testDir, name);
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
     identityProvider: devProvider,
     languageModel: createEchoModel(),
     providers: { anthropic: { apiKey: "test-key", models } },
-    ...(slots ? { models: slots as never } : {}),
+    ...(slots ? { models: slots } : {}),
     workDir,
   });
   await provisionTestWorkspace(runtime);

@@ -46,7 +46,7 @@ function slotsFor(runtime: Runtime, model?: string) {
     orgRole: "member",
     preferences: model === undefined ? {} : { models: { default: model } },
   });
-  return runWithRequestContext({ identity, workspaceId: null } as never, () =>
+  return runWithRequestContext({ identity }, () =>
     runtime.getModelSlots(),
   );
 }
@@ -173,7 +173,7 @@ async function setPreference(runtime: Runtime, userId: string, model: string | n
   if (!identity) throw new Error(`user ${userId} not found`);
   const tool = createCoreToolDefs(runtime).find((d) => d.name === "set_preferences");
   if (!tool) throw new Error("set_preferences tool not found");
-  return runWithRequestContext({ identity, workspaceId: null } as never, () =>
+  return runWithRequestContext({ identity }, () =>
     tool.handler({ model }),
   );
 }
@@ -307,7 +307,7 @@ describe("a caller's own choice never becomes everyone's default", () => {
         preferences: { models: { default: CHOSEN } },
       });
 
-      runWithRequestContext({ identity, workspaceId: null } as never, () =>
+      runWithRequestContext({ identity }, () =>
         runtime.updateConfig({ models: { fast: "anthropic:claude-haiku-4-5-20251001" } }),
       );
 
@@ -346,7 +346,7 @@ describe("the settings view is the configured one", () => {
       const tool = createCoreToolDefs(runtime).find((d) => d.name === "get_config");
       if (!tool) throw new Error("get_config not found");
       const { config, slots } = await runWithRequestContext(
-        { identity, workspaceId: null } as never,
+        { identity },
         async () => ({
           config: (await tool.handler({})).structuredContent as {
             models: { default: string };
