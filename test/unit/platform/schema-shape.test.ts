@@ -91,7 +91,7 @@ function makeRuntimeStub(workDir: string): unknown {
 
 const SOURCES = [
   { name: "skills", factory: createSkillsSource, typedOutputs: true },
-  { name: "files", factory: createFilesSource },
+  { name: "files", factory: createFilesSource, typedOutputs: true },
   { name: "conversations", factory: createConversationsSource },
   { name: "tasks", factory: createTasksSource },
   { name: "notifications", factory: createNotificationsSource },
