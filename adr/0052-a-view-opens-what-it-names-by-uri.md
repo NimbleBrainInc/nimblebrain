@@ -53,9 +53,9 @@ reads:**
    than in an app, opens there. It is a set of its own, kept beside the
    resolver: the schemes in `src/tools/resource-schemes.ts` are every scheme
    the host resolves, and the kernel-shown set is the subset it shows in its
-   own chrome. This decision adds `conversation://<id>`, which opens the chat panel. The host
-   answers it, so it joins `RESERVED_RESOURCE_SCHEMES`, where no declared
-   resource can claim it.
+   own chrome. This decision adds `conversation://<id>`, which opens the chat
+   panel. The host answers it, so it joins `RESERVED_RESOURCE_SCHEMES`, where
+   no declared resource can claim it.
 2. **An app's own screen.** An app's `ui://` resource opens that app at its
    home.
 3. **A served resource.** Otherwise the URI goes to the one app the person can
