@@ -2706,7 +2706,7 @@ export class McpSource implements ToolSource {
     }
     // An outside client reads `structuredContent` itself; only the agent loop
     // needs it as text.
-    return caller ? promoted : this.forAgent(promoted);
+    return caller ? promoted : this.forAgent(toolName, promoted);
   }
 
   /**
@@ -2791,16 +2791,21 @@ export class McpSource implements ToolSource {
     if (promoted !== toolResult) {
       log.debug("mcp", `lie-normalized source=${this.name} tool=${toolName} path=task`);
     }
-    return this.forAgent(promoted);
+    return this.forAgent(toolName, promoted);
   }
 
   /**
    * A remote server's result as the agent loop reads it: its structured data
    * carried in text, since the model sees text only. In-process platform tools
-   * put what the model should read in `content` already.
+   * put what the model should read in `content` already, and a tool with an
+   * MCP Apps UI (`_meta.ui.resourceUri`) sends `structuredContent` to render
+   * that UI, not for the model's context.
    */
-  private forAgent(result: ToolResult): ToolResult {
-    return this.mode.type === "inProcess" ? result : withStructuredContentText(result);
+  private forAgent(toolName: string, result: ToolResult): ToolResult {
+    if (this.mode.type === "inProcess") return result;
+    const ui = this.findTool(toolName)?.meta?.ui as { resourceUri?: unknown } | undefined;
+    if (typeof ui?.resourceUri === "string") return result;
+    return withStructuredContentText(result);
   }
 
   /**

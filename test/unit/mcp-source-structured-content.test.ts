@@ -1,7 +1,7 @@
 /**
  * A remote server's structured data reaches the agent loop as text; an
- * in-process platform source's result passes through as written, and so does
- * one relayed to an outside client.
+ * in-process platform source's result passes through as written, and so do a
+ * remote tool's with an MCP Apps UI and one relayed to an outside client.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -14,7 +14,10 @@ const noopSink: EventSink = { emit: () => {} };
 
 const ROWS = { records: [{ id: "7", vendor: "Acme Paper", amount: "250.00" }], totalCount: 1 };
 
-function buildSource(mode: ConstructorParameters<typeof McpSource>[1]): McpSource {
+function buildSource(
+  mode: ConstructorParameters<typeof McpSource>[1],
+  meta?: Record<string, unknown>,
+): McpSource {
   const source = new McpSource("ledger", mode, noopSink);
   const fakeClient = {
     callTool: async (): Promise<CallToolResult> => ({
@@ -32,6 +35,7 @@ function buildSource(mode: ConstructorParameters<typeof McpSource>[1]): McpSourc
       description: "",
       inputSchema: { type: "object", properties: {} },
       source: "mcp:ledger",
+      meta,
     },
   ];
   return source;
@@ -42,6 +46,16 @@ describe("McpSource — structured data for the agent loop", () => {
     const source = buildSource({ type: "remote", url: new URL("http://localhost:0/mcp") });
     const result = await source.execute("query", {});
     expect(extractTextForModel(result.content)).toBe(`Found 1 record(s).\n${JSON.stringify(ROWS)}`);
+    expect(result.structuredContent).toEqual(ROWS);
+  });
+
+  it("a remote tool with an MCP Apps UI keeps its structuredContent for the UI", async () => {
+    const source = buildSource(
+      { type: "remote", url: new URL("http://localhost:0/mcp") },
+      { ui: { resourceUri: "ui://ledger/chart" } },
+    );
+    const result = await source.execute("query", {});
+    expect(extractTextForModel(result.content)).toBe("Found 1 record(s).");
     expect(result.structuredContent).toEqual(ROWS);
   });
 
