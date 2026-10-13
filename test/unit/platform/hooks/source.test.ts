@@ -87,7 +87,9 @@ class FakeRuntime {
   }
 
   /** A running connector that declares the stream, answering its register tool with `answer`. */
-  runConnector(answer: ToolResult = { content: [] }): Array<Record<string, unknown>> {
+  runConnector(
+    answer: ToolResult = { content: [], isError: false },
+  ): Array<Record<string, unknown>> {
     const handed: Array<Record<string, unknown>> = [];
     this.declarations = [
       { vendor: "acme", route: "/ingest/acme", register_tool: "set_webhook_url" },
