@@ -9,7 +9,14 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import type { TaskRequest } from "../../runtime/types.ts";
 import { coreSkillBody } from "../../skills/loader.ts";
 import { isTaskForbiddenIdentityTool } from "../../tools/identity-sources.ts";
-import { defineInProcessApp, type InProcessTool, typedTool } from "../../tools/in-process-app.ts";
+import {
+  defineInProcessApp,
+  type InProcessTool,
+  type OutputSchema,
+  type ToolErrorResult,
+  type ToolSuccessResult,
+  typedTool,
+} from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { unmatchedAllowedTools } from "../../tools/tool-pattern.ts";
 import { ledgerCostByTaskRun } from "../../usage/aggregate.ts";
@@ -64,6 +71,9 @@ import {
 import { createTaskRunSource } from "./task-source.ts";
 import type { Batch, RunTicket, Task, TaskRun } from "./types.ts";
 import { TASKS_PANEL_HTML } from "./ui-resource.ts";
+
+/** What a tool's handler answers: the static type of its output schema. */
+type ToolOutput<K extends TaskToolName> = Static<(typeof TOOL_SCHEMAS)[K]["outputSchema"]>;
 
 /**
  * Resolve WHO a task run acts as: the task's owner, focused on the
@@ -533,15 +543,21 @@ export async function createTasksSource(
     }),
   );
 
-  /** Shared error handler — catches, formats, returns isError result. */
-  function withErrorHandling<I>(
-    fn: (input: I) => Promise<object> | object,
-  ): (input: I) => Promise<{ content: ReturnType<typeof textContent>; isError: boolean }> {
+  /**
+   * Run a handler and shape its answer: a success is the answer as JSON text,
+   * which is what the model reads, and the same object as `structuredContent`,
+   * which the SDK client checks against the tool's output schema; a throw is an
+   * error result naming the message.
+   */
+  function withErrorHandling<I, O>(
+    fn: (input: I) => Promise<O> | O,
+  ): (input: I) => Promise<ToolSuccessResult<O> | ToolErrorResult> {
     return async (input) => {
       try {
         const result = await fn(input);
         return {
           content: textContent(JSON.stringify(result, null, 2)),
+          structuredContent: result,
           isError: false,
         };
       } catch (err) {
@@ -599,13 +615,13 @@ export async function createTasksSource(
   }
 
   // Every handler, keyed by tool name. The mapped type types each one's input
-  // from its own entry in `TOOL_SCHEMAS`, and a tool missing here fails to
-  // compile.
+  // and answer from its own entry in `TOOL_SCHEMAS`, and a tool missing here
+  // fails to compile.
   const handlers: {
     [K in TaskToolName]: (
       input: Static<(typeof TOOL_SCHEMAS)[K]["inputSchema"]>,
       ctx: ToolContext,
-    ) => Promise<object> | object;
+    ) => Promise<ToolOutput<K>> | ToolOutput<K>;
   } = {
     create: (input, ctx) => warnAboutTask(handleCreate(input, ctx)),
     update: (input, ctx) => warnAboutTask(handleUpdate(input, ctx)),
@@ -636,8 +652,17 @@ export async function createTasksSource(
 
   function registerTool<K extends TaskToolName>(name: K): InProcessTool {
     const handle = handlers[name];
+    // `handlers` holds each tool's answer to its own output schema; here every
+    // tool is registered through one generic body, which reads the schema as
+    // the general `OutputSchema` it publishes.
+    const { description, inputSchema, annotations } = TOOL_SCHEMAS[name];
+    const outputSchema: OutputSchema = TOOL_SCHEMAS[name].outputSchema;
     return typedTool({
-      ...TOOL_SCHEMAS[name],
+      name,
+      description,
+      inputSchema,
+      outputSchema,
+      annotations,
       handler: withErrorHandling((input) => {
         // Unattended-run wall. A task must not reach the
         // task-authoring surface (create/update/delete/run, and any authoring
