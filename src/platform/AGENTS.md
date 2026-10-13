@@ -303,10 +303,9 @@ and files fixtures call it after `start()` for that reason.
 
 The skills and files apps declare their outputs this way. The other apps
 declare type-only `XxxOutput` exports in `schemas/` and annotate their
-handlers with them; each
-moves onto output schemas in its own change, and is then marked `typedOutputs`.
-Until then, the type-only export is the handler's annotated return type, never
-`object`.
+handlers with them; each moves onto output schemas in its own change, and is
+then marked `typedOutputs`. Until then, the type-only export is the handler's
+annotated return type, never `object`.
 
 ### Consumers import the named type
 

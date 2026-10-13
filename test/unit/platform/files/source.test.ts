@@ -19,7 +19,10 @@ import { DEFAULT_FILE_CONFIG } from "../../../../src/files/types.ts";
 import { createFilesSource } from "../../../../src/platform/files/source.ts";
 import type {
   FilesCreateOutput,
+  FilesInfoOutput,
   FilesReadPdfPagesOutput,
+  FilesSearchOutput,
+  FilesTagOutput,
 } from "../../../../src/platform/schemas/files.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
@@ -347,6 +350,57 @@ describe("files app", () => {
     });
     expect(created.isError).toBe(false);
     expect(parseFirst(created)).toMatchObject({ size: 0 });
+  });
+
+  test("search returns matching files and the match count", async () => {
+    const created = await exec("create", {
+      manifest: { filename: "quarterly-report.txt", mimeType: "text/plain" },
+      body: "q3 numbers",
+      encoding: "text",
+    });
+    const { id } = parseFirst(created) as FilesCreateOutput;
+    await exec("create", {
+      manifest: { filename: "unrelated.txt", mimeType: "text/plain" },
+      body: "other",
+      encoding: "text",
+    });
+
+    const result = await exec("search", { query: "quarterly" });
+    expect(result.isError).toBe(false);
+    const structured = structuredOutput<FilesSearchOutput>(result);
+    expect(structured.total).toBe(1);
+    expect(structured.files.map((f) => f.id)).toEqual([id]);
+  });
+
+  test("info returns the file's record", async () => {
+    const created = await exec("create", {
+      manifest: { filename: "notes.md", mimeType: "text/markdown" },
+      body: "# Notes",
+      encoding: "text",
+    });
+    const { id } = parseFirst(created) as FilesCreateOutput;
+
+    const result = await exec("info", { id });
+    expect(result.isError).toBe(false);
+    expect(structuredOutput<FilesInfoOutput>(result)).toMatchObject({
+      id,
+      filename: "notes.md",
+      mimeType: "text/markdown",
+    });
+  });
+
+  test("tag adds and removes tags and returns the result", async () => {
+    const created = await exec("create", {
+      manifest: { filename: "tagged.txt", mimeType: "text/plain" },
+      body: "tag me",
+      encoding: "text",
+    });
+    const { id } = parseFirst(created) as FilesCreateOutput;
+
+    await exec("tag", { id, add: ["draft", "finance"] });
+    const result = await exec("tag", { id, remove: ["draft"] });
+    expect(result.isError).toBe(false);
+    expect(structuredOutput<FilesTagOutput>(result)).toEqual({ id, tags: ["finance"] });
   });
 
   test("read of nonexistent id surfaces a clean message (not a raw fs error)", async () => {
