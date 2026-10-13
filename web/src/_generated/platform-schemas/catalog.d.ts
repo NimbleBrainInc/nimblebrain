@@ -24,7 +24,7 @@ export declare const PlatformToolCatalog: {
                 layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<1 | 3>>;
                 loading_strategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
                 tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
+                status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"disabled" | "active">>;
                 modified_since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
         };

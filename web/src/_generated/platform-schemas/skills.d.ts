@@ -21,7 +21,7 @@ export declare const SkillsListInput: import("@sinclair/typebox").TObject<{
     layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<1 | 3>>;
     loading_strategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
     tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"active" | "disabled">>;
+    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"disabled" | "active">>;
     modified_since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type SkillsListInput = Static<typeof SkillsListInput>;
@@ -99,7 +99,7 @@ export declare const UseSkillInput: import("@sinclair/typebox").TObject<{
 }>;
 export type UseSkillInput = Static<typeof UseSkillInput>;
 declare const ScopeValue: import("@sinclair/typebox").TUnsafe<"org" | "workspace" | "user" | "provided">;
-declare const StatusValue: import("@sinclair/typebox").TUnsafe<"active" | "disabled">;
+declare const StatusValue: import("@sinclair/typebox").TUnsafe<"disabled" | "active">;
 declare const LayerValue: import("@sinclair/typebox").TUnsafe<1 | 3>;
 /** Tier a skill lives in. */
 export type SkillScope = Static<typeof ScopeValue>;
@@ -139,7 +139,7 @@ export declare const SkillSummary: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TString;
     layer: import("@sinclair/typebox").TUnsafe<1 | 3>;
     scope: import("@sinclair/typebox").TUnsafe<"org" | "workspace" | "user" | "provided">;
-    status: import("@sinclair/typebox").TUnsafe<"active" | "disabled">;
+    status: import("@sinclair/typebox").TUnsafe<"disabled" | "active">;
     tokens: import("@sinclair/typebox").TNumber;
     source: import("@sinclair/typebox").TObject<{
         connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -165,7 +165,7 @@ export declare const SkillsListOutput: import("@sinclair/typebox").TObject<{
         name: import("@sinclair/typebox").TString;
         layer: import("@sinclair/typebox").TUnsafe<1 | 3>;
         scope: import("@sinclair/typebox").TUnsafe<"org" | "workspace" | "user" | "provided">;
-        status: import("@sinclair/typebox").TUnsafe<"active" | "disabled">;
+        status: import("@sinclair/typebox").TUnsafe<"disabled" | "active">;
         tokens: import("@sinclair/typebox").TNumber;
         source: import("@sinclair/typebox").TObject<{
             connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -248,8 +248,8 @@ export declare const SkillsReadOutput: import("@sinclair/typebox").TUnsafe<{
     source: {
         connector?: string | undefined;
         path?: string | undefined;
-        connectorVersion?: string | undefined;
         uri?: string | undefined;
+        connectorVersion?: string | undefined;
     };
     scope: "org" | "workspace" | "user" | "provided";
     layer: 1 | 3;
