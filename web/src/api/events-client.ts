@@ -50,8 +50,18 @@ type ReconnectHandler = () => void;
 type Connector = (options: ConnectEventsOptions) => EventConnection;
 let connectImpl: Connector = connectEvents;
 
-// biome-ignore lint/suspicious/noExplicitAny: subscriber set is keyed by event type; type-safety is enforced by `subscribe<K>` at the public boundary
-const eventHandlers = new Map<keyof WorkspaceStreamEvents, Set<Handler<any>>>();
+/**
+ * Each event type's subscribers. A `Map` cannot relate a key's type to its
+ * value's, so this view of it does: the set under `K` holds `Handler<K>`s, and
+ * `get` and `set` are the only ways in.
+ */
+interface HandlersByType {
+  get<K extends keyof WorkspaceStreamEvents>(type: K): Set<Handler<K>> | undefined;
+  set<K extends keyof WorkspaceStreamEvents>(type: K, handlers: Set<Handler<K>>): void;
+  values(): Iterable<{ readonly size: number }>;
+  clear(): void;
+}
+const eventHandlers: HandlersByType = new Map();
 const reconnectHandlers = new Set<ReconnectHandler>();
 
 let connection: EventConnection | null = null;
@@ -73,7 +83,7 @@ function ensureOpen(): void {
       if (!set) return;
       for (const h of set) {
         try {
-          (h as Handler<K>)(data);
+          h(data);
         } catch (err) {
           console.warn("[events-client] event handler threw for", type, err);
         }

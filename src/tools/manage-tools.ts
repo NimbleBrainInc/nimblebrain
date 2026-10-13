@@ -1,10 +1,7 @@
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolPromotionControls, ToolPromotionResult, ToolResult } from "../engine/types.ts";
-import {
-  ManageToolsInput,
-  type ManageToolsInput as ManageToolsInputType,
-} from "../platform/schemas/manage-tools.ts";
-import type { InProcessTool } from "./in-process-app.ts";
+import { ManageToolsInput } from "../platform/schemas/manage-tools.ts";
+import { type InProcessTool, typedTool } from "./in-process-app.ts";
 
 interface BatchResult {
   promoted: ToolPromotionResult[];
@@ -36,13 +33,13 @@ export function createManageToolsToolDefs(
   toolPromotionCtx?: ToolPromotionControls,
 ): InProcessTool[] {
   return [
-    {
+    typedTool({
       name: "manage_tools",
       description:
         "Patch your active tool list in one call. Pass `add` to promote discovered tools (after nb__search) so they become callable, and/or `remove` to release tools you no longer need. Both arrays are optional; supply at least one non-empty array. Per-item results are returned in structuredContent.\n\nBatch every tool the task needs into one `add` — but promote only tools you actually intend to call. A promoted tool's schema is re-sent on the turns that follow, so carrying a plausible-looking extra from the search results costs tokens and buys nothing. When search returns several candidates for one job, promote the one that fits rather than all of them.",
       inputSchema: ManageToolsInput,
       handler: async (input): Promise<ToolResult> => {
-        const { add = [], remove = [] } = input as unknown as ManageToolsInputType;
+        const { add = [], remove = [] } = input;
         if (add.length === 0 && remove.length === 0) {
           return {
             content: textContent(
@@ -76,6 +73,6 @@ export function createManageToolsToolDefs(
           isError: false,
         };
       },
-    },
+    }),
   ];
 }

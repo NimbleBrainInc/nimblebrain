@@ -44,7 +44,7 @@ export function useShell(_token: string, workspaceId?: string) {
     }
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceId is a parameter that drives refetch
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `shell` is read only to choose the first-load screen over a silent swap; depending on it would refetch each time a fetch lands
   useEffect(() => {
     if (!workspaceId) {
       setLoading(false);

@@ -16,7 +16,7 @@
 // agent can't see the app's visible state (e.g. the open document).
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
@@ -78,13 +78,13 @@ export function ChatChrome() {
   // Collapse fullscreen when the route changes — same logic AppWithChat
   // had; lifting it here makes it work globally.
   const prevPathnameRef = useRef(location.pathname);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only react to pathname changes
+  const collapseFullscreen = useEffectEvent(() => {
+    if (panelState === "fullscreen") toggleFullscreen();
+  });
   useEffect(() => {
     if (location.pathname !== prevPathnameRef.current) {
       prevPathnameRef.current = location.pathname;
-      if (panelState === "fullscreen") {
-        toggleFullscreen();
-      }
+      collapseFullscreen();
     }
   }, [location.pathname]);
 
@@ -93,19 +93,20 @@ export function ChatChrome() {
   // shared link while the chat was left fullscreen, would be covered — so
   // collapse fullscreen once on mount when we land directly on such a route.
   const mountCollapseHandled = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount
-  useEffect(() => {
+  const collapseOnLanding = useEffectEvent(() => {
     if (mountCollapseHandled.current) return;
     mountCollapseHandled.current = true;
     if (panelState === "fullscreen" && /^\/w\/[^/]+\/context\//.test(location.pathname)) {
       toggleFullscreen();
     }
+  });
+  useEffect(() => {
+    collapseOnLanding();
   }, []);
 
   // Deep-link: open chat from ?chat=<conversationId> on mount.
   const deepLinkHandled = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount
-  useEffect(() => {
+  const openFromUrl = useEffectEvent(() => {
     if (deepLinkHandled.current) return;
     deepLinkHandled.current = true;
     const params = new URLSearchParams(window.location.search);
@@ -113,6 +114,9 @@ export function ChatChrome() {
     if (chatId) {
       openPanel(chatId);
     }
+  });
+  useEffect(() => {
+    openFromUrl();
   }, []);
 
   // Unread tracking: count assistant messages added while panel is closed.

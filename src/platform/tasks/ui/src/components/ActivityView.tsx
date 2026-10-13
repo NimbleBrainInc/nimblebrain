@@ -432,7 +432,7 @@ export function ActivityView({
   const filtersKey = JSON.stringify(filters);
   const lastFilters = useRef<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable; reload on filters or data change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `filtersKey` stands for `filters`, so a new object with the same filters does not reload; `refreshKey` is the data-change signal; `page` reads only the stable `runsTool`
   useEffect(() => {
     let cancelled = false;
     const reset = lastFilters.current !== filtersKey;

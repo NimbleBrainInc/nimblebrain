@@ -41,10 +41,16 @@ export function Modal({
   }, []);
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: Escape closes it (window listener above)
-    // biome-ignore lint/a11y/noStaticElementInteractions: the backdrop is not a control
-    <div className="confirm-overlay" onClick={onClose}>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: the click only stops the backdrop's close; Escape is handled on window */}
+    <div className="confirm-overlay">
+      {/* A click outside the panel closes it. Out of the tab order: Escape and
+          the × are the keyboard's ways out. */}
+      <button
+        type="button"
+        className="modal-backdrop"
+        aria-label="Close dialog"
+        tabIndex={-1}
+        onClick={onClose}
+      />
       <div
         ref={panelRef}
         className={`confirm-panel${wide ? " modal-wide" : ""}`}
@@ -52,7 +58,6 @@ export function Modal({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-head">
           <h2 className="confirm-title" id={titleId}>

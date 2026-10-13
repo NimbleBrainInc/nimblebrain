@@ -25,12 +25,12 @@ const importInput = () => import("./InputEditor.tsx");
 
 beforeAll(async () => {
   const { window } = new JSDOM("", { url: "http://localhost" });
-  // biome-ignore lint/suspicious/noExplicitAny: test-only DOM shim
-  const g = globalThis as any;
-  g.window = window;
-  g.document = window.document;
-  g.HTMLElement = window.HTMLElement;
-  g.Node = window.Node;
+  Object.assign(globalThis, {
+    window,
+    document: window.document,
+    HTMLElement: window.HTMLElement,
+    Node: window.Node,
+  });
   [home, upcoming, activity, result, input] = await Promise.all([
     importHome(),
     importUpcoming(),
@@ -538,7 +538,6 @@ describe("Result", () => {
     expect(html).toMatch(/Outcome<\/span><span class="tile-value">Failed/);
     expect(html).toContain("Connector gone");
     expect(html).toContain("No deliverable for this run.");
-    expect(html).not.toContain("Showing the preview");
     expect(html).not.toContain(">Accept<");
   });
 
@@ -560,14 +559,14 @@ describe("Result", () => {
     expect(html).not.toContain(">Accept<");
   });
 
-  test("a run recorded with no result shows its preview and says so", () => {
+  test("the deliverable is the result's output, never the run's preview", () => {
     const html = body({
       status: "ready",
       run: { ...RUN, assessment: undefined, resultPreview: "Three prospects found." },
       result: null,
     });
-    expect(html).toContain("Three prospects found.");
-    expect(html).toContain("Showing the preview; the full result could not be read.");
+    expect(html).not.toContain("Three prospects found.");
+    expect(html).toContain("No deliverable for this run.");
   });
 });
 

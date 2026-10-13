@@ -20,18 +20,11 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom's Window stub doesn't expose SyntaxError/TypeError; querySelector's
-// selector parser constructs one and trips on the gap.
-{
-  const win = (globalThis as unknown as { window?: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
@@ -487,7 +480,7 @@ describe("the filter bar", () => {
     // The prototype setter, not `select.value =`: React tracks the value it
     // last wrote, and only the native setter updates that tracker.
     const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-    const WindowEvent = (window as unknown as { Event: typeof Event }).Event;
+    const WindowEvent = window.Event;
     act(() => {
       setValue?.call(select, "ws_003335b14591adb0");
       select.dispatchEvent(new WindowEvent("change", { bubbles: true }));

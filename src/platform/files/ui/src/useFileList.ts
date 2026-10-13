@@ -32,12 +32,14 @@ export function useFileList(params: Record<string, unknown>): FileListState {
   const key = JSON.stringify(params);
   const seq = useRef(0);
 
-  // A new query starts at its first page.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is the trigger
-  useEffect(() => {
+  // A new query starts at its first page. Reset while rendering, so the first
+  // read of the new query already asks for page 0.
+  const [shownKey, setShownKey] = useState(key);
+  if (shownKey !== key) {
+    setShownKey(key);
     setPage(0);
     setResult(null);
-  }, [key]);
+  }
 
   const reload = useCallback(async () => {
     const mine = ++seq.current;
@@ -78,7 +80,9 @@ async function fetchPage(app: App, key: string, page: number): Promise<ListResul
     offset: page * PAGE_SIZE,
   });
   if (res.isError) {
-    const message = (res.data as unknown as { error?: string } | undefined)?.error;
+    // `callTool<ListResult>` types `data` as `ListResult` whether or not the call
+    // failed; a failed `files__list` carries `{ error }` there instead.
+    const message = (res.data as { error?: string } | undefined)?.error;
     throw new Error(message ?? "Failed to load files");
   }
   return res.data;

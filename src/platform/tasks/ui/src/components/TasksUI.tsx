@@ -68,7 +68,6 @@ export function TasksUI() {
   const [batchDialog, setBatchDialog] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<TaskRef | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: listTool.call is stable
   const loadTasks = useCallback(async () => {
     setLoading(true);
     try {
@@ -87,7 +86,7 @@ export function TasksUI() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [listTool]);
 
   const refresh = useCallback(() => {
     void loadTasks();

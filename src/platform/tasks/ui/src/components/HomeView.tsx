@@ -421,19 +421,21 @@ export function HomeView({
   const [upcoming, setUpcoming] = useState<UpcomingData | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable
   const load = useCallback(async () => {
     const [s, u] = await Promise.allSettled([statsTool.call({}), upcomingTool.call({ days: 7 })]);
     if (s.status === "fulfilled") {
       const list = (asDict(s.value.data).tasks as TaskStats[]) ?? [];
       setStats(new Map(list.map((x) => [x.taskId, x])));
     }
+    // `tasks__upcoming` answers JSON this package reads as `UpcomingData`, its
+    // hand-kept mirror of `TasksUpcomingOutput`; nothing checks it at runtime.
+    // biome-ignore lint/plugin/double-cast: tool JSON read as the hand-kept `UpcomingData` mirror
     if (u.status === "fulfilled") setUpcoming(asDict(u.value.data) as unknown as UpcomingData);
     const failed = [s, u].find((r) => r.status === "rejected");
     setReadError(failed?.status === "rejected" ? toolErrorText(failed.reason) : null);
-  }, []);
+  }, [statsTool, upcomingTool]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is the signal
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the stats are re-read
   useEffect(() => {
     void load();
     const timer = setInterval(() => void load(), REFRESH_MS);

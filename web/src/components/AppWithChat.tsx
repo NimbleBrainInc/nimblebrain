@@ -23,7 +23,7 @@
 //     to the last in-flight conversation so the SSE viewer reconnects.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import type { AppTrailEntry } from "../bridge/schemas";
 import { useAppLocation } from "../context/AppLocationContext";
@@ -71,13 +71,13 @@ export function AppWithChat({ placement }: AppWithChatProps) {
 
   // Collapse fullscreen when navigating to a different route
   const prevPathnameRef = useRef(location.pathname);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only react to pathname changes, panelState/toggleFullscreen are intentionally excluded
+  const collapseFullscreen = useEffectEvent(() => {
+    if (panelState === "fullscreen") toggleFullscreen();
+  });
   useEffect(() => {
     if (location.pathname !== prevPathnameRef.current) {
       prevPathnameRef.current = location.pathname;
-      if (panelState === "fullscreen") {
-        toggleFullscreen();
-      }
+      collapseFullscreen();
     }
   }, [location.pathname]);
 
@@ -87,8 +87,7 @@ export function AppWithChat({ placement }: AppWithChatProps) {
   // loadConversation re-subscribes and the server's `isActive` drives the
   // bubble. Module-once so app-to-app navigation doesn't re-trigger it.
   const deepLinkHandled = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally runs only on mount
-  useEffect(() => {
+  const openFromUrl = useEffectEvent(() => {
     if (deepLinkHandled.current) return;
     deepLinkHandled.current = true;
     const chatId = new URLSearchParams(window.location.search).get("chat");
@@ -99,6 +98,9 @@ export function AppWithChat({ placement }: AppWithChatProps) {
     if (restoredLastConversation) return;
     restoredLastConversation = true;
     restoreSavedConversation(chat);
+  });
+  useEffect(() => {
+    openFromUrl();
   }, []);
 
   // Persist the active conversation id (per-tab) so a reload can reopen it.
@@ -140,7 +142,7 @@ export function AppWithChat({ placement }: AppWithChatProps) {
     (trail: AppTrailEntry[], navigate: (id: string) => void) => setAppLocation({ trail, navigate }),
     [setAppLocation],
   );
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the placement is the trigger, not a value read
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sibling app routes reuse this instance, so a new `placement.resourceUri` is the app leaving and its trail must clear as on unmount
   useEffect(() => () => setAppLocation(null), [setAppLocation, placement.resourceUri]);
 
   const handleChat = useCallback(

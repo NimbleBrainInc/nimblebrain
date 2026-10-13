@@ -27,6 +27,7 @@ const { createBridge, getAppState } = await import("../../bridge/bridge");
 // own visibility: `setOnScreen` delivers the entry a real observer would.
 const screenCallbacks = new Map<Element, IntersectionObserverCallback>();
 const RealIntersectionObserver = globalThis.IntersectionObserver;
+// biome-ignore lint/plugin/double-cast: An observer with only `observe` and `disconnect`; no `root`, `thresholds`, `unobserve`, or `takeRecords`.
 globalThis.IntersectionObserver = class {
   constructor(private readonly callback: IntersectionObserverCallback) {}
   observe(target: Element) {
@@ -59,6 +60,7 @@ afterEach(() => {
 function mountView(appName: string): View {
   const iframe = document.createElement("iframe");
   document.body.appendChild(iframe);
+  // biome-ignore lint/plugin/double-cast: The app's window, reduced to the `postMessage` the bridge calls on it.
   const stubWindow = { postMessage() {} } as unknown as Window;
   Object.defineProperty(iframe, "contentWindow", { configurable: true, get: () => stubWindow });
 
@@ -72,8 +74,7 @@ function mountView(appName: string): View {
       document.body.removeChild(iframe);
     },
     push(state) {
-      const WindowMessageEvent = (window as unknown as { MessageEvent: typeof MessageEvent })
-        .MessageEvent;
+      const WindowMessageEvent = window.MessageEvent;
       const event = new WindowMessageEvent("message", {
         data: {
           jsonrpc: "2.0",

@@ -1,6 +1,6 @@
 import type { ToolCallResult } from "@nimblebrain/synapse";
 import { useCallTool } from "@nimblebrain/synapse/react";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 /**
  * Throw a tool execution error as an `Error` carrying the tool's text.
@@ -23,7 +23,11 @@ export function throwIfToolError<T>(result: ToolCallResult<T>): ToolCallResult<T
   throw new Error(text || "Tool error");
 }
 
-/** `useCallTool` whose `call` rejects when the tool reports an error. */
+/**
+ * `useCallTool` whose `call` rejects when the tool reports an error. The
+ * returned object and its `call` keep their identity for the tool's lifetime,
+ * so a hook lists either as a dependency without re-running each render.
+ */
 export function useTool<T = unknown>(
   toolName: string,
 ): { call: (args?: Record<string, unknown>) => Promise<ToolCallResult<T>> } {
@@ -32,5 +36,5 @@ export function useTool<T = unknown>(
     async (args?: Record<string, unknown>) => throwIfToolError(await callTool(args)),
     [callTool],
   );
-  return { call };
+  return useMemo(() => ({ call }), [call]);
 }

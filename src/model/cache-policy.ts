@@ -136,7 +136,7 @@ function stepAnchorIndex(messages: LanguageModelV4Message[]): number {
 }
 
 function systemMessageOf(systemPrompt: string): LanguageModelV4Message {
-  return { role: "system" as const, content: systemPrompt } as unknown as LanguageModelV4Message;
+  return { role: "system", content: systemPrompt };
 }
 
 /**

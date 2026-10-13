@@ -550,7 +550,7 @@ export function MessageList({
   // Track which messages existed on mount/load so we don't animate them.
   // Only messages added after the initial render get the entrance animation.
   const initialCountRef = useRef(messages.length);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on conversation identity (first message timestamp)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the first message's timestamp changes only when another conversation replaces the list; appending (a new turn, streaming) leaves it, and must keep the baseline
   useEffect(() => {
     // When conversation changes (messages replaced wholesale), update the baseline
     initialCountRef.current = messages.length;
@@ -564,6 +564,12 @@ export function MessageList({
     );
   }
 
+  // Messages carry no id, so a message is keyed by its position within its
+  // conversation, named by its first message's timestamp: opening another
+  // conversation remounts every message rather than handing the new one the
+  // old one's view state (an expanded chip) at the same index.
+  const conversationMark = messages[0]?.timestamp ?? "";
+
   // Which turns announce their equipment. A sequence-level decision, so it is
   // made here where the sequence lives — `LedgerLine` renders what it is given.
   const ledgerRows = ledgerChanges(messages);
@@ -574,8 +580,8 @@ export function MessageList({
         <div className={`py-6 flex flex-col gap-10 ${compact ? "px-4" : "px-8 max-w-4xl mx-auto"}`}>
           {messages.map((msg, idx) => (
             <MessageItem
-              // biome-ignore lint/suspicious/noArrayIndexKey: messages lack stable IDs and don't reorder
-              key={idx}
+              // biome-ignore lint/suspicious/noArrayIndexKey: a conversation's messages change only at the end (appended, or truncated on retry), never reordered, and the prefix changes with the conversation
+              key={`${conversationMark}:${idx}`}
               msg={msg}
               ledgerSkills={ledgerRows[idx]}
               isNew={idx >= initialCountRef.current}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { UploadIcon } from "./icons";
 import { Overlay } from "./Overlay";
 import { UploadRefusals } from "./UploadRefusals";
@@ -48,10 +48,13 @@ export function UploadDialog({
     if (result.storedIds.length > 0) onDone(result.storedIds.length);
   }
 
-  // Files dropped on the view, which opened this dialog, upload straight away.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: once, for the files the dialog opened with
-  useEffect(() => {
+  // Files dropped on the view, which opened this dialog, upload straight away,
+  // once: a later `initialFiles` is not a new drop and must not upload again.
+  const uploadInitial = useEffectEvent(() => {
     if (initialFiles && initialFiles.length > 0) void run(initialFiles);
+  });
+  useEffect(() => {
+    uploadInitial();
   }, []);
 
   function onDrop(e: React.DragEvent) {

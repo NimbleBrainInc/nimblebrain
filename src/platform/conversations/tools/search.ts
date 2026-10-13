@@ -8,14 +8,10 @@
 import { readFile } from "node:fs/promises";
 import type {
   ConversationSearchResult,
+  ConversationsSearchInput,
   ConversationsSearchOutput,
 } from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex, WorkspaceScope } from "../index-cache.ts";
-
-export interface SearchInput {
-  query: string;
-  limit?: number;
-}
 
 type MatchSnippet = ConversationSearchResult["matches"][number];
 
@@ -84,7 +80,7 @@ function collectSnippets(raw: string, query: string, queryLower: string): MatchS
 }
 
 export async function handleSearch(
-  input: SearchInput,
+  input: ConversationsSearchInput,
   index: ConversationIndex,
   scope: WorkspaceScope,
   access?: AccessContext,

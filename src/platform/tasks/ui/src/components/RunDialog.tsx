@@ -52,7 +52,6 @@ export function RunDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: statusTool.call is stable
   useEffect(() => {
     if (inputSchema) return;
     statusTool
@@ -61,7 +60,7 @@ export function RunDialog({
         setSchema((asDict(res.data).task as TaskDetail | undefined)?.inputSchema ?? null),
       )
       .catch((err) => setLoadError(toolErrorText(err)));
-  }, [taskId]);
+  }, [taskId, inputSchema, statusTool]);
 
   async function run() {
     if (!input.ok) return;

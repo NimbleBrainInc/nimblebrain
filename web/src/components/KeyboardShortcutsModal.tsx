@@ -113,13 +113,15 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
                 {group.title}
               </h3>
               <div className="space-y-2">
-                {group.shortcuts.map((shortcut, index) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: static shortcut list
-                  <div key={index} className="flex items-center justify-between py-1.5">
+                {group.shortcuts.map((shortcut) => (
+                  <div
+                    key={shortcut.description}
+                    className="flex items-center justify-between py-1.5"
+                  >
                     <span className="text-sm text-muted-foreground">{shortcut.description}</span>
                     <div className="flex items-center gap-1">
                       {shortcut.keys.map((key, keyIndex) => (
-                        // biome-ignore lint/suspicious/noArrayIndexKey: static shortcut list
+                        // biome-ignore lint/suspicious/noArrayIndexKey: a shortcut's keys are a constant sequence, and one key can repeat in it
                         <span key={keyIndex}>
                           <kbd className="inline-flex items-center justify-center min-w-[24px] px-1.5 py-1 text-xs font-mono font-medium bg-muted text-foreground rounded border border-border">
                             {key}

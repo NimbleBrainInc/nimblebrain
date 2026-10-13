@@ -1,6 +1,6 @@
 import { action as hostAction } from "@nimblebrain/synapse";
 import { useApp } from "@nimblebrain/synapse/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import { STARTED_BY_TEXT, startedByOf } from "../lib/activity.ts";
 import { assessmentReasonText, inputSummary, runName, runTime } from "../lib/plain.ts";
 import { readResult } from "../lib/runResult.ts";
@@ -59,8 +59,7 @@ export function Deliverable({
   onOpenFile?: (file: RunFileRef) => void;
 }) {
   const [raw, setRaw] = useState(false);
-  // Every run writes a result; a run recorded before that has only its preview.
-  const output = result?.output ?? run?.resultPreview ?? "";
+  const output = result?.output ?? "";
   const files = result?.outputFiles ?? [];
   const structured = isStructured(result, output);
   return (
@@ -84,7 +83,7 @@ export function Deliverable({
       ) : output ? (
         <div
           className="out-md"
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized via DOMPurify in renderMarkdown
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: `renderMarkdown` returns DOMPurify output under an explicit tag and attribute allowlist (pinned by markdown.test.ts)
           dangerouslySetInnerHTML={{ __html: renderMarkdown(output) }}
         />
       ) : (
@@ -93,9 +92,6 @@ export function Deliverable({
             ? "This run did not start, so it left no deliverable."
             : "No deliverable for this run."}
         </p>
-      )}
-      {!result && run?.resultPreview && (
-        <p className="muted">Showing the preview; the full result could not be read.</p>
       )}
       {files.length > 0 && (
         <div className="result-files">
@@ -307,7 +303,7 @@ export function useRunResult(
   });
   const [tick, setTick] = useState(0);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable; reload on run, task, or tick
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `initialRun` is only the fallback shown until the first read lands, so a new one must not re-read; `tick` is the poll and reload signal
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
@@ -325,7 +321,7 @@ export function useRunResult(
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [runId, taskId, tick]);
+  }, [runId, taskId, resultTool, statusTool, tick]);
 
   const setRun = useCallback((run: TaskRun) => {
     setState((s) => ({
@@ -548,10 +544,13 @@ export function ResultScreen({
 }) {
   const ownerTaskId = taskId ?? initialRun?.taskId;
   const state = useRunResult(runId, ownerTaskId, initialRun);
+  // Told once the record is read, not on each poll that re-reads it.
   const loadedStart = state.run?.startedAt;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: report once per run start, not per callback identity
-  useEffect(() => {
+  const reportLoaded = useEffectEvent(() => {
     if (state.run && !initialRun) onRunLoaded?.(state.run);
+  });
+  useEffect(() => {
+    if (loadedStart !== undefined) reportLoaded();
   }, [loadedStart]);
   const assess = useAssess(runId, ownerTaskId, state.setRun);
   const cancelTool = useTool<string>("cancel");
@@ -562,7 +561,7 @@ export function ResultScreen({
   const label = run?.label ?? state.result?.label;
   const shownName = taskName ?? state.taskName;
   const rerunId = taskId ?? run?.taskId;
-  const output = state.result?.output ?? run?.resultPreview ?? "";
+  const output = state.result?.output ?? "";
 
   async function copy() {
     try {

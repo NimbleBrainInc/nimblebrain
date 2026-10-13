@@ -21,6 +21,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { getProviderFromModel } from "../model/catalog.ts";
 import {
   USAGE_GROUP_BYS,
   type UsageGroupBy,
@@ -239,36 +240,24 @@ function addCost(target: CostBreakdown, cost: CostBreakdown): void {
 }
 
 /**
- * Normalize model ID by stripping any `provider:` prefix and date suffix for
- * grouping/display. The prefix match is generic (`^[a-z0-9-]+:`) so a new
- * provider like `nebius:` is handled without editing this (and the sibling
- * copies in the usage UIs). Exported for the drift-pinning test.
- */
-/**
- * The provider a qualified model string names — the segment before the first
- * colon. Ledger lines written before model ids were always qualified can carry
- * a bare Anthropic id, so a string with no colon reads as Anthropic, matching
- * `getModelByString`.
- */
-export function providerOf(model: string): string {
-  const i = model.indexOf(":");
-  return i < 0 ? "anthropic" : model.slice(0, i);
-}
-
-/**
  * Whether this line's cost is a real number rather than an absence.
  *
  * True when the line carries stored rates, or when the catalog can still price
- * its model. False for a backfilled task line (`model: "unknown"`) and
- * for anything else the catalog has never known — those contribute tokens and
- * no dollars, and are counted separately so the total reads as incomplete
- * rather than as zero.
+ * its model. False for a model the catalog has never known: those lines
+ * contribute tokens and no dollars, and are counted separately so the total
+ * reads as incomplete rather than as zero.
  */
 function isPriced(record: LlmCallRecord): boolean {
   if (record.rates) return true;
   return costBreakdown(record.model, { inputTokens: 1, outputTokens: 0 }).total > 0;
 }
 
+/**
+ * Normalize model ID by stripping any `provider:` prefix and date suffix for
+ * grouping/display. The prefix match is generic (`^[a-z0-9-]+:`) so a new
+ * provider like `nebius:` is handled without editing this (and the sibling
+ * copies in the usage UIs). Exported for the drift-pinning test.
+ */
 export function normalizeModel(model: string): string {
   return model.replace(/^[a-z0-9-]+:/, "").replace(/-\d{8}$/, "");
 }
@@ -305,7 +294,7 @@ function groupKeyFor(record: LlmCallRecord, groupBy: UsageGroupBy, modelKey: str
     case "origin":
       return record.origin;
     case "provider":
-      return providerOf(record.model);
+      return getProviderFromModel(record.model);
     case "workspace":
       // A call made outside any workspace (a detached background call) has no
       // binding, and groups under "none" — the same word the id-keyed

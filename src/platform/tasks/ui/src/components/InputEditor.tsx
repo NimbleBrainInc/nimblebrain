@@ -172,7 +172,7 @@ export function InputEditor({
   const state = form ? formState(form.errors, form.input) : parseJsonInput(text);
 
   const stateKey = JSON.stringify(state);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: report when the state's content changes, not its identity
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `state` is rebuilt every render, so `stateKey` (its content) is the dependency and the parent hears each change once; `onChange` is the one from the render whose state changed
   useEffect(() => {
     onChange(state);
   }, [stateKey]);

@@ -26,7 +26,7 @@ import { realClient } from "../../test/setup";
 import { __internal__ } from "../api/events-client";
 import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const WS = "ws_005b519ef7efc353";
 

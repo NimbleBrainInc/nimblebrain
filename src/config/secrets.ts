@@ -4,7 +4,7 @@
  *
  * It lives in `src/config/` rather than beside the store because it is a
  * *config* shape — `RuntimeConfig` names it, and `src/runtime/` may not reach
- * into `src/tools/` (see `scripts/check-cycles.ts`). The registry that consumes
+ * into `src/tools/` (AGENTS.md, Layering). The registry that consumes
  * it is `src/tools/credential-store-backend.ts`.
  */
 

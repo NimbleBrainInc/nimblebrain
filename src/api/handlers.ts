@@ -1415,7 +1415,7 @@ export async function handleOidcRefresh(
 
 /** Strip characters that could break or inject Content-Disposition headers. */
 export function sanitizeFilename(name: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional security sanitization
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: a control byte in the name could split or inject the Content-Disposition header, so matching them is the point
   return name.replace(/["\r\n\x00-\x1f]/g, "_");
 }
 
@@ -1537,26 +1537,21 @@ type MultipartForm = Awaited<ReturnType<Request["formData"]>>;
 
 /**
  * Collect uploaded files from a chat multipart body. FormDataEntryValue is
- * `string | File` in Bun; without the DOM lib we duck-type the file parts.
+ * `string | File` in Bun, so a part that is not a string is a `File`.
  */
 async function collectMultipartChatFiles(formData: MultipartForm): Promise<UploadedFile[]> {
   const uploadedFiles: UploadedFile[] = [];
   for (const [_key, value] of formData.entries()) {
     if (typeof value === "string") continue;
-    const entry = value as unknown as {
-      arrayBuffer(): Promise<ArrayBuffer>;
-      name?: string;
-      type?: string;
-    };
-    if (typeof entry.arrayBuffer !== "function") continue;
-    const buffer = Buffer.from(await entry.arrayBuffer());
+    if (typeof value.arrayBuffer !== "function") continue;
+    const buffer = Buffer.from(await value.arrayBuffer());
     uploadedFiles.push({
       data: buffer,
-      filename: entry.name || "unnamed",
+      filename: value.name || "unnamed",
       // Browsers leave the part's Content-Type empty for extensions they
       // don't recognise (.typ etc.); recover a text type from the filename
       // so the file isn't stored as opaque binary. See resolveMimeType.
-      mimeType: resolveMimeType(entry.name, entry.type),
+      mimeType: resolveMimeType(value.name, value.type),
     });
   }
   return uploadedFiles;
@@ -1722,19 +1717,14 @@ async function collectResourceUploads(formData: MultipartForm): Promise<Uploaded
     for (const [key, value] of formData.entries()) {
       if (typeof value === "string") continue;
       if (key !== "file" && key !== "files") continue;
-      const entry = value as unknown as {
-        arrayBuffer(): Promise<ArrayBuffer>;
-        name?: string;
-        type?: string;
-      };
-      if (typeof entry.arrayBuffer !== "function") continue;
+      if (typeof value.arrayBuffer !== "function") continue;
       uploads.push({
-        data: Buffer.from(await entry.arrayBuffer()),
-        filename: entry.name || "unnamed",
+        data: Buffer.from(await value.arrayBuffer()),
+        filename: value.name || "unnamed",
         // Recover a text type from the filename when the browser sent no
         // usable Content-Type (see resolveMimeType) — same recovery as the
         // chat-multipart path.
-        mimeType: resolveMimeType(entry.name, entry.type),
+        mimeType: resolveMimeType(value.name, value.type),
       });
     }
   } catch {

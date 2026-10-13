@@ -19,12 +19,12 @@ let structured: Mod<ReturnType<typeof importStructured>>;
 
 beforeAll(async () => {
   const { window } = new JSDOM("", { url: "http://localhost" });
-  // biome-ignore lint/suspicious/noExplicitAny: test-only DOM shim
-  const g = globalThis as any;
-  g.window = window;
-  g.document = window.document;
-  g.HTMLElement = window.HTMLElement;
-  g.Node = window.Node;
+  Object.assign(globalThis, {
+    window,
+    document: window.document,
+    HTMLElement: window.HTMLElement,
+    Node: window.Node,
+  });
   [page, activity, chrome, menu, structured] = await Promise.all([
     importPage(),
     importActivity(),
@@ -153,6 +153,36 @@ describe("TaskPageBody", () => {
     expect(html.match(/class="task-run"/g)).toHaveLength(2);
     expect(html).toContain("75%");
     expect(html).toContain("What it does");
+  });
+
+  test("the latest result while it loads, when the run left none, and when it could not be read", () => {
+    const failed = { ...run("r4", "Failed", new Date().toISOString()), status: "failure" as const };
+    const body = (latest: TaskRun, extra: Record<string, unknown>) =>
+      renderToStaticMarkup(
+        createElement(page.TaskPageBody, {
+          detail: DETAIL,
+          health: page.taskHealth(undefined, DETAIL, null, [latest]),
+          stats: null,
+          runs: [latest],
+          runsError: null,
+          actions: SHEET_ACTIONS,
+          ...extra,
+        }),
+      );
+    expect(body(failed, {})).toContain('class="skel skel-card"');
+    expect(body({ ...failed, error: "The model refused." }, { latestResult: null })).toContain(
+      "The model refused.",
+    );
+    expect(body(failed, { latestResult: null })).toContain("This run left no result.");
+    const unread = body(run("r5", "Succeeded", new Date().toISOString()), {
+      latestResult: null,
+      latestError: "",
+    });
+    expect(unread).toContain("This run&#x27;s result could not be read.");
+    expect(unread).not.toContain("left no result");
+    expect(body(failed, { latestResult: null, latestError: "Permission denied." })).toContain(
+      "Permission denied.",
+    );
   });
 
   test("no runs yet, and a run in flight reads Running", () => {

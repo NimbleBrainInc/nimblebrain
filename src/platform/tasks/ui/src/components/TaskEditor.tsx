@@ -641,10 +641,12 @@ function useEditorData(taskId: string | undefined) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [judges, setJudges] = useState<JudgesData | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable
   useEffect(() => {
     judgesTool
       .call({})
+      // `tasks__judges` answers JSON read as `JudgesData`, this package's
+      // hand-kept mirror of `TasksJudgesOutput`; nothing checks it at runtime.
+      // biome-ignore lint/plugin/double-cast: tool JSON read as the hand-kept `JudgesData` mirror
       .then((res) => setJudges(asDict(res.data) as unknown as JudgesData))
       .catch(() => setJudges({ servers: [] }));
     if (!taskId) return;
@@ -656,7 +658,7 @@ function useEditorData(taskId: string | undefined) {
         setDetail(d);
       })
       .catch((err) => setLoadError(toolErrorText(err)));
-  }, [taskId]);
+  }, [taskId, judgesTool, statusTool]);
   return { detail, loadError, judges };
 }
 

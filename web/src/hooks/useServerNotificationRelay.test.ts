@@ -20,6 +20,9 @@ let fakeIframes: HTMLIFrameElement[] = [];
 /** An iframe of `appName` whose bridge delivers into the returned inbox. */
 function mountIframe(appName: string): unknown[] {
   const inbox: unknown[] = [];
+  // A fake iframe with no element behind it: the relay reads only `dataset.app`, and the
+  // bridge registry keys on the object.
+  // biome-ignore lint/plugin/double-cast: a fake iframe with only `dataset.app`
   const iframe = { dataset: { app: appName } } as unknown as HTMLIFrameElement;
   openAppChannel(iframe, (data) => inbox.push(data));
   fakeIframes.push(iframe);
@@ -28,7 +31,8 @@ function mountIframe(appName: string): unknown[] {
     const fallback = originalQSA;
     document.querySelectorAll = ((selector: string) =>
       selector === "iframe[data-app]"
-        ? (fakeIframes as unknown as NodeListOf<Element>)
+        ? // biome-ignore lint/plugin/double-cast: an array stands in for the NodeList; the hook only iterates it
+          (fakeIframes as unknown as NodeListOf<Element>)
         : fallback(selector)) as typeof document.querySelectorAll;
   }
   return inbox;
@@ -77,6 +81,7 @@ describe("useServerNotificationRelay", () => {
   });
 
   test("an iframe with no bridge is sent nothing", () => {
+    // biome-ignore lint/plugin/double-cast: A fake iframe: only `dataset.app` and `contentWindow.postMessage` exist on it.
     const iframe = {
       dataset: { app: "notes" },
       contentWindow: { postMessage: () => expect.unreachable("posted around the bridge") },

@@ -8,9 +8,13 @@ import type {
   TaskBatchItemView,
   TaskBatchView,
   TaskRunLabel,
+  TasksBatchControlInput,
   TasksBatchControlOutput,
+  TasksBatchesInput,
   TasksBatchesOutput,
+  TasksBatchInput,
   TasksBatchOutput,
+  TasksRunBatchInput,
   TasksRunBatchOutput,
 } from "../schemas/tasks.ts";
 import { MAX_BATCH_INPUT_BYTES, MAX_BATCH_ITEMS, passRateOf } from "./batch.ts";
@@ -18,12 +22,11 @@ import { bucketOf } from "./batch-store.ts";
 import { requireTask } from "./domain.ts";
 import {
   ensureOneoff,
-  type InlineDefinition,
   MAX_IDEMPOTENCY_KEY_LENGTH,
   runInputProblem,
   type ToolContext,
 } from "./server.ts";
-import type { Batch, BatchItem, BatchStopRule, Task } from "./types.ts";
+import type { Batch, BatchItem, Task } from "./types.ts";
 
 /** How many bad items a refused batch names. */
 const BAD_ITEMS_NAMED = 5;
@@ -37,17 +40,6 @@ const INPUT_SUMMARY_CHARS = 200;
 /** The most structured-output fields a result row carries, and the longest string value. */
 const OUTPUT_FIELDS = 12;
 const OUTPUT_VALUE_CHARS = 200;
-
-/** `tasks__run_batch`'s arguments, already shape-checked by its input schema. */
-interface RunBatchArgs {
-  taskId?: string;
-  definition?: InlineDefinition;
-  items: unknown[];
-  concurrency?: number;
-  budgetUsd?: number;
-  stopWhen?: BatchStopRule;
-  idempotencyKey?: string;
-}
 
 /** The batch tools need the driver; say so plainly where it is not wired. */
 function portOf(ctx: ToolContext): NonNullable<ToolContext["batches"]> {
@@ -99,7 +91,7 @@ function checkItems(name: string, inputSchema: Task["inputSchema"], items: unkno
 }
 
 /** Resolve the task a batch runs: a saved one, or a one-off from the inline definition. Items are checked first. */
-function resolveTask(args: RunBatchArgs, ctx: ToolContext): Task {
+function resolveTask(args: TasksRunBatchInput, ctx: ToolContext): Task {
   if ((args.taskId === undefined) === (args.definition === undefined)) {
     throw new Error(
       "Give `taskId` (a task to run, from tasks__list) or `definition` (a one-off), not both.",
@@ -141,11 +133,7 @@ function existingBatch(
   return existing;
 }
 
-export function handleRunBatch(
-  rawArgs: Record<string, unknown>,
-  ctx: ToolContext,
-): TasksRunBatchOutput {
-  const args = rawArgs as unknown as RunBatchArgs;
+export function handleRunBatch(args: TasksRunBatchInput, ctx: ToolContext): TasksRunBatchOutput {
   const port = portOf(ctx);
   const key = args.idempotencyKey;
   if (key !== undefined && (key.length === 0 || key.length > MAX_IDEMPOTENCY_KEY_LENGTH)) {
@@ -280,16 +268,8 @@ function toItemView(item: BatchItem, output: TaskBatchItemView["output"]): TaskB
   };
 }
 
-interface BatchArgs {
-  batchId: string;
-  results?: boolean;
-  filter?: ResultFilter;
-  cursor?: number;
-  limit?: number;
-}
-
-export function handleBatch(rawArgs: Record<string, unknown>, ctx: ToolContext): TasksBatchOutput {
-  const { batchId, results, filter, cursor, limit } = rawArgs as unknown as BatchArgs;
+export function handleBatch(args: TasksBatchInput, ctx: ToolContext): TasksBatchOutput {
+  const { batchId, results, filter, cursor, limit } = args;
   const found = portOf(ctx).get(batchId);
   if (!found) throw new Error(`Batch not found: "${batchId}".`);
   const { batch, items } = found;
@@ -321,34 +301,19 @@ export function handleBatch(rawArgs: Record<string, unknown>, ctx: ToolContext):
   };
 }
 
-interface BatchControlArgs {
-  batchId: string;
-  action: "pause" | "resume" | "cancel" | "rerun_failed";
-  budgetUsd?: number;
-}
-
 export function handleBatchControl(
-  rawArgs: Record<string, unknown>,
+  args: TasksBatchControlInput,
   ctx: ToolContext,
 ): TasksBatchControlOutput {
-  const { batchId, action, budgetUsd } = rawArgs as unknown as BatchControlArgs;
+  const { batchId, action, budgetUsd } = args;
   // The scheduler must know the task, for a resume or a re-run.
   ctx.reloadScheduler();
   const result = portOf(ctx).control(batchId, action, budgetUsd);
   return { batch: toBatchView(result.batch), message: result.message, affected: result.affected };
 }
 
-interface BatchesArgs {
-  taskId?: string;
-  state?: Batch["state"];
-  limit?: number;
-}
-
-export function handleBatches(
-  rawArgs: Record<string, unknown>,
-  ctx: ToolContext,
-): TasksBatchesOutput {
-  const { taskId, state, limit } = rawArgs as unknown as BatchesArgs;
+export function handleBatches(args: TasksBatchesInput, ctx: ToolContext): TasksBatchesOutput {
+  const { taskId, state, limit } = args;
   const batches = portOf(ctx)
     .list()
     .filter((b) => (taskId === undefined || b.taskId === taskId) && (!state || b.state === state))

@@ -34,7 +34,7 @@ export function sanitizeFilename(name: string): string {
     name
       .replace(/[/\\]/g, "")
       .replace(/\0/g, "")
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional filename sanitization
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: control bytes are what this strips from a stored filename
       .replace(/[\x00-\x1f]/g, "")
       .trim() || "unnamed"
   );

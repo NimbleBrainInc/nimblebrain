@@ -63,7 +63,7 @@ export function StructuredValue({
             </thead>
             <tbody>
               {value.map((row, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: rows of a fixed deliverable
+                // biome-ignore lint/suspicious/noArrayIndexKey: a run's deliverable is written once; its rows never reorder or change
                 <tr key={i}>
                   {cols.map((c) => (
                     <td key={c}>
@@ -80,7 +80,7 @@ export function StructuredValue({
     return (
       <ul className="sv-list">
         {value.map((v, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: items of a fixed deliverable
+          // biome-ignore lint/suspicious/noArrayIndexKey: a run's deliverable is written once; its items never reorder or change
           <li key={i}>
             <StructuredValue value={v} depth={depth + 1} />
           </li>

@@ -814,7 +814,7 @@ function SkillRow({
   // `detail` isn't read in the effect, but its async content renders inside
   // bodyRef — so when it loads the measured scrollHeight changes. Keeping it as
   // a dependency re-measures on load; it's a deliberate trigger, not dead code.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: detail changes the measured DOM height
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `detail` renders inside `bodyRef` when it loads, which changes the height measured here
   useEffect(() => {
     if (!expanded) {
       setShellH(0);
