@@ -906,6 +906,26 @@ describe("manage_connectors.uninstall of a static-auth connector", () => {
     expect(out.deletedSecretKeys).toEqual([DROPBOX_SECRET_KEY]);
   });
 
+  test("a client secret that fails to delete is reported with its error", async () => {
+    const realDelete = h.credStore.delete.bind(h.credStore);
+    h.credStore.delete = async (scope, key) => {
+      if (key === DROPBOX_SECRET_KEY) throw new Error("store unavailable");
+      return realDelete(scope, key);
+    };
+
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "uninstall",
+      serverName: SERVER,
+    });
+    expect(result.isError).toBe(false);
+    const out = result.structuredContent as {
+      failedSecretKeys?: string[];
+      secretDeleteError?: string;
+    };
+    expect(out.failedSecretKeys).toEqual([DROPBOX_SECRET_KEY]);
+    expect(out.secretDeleteError).toBe("store unavailable");
+  });
+
   test("an app another installed connector still uses is kept, and said", async () => {
     // A second ref built on the same operator app: same url, same secret ref.
     const ws = await h.workspaceStore.get(h.wsId);

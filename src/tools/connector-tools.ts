@@ -2825,9 +2825,9 @@ async function releaseOperatorApp(
   if (!app || app.inUse) return secrets;
   const key = app.clientSecretKey;
   try {
-    return (await removeOperatorApp(ctx, wsId, app.catalogId, key))
-      ? { ...secrets, deleted: [...secrets.deleted, key] }
-      : { ...secrets, failed: [...secrets.failed, key] };
+    const { deleteError } = await removeOperatorApp(ctx, wsId, app.catalogId, key);
+    if (deleteError === undefined) return { ...secrets, deleted: [...secrets.deleted, key] };
+    return { ...secrets, failed: [...secrets.failed, key], error: secrets.error ?? deleteError };
   } catch (err) {
     return {
       ...secrets,
@@ -3740,14 +3740,15 @@ async function handleRemoveOperatorSetup(
  * that reads as configured. The workspace is read fresh because an uninstall
  * calls this after its own writes to the record.
  *
- * Throws when the record write fails; returns whether the secret is gone.
+ * Throws when the record write fails; returns the secret delete's error when it
+ * fails.
  */
 async function removeOperatorApp(
   ctx: ManageConnectorsContext,
   wsId: string,
   catalogId: string,
   clientSecretKey: string | undefined,
-): Promise<boolean> {
+): Promise<{ deleteError?: string }> {
   const store = ctx.runtime.getWorkspaceStore();
   const ws = await store.get(wsId);
   if (ws?.oauthOperatorApps?.[catalogId]) {
@@ -3755,13 +3756,13 @@ async function removeOperatorApp(
     delete apps[catalogId];
     await store.update(wsId, { oauthOperatorApps: apps });
   }
-  if (!clientSecretKey) return true;
+  if (!clientSecretKey) return {};
   return ctx.runtime
     .getCredentialStore()
     .delete({ kind: "workspace", wsId }, clientSecretKey)
     .then(
-      () => true,
-      () => false,
+      () => ({}),
+      (err: unknown) => ({ deleteError: err instanceof Error ? err.message : String(err) }),
     );
 }
 

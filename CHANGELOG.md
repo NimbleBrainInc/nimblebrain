@@ -408,7 +408,6 @@
 
 ### Changed
 
-- **Uninstalling a static-auth connector removes its operator OAuth app** (client id and secret) when no other installed connector uses it, so a reinstall starts at Set up.
 - **Host-owned `_meta` keys.** `ai.nimblebrain/non-advancing` is stripped from connector results, like the skill markers; the platform's own tools still set it. Outbound `tools/call` no longer carries `ai.nimblebrain/unattended`: a server is not told that a call was fired by configuration with no one watching. The reason stays in the audit line.
 
 ## [0.4.0] - 2026-04-24
