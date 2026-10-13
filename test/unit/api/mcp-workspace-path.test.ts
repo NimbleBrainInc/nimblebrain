@@ -16,7 +16,7 @@ import { readJson } from "../../helpers/http.ts";
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
-import type { McpRequestContext } from "../../../src/api/mcp-server.ts";
+import type { McpRequestContext, McpServerHost } from "../../../src/api/mcp-server.ts";
 import { requireAuth } from "../../../src/api/middleware/auth.ts";
 import { RequestRateLimiter } from "../../../src/api/rate-limiter.ts";
 import { mcpRoutes } from "../../../src/api/routes/mcp.ts";
@@ -28,6 +28,10 @@ import {
   type UserIdentity,
   type VerifiedIdentity,
 } from "../../../src/identity/provider.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
+import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { stub } from "../../helpers/stub.ts";
+import { makeWorkspace } from "../../helpers/test-workspace.ts";
 
 const ORIGIN = "https://nb.example.com";
 const WS_A = "ws_00079598e311c160";
@@ -64,8 +68,8 @@ const TOKENS: Record<string, VerifiedIdentity> = {
 };
 
 const WORKSPACES = new Map([
-  [WS_A, { id: WS_A, members: [{ userId: ALICE.id, role: "member" }] }],
-  [WS_B, { id: WS_B, members: [{ userId: ALICE.id, role: "member" }] }],
+  [WS_A, makeWorkspace({ id: WS_A, members: [{ userId: ALICE.id, role: "member" }] })],
+  [WS_B, makeWorkspace({ id: WS_B, members: [{ userId: ALICE.id, role: "member" }] })],
 ]);
 
 /** What reached the MCP host, if anything. */
@@ -90,23 +94,23 @@ function makeCtx(mcpLimiter = new RequestRateLimiter(10_000, 60_000)): AppContex
     },
     deleteUser: async () => false,
   };
-  return {
+  return stub<AppContext>({
     provider,
     authOptions: {
       provider,
       eventSink: { emit: () => {} },
     },
-    runtime: { getFeatures: () => resolveFeatures() },
-    workspaceStore: { get: async (id: string) => WORKSPACES.get(id) ?? null },
-    mcpHost: {
+    runtime: stub<Runtime>({ getFeatures: () => resolveFeatures() }),
+    workspaceStore: stub<WorkspaceStore>({ get: async (id: string) => WORKSPACES.get(id) ?? null }),
+    mcpHost: stub<McpServerHost>({
       handle: async (_req: Request, _features: unknown, sessionCtx: McpRequestContext) => {
         reached.push(sessionCtx);
         return Response.json({ ok: true });
       },
-    },
+    }),
     // Generous by default, so no test here meets the limit unless it asks to.
     mcpLimiter,
-  } as unknown as AppContext;
+  });
 }
 
 function makeApp(mcpLimiter?: RequestRateLimiter): Hono {

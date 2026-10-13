@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { authRoutes } from "../../../src/api/routes/auth.ts";
 import type { AppContext } from "../../../src/api/types.ts";
+import type { IdentityProvider } from "../../../src/identity/provider.ts";
+import { stub } from "../../helpers/stub.ts";
 
 /**
  * Unit coverage for `POST /v1/auth/logout`. Sign-out has to clear the browser's
@@ -12,8 +14,8 @@ import type { AppContext } from "../../../src/api/types.ts";
 // Only the fields authRoutes reads. The provider rejects every token, which is
 // what a lapsed access token looks like to the verifier.
 function makeCtx(): AppContext {
-  const provider = { verifyRequest: async () => null };
-  return {
+  const provider = stub<IdentityProvider>({ verifyRequest: async () => null });
+  return stub<AppContext>({
     provider,
     authOptions: {
       provider,
@@ -21,7 +23,7 @@ function makeCtx(): AppContext {
     },
     secureCookies: false,
     appOrigin: "http://localhost",
-  } as unknown as AppContext;
+  });
 }
 
 async function logout(headers: Record<string, string>): Promise<Response> {

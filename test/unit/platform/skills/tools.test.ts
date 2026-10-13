@@ -26,10 +26,15 @@ import type {
   ConversationListResult,
   ListOptions,
 } from "../../../../src/conversation/types.ts";
+import type { IdentityProvider, UserIdentity } from "../../../../src/identity/provider.ts";
 import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import { parseSkillFile } from "../../../../src/skills/loader.ts";
 import type { Skill } from "../../../../src/skills/types.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 // SHA-256 hex placeholder. Tests in this file exercise event projection /
 // filtering / dispatch — none verify hash math, so the actual value just
@@ -79,11 +84,11 @@ class FakeRuntime {
   getWorkDir(): string {
     return this.workDir;
   }
-  getCurrentIdentity(): FakeIdentity | null {
-    return this.identity;
+  getCurrentIdentity(): UserIdentity | null {
+    return this.identity && makeIdentity(this.identity);
   }
-  getIdentityProvider(): object | null {
-    return this.hasIdentityProvider ? ({} as object) : null;
+  getIdentityProvider(): IdentityProvider | null {
+    return this.hasIdentityProvider ? stub<IdentityProvider>({}) : null;
   }
   requireWorkspaceId(): string {
     if (!this.wsId) throw new Error("no workspace");
@@ -97,7 +102,7 @@ class FakeRuntime {
       dir: workspaceConversationsDir(this.workDir, loc.wsId, loc.ownerId ?? ""),
     });
   }
-  async findConversation(id: string, access?: ConversationAccessContext): Promise<unknown> {
+  async findConversation(id: string, access?: ConversationAccessContext) {
     const store = await this.resolveConversationStore(id);
     if (!store) return null;
     return store.load(id, access);
@@ -113,9 +118,9 @@ class FakeRuntime {
     // Tests that exercise the cross-workspace path supply this directly
     // by patching it. Default returns null for everything → access
     // checks fail gracefully when a test forgets to set up membership.
-    return {
+    return stub<WorkspaceStore>({
       get: async (_id: string) => null,
-    };
+    });
   }
   getContextSkills(): Skill[] {
     return this.contextSkills;
@@ -220,7 +225,7 @@ afterEach(async () => {
 });
 
 async function buildSource(): Promise<McpSource> {
-  source = createSkillsSource(runtime as unknown as never, new NoopEventSink());
+  source = createSkillsSource(stub<Runtime>(runtime), new NoopEventSink());
   await source.start();
   return source;
 }

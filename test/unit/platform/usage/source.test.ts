@@ -20,9 +20,12 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { UsageReportOutput } from "../../../../src/platform/schemas/usage.ts";
 import { createUsageSource } from "../../../../src/platform/usage/source.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { usageMonthDir, usageMonthOf } from "../../../../src/usage/paths.ts";
 import type { UsageLedgerEntry } from "../../../../src/usage/types.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -41,7 +44,7 @@ class FakeRuntime {
     return this.workDir;
   }
   getCurrentIdentity() {
-    return this.identity;
+    return this.identity && makeIdentity(this.identity);
   }
 }
 
@@ -101,7 +104,7 @@ afterEach(async () => {
 });
 
 async function buildSource(): Promise<McpSource> {
-  source = createUsageSource(runtime as unknown as never, new NoopEventSink());
+  source = createUsageSource(stub<Runtime>(runtime), new NoopEventSink());
   await source.start();
   return source;
 }

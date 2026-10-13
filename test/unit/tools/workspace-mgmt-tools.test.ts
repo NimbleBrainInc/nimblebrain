@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import type { ConnectorCatalog } from "../../../src/connectors/catalog/catalog.ts";
 import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { User } from "../../../src/identity/user.ts";
@@ -17,6 +18,7 @@ import {
 import { WORKSPACE_ID_RE } from "../../../src/workspace/workspace-id-pattern.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
+import { stub } from "../../helpers/stub.ts";
 import { parseResult, resultText } from "../../helpers/tool-result.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -45,16 +47,17 @@ function makeCtx(): ManageWorkspacesContext {
   return {
     getIdentity: () => currentIdentity,
     workspaceStore: store,
-    runtime: {
+    runtime: stub<Runtime>({
       deleteWorkspace: async (wsId: string) => ({
         deleted: await store.delete(wsId),
         connectors: [],
       }),
-      getConnectorCatalog: () => ({
-        catalogByUrl: async () => new Map(catalogEntries.map((e) => [e.url, e])),
-        catalogByIdMap: async () => new Map(catalogEntries.map((e) => [e.id, e])),
-      }),
-    } as unknown as Runtime,
+      getConnectorCatalog: () =>
+        stub<ConnectorCatalog>({
+          catalogByUrl: async () => new Map(catalogEntries.map((e) => [e.url, e])),
+          catalogByIdMap: async () => new Map(catalogEntries.map((e) => [e.id, e])),
+        }),
+    }),
     userStore,
   };
 }
@@ -404,7 +407,7 @@ describe("nb__manage_workspaces", () => {
 
       tool = createManageWorkspacesTool({
         ...makeCtx(),
-        runtime: {
+        runtime: stub<Runtime>({
           deleteWorkspace: async () => ({
             deleted: false,
             deleteError: "EEXIST: file already exists",
@@ -412,7 +415,7 @@ describe("nb__manage_workspaces", () => {
               { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
             ],
           }),
-        } as unknown as Runtime,
+        }),
       });
 
       const result = await tool.handler({
@@ -605,7 +608,7 @@ describe("nb__manage_workspaces", () => {
 
       tool = createManageWorkspacesTool({
         ...makeCtx(),
-        runtime: {
+        runtime: stub<Runtime>({
           deleteWorkspace: async (wsId: string) => ({
             deleted: await store.delete(wsId),
             connectors: [
@@ -618,7 +621,7 @@ describe("nb__manage_workspaces", () => {
               },
             ],
           }),
-        } as unknown as Runtime,
+        }),
       });
 
       const result = await tool.handler({

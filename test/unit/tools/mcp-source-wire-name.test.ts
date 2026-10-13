@@ -14,7 +14,8 @@ import { McpSource } from "../../../src/tools/mcp-source.ts";
 
 /** Reach the private accessor the emit sites use. */
 const emittedName = (s: McpSource): string =>
-  (s as unknown as { eventSourceName: string }).eventSourceName;
+  // biome-ignore lint/complexity/useLiteralKeys: `eventSourceName` is private; bracket access is TypeScript's typed path to it
+  s["eventSourceName"];
 
 const remote = { type: "remote" as const, url: new URL("https://example.test/mcp") };
 const sink = { emit: () => {} };
