@@ -39,7 +39,7 @@ export function hexToOklch(hex: string): Oklch {
   return { l: L, c: Math.hypot(a, bb), h: h < 0 ? h + 360 : h };
 }
 
-/** Linear sRGB for an OKLCH colour, possibly outside [0, 1]. */
+/** Linear sRGB for an OKLCH color, possibly outside [0, 1]. */
 function oklchToLinear({ l, c, h }: Oklch): [number, number, number] {
   const rad = (h * Math.PI) / 180;
   const a = c * Math.cos(rad);
@@ -57,7 +57,7 @@ function oklchToLinear({ l, c, h }: Oklch): [number, number, number] {
 const inGamut = (rgb: number[]) => rgb.every((v) => v >= -1e-6 && v <= 1 + 1e-6);
 
 /**
- * The `#rrggbb` for an OKLCH colour. A colour outside sRGB keeps its lightness
+ * The `#rrggbb` for an OKLCH color. A color outside sRGB keeps its lightness
  * and hue and gives up chroma until it fits, so a derived surface never shifts
  * lightness, which is what its contrast rests on.
  */

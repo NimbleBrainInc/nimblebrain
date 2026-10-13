@@ -57,7 +57,7 @@ describe("brand schema", () => {
     expect(ok).toBe(false);
   });
 
-  test("flags radius, a mono role, faces and an unsupported colour as unknown keys", () => {
+  test("flags radius, a mono role, faces and an unsupported color as unknown keys", () => {
     const { errors } = validate({
       colors: { primary: ["#B53707", "#FF8A4C"], success: ["#0D6B45", "#3fbf85"] },
       fonts: {
@@ -93,12 +93,12 @@ describe("brand schema", () => {
     expect(validate({ defaultTheme: "sepia" }).ok).toBe(false);
   });
 
-  test("rejects a colour that is not #rrggbb", () => {
+  test("rejects a color that is not #rrggbb", () => {
     expect(validate({ colors: { primary: ["red", "#000000"] } }).ok).toBe(false);
   });
 
   /**
-   * The schema lists the colours and font roles a brand may set so editors can
+   * The schema lists the colors and font roles a brand may set so editors can
    * complete them, and the types list the same ones. Pinned here so the two
    * cannot drift.
    */
@@ -155,7 +155,7 @@ describe("mergePalette", () => {
       const before = hexToOklch(colors[token][0]);
       const after = hexToOklch(merged.colors[token][0]);
       expect(after.l).toBeCloseTo(before.l, 2);
-      // Within 8-bit rounding of the brand's hue at a near-grey chroma.
+      // Within 8-bit rounding of the brand's hue at a near-gray chroma.
       expect(Math.abs(after.h - hue)).toBeLessThan(6);
     }
     // The page and card grounds stay white.
@@ -163,14 +163,14 @@ describe("mergePalette", () => {
     expect(merged.colors.card[0]).toBe(colors.card[0]);
   });
 
-  test("a black, white or grey primary leaves the neutrals as they are", () => {
+  test("a black, white or gray primary leaves the neutrals as they are", () => {
     const merged = mergePalette({ colors: { primary: ["#000000", "#ffffff"] } });
     for (const token of ["foreground", "muted-foreground", "border", "muted", "sidebar"] as const) {
       expect(merged.colors[token]).toEqual(colors[token]);
     }
   });
 
-  test("a grey dark sidebar derives grey text, with no cast", () => {
+  test("a gray dark sidebar derives gray text, with no cast", () => {
     const merged = mergePalette({ colors: { sidebar: ["#ffffff", "#121212"] } });
     for (const token of ["foreground", "muted-foreground", "sidebar-foreground"] as const) {
       expect(hexToOklch(merged.colors[token][1]).c).toBeLessThan(0.005);
@@ -183,7 +183,7 @@ describe("mergePalette", () => {
     expect(merged.colors["sidebar-active-foreground"]).toEqual(["#000000", "#ffffff"]);
   });
 
-  test("sidebar's dark colour anchors the dark surfaces as lighter steps of one hue", () => {
+  test("sidebar's dark color anchors the dark surfaces as lighter steps of one hue", () => {
     const merged = mergePalette({ colors: { sidebar: ["#f4f1ec", "#1C0F0A"] } });
     const anchor = hexToOklch("#1C0F0A");
     expect(merged.colors.sidebar[1]).toBe("#1C0F0A");
@@ -198,7 +198,7 @@ describe("mergePalette", () => {
     }
   });
 
-  test("a light sidebar colour is the light-mode ground; a dark one makes an island", () => {
+  test("a light sidebar color is the light-mode ground; a dark one makes an island", () => {
     const light = mergePalette({ colors: { sidebar: ["#f4f1ec", "#1C0F0A"] } });
     expect(light.colors.sidebar[0]).toBe("#f4f1ec");
     expect(light.sidebarIsland).toBeUndefined();
@@ -212,7 +212,7 @@ describe("mergePalette", () => {
     ).toBeGreaterThanOrEqual(4.5);
   });
 
-  test("on a brand's dark ground, canonical status colours lighten to read; the brand's own do not move", () => {
+  test("on a brand's dark ground, canonical status colors lighten to read; the brand's own do not move", () => {
     const merged = mergePalette(ACME_BRAND);
     const [bg, card] = [merged.colors.background[1], merged.colors.card[1]];
     for (const token of ["destructive", "processing", "success", "warning"] as const) {
@@ -225,7 +225,7 @@ describe("mergePalette", () => {
     expect(merged.colors.primary[1]).toBe("#FF8A4C");
   });
 
-  test("a malformed colour throws, so the client paints canonical rather than half a brand", () => {
+  test("a malformed color throws, so the client paints canonical rather than half a brand", () => {
     expect(() => mergePalette({ colors: { highlight: null } } as never)).toThrow();
   });
 

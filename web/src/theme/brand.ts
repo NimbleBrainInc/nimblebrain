@@ -6,10 +6,10 @@
  * boot. Both call {@link mergePalette}, so the palette the runtime checked for
  * contrast is exactly the palette the shell paints.
  *
- * A brand sets up to four colours as `[light, dark]` pairs, the shape
+ * A brand sets up to four colors as `[light, dark]` pairs, the shape
  * `palette.ts` uses, and the `sans`, `heading` and `reading` stacks. The
- * colours are roles, not tokens: each one derives a family of tokens
- * ({@link mergePalette}), so a brand names the few colours its identity is made
+ * colors are roles, not tokens: each one derives a family of tokens
+ * ({@link mergePalette}), so a brand names the few colors its identity is made
  * of and the shell stays coherent around them. The mono stack and the radius
  * scale stay canonical.
  *
@@ -26,7 +26,7 @@ import { colors, extOnlyColors, fonts, type Pair } from "./palette.ts";
 export type FontRole = keyof typeof fonts;
 
 /**
- * The colour roles a brand may set.
+ * The color roles a brand may set.
  *
  * - `primary`: actions, links, accent text. Its hue also tints the neutrals.
  * - `ring`: the focus ring, usually equal to `primary`.
@@ -41,7 +41,7 @@ export type BrandColorToken = (typeof BRAND_COLOR_TOKENS)[number];
 export const BRAND_FONT_ROLES = ["sans", "heading", "reading"] as const;
 export type BrandFontRole = (typeof BRAND_FONT_ROLES)[number];
 
-/** A colour theme setting: a fixed mode, or `system` to follow the OS. */
+/** A color theme setting: a fixed mode, or `system` to follow the OS. */
 export type ThemeSetting = "light" | "dark" | "system";
 
 /**
@@ -81,7 +81,7 @@ export interface Brand {
 /** The brand as `GET /v1/brand.js` serves it: validated, and holding only the keys above. */
 export type ResolvedBrand = Brand;
 
-/** The full overridable palette: colours and stacks. */
+/** The full overridable palette: colors and stacks. */
 export interface Palette extends ColorPalette {
   fonts: Record<FontRole, string>;
 }
@@ -107,7 +107,7 @@ type Token = keyof typeof colors | keyof typeof extOnlyColors;
  * Chroma a neutral takes on toward the brand's hue, by role and mode. Lightness
  * stays canonical, so each neutral keeps its contrast; only its cast changes.
  * Surfaces and lines take a trace, text a little more, so ink reads as the
- * brand's dark colour rather than grey.
+ * brand's dark color rather than gray.
  */
 const NEUTRAL_TINT: readonly [tokens: Token[], light: number, dark: number][] = [
   [
@@ -133,9 +133,9 @@ const NEUTRAL_TINT: readonly [tokens: Token[], light: number, dark: number][] = 
 
 /**
  * The dark-mode surface family, as lightness steps above the brand's dark
- * `sidebar` colour, which is the deepest surface. Every step keeps the
- * anchor's hue and chroma, so dark mode reads as one coloured ground rather
- * than the brand's colours on black.
+ * `sidebar` color, which is the deepest surface. Every step keeps the
+ * anchor's hue and chroma, so dark mode reads as one colored ground rather
+ * than the brand's colors on black.
  */
 const DARK_SURFACE_STEPS: readonly [tokens: Token[], lift: number][] = [
   [["background"], 0.03],
@@ -146,10 +146,10 @@ const DARK_SURFACE_STEPS: readonly [tokens: Token[], lift: number][] = [
 ];
 
 /**
- * Canonical colours painted as text on the page and card grounds, alone and on
+ * Canonical colors painted as text on the page and card grounds, alone and on
  * a 20% tint of themselves (`contrast-pairs.ts`). They were chosen for the
- * canonical near-black, so on a brand's coloured dark ground each is lightened,
- * hue and chroma kept, until it clears AA there. A brand's own colours are
+ * canonical near-black, so on a brand's colored dark ground each is lightened,
+ * hue and chroma kept, until it clears AA there. A brand's own colors are
  * never adjusted: one that fails is rejected at load.
  */
 const DARK_GROUND_TEXT: readonly Token[] = [
@@ -210,14 +210,14 @@ const isPair = (v: unknown): v is Pair =>
   v.every((x) => typeof x === "string" && /^#[0-9a-f]{6}$/i.test(x));
 
 /**
- * Chroma at which a brand colour's hue counts in full. Below it the hue angle
- * grows unreliable (a grey's is rounding noise), so a derivation scales the
- * colour it would add by {@link hueWeight} and a black, white or grey brand
+ * Chroma at which a brand color's hue counts in full. Below it the hue angle
+ * grows unreliable (a gray's is rounding noise), so a derivation scales the
+ * color it would add by {@link hueWeight} and a black, white or gray brand
  * leaves the neutrals as they are.
  */
 const FULL_HUE_CHROMA = 0.04;
 
-/** How far, 0 to 1, a colour's hue may cast the colours derived from it. */
+/** How far, 0 to 1, a color's hue may cast the colors derived from it. */
 const hueWeight = (color: Oklch) => Math.min(1, color.c / FULL_HUE_CHROMA);
 
 /**
@@ -240,7 +240,7 @@ function recast(hex: string, h: number, c: number, weight: number): string {
 }
 
 /**
- * Whether the light-mode sidebar is a dark island: a `sidebar` light colour
+ * Whether the light-mode sidebar is a dark island: a `sidebar` light color
  * that reads best under white text. The shell then renders the sidebar under
  * the dark palette ({@link Palette.sidebarIsland} holds its ground).
  */
@@ -250,15 +250,15 @@ export function sidebarIsIsland(brand?: Pick<Brand, "colors">): boolean {
 }
 
 /**
- * Lay `brand` over the canonical palette. Each colour role derives a family:
+ * Lay `brand` over the canonical palette. Each color role derives a family:
  *
  * - `primary` sets the accent, and its hue recasts the neutrals
  *   ({@link NEUTRAL_TINT}) at their canonical lightness, so text, borders and
- *   grey surfaces carry the brand's cast. `primary-foreground` is, per mode,
+ *   gray surfaces carry the brand's cast. `primary-foreground` is, per mode,
  *   white or black, whichever reads better on the accent.
- * - `sidebar`'s dark colour anchors dark mode: every surface is a lightness
+ * - `sidebar`'s dark color anchors dark mode: every surface is a lightness
  *   step above it ({@link DARK_SURFACE_STEPS}), and text takes its hue. Its
- *   light colour is the light-mode sidebar ground; a dark one makes the
+ *   light color is the light-mode sidebar ground; a dark one makes the
  *   sidebar an island under the dark palette ({@link sidebarIsIsland}).
  * - `highlight` fills the active sidebar row, under white or black text.
  *
@@ -294,7 +294,7 @@ export function mergePalette(brand?: Pick<Brand, "colors" | "fonts">): Palette {
   };
 }
 
-/** Throw unless every colour role the brand sets is a `[light, dark]` pair of hex colours. */
+/** Throw unless every color role the brand sets is a `[light, dark]` pair of hex colors. */
 function assertPairs(brandColors: NonNullable<Brand["colors"]>): void {
   for (const role of BRAND_COLOR_TOKENS) {
     const pair: unknown = brandColors[role];
@@ -341,7 +341,7 @@ function applyPrimary(modes: Modes, primary: Pair): void {
   }
 }
 
-/** The dark surface family from the dark colour; the light sidebar, or its island, from the light. */
+/** The dark surface family from the dark color; the light sidebar, or its island, from the light. */
 function applySidebar(modes: Modes, sidebar: Pair): SidebarIsland | undefined {
   const { dark, light } = modes;
   const anchor = hexToOklch(sidebar[1]);
