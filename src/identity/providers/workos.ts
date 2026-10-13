@@ -387,6 +387,33 @@ export class WorkosIdentityProvider implements IdentityProvider {
     };
   }
 
+  /**
+   * Revoke the WorkOS session the request's token names (`sid`). Without this,
+   * AuthKit keeps its own session, and the next sign-in resumes it without
+   * asking for credentials. Expiry is not checked: sign-out often follows a
+   * lapsed access token whose session is still live. The signature is checked,
+   * so only a session WorkOS issued to this client is revoked, never one a
+   * forged token names.
+   */
+  async endSession(req: Request): Promise<void> {
+    const token = extractToken(req);
+    const parsed = token ? parseJwt(token) : null;
+    const sessionId = parsed?.payload.sid;
+    if (!parsed || typeof sessionId !== "string") return;
+
+    const keys = await this.getJwks();
+    const verified =
+      keys !== null &&
+      (await this.verifySignature(parsed.header, parsed.signatureInput, parsed.signature, keys));
+    if (!verified) {
+      log.warn("[workos] sign-out left the WorkOS session open: token not verified", {
+        sub: parsed.payload.sub,
+      });
+      return;
+    }
+    await this.workos.userManagement.revokeSession({ sessionId });
+  }
+
   async refreshToken(refreshToken: string): Promise<TokenResult> {
     try {
       const result = await this.workos.userManagement.authenticateWithRefreshToken({
