@@ -25,7 +25,9 @@ const mockGetInstalled = mock(
 
 // Capture the latest onEvent handler registered via connectEvents so tests can
 // drive SSE events directly.
-let capturedOnEvent: (<K extends keyof WorkspaceStreamEvents>(type: K, data: unknown) => void) | null = null;
+let capturedOnEvent:
+  | (<K extends keyof WorkspaceStreamEvents>(type: K, data: unknown) => void)
+  | null = null;
 const mockConnectEvents = mock((opts: { onEvent: typeof capturedOnEvent }) => {
   capturedOnEvent = opts.onEvent;
   return { close: () => {} };
@@ -49,7 +51,8 @@ mock.module("../src/api/sse", () => ({
 const { WorkspaceAppIconsProvider } = await import("../src/context/WorkspaceAppIconsProvider");
 const { __internal__: eventsClient } = await import("../src/api/events-client");
 const { useWorkspaceAppIcons } = await import("../src/context/WorkspaceAppIconsContext");
-type WorkspaceAppIconsValue = import("../src/context/WorkspaceAppIconsContext").WorkspaceAppIconsValue;
+type WorkspaceAppIconsValue =
+  import("../src/context/WorkspaceAppIconsContext").WorkspaceAppIconsValue;
 
 function fire(type: keyof WorkspaceStreamEvents, data: Record<string, unknown> = {}) {
   if (!capturedOnEvent) throw new Error("connectEvents.onEvent was never registered");
@@ -117,7 +120,9 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
       toolCount: 0,
       status: "needs_auth",
     };
-    mockGetInstalled.mockImplementationOnce(() => Promise.resolve({ installed: [gmail], errors: [] }));
+    mockGetInstalled.mockImplementationOnce(() =>
+      Promise.resolve({ installed: [gmail], errors: [] }),
+    );
     let seen: WorkspaceAppIconsValue["connectors"];
     function Probe() {
       seen = useWorkspaceAppIcons().connectors;

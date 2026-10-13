@@ -7,16 +7,11 @@
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 import { realClient } from "./setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+defineHappyDomErrorClasses();
 
 const WS_ID = "ws_00000000000000aa";
 const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
@@ -24,7 +19,11 @@ let refusal: string | null = null;
 
 mock.module("../src/api/client", () => ({
   ...realClient,
-  callToolWithoutWorkspace: async (_server: string, tool: string, args: Record<string, unknown>) => {
+  callToolWithoutWorkspace: async (
+    _server: string,
+    tool: string,
+    args: Record<string, unknown>,
+  ) => {
     calls.push({ tool, args });
     if (tool === "manage_users") {
       return {
@@ -167,7 +166,7 @@ describe("adding a member on the org workspace page", () => {
   async function addCy(c: HTMLElement) {
     await click(buttonByText("Add member"));
     const select = c.querySelector<HTMLSelectElement>("#add-member-user")!;
-    const win = (globalThis as unknown as { window: Window & typeof globalThis }).window;
+    const win = window;
     const setter = Object.getOwnPropertyDescriptor(win.HTMLSelectElement.prototype, "value")?.set;
     await act(async () => {
       setter?.call(select, "usr_cy");

@@ -22,7 +22,12 @@ const placement = (over: Partial<PlacementEntry>): PlacementEntry => ({
 
 const PLACEMENTS = [
   placement({ serverName: "people", label: "People", route: "people" }),
-  placement({ serverName: "conversations", slot: "sidebar", label: "Conversations", route: "conversations" }),
+  placement({
+    serverName: "conversations",
+    slot: "sidebar",
+    label: "Conversations",
+    route: "conversations",
+  }),
   placement({ serverName: "widget", label: "Widget" }),
 ];
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, mock, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { renderHook, waitFor } from "@testing-library/react";
 import { useShell } from "../src/hooks/useShell";
 import type { PlacementEntry, ShellResponse } from "../src/types";
@@ -152,7 +152,10 @@ describe("useShell", () => {
 
     let resolveFirst!: (v: ShellResponse) => void;
     mockGetShell.mockImplementationOnce(
-      () => new Promise((r) => { resolveFirst = r; }),
+      () =>
+        new Promise((r) => {
+          resolveFirst = r;
+        }),
     );
     mockGetShell.mockResolvedValueOnce(freshShell);
 

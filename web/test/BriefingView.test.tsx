@@ -8,7 +8,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { BriefingOutput } from "../src/_generated/platform-schemas/home";
 import type { InstalledConnector } from "../src/api/client";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
@@ -150,13 +150,39 @@ describe("BriefingView", () => {
   test("hides nothing the server sent, in the order it sent it", async () => {
     const briefing = makeBriefing({
       items: [
-        { app: "B", facet: "b", label: "Second app", count: 1, level: "warning", route: null, state: "ok" },
-        { app: "A", facet: "a", label: "Down", count: 0, level: "warning", route: null, state: "unavailable" },
-        { app: "A", facet: "c", label: "Third", count: 7, level: "warning", route: null, state: "ok" },
+        {
+          app: "B",
+          facet: "b",
+          label: "Second app",
+          count: 1,
+          level: "warning",
+          route: null,
+          state: "ok",
+        },
+        {
+          app: "A",
+          facet: "a",
+          label: "Down",
+          count: 0,
+          level: "warning",
+          route: null,
+          state: "unavailable",
+        },
+        {
+          app: "A",
+          facet: "c",
+          label: "Third",
+          count: 7,
+          level: "warning",
+          route: null,
+          state: "ok",
+        },
       ],
     });
     mounted = await mount(view({ briefing }));
-    const rows = Array.from(mounted.container.getElementsByTagName("li")).map((li) => li.textContent);
+    const rows = Array.from(mounted.container.getElementsByTagName("li")).map(
+      (li) => li.textContent,
+    );
     expect(rows).toEqual([
       "Warning: Second app 1 · B",
       "Warning: Down — unavailable · A",
@@ -179,17 +205,41 @@ describe("BriefingView", () => {
 
   test("an item with no route has no action", async () => {
     const briefing = makeBriefing({
-      items: [{ app: "A", facet: "a", label: "Things", count: 3, level: "warning", route: null, state: "ok" }],
+      items: [
+        {
+          app: "A",
+          facet: "a",
+          label: "Things",
+          count: 3,
+          level: "warning",
+          route: null,
+          state: "ok",
+        },
+      ],
     });
     mounted = await mount(view({ briefing }));
     const row = findByTestId(mounted.container, "briefing-item");
     // Only the row's hide control is a button; the row itself opens nothing.
-    expect(Array.from(row?.getElementsByTagName("button") ?? []).map((b) => b.getAttribute("data-testid"))).toEqual(["briefing-hide"]);
+    expect(
+      Array.from(row?.getElementsByTagName("button") ?? []).map((b) =>
+        b.getAttribute("data-testid"),
+      ),
+    ).toEqual(["briefing-hide"]);
   });
 
   test("renders a label as text, never as markup", async () => {
     const briefing = makeBriefing({
-      items: [{ app: "CRM", facet: "x", label: "<b>bold</b>", count: 1, level: "warning", route: null, state: "ok" }],
+      items: [
+        {
+          app: "CRM",
+          facet: "x",
+          label: "<b>bold</b>",
+          count: 1,
+          level: "warning",
+          route: null,
+          state: "ok",
+        },
+      ],
     });
     mounted = await mount(view({ briefing }));
     expect(mounted.container.getElementsByTagName("b")).toHaveLength(0);
@@ -255,9 +305,33 @@ describe("BriefingView", () => {
       view({
         briefing: makeBriefing({
           items: [
-            { app: "Out", facet: "d", label: "Drafts", count: 4, level: "warning", route: null, state: "ok" },
-            { app: "Out", facet: "r", label: "Replies", count: 2, level: "info", route: null, state: "ok" },
-            { app: "Tasks", facet: "b", label: "Tasks blocked", count: 1, level: "critical", route: null, state: "ok" },
+            {
+              app: "Out",
+              facet: "d",
+              label: "Drafts",
+              count: 4,
+              level: "warning",
+              route: null,
+              state: "ok",
+            },
+            {
+              app: "Out",
+              facet: "r",
+              label: "Replies",
+              count: 2,
+              level: "info",
+              route: null,
+              state: "ok",
+            },
+            {
+              app: "Tasks",
+              facet: "b",
+              label: "Tasks blocked",
+              count: 1,
+              level: "critical",
+              route: null,
+              state: "ok",
+            },
           ],
         }),
         connectors: [connector("c", "connecting", "Slack"), connector("n", "needs_auth", "Notion")],
@@ -284,7 +358,9 @@ describe("BriefingView", () => {
       view({
         briefing: makeBriefing({
           items: [
+            // biome-ignore lint/plugin/double-cast: a level the server might send that the BriefingLevel union does not name
             { ...odd, level: "urgent" as unknown as "warning" },
+            // biome-ignore lint/plugin/double-cast: a level naming an Object.prototype key, which the BriefingLevel union does not name
             { ...odd, facet: "y", level: "constructor" as unknown as "warning" },
           ],
         }),
@@ -321,7 +397,17 @@ describe("BriefingView", () => {
   describe("hiding a row until it changes", () => {
     const one = (count: number) =>
       makeBriefing({
-        items: [{ app: "Tasks", facet: "blocked", label: "Tasks blocked", count, level: "critical", route: null, state: "ok" }],
+        items: [
+          {
+            app: "Tasks",
+            facet: "blocked",
+            label: "Tasks blocked",
+            count,
+            level: "critical",
+            route: null,
+            state: "ok",
+          },
+        ],
       });
     const rows = () => findAllByTestId(mounted!.container, "briefing-item");
     const hideFirst = async () => {
@@ -338,7 +424,9 @@ describe("BriefingView", () => {
       mounted = await mount(view({ briefing: one(2) }));
       await hideFirst();
       expect(rows()).toHaveLength(0);
-      expect(findByTestId(mounted.container, "briefing-show-hidden")?.textContent).toBe("1 hidden · Show");
+      expect(findByTestId(mounted.container, "briefing-show-hidden")?.textContent).toBe(
+        "1 hidden · Show",
+      );
       await act(async () => {
         findByTestId(mounted!.container, "briefing-show-hidden")?.click();
       });
@@ -380,9 +468,13 @@ describe("BriefingView", () => {
 
     test("a hidden connector comes back when its status changes", async () => {
       const empty = makeBriefing({ items: [] });
-      mounted = await mount(view({ briefing: empty, connectors: [connector("n", "needs_auth", "Notion")] }));
+      mounted = await mount(
+        view({ briefing: empty, connectors: [connector("n", "needs_auth", "Notion")] }),
+      );
       await hideFirst();
-      await rerender(view({ briefing: empty, connectors: [connector("n", "needs_auth", "Notion")] }));
+      await rerender(
+        view({ briefing: empty, connectors: [connector("n", "needs_auth", "Notion")] }),
+      );
       expect(findAllByTestId(mounted.container, "briefing-connector-status")).toHaveLength(0);
       await rerender(view({ briefing: empty, connectors: [connector("n", "failed", "Notion")] }));
       expect(findAllByTestId(mounted.container, "briefing-connector-status")).toHaveLength(1);
@@ -392,7 +484,9 @@ describe("BriefingView", () => {
       mounted = await mount(view({ briefing: one(2), connectors: [connector("n", "needs_auth")] }));
       await hideFirst();
       // The facet goes to zero (the server omits it), then returns at the same count.
-      await rerender(view({ briefing: makeBriefing({ items: [] }), connectors: [connector("n", "needs_auth")] }));
+      await rerender(
+        view({ briefing: makeBriefing({ items: [] }), connectors: [connector("n", "needs_auth")] }),
+      );
       await rerender(view({ briefing: one(2), connectors: [connector("n", "needs_auth")] }));
       expect(rows()).toHaveLength(1);
     });
@@ -419,8 +513,12 @@ describe("BriefingView", () => {
     });
     mounted.unmount();
     mounted = await mount(view({ error: "boom" }));
-    expect(findByTestId(mounted.container, "briefing-toggle")?.getAttribute("aria-expanded")).toBe("false");
-    expect(findByTestId(mounted.container, "workspace-briefing-error")?.textContent).toContain("boom");
+    expect(findByTestId(mounted.container, "briefing-toggle")?.getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+    expect(findByTestId(mounted.container, "workspace-briefing-error")?.textContent).toContain(
+      "boom",
+    );
   });
 
   test("collapses and expands, and remembers it", async () => {
@@ -432,7 +530,9 @@ describe("BriefingView", () => {
     });
     expect(toggle()?.getAttribute("aria-expanded")).toBe("false");
     expect(mounted.container.getElementsByTagName("li")).toHaveLength(0);
-    expect(findByTestId(mounted.container, "briefing-critical-count")?.textContent).toBe("1 critical");
+    expect(findByTestId(mounted.container, "briefing-critical-count")?.textContent).toBe(
+      "1 critical",
+    );
     mounted.unmount();
     mounted = await mount(view());
     expect(toggle()?.getAttribute("aria-expanded")).toBe("false");

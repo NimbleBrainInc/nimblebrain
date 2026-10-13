@@ -171,7 +171,9 @@ describe("describeCall — Tier 0 generic", () => {
   });
 
   it("truncates long summaries", () => {
-    const d = describeCall(call({ name: "search_knowledge_base", input: { query: "x".repeat(200) } }));
+    const d = describeCall(
+      call({ name: "search_knowledge_base", input: { query: "x".repeat(200) } }),
+    );
     expect(d.summary).toContain("…");
     expect(d.summary!.length).toBeLessThanOrEqual(120);
   });

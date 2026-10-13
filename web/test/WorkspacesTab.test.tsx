@@ -7,16 +7,11 @@
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 import { realClient } from "./setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+defineHappyDomErrorClasses();
 
 const calls: Array<Record<string, unknown>> = [];
 let refusal: string | null = null;
@@ -24,14 +19,16 @@ let refusal: string | null = null;
 mock.module("../src/api/client", () => ({
   ...realClient,
   tryBootstrap: async () => null,
-  callToolWithoutWorkspace: async (_server: string, _tool: string, args: Record<string, unknown>) => {
+  callToolWithoutWorkspace: async (
+    _server: string,
+    _tool: string,
+    args: Record<string, unknown>,
+  ) => {
     calls.push(args);
     if (args.action === "list") {
       return {
         structuredContent: {
-          workspaces: [
-            { id: "ws_00000000000000aa", name: "Acme", memberCount: 3, connectors: [] },
-          ],
+          workspaces: [{ id: "ws_00000000000000aa", name: "Acme", memberCount: 3, connectors: [] }],
         },
         isError: false,
       };
@@ -111,7 +108,7 @@ describe("creating a workspace", () => {
 
     const input = c.querySelector<HTMLInputElement>("#create-ws-name")!;
     expect(input.maxLength).toBe(80);
-    const win = (globalThis as unknown as { window: Window & typeof globalThis }).window;
+    const win = window;
     const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, "value")?.set;
     await act(async () => {
       setter?.call(input, "Sales");

@@ -22,11 +22,21 @@ function ws(id: string, name: string, extra?: Partial<WorkspaceInfo>): Workspace
 }
 
 const apps: PlacementEntry[] = [
-  { serverName: "crm", slot: "sidebar.apps", resourceUri: "ui://crm", priority: 1, label: "CRM", route: "crm" },
+  {
+    serverName: "crm",
+    slot: "sidebar.apps",
+    resourceUri: "ui://crm",
+    priority: 1,
+    label: "CRM",
+    route: "crm",
+  },
 ];
 
 const ctx: CommandSourceContext = {
-  workspaces: [ws("ws_aaaaaaaaaaaaaaaa", "Pacific Clinic"), ws("ws_bbbbbbbbbbbbbbbb", "Helix Sales")],
+  workspaces: [
+    ws("ws_aaaaaaaaaaaaaaaa", "Pacific Clinic"),
+    ws("ws_bbbbbbbbbbbbbbbb", "Helix Sales"),
+  ],
   activeWorkspaceId: "ws_bbbbbbbbbbbbbbbb",
   activeWorkspaceName: "Helix Sales",
   activeWorkspaceSlug: "bbbbbbbbbbbbbbbb",
