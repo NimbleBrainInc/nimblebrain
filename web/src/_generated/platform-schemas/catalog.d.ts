@@ -20,7 +20,7 @@ export declare const PlatformToolCatalog: {
     readonly skills: {
         readonly list: {
             readonly input: import("@sinclair/typebox").TObject<{
-                scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"org" | "workspace" | "user" | "provided">>;
+                scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace" | "provided">>;
                 layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<1 | 3>>;
                 loading_strategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
                 tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -45,7 +45,7 @@ export declare const PlatformToolCatalog: {
         };
         readonly create: {
             readonly input: import("@sinclair/typebox").TObject<{
-                scope: import("@sinclair/typebox").TUnsafe<"org" | "workspace" | "user">;
+                scope: import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace">;
                 manifest: import("@sinclair/typebox").TObject<{
                     name: import("@sinclair/typebox").TString;
                     description: import("@sinclair/typebox").TString;
@@ -94,12 +94,12 @@ export declare const PlatformToolCatalog: {
     readonly usage: {
         readonly report: {
             readonly input: import("@sinclair/typebox").TObject<{
-                scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"org" | "user">>;
+                scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org">>;
                 period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
                 from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "conversation" | "model" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "conversation" | "model" | "turn" | "origin" | "provider">>]>>;
-                stackBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "model" | "origin" | "provider">>;
+                groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"day" | "user" | "workspace" | "conversation" | "model" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"day" | "user" | "workspace" | "conversation" | "model" | "turn" | "origin" | "provider">>]>>;
+                stackBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "workspace" | "model" | "origin" | "provider">>;
                 workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 userId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -328,7 +328,7 @@ export declare const PlatformToolCatalog: {
         readonly get: {
             readonly input: import("@sinclair/typebox").TObject<{
                 id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"metadata" | "messages" | "full">>;
+                expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"messages" | "metadata" | "full">>;
                 limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             }>;
         };

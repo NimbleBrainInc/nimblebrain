@@ -136,15 +136,15 @@ export type FolderRecord = Static<typeof FolderRecord>;
 export declare const ListedFile: import("@sinclair/typebox").TObject<{
     description: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
     id: import("@sinclair/typebox").TString;
-    folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
     conversationId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
     runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+    source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
+    folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
     tags: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
     mimeType: import("@sinclair/typebox").TString;
     createdAt: import("@sinclair/typebox").TString;
     filename: import("@sinclair/typebox").TString;
     size: import("@sinclair/typebox").TNumber;
-    source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
     ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     visibility: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"private" | "shared">>;
@@ -181,15 +181,15 @@ export declare const FilesListOutput: import("@sinclair/typebox").TObject<{
     files: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
         id: import("@sinclair/typebox").TString;
-        folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
         conversationId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
         runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+        source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
+        folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
         tags: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
         mimeType: import("@sinclair/typebox").TString;
         createdAt: import("@sinclair/typebox").TString;
         filename: import("@sinclair/typebox").TString;
         size: import("@sinclair/typebox").TNumber;
-        source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         visibility: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"private" | "shared">>;

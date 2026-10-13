@@ -14,7 +14,7 @@ export declare const ConversationsListInput: import("@sinclair/typebox").TObject
 export type ConversationsListInput = Static<typeof ConversationsListInput>;
 export declare const ConversationsGetInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"metadata" | "messages" | "full">>;
+    expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"messages" | "metadata" | "full">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
 export type ConversationsGetInput = Static<typeof ConversationsGetInput>;
