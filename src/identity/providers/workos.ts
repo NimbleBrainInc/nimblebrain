@@ -129,11 +129,15 @@ function extractToken(req: Request): string | null {
   if (authHeader?.startsWith("Bearer ")) return authHeader.slice(7);
 
   // Fall back to nb_session cookie (set during auth code flow callback)
+  return cookieValue(req, "nb_session");
+}
+
+function cookieValue(req: Request, name: string): string | null {
   const cookieHeader = req.headers.get("cookie");
   if (!cookieHeader) return null;
   for (const part of cookieHeader.split(";")) {
     const trimmed = part.trim();
-    if (trimmed.startsWith("nb_session=")) return trimmed.slice(11);
+    if (trimmed.startsWith(`${name}=`)) return trimmed.slice(name.length + 1);
   }
   return null;
 }
@@ -385,6 +389,66 @@ export class WorkosIdentityProvider implements IdentityProvider {
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
     };
+  }
+
+  /**
+   * Revoke the WorkOS session behind the request. Without this, AuthKit keeps
+   * its own session, and the next sign-in resumes it without asking for
+   * credentials. The session id (`sid`) comes from the access token when the
+   * request carries one, and otherwise from a token minted with `nb_refresh`:
+   * the access-token cookie outlives no more than an hour, and a tab left idle
+   * longer signs out with the refresh token alone.
+   */
+  async endSession(req: Request): Promise<void> {
+    const sessionId =
+      (await this.sessionIdFromAccessToken(req)) ?? (await this.sessionIdFromRefreshToken(req));
+    if (sessionId === null) {
+      log.info("[workos] sign-out found no WorkOS session to end");
+      return;
+    }
+    await this.workos.userManagement.revokeSession({ sessionId });
+  }
+
+  /**
+   * The `sid` of the request's access token. Expiry is not checked: sign-out
+   * often follows a lapsed access token whose session is still live. The
+   * signature is, so a forged token never names the session to revoke.
+   */
+  private async sessionIdFromAccessToken(req: Request): Promise<string | null> {
+    const token = extractToken(req);
+    const parsed = token ? parseJwt(token) : null;
+    const sessionId = parsed?.payload.sid;
+    if (!parsed || typeof sessionId !== "string") return null;
+
+    const keys = await this.getJwks();
+    const verified =
+      keys !== null &&
+      (await this.verifySignature(parsed.header, parsed.signatureInput, parsed.signature, keys));
+    if (!verified) {
+      log.warn("[workos] sign-out ignored an access token that did not verify", {
+        sub: parsed.payload.sub,
+      });
+      return null;
+    }
+    return sessionId;
+  }
+
+  /**
+   * The `sid` of an access token WorkOS mints from the request's `nb_refresh`.
+   * WorkOS returns the token directly, so it needs no signature check. A
+   * refresh token WorkOS rejects belongs to a session already over.
+   */
+  private async sessionIdFromRefreshToken(req: Request): Promise<string | null> {
+    const refreshToken = cookieValue(req, "nb_refresh");
+    if (!refreshToken) return null;
+    try {
+      const { accessToken } = await this.refreshToken(refreshToken);
+      const sessionId = parseJwt(accessToken)?.payload.sid;
+      return typeof sessionId === "string" ? sessionId : null;
+    } catch (err) {
+      if (err instanceof RefreshTokenError && err.kind === "rejected") return null;
+      throw err;
+    }
   }
 
   async refreshToken(refreshToken: string): Promise<TokenResult> {
