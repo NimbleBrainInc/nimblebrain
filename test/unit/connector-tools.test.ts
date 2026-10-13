@@ -749,6 +749,7 @@ describe("manage_connectors.setup_operator on an installed connector", () => {
     // A completed sign-in under the old client.
     await h.credStore.put(scope(), `mcp-oauth.${SERVER}.tokens`, '{"access_token":"old"}');
     await h.credStore.put(scope(), `mcp-oauth.${SERVER}.identity`, '{"sub":"someone"}');
+    h.lifecycle.recordConnectionStateChange(SERVER, h.wsId, "_workspace", "running");
   });
 
   afterEach(() => {
