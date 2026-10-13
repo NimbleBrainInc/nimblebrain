@@ -58,6 +58,8 @@ export function SidebarHeader({ collapsed = false }: { collapsed?: boolean }) {
             <Logo
               variant="icon"
               height={28}
+              maxHeight={36}
+              maxWidth={36}
               className="group-hover/logo:hidden group-focus-visible/logo:hidden"
             />
             <PanelLeftOpen
