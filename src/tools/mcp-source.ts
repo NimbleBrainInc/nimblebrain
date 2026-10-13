@@ -74,6 +74,7 @@ import {
   relayableParams,
   type ServerNotification,
 } from "./server-notifications.ts";
+import { withStructuredContentText } from "./structured-content-text.ts";
 import {
   type McpCaller,
   type ResourceData,
@@ -2703,7 +2704,9 @@ export class McpSource implements ToolSource {
     if (promoted !== toolResult) {
       log.debug("mcp", `lie-normalized source=${this.name} tool=${toolName} path=inline`);
     }
-    return promoted;
+    // An outside client reads `structuredContent` itself; only the agent loop
+    // needs it as text.
+    return caller ? promoted : this.forAgent(promoted);
   }
 
   /**
@@ -2788,7 +2791,16 @@ export class McpSource implements ToolSource {
     if (promoted !== toolResult) {
       log.debug("mcp", `lie-normalized source=${this.name} tool=${toolName} path=task`);
     }
-    return promoted;
+    return this.forAgent(promoted);
+  }
+
+  /**
+   * A remote server's result as the agent loop reads it: its structured data
+   * carried in text, since the model sees text only. In-process platform tools
+   * put what the model should read in `content` already.
+   */
+  private forAgent(result: ToolResult): ToolResult {
+    return this.mode.type === "inProcess" ? result : withStructuredContentText(result);
   }
 
   /**
