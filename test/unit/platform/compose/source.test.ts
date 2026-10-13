@@ -27,6 +27,7 @@ import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import { hashSkillBody } from "../../../../src/runtime/skills-loaded-payload.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { ToolRegistry } from "../../../../src/tools/registry.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
 import { makeIdentity } from "../../../helpers/identity.ts";
 import { stub } from "../../../helpers/stub.ts";
 import { resultText, structuredOutput } from "../../../helpers/tool-result.ts";
@@ -102,7 +103,7 @@ function makeRuntime(): Runtime {
     getCurrentIdentity: () => makeIdentity({ id: "usr_test" }),
     requireWorkspaceId: () => WS_ID,
     resolveConversationStore: async () => store,
-    getWorkspaceStore: () => stub({ get: async () => null }),
+    getWorkspaceStore: () => stub<WorkspaceStore>({ get: async () => null }),
     loadConversationSkills: () => [],
     loadConnectorSkillCandidates: () => [],
     buildAppsList: async () => [],
