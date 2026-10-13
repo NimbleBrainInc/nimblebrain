@@ -418,8 +418,11 @@ describe("a connector's fact reaching a Slack channel", () => {
 
 describe("a connector's fact reaching a task", () => {
   const TASK = "reply-triage";
-  /** The batch window. The test closes it (`closeWindow`); the clock never does. */
-  const DEBOUNCE = 60_000;
+  /**
+   * The batch window. The test closes it (`closeWindow`); the clock never does.
+   * No other timer here is armed for this long, so the spy holds only windows.
+   */
+  const DEBOUNCE = 60_001;
 
   /**
    * The timers the trigger armed for its batch windows, held until the test
