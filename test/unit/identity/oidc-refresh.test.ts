@@ -29,6 +29,7 @@ import {
 } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { readJson } from "../../helpers/http.ts";
+import { stubWorkosUserManagement } from "../../helpers/workos-sdk.ts";
 
 // ── Layer 1: WorkOS provider classification ──────────────────────────
 
@@ -42,16 +43,11 @@ const BASE_CONFIG: WorkosAuth = {
 /** Build a provider whose underlying WorkOS refresh call throws `thrown`. */
 function providerThatThrows(thrown: unknown): WorkosIdentityProvider {
   const provider = new WorkosIdentityProvider(BASE_CONFIG, undefined);
-  // Cast escape hatch: `workos` is a private field typed as the full WorkOS SDK;
-  // we only need to swap the one method under test, so we widen it to a bag of
-  // unknowns rather than reconstruct the SDK's type.
-  const sdk = (provider as unknown as { workos: { userManagement: Record<string, unknown> } })
-    .workos;
-  sdk.userManagement = {
+  stubWorkosUserManagement(provider, {
     authenticateWithRefreshToken: async () => {
       throw thrown;
     },
-  };
+  });
   return provider;
 }
 
