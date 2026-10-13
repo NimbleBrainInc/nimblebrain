@@ -9,13 +9,13 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
-import { DOCS_URL } from "../src/lib/docs";
-import { appsSource } from "../src/components/palette/sources/apps";
 import { actionsSource } from "../src/components/palette/sources/actions";
+import { appsSource } from "../src/components/palette/sources/apps";
 import { workspacesSource } from "../src/components/palette/sources/workspaces";
 import type { CommandRunContext, CommandSourceContext } from "../src/components/palette/types";
 import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
 import type { ScopedRole } from "../src/hooks/useScopedRole";
+import { DOCS_URL } from "../src/lib/docs";
 import type { PlacementEntry } from "../src/types";
 
 function ws(id: string, name: string, extra?: Partial<WorkspaceInfo>): WorkspaceInfo {
@@ -90,8 +90,22 @@ describe("workspacesSource", () => {
 
 describe("appsSource", () => {
   const apps: PlacementEntry[] = [
-    { serverName: "crm", slot: "sidebar.apps", resourceUri: "ui://crm", priority: 1, label: "CRM", route: "crm" },
-    { serverName: "pipeline", slot: "sidebar.apps", resourceUri: "ui://pipe", priority: 2, label: "Pipeline", route: "pipeline" },
+    {
+      serverName: "crm",
+      slot: "sidebar.apps",
+      resourceUri: "ui://crm",
+      priority: 1,
+      label: "CRM",
+      route: "crm",
+    },
+    {
+      serverName: "pipeline",
+      slot: "sidebar.apps",
+      resourceUri: "ui://pipe",
+      priority: 2,
+      label: "Pipeline",
+      route: "pipeline",
+    },
   ];
 
   test("returns empty when shell not ready (no apps)", () => {
@@ -179,7 +193,9 @@ describe("actionsSource", () => {
   });
 
   test("documentation run opens the docs site and closes the palette", () => {
-    const item = actionsSource.getItems("docs", baseCtx).find((i) => i.id === "action:documentation");
+    const item = actionsSource
+      .getItems("docs", baseCtx)
+      .find((i) => i.id === "action:documentation");
     expect(item).toBeDefined();
     const { ctx: run, calls } = recordRunContext();
     item!.run(run);

@@ -32,6 +32,7 @@ import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+import { structuredOutput } from "../helpers/tool-result.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -101,9 +102,7 @@ describe("skills__create — web 'rules' payload contract", () => {
     // Visible to list (the orphan bug made it invisible), and reported as a
     // skill that actually reaches the prompt.
     const list = await callTool("list", { scope: "workspace" });
-    const listed = (list.structuredContent as unknown as SkillsListOutput).skills.find(
-      (s) => s.id === id,
-    );
+    const listed = structuredOutput<SkillsListOutput>(list).skills.find((s) => s.id === id);
     expect(listed).toBeDefined();
     expect(listed?.loadingStrategy).toBe("always");
     expect(listed?.loading?.wouldLoad).toBe(true);
@@ -112,7 +111,7 @@ describe("skills__create — web 'rules' payload contract", () => {
     // Readable, with the title preserved as the description label.
     const read = await callTool("read", { id });
     expect(read.isError).toBeFalsy();
-    const detail = read.structuredContent as unknown as SkillDetail;
+    const detail = structuredOutput<SkillDetail>(read);
     expect(detail.metadata.loadingStrategy).toBe("always");
     expect(detail.metadata.description).toBe("Voice rules");
     expect(detail.content).toContain("Avoid em-dashes");
@@ -134,7 +133,7 @@ describe("skills__create — web 'rules' payload contract", () => {
 
     // No file was written → not in the list…
     const list = await callTool("list", { scope: "workspace" });
-    const orphan = (list.structuredContent as unknown as SkillsListOutput).skills.find((s) =>
+    const orphan = structuredOutput<SkillsListOutput>(list).skills.find((s) =>
       s.id.endsWith("orphan-rule.md"),
     );
     expect(orphan).toBeUndefined();

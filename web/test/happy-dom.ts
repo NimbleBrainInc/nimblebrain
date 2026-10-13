@@ -1,4 +1,4 @@
-import type { Window as HappyDomWindow } from "happy-dom";
+import { happyDomWindow } from "./setup";
 
 /**
  * Defines `window.SyntaxError` and `window.TypeError` from the runtime's own
@@ -23,7 +23,5 @@ export function defineHappyDomErrorClasses(): void {
 
 /** Resizes the test window, as a phone or a desktop browser would be. */
 export function setHappyDomViewport(size: { width: number; height: number }): void {
-  // test/setup.ts installs a happy-dom `Window` as `window`; the DOM lib types
-  // it as the browser's `Window`, which has no `happyDOM` control surface.
-  (window as unknown as HappyDomWindow).happyDOM.setViewport(size);
+  happyDomWindow.happyDOM.setViewport(size);
 }

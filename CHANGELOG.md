@@ -33,6 +33,7 @@
 
 ### Added
 
+- **Skills tools declare their output.** Each `skills__*` tool and `nb__use_skill` publishes an `outputSchema` on `tools/list` and returns matching `structuredContent`, so an `/mcp/<wsId>` client can read a result without parsing text.
 - **A connector's prompt can ask an outside client for input.** `prompts/get` through `/mcp/<wsId>` relays a connector's `input_required` answer as `tools/call` does. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).
 - **`/mcp/<wsId>` serves its connectors' prompts and completions.** Each prompt is named `<source>__<prompt>`, as tools are. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).
 - **`/mcp/<wsId>` serves its connectors' instructions and skills.** `server/discover` answers each connector's server instructions under its source name, and the MCP Skills extension (`skills/list`, `skills/get`) lists the skills the workspace's connectors serve, so a client outside NimbleBrain learns how their tools are meant to be used. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).
@@ -259,6 +260,7 @@
 
 ### Fixed
 
+- **The model sees a remote tool's structured data.** A remote server that returns its data only in `structuredContent`, with a summary as the text, now has that JSON passed to the model as text (within the usual result bound) instead of the summary alone.
 - **The chat panel's resize handle and the usage chart's daily bars work from the keyboard.** Arrow keys resize the panel; a focused bar shows its day's breakdown and is labelled for screen readers.
 - **A remote connector redeployed at the same URL reaches agent runs within a minute.** A run's tool list re-fetches a remote server's tools once they are older than 60 s, so a new tool or parameter is callable without a runtime restart ([#1683](https://github.com/NimbleBrainInc/nimblebrain/issues/1683)).
 - **Every task run leaves a result.** A run that failed before the engine returned, never started, or was lost with its process now writes `<runId>.result.json` too, with an empty output and its `error`, so `tasks__run_result` and the Tasks panel read one shape. See Breaking for the upgrade floor.

@@ -54,11 +54,45 @@ export interface InProcessTool {
   outputSchema?: Record<string, unknown>;
 }
 
-/** An {@link InProcessTool} whose handler reads the static type of its TypeBox `inputSchema`. */
-export interface TypedInProcessTool<S extends TSchema>
-  extends Omit<InProcessTool, "inputSchema" | "handler"> {
+/**
+ * A failed call. An output schema binds only a success result (the SDK client
+ * validates `structuredContent` when `isError` is false), so a failure carries
+ * any `structuredContent` it likes, or none.
+ */
+export type ToolErrorResult = ToolResult & { isError: true };
+
+/** A successful call whose `structuredContent` is `T`. */
+export type ToolSuccessResult<T> = Omit<ToolResult, "structuredContent" | "isError"> & {
+  structuredContent: T;
+  isError: false;
+};
+
+/**
+ * A tool output schema. Its root is an object on every MCP revision: 2025-11-25
+ * requires that, and the SDK server rewraps any other root as `{ result: … }`.
+ * A union of object shapes is `ObjectUnion` (`src/platform/schemas/_shared.ts`).
+ */
+export type OutputSchema = TSchema & { type: "object" };
+
+/** What the handler of a tool declaring output schema `O` returns. */
+export type TypedToolResult<O extends OutputSchema> =
+  | ToolSuccessResult<Static<O>>
+  | ToolErrorResult;
+
+/**
+ * An {@link InProcessTool} whose handler reads the static type of its TypeBox
+ * `inputSchema` and, when it declares a TypeBox `outputSchema`, returns that
+ * schema's static type as `structuredContent` on every success.
+ */
+export interface TypedInProcessTool<
+  S extends TSchema,
+  O extends OutputSchema | undefined = undefined,
+> extends Omit<InProcessTool, "inputSchema" | "handler" | "outputSchema"> {
   inputSchema: S;
-  handler: (input: Static<S>) => Promise<ToolResult>;
+  outputSchema?: O;
+  handler: (
+    input: Static<S>,
+  ) => Promise<[O] extends [OutputSchema] ? TypedToolResult<O> : ToolResult>;
 }
 
 /**
@@ -66,8 +100,16 @@ export interface TypedInProcessTool<S extends TSchema>
  * runs `validateToolInput` against `inputSchema` before it calls a handler, so
  * a handler never sees input its schema rejects, and it reads typed fields
  * without a cast of its own.
+ *
+ * With an `outputSchema`, the compiler holds each success result to
+ * `Static<O>`, and `tools/list` publishes the schema, so a client knows the
+ * result's shape without reading this source. Keep an output schema open (no
+ * `additionalProperties: false`): the SDK client validates every success result
+ * against it, and a result it rejects fails the call.
  */
-export function typedTool<S extends TSchema>(tool: TypedInProcessTool<S>): InProcessTool {
+export function typedTool<S extends TSchema, O extends OutputSchema | undefined = undefined>(
+  tool: TypedInProcessTool<S, O>,
+): InProcessTool {
   // `InProcessTool.handler` takes the `Record<string, unknown>` the SDK hands
   // `tools/call`; the input has already passed validation against `S`, which
   // that parameter type cannot express. Identical at runtime: the same object.
