@@ -260,6 +260,7 @@
 
 ### Fixed
 
+- **The model sees a remote tool's structured data.** A remote server that returns its data only in `structuredContent`, with a summary as the text, now has that JSON passed to the model as text (within the usual result bound) instead of the summary alone.
 - **The chat panel's resize handle and the usage chart's daily bars work from the keyboard.** Arrow keys resize the panel; a focused bar shows its day's breakdown and is labelled for screen readers.
 - **A remote connector redeployed at the same URL reaches agent runs within a minute.** A run's tool list re-fetches a remote server's tools once they are older than 60 s, so a new tool or parameter is callable without a runtime restart ([#1683](https://github.com/NimbleBrainInc/nimblebrain/issues/1683)).
 - **Every task run leaves a result.** A run that failed before the engine returned, never started, or was lost with its process now writes `<runId>.result.json` too, with an empty output and its `error`, so `tasks__run_result` and the Tasks panel read one shape. See Breaking for the upgrade floor.
