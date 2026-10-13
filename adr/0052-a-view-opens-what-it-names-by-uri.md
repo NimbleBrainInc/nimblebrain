@@ -53,8 +53,9 @@ reads:**
    than in an app, opens there. It is a set of its own, kept beside the
    resolver: the schemes in `src/tools/resource-schemes.ts` are the ones the
    runtime resolves for *reading*, which is a different question. This
-   decision adds `conversation://<id>`, which opens the chat panel; the build's
-   scheme check records it as not read-resolved.
+   decision adds `conversation://<id>`, which opens the chat panel. The host
+   answers it, so it joins `RESERVED_RESOURCE_SCHEMES`, where no declared
+   resource can claim it.
 2. **An app's own screen.** An app's `ui://` resource opens that app at its
    home.
 3. **A served resource.** Otherwise the URI goes to the one app the person can
@@ -110,12 +111,12 @@ a refusal, as `notify` does.
   Standardizing it is a rename (ADR-0024).
 - A deep link into the shell is a route over the same resolver, added when
   something needs it.
-- `ai.nimblebrain/action` goes in the same release, with no period where the
-  host serves both. Its only callers are first-party apps, and they move to
-  the new requests in that release. A bundle built against an older SDK fails
-  silently rather than loudly: its `action()` checks the declaration, finds
-  none, and sends nothing. So an app's rebuild ships with the host change, not
-  after it.
+- `ai.nimblebrain/action` is served for one release beside the new requests,
+  then removed. Platform apps in this repo move in the release that adds
+  `open`, but a connector's bundle ships on its own schedule. A bundle built
+  against an older SDK fails silently once the host stops declaring the
+  method: its `action()` finds no declaration and sends nothing. The overlap
+  release gives such a bundle time to rebuild against the new requests.
 
 ## Alternatives considered
 
