@@ -4,107 +4,98 @@ import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { payloadsOf } from "../helpers/engine-events.ts";
+import { stub } from "../helpers/stub.ts";
 
-/** Mock remote source — has isRemote() returning true. */
-function makeMockRemoteSource(name: string): McpSource & {
+interface RemoteControls {
   alive: boolean;
   userStopped: boolean;
   startResult: boolean;
   stopCalls: number;
   startCalls: number;
-} {
+}
+
+/** Mock remote source — has isRemote() returning true. */
+function makeMockRemoteSource(name: string): McpSource & RemoteControls {
   let startedAt: number | null = Date.now();
-  const mock = {
-    name,
-    alive: true,
-    userStopped: false,
-    startResult: true,
-    stopCalls: 0,
-    startCalls: 0,
-    isRemote() {
-      return true;
-    },
-    isAlive() {
-      return mock.alive;
-    },
-    isStopped() {
-      return mock.userStopped;
-    },
-    uptime() {
-      return startedAt !== null ? Date.now() - startedAt : null;
-    },
-    async restart() {
-      // HealthMonitor reconnects remote sources through restart() (→ tryRestart)
-      // so the tick shares the source's in-flight-restart guard with inline
-      // session recovery. restart() drives the same stop()+start() cycle and
-      // returns a boolean — it never throws.
-      await mock.stop();
-      try {
-        await mock.start();
+  const mock: McpSource & RemoteControls = Object.assign(
+    stub<McpSource>({
+      name,
+      isRemote() {
         return true;
-      } catch {
-        return false;
-      }
-    },
-    async stop() {
-      mock.stopCalls++;
-    },
-    async start() {
-      mock.startCalls++;
-      if (mock.startResult) {
-        mock.alive = true;
-        startedAt = Date.now();
-      } else {
-        throw new Error("Remote connection failed");
-      }
-    },
-  } as unknown as McpSource & {
-    alive: boolean;
-    userStopped: boolean;
-    startResult: boolean;
-    stopCalls: number;
-    startCalls: number;
-  };
+      },
+      isAlive() {
+        return mock.alive;
+      },
+      isStopped() {
+        return mock.userStopped;
+      },
+      uptime() {
+        return startedAt !== null ? Date.now() - startedAt : null;
+      },
+      async restart() {
+        // HealthMonitor reconnects remote sources through restart() (→ tryRestart)
+        // so the tick shares the source's in-flight-restart guard with inline
+        // session recovery. restart() drives the same stop()+start() cycle and
+        // returns a boolean — it never throws.
+        await mock.stop();
+        try {
+          await mock.start();
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      async stop() {
+        mock.stopCalls++;
+      },
+      async start() {
+        mock.startCalls++;
+        if (mock.startResult) {
+          mock.alive = true;
+          startedAt = Date.now();
+        } else {
+          throw new Error("Remote connection failed");
+        }
+      },
+    }),
+    { alive: true, userStopped: false, startResult: true, stopCalls: 0, startCalls: 0 },
+  );
   return mock;
 }
 
-/** Mock in-process source — no isRemote() method (or returns false). */
-function makeMockLocalSource(name: string): McpSource & {
+interface LocalControls {
   alive: boolean;
   userStopped: boolean;
   restartResult: boolean;
   restartCalls: number;
-} {
+}
+
+/** Mock in-process source — no isRemote() method (or returns false). */
+function makeMockLocalSource(name: string): McpSource & LocalControls {
   let startedAt: number | null = Date.now();
-  const mock = {
-    name,
-    alive: true,
-    userStopped: false,
-    restartResult: true,
-    restartCalls: 0,
-    isAlive() {
-      return mock.alive;
-    },
-    isStopped() {
-      return mock.userStopped;
-    },
-    uptime() {
-      return startedAt !== null ? Date.now() - startedAt : null;
-    },
-    async restart() {
-      mock.restartCalls++;
-      if (mock.restartResult) {
-        mock.alive = true;
-        startedAt = Date.now();
-      }
-      return mock.restartResult;
-    },
-  } as unknown as McpSource & {
-    alive: boolean;
-    userStopped: boolean;
-    restartResult: boolean;
-    restartCalls: number;
-  };
+  const mock: McpSource & LocalControls = Object.assign(
+    stub<McpSource>({
+      name,
+      isAlive() {
+        return mock.alive;
+      },
+      isStopped() {
+        return mock.userStopped;
+      },
+      uptime() {
+        return startedAt !== null ? Date.now() - startedAt : null;
+      },
+      async restart() {
+        mock.restartCalls++;
+        if (mock.restartResult) {
+          mock.alive = true;
+          startedAt = Date.now();
+        }
+        return mock.restartResult;
+      },
+    }),
+    { alive: true, userStopped: false, restartResult: true, restartCalls: 0 },
+  );
   return mock;
 }
 
@@ -295,11 +286,10 @@ describe("HealthMonitor — remote sources", () => {
     const remote = makeMockRemoteSource("remote-one");
     const local = makeMockLocalSource("local-one");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor(
-      () => [remote as unknown as McpSource, local as unknown as McpSource],
-      sink,
-      { checkIntervalMs: 60_000, baseDelayMs: 1 },
-    );
+    const monitor = new HealthMonitor(() => [remote, local], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // Kill both
     remote.alive = false;

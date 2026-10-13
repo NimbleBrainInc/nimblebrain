@@ -17,34 +17,35 @@ describe("estimateContentSize", () => {
 
   it("measures image block base64 data length", () => {
     const data = "aGVsbG8="; // 8 chars of base64
-    const blocks = [{ type: "image", data, mimeType: "image/png" }] as unknown as ContentBlock[];
+    const blocks: ContentBlock[] = [{ type: "image", data, mimeType: "image/png" }];
     expect(estimateContentSize(blocks)).toBe(8);
   });
 
   it("measures embedded resource text", () => {
-    const blocks = [
+    const blocks: ContentBlock[] = [
       { type: "resource", resource: { text: "embedded content", uri: "file://test" } },
-    ] as unknown as ContentBlock[];
+    ];
     expect(estimateContentSize(blocks)).toBe(16);
   });
 
   it("measures embedded resource blob", () => {
-    const blocks = [
+    const blocks: ContentBlock[] = [
       { type: "resource", resource: { blob: "YmxvYmRhdGE=", uri: "file://test" } },
-    ] as unknown as ContentBlock[];
+    ];
     expect(estimateContentSize(blocks)).toBe(12);
   });
 
   it("falls back to JSON.stringify for unknown block types", () => {
+    // biome-ignore lint/plugin/double-cast: a block of type "custom", which no ContentBlock variant admits, read as a ContentBlock
     const block = { type: "custom", payload: "data" } as unknown as ContentBlock;
     expect(estimateContentSize([block])).toBe(JSON.stringify(block).length);
   });
 
   it("handles mixed block types", () => {
-    const blocks = [
+    const blocks: ContentBlock[] = [
       { type: "text", text: "abc" },
       { type: "image", data: "AAAA", mimeType: "image/png" },
-    ] as unknown as ContentBlock[];
+    ];
     expect(estimateContentSize(blocks)).toBe(7); // 3 + 4
   });
 });

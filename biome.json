@@ -65,6 +65,7 @@
         "test/helpers/**",
         "test/integration/**",
         "test/scripts/**",
+        "test/unit/*.ts",
         "test/unit/__golden__/**",
         "test/unit/api/**",
         "test/unit/brand/**",

@@ -26,6 +26,7 @@ import {
   registerCredentialTransportCredentialProvider,
 } from "../../src/tools/credential-transport-credential.ts";
 import { resolveTransportCredential } from "../../src/tools/remote-transport.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 let workDir: string;
@@ -38,10 +39,10 @@ function captureFetch(): {
   calls: Array<{ url: string; headers: Headers }>;
 } {
   const calls: Array<{ url: string; headers: Headers }> = [];
-  const impl = (async (input: string, init?: RequestInit) => {
+  const impl = fakeFetch(async (input, init) => {
     calls.push({ url: String(input), headers: new Headers(init?.headers) });
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof fetch;
+  });
   return { fetch: impl, calls };
 }
 

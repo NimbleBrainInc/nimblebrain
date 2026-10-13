@@ -16,6 +16,7 @@ import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 // Bun.serve-based cases (headless single-hop, headless multi-hop, interactive
@@ -635,7 +636,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     calls: Array<{ url: string; init?: RequestInit }>;
   } {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const fetcher = (async (url: string | URL | Request, init?: RequestInit) => {
+    const fetcher = fakeFetch(async (url, init) => {
       const u = typeof url === "string" ? url : url.toString();
       calls.push({ url: u, init });
       const r = responses[u];
@@ -645,7 +646,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
         status: r.status,
         headers: { "Content-Type": "application/json" },
       });
-    }) as unknown as typeof fetch;
+    });
     return { fetch: fetcher, calls };
   }
 
@@ -1249,7 +1250,8 @@ describe("WorkspaceOAuthProvider — auth_lost flag", () => {
 
   /** Wait for the flag write `notifyAuthLost` starts without awaiting. */
   const settled = (p: WorkspaceOAuthProvider) =>
-    (p as unknown as { authLostWrite: Promise<void> }).authLostWrite;
+    // biome-ignore lint/complexity/useLiteralKeys: `authLostWrite` is private; bracket access is TypeScript's typed path to it
+    p["authLostWrite"];
 
   it("test_notifyAuthLost_workspaceOwner_persistsFlag", async () => {
     const p = makeProvider();

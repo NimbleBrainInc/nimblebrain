@@ -5,10 +5,13 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { extractTextForModel } from "../../src/engine/content-helpers.ts";
 import type { EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { mcpSourceInternals } from "../helpers/mcp-source-internals.ts";
+import { stub } from "../helpers/stub.ts";
 
 const noopSink: EventSink = { emit: () => {} };
 
@@ -19,15 +22,15 @@ function buildSource(
   meta?: Record<string, unknown>,
 ): McpSource {
   const source = new McpSource("ledger", mode, noopSink);
-  const fakeClient = {
+  const fakeClient = stub<Client>({
     callTool: async (): Promise<CallToolResult> => ({
       content: [{ type: "text", text: "Found 1 record(s)." }],
       structuredContent: ROWS,
       isError: false,
     }),
     close: async () => {},
-  };
-  const internals = source as unknown as { client: unknown; cachedTools: unknown };
+  });
+  const internals = mcpSourceInternals(source);
   internals.client = fakeClient;
   internals.cachedTools = [
     {
