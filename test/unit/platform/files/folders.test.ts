@@ -101,6 +101,9 @@ beforeEach(async () => {
   store = createFileStore(workspaceFilesDir(workDir, WS_ID, OWNER_ID));
   source = createFilesSource(makeRuntime(workDir), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {

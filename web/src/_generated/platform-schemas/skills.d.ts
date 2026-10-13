@@ -247,8 +247,8 @@ export declare const SkillsReadOutput: import("@sinclair/typebox").TUnsafe<{
     };
     source: {
         connector?: string | undefined;
-        connectorVersion?: string | undefined;
         path?: string | undefined;
+        connectorVersion?: string | undefined;
         uri?: string | undefined;
     };
     scope: "org" | "workspace" | "user" | "provided";

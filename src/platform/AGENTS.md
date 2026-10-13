@@ -299,10 +299,11 @@ Rules for an output schema:
 shape on every published output schema, and requires one on every tool of a
 source marked `typedOutputs`. A unit test sees the SDK's validation only after
 its client has fetched `tools/list`, which `McpSource.tools()` does; the skills
-fixtures call it after `start()` for that reason.
+and files fixtures call it after `start()` for that reason.
 
-The skills app declares its outputs this way. The other apps declare type-only
-`XxxOutput` exports in `schemas/` and annotate their handlers with them; each
+The skills and files apps declare their outputs this way. The other apps
+declare type-only `XxxOutput` exports in `schemas/` and annotate their
+handlers with them; each
 moves onto output schemas in its own change, and is then marked `typedOutputs`.
 Until then, the type-only export is the handler's annotated return type, never
 `object`.
