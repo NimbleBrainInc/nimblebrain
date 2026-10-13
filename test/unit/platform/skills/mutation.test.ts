@@ -142,6 +142,9 @@ afterEach(async () => {
 async function buildSource(): Promise<McpSource> {
   source = createSkillsSource(runtime as unknown as never, sink ?? new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 
