@@ -20,8 +20,10 @@ import {
   isTaskForbiddenSkillTool,
 } from "../../../../src/platform/skills/source.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { textOf } from "../../../helpers/resource-contents.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 // ── Fake Runtime ────────────────────────────────────────────────────────
 //
@@ -68,7 +70,7 @@ afterEach(async () => {
 
 async function buildSource(): Promise<McpSource> {
   const runtime = new FakeRuntime(workDir);
-  source = createSkillsSource(runtime as unknown as never, new NoopEventSink());
+  source = createSkillsSource(stub<Runtime>(runtime), new NoopEventSink());
   await source.start();
   return source;
 }
@@ -88,7 +90,7 @@ async function buildSourceWithFeatures(
 ): Promise<McpSource> {
   const runtime = new FakeRuntime(workDir);
   source = createSkillsSource(
-    runtime as unknown as never,
+    stub<Runtime>(runtime),
     new NoopEventSink(),
     resolveFeatures({ skillManagement: true, ...overrides }),
   );

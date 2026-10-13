@@ -20,6 +20,9 @@ import { createConversationsSource } from "../../../../src/platform/conversation
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 const OWNER_ID = "usr_test";
 const WS_ID = "ws_0044782be7c9916a";
@@ -77,16 +80,17 @@ function writeUnterminated(id: string): void {
 }
 
 function makeRuntime(): Runtime {
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: () => OWNER_ID,
-    getWorkspaceStore: () => ({ getWorkspacesDir: () => join(workDir, "workspaces") }),
-    onConversationsChanged: () => {},
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({ getWorkspacesDir: () => join(workDir, "workspaces") }),
+    onConversationsChanged: () => () => {},
     isTurnActive: (conversationId: string) => {
       askedAbout.push(conversationId);
       return liveIds.has(conversationId);
     },
-  } as unknown as Runtime;
+  });
 }
 
 function exec(tool: string, args: Record<string, unknown>): Promise<ToolResult> {

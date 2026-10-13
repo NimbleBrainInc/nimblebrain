@@ -6,12 +6,18 @@
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
+import type { EventSink } from "../../../../src/engine/types.ts";
 import { isModelVisible } from "../../../../src/engine/types.ts";
 import { buildHookUrl } from "../../../../src/hooks/token.ts";
 import type { HookRegistration } from "../../../../src/hooks/types.ts";
 import { createHooksSource } from "../../../../src/platform/hooks/source.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
+import type { ConnectorPort } from "../../../../src/tools/connector-surface.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { Workspace } from "../../../../src/workspace/types.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 const WS = "ws_005b519ef7efc353";
 const USER = "usr_admin";
@@ -35,49 +41,52 @@ class FakeRuntime {
   workspaces = new Map<string, Workspace>();
 
   getCurrentIdentity() {
-    return this.identity;
+    return this.identity && makeIdentity(this.identity);
   }
   getCurrentWorkspaceId() {
     return this.wsId;
   }
   getWorkspaceStore() {
-    return { get: async (id: string) => this.workspaces.get(id) ?? null };
+    return stub<WorkspaceStore>({ get: async (id: string) => this.workspaces.get(id) ?? null });
   }
   /** What `ensureHooks` will find. Empty = the connector is not running. */
-  hookPorts = new Map<string, unknown>();
+  hookPorts = new Map<string, ConnectorPort>();
   getHookReconcileDeps() {
     return {
-      workspaceStore: {
+      workspaceStore: stub<WorkspaceStore>({
         get: async (id: string) => this.workspaces.get(id) ?? null,
-        update: async () => undefined,
-      },
+        update: async () => null,
+      }),
       identity: { tid: "tenant-a", key: Buffer.alloc(32, 7) },
-      declarationsFor: () => [],
+      declarationsFor: async () => [],
       portFor: (name: string) => this.hookPorts.get(name),
     };
   }
 
   seed(role: "admin" | "member", hooks: Record<string, HookRegistration>): void {
-    this.workspaces.set(WS, {
-      id: WS,
-      name: WS,
-      members: [{ userId: USER, role }],
-      connectors: [],
-      hooks,
-      createdAt: "",
-      updatedAt: "",
-    } as unknown as Workspace);
+    this.workspaces.set(
+      WS,
+      stub<Workspace>({
+        id: WS,
+        name: WS,
+        members: [{ userId: USER, role }],
+        connectors: [],
+        hooks,
+        createdAt: "",
+        updatedAt: "",
+      }),
+    );
   }
 }
 
 let runtime: FakeRuntime;
 let source: McpSource;
 
-const noopSink = { emit: () => {} } as unknown as never;
+const noopSink: EventSink = { emit: () => {} };
 
 beforeEach(async () => {
   runtime = new FakeRuntime();
-  source = createHooksSource(runtime as unknown as never, noopSink);
+  source = createHooksSource(stub<Runtime>(runtime), noopSink);
   await source.start();
 });
 

@@ -11,9 +11,17 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { WORKSPACE_PRINCIPAL_ID } from "../../../../src/connectors/runtime/connection.ts";
+import type { ConnectorCatalog } from "../../../../src/connectors/catalog/catalog.ts";
+import {
+  type Connection,
+  WORKSPACE_PRINCIPAL_ID,
+} from "../../../../src/connectors/runtime/connection.ts";
+import type { ConnectorLifecycleManager } from "../../../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorInstance } from "../../../../src/connectors/runtime/types.ts";
 import { pollTargets } from "../../../../src/platform/notifications/source.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
+import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 const WORKSPACES = ["ws_aaaaaaaaaaaaaaaa", "ws_bbbbbbbbbbbbbbbb", "ws_cccccccccccccccc"];
 const SERVERS = ["acme", "globex", "initech", "umbrella"];
@@ -21,21 +29,24 @@ const SERVERS = ["acme", "globex", "initech", "umbrella"];
 /** A runtime with every server installed and running in every workspace. */
 function makeRuntime() {
   const instances = WORKSPACES.flatMap((wsId) =>
-    SERVERS.map((serverName) => ({
-      wsId,
-      serverName,
-      connections: new Map([[WORKSPACE_PRINCIPAL_ID, { state: "running" }]]),
-    })),
+    SERVERS.map((serverName) =>
+      stub<ConnectorInstance>({
+        wsId,
+        serverName,
+        connections: new Map([[WORKSPACE_PRINCIPAL_ID, stub<Connection>({ state: "running" })]]),
+      }),
+    ),
   );
   const opened: object[] = [];
   const lookups: Array<{ wsId: string; serverName: string; catalog: unknown }> = [];
-  const runtime = {
-    getLifecycle: () => ({
-      getInstances: () => instances,
-      connectionSource: () => ({}),
-    }),
+  const runtime = stub<Runtime>({
+    getLifecycle: () =>
+      stub<ConnectorLifecycleManager>({
+        getInstances: () => instances,
+        connectionSource: () => stub<McpSource>({}),
+      }),
     getConnectorCatalog: () => {
-      const catalog = {};
+      const catalog = stub<ConnectorCatalog>({});
       opened.push(catalog);
       return catalog;
     },
@@ -43,7 +54,7 @@ function makeRuntime() {
       lookups.push({ wsId, serverName, catalog });
       return { resource: `${serverName}://notifications` };
     },
-  } as unknown as Runtime;
+  });
   return { runtime, opened, lookups };
 }
 

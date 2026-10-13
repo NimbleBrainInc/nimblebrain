@@ -17,18 +17,28 @@
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
+import type { ConnectorLifecycleManager } from "../../../../src/connectors/runtime/lifecycle.ts";
+import type { EventSink } from "../../../../src/engine/types.ts";
 import { isModelVisible } from "../../../../src/engine/types.ts";
 import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
+import type { NotificationStore } from "../../../../src/notifications/store.ts";
 import { createNotificationsSource } from "../../../../src/platform/notifications/source.ts";
 import {
   NOTIFICATION_SOURCES_MAX,
   type NotificationRouteInput,
   type NotificationsSettingsOutput,
 } from "../../../../src/platform/schemas/notifications.ts";
+import type { TaskDomainContext } from "../../../../src/platform/tasks/domain.ts";
+import type { Task } from "../../../../src/platform/tasks/types.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { ToolRegistry } from "../../../../src/tools/registry.ts";
 import type { Workspace } from "../../../../src/workspace/types.ts";
-import { resultText } from "../../../helpers/tool-result.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
+import { resultText, structuredOutput } from "../../../helpers/tool-result.ts";
 
 const WS = "ws_005b519ef7efc353";
 const USER = "usr_admin";
@@ -38,29 +48,29 @@ const TOOL = "slack__send_message";
 class FakeRuntime {
   identity: { id: string } | null = { id: USER };
   workspaces = new Map<string, Workspace>();
-  tasks = [
-    {
+  tasks: Task[] = [
+    stub<Task>({
       id: "auto_triage",
       name: "Triage replies",
       schedule: { type: "event", match: { source: "precision-outbound" } },
-    },
+    }),
     // A clock task is a legal thing for a route to name and a useless
     // one, so the picker has to be able to say so.
-    {
+    stub<Task>({
       id: "auto_digest",
       name: "Weekly digest",
       schedule: { type: "cron", expression: "0 9 * * 1" },
-    },
+    }),
   ];
 
   getCurrentIdentity() {
-    return this.identity;
+    return this.identity && makeIdentity(this.identity);
   }
   resolveRequestUserId(identity?: { id: string }) {
     return identity?.id ?? "usr_dev";
   }
   getWorkspaceStore() {
-    return {
+    return stub<WorkspaceStore>({
       list: async () => [...this.workspaces.values()],
       get: async (id: string) => this.workspaces.get(id) ?? null,
       update: async (id: string, patch: Partial<Workspace>) => {
@@ -70,7 +80,7 @@ class FakeRuntime {
         this.workspaces.set(id, next);
         return next;
       },
-    };
+    });
   }
   async listNotificationSources() {
     return [
@@ -82,17 +92,22 @@ class FakeRuntime {
     ];
   }
   async ensureWorkspaceRegistry() {
-    return { availableTools: async () => [{ name: TOOL }, { name: "slack__list_channels" }] };
+    return stub<ToolRegistry>({
+      availableTools: async () =>
+        [TOOL, "slack__list_channels"].map((name) => ({ name, description: "", inputSchema: {} })),
+    });
   }
   getTasksContext() {
-    return { definitions: () => new Map(this.tasks.map((a) => [a.id, a])) };
+    return stub<TaskDomainContext>({
+      definitions: () => new Map(this.tasks.map((a) => [a.id, a])),
+    });
   }
 
   // The source also builds the outbox poller at construction. With no lifecycle
   // instances there is nothing for it to read, which is what these tests want:
   // they are about the settings door, and the loop has its own suite.
   getLifecycle() {
-    return { getInstances: () => [] };
+    return stub<ConnectorLifecycleManager>({ getInstances: () => [] });
   }
   async getNotificationsDeclaration() {
     return undefined;
@@ -100,7 +115,7 @@ class FakeRuntime {
   getNotificationsPollConfig() {
     return resolvePollConfig();
   }
-  getNotificationStore() {
+  getNotificationStore(): NotificationStore {
     throw new Error("these tests write no notifications");
   }
 
@@ -112,18 +127,18 @@ class FakeRuntime {
       connectors: [],
       createdAt: "",
       updatedAt: "",
-    } as unknown as Workspace);
+    });
   }
 }
 
 let runtime: FakeRuntime;
 let source: McpSource;
-const noopSink = { emit: () => {} } as unknown as never;
+const noopSink: EventSink = { emit: () => {} };
 
 beforeEach(async () => {
   runtime = new FakeRuntime();
   runtime.seed("admin");
-  source = createNotificationsSource(runtime as unknown as never, noopSink);
+  source = createNotificationsSource(stub<Runtime>(runtime), noopSink);
   await source.start();
 });
 
@@ -138,7 +153,7 @@ function exec(tool: string, args: Record<string, unknown> = {}) {
 async function settings(): Promise<NotificationsSettingsOutput> {
   const res = await exec("settings");
   expect(res.isError).toBe(false);
-  return res.structuredContent as unknown as NotificationsSettingsOutput;
+  return structuredOutput<NotificationsSettingsOutput>(res);
 }
 
 const route = (over: Partial<NotificationRouteInput> = {}): NotificationRouteInput => ({
@@ -210,7 +225,7 @@ describe("the ceiling", () => {
       maxLevel: "urgent",
     });
     expect(res.isError).toBe(false);
-    const out = res.structuredContent as unknown as NotificationsSettingsOutput;
+    const out = structuredOutput<NotificationsSettingsOutput>(res);
     expect(out.sources[0]).toMatchObject({ maxLevel: "urgent", configured: true });
     expect(runtime.workspaces.get(WS)?.notifications?.sources).toEqual({
       "precision-outbound": { maxLevel: "urgent" },
@@ -313,10 +328,14 @@ describe("the runtime's dormancy note on a route", () => {
   test("a half-written note is dropped rather than rendered as a reasonless refusal", async () => {
     await exec("set_routes", { routes: [route()] });
     const stored = runtime.workspaces.get(WS)?.notifications?.routes ?? [];
-    runtime.workspaces.set(WS, {
-      ...(runtime.workspaces.get(WS) as Workspace),
-      notifications: { routes: [{ ...stored[0], disabled: { reason: 42 } }] },
-    } as unknown as Workspace);
+    runtime.workspaces.set(
+      WS,
+      // biome-ignore lint/plugin/double-cast: a stored route whose `disabled.reason` is a number, where the type promises a string
+      {
+        ...(runtime.workspaces.get(WS) as Workspace),
+        notifications: { routes: [{ ...stored[0], disabled: { reason: 42 } }] },
+      } as unknown as Workspace,
+    );
 
     expect((await settings()).routes[0]?.disabled).toBeUndefined();
   });

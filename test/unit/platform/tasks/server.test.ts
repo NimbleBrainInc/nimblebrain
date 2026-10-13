@@ -1815,7 +1815,7 @@ describe("the tool surface an agent reads", () => {
       "tokenBudget",
     ];
     handleUpdate(updateArgs("full", Object.fromEntries(cleared.map((k) => [k, null]))), ctx);
-    const stored = loadDefs().get("full") as unknown as Record<string, unknown>;
+    const stored = loadDefs().get("full")!;
     for (const key of cleared) expect(key in stored).toBe(false);
     expect("budgetResetAt" in stored).toBe(false);
   });

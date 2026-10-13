@@ -8,11 +8,16 @@ import { securityHeaders } from "../../../src/api/middleware/security-headers.ts
 import { mcpAuthRoutes } from "../../../src/api/routes/mcp-auth.ts";
 import type { ApiErrorBody, OAuthInitiateResponse } from "../../../src/api/schemas/responses.ts";
 import type { AppContext, AppEnv } from "../../../src/api/types.ts";
-import { ConnectorBusyError } from "../../../src/connectors/runtime/lifecycle.ts";
+import {
+  ConnectorBusyError,
+  type ConnectorLifecycleManager,
+} from "../../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorInstance } from "../../../src/connectors/runtime/types.ts";
 import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
-import { FIRST_PARTY_GRANT } from "../../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT, type IdentityProvider } from "../../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { log } from "../../../src/observability/log.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
 import {
   _clearAll,
   DEFAULT_FLOW_TTL_MS,
@@ -20,7 +25,10 @@ import {
   register as registerFlow,
   resolveWithCode,
 } from "../../../src/tools/oauth-flow-registry.ts";
+import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { readJson } from "../../helpers/http.ts";
+import { stub } from "../../helpers/stub.ts";
+import { makeWorkspace } from "../../helpers/test-workspace.ts";
 
 /** What `POST .../mcp-auth/initiate` answers: `null` when no interactive step is needed. */
 
@@ -42,9 +50,9 @@ const WS_ID = "ws_0076759dbbe19fcc";
 const DEV_USER_ID = "usr_default";
 /** Auth that verifies every request as the dev user, as the `dev` provider does. */
 const DEV_AUTH = {
-  provider: {
+  provider: stub<IdentityProvider>({
     verifyRequest: async () => ({ ...DEV_IDENTITY, grant: FIRST_PARTY_GRANT }),
-  },
+  }),
   eventSink: { emit: () => {} },
 };
 const INITIATE_PATH = `/v1/workspaces/${WS_ID}/mcp-auth/initiate`;
@@ -59,12 +67,12 @@ interface StubLifecycle {
   /** Pre-canned URL the stub `startAuth` returns. Unset ⇒ throws; value `null` ⇒
    *  connected without an interactive flow (already authenticated). */
   authUrls: Map<string, string | null>; // key: "serverName|wsId|principalId"
-  instances: Map<string, { oauthScope?: "workspace" | "user" }>; // key: "serverName|wsId"
+  instances: Map<string, Partial<ConnectorInstance>>; // key: "serverName|wsId"
   /** Pre-canned URL the stub `startIdentityAuth` returns. Unset ⇒ throws; value
    *  `null` ⇒ connected without an interactive flow (already authenticated).
    *  Key: "serverName|userId". */
   identityAuthUrls: Map<string, string | null>;
-  getInstance(serverName: string, wsId: string): { oauthScope?: "workspace" | "user" } | null;
+  getInstance(serverName: string, wsId: string): ConnectorInstance | null;
   startAuth(
     serverName: string,
     wsId: string,
@@ -81,13 +89,14 @@ interface StubLifecycle {
 function makeStubLifecycle(): StubLifecycle {
   const authUrls = new Map<string, string | null>();
   const identityAuthUrls = new Map<string, string | null>();
-  const instances = new Map<string, { oauthScope?: "workspace" | "user" }>();
+  const instances = new Map<string, Partial<ConnectorInstance>>();
   return {
     authUrls,
     identityAuthUrls,
     instances,
     getInstance(serverName, wsId) {
-      return instances.get(`${serverName}|${wsId}`) ?? null;
+      const instance = instances.get(`${serverName}|${wsId}`);
+      return instance ? stub<ConnectorInstance>(instance) : null;
     },
     async startAuth(serverName, wsId, principalId) {
       const key = `${serverName}|${wsId}|${principalId}`;
@@ -107,21 +116,23 @@ function makeApp(
   secureCookies = false,
   workDir = "/tmp/nb-test",
 ): Hono<AppEnv> {
-  const ctx = {
-    runtime: {
-      getLifecycle: () => lifecycle,
+  const ctx = stub<AppContext>({
+    runtime: stub<Runtime>({
+      getLifecycle: () => stub<ConnectorLifecycleManager>(lifecycle),
       getWorkDir: () => workDir,
       getAllowInsecureRemotes: () => false,
       // The route's owner resolution, fixed to the test user.
       resolveRequestUserId: () => USER_ID,
-    },
+    }),
     authOptions: DEV_AUTH,
-    workspaceStore: {
+    workspaceStore: stub<WorkspaceStore>({
       get: async (id: string) =>
-        id === WS_ID ? { id, members: [{ userId: DEV_USER_ID, role: "admin" }] } : null,
-    },
+        id === WS_ID
+          ? makeWorkspace({ id, members: [{ userId: DEV_USER_ID, role: "admin" }] })
+          : null,
+    }),
     secureCookies,
-  } as unknown as AppContext;
+  });
 
   const app = new Hono<AppEnv>();
   app.route("/", mcpAuthRoutes(ctx));
@@ -337,16 +348,16 @@ describe("GET /v1/mcp-auth/callback", () => {
     // own CSP, and the security-headers middleware must respect it (per
     // its `if (!c.res.headers.has(...)) set` precedent). This test wires
     // the real middleware in front of the route and verifies both.
-    const ctx = {
-      runtime: {
-        getLifecycle: () => lifecycle,
+    const ctx = stub<AppContext>({
+      runtime: stub<Runtime>({
+        getLifecycle: () => stub<ConnectorLifecycleManager>(lifecycle),
         getWorkDir: () => "/tmp/nb-test",
         getAllowInsecureRemotes: () => false,
-      },
+      }),
       authOptions: DEV_AUTH,
-      workspaceStore: {},
+      workspaceStore: stub<WorkspaceStore>({}),
       secureCookies: false,
-    } as unknown as AppContext;
+    });
     const wrapped = new Hono<AppEnv>();
     wrapped.use("*", securityHeaders());
     wrapped.use("*", async (c, next) => {

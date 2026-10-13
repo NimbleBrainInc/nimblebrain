@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, type Mock, mock, spyOn } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -133,10 +133,8 @@ function makeFailureRun(taskId: string, error = "Something broke"): TaskRun {
   };
 }
 
-function createMockExecutor(result?: TaskRun): Executor {
-  return mock(async (auto: Task, _signal: AbortSignal) => {
-    return execOk(result ?? makeSuccessRun(auto.id));
-  }) as Executor;
+function createMockExecutor(result?: TaskRun): Mock<Executor> {
+  return mock<Executor>(async (auto) => execOk(result ?? makeSuccessRun(auto.id)));
 }
 
 /** Executor that throws — exercises `dispatchRun`'s catch/classification path. */
@@ -2355,8 +2353,7 @@ describe("Scheduler — event schedules", () => {
 
     expect("run" in outcome).toBe(true);
     expect(executor).toHaveBeenCalledTimes(1);
-    const [, , trigger, input] = (executor as unknown as { mock: { calls: unknown[][] } }).mock
-      .calls[0]!;
+    const [, , trigger, input] = executor.mock.calls[0]!;
     expect(trigger).toBe("event");
     expect(input).toEqual({ preamble: "<event>…</event>" });
     scheduler.stop();

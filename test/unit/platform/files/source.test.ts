@@ -15,6 +15,7 @@ import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { ContentBlock, ToolResult } from "../../../../src/engine/types.ts";
 import { workspaceFilesDir } from "../../../../src/files/paths.ts";
 import { createFileStore } from "../../../../src/files/store.ts";
+import { DEFAULT_FILE_CONFIG } from "../../../../src/files/types.ts";
 import { createFilesSource } from "../../../../src/platform/files/source.ts";
 import type {
   FilesCreateOutput,
@@ -23,7 +24,10 @@ import type {
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
+import { structuredOutput } from "../../../helpers/tool-result.ts";
 
 /** The owner and focused workspace every handler call in this file runs as. */
 const OWNER_ID = "usr_test";
@@ -51,14 +55,7 @@ function findResourceLink(result: ToolResult): {
   size?: number;
 } {
   for (const block of result.content as ContentBlock[]) {
-    if ((block as { type?: string }).type === "resource_link") {
-      return block as unknown as {
-        uri: string;
-        name: string;
-        mimeType?: string;
-        size?: number;
-      };
-    }
+    if (block.type === "resource_link") return block;
   }
   throw new Error("expected a resource_link block in tool result");
 }
@@ -69,13 +66,13 @@ function makeRuntime(workDir: string): Runtime {
   // where the workspace comes from the request context (see `exec`) and the owner
   // from the current identity. The mock roots each store at the matching workspace
   // partition so the on-disk round-trip is exercised faithfully.
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? OWNER_ID,
     getWorkspaceFileStore: (wsId: string, ownerId: string) =>
       createFileStore(workspaceFilesDir(workDir, wsId, ownerId)),
-    getFilesConfig: () => ({ maxExtractedTextSize: 204_800 }),
-  } as unknown as Runtime;
+    getFilesConfig: () => DEFAULT_FILE_CONFIG,
+  });
 }
 
 /**
@@ -387,7 +384,7 @@ describe("files app", () => {
     expect(text).not.toContain("page three should stay hidden");
     expect(JSON.stringify(result)).not.toContain(pdf.toString("base64"));
 
-    const structured = result.structuredContent as unknown as FilesReadPdfPagesOutput;
+    const structured = structuredOutput<FilesReadPdfPagesOutput>(result);
     expect(structured).toMatchObject({
       id,
       filename: "report.pdf",
@@ -423,7 +420,7 @@ describe("files app", () => {
     expect(text).toContain("only page");
     expect(text).toContain("Missing pages: 99 (PDF has 1 page).");
 
-    const structured = result.structuredContent as unknown as FilesReadPdfPagesOutput;
+    const structured = structuredOutput<FilesReadPdfPagesOutput>(result);
     expect(structured.requestedPages).toEqual([1, 99]);
     expect(structured.missingPages).toEqual([99]);
     expect(structured.pages.map((page) => page.page)).toEqual([1]);

@@ -17,6 +17,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import type { ConnectorLifecycleManager } from "../../../../src/connectors/runtime/lifecycle.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
 import { parseNotificationEnvelope } from "../../../../src/notifications/envelope.ts";
 import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
@@ -33,6 +34,8 @@ import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const OWNER_ID = "usr_test";
@@ -72,16 +75,16 @@ function seed(wsId: string, source_: string, eventId: string, extra: Record<stri
  * `notifications/routes.test.ts`.
  */
 function makeRuntime(): Runtime {
-  return {
+  return stub<Runtime>({
     getNotificationStore: (wsId: string) => storeFor(wsId),
     getWorkspaceStore: () => new WorkspaceStore(workDir),
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? OWNER_ID,
     dispatchUnattended: async () => ({ outcome: "ok" }),
-    getLifecycle: () => ({ getInstances: () => [] }),
+    getLifecycle: () => stub<ConnectorLifecycleManager>({ getInstances: () => [] }),
     getNotificationsDeclaration: async () => undefined,
     getNotificationsPollConfig: () => resolvePollConfig(),
-  } as unknown as Runtime;
+  });
 }
 
 /** Run a notifications tool with `wsId` as the request's bound workspace. */

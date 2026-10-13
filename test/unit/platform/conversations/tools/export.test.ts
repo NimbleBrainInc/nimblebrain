@@ -32,7 +32,7 @@ const META = {
   lastModel: "claude-sonnet-4-5-20250929",
 };
 
-const MESSAGES = [
+const MESSAGES: FixtureTurn[] = [
   { role: "user", content: "Hello there", timestamp: "2025-06-01T10:01:00.000Z" },
   {
     role: "assistant",
@@ -69,15 +69,12 @@ afterEach(() => {
 
 async function setupConversation(
   meta: Record<string, unknown>,
-  messages: Record<string, unknown>[],
+  messages: FixtureTurn[],
   filename?: string,
 ): Promise<void> {
   const id = meta.id as string;
   const fname = filename ?? `${id}.jsonl`;
-  const lines = [
-    JSON.stringify(meta),
-    ...conversationEventLines(messages as unknown as FixtureTurn[]),
-  ];
+  const lines = [JSON.stringify(meta), ...conversationEventLines(messages)];
   writeTmpFile(fname, lines);
   await index.build(ROOT);
 }
@@ -116,7 +113,7 @@ describe("handleExport — markdown", () => {
   });
 
   test("renders tool calls as blockquotes", async () => {
-    const messagesWithTools = [
+    const messagesWithTools: FixtureTurn[] = [
       { role: "user", content: "Search for files", timestamp: "2025-06-01T10:01:00.000Z" },
       {
         role: "assistant",
@@ -159,7 +156,7 @@ describe("handleExport — markdown", () => {
   });
 
   test("preserves code blocks in message content", async () => {
-    const codeMessage = [
+    const codeMessage: FixtureTurn[] = [
       {
         role: "user",
         content:
@@ -191,7 +188,7 @@ describe("handleExport — markdown", () => {
     };
     const longOutput = "b".repeat(400);
 
-    const messagesWithLongToolCalls = [
+    const messagesWithLongToolCalls: FixtureTurn[] = [
       { role: "user", content: "Do something", timestamp: "2025-06-01T10:01:00.000Z" },
       {
         role: "assistant",

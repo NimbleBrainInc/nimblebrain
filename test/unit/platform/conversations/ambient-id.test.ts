@@ -21,7 +21,10 @@ import { createConversationsSource } from "../../../../src/platform/conversation
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
 import { conversationEventLines } from "../../../helpers/conversation-events.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 const OWNER_ID = "usr_test";
 const WS_ID = "ws_0017179cea048c8e";
@@ -131,16 +134,17 @@ function storedTitle(id: string): string | null {
 }
 
 function makeRuntime(): Runtime {
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: () => OWNER_ID,
-    getWorkspaceStore: () => ({ getWorkspacesDir: () => join(workDir, "workspaces") }),
-    onConversationsChanged: () => {},
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({ getWorkspacesDir: () => join(workDir, "workspaces") }),
+    onConversationsChanged: () => () => {},
     announceIdentitySourceChange: (name: string, userId: string) => {
       announced.push(`${name}:${userId}`);
     },
     isTurnActive: () => false,
-  } as unknown as Runtime;
+  });
 }
 
 /** Run a tool the way a chat does — with an ambient conversation in scope. */

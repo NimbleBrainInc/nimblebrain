@@ -22,7 +22,7 @@ interface ConvSpec {
   lastModel?: string | null;
   ownerId?: string;
   workspaceId?: string | null;
-  messages?: Array<{ role: string; content: string; timestamp: string }>;
+  messages?: FixtureTurn[];
 }
 
 function writeConvFile(spec: ConvSpec): string {
@@ -40,7 +40,7 @@ function writeConvFile(spec: ConvSpec): string {
   // The connector does not read line-1 totals — attach the requested totals
   // as `metadata.usage` on the last assistant message so the read-time
   // derivation produces matching numbers without changing message count.
-  const messages = (spec.messages ?? []).map((m) => ({ ...m })) as Array<Record<string, unknown>>;
+  const messages = (spec.messages ?? []).map((m): FixtureTurn => ({ ...m }));
   const wantsTotals = spec.totalInputTokens || spec.totalOutputTokens;
   if (wantsTotals) {
     const lastAssistantIdx = (() => {
@@ -60,10 +60,7 @@ function writeConvFile(spec: ConvSpec): string {
     }
   }
 
-  const lines = [
-    JSON.stringify(meta),
-    ...conversationEventLines(messages as unknown as FixtureTurn[]),
-  ];
+  const lines = [JSON.stringify(meta), ...conversationEventLines(messages)];
 
   const filename = `conv_${spec.id}.jsonl`;
   // The index takes an entry's workspace from its DIRECTORY, so a fixture lives

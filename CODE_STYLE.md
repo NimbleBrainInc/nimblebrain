@@ -367,6 +367,10 @@ typedTool({
   handler: async ({ taskId }) => ok(await deleteTask(taskId)),
 });
 
+// GOOD — a test double through `stub<T>` (test/helpers/stub.ts): the members
+// given are checked against `T`, and the ones left out are absent.
+const runtime = stub<Runtime>({ requireWorkspaceId: () => WS });
+
 // GOOD — no typed path, so the reason names the mismatch.
 // biome-ignore lint/plugin/double-cast: the app's window, reduced to the `postMessage` the bridge calls
 const stub = { postMessage() {} } as unknown as Window;

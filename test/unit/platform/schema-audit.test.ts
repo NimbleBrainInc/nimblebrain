@@ -24,6 +24,7 @@ import { createUsageSource } from "../../../src/platform/usage/source.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import { validateToolInput } from "../../../src/tools/validate-input.ts";
+import { stub } from "../../helpers/stub.ts";
 
 /**
  * Minimal runtime stub sufficient for every synchronous / lazy platform
@@ -37,15 +38,17 @@ import { validateToolInput } from "../../../src/tools/validate-input.ts";
  * `InlineSource` an optional onStop callback factories can wire through.
  */
 function makeRuntime(workDir: string): Runtime {
-  return {
+  return stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceScopedDir: () => workDir,
     getCurrentWorkspaceId: () => "ws_001b7d589bde72e7",
     getCurrentIdentity: () => null,
     getDefaultModel: () => "claude-sonnet-4-6",
     getWorkspaceStore: () => null,
-    chat: async () => ({ content: [], usage: { inputTokens: 0, outputTokens: 0 } }),
-  } as unknown as Runtime;
+    chat: async () => {
+      throw new Error("the schema audit lists tools and runs no chat");
+    },
+  });
 }
 
 async function auditSource(source: McpSource): Promise<void> {

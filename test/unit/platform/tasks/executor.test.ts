@@ -154,10 +154,10 @@ describe("createDirectExecutor", () => {
   });
 
   test("omits workspaceId and identity when context is empty", async () => {
-    let capturedRequest: Record<string, unknown> | undefined;
+    let capturedRequest: Parameters<TaskFn>[0] | undefined;
 
     const taskFn: TaskFn = async (req) => {
-      capturedRequest = req as unknown as Record<string, unknown>;
+      capturedRequest = req;
       return {
         output: "ok",
         runId: "run_test000000",
