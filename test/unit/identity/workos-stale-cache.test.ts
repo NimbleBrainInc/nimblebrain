@@ -14,6 +14,13 @@ import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { TransientAuthError } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import {
+  stubWorkosUserManagement,
+  workosMembership,
+  workosMembershipList,
+  workosUser,
+  workosUserManagement,
+} from "../../helpers/workos-sdk.ts";
 
 // ── Key generation helpers (shared with workos-authkit.test.ts) ──
 
@@ -100,32 +107,19 @@ function jwksResponseBody() {
 function createProvider() {
   const provider = new WorkosIdentityProvider(CONFIG, undefined);
 
-  const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-  workos.userManagement = {
-    getUser: async (userId: string) => ({
-      id: userId,
-      email: `${userId}@test.com`,
-      firstName: "Test",
-      lastName: "User",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }),
-    listOrganizationMemberships: async (opts: { userId: string; organizationId: string }) => ({
-      data: [
-        {
-          id: "om_test",
+  stubWorkosUserManagement(provider, {
+    getUser: async (userId) =>
+      workosUser({ id: userId, email: `${userId}@test.com`, firstName: "Test", lastName: "User" }),
+    listOrganizationMemberships: async (opts) =>
+      workosMembershipList([
+        workosMembership({
           userId: opts.userId,
           organizationId: opts.organizationId,
-          role: { slug: "member" },
-          status: "active",
-        },
-      ],
-    }),
+          slug: "member",
+        }),
+      ]),
     getAuthorizationUrl: () => "https://fake.workos.com/authorize",
-    listUsers: async () => ({ data: [] }),
-    createUser: async () => ({}),
-    deleteUser: async () => {},
-  };
+  });
 
   provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
@@ -235,8 +229,7 @@ describe("resolveUser stale cache fallback", () => {
     provider.now = () => baseTime + 6 * 60 * 1000;
 
     // WorkOS getUser now throws
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).getUser = async () => {
+    workosUserManagement(provider).getUser = async () => {
       throw new Error("WorkOS API timeout");
     };
 
@@ -258,8 +251,7 @@ describe("resolveUser stale cache fallback", () => {
       await provider.verifyRequest(makeRequest(await makeValidToken("user_stale_limit", baseTime))),
     ).not.toBeNull();
 
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).getUser = async () => {
+    workosUserManagement(provider).getUser = async () => {
       throw new Error("WorkOS API timeout");
     };
 
@@ -288,8 +280,7 @@ describe("resolveUser stale cache fallback", () => {
     const provider = createProvider();
 
     // WorkOS getUser throws from the start — no cache to fall back on
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).getUser = async () => {
+    workosUserManagement(provider).getUser = async () => {
       throw new Error("WorkOS API down");
     };
 
@@ -315,8 +306,7 @@ describe("resolveUser stale cache fallback", () => {
     expect(await provider.verifyRequest(makeRequest(token))).not.toBeNull();
 
     // Memberships endpoint goes down. getUser still works.
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).listOrganizationMemberships = async () => {
+    workosUserManagement(provider).listOrganizationMemberships = async () => {
       throw new Error("WorkOS memberships 429");
     };
     provider.now = () => baseTime + 6 * 60 * 1000;
@@ -344,8 +334,7 @@ describe("resolveUser stale cache fallback", () => {
     // outage (429, degraded endpoint). Returning null here reached
     // resolveUser's definitive "no org membership" branch and 401'd a valid
     // session while deleting the cache that would have saved the next request.
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).listOrganizationMemberships = async () => {
+    workosUserManagement(provider).listOrganizationMemberships = async () => {
       throw new Error("WorkOS memberships 429");
     };
 
@@ -371,10 +360,8 @@ describe("resolveUser stale cache fallback", () => {
     provider.now = () => baseTime + 6 * 60 * 1000;
 
     // User's org membership was revoked (not an error — empty result)
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).listOrganizationMemberships = async () => ({
-      data: [], // No memberships — access definitively revoked
-    });
+    workosUserManagement(provider).listOrganizationMemberships = async () =>
+      workosMembershipList([]);
 
     provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 

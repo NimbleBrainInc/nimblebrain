@@ -16,10 +16,9 @@ import { ToolRegistry } from "../../../src/tools/registry.ts";
  */
 function runtimeWith(registries: Map<string, ToolRegistry>): Runtime {
   const rt = Object.create(Runtime.prototype) as Runtime;
-  // Seeds the private registry map the method under test reads. Intersecting
-  // `Runtime` with the field instead collapses to `never`, since it is private.
-  (rt as unknown as { _workspaceRegistries: Map<string, ToolRegistry> })._workspaceRegistries =
-    registries;
+  // Seeds the private registry map the method under test reads.
+  // biome-ignore lint/complexity/useLiteralKeys: _workspaceRegistries is private; bracket access is TypeScript's typed path to it
+  rt["_workspaceRegistries"] = registries;
   return rt;
 }
 

@@ -6,6 +6,7 @@
 
 import { describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
+import type { Client } from "@modelcontextprotocol/client";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { disambiguateSkillNames } from "../../../src/skills/connector-skills.ts";
 import {
@@ -17,6 +18,8 @@ import {
 } from "../../../src/skills/skills-extension.ts";
 import { McpSource } from "../../../src/tools/mcp-source.ts";
 import { makeInProcessSource } from "../../helpers/in-process-source.ts";
+import { connectMcpSource, fakeSchemaRequest } from "../../helpers/mcp-source-connection.ts";
+import { stub } from "../../helpers/stub.ts";
 
 const SKILL_MD = `---
 name: refunds
@@ -168,19 +171,16 @@ describe("disambiguateSkillNames", () => {
  * An `McpSource` whose SDK client is a stub, on the given era. The stub
  * defaults to a server that advertises no extensions.
  */
-function makeSource(client: unknown, era: "legacy" | "modern" = "legacy"): McpSource {
+function makeSource(client: Partial<Client>, era: "legacy" | "modern" = "legacy"): McpSource {
   const source = new McpSource(
     "stub",
     { type: "remote", url: new URL("http://localhost:0/mcp") },
     new NoopEventSink(),
   );
-  const stub =
-    client && typeof client === "object" && !("getServerCapabilities" in client)
-      ? { getServerCapabilities: () => ({}), ...client }
-      : client;
-  const internals = source as unknown as { client: unknown; protocolEra: string };
-  internals.client = stub;
-  internals.protocolEra = era;
+  connectMcpSource(source, {
+    client: stub<Client>({ getServerCapabilities: () => ({}), ...client }),
+    era,
+  });
   return source;
 }
 
@@ -260,10 +260,10 @@ describe("McpSource skills extension", () => {
   it("follows skills/list pagination", async () => {
     const methods: string[] = [];
     const source = makeSource({
-      request: async (req: { method: string; params: { cursor?: string } }) => {
+      request: fakeSchemaRequest(async (req) => {
         methods.push(req.method);
-        return req.params.cursor ? { skills: ["b"] } : { skills: ["a"], nextCursor: "p2" };
-      },
+        return req.params?.cursor ? { skills: ["b"] } : { skills: ["a"], nextCursor: "p2" };
+      }),
     });
     expect(await source.listSkills()).toEqual({ entries: ["a", "b"], ok: true, truncated: false });
     expect(methods).toEqual(["skills/list", "skills/list"]);
@@ -277,7 +277,9 @@ describe("McpSource skills extension", () => {
     });
     expect(await failing.listSkills()).toEqual({ entries: [], ok: false, truncated: false });
 
-    const endless = makeSource({ request: async () => ({ skills: ["x"], nextCursor: "more" }) });
+    const endless = makeSource({
+      request: fakeSchemaRequest(async () => ({ skills: ["x"], nextCursor: "more" })),
+    });
     const out = await endless.listSkills();
     expect(out.ok).toBe(true);
     expect(out.truncated).toBe(true);

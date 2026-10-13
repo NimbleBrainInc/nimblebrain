@@ -411,11 +411,10 @@ describe("WorkspaceStore.update", () => {
     const ws = await store.create("Team", {
       members: [{ userId: "user_alice", role: "admin" }],
     });
-    // Cast past the Pick<> — the runtime must strip it too.
-    const updated = await store.update(ws.id, {
-      name: "Team 2",
-      members: [{ userId: "user_evil", role: "admin" }],
-    } as unknown as { name: string });
+    // A patch held in a variable carries `members` past the excess-property
+    // check, as an untyped caller's would; the runtime must strip it too.
+    const patch = { name: "Team 2", members: [{ userId: "user_evil", role: "admin" }] };
+    const updated = await store.update(ws.id, patch);
     expect(updated?.name).toBe("Team 2");
     expect(updated?.members).toEqual([{ userId: "user_alice", role: "admin" }]);
     expect((await store.get(ws.id))?.members).toEqual([{ userId: "user_alice", role: "admin" }]);

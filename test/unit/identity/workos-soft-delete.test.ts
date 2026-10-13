@@ -16,6 +16,12 @@ import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import {
+  stubWorkosUserManagement,
+  workosMembership,
+  workosMembershipList,
+  workosUser,
+} from "../../helpers/workos-sdk.ts";
 
 // ── Crypto helpers ──────────────────────────────────────────────────
 
@@ -104,28 +110,18 @@ function createProvider(): { provider: WorkosIdentityProvider; userStore: UserSt
   const userStore = new UserStore(dir);
   const provider = new WorkosIdentityProvider(CONFIG, userStore);
 
-  const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-  workos.userManagement = {
-    getUser: async (userId: string) => ({
-      id: userId,
-      email: `${userId}@test.com`,
-      firstName: "Test",
-      lastName: "User",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }),
-    listOrganizationMemberships: async (opts: { userId: string; organizationId: string }) => ({
-      data: [
-        {
-          id: "om_test",
+  stubWorkosUserManagement(provider, {
+    getUser: async (userId) =>
+      workosUser({ id: userId, email: `${userId}@test.com`, firstName: "Test", lastName: "User" }),
+    listOrganizationMemberships: async (opts) =>
+      workosMembershipList([
+        workosMembership({
           userId: opts.userId,
           organizationId: opts.organizationId,
-          role: { slug: "member" },
-          status: "active",
-        },
-      ],
-    }),
-  };
+          slug: "member",
+        }),
+      ]),
+  });
   provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
   return { provider, userStore };
