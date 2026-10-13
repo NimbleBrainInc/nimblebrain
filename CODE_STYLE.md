@@ -253,8 +253,8 @@ its source.
 
 A tool handler under `src/platform/` declares a named output type from
 `src/platform/schemas/<app>.ts` as its return type, never `object`. The full
-rule, including the construction-site form for handlers that build their own
-`ToolResult`, is `src/platform/AGENTS.md` §2.1.
+rule, and the TypeBox output schemas each app moves onto (which make the return
+type the schema's), is `src/platform/AGENTS.md` §2.1.
 
 ```ts
 // BAD — every caller gets an untyped result and re-declares its shape.
@@ -392,8 +392,8 @@ suppresses anything. Whether a reason is true is review's call. The repo has no
 **Override.** The suppression above, on the line directly above the line where
 the cast expression starts; a longer explanation may sit above it. The plugin
 runs on the paths in its `biome.json` override: `scripts/`, `src/` (the platform
-app UIs included), `web/src/`, and each `test/` directory whose casts are clean.
-A directory joins when it is cleaned. `web/test/` joins once Biome lints it.
+app UIs included), `web/src/`, `web/test/`, and each `test/` directory whose casts
+are clean. A directory joins when it is cleaned.
 
 ---
 

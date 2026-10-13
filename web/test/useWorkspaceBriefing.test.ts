@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:t
 import { act, renderHook } from "@testing-library/react";
 import { realClient } from "./setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 interface Deferred {
   resolve: (v: unknown) => void;

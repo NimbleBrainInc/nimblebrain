@@ -33,6 +33,7 @@
 
 ### Added
 
+- **Skills tools declare their output.** Each `skills__*` tool and `nb__use_skill` publishes an `outputSchema` on `tools/list` and returns matching `structuredContent`, so an `/mcp/<wsId>` client can read a result without parsing text.
 - **A connector's prompt can ask an outside client for input.** `prompts/get` through `/mcp/<wsId>` relays a connector's `input_required` answer as `tools/call` does. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).
 - **`/mcp/<wsId>` serves its connectors' prompts and completions.** Each prompt is named `<source>__<prompt>`, as tools are. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).
 - **`/mcp/<wsId>` serves its connectors' instructions and skills.** `server/discover` answers each connector's server instructions under its source name, and the MCP Skills extension (`skills/list`, `skills/get`) lists the skills the workspace's connectors serve, so a client outside NimbleBrain learns how their tools are meant to be used. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).

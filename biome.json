@@ -43,6 +43,7 @@
     "includes": [
       "src/**",
       "web/src/**",
+      "web/test/**",
       "instrument/**",
       "scripts/**",
       "test/**/*.ts",
@@ -91,7 +92,8 @@
         "test/unit/tools/**",
         "test/unit/usage/**",
         "test/unit/util/**",
-        "test/unit/workspace/**"
+        "test/unit/workspace/**",
+        "web/test/**"
       ],
       "plugins": ["./biome-plugins/double-cast.grit"]
     },
@@ -230,7 +232,7 @@
       ]
     },
     {
-      "includes": ["test/**"],
+      "includes": ["test/**", "web/test/**"],
       "linter": {
         "rules": {
           "complexity": { "noExcessiveCognitiveComplexity": "off" },

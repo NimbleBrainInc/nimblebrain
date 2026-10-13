@@ -10,17 +10,12 @@
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 import { realClient } from "./setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 type CallToolArgs = { server: string; tool: string; args: Record<string, unknown> };
 const callToolCalls: CallToolArgs[] = [];
@@ -160,8 +155,7 @@ describe("SkillsBrowser with lockedScope='org' (org-admin /org/skills surface)",
     expect(nameInput).not.toBeNull();
     expect(bodyInput).not.toBeNull();
 
-    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window
-      .Event;
+    const WindowEvent = window.Event;
     await act(async () => {
       const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       setVal?.call(nameInput, "voice-rule");
@@ -226,18 +220,15 @@ describe("SkillsBrowser with lockedScope='org' (org-admin /org/skills surface)",
     await flush();
 
     const body = mounted.container.querySelector("#rule-body") as HTMLTextAreaElement;
-    const win = (
-      globalThis as unknown as { window: { Event: typeof Event; FocusEvent: typeof FocusEvent } }
-    ).window;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
         body,
         "Edited org body.",
       );
-      body.dispatchEvent(new win.Event("input", { bubbles: true }));
+      body.dispatchEvent(new window.Event("input", { bubbles: true }));
     });
     await act(async () => {
-      body.dispatchEvent(new win.FocusEvent("focusout", { bubbles: true }));
+      body.dispatchEvent(new window.FocusEvent("focusout", { bubbles: true }));
     });
     await flush();
 

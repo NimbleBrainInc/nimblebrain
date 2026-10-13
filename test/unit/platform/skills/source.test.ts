@@ -72,6 +72,9 @@ async function buildSource(): Promise<McpSource> {
   const runtime = new FakeRuntime(workDir);
   source = createSkillsSource(stub<Runtime>(runtime), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 
@@ -95,6 +98,9 @@ async function buildSourceWithFeatures(
     resolveFeatures({ skillManagement: true, ...overrides }),
   );
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 
