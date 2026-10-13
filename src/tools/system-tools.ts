@@ -893,7 +893,7 @@ async function searchTools(
     lines.push(`- **${t.name}**: ${desc.length > 100 ? `${desc.slice(0, 100)}…` : desc}`);
   }
   lines.push(
-    "\nTo call one, activate it with nb__manage_tools first (that surfaces its full schema).",
+    "\nTo call one, activate it with nb__manage_tools first. Its schema reaches you on your next message, so promote and call in separate messages, never in the same one.",
   );
   return {
     content: textContent(lines.join("\n")),
