@@ -159,7 +159,7 @@ describe("the transport's own SSRF posture, not just the URL gate's", () => {
     if (!(transport instanceof StreamableHTTPClientTransport)) {
       throw new Error("expected a streamable-http transport");
     }
-    // biome-ignore lint/complexity/useLiteralKeys: `_fetch` is private; bracket access is TypeScript's typed path to it
+    // biome-ignore lint/complexity/useLiteralKeys: `_fetch` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
     return transport["_fetch"];
   }
 

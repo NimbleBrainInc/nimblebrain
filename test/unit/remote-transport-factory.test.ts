@@ -36,7 +36,7 @@ function sdkTransport(t: Transport): StreamableHTTPClientTransport | SSEClientTr
 
 /** The fetch an SDK HTTP transport sends every request through. */
 function transportFetch(t: Transport): FetchLike | undefined {
-  // biome-ignore lint/complexity/useLiteralKeys: `_fetch` is private; bracket access is TypeScript's typed path to it
+  // biome-ignore lint/complexity/useLiteralKeys: `_fetch` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
   return sdkTransport(t)["_fetch"];
 }
 
@@ -219,7 +219,7 @@ describe("createRemoteTransport — provider auth (minted)", () => {
     // The minted token is attached via the transport's fetch override, not a
     // static header — so `_fetch` is wired and `Authorization` is absent.
     expect(transportFetch(t)).toBeDefined();
-    // biome-ignore lint/complexity/useLiteralKeys: `_requestInit` is private; bracket access is TypeScript's typed path to it
+    // biome-ignore lint/complexity/useLiteralKeys: `_requestInit` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
     const reqInit: RequestInit | undefined = sdkTransport(t)["_requestInit"];
     const headers = (reqInit?.headers ?? {}) as Record<string, string>;
     expect(headers.Authorization).toBeUndefined();
@@ -514,7 +514,7 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
 
   /** The fetch the SDK hands its OAuth calls. */
   function sdkOAuthFetch(t: Transport): FetchLike {
-    // biome-ignore lint/complexity/useLiteralKeys: `_fetchWithInit` is private; bracket access is TypeScript's typed path to it
+    // biome-ignore lint/complexity/useLiteralKeys: `_fetchWithInit` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
     const fetchFn: FetchLike | undefined = sdkTransport(t)["_fetchWithInit"];
     // If the SDK moves it, fail here rather than let `auth` fall back to the
     // global fetch and pass for the wrong reason.
@@ -595,7 +595,7 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
       { ...config, auth: { type: "bearer", token: "static-token" } },
       memoryProvider(),
     );
-    // biome-ignore lint/complexity/useLiteralKeys: `_authProvider` is private; bracket access is TypeScript's typed path to it
+    // biome-ignore lint/complexity/useLiteralKeys: `_authProvider` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
     expect(sdkTransport(t)["_authProvider"]).toBeUndefined();
     await sdkOAuthFetch(t)(`${OTHER_ORIGIN}/.well-known/oauth-authorization-server`, {});
     await t.send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" });
@@ -618,7 +618,7 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
       authProvider,
     );
     if (!(t instanceof SSEClientTransport)) throw new Error("expected an SSEClientTransport");
-    // biome-ignore lint/complexity/useLiteralKeys: `_endpoint` is private; bracket access is TypeScript's typed path to it
+    // biome-ignore lint/complexity/useLiteralKeys: `_endpoint` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
     t["_endpoint"] = ENDPOINT;
     return t;
   }
