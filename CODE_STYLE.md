@@ -392,8 +392,7 @@ suppresses anything. Whether a reason is true is review's call. The repo has no
 **Override.** The suppression above, on the line directly above the line where
 the cast expression starts; a longer explanation may sit above it. The plugin
 runs on the paths in its `biome.json` override: `scripts/`, `src/` (the platform
-app UIs included), `web/src/`, `web/test/`, and each `test/` directory whose casts
-are clean. A directory joins when it is cleaned.
+app UIs included), `web/src/`, `test/`, and `web/test/`.
 
 ---
 

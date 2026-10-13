@@ -9,17 +9,17 @@
 
 import type { Client, Request, StandardSchemaV1, Transport } from "@modelcontextprotocol/client";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
+import { mcpSourceInternals } from "./mcp-source-internals.ts";
 
 /** Put `source` in the connected state a `start()` on `era` leaves it in. */
 export function connectMcpSource(
   source: McpSource,
   connection: { client: Client; transport?: Transport; era?: "legacy" | "modern" },
 ): void {
-  // biome-ignore-start lint/complexity/useLiteralKeys: client, transport and protocolEra are private; bracket access is TypeScript's typed path to them
-  source["client"] = connection.client;
-  if (connection.transport) source["transport"] = connection.transport;
-  if (connection.era) source["protocolEra"] = connection.era;
-  // biome-ignore-end lint/complexity/useLiteralKeys: client, transport and protocolEra are private; bracket access is TypeScript's typed path to them
+  const internals = mcpSourceInternals(source);
+  internals.client = connection.client;
+  if (connection.transport) internals.transport = connection.transport;
+  if (connection.era) internals.protocolEra = connection.era;
 }
 
 /**
