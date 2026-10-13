@@ -95,7 +95,6 @@ describe("operator config is not the caller's input and is not gated", () => {
     const runtime = await startWithAllowlist("default-exempt", ["claude-sonnet-4-6"], {
       default: "anthropic:claude-opus-4-6",
       fast: "anthropic:claude-opus-4-6",
-      reasoning: "anthropic:claude-opus-4-6",
     });
     try {
       expect(await chatError(runtime)).not.toBeInstanceOf(ModelNotAllowedError);
@@ -108,7 +107,6 @@ describe("operator config is not the caller's input and is not gated", () => {
     const runtime = await startWithAllowlist("slot-exempt", ["claude-sonnet-4-6"], {
       default: "anthropic:claude-opus-4-6",
       fast: "anthropic:claude-opus-4-6",
-      reasoning: "anthropic:claude-opus-4-6",
     });
     try {
       expect(await chatError(runtime, "alias:fast")).not.toBeInstanceOf(ModelNotAllowedError);
