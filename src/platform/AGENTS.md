@@ -205,10 +205,15 @@ typedTool({
   name: "create",
   description: SKILLS_CREATE_DESCRIPTION,
   inputSchema: SkillsCreateInput,
-  handler: async (input): Promise<ToolResult> => createSkill(runtime, input, eventSink),
+  outputSchema: SkillsWriteOutput, // §2.1
+  handler: async (input) => createSkill(runtime, input, eventSink),
 });
 
-async function createSkill(runtime: Runtime, input: SkillsCreateInput, ...): Promise<ToolResult> {
+async function createSkill(
+  runtime: Runtime,
+  input: SkillsCreateInput,
+  ...
+): Promise<TypedToolResult<typeof SkillsWriteOutput>> {
   const { scope, manifest, body } = input;
   // ... handler logic, no defensive re-validation
 }

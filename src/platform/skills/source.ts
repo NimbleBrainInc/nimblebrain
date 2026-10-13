@@ -1018,8 +1018,6 @@ async function readSkillHandler(
       isError: true,
     };
   }
-  // Compile-time drift coverage on the read shape: `out`'s type
-  // pins it to the canonical `SkillsReadOutput`.
   return {
     // `content` carries the full body + manifest because the
     // engine never surfaces `structuredContent` to the model;
