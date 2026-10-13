@@ -127,7 +127,8 @@ describe("opticalSize", () => {
 describe("Logo sizing", () => {
   function dispatch(img: HTMLImageElement, type: "load" | "error") {
     act(() => {
-      const win = img.ownerDocument.defaultView as unknown as { Event: typeof Event };
+      const win = img.ownerDocument.defaultView;
+      if (!win) throw new Error("no window");
       img.dispatchEvent(new win.Event(type));
     });
   }
