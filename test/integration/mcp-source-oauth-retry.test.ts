@@ -293,7 +293,8 @@ describe("McpSource — OAuth retry path", () => {
     // The first attempt's 401 went through cleanupOnStartFailure(), which starts
     // an outage; the retry seam's success must end it, or the source's next
     // restart is judged already past the restart horizon.
-    expect((source as unknown as { downSince: number | null }).downSince).toBeNull();
+    // biome-ignore lint/complexity/useLiteralKeys: downSince is private; bracket access is TypeScript's typed path to it
+    expect(source["downSince"]).toBeNull();
 
     await source.stop();
   }, 15_000);

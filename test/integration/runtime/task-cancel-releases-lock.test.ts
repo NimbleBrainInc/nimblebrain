@@ -77,12 +77,13 @@ describe("cancelling a task run", () => {
       await provisionTestWorkspace(runtime, WS, "Cancel lock");
       const reg = await runtime.ensureWorkspaceRegistry(WS);
       reg.addSource(source);
-      const auto = {
+      const auto: Task = {
         id: "hangs",
         name: "Hangs",
         prompt: "call the hang tool",
         ownerId: DEV_IDENTITY.id,
         workspaceId: WS,
+        source: "user",
         enabled: true,
         schedule: { type: "interval", intervalMs: 3_600_000 },
         consecutiveErrors: 0,
@@ -92,7 +93,7 @@ describe("cancelling a task run", () => {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         nextRunAt: new Date(Date.now() + 3_600_000).toISOString(),
-      } as unknown as Task;
+      };
       saveTask(workDir, WS, DEV_IDENTITY.id, auto);
       const executor = createDirectExecutor(
         (req) => runtime.executeTask(req as TaskRequest),

@@ -306,18 +306,13 @@ describe("degraded skill discovery", () => {
       message: "fourth",
     });
     expect(typeof response).toBe("string");
-    const pool = await (
-      runtime as unknown as {
-        loadConnectorSkills: (wsId: string) => Promise<
-          Array<{
-            manifest: { name: string };
-            loadBody?: () => Promise<{ ok: boolean; body?: string }>;
-          }>
-        >;
-      }
-    ).loadConnectorSkills(TEST_WORKSPACE_ID);
+    // biome-ignore lint/complexity/useLiteralKeys: loadConnectorSkills is private; bracket access is TypeScript's typed path to it
+    const pool = await runtime["loadConnectorSkills"](TEST_WORKSPACE_ID);
     const healthySkill = pool.find((s) => s.manifest.name === `connector:${HEALTHY_NAME}:guide`);
-    expect((await healthySkill?.loadBody?.())?.body).toContain("HEALTHY-MARKER");
+    expect(await healthySkill?.loadBody?.()).toEqual({
+      ok: true,
+      body: expect.stringContaining("HEALTHY-MARKER"),
+    });
   });
 
   it("reports source_unavailable only for a connector believed running — an auth-resting connector stays silent", async () => {
@@ -329,12 +324,12 @@ describe("degraded skill discovery", () => {
     // its source is the anomaly the reason exists for.
     const GHOST_NAME = "ai-nimblebrain-ghost-mcp";
     const lifecycle = runtime.getLifecycle();
-    const ref = {
+    const ref: ConnectorRef = {
       url: "http://127.0.0.1:9/mcp",
       serverName: GHOST_NAME,
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
-    } as unknown as ConnectorRef;
+    };
     await lifecycle.seedInstance(
       GHOST_NAME,
       "@nimblebraininc/ghost",

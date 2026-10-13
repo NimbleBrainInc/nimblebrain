@@ -21,6 +21,7 @@ import type { webcrypto } from "node:crypto";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { WorkOS } from "@workos-inc/node";
 import { mcpResourceUrl } from "../../src/api/mcp-resource.ts";
 import type { ChatStartResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
@@ -32,6 +33,7 @@ import { buildMcpRequest } from "../../web/src/mcp-bridge-client.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { readJson } from "../helpers/http.ts";
+import { stub } from "../helpers/stub.ts";
 
 /** What `POST …/chat/start` answers: the turn runs on, the id comes back now. */
 
@@ -97,6 +99,9 @@ function channelsLike(clientId: string): Promise<string> {
 
 // ── A runtime and server per configuration ────────────────────────
 
+/** The WorkOS user-management client, of which sign-in calls `getUser` and `listOrganizationMemberships`. */
+type UserManagement = WorkOS["userManagement"];
+
 function workosProvider(config: Partial<WorkosAuth>): WorkosIdentityProvider {
   const provider = new WorkosIdentityProvider(
     {
@@ -109,28 +114,45 @@ function workosProvider(config: Partial<WorkosAuth>): WorkosIdentityProvider {
     },
     undefined,
   );
-  const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-  workos.userManagement = {
-    getUser: async (id: string) => ({
+  const now = new Date().toISOString();
+  const userManagement = stub<UserManagement>({
+    getUser: async (id) => ({
+      object: "user",
       id,
       email: `${id}@example.com`,
+      emailVerified: true,
+      profilePictureUrl: null,
+      name: "Test User",
       firstName: "Test",
       lastName: "User",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      lastSignInAt: null,
+      locale: null,
+      createdAt: now,
+      updatedAt: now,
+      externalId: null,
+      metadata: {},
     }),
-    listOrganizationMemberships: async (opts: { userId: string; organizationId: string }) => ({
-      data: [
-        {
-          id: "om_test",
-          userId: opts.userId,
-          organizationId: opts.organizationId,
-          role: { slug: "member" },
-          status: "active",
-        },
-      ],
-    }),
-  };
+    listOrganizationMemberships: async (opts) =>
+      stub<Awaited<ReturnType<UserManagement["listOrganizationMemberships"]>>>({
+        data: [
+          {
+            object: "organization_membership",
+            id: "om_test",
+            userId: "userId" in opts ? opts.userId : "",
+            organizationId: "organizationId" in opts ? opts.organizationId : "",
+            organizationName: "Test Org",
+            role: { slug: "member" },
+            status: "active",
+            directoryManaged: false,
+            createdAt: now,
+            updatedAt: now,
+            customAttributes: {},
+          },
+        ],
+      }),
+  });
+  // biome-ignore lint/complexity/useLiteralKeys: workos is private; bracket access is TypeScript's typed path to it
+  provider["workos"] = stub<WorkOS>({ userManagement });
   provider.fetcher = fakeFetch(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url !== `${AUTHKIT_ISSUER}/oauth2/jwks`) return new Response("Not Found", { status: 404 });

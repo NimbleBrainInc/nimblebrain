@@ -174,8 +174,8 @@ describe("connector-skill surface-once (engine + event store)", () => {
     // produced yet when that last call was sent — so the live shape is a
     // PREFIX of it. Prefix equality is also the property that matters: it is
     // the cached span the next turn reuses.
-    const replayShape = (await store.history(conv)).map((m) =>
-      containsOverlay(m as unknown as LanguageModelV4Message) ? "OVERLAY" : m.role,
+    const replayShape = asEngineInput(await store.history(conv)).map((m) =>
+      containsOverlay(m) ? "OVERLAY" : m.role,
     );
 
     expect(liveShape).toContain("OVERLAY");

@@ -16,7 +16,7 @@
  *   and a digest that failed verification is not re-read every turn.
  */
 
-import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,7 +32,7 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
+import { SKILLS_EXTENSION_ID, type SkillEntry } from "../../src/skills/skills-extension.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -218,6 +218,15 @@ afterAll(async () => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
+/** A listing entry typed as the extension's `SkillEntry`, once its frontmatter is shown to carry a name and description. */
+function withRequiredFrontmatter(raw: ReturnType<typeof skillEntryFor>): SkillEntry {
+  const { name, description } = raw.frontmatter;
+  if (typeof name !== "string" || typeof description !== "string") {
+    throw new Error(`${raw.uri}: frontmatter lacks a name or description`);
+  }
+  return { ...raw, frontmatter: { ...raw.frontmatter, name, description } };
+}
+
 describe("the client claim", () => {
   it("rides the 2025 initialize and every 2026-07-28 envelope", () => {
     for (const name of ["modern-declared", "legacy-none"] as const) {
@@ -309,30 +318,33 @@ describe("bodies on need", () => {
   // out of another workspace or server that serves the right bytes.
   it("remembers a verification failure per workspace and server, not per digest", async () => {
     const text = bodies["skill://listed/SKILL.md"]!;
-    const entry = skillEntryFor("skill://shared/SKILL.md", text);
-    const internals = runtime as unknown as {
-      fetchVerifiedSkillText: (ws: string, server: string, e: unknown) => Promise<unknown>;
-      loadServerSkillBody: (ws: string, server: string, e: unknown) => Promise<unknown>;
-      skillBodyCache: Map<string, string>;
-    };
+    const entry = withRequiredFrontmatter(skillEntryFor("skill://shared/SKILL.md", text));
     // The listed body may already be verified by an earlier test; start cold.
-    internals.skillBodyCache.clear();
-    const fetch = spyOn(internals, "fetchVerifiedSkillText");
+    // biome-ignore lint/complexity/useLiteralKeys: skillBodyCache is private; bracket access is TypeScript's typed path to it
+    runtime["skillBodyCache"].clear();
+    // biome-ignore lint/complexity/useLiteralKeys: fetchVerifiedSkillText is private; bracket access is TypeScript's typed path to it
+    const verify = runtime["fetchVerifiedSkillText"];
+    const fetch = mock(verify.bind(runtime));
+    // biome-ignore lint/complexity/useLiteralKeys: fetchVerifiedSkillText is private; bracket access is TypeScript's typed path to it
+    runtime["fetchVerifiedSkillText"] = fetch;
+    const loadBody = (ws: string, server: string) => {
+      // biome-ignore lint/complexity/useLiteralKeys: loadServerSkillBody is private; bracket access is TypeScript's typed path to it
+      return runtime["loadServerSkillBody"](ws, server, entry);
+    };
     try {
       fetch.mockImplementationOnce(async () => ({ ok: false, reason: "unverified" }));
-      expect(await internals.loadServerSkillBody("ws_00079598e311c160", "impostor", entry)).toEqual(
-        {
-          ok: false,
-          reason: "unverified",
-        },
-      );
+      expect(await loadBody("ws_00079598e311c160", "impostor")).toEqual({
+        ok: false,
+        reason: "unverified",
+      });
       fetch.mockImplementationOnce(async () => ({ ok: true, text }));
-      expect(await internals.loadServerSkillBody("ws_001c32f121060ff3", "honest", entry)).toEqual({
+      expect(await loadBody("ws_001c32f121060ff3", "honest")).toEqual({
         ok: true,
         body: expect.stringContaining("LISTED_BODY"),
       });
     } finally {
-      fetch.mockRestore();
+      // biome-ignore lint/complexity/useLiteralKeys: fetchVerifiedSkillText is private; bracket access is TypeScript's typed path to it
+      runtime["fetchVerifiedSkillText"] = verify;
     }
   });
 

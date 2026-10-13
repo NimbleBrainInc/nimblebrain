@@ -30,7 +30,9 @@ import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycl
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { UserStore } from "../../src/identity/user.ts";
 import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import {
@@ -46,6 +48,8 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { resolveTransportCredential } from "../../src/tools/remote-transport.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
+import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const CATALOG_DIR = join(import.meta.dir, "..", "fixtures", "connectors-secret-headers");
@@ -150,7 +154,7 @@ function operatorEntry(): CatalogListing {
         clientSecretKey: KEY,
       },
     },
-  } as unknown as CatalogListing;
+  };
 }
 
 /**
@@ -160,7 +164,7 @@ function operatorEntry(): CatalogListing {
 function toolFor(sessionWsId: string, injected?: ConnectorLifecycleManager) {
   const lifecycle = injected ?? new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getCredentialStore: () => store,
     getEventSink: () => new NoopEventSink(),
@@ -169,8 +173,8 @@ function toolFor(sessionWsId: string, injected?: ConnectorLifecycleManager) {
     getConnectorCatalog: () => new ConnectorCatalog(CATALOG_DIR),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
-    getPermissionStore: () => ({ deleteConnector: async () => {} }),
-    getUserStore: () => ({ get: async () => null }),
+    getPermissionStore: () => stub<PermissionStore>({ deleteConnector: async () => {} }),
+    getUserStore: () => stub<UserStore>({ get: async () => null }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
     // No connector here advertises the lifecycle extension, so both calls
@@ -180,7 +184,7 @@ function toolFor(sessionWsId: string, injected?: ConnectorLifecycleManager) {
       declarationFor: async () => undefined,
       portFor: () => undefined,
     }),
-  } as unknown as Runtime;
+  });
   return createManageConnectorsTool({
     runtime,
     getIdentity: () => ADMIN,
@@ -215,10 +219,10 @@ async function send(wsId: string): Promise<Headers> {
     wsId,
   );
   let seen = new Headers();
-  globalThis.fetch = (async (_input: string, init?: RequestInit) => {
+  globalThis.fetch = fakeFetch(async (_input, init) => {
     seen = new Headers(init?.headers);
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof fetch;
+  });
   await (authed ?? globalThis.fetch)(URL_, { method: "POST", headers });
   return seen;
 }
