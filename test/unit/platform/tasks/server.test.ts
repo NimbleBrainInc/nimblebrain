@@ -1524,11 +1524,11 @@ describe("task ownership", () => {
 // ---------------------------------------------------------------------------
 
 describe("event schedules", () => {
-  const match = { source: "precision-outbound", name: "reply.*" };
+  const match = { source: "acme-outbound", name: "reply.*" };
 
   test("format as the notifications they wait for", () => {
     expect(formatSchedule({ type: "event", match })).toBe(
-      "On notifications from precision-outbound, matching reply.*",
+      "On notifications from acme-outbound, matching reply.*",
     );
     expect(formatSchedule({ type: "event", match: { level: "urgent" } })).toBe(
       "On notifications at urgent or above",
@@ -1591,7 +1591,7 @@ describe("event schedules", () => {
       maxFiresPerHour: 6,
     });
     expect(status.task.scheduleHuman).toBe(
-      "On notifications from precision-outbound, matching reply.*",
+      "On notifications from acme-outbound, matching reply.*",
     );
     expect(status.task.nextRunAt).toBeUndefined();
     expect(status.task.estimatedCostPerDay).toBe(0);

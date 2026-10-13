@@ -2304,7 +2304,7 @@ describe("Scheduler — event schedules", () => {
       id: "reply-triage",
       schedule: {
         type: "event",
-        match: { source: "precision-outbound", name: "reply.*" },
+        match: { source: "acme-outbound", name: "reply.*" },
       },
       ...overrides,
     });

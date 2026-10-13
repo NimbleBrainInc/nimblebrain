@@ -96,7 +96,7 @@ describe("BlockTimeline phase segmentation", () => {
   test("consecutive same-tool blocks fold into one chip", async () => {
     expect(
       await render([
-        search("t1", "precision outbound campaign create", 17),
+        search("t1", "acme outbound campaign create", 17),
         search("t2", "campaign", 6),
         search("t3", "precision", 5),
       ]),
@@ -107,7 +107,7 @@ describe("BlockTimeline phase segmentation", () => {
     expect(
       await render([
         text("\n"),
-        search("t1", "precision outbound campaign create", 17),
+        search("t1", "acme outbound campaign create", 17),
         text("\n"),
         search("t2", "campaign", 6),
         text("\n\n"),
