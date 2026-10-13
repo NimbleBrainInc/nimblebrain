@@ -49,21 +49,21 @@ beforeEach(() => {
     (globalThis as Record<string, unknown>).window = globalThis;
   }
 
-  (globalThis as unknown as { open: unknown }).open = mock(() => null);
+  globalThis.open = mock(() => null);
 
-  globalThis.window.addEventListener = ((type: string, fn: Listener) => {
+  globalThis.window.addEventListener = (type: string, fn: Listener) => {
     if (!windowListeners.has(type)) windowListeners.set(type, new Set());
     windowListeners.get(type)!.add(fn);
-  }) as unknown as typeof globalThis.window.addEventListener;
+  };
 
-  globalThis.window.removeEventListener = ((type: string, fn: Listener) => {
+  globalThis.window.removeEventListener = (type: string, fn: Listener) => {
     windowListeners.get(type)?.delete(fn);
-  }) as unknown as typeof globalThis.window.removeEventListener;
+  };
 
-  globalThis.window.dispatchEvent = ((event: Event & { detail?: unknown }) => {
+  globalThis.window.dispatchEvent = (event: Event & { detail?: unknown }) => {
     customEventsFired.push({ type: event.type, detail: event.detail });
     return true;
-  }) as unknown as typeof globalThis.window.dispatchEvent;
+  };
 
   // Provide a minimal document shim so getHostThemeMode() doesn't throw.
   if (typeof globalThis.document === "undefined") {
@@ -301,11 +301,7 @@ describe("Bridge — ui/open-link and size-changed", () => {
       params: { url: "https://example.com" },
     });
 
-    expect((globalThis as unknown as { open: ReturnType<typeof mock> }).open).toHaveBeenCalledWith(
-      "https://example.com",
-      "_blank",
-      "noopener",
-    );
+    expect(globalThis.open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener");
 
     handle.destroy();
   });

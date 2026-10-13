@@ -15,6 +15,13 @@ import { join } from "node:path";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { UserStore } from "../../../src/identity/user.ts";
+import {
+  stubWorkosUserManagement,
+  type WorkosUserManagement,
+  workosMembership,
+  workosMembershipList,
+  workosUser,
+} from "../../helpers/workos-sdk.ts";
 
 let workDir: string;
 let userStore: UserStore;
@@ -42,28 +49,26 @@ afterEach(() => {
 });
 
 interface Recorded {
-  userUpdates: Array<Record<string, unknown>>;
-  roleUpdates: Array<[string, Record<string, unknown>]>;
+  userUpdates: Array<Parameters<WorkosUserManagement["updateUser"]>[0]>;
+  roleUpdates: Array<Parameters<WorkosUserManagement["updateOrganizationMembership"]>>;
 }
 
 /** A provider whose WorkOS calls are recorded; `slug` is the user's current membership role. */
 function makeProvider(slug: string | null, configOverride?: Partial<WorkosAuth>) {
   const provider = new WorkosIdentityProvider({ ...BASE_CONFIG, ...configOverride }, userStore);
   const recorded: Recorded = { userUpdates: [], roleUpdates: [] };
-  const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-  workos.userManagement = {
-    updateUser: async (payload: Record<string, unknown>) => {
+  stubWorkosUserManagement(provider, {
+    updateUser: async (payload) => {
       recorded.userUpdates.push(payload);
-      return payload;
+      return workosUser({ id: payload.userId, email: `${payload.userId}@test.com`, ...payload });
     },
-    listOrganizationMemberships: async () => ({
-      data: slug === null ? [] : [{ id: "om_bo", role: { slug } }],
-    }),
-    updateOrganizationMembership: async (id: string, opts: Record<string, unknown>) => {
+    listOrganizationMemberships: async () =>
+      workosMembershipList(slug === null ? [] : [workosMembership({ id: "om_bo", slug })]),
+    updateOrganizationMembership: async (id, opts) => {
       recorded.roleUpdates.push([id, opts]);
-      return {};
+      return workosMembership({ id, slug: opts.roleSlug ?? "member" });
     },
-  };
+  });
   return { provider, recorded };
 }
 

@@ -28,9 +28,11 @@ import {
   dispatchUnattended,
   type UnattendedDispatchRuntime,
 } from "../../../src/orchestrator/unattended-dispatch.ts";
+import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { stub } from "../../helpers/stub.ts";
 
 const AUTHOR = "usr_admin";
 const SOURCE = "acme-mcp";
@@ -76,15 +78,16 @@ function slackSource(): ToolSource {
 function dispatchRuntime(): UnattendedDispatchRuntime {
   const slack = slackSource();
   const sink: EventSink = { emit: (event) => events.push(event) };
-  return {
+  return stub<UnattendedDispatchRuntime>({
     async isPrincipalWorkspaceMember(_wsId: string, principalId: string): Promise<boolean> {
       return members.includes(principalId);
     },
     getEventSink: () => sink,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getRegistryForWorkspace: () => ({
-      getSource: (name: string) => (name === "slack" ? slack : undefined),
-    }),
+    getRegistryForWorkspace: () =>
+      stub<ToolRegistry>({
+        getSource: (name: string) => (name === "slack" ? slack : undefined),
+      }),
     getIdentitySource: () => undefined,
     async getIdentityConnectorSource() {
       return undefined;
@@ -94,7 +97,7 @@ function dispatchRuntime(): UnattendedDispatchRuntime {
     async listToolsForWorkspace() {
       return [];
     },
-  } as unknown as UnattendedDispatchRuntime;
+  });
 }
 
 function storeFor(id: string): NotificationStore {

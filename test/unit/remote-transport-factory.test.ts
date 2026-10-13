@@ -25,7 +25,20 @@ import {
 } from "../../src/tools/credential-store.ts";
 import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
 import { payloadsOf } from "../helpers/engine-events.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
+
+/** `t` as the SDK HTTP transport class `createRemoteTransport` built, so its private fields are reachable. */
+function sdkTransport(t: Transport): StreamableHTTPClientTransport | SSEClientTransport {
+  if (t instanceof StreamableHTTPClientTransport || t instanceof SSEClientTransport) return t;
+  throw new Error("expected an SDK HTTP transport");
+}
+
+/** The fetch an SDK HTTP transport sends every request through. */
+function transportFetch(t: Transport): FetchLike | undefined {
+  // biome-ignore lint/complexity/useLiteralKeys: `_fetch` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
+  return sdkTransport(t)["_fetch"];
+}
 
 describe("createRemoteTransport", () => {
   test("default returns StreamableHTTPClientTransport", async () => {
@@ -61,10 +74,10 @@ describe("createRemoteTransport", () => {
     beforeEach(() => {
       seen = [];
       originalFetch = globalThis.fetch;
-      globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      globalThis.fetch = fakeFetch(async (_input, init) => {
         seen.push(new Headers(init?.headers));
         return new Response(null, { status: 202 });
-      }) as unknown as typeof fetch;
+      });
     });
 
     afterEach(() => {
@@ -123,13 +136,10 @@ describe("createRemoteTransport", () => {
     const t = await createRemoteTransport(new URL("https://example.com/mcp"), {
       sessionId: "session-abc",
     });
-    expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
-    const internal = t as unknown as Record<string, unknown>;
-    // StreamableHTTPClientTransport stores sessionId as _sessionId
-    const sessionId = internal._sessionId as string | undefined;
-    if (sessionId !== undefined) {
-      expect(sessionId).toBe("session-abc");
+    if (!(t instanceof StreamableHTTPClientTransport)) {
+      throw new Error("expected a StreamableHTTPClientTransport");
     }
+    expect(t.sessionId).toBe("session-abc");
   });
 });
 
@@ -174,9 +184,9 @@ describe("createRemoteTransport — provider auth (minted)", () => {
     process.env.NB_FLEET_AUTHORIZER_TOKEN_URL = "https://authz.test/token";
     // A malformed workspace.json `{ type: "provider", provider: "minted" }` with
     // no `config` (the TS type requires it; JSON config can omit it).
-    const noConfig = {
-      auth: { type: "provider" as const, provider: "minted" },
-    } as unknown as Parameters<typeof createRemoteTransport>[1];
+    const noConfig: Parameters<typeof createRemoteTransport>[1] = {
+      auth: { type: "provider", provider: "minted", config: undefined },
+    };
     await expect(
       createRemoteTransport(new URL("https://artifacts.test/mcp"), noConfig, undefined, {
         workspaceId: "ws_006ecec8527e3353",
@@ -206,11 +216,11 @@ describe("createRemoteTransport — provider auth (minted)", () => {
       },
     );
     expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
-    const internal = t as unknown as Record<string, unknown>;
     // The minted token is attached via the transport's fetch override, not a
     // static header — so `_fetch` is wired and `Authorization` is absent.
-    expect(internal._fetch).toBeDefined();
-    const reqInit = internal._requestInit as RequestInit | undefined;
+    expect(transportFetch(t)).toBeDefined();
+    // biome-ignore lint/complexity/useLiteralKeys: `_requestInit` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
+    const reqInit: RequestInit | undefined = sdkTransport(t)["_requestInit"];
     const headers = (reqInit?.headers ?? {}) as Record<string, string>;
     expect(headers.Authorization).toBeUndefined();
   });
@@ -241,10 +251,10 @@ describe("createRemoteTransport — a credential reference resolves on every req
     setCredentialStore(store);
     seen = [];
     originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+    globalThis.fetch = fakeFetch(async (_input, init) => {
       seen.push(new Headers(init?.headers));
       return new Response(null, { status: 202 });
-    }) as unknown as typeof fetch;
+    });
   });
 
   afterEach(() => {
@@ -376,11 +386,8 @@ describe("createRemoteTransport — a credential reference resolves on every req
     await store.put(scope, KEY, "old-secret");
     const t = await build({ type: "sse", headers: refHeaders });
     expect(t).toBeInstanceOf(SSEClientTransport);
-    const transportFetch = (
-      t as unknown as { _fetch: (u: URL, i?: RequestInit) => Promise<Response> }
-    )._fetch;
     await store.put(scope, KEY, "new-secret");
-    await transportFetch(ENDPOINT, {});
+    await transportFetch(t)(ENDPOINT, {});
     expect(seen.at(-1)?.get(HEADER)).toBe("new-secret");
   });
 
@@ -403,11 +410,8 @@ describe("createRemoteTransport — a credential reference resolves on every req
     // the same fetch; the workspace's secret is not theirs.
     await store.put(scope, KEY, "old-secret");
     const t = await build({ headers: refHeaders });
-    const transportFetch = (
-      t as unknown as { _fetch: (u: string, i?: RequestInit) => Promise<Response> }
-    )._fetch;
     events.length = 0;
-    await transportFetch("https://auth.other.test/token", { method: "POST" });
+    await transportFetch(t)("https://auth.other.test/token", { method: "POST" });
     expect(seen.at(-1)?.get(HEADER)).toBeNull();
     expect(events).toEqual([]);
   });
@@ -443,7 +447,7 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
 
   /** Serve a connector at ENDPOINT whose protected-resource metadata names `issuer`. */
   function serve(issuer: string): void {
-    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    globalThis.fetch = fakeFetch(async (input, init) => {
       const url = new URL(String(input));
       const record = (kind: string) =>
         sent.push({ url, kind, headers: new Headers(init?.headers) });
@@ -482,7 +486,7 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
       }
       record("connector");
       return new Response(null, { status: 202 });
-    }) as unknown as typeof fetch;
+    });
   }
 
   function memoryProvider(): OAuthClientProvider {
@@ -510,7 +514,8 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
 
   /** The fetch the SDK hands its OAuth calls. */
   function sdkOAuthFetch(t: Transport): FetchLike {
-    const fetchFn = (t as unknown as { _fetchWithInit?: FetchLike })._fetchWithInit;
+    // biome-ignore lint/complexity/useLiteralKeys: `_fetchWithInit` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
+    const fetchFn: FetchLike | undefined = sdkTransport(t)["_fetchWithInit"];
     // If the SDK moves it, fail here rather than let `auth` fall back to the
     // global fetch and pass for the wrong reason.
     if (typeof fetchFn !== "function") throw new Error("SDK transport has no _fetchWithInit");
@@ -590,7 +595,8 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
       { ...config, auth: { type: "bearer", token: "static-token" } },
       memoryProvider(),
     );
-    expect((t as unknown as Record<string, unknown>)._authProvider).toBeUndefined();
+    // biome-ignore lint/complexity/useLiteralKeys: `_authProvider` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
+    expect(sdkTransport(t)["_authProvider"]).toBeUndefined();
     await sdkOAuthFetch(t)(`${OTHER_ORIGIN}/.well-known/oauth-authorization-server`, {});
     await t.send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" });
     expect(
@@ -611,7 +617,9 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
       { ...transportConfig, type: "sse" },
       authProvider,
     );
-    (t as unknown as { _endpoint: URL })._endpoint = ENDPOINT;
+    if (!(t instanceof SSEClientTransport)) throw new Error("expected an SSEClientTransport");
+    // biome-ignore lint/complexity/useLiteralKeys: `_endpoint` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
+    t["_endpoint"] = ENDPOINT;
     return t;
   }
 

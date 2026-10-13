@@ -99,7 +99,7 @@ describe("envelope rejects malformed input", () => {
     expectError(
       () =>
         verifyEnvelopeAsTenant({
-          wire: undefined as unknown as string,
+          wire: undefined,
           tenantKey: tenantKey(),
           expectedTid: TID,
         }),

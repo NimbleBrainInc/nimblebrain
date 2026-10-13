@@ -8,6 +8,9 @@ import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { UserStore } from "../../src/identity/user.ts";
+import type { LifecycleNotifyDeps } from "../../src/lifecycle/notify.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -21,6 +24,7 @@ import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
+import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /** Read metadata every store read now carries; the audit trail is asserted in credential-store.test.ts. */
@@ -135,9 +139,7 @@ interface PermissionWrite {
 
 /**
  * Build a stub Runtime exposing the methods the connector-tool handlers
- * actually call. Cast to `Runtime` at the boundary — the type widens to
- * what the production `ManageConnectorsContext` declares without forcing
- * us to satisfy 100+ unrelated methods.
+ * actually call.
  */
 function buildHarness(): Harness {
   const permissionWrites: PermissionWrite[] = [];
@@ -151,7 +153,7 @@ function buildHarness(): Harness {
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
@@ -165,36 +167,39 @@ function buildHarness(): Harness {
     // tests; here we just need the methods to exist with sane
     // return shapes so the handler doesn't blow up looking up
     // tangential metadata (user display names, user-scope connectors).
-    getPermissionStore: () => ({
-      deleteConnector: async (
-        _owner: { scope: "workspace" | "user"; wsId?: string; userId?: string },
-        _serverName: string,
-      ): Promise<void> => {},
-      // Records the write so an admin-path test can assert the handler got
-      // past its gate and actually persisted, rather than only that it
-      // returned ok.
-      setConnector: async (
-        owner: { scope: "workspace" | "user"; wsId?: string; userId?: string },
-        serverName: string,
-        tools: Record<string, "allow" | "disallow">,
-      ): Promise<void> => {
-        permissionWrites.push({ owner, serverName, tools });
-      },
-    }),
-    getUserStore: () => ({
-      get: async (_id: string) => null,
-    }),
+    getPermissionStore: () =>
+      stub<PermissionStore>({
+        deleteConnector: async (
+          _owner: { scope: "workspace" | "user"; wsId?: string; userId?: string },
+          _serverName: string,
+        ): Promise<void> => {},
+        // Records the write so an admin-path test can assert the handler got
+        // past its gate and actually persisted, rather than only that it
+        // returned ok.
+        setConnector: async (
+          owner: { scope: "workspace" | "user"; wsId?: string; userId?: string },
+          serverName: string,
+          tools: Record<string, "allow" | "disallow">,
+        ): Promise<void> => {
+          permissionWrites.push({ owner, serverName, tools });
+        },
+      }),
+    getUserStore: () =>
+      stub<UserStore>({
+        get: async (_id: string) => null,
+      }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
     // The lifecycle notification the install and uninstall handlers make. No
     // connector here declares one, so both calls are no-ops — but the getter
     // has to exist: `handleUninstall` reads it before any teardown, and a stub
     // missing it fails the uninstall rather than skipping the notification.
-    getLifecycleNotifyDeps: () => ({
-      declarationFor: async () => undefined,
-      portFor: () => undefined,
-    }),
-  } as unknown as Runtime;
+    getLifecycleNotifyDeps: () =>
+      stub<LifecycleNotifyDeps>({
+        declarationFor: async () => undefined,
+        portFor: () => undefined,
+      }),
+  });
 
   return {
     workDir,
@@ -1118,8 +1123,7 @@ describe("manage_connectors.install", () => {
         ],
       }),
     );
-    (h.runtime as unknown as { getConnectorCatalog: () => ConnectorCatalog }).getConnectorCatalog =
-      () => new ConnectorCatalog(dir);
+    h.runtime.getConnectorCatalog = () => new ConnectorCatalog(dir);
     const stored = {
       placements: [{ slot: "sidebar.apps", resourceUri: "ui://app/stored", route: "stored" }],
     };

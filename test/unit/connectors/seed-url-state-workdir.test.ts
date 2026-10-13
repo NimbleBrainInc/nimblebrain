@@ -63,24 +63,11 @@ async function seededState(
   startError?: string,
 ): Promise<string | undefined> {
   let seen: string | undefined;
-  (mgr as unknown as { recordConnectionStateChange: unknown }).recordConnectionStateChange = (
-    _server: string,
-    _ws: string,
-    _principal: string,
-    state: string,
-  ): void => {
+  mgr.recordConnectionStateChange = (_server, _ws, _principal, state) => {
     seen = state;
   };
-  await (
-    mgr as unknown as {
-      seedUrlConnectionState: (
-        s: string,
-        w: string,
-        r: ConnectorRef,
-        startError?: string,
-      ) => Promise<void>;
-    }
-  ).seedUrlConnectionState(SERVER, WS, urlConnector(), startError);
+  // biome-ignore lint/complexity/useLiteralKeys: seedUrlConnectionState is private; bracket access is TypeScript's typed path to it
+  await mgr["seedUrlConnectionState"](SERVER, WS, urlConnector(), startError);
   return seen;
 }
 

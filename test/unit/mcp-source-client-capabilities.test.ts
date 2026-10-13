@@ -14,17 +14,17 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Server } from "@modelcontextprotocol/server";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { HOST_RESOURCES_CAPABILITY_KEY } from "../../src/host-resources/capability.ts";
 import { FACETS_EXTENSION_ID } from "../../src/services/facets-extension.ts";
 import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
+import { mcpSourceInternals } from "../helpers/mcp-source-internals.ts";
 
 /** The capabilities the connected server saw us declare. */
 function declaredCapabilities(source: McpSource) {
-  const server = (source as unknown as { inProcessServer: Server | null }).inProcessServer;
+  const server = mcpSourceInternals(source).inProcessServer;
   return server?.getClientCapabilities();
 }
 

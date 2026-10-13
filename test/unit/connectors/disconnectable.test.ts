@@ -7,8 +7,12 @@ import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
 // connection has one is decided here, once, for the web menu and the disconnect tool.
 
 const URL = "https://mcp.example.test/mcp";
-const ref = (over: Record<string, unknown> = {}) =>
-  ({ url: URL, serverName: "acme", ...over }) as unknown as ConnectorRef;
+type TransportAuth = NonNullable<NonNullable<ConnectorRef["transport"]>["auth"]>;
+const ref = (over: Partial<ConnectorRef> = {}): ConnectorRef => ({
+  url: URL,
+  serverName: "acme",
+  ...over,
+});
 
 /** A lifecycle whose managed-connector registry holds exactly `providers`. */
 function lifecycleWith(providers: Record<string, object>): ConnectorLifecycleManager {
@@ -37,11 +41,12 @@ describe("isDisconnectable", () => {
   });
 
   test("a static credential is not: platform-minted, bearer or header", () => {
-    for (const auth of [
-      { type: "provider", provider: "minted" },
+    const auths: TransportAuth[] = [
+      { type: "provider", provider: "minted", config: {} },
       { type: "bearer", token: "t" },
       { type: "header", name: "x-key", value: "v" },
-    ]) {
+    ];
+    for (const auth of auths) {
       expect(lc.isDisconnectable(ref({ transport: { type: "streamable-http", auth } }))).toBe(
         false,
       );

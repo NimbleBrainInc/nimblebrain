@@ -8,6 +8,8 @@ import { defaultWorkDir } from "../../../src/connectors/runtime/paths.ts";
 import { CONNECTOR_SKILLS_SUBDIR } from "../../../src/skills/connector-skill-store.ts";
 import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import { stub } from "../../helpers/stub.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 /**
@@ -48,11 +50,15 @@ function manager(
   routes: Record<string, { status: number; body?: string }>,
 ): ConnectorLifecycleManager {
   const m = new ConnectorLifecycleManager(new NoopEventSink());
-  m.setConnectorSkillFetch((async (url: string | URL | Request) => {
-    const u = typeof url === "string" ? url : url.toString();
-    const r = routes[u];
-    return r ? new Response(r.body ?? "", { status: r.status }) : new Response("", { status: 404 });
-  }) as unknown as typeof fetch);
+  m.setConnectorSkillFetch(
+    fakeFetch(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      const r = routes[u];
+      return r
+        ? new Response(r.body ?? "", { status: r.status })
+        : new Response("", { status: 404 });
+    }),
+  );
   return m;
 }
 
@@ -87,9 +93,11 @@ describe("ConnectorLifecycleManager.syncBoundSkills (P4)", () => {
   it("is non-fatal (returns []) when the fetch fails", async () => {
     const wd = workDir();
     const m = new ConnectorLifecycleManager(new NoopEventSink());
-    m.setConnectorSkillFetch((() => {
-      throw new Error("network down");
-    }) as unknown as typeof fetch);
+    m.setConnectorSkillFetch(
+      fakeFetch(() => {
+        throw new Error("network down");
+      }),
+    );
     const lock = await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
     expect(lock).toEqual([]);
   });
@@ -123,10 +131,10 @@ describe("ConnectorLifecycleManager.syncBoundSkills (P4)", () => {
 
     // Real uninstall path (no instance/config/registry source needed — step 4d
     // runs regardless and uses the wired workDir).
-    const registry = {
+    const registry = stub<ToolRegistry>({
       hasSource: () => false,
       hasEstablishedSource: () => false,
-    } as unknown as ToolRegistry;
+    });
     await m.uninstall("gmail", registry, WS_ID);
 
     expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(false);
