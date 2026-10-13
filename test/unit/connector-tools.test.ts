@@ -722,6 +722,126 @@ describe("manage_connectors.install (static-auth)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+// setup_operator on an installed connector — the rotated client reaches it
+// ─────────────────────────────────────────────────────────────────────
+
+describe("manage_connectors.setup_operator on an installed connector", () => {
+  const SERVER = "com-dropbox-mcp";
+  const scope = () => ({ kind: "workspace" as const, wsId: h.wsId });
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+    const tool = buildTool(h, ADMIN_USER);
+    await tool.handler({
+      action: "setup_operator",
+      catalogId: DROPBOX_ID,
+      clientId: "cid-old",
+      clientSecret: "sec-old",
+    });
+    const installed = await tool.handler({
+      action: "install",
+      entry: dropboxEntry(),
+      wsId: h.wsId,
+    });
+    expect(installed.isError).toBe(false);
+    // A completed sign-in under the old client.
+    await h.credStore.put(scope(), `mcp-oauth.${SERVER}.tokens`, '{"access_token":"old"}');
+    await h.credStore.put(scope(), `mcp-oauth.${SERVER}.identity`, '{"sub":"someone"}');
+    h.lifecycle.recordConnectionStateChange(SERVER, h.wsId, "_workspace", "running");
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  async function installedRef(): Promise<ConnectorRef | undefined> {
+    const ws = await h.workspaceStore.get(h.wsId);
+    return ws?.connectors.find((b) => b.url === DROPBOX_URL);
+  }
+
+  async function oauthKeys(): Promise<string[]> {
+    return (await h.credStore.list(scope()))
+      .map((k) => k.key)
+      .filter((k) => k.startsWith("mcp-oauth."));
+  }
+
+  test("a new client id reaches the persisted ref and the live instance", async () => {
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "setup_operator",
+      catalogId: DROPBOX_ID,
+      clientId: "cid-new",
+      clientSecret: "sec-new",
+    });
+    expect(result.isError).toBe(false);
+
+    expect((await installedRef())?.oauthClient?.clientId).toBe("cid-new");
+    expect(h.lifecycle.getInstance(SERVER, h.wsId)?.ref?.oauthClient?.clientId).toBe("cid-new");
+  });
+
+  test("a new client id drops the old sign-in and asks for a new one", async () => {
+    await buildTool(h, ADMIN_USER).handler({
+      action: "setup_operator",
+      catalogId: DROPBOX_ID,
+      clientId: "cid-new",
+      clientSecret: "sec-new",
+    });
+
+    expect(await oauthKeys()).toEqual([]);
+    const instance = h.lifecycle.getInstance(SERVER, h.wsId);
+    expect(instance?.connections?.get("_workspace")?.state).toBe("not_authenticated");
+  });
+
+  test("the same client id with a new secret keeps the sign-in", async () => {
+    await buildTool(h, ADMIN_USER).handler({
+      action: "setup_operator",
+      catalogId: DROPBOX_ID,
+      clientId: "cid-old",
+      clientSecret: "sec-new",
+    });
+
+    expect((await installedRef())?.oauthClient?.clientId).toBe("cid-old");
+    expect((await oauthKeys()).sort()).toEqual([
+      `mcp-oauth.${SERVER}.identity`,
+      `mcp-oauth.${SERVER}.tokens`,
+    ]);
+    // The secret is a reference, so the new value is what the next read sees.
+    const secret = await h.credStore.get(scope(), DROPBOX_SECRET_KEY, {
+      caller: "test",
+      purpose: "assert the rotated secret",
+    });
+    expect(secret?.reveal()).toBe("sec-new");
+  });
+});
+
+describe("manage_connectors.setup_operator before install", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("records the operator app and touches no connector", async () => {
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "setup_operator",
+      catalogId: DROPBOX_ID,
+      clientId: "cid-first",
+      clientSecret: "sec-first",
+    });
+    expect(result.isError).toBe(false);
+    const ws = await h.workspaceStore.get(h.wsId);
+    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid-first");
+    expect(ws?.connectors).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
 // install — entry-based dispatch
 // ─────────────────────────────────────────────────────────────────────
 

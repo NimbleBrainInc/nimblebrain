@@ -318,6 +318,8 @@ The new entry appears on Settings → Connectors → Browse. Walk through the in
 
 If anything is off, check the API server logs for `[static-source]` / `[connector-directory]` warnings — invalid entries are dropped with a logged reason.
 
+To replace a static-auth connector's OAuth app, open its detail page and edit the **OAuth client**. A new `client_id` reaches the installed connector at once and signs it out, because the vendor does not accept the old client's tokens from the new one, so click **Connect** again. Saving the same `client_id` with a new `client_secret` keeps the connection signed in.
+
 ## Catalog file format
 
 Each file in the catalog directory is a YAML or JSON document with one of these shapes:
