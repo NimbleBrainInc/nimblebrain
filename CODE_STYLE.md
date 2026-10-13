@@ -253,8 +253,8 @@ its source.
 
 A tool handler under `src/platform/` declares a named output type from
 `src/platform/schemas/<app>.ts` as its return type, never `object`. The full
-rule, including the construction-site form for handlers that build their own
-`ToolResult`, is `src/platform/AGENTS.md` §2.1.
+rule, and the TypeBox output schemas each app moves onto (which make the return
+type the schema's), is `src/platform/AGENTS.md` §2.1.
 
 ```ts
 // BAD — every caller gets an untyped result and re-declares its shape.
