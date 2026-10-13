@@ -114,6 +114,7 @@
 
 ### Changed
 
+- **Uninstalling a static-auth connector removes its operator OAuth app** (client id and secret) when no other installed connector uses it, so a reinstall starts at Set up.
 - **Automations are now Tasks.** The source, its tools (`tasks__*`), the sidebar view (`/w/<slug>/tasks`) and storage (`workspaces/<wsId>/tasks/<ownerId>/`) take the name. A deployment on v0.34.x or earlier upgrades through v0.35.x, whose boot moves storage from `automations/`. [Docs](https://docs.nimblebrain.ai/using/tasks/).
 - **The host block has no `name`, `icon`, `category` or `primaryView`.** A connector's display name is its catalog entry's `title` (or `name`) on every surface — the connector page, the workspace listing, the briefing, and the system prompt — and a valid placement is projected without a `name`. A block that still declares them loads; the host ignores them, and placements alone declare a connector's views. [Docs](https://docs.nimblebrain.ai/apps/manifest/).
 - **The event streams carry only what a client reads.** A conversation's stream no longer sends `run.start` (with its system prompt), connector skill bodies, or run accounting events, and `/v1/events` no longer sends `skill.*` or `bridge.tool.*`. Those events still reach logs, metrics and the conversation record.
@@ -407,6 +408,7 @@
 
 ### Changed
 
+- **Uninstalling a static-auth connector removes its operator OAuth app** (client id and secret) when no other installed connector uses it, so a reinstall starts at Set up.
 - **Host-owned `_meta` keys.** `ai.nimblebrain/non-advancing` is stripped from connector results, like the skill markers; the platform's own tools still set it. Outbound `tools/call` no longer carries `ai.nimblebrain/unattended`: a server is not told that a call was fired by configuration with no one watching. The reason stays in the audit line.
 
 ## [0.4.0] - 2026-04-24

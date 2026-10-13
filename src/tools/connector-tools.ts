@@ -2583,13 +2583,17 @@ async function handleDisconnect(
  *     `docs/config/secrets.mdx`), so reading only the headers would miss its
  *     one credential entirely.
  *
- * A THIRD site names a workspace key and is deliberately not here:
+ * A THIRD site names a workspace key and is not here:
  * `oauthClient.clientSecret`, which `resolveStaticOAuthClient` dereferences
- * against this same store. That key is the workspace's OAuth app setup for a
- * whole vendor rather than this connector's own credential — `setup_operator`
- * writes it and `remove_operator_setup` takes it away — so an uninstall must
- * not delete it. It is still a reason not to delete SOMEONE ELSE's key, which
- * is why `deletableSecretKeys` reads it on the referrer side only.
+ * against this same store. That key is half of the workspace's operator OAuth
+ * app for a static-auth catalog entry, and the other half is
+ * `workspace.json#oauthOperatorApps[catalogId]`. The two go together or not at
+ * all, so an uninstall decides on them as a pair in `operatorAppOf` and removes
+ * both when it takes out the app's last user. Here it would delete the secret
+ * and strand the record, which reads as configured and installs a connector
+ * that cannot complete a token exchange. It is still a reason not to delete
+ * SOMEONE ELSE's key, which is why `deletableSecretKeys` reads it on the
+ * referrer side.
  *
  * Read from the PERSISTED REF rather than the catalog entry, deliberately. The
  * ref is what the transport resolves on the next request, so it is the honest
@@ -2646,8 +2650,8 @@ function deletableSecretKeys(ws: Workspace, serverName: string, ownRef: Connecto
   for (const other of ws.connectors) {
     if (matchesServerName(other, serverName)) continue;
     for (const key of workspaceKeysNamedBy(other)) stillNamed.add(key);
-    // The third site. Owned by `setup_operator` rather than by this connector,
-    // so it is a referrer and never a deletion — see `workspaceKeysNamedBy`.
+    // The third site. The operator app's secret, which goes only with its
+    // record (`operatorAppOf`), so here it is a referrer and never a deletion.
     const clientSecretKey = other.oauthClient?.clientSecret?.key;
     if (clientSecretKey) stillNamed.add(clientSecretKey);
   }
@@ -2655,6 +2659,47 @@ function deletableSecretKeys(ws: Workspace, serverName: string, ownRef: Connecto
     deletable: own.filter((k) => !stillNamed.has(k)),
     retained: own.filter((k) => stillNamed.has(k)),
   };
+}
+
+/**
+ * The operator OAuth app the uninstalled connector is built on, and whether
+ * another installed connector still uses it.
+ *
+ * A ref carries no catalog id, so the app is found the way install made it:
+ * the catalog entry at the ref's `url` (the relation `rotateInstalledOAuthClients`
+ * and `remove_operator_setup` use) that is static-auth, has a recorded app in
+ * this workspace, and declares the very key the ref's `oauthClient.clientSecret`
+ * names. A ref that names no client secret, or whose entry has left the
+ * catalog, has no app to release.
+ *
+ * In use means another ref at the same `url`, or one that resolves the same
+ * key through any of the three sites. Either keeps BOTH halves: the record and
+ * the secret go together, so a key a sibling resolves keeps the record too.
+ */
+async function operatorAppOf(
+  ctx: ManageConnectorsContext,
+  ws: Workspace,
+  serverName: string,
+  ref: ConnectorRef | undefined,
+): Promise<{ catalogId: string; clientSecretKey: string; inUse: boolean } | undefined> {
+  const secret = ref?.oauthClient?.clientSecret;
+  if (!ref?.url || !isCredentialRef(secret)) return undefined;
+  const entry = (await ctx.runtime.getConnectorCatalog().catalogByUrl()).get(ref.url);
+  if (
+    entry?.auth !== "static" ||
+    entry.operatorSetup?.clientSecretKey !== secret.key ||
+    !ws.oauthOperatorApps?.[entry.id]
+  ) {
+    return undefined;
+  }
+  const inUse = ws.connectors.some(
+    (other) =>
+      !matchesServerName(other, serverName) &&
+      (other.url === ref.url ||
+        other.oauthClient?.clientSecret?.key === secret.key ||
+        workspaceKeysNamedBy(other).includes(secret.key)),
+  );
+  return { catalogId: entry.id, clientSecretKey: secret.key, inUse };
 }
 
 /**
@@ -2680,6 +2725,15 @@ function deletableSecretKeys(ws: Workspace, serverName: string, ownRef: Connecto
  * The keys come from the connector's own declaration, read here rather than
  * from the call: a caller-named key would be a delete primitive pointed at any
  * secret in the workspace.
+ *
+ * A static-auth connector's operator OAuth app goes with its last user. Set up
+ * and uninstall are both workspace-admin actions and nothing outside this file
+ * reads the app, so keeping it past the last install buys nothing: a reinstall
+ * would silently reuse a client id and secret the admin meant to remove, with
+ * no surface to clear them. Removing it puts the entry back to Set up, and the
+ * secret is reported with the connector's own deleted keys. While another
+ * installed connector still uses the app (see `operatorAppOf`), both halves
+ * stay and the key is reported as retained.
  *
  * Workspace connectors only — a personal (identity-owned) connector is removed
  * via `handleDisconnectIdentity` (the dispatcher routes `scope:"identity"` there).
@@ -2721,18 +2775,18 @@ async function handleUninstall(
   // Resolved BEFORE the uninstall, off the workspace record as it stands now:
   // `lifecycle.uninstall` drops the instance and `stripUninstalledConnectorEntry`
   // drops the row, and both are inputs here.
-  const { deletable: secretKeys, retained: retainedKeys } = deletableSecretKeys(
-    ws,
-    serverName,
-    instance.ref,
-  );
+  const { deletable: secretKeys, retained } = deletableSecretKeys(ws, serverName, instance.ref);
+  const operatorApp = await operatorAppOf(ctx, ws, serverName, instance.ref);
+  const retainedKeys = operatorApp?.inUse ? [...retained, operatorApp.clientSecretKey] : retained;
 
   const outcome = await uninstallWorkspaceConnector(ctx.runtime, wsId, serverName, {
     secretKeys,
   });
   if (!outcome.ok) return errResult(outcome.error ?? "Uninstall failed.");
 
-  const { secrets } = outcome;
+  // After the teardown, like the connector's own keys: a connector that is
+  // still installed still has the app it signs in with.
+  const secrets = await releaseOperatorApp(ctx, wsId, operatorApp, outcome.secrets);
   return {
     content: textContent(
       `Uninstalled "${serverName}" from workspace.${describeSecretOutcome(secrets, retainedKeys)}`,
@@ -2754,6 +2808,33 @@ async function handleUninstall(
     },
     isError: false,
   };
+}
+
+/**
+ * Remove the uninstalled connector's operator app when nothing else uses it,
+ * folding its secret into the uninstall's secret outcome: deleted when it went,
+ * failed when it is still stored (including when the record write threw before
+ * the secret was tried). An app still in use, or none, leaves the outcome as is.
+ */
+async function releaseOperatorApp(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  app: { catalogId: string; clientSecretKey: string; inUse: boolean } | undefined,
+  secrets: { deleted: string[]; failed: string[]; error?: string },
+): Promise<{ deleted: string[]; failed: string[]; error?: string }> {
+  if (!app || app.inUse) return secrets;
+  const key = app.clientSecretKey;
+  try {
+    return (await removeOperatorApp(ctx, wsId, app.catalogId, key))
+      ? { ...secrets, deleted: [...secrets.deleted, key] }
+      : { ...secrets, failed: [...secrets.failed, key] };
+  } catch (err) {
+    return {
+      ...secrets,
+      failed: [...secrets.failed, key],
+      error: secrets.error ?? (err instanceof Error ? err.message : String(err)),
+    };
+  }
 }
 
 /**
@@ -3640,24 +3721,48 @@ async function handleRemoveOperatorSetup(
     );
   }
 
-  const apps = { ...(ws.oauthOperatorApps ?? {}) };
-  if (!apps[catalogId]) {
+  if (!ws.oauthOperatorApps?.[catalogId]) {
     return errResult(`No operator setup configured for "${entry.name}".`);
   }
-  delete apps[catalogId];
-  await ctx.runtime.getWorkspaceStore().update(wsId, { oauthOperatorApps: apps });
-
-  const clientSecretKey = entry.operatorSetup?.clientSecretKey;
-  if (clientSecretKey) {
-    const credStore = ctx.runtime.getCredentialStore();
-    await credStore.delete({ kind: "workspace", wsId }, clientSecretKey).catch(() => {});
-  }
+  await removeOperatorApp(ctx, wsId, catalogId, entry.operatorSetup?.clientSecretKey);
 
   return {
     content: textContent(`Removed OAuth app config for "${entry.name}".`),
     structuredContent: { ok: true, catalogId },
     isError: false,
   };
+}
+
+/**
+ * Remove both halves of a workspace's operator OAuth app: the
+ * `oauthOperatorApps` record, then the client secret. The record goes first, so
+ * a failed secret delete leaves an unreferenced secret rather than a record
+ * that reads as configured. The workspace is read fresh because an uninstall
+ * calls this after its own writes to the record.
+ *
+ * Throws when the record write fails; returns whether the secret is gone.
+ */
+async function removeOperatorApp(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  catalogId: string,
+  clientSecretKey: string | undefined,
+): Promise<boolean> {
+  const store = ctx.runtime.getWorkspaceStore();
+  const ws = await store.get(wsId);
+  if (ws?.oauthOperatorApps?.[catalogId]) {
+    const apps = { ...ws.oauthOperatorApps };
+    delete apps[catalogId];
+    await store.update(wsId, { oauthOperatorApps: apps });
+  }
+  if (!clientSecretKey) return true;
+  return ctx.runtime
+    .getCredentialStore()
+    .delete({ kind: "workspace", wsId }, clientSecretKey)
+    .then(
+      () => true,
+      () => false,
+    );
 }
 
 // ── Workspace secrets ───────────────────────────────────────────────
