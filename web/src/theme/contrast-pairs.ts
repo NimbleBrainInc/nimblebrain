@@ -87,7 +87,7 @@ export const TEXT_PAIRS: readonly [fg: TokenName, bg: TokenName, where: string][
   ["muted-foreground", "background", "lead paragraphs"],
   ["muted-foreground", "card", "row sub-lines"],
   ["muted-foreground", "sidebar", "sidebar nav rows"],
-  ["foreground", "sidebar", "the active sidebar nav row"],
+  ["foreground", "sidebar", "hovered and open sidebar rows"],
   // `text-tertiary` and `background-tertiary` are ext-apps-only: the shell's
   // `:root` never emits them, so the only surface they meet is an embedded
   // iframe, where both are injected together.
@@ -230,8 +230,7 @@ export function contrastChecks(palette: ColorPalette, mode: Mode): ContrastCheck
   );
 
   // The sidebar's own tint family. `bg-sidebar-foreground/N` over `bg-sidebar`
-  // carries hover and the active row throughout the shell, and is a tint of the
-  // text colour itself.
+  // carries hover throughout the shell, and is a tint of the text colour itself.
   const sidebar = t("sidebar");
   const sidebarText = t("sidebar-foreground");
   add(
@@ -240,7 +239,7 @@ export function contrastChecks(palette: ColorPalette, mode: Mode): ContrastCheck
     over(sidebarText, sidebar, 5),
   );
   add(
-    "sidebar-foreground on sidebar-foreground/10 (active)",
+    "sidebar-foreground on sidebar-foreground/10 (sidebar icon buttons, hover)",
     sidebarText,
     over(sidebarText, sidebar, 10),
   );
@@ -261,7 +260,7 @@ export function contrastChecks(palette: ColorPalette, mode: Mode): ContrastCheck
       island["sidebar-hover"],
     );
     add(
-      "dark foreground on island sidebar (the active row's label)",
+      "dark foreground on island sidebar (hovered and open rows)",
       d("foreground"),
       island.sidebar,
     );

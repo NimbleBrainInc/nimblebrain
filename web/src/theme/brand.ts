@@ -19,7 +19,7 @@
 
 import { AA_TEXT, contrastRatio, over } from "./contrast.ts";
 import type { ColorPalette, SidebarIsland } from "./contrast-pairs.ts";
-import { hexToOklch, oklchToHex } from "./oklch.ts";
+import { hexToOklch, type Oklch, oklchToHex } from "./oklch.ts";
 import { colors, extOnlyColors, fonts, type Pair } from "./palette.ts";
 
 /** A typeface role of the canonical palette. */
@@ -209,9 +209,34 @@ const isPair = (v: unknown): v is Pair =>
   v.length === 2 &&
   v.every((x) => typeof x === "string" && /^#[0-9a-f]{6}$/i.test(x));
 
-/** `hex` with its lightness kept and its hue and chroma replaced. */
-function recast(hex: string, h: number, c: number): string {
-  return oklchToHex({ l: hexToOklch(hex).l, c, h });
+/**
+ * Chroma at which a brand colour's hue counts in full. Below it the hue angle
+ * grows unreliable (a grey's is rounding noise), so a derivation scales the
+ * colour it would add by {@link hueWeight} and a black, white or grey brand
+ * leaves the neutrals as they are.
+ */
+const FULL_HUE_CHROMA = 0.04;
+
+/** How far, 0 to 1, a colour's hue may cast the colours derived from it. */
+const hueWeight = (color: Oklch) => Math.min(1, color.c / FULL_HUE_CHROMA);
+
+/**
+ * `hex` with its lightness kept, moved toward hue `h` at chroma `c` by `weight`
+ * (0 keeps it, 1 replaces its hue and chroma). The move is in OKLab, so a
+ * partial one blends the two casts rather than swinging the hue angle.
+ */
+function recast(hex: string, h: number, c: number, weight: number): string {
+  const base = hexToOklch(hex);
+  const ab = (hue: number, chroma: number) => {
+    const rad = (hue * Math.PI) / 180;
+    return [chroma * Math.cos(rad), chroma * Math.sin(rad)] as const;
+  };
+  const [a0, b0] = ab(base.h, base.c);
+  const [a1, b1] = ab(h, c);
+  const a = a0 + (a1 - a0) * weight;
+  const b = b0 + (b1 - b0) * weight;
+  const hue = (Math.atan2(b, a) * 180) / Math.PI;
+  return oklchToHex({ l: base.l, c: Math.hypot(a, b), h: hue < 0 ? hue + 360 : hue });
 }
 
 /**
@@ -307,11 +332,11 @@ function applyPrimary(modes: Modes, primary: Pair): void {
   set(modes, "primary", primary);
   modes.light["primary-foreground"] = readableOn(primary[0]);
   modes.dark["primary-foreground"] = readableOn(primary[1]);
-  const [hueLight, hueDark] = [hexToOklch(primary[0]).h, hexToOklch(primary[1]).h];
+  const [light, dark] = [hexToOklch(primary[0]), hexToOklch(primary[1])];
   for (const [tokens, cLight, cDark] of NEUTRAL_TINT) {
     for (const token of tokens) {
-      modes.light[token] = recast(read(modes.light, token), hueLight, cLight);
-      modes.dark[token] = recast(read(modes.dark, token), hueDark, cDark);
+      modes.light[token] = recast(read(modes.light, token), light.h, cLight, hueWeight(light));
+      modes.dark[token] = recast(read(modes.dark, token), dark.h, cDark, hueWeight(dark));
     }
   }
 }
@@ -325,7 +350,8 @@ function applySidebar(modes: Modes, sidebar: Pair): SidebarIsland | undefined {
     for (const token of tokens) dark[token] = oklchToHex({ ...anchor, l: anchor.l + lift });
   }
   for (const [tokens, l, c] of DARK_SURFACE_TEXT) {
-    for (const token of tokens) dark[token] = oklchToHex({ l, c, h: anchor.h });
+    for (const token of tokens)
+      dark[token] = oklchToHex({ l, c: c * hueWeight(anchor), h: anchor.h });
   }
   const grounds = [read(dark, "background"), read(dark, "card")];
   for (const token of DARK_GROUND_TEXT) dark[token] = liftToRead(read(dark, token), grounds);
@@ -336,7 +362,11 @@ function applySidebar(modes: Modes, sidebar: Pair): SidebarIsland | undefined {
       sidebar: sidebar[0],
       "sidebar-hover": oklchToHex({ ...ground, l: ground.l + ISLAND.hover }),
       "sidebar-border": oklchToHex({ ...ground, l: ground.l + ISLAND.border }),
-      "sidebar-foreground": oklchToHex({ ...ISLAND.text, h: ground.h }),
+      "sidebar-foreground": oklchToHex({
+        l: ISLAND.text.l,
+        c: ISLAND.text.c * hueWeight(ground),
+        h: ground.h,
+      }),
     };
   }
   light.sidebar = sidebar[0];

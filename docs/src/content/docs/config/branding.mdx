@@ -62,7 +62,7 @@ When `name` is set, OAuth registration sends only your values: without a `homepa
 |---|---|
 | `primary` | The accent: primary buttons, links, accent text. Its hue also tints the neutrals (text, borders, grey surfaces) at their canonical lightness, so the whole shell takes your colour's cast without any contrast moving. |
 | `ring` | The focus ring. Usually the same value as `primary`. |
-| `highlight` | The fill of the active sidebar row. Text on it is white or black, whichever reads better, so a bright colour such as a yellow works. |
+| `highlight` | The fill of the active sidebar row. Text on it is white or black, whichever reads better, so a bright colour such as a yellow works. A dark light-mode `sidebar` renders under the dark palette, so its row shows the dark value in both modes and the light value is unused. |
 | `sidebar` | Two jobs. The **light** value is the light-mode sidebar ground: a light colour tints it; a dark colour turns the sidebar into a dark panel, rendered under the dark palette, with the dark logo. The **dark** value anchors dark mode: it is the deepest surface, and the page, cards, muted fills and borders are lighter steps of the same hue, so dark mode reads as your colour rather than black. |
 
 Without `sidebar`, dark mode keeps the canonical near-black, tinted by `primary`.

@@ -163,6 +163,20 @@ describe("mergePalette", () => {
     expect(merged.colors.card[0]).toBe(colors.card[0]);
   });
 
+  test("a black, white or grey primary leaves the neutrals as they are", () => {
+    const merged = mergePalette({ colors: { primary: ["#000000", "#ffffff"] } });
+    for (const token of ["foreground", "muted-foreground", "border", "muted", "sidebar"] as const) {
+      expect(merged.colors[token]).toEqual(colors[token]);
+    }
+  });
+
+  test("a grey dark sidebar derives grey text, with no cast", () => {
+    const merged = mergePalette({ colors: { sidebar: ["#ffffff", "#121212"] } });
+    for (const token of ["foreground", "muted-foreground", "sidebar-foreground"] as const) {
+      expect(hexToOklch(merged.colors[token][1]).c).toBeLessThan(0.005);
+    }
+  });
+
   test("highlight fills the active sidebar row under whichever of white or black reads", () => {
     const merged = mergePalette({ colors: { highlight: ["#FFC94A", "#2563eb"] } });
     expect(merged.colors["sidebar-active"]).toEqual(["#FFC94A", "#2563eb"]);

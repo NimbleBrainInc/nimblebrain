@@ -121,7 +121,7 @@ function islandCss(palette: Palette): string {
   const island = palette.sidebarIsland;
   if (!island) return "";
   const decls = Object.entries(island).map(([token, value]) => `  --${token}: ${value};`);
-  return `:root:not(.dark) .${ISLAND_CLASS} {\n${decls.join("\n")}\n}\n`;
+  return `:root:not(.dark) .${ISLAND_CLASS} {\n  color-scheme: dark;\n${decls.join("\n")}\n}\n`;
 }
 
 /** The `@font-face` each brand role with a file declares, one per distinct family, URL and weight. */
