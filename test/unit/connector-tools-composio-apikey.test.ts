@@ -70,6 +70,7 @@ mock.module("@composio/core", () => ({
 
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   readComposioConnection,
@@ -83,6 +84,7 @@ import {
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
@@ -91,7 +93,8 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import { seedWorkspace, seedWorkspaceRoot } from "../helpers/test-workspace.ts";
+import { stub } from "../helpers/stub.ts";
+import { makeWorkspace, seedWorkspace, seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const POSTHOG_ID = "com.posthog/analytics";
 const GMAIL_ID = "com.google/gmail";
@@ -168,7 +171,7 @@ function buildHarness(): Harness {
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
     getConnectorCatalog: () => new ConnectorCatalog(catalogPath),
@@ -178,7 +181,7 @@ function buildHarness(): Harness {
     getEventSink: () => new NoopEventSink(),
     getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
-  } as unknown as Runtime;
+  });
 
   return { workDir, wsId, runtime };
 }
@@ -370,16 +373,16 @@ const POSTHOG_ENTRY = {
 function stubCtx(opts: {
   workDir: string;
   wsId: string;
-  entry: unknown | null;
+  entry: ConnectorCatalogEntry | null;
   ensureSourceRegisteredError?: Error;
   identity?: UserIdentity;
   role?: "admin" | "member";
-  connectors?: Array<{ serverName: string }>;
+  connectors?: ConnectorRef[];
 }): ManageConnectorsContext & { __calls: StubCalls } {
   const identity = opts.identity ?? ADMIN;
   const role = opts.role ?? "admin";
   const calls: StubCalls = { recordConnectionStateChange: { lastCall: null, callCount: 0 } };
-  const lifecycle = {
+  const lifecycle = stub<ConnectorLifecycleManager>({
     async ensureSourceRegistered(): Promise<void> {
       if (opts.ensureSourceRegisteredError) throw opts.ensureSourceRegisteredError;
     },
@@ -392,30 +395,32 @@ function stubCtx(opts: {
       calls.recordConnectionStateChange.lastCall = { serverName, wsId, principalId, state };
       calls.recordConnectionStateChange.callCount++;
     },
-  };
-  const runtime = {
+  });
+  const runtime = stub<Runtime>({
     getWorkDir: () => opts.workDir,
-    getWorkspaceStore: () => ({
-      get: async () => ({
-        id: opts.wsId,
-        name: "Test",
-        members: [{ userId: identity.id, role }],
-        connectors: opts.connectors ?? [],
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({
+        get: async () =>
+          makeWorkspace({
+            id: opts.wsId,
+            name: "Test",
+            members: [{ userId: identity.id, role }],
+            connectors: opts.connectors ?? [],
+          }),
       }),
-    }),
-    getConnectorCatalog: () => ({
-      catalogById: async (id: string) =>
-        opts.entry && (opts.entry as { id: string }).id === id ? opts.entry : null,
-    }),
+    getConnectorCatalog: () =>
+      stub<ConnectorCatalog>({
+        catalogById: async (id: string) => (opts.entry?.id === id ? opts.entry : null),
+      }),
     getLifecycle: () => lifecycle,
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
-  } as unknown as Runtime;
+  });
   return {
     runtime,
     getIdentity: () => identity,
     getWorkspaceId: () => opts.wsId,
     __calls: calls,
-  } as unknown as ManageConnectorsContext & { __calls: StubCalls };
+  };
 }
 
 describe("manage_connectors.connect_api_key — lifecycle tail", () => {
@@ -571,7 +576,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
       workDir,
       wsId: WS,
       entry: POSTHOG_ENTRY,
-      connectors: [{ serverName: slugifyServerName(POSTHOG_ID) }],
+      connectors: [{ url: POSTHOG_ENTRY.url, serverName: slugifyServerName(POSTHOG_ID) }],
       ensureSourceRegisteredError: new Error("transport handshake failed"),
     });
     const r = await createManageConnectorsTool(ctx).handler({

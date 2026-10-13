@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import type { McpSource } from "../../src/tools/mcp-source.ts";
+import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import { stub } from "../helpers/stub.ts";
 
 /**
  * Coverage for the lifecycle-level OAuth coalesce: `authFlowsInFlight`
@@ -238,23 +241,11 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
     );
 
     const resolveAuthUrl = mock((_url: string | null) => {});
-    const source = { start: async () => {} };
-    const provider = { setInteractiveAuthAllowed: () => {} };
+    const source = stub<McpSource>({ start: async () => {} });
+    const provider = stub<WorkspaceOAuthProvider>({ setInteractiveAuthAllowed: () => {} });
 
-    (
-      lifecycle as unknown as {
-        startAuthBackground: (a: {
-          source: unknown;
-          provider: unknown;
-          serverName: string;
-          wsId: string;
-          principalId: string;
-          getCapturedAuthUrl: () => string | undefined;
-          resolveAuthUrl: (u: string | null) => void;
-          rejectAuthUrl: (e: Error) => void;
-        }) => void;
-      }
-    ).startAuthBackground({
+    // biome-ignore lint/complexity/useLiteralKeys: `startAuthBackground` is private; bracket access is TypeScript's typed path to it
+    lifecycle["startAuthBackground"]({
       source,
       provider,
       serverName: "minted",

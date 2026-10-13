@@ -10,22 +10,17 @@ import {
   revalidatorIntervalMsFromEnv,
 } from "../../src/connectors/runtime/connection-revalidator.ts";
 import type { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorInstance } from "../../src/connectors/runtime/types.ts";
+import { stub } from "../helpers/stub.ts";
 
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
 
-interface FakeConn {
-  principalId: string;
-  state: ConnectionState;
-}
-interface FakeInstance {
-  serverName: string;
-  wsId: string;
-  state: ConnectionState;
-  ref: unknown;
-  connections: Map<string, FakeConn>;
-}
+type FakeInstance = Pick<
+  ConnectorInstance,
+  "serverName" | "wsId" | "state" | "ref" | "connections"
+>;
 
 interface Flip {
   serverName: string;
@@ -41,6 +36,7 @@ function composioInstance(serverName: string, wsId = "ws_0002ee92e8791c13"): Fak
     state: "running",
     ref: {
       url: "https://backend.composio.dev/x/mcp",
+      serverName,
       brokered: { provider: "composio", connectorId: "com.x" },
     },
     connections: new Map([[`_workspace`, { principalId: "_workspace", state: "running" }]]),
@@ -49,10 +45,12 @@ function composioInstance(serverName: string, wsId = "ws_0002ee92e8791c13"): Fak
 
 function fakeLifecycle(instances: FakeInstance[]) {
   const flips: Flip[] = [];
-  const lifecycle = {
-    getInstances: () => instances,
+  const lifecycle = stub<ConnectorLifecycleManager>({
+    getInstances: () => instances.map((i) => stub<ConnectorInstance>(i)),
     getInstance: (serverName: string, wsId: string) =>
-      instances.find((i) => i.serverName === serverName && i.wsId === wsId),
+      stub<ConnectorInstance>(
+        instances.find((i) => i.serverName === serverName && i.wsId === wsId),
+      ),
     recordConnectionStateChange: (
       serverName: string,
       wsId: string,
@@ -66,7 +64,7 @@ function fakeLifecycle(instances: FakeInstance[]) {
       if (conn) conn.state = newState;
       if (inst) inst.state = newState;
     },
-  } as unknown as ConnectorLifecycleManager;
+  });
   return { lifecycle, flips };
 }
 
@@ -165,7 +163,7 @@ describe("ConnectionRevalidator — dispatch & filtering", () => {
 
   it("never probes a connection with no matching provider probe", async () => {
     const inst = composioInstance("plain");
-    inst.ref = { url: "https://example.com/mcp" }; // no composio field
+    inst.ref = { url: "https://example.com/mcp", serverName: "plain" }; // no brokered provider
     const { lifecycle, flips } = fakeLifecycle([inst]);
     const probe = new ScriptedProbe();
     const rv = new ConnectionRevalidator(lifecycle, [probe]);
@@ -243,9 +241,12 @@ describe("ConnectionRevalidator — timer ceiling", () => {
     const revalidator = new ConnectionRevalidator(lifecycle, [new ScriptedProbe()], { intervalMs });
     const delays: number[] = [];
     let fired = 0;
+    // A real, already-cleared handle for the fake to return.
+    const inert = setTimeout(() => {}, 0);
+    clearTimeout(inert);
 
     const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(((
-      fn: () => void,
+      fn: Parameters<typeof setTimeout>[0],
       ms?: number,
     ) => {
       delays.push(ms ?? 0);
@@ -253,10 +254,11 @@ describe("ConnectionRevalidator — timer ceiling", () => {
       // `setTimeout` lands after the microtask flush below.
       if (fired < cycles) {
         fired++;
-        fn();
+        if (typeof fn === "function") fn();
       }
-      return 0 as unknown as ReturnType<typeof setTimeout>;
-    }) as unknown as typeof setTimeout);
+      return inert;
+      // The call signature alone; `typeof setTimeout` also carries static members.
+    }) as typeof setTimeout);
 
     try {
       revalidator.start();

@@ -10,8 +10,10 @@
 
 import { describe, expect, test } from "bun:test";
 import type { PlacementEntry } from "../../src/connectors/runtime/types.ts";
+import type { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createOpenAppTool, findOpenableApp, openableAppNames } from "../../src/tools/open-app.ts";
+import { stub } from "../helpers/stub.ts";
 
 const placement = (over: Partial<PlacementEntry>): PlacementEntry => ({
   serverName: "people",
@@ -50,15 +52,15 @@ describe("findOpenableApp", () => {
   });
 });
 
+/** The tool reads only these two members. */
 function fakeRuntime(placements: PlacementEntry[]): Runtime {
-  const runtime = {
+  return stub<Runtime>({
     requireWorkspaceId: () => "ws_a",
-    getPlacementRegistry: () => ({
-      forWorkspace: (wsId: string) => (wsId === "ws_a" ? placements : []),
-    }),
-  };
-  // The tool reads only these two members.
-  return runtime as unknown as Runtime;
+    getPlacementRegistry: () =>
+      stub<PlacementRegistry>({
+        forWorkspace: (wsId: string) => (wsId === "ws_a" ? placements : []),
+      }),
+  });
 }
 
 describe("nb__open_app", () => {

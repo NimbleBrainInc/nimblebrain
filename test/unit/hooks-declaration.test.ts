@@ -10,6 +10,7 @@ import {
 } from "../../src/hooks/declaration.ts";
 
 function meta(hooks: unknown): HostManifestMeta {
+  // biome-ignore lint/plugin/double-cast: a manifest `hooks` value of any shape, non-arrays and malformed entries included, where the type promises HookDeclaration[]
   return { host_version: "1.2", hooks } as unknown as HostManifestMeta;
 }
 

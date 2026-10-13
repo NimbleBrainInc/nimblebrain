@@ -92,7 +92,11 @@ describe("parseAdminToolsDeclaration", () => {
   test("declares nothing for a host block that is not an object", () => {
     for (const host of ["1.0", 7]) {
       expect(
-        parseAdminToolsDeclaration(host as unknown as HostManifestMeta, "ai.acme/crm"),
+        parseAdminToolsDeclaration(
+          // biome-ignore lint/plugin/double-cast: a host block that is a string or a number, where the type promises a HostManifestMeta object
+          host as unknown as HostManifestMeta,
+          "ai.acme/crm",
+        ),
       ).toBeUndefined();
     }
   });
@@ -121,6 +125,7 @@ describe("the catalog projection", () => {
   // `host` is the raw `_meta` block as a catalog file carries it, including
   // shapes the projection must reject, so it is wider than the typed block.
   function detail(host: Record<string, unknown>): ServerDetail {
+    // biome-ignore lint/plugin/double-cast: a server detail whose host `_meta` block is raw catalog JSON, where the type promises a well-formed HostManifestMeta
     return {
       name: "ai.acme/crm",
       description: "Acme",
