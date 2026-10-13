@@ -6,7 +6,11 @@
  * tool data.
  */
 
-import type { ConversationsStatsInput } from "../../schemas/conversations.ts";
+import type {
+  ConversationModelStats,
+  ConversationsStatsInput,
+  ConversationsStatsOutput,
+} from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex, WorkspaceScope } from "../index-cache.ts";
 import {
   type ConversationFile,
@@ -15,25 +19,8 @@ import {
   readConversation,
 } from "../jsonl-reader.ts";
 
-interface ModelStats {
-  inputTokens: number;
-  outputTokens: number;
-  conversations: number;
-}
-
-interface ToolEntry {
-  name: string;
-  callCount: number;
-}
-
-interface StatsResult {
-  period: { since: string; until: string };
-  totalConversations: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  byModel: Record<string, ModelStats>;
-  topTools: ToolEntry[];
-}
+type ModelStats = ConversationModelStats;
+type ToolEntry = ConversationsStatsOutput["topTools"][number];
 
 /**
  * Calculate the start of the date range based on the period.
@@ -118,7 +105,7 @@ export async function handleStats(
   index: ConversationIndex,
   scope: WorkspaceScope,
   access?: AccessContext,
-): Promise<StatsResult> {
+): Promise<ConversationsStatsOutput> {
   const period = input.period ?? "week";
   const now = new Date();
   const since = periodToSince(period, now);

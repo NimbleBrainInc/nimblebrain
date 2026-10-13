@@ -772,16 +772,23 @@ function wrapOutputAsResult(text: string, isError: boolean): DisplayToolResult {
   };
 }
 
-/** Tool inputs may be JSON strings in the event log — parse defensively. */
+/**
+ * Tool inputs may be JSON strings in the event log — parse defensively. An
+ * input that is not a JSON object (unparseable, `null`, an array, a scalar)
+ * reads as `{}`, the shape `DisplayToolCall.input` declares.
+ */
 function parseToolInput(input: unknown): Record<string, unknown> {
+  let value = input;
   if (typeof input === "string") {
     try {
-      return JSON.parse(input) as Record<string, unknown>;
+      value = JSON.parse(input);
     } catch {
       return {};
     }
   }
-  if (input && typeof input === "object") return input as Record<string, unknown>;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
   return {};
 }
 

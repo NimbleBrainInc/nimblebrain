@@ -138,6 +138,9 @@ beforeEach(async () => {
   writeConv({ id: "conv_peer", wsId: WS_A, ownerId: PEER_ID });
   source = await createConversationsSource(makeRuntime(), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {
@@ -287,6 +290,9 @@ describe("conversations index — concurrent cold reads", () => {
     await source.stop();
     source = await createConversationsSource(makeRuntime(), new NoopEventSink());
     await source.start();
+    // List first, as the engine does: the SDK client validates a result against
+    // its tool's output schema only once it holds the `tools/list` that declares it.
+    await source.tools();
 
     const [a, b] = await Promise.all([
       exec("list", { limit: 1000 }, WS_A),

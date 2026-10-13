@@ -8,17 +8,26 @@ import {
   defineInProcessApp,
   type InProcessTool,
   MCP_APP_MIME_TYPE,
+  type ToolErrorResult,
+  type ToolSuccessResult,
   typedTool,
 } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import {
   ConversationsExportInput,
+  ConversationsExportOutput,
   ConversationsForkInput,
+  ConversationsForkOutput,
   ConversationsGetInput,
+  ConversationsGetOutput,
   ConversationsListInput,
+  ConversationsListOutput,
   ConversationsSearchInput,
+  ConversationsSearchOutput,
   ConversationsStatsInput,
+  ConversationsStatsOutput,
   ConversationsUpdateInput,
+  ConversationsUpdateOutput,
 } from "../schemas/conversations.ts";
 import { type AccessContext, ConversationIndex, type WorkspaceScope } from "./index-cache.ts";
 import { handleExport } from "./tools/export.ts";
@@ -190,15 +199,21 @@ export async function createConversationsSource(
     return { ...summary, preview: capPreview(summary.preview) };
   }
 
-  /** Shared error handler — catches, formats, returns isError result. */
-  function withErrorHandling<I>(
-    fn: (input: I) => Promise<object>,
-  ): (input: I) => Promise<{ content: ReturnType<typeof textContent>; isError: boolean }> {
+  /**
+   * Shared error handler. A success carries the result twice: as JSON text,
+   * which is what the model reads, and as `structuredContent`, which the SDK
+   * checks against the tool's output schema. A throw becomes an `isError`
+   * result naming the message.
+   */
+  function withErrorHandling<I, T>(
+    fn: (input: I) => Promise<T>,
+  ): (input: I) => Promise<ToolSuccessResult<T> | ToolErrorResult> {
     return async (input) => {
       try {
         const result = await fn(input);
         return {
           content: textContent(JSON.stringify(result, null, 2)),
+          structuredContent: result,
           isError: false,
         };
       } catch (err) {
@@ -217,6 +232,7 @@ export async function createConversationsSource(
       description:
         "List conversations in the current workspace, with pagination, sorting, and filtering. Returns conversation metadata (title, timestamps, token counts, preview, and whether a reply is still generating as `active`). Scoped to the workspace you are in — there is no cross-workspace listing, and no workspace argument to pass.",
       inputSchema: ConversationsListInput,
+      outputSchema: ConversationsListOutput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const access = currentAccess();
@@ -239,6 +255,7 @@ export async function createConversationsSource(
       description:
         'Load a conversation by ID — omit `id` for the conversation you are in. Returns metadata plus, by default, the most recent ~20 messages (with the message payload capped to ~30 KB; the full pretty-printed response stays under ~50 KB). Use expand:"metadata" for just the metadata or expand:"full" when you actually need the entire transcript — long conversations can run hundreds of thousands of tokens and full reads are recorded in tool history.',
       inputSchema: ConversationsGetInput,
+      outputSchema: ConversationsGetOutput,
       handler: withErrorHandling(async (get) => {
         const { index } = await getIndex();
         const id = resolveConversationId(get.id);
@@ -250,6 +267,7 @@ export async function createConversationsSource(
       description:
         "Full-text search across message content in the current workspace's conversations. Returns matching conversations with context snippets around each match. Scoped to the workspace you are in — it does not reach other workspaces.",
       inputSchema: ConversationsSearchInput,
+      outputSchema: ConversationsSearchOutput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const access = currentAccess();
@@ -261,6 +279,7 @@ export async function createConversationsSource(
       description:
         "Update a conversation's title. Omit `id` to retitle the conversation you are in.",
       inputSchema: ConversationsUpdateInput,
+      outputSchema: ConversationsUpdateOutput,
       handler: withErrorHandling(async (update) => {
         const { index } = await getIndex();
         const access = currentAccess();
@@ -280,6 +299,7 @@ export async function createConversationsSource(
       description:
         "Fork a conversation at a specific message index, creating a new conversation with messages up to that point. Omit `id` to fork the conversation you are in.",
       inputSchema: ConversationsForkInput,
+      outputSchema: ConversationsForkOutput,
       handler: withErrorHandling(async (fork) => {
         const { index } = await getIndex();
         const access = currentAccess();
@@ -298,6 +318,7 @@ export async function createConversationsSource(
       description:
         "Token usage analytics for the current workspace. Returns total tokens, breakdown by model and skill, and top tools used.",
       inputSchema: ConversationsStatsInput,
+      outputSchema: ConversationsStatsOutput,
       handler: withErrorHandling(async (input) => {
         const { index } = await getIndex();
         const access = currentAccess();
@@ -309,6 +330,7 @@ export async function createConversationsSource(
       description:
         "Export a conversation as markdown or JSON — omit `id` for the conversation you are in. Markdown renders messages as a readable document; JSON returns raw JSONL content as a JSON array.",
       inputSchema: ConversationsExportInput,
+      outputSchema: ConversationsExportOutput,
       handler: withErrorHandling(async (exp) => {
         const { index } = await getIndex();
         return handleExport({ ...exp, id: resolveConversationId(exp.id) }, index, currentAccess());

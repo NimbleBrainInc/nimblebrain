@@ -24,7 +24,7 @@ export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
     period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
     from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "conversation" | "model" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "conversation" | "model" | "turn" | "origin" | "provider">>]>>;
+    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "model" | "conversation" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "model" | "conversation" | "turn" | "origin" | "provider">>]>>;
     stackBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "model" | "origin" | "provider">>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     userId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;

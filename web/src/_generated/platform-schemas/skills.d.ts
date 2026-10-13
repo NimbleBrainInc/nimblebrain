@@ -245,15 +245,15 @@ export declare const SkillsReadOutput: import("@sinclair/typebox").TUnsafe<{
         triggers?: string[] | undefined;
         name: string;
     };
+    content: string;
+    scope: "org" | "workspace" | "user" | "provided";
     source: {
         connector?: string | undefined;
+        uri?: string | undefined;
         path?: string | undefined;
         connectorVersion?: string | undefined;
-        uri?: string | undefined;
     };
-    scope: "org" | "workspace" | "user" | "provided";
     layer: 1 | 3;
-    content: string;
 } | {
     id: string;
     manifest: unknown;
@@ -356,8 +356,8 @@ export type SkillsActivationOutput = Static<typeof SkillsActivationOutput>;
  */
 export declare const SkillsUseOutput: import("@sinclair/typebox").TUnsafe<{
     name: string;
-    scope: string;
     status: "loaded";
+    scope: string;
     tokens: number;
 } | {
     name: string;
