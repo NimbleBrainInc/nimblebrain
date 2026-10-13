@@ -18,6 +18,7 @@ import type { Workspace } from "../../../../src/workspace/types.ts";
 import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
 import { makeIdentity } from "../../../helpers/identity.ts";
 import { stub } from "../../../helpers/stub.ts";
+import { makeWorkspace } from "../../../helpers/test-workspace.ts";
 
 const WS = "ws_005b519ef7efc353";
 const USER = "usr_admin";
@@ -66,14 +67,10 @@ class FakeRuntime {
   seed(role: "admin" | "member", hooks: Record<string, HookRegistration>): void {
     this.workspaces.set(
       WS,
-      stub<Workspace>({
+      makeWorkspace({
         id: WS,
-        name: WS,
         members: [{ userId: USER, role }],
-        connectors: [],
         hooks,
-        createdAt: "",
-        updatedAt: "",
       }),
     );
   }

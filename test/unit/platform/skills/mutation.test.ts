@@ -38,7 +38,7 @@ import type { Workspace } from "../../../../src/workspace/types.ts";
 import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
 import { skillEditPatch } from "../../../../web/src/pages/settings/skill-edit-patch.ts";
 import { stub } from "../../../helpers/stub.ts";
-import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
+import { makeWorkspace, seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 /** The dev user, as the `dev` provider verifies every request: org admin. */
 const DEV_USER: UserIdentity = {
@@ -102,14 +102,7 @@ class FakeRuntime {
   setMember(wsId: string, userId: string, role: "admin" | "member"): void {
     const ws = this.workspaces.get(wsId);
     if (!ws) {
-      this.workspaces.set(wsId, {
-        id: wsId,
-        name: wsId,
-        members: [{ userId, role }],
-        connectors: [],
-        createdAt: "",
-        updatedAt: "",
-      });
+      this.workspaces.set(wsId, makeWorkspace({ id: wsId, members: [{ userId, role }] }));
     } else {
       ws.members = [{ userId, role }];
     }
@@ -1615,14 +1608,14 @@ describe("cross-workspace access — regression", () => {
     runtime.wsId = "ws_00148bca567ef156";
     // Alice is admin in ws_00148bca567ef156. ws_005820c54ca342ad has no Alice membership.
     runtime.setMember("ws_00148bca567ef156", "u_alice", "admin");
-    runtime.workspaces.set("ws_005820c54ca342ad", {
-      id: "ws_005820c54ca342ad",
-      name: "Other",
-      members: [{ userId: "u_carol", role: "admin" }],
-      connectors: [],
-      createdAt: "",
-      updatedAt: "",
-    });
+    runtime.workspaces.set(
+      "ws_005820c54ca342ad",
+      makeWorkspace({
+        id: "ws_005820c54ca342ad",
+        name: "Other",
+        members: [{ userId: "u_carol", role: "admin" }],
+      }),
+    );
     // Pre-stage a skill under ws_005820c54ca342ad, on disk.
     const otherDir = join(workDir, "workspaces", "ws_005820c54ca342ad", "skills");
     mkdirSync(otherDir, { recursive: true });
