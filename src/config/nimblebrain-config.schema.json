@@ -501,7 +501,7 @@
       "additionalProperties": false
     },
     "brand": {
-      "description": "White-label branding: the product name, logos, accent colour and typefaces a tenant's users see in place of NimbleBrain's. Every key is optional, and an absent block is NimbleBrain. The runtime rejects at load a palette that fails any WCAG AA contrast pair the canonical palette is held to. Served unauthenticated at GET /v1/brand.js. See https://docs.nimblebrain.ai/config/branding/.",
+      "description": "White-label branding: the product name, logos, accent color and typefaces a tenant's users see in place of NimbleBrain's. Every key is optional, and an absent block is NimbleBrain. The runtime rejects at load a palette that fails any WCAG AA contrast pair the canonical palette is held to. Served unauthenticated at GET /v1/brand.js. See https://docs.nimblebrain.ai/config/branding/.",
       "type": "object",
       "properties": {
         "name": {
@@ -514,7 +514,7 @@
         "defaultTheme": {
           "type": "string",
           "enum": ["light", "dark", "system"],
-          "description": "The colour theme a person starts in until they choose one. \"system\" follows the operating system. Default: \"system\"."
+          "description": "The color theme a person starts in until they choose one. \"system\" follows the operating system. Default: \"system\"."
         },
         "homepageUrl": {
           "$ref": "#/$defs/brandUrl",
@@ -549,15 +549,23 @@
         },
         "colors": {
           "type": "object",
-          "description": "Accent colours, each a [light, dark] pair of #rrggbb values. primary-foreground is derived from primary as white or black, whichever reads better.",
+          "description": "Color roles, each a [light, dark] pair of #rrggbb values. Each role derives a family of tokens; the merged palette must clear WCAG AA in both modes.",
           "properties": {
             "primary": {
               "$ref": "#/$defs/brandColorPair",
-              "description": "The accent: primary actions, links, accent text."
+              "description": "The accent: primary actions, links, accent text. Its hue also tints the neutrals (text, borders, gray surfaces) at their canonical lightness."
             },
             "ring": {
               "$ref": "#/$defs/brandColorPair",
               "description": "The focus ring. Usually the same value as primary."
+            },
+            "highlight": {
+              "$ref": "#/$defs/brandColorPair",
+              "description": "The fill of the active sidebar row, under white or black text, whichever reads better."
+            },
+            "sidebar": {
+              "$ref": "#/$defs/brandColorPair",
+              "description": "Light: the light-mode sidebar ground; a dark color renders the sidebar under the dark palette. Dark: the deepest dark-mode surface, from which the page, card, muted and border surfaces are derived as lighter steps."
             }
           },
           "additionalProperties": false

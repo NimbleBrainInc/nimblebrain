@@ -20,6 +20,8 @@ export const ACME_BRAND: Brand = {
   colors: {
     primary: ["#B53707", "#FF8A4C"],
     ring: ["#B53707", "#FF8A4C"],
+    highlight: ["#FFC94A", "#FFC94A"],
+    sidebar: ["#2A1710", "#1C0F0A"],
   },
   fonts: {
     heading: {

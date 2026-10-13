@@ -35,13 +35,24 @@ export type ColorToken = keyof typeof colors;
 export type ExtColorToken = keyof typeof extOnlyColors;
 export type TokenName = ColorToken | ExtColorToken;
 
-/** The colour half of a palette: the shape `palette.ts` exports and a merged brand returns. */
+/**
+ * The light-mode sidebar of a brand whose sidebar ground is dark: the sidebar
+ * renders under the dark palette, on this ground, with these hover, border and
+ * text colors.
+ */
+export type SidebarIsland = Record<
+  "sidebar" | "sidebar-hover" | "sidebar-border" | "sidebar-foreground",
+  string
+>;
+
+/** The color half of a palette: the shape `palette.ts` exports and a merged brand returns. */
 export interface ColorPalette {
   colors: Record<ColorToken, Pair>;
   extOnlyColors: Record<ExtColorToken, Pair>;
+  sidebarIsland?: SidebarIsland;
 }
 
-/** Read one token for a mode from either colour map. */
+/** Read one token for a mode from either color map. */
 export function tokenValue(palette: ColorPalette, name: TokenName, mode: Mode): string {
   const pair =
     (palette.colors as Record<string, Pair>)[name] ??
@@ -76,7 +87,7 @@ export const TEXT_PAIRS: readonly [fg: TokenName, bg: TokenName, where: string][
   ["muted-foreground", "background", "lead paragraphs"],
   ["muted-foreground", "card", "row sub-lines"],
   ["muted-foreground", "sidebar", "sidebar nav rows"],
-  ["foreground", "sidebar", "the active sidebar nav row"],
+  ["foreground", "sidebar", "hovered and open sidebar rows"],
   // `text-tertiary` and `background-tertiary` are ext-apps-only: the shell's
   // `:root` never emits them, so the only surface they meet is an embedded
   // iframe, where both are injected together.
@@ -134,12 +145,12 @@ export const TEXT_PAIRS: readonly [fg: TokenName, bg: TokenName, where: string][
  *
  * That holds for the *supported* path only. Tailwind compiles `bg-<hue>/N` to
  * `color-mix()`, and browsers failing its `@supports` test get the unguarded
- * fallback — the first operand, opaque — so the fill becomes the text colour:
+ * fallback — the first operand, opaque — so the fill becomes the text color:
  * 1.000:1, whatever is asserted here. Tracked in #781.
  *
  * Resting states only, and the dark figure is deliberately stricter than what
  * renders: only `destructive` declares a `dark:bg-destructive/20`, so the other
- * four stay at /10 in dark. Deepening a tint toward its own text colour always
+ * four stay at /10 in dark. Deepening a tint toward its own text color always
  * lowers contrast, so asserting /20 for all five demands more than any of them
  * renders. Hover states (/20 light, /30 dark) are not asserted: deepening a tint
  * of the text's own hue moves the fill toward the text by construction, and
@@ -166,7 +177,7 @@ export const TRANSLUCENT_TINTS: readonly [tint: ColorToken, source: ColorToken][
 
 /**
  * Every `text-<token>/N` combination in the shell, with the ground(s) it is
- * painted on. Tailwind composites a text colour's `/N` toward whatever is
+ * painted on. Tailwind composites a text color's `/N` toward whatever is
  * behind it, so the rendered ratio is not the token's. `contrast.test.ts` scans
  * the web source for these classes, so a new one fails until it is recorded
  * here, and recording it computes the ratio.
@@ -177,7 +188,7 @@ export const ALPHA_TEXT: readonly [token: TokenName, pct: number, grounds: Token
   ["foreground", 80, ["background", "card"]],
 ];
 
-/** One contrast assertion, resolved to concrete colours for a mode. */
+/** One contrast assertion, resolved to concrete colors for a mode. */
 export interface ContrastCheck {
   /** Human-readable: which tokens, composited how, and where it renders. */
   name: string;
@@ -219,8 +230,7 @@ export function contrastChecks(palette: ColorPalette, mode: Mode): ContrastCheck
   );
 
   // The sidebar's own tint family. `bg-sidebar-foreground/N` over `bg-sidebar`
-  // carries hover and the active row throughout the shell, and is a tint of the
-  // text colour itself.
+  // carries hover throughout the shell, and is a tint of the text color itself.
   const sidebar = t("sidebar");
   const sidebarText = t("sidebar-foreground");
   add(
@@ -229,10 +239,33 @@ export function contrastChecks(palette: ColorPalette, mode: Mode): ContrastCheck
     over(sidebarText, sidebar, 5),
   );
   add(
-    "sidebar-foreground on sidebar-foreground/10 (active)",
+    "sidebar-foreground on sidebar-foreground/10 (sidebar icon buttons, hover)",
     sidebarText,
     over(sidebarText, sidebar, 10),
   );
+
+  // A dark light-mode sidebar renders its rows under the dark palette, on the
+  // island's own ground.
+  const island = palette.sidebarIsland;
+  if (island && mode === "light") {
+    const d = (name: TokenName) => tokenValue(palette, name, "dark");
+    add(
+      "island sidebar-foreground on island sidebar",
+      island["sidebar-foreground"],
+      island.sidebar,
+    );
+    add(
+      "island sidebar-foreground on island hover",
+      island["sidebar-foreground"],
+      island["sidebar-hover"],
+    );
+    add(
+      "dark foreground on island sidebar (hovered and open rows)",
+      d("foreground"),
+      island.sidebar,
+    );
+    add("dark muted-foreground on island sidebar", d("muted-foreground"), island.sidebar);
+  }
 
   // `hover:bg-primary/90` composited over the page ground, under its label.
   add(

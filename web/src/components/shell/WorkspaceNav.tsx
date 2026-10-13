@@ -279,7 +279,7 @@ const rowClass = (isActive: boolean, collapsed: boolean) =>
     "flex items-center rounded-sm text-sm transition-colors",
     collapsed ? "size-9 justify-center" : "gap-2.5 px-2 min-h-8",
     isActive
-      ? "bg-sidebar-foreground/10 font-medium text-foreground"
+      ? "bg-sidebar-active font-medium text-sidebar-active-foreground"
       : "font-normal hover:bg-sidebar-foreground/5 hover:text-foreground",
   );
 
