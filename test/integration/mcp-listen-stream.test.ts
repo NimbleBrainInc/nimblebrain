@@ -108,8 +108,8 @@ const HELD_MS = 1_100;
 
 /** The filter of the stream the source currently holds, as the server acknowledged it. */
 function liveFilter(source: McpSource): unknown {
-  return (source as unknown as { subscription: { honoredFilter: unknown } | null }).subscription
-    ?.honoredFilter;
+  // biome-ignore lint/complexity/useLiteralKeys: subscription is private; bracket access is TypeScript's typed path to it
+  return source["subscription"]?.honoredFilter;
 }
 
 describe("the listen stream on a 2026-07-28 connection", () => {

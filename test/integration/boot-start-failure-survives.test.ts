@@ -23,6 +23,7 @@ import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { startWorkspaceConnectors } from "../../src/runtime/workspace-runtime.ts";
+import { McpSource } from "../../src/tools/mcp-source.ts";
 import type { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
@@ -45,10 +46,9 @@ function unreachableConnector(serverName: string): ConnectorRef {
     transport: { type: "streamable-http", auth: { type: "bearer", token: "test-token" } },
     oauthScope: "workspace",
     ui: {
-      name: "Unreachable",
       placements: [{ slot: "sidebar.apps", resourceUri: "ui://unreachable/main", route: "u" }],
     },
-  } as unknown as ConnectorRef;
+  };
 }
 
 beforeEach(() => {
@@ -62,11 +62,11 @@ afterEach(() => {
 
 /**
  * `hasLiveSource` is private — reached deliberately to document the contrast that
- * justifies `hasEstablishedSource`. `tsconfig` does not cover `test/`, so a bare
- * call would compile by omission rather than by intent.
+ * justifies `hasEstablishedSource`.
  */
 function liveness(registry: ToolRegistry, name: string): boolean {
-  return (registry as unknown as { hasLiveSource: (n: string) => boolean }).hasLiveSource(name);
+  // biome-ignore lint/complexity/useLiteralKeys: hasLiveSource is private; bracket access is TypeScript's typed path to it
+  return registry["hasLiveSource"](name);
 }
 
 describe("startWorkspaceConnectors — unreachable URL connector at boot", () => {
@@ -148,7 +148,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
           serverName: "no-tokens",
           transport: { type: "streamable-http" },
           oauthScope: "workspace",
-        } as unknown as ConnectorRef,
+        },
       ],
     });
 
@@ -272,6 +272,8 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     // Same object, still registered, still not deliberately stopped.
     expect(registry?.getSource("still-down")).toBe(retained);
     expect(registry?.hasSource("still-down")).toBe(true);
-    expect((retained as unknown as { isStopped: () => boolean }).isStopped()).toBe(false);
+    if (!(retained instanceof McpSource))
+      throw new Error("the retained source is not an McpSource");
+    expect(retained.isStopped()).toBe(false);
   }, 30_000);
 });
