@@ -1,9 +1,9 @@
 import { Check, Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type {
-  HookWebhook as Webhook,
   HooksListOutput,
   HooksRotateOutput,
+  HookWebhook as Webhook,
 } from "../../_generated/platform-schemas/hooks";
 import { callTool } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
