@@ -3,9 +3,11 @@
  *
  * AuthKit keeps its own session. Left open, the next sign-in resumes it without
  * asking for credentials, so signing out neither protects a shared machine nor
- * lets someone switch accounts. `endSession` revokes the session the token's
- * `sid` names: from an expired token too, since sign-out often follows one, but
- * never from a token whose signature does not verify.
+ * lets someone switch accounts. `endSession` revokes the session the access
+ * token's `sid` names: from an expired token too, since sign-out often follows
+ * one, but never from a token whose signature does not verify. With no access
+ * token, as from a tab idle past the cookie's hour, it finds the session
+ * through `nb_refresh`.
  */
 
 import { beforeAll, describe, expect, it } from "bun:test";
@@ -73,8 +75,24 @@ beforeAll(async () => {
   foreignKey = await generateRSAKeyPair("workos-key-1");
 });
 
-/** A provider whose JWKS is `workosKey` and whose revocations are recorded. */
-function createProvider(): { provider: WorkosIdentityProvider; revoked: string[] } {
+type RefreshResult = { accessToken: string; refreshToken: string };
+
+/** What WorkOS answers a refresh token it no longer honours. */
+async function rejectRefresh(): Promise<RefreshResult> {
+  throw Object.assign(new Error("Refresh token is invalid"), { error: "invalid_grant" });
+}
+
+/**
+ * A provider whose JWKS is `workosKey` and whose revocations are recorded.
+ * `refresh` answers `authenticateWithRefreshToken`; by default the refresh
+ * token is dead, so only the access token can name a session.
+ */
+function createProvider(
+  refresh: (refreshToken: string) => Promise<RefreshResult> = rejectRefresh,
+): {
+  provider: WorkosIdentityProvider;
+  revoked: string[];
+} {
   const provider = new WorkosIdentityProvider(CONFIG, undefined);
   const revoked: string[] = [];
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
@@ -82,6 +100,8 @@ function createProvider(): { provider: WorkosIdentityProvider; revoked: string[]
     revokeSession: async ({ sessionId }: { sessionId: string }) => {
       revoked.push(sessionId);
     },
+    authenticateWithRefreshToken: ({ refreshToken }: { refreshToken: string }) =>
+      refresh(refreshToken),
   };
   provider.fetcher = fakeFetch(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -111,11 +131,15 @@ async function sessionToken(
   );
 }
 
-function logoutRequest(token: string): Request {
+function logoutRequest(cookie: string): Request {
   return new Request("http://localhost:27247/v1/auth/logout", {
     method: "POST",
-    headers: { cookie: `nb_session=${token}; nb_refresh=rt_live` },
+    headers: { cookie },
   });
+}
+
+function withAccessToken(token: string): Request {
+  return logoutRequest(`nb_session=${token}; nb_refresh=rt_live`);
 }
 
 // ── endSession ──────────────────────────────────────────────────────
@@ -123,7 +147,7 @@ function logoutRequest(token: string): Request {
 describe("WorkosIdentityProvider.endSession", () => {
   it("revokes the session the token names", async () => {
     const { provider, revoked } = createProvider();
-    await provider.endSession(logoutRequest(await sessionToken({ sid: "session_abc" })));
+    await provider.endSession(withAccessToken(await sessionToken({ sid: "session_abc" })));
     expect(revoked).toEqual(["session_abc"]);
   });
 
@@ -131,14 +155,14 @@ describe("WorkosIdentityProvider.endSession", () => {
     const { provider, revoked } = createProvider();
     const pastSec = Math.floor(Date.now() / 1000) - 7200;
     const token = await sessionToken({ sid: "session_lapsed", iat: pastSec, exp: pastSec + 300 });
-    await provider.endSession(logoutRequest(token));
+    await provider.endSession(withAccessToken(token));
     expect(revoked).toEqual(["session_lapsed"]);
   });
 
   it("does not revoke a session a forged token names", async () => {
     const { provider, revoked } = createProvider();
     const forged = await sessionToken({ sid: "session_victim" }, foreignKey);
-    await provider.endSession(logoutRequest(forged));
+    await provider.endSession(withAccessToken(forged));
     expect(revoked).toEqual([]);
   });
 
@@ -147,8 +171,28 @@ describe("WorkosIdentityProvider.endSession", () => {
     await provider.endSession(
       new Request("http://localhost:27247/v1/auth/logout", { method: "POST" }),
     );
-    await provider.endSession(logoutRequest(await sessionToken({})));
-    await provider.endSession(logoutRequest("not-a-jwt"));
+    await provider.endSession(withAccessToken(await sessionToken({})));
+    await provider.endSession(withAccessToken("not-a-jwt"));
+    expect(revoked).toEqual([]);
+  });
+
+  it("revokes the session behind the refresh token when the access token is gone", async () => {
+    const minted = await sessionToken({ sid: "session_idle" });
+    const asked: string[] = [];
+    const { provider, revoked } = createProvider(async (refreshToken) => {
+      asked.push(refreshToken);
+      return { accessToken: minted, refreshToken: "rt_rotated" };
+    });
+    await provider.endSession(logoutRequest("nb_refresh=rt_idle"));
+    expect(asked).toEqual(["rt_idle"]);
+    expect(revoked).toEqual(["session_idle"]);
+  });
+
+  it("throws when the refresh hop cannot reach WorkOS", async () => {
+    const { provider, revoked } = createProvider(async () => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(provider.endSession(logoutRequest("nb_refresh=rt_idle"))).rejects.toThrow();
     expect(revoked).toEqual([]);
   });
 });
