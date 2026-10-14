@@ -20,14 +20,14 @@ export declare const NOTIFICATION_LIST_DEFAULT_LIMIT = 20;
 export declare const NOTIFICATION_LIST_MAX_LIMIT = 100;
 export declare const NotificationsListInput: import("@sinclair/typebox").TObject<{
     unreadOnly: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     after: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     before: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     ids: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     query: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
+    order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"asc" | "desc">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
 export type NotificationsListInput = Static<typeof NotificationsListInput>;
@@ -94,10 +94,10 @@ export declare const DeliveryRecord: import("@sinclair/typebox").TObject<{
     /** Position in the route's `deliver` list. Part of the row's identity. */
     index: import("@sinclair/typebox").TNumber;
     /** Which kind of target `target` names. */
-    kind: import("@sinclair/typebox").TUnsafe<"tool" | "agent">;
+    kind: import("@sinclair/typebox").TUnsafe<"agent" | "tool">;
     attempts: import("@sinclair/typebox").TNumber;
     lastError: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    outcome: import("@sinclair/typebox").TUnsafe<"pending" | "delivered" | "deferred" | "denied" | "skipped" | "failed">;
+    outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
     /**
      * Why, for a non-`delivered` outcome — the dispatch's own classification
      * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
@@ -140,7 +140,7 @@ export declare const NotificationView: import("@sinclair/typebox").TObject<{
     /** The server's own event name. */
     name: import("@sinclair/typebox").TString;
     /** The level the emitting connector chose. */
-    level: import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">;
+    level: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
     /**
      * The level routes were matched against, when the workspace's ceiling for
      * this source held it below {@link level}. Absent when nothing was clamped,
@@ -152,7 +152,7 @@ export declare const NotificationView: import("@sinclair/typebox").TObject<{
      * what explains why one did or did not fire. Lowering a ceiling afterwards
      * does not rewrite history.
      */
-    effectiveLevel: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+    effectiveLevel: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
     title: import("@sinclair/typebox").TString;
     subject: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -187,10 +187,10 @@ export declare const NotificationView: import("@sinclair/typebox").TObject<{
         /** Position in the route's `deliver` list. Part of the row's identity. */
         index: import("@sinclair/typebox").TNumber;
         /** Which kind of target `target` names. */
-        kind: import("@sinclair/typebox").TUnsafe<"tool" | "agent">;
+        kind: import("@sinclair/typebox").TUnsafe<"agent" | "tool">;
         attempts: import("@sinclair/typebox").TNumber;
         lastError: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        outcome: import("@sinclair/typebox").TUnsafe<"pending" | "delivered" | "deferred" | "denied" | "skipped" | "failed">;
+        outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
         /**
          * Why, for a non-`delivered` outcome — the dispatch's own classification
          * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
@@ -223,7 +223,7 @@ export declare const NotificationsListOutput: import("@sinclair/typebox").TObjec
         /** The server's own event name. */
         name: import("@sinclair/typebox").TString;
         /** The level the emitting connector chose. */
-        level: import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">;
+        level: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
         /**
          * The level routes were matched against, when the workspace's ceiling for
          * this source held it below {@link level}. Absent when nothing was clamped,
@@ -235,7 +235,7 @@ export declare const NotificationsListOutput: import("@sinclair/typebox").TObjec
          * what explains why one did or did not fire. Lowering a ceiling afterwards
          * does not rewrite history.
          */
-        effectiveLevel: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+        effectiveLevel: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
         title: import("@sinclair/typebox").TString;
         subject: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -270,10 +270,10 @@ export declare const NotificationsListOutput: import("@sinclair/typebox").TObjec
             /** Position in the route's `deliver` list. Part of the row's identity. */
             index: import("@sinclair/typebox").TNumber;
             /** Which kind of target `target` names. */
-            kind: import("@sinclair/typebox").TUnsafe<"tool" | "agent">;
+            kind: import("@sinclair/typebox").TUnsafe<"agent" | "tool">;
             attempts: import("@sinclair/typebox").TNumber;
             lastError: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            outcome: import("@sinclair/typebox").TUnsafe<"pending" | "delivered" | "deferred" | "denied" | "skipped" | "failed">;
+            outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
             /**
              * Why, for a non-`delivered` outcome — the dispatch's own classification
              * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
@@ -355,7 +355,7 @@ export type NotificationPlaceholder = (typeof NOTIFICATION_PLACEHOLDERS)[number]
 export declare const NotificationRouteMatch: import("@sinclair/typebox").TObject<{
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
 }>;
 export type NotificationRouteMatch = Static<typeof NotificationRouteMatch>;
 export declare const NotificationDeliverTarget: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
@@ -395,7 +395,7 @@ export declare const NotificationRouteInput: import("@sinclair/typebox").TObject
     match: import("@sinclair/typebox").TObject<{
         source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
     }>;
     deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
         kind: import("@sinclair/typebox").TLiteral<"tool">;
@@ -413,7 +413,7 @@ export declare const NotificationsSetRoutesInput: import("@sinclair/typebox").TO
         match: import("@sinclair/typebox").TObject<{
             source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
         }>;
         deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
             kind: import("@sinclair/typebox").TLiteral<"tool">;
@@ -428,7 +428,7 @@ export declare const NotificationsSetRoutesInput: import("@sinclair/typebox").TO
 export type NotificationsSetRoutesInput = Static<typeof NotificationsSetRoutesInput>;
 export declare const NotificationsSetSourceLevelInput: import("@sinclair/typebox").TObject<{
     source: import("@sinclair/typebox").TString;
-    maxLevel: import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">;
+    maxLevel: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
 }>;
 export type NotificationsSetSourceLevelInput = Static<typeof NotificationsSetSourceLevelInput>;
 export declare const NotificationsSettingsInput: import("@sinclair/typebox").TObject<{}>;
@@ -452,7 +452,7 @@ export declare const NotificationsSendTestOutput: import("@sinclair/typebox").TO
     /** The source it was attributed to, and whose ceiling therefore applied. */
     source: import("@sinclair/typebox").TString;
     /** The level the item was stored at, after the ceiling clamped it. */
-    effectiveLevel: import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">;
+    effectiveLevel: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
     /** Whether the route matched the test item at all. */
     matched: import("@sinclair/typebox").TBoolean;
     /** Why not, when `matched` is false — operator-facing prose. */
@@ -466,10 +466,10 @@ export declare const NotificationsSendTestOutput: import("@sinclair/typebox").TO
         /** Position in the route's `deliver` list. Part of the row's identity. */
         index: import("@sinclair/typebox").TNumber;
         /** Which kind of target `target` names. */
-        kind: import("@sinclair/typebox").TUnsafe<"tool" | "agent">;
+        kind: import("@sinclair/typebox").TUnsafe<"agent" | "tool">;
         attempts: import("@sinclair/typebox").TNumber;
         lastError: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        outcome: import("@sinclair/typebox").TUnsafe<"pending" | "delivered" | "deferred" | "denied" | "skipped" | "failed">;
+        outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
         /**
          * Why, for a non-`delivered` outcome — the dispatch's own classification
          * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
@@ -499,7 +499,7 @@ export declare const NotificationSourceView: import("@sinclair/typebox").TObject
     /** What the connector says its outbox carries. Operator-facing prose. */
     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /** The effective ceiling: what an admin set, or {@link DEFAULT_SOURCE_MAX_LEVEL}. */
-    maxLevel: import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">;
+    maxLevel: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
     /** False while the source is still at the default — nobody has raised it. */
     configured: import("@sinclair/typebox").TBoolean;
 }>;
@@ -533,7 +533,7 @@ export declare const NotificationRouteView: import("@sinclair/typebox").TObject<
     match: import("@sinclair/typebox").TObject<{
         source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
     }>;
     deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<{
         input?: {
@@ -579,7 +579,7 @@ export declare const NotificationsSettingsOutput: import("@sinclair/typebox").TO
         /** What the connector says its outbox carries. Operator-facing prose. */
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         /** The effective ceiling: what an admin set, or {@link DEFAULT_SOURCE_MAX_LEVEL}. */
-        maxLevel: import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">;
+        maxLevel: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
         /** False while the source is still at the default — nobody has raised it. */
         configured: import("@sinclair/typebox").TBoolean;
     }>>;
@@ -590,7 +590,7 @@ export declare const NotificationsSettingsOutput: import("@sinclair/typebox").TO
         match: import("@sinclair/typebox").TObject<{
             source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
         }>;
         deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<{
             input?: {

@@ -207,7 +207,7 @@ export type TracedLayerView = Static<typeof TracedLayerView>;
  * `windowTokens`.
  */
 export declare const ComposeEffectiveContextOutput: import("@sinclair/typebox").TObject<{
-    mode: import("@sinclair/typebox").TUnsafe<"live" | "historical">;
+    mode: import("@sinclair/typebox").TUnsafe<"historical" | "live">;
     conversationId: import("@sinclair/typebox").TString;
     runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /**
