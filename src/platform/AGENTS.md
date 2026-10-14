@@ -295,17 +295,10 @@ Rules for an output schema:
 - **The engine never sends it to the model.** The model reads `content`, so
   `content` must carry what the model needs (`renderRead` in the skills app).
 
-`test/unit/platform/schema-shape.test.ts` checks the object root and the open
-shape on every published output schema, and requires one on every tool of a
-source marked `typedOutputs`. A unit test sees the SDK's validation only after
-its client has fetched `tools/list`, which `McpSource.tools()` does; the skills
-and files fixtures call it after `start()` for that reason.
-
-The skills and files apps declare their outputs this way. The other apps
-declare type-only `XxxOutput` exports in `schemas/` and annotate their
-handlers with them; each moves onto output schemas in its own change, and is
-then marked `typedOutputs`. Until then, the type-only export is the handler's
-annotated return type, never `object`.
+`test/unit/platform/schema-shape.test.ts` requires an output schema on every
+platform tool, and checks its object root and open shape. A unit test sees the
+SDK's validation only after its client has fetched `tools/list`, which
+`McpSource.tools()` does, so an app's test fixture calls it after `start()`.
 
 ### Consumers import the named type
 
@@ -393,8 +386,7 @@ passed, production stayed broken. Match the production type strictly.
 3. **Define `XxxOutput`** as a TypeBox schema in the same
    `schemas/<source>.ts` file, with `type XxxOutput = Static<typeof XxxOutput>`
    beside it (§2.1). An object root, open, and `ObjectUnion` for a result with
-   several shapes. In an app not yet on output schemas, a type-only
-   `XxxOutput` export.
+   several shapes.
 4. **Write the handler.** Register it with `typedTool`, passing `inputSchema`
    and `outputSchema`, so its input is the input schema's static type and each
    success result is checked against the output schema's. No `: object`.
@@ -421,8 +413,8 @@ update by grep is the discipline; the type system is the safety net.
 - **Lint**: `test/unit/platform/schema-shape.test.ts` walks every
   source's `tools/list`, the core `nb` tools included, and rejects bare
   object/array shapes, `clear<Field>` flags, and a `null` inside an `enum`.
-  On the output side it rejects a non-object root and `additionalProperties:
-  false`, and a missing output schema on a `typedOutputs` source.
+  On the output side it rejects a missing output schema on a platform tool,
+  a non-object root, and `additionalProperties: false`.
 - **Type system**: each handler's input is `Static<typeof XxxInput>` of the
   schema it is registered with (`typedTool`), so the schema and the type
   cannot drift.
@@ -431,11 +423,6 @@ update by grep is the discipline; the type system is the safety net.
   so consumer drift, tests included, surfaces at compile.
 - **Runtime, output side (§2.1)**: the SDK client validates each success result
   against the published output schema, so a drifted handler fails its call.
-- **Lint, output side (§2.1)**: the Biome plugin
-  `biome-plugins/platform-object-return.grit` (run by `bun run lint`) fails on
-  any function under `src/platform/` declared to return `object` or
-  `Promise<object>`. Rule doc: `CODE_STYLE.md`, "Platform tool handlers return
-  a named output type".
 - **Code review**: section 3 (anti-patterns) — flag in PRs explicitly.
 
 If you're tempted to violate any of section 1, ask whether the underlying
