@@ -150,15 +150,16 @@ function makeRuntime(): Runtime {
 /** Run a tool the way a chat does — with an ambient conversation in scope. */
 function inChat(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(
-    { identity: { id: OWNER_ID } as never, workspaceId: WS_ID, conversationId: CURRENT_ID },
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID, conversationId: CURRENT_ID },
     () => source.execute(tool, args),
   );
 }
 
 /** Run a tool the way a REST or `/mcp` caller does — no conversation in scope. */
 function outsideChat(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
-  return runWithRequestContext({ identity: { id: OWNER_ID } as never, workspaceId: WS_ID }, () =>
-    source.execute(tool, args),
+  return runWithRequestContext(
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID },
+    () => source.execute(tool, args),
   );
 }
 
@@ -170,7 +171,7 @@ function outsideChat(tool: string, args: Record<string, unknown>): Promise<ToolR
 function inTaskRun(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(
     {
-      identity: { id: OWNER_ID } as never,
+      identity: makeIdentity({ id: OWNER_ID }),
       workspaceId: WS_ID,
       runId: RUN_ID,
       unattended: true,
@@ -191,7 +192,7 @@ function withRunIdInConversationField(
 ): Promise<ToolResult> {
   return runWithRequestContext(
     {
-      identity: { id: OWNER_ID } as never,
+      identity: makeIdentity({ id: OWNER_ID }),
       workspaceId: WS_ID,
       conversationId: RUN_ID,
       unattended: true,

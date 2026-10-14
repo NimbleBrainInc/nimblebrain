@@ -221,7 +221,7 @@ describe("a registration that predates delivery ids", () => {
     // record; the page has to say the same thing, or an admin pastes a dead
     // address into a vendor console and gets no error from anyone.
     const { deliveryId: _dropped, ...stale } = reg();
-    runtime.seed("admin", { "acme-billing-mcp:acme": stale as never });
+    runtime.seed("admin", { "acme-billing-mcp:acme": stale });
     const webhooks = (await list()).webhooks;
     expect(webhooks[0]?.url).toBeNull();
     expect(JSON.stringify(webhooks)).not.toContain("undefined");
@@ -288,7 +288,7 @@ describe("a result carries the same object as text and as structured content", (
       }),
       "acme-billing-mcp/legacy": (() => {
         const { deliveryId: _dropped, ...stale } = reg({ vendor: "legacy" });
-        return stale as never;
+        return stale;
       })(),
     });
     const res = await source.execute("list_webhooks", {});

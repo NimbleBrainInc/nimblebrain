@@ -73,7 +73,7 @@ function makeRuntime(): Runtime {
 
 async function list(): Promise<Array<{ id: string; active?: boolean }>> {
   const result: ToolResult = await runWithRequestContext(
-    { identity: { id: OWNER_ID } as never, workspaceId: WS_ID },
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID },
     () => source.execute("list", {}),
   );
   const first = result.content[0];

@@ -324,12 +324,12 @@ describe("compactConversationMessages", () => {
   test("no-op below threshold: same reference, no event, model never called", async () => {
     const msgs = conversation(2, 40);
     let called = false;
-    const model = {
+    const model = stub<LanguageModelV4>({
       doGenerate: async () => {
         called = true;
-        return { content: [] };
+        return generated("");
       },
-    } as never;
+    });
     const events: HistoryCompactedEvent[] = [];
     const out = await compactConversationMessages(model, msgs, {
       budget: 100_000,
@@ -343,11 +343,11 @@ describe("compactConversationMessages", () => {
 
   test("best-effort: a summarizer failure falls back to full history, no event", async () => {
     const msgs = conversation(40, 800);
-    const model = {
+    const model = stub<LanguageModelV4>({
       doGenerate: async () => {
         throw new Error("model boom");
       },
-    } as never;
+    });
     const events: HistoryCompactedEvent[] = [];
     const out = await compactConversationMessages(model, msgs, {
       budget: 5000,

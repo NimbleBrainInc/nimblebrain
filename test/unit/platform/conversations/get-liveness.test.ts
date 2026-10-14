@@ -94,8 +94,9 @@ function makeRuntime(): Runtime {
 }
 
 function exec(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
-  return runWithRequestContext({ identity: { id: OWNER_ID } as never, workspaceId: WS_ID }, () =>
-    source.execute(tool, args),
+  return runWithRequestContext(
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID },
+    () => source.execute(tool, args),
   );
 }
 

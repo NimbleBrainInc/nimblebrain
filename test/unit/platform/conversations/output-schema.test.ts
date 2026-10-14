@@ -202,7 +202,7 @@ function makeRuntime(): Runtime {
 /** Run a tool and return its structured result, failing on an error result. */
 async function call<T>(tool: string, args: Record<string, unknown>): Promise<T> {
   const result: ToolResult = await runWithRequestContext(
-    { identity: { id: OWNER_ID } as never, workspaceId: WS_ID },
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID },
     () => source.execute(tool, args),
   );
   const first = result.content[0];

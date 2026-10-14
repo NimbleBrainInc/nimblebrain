@@ -201,7 +201,7 @@ function sc(result: { structuredContent?: unknown }): {
     identity?: Record<string, unknown>;
   }>;
 } {
-  return (result.structuredContent ?? {}) as never;
+  return result.structuredContent ?? {};
 }
 
 describe("manage_connectors — personal-connector grants", () => {

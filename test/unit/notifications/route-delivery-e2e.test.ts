@@ -245,7 +245,7 @@ describe("a connector's fact reaching a Slack channel", () => {
           },
         ],
       },
-    } as never);
+    });
 
     const fixture = await outbox();
     const { poller } = loop(targetFor(fixture));
@@ -320,7 +320,7 @@ describe("a connector's fact reaching a Slack channel", () => {
           },
         ],
       },
-    } as never);
+    });
 
     const fixture = await outbox();
     const { poller } = loop(targetFor(fixture));
@@ -351,7 +351,7 @@ describe("a connector's fact reaching a Slack channel", () => {
           },
         ],
       },
-    } as never);
+    });
 
     const fixture = await outbox();
     const { poller } = loop(targetFor(fixture));
@@ -385,7 +385,7 @@ describe("a connector's fact reaching a Slack channel", () => {
           },
         ],
       },
-    } as never);
+    });
 
     const fixture = await outbox();
     const { poller } = loop(targetFor(fixture));
@@ -405,7 +405,7 @@ describe("a connector's fact reaching a Slack channel", () => {
         ...(ws?.notifications as Record<string, unknown>),
         cursors: undefined,
       },
-    } as never);
+    });
     clock += PAST_ANY_BACKOFF_MS;
     await sweepAndSettle(poller);
     clock += PAST_ANY_BACKOFF_MS;
@@ -505,7 +505,7 @@ describe("a connector's fact reaching a task", () => {
           },
         ],
       },
-    } as never);
+    });
   }
 
   /**
@@ -612,7 +612,7 @@ describe("a connector's fact reaching a task", () => {
           },
         ],
       },
-    } as never);
+    });
 
     const fixture = await outbox();
     const { poller } = loop(targetFor(fixture), trigger());

@@ -4,6 +4,7 @@ import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { StoredMessage } from "../../../src/conversation/types.ts";
 import { rehydrateUserResources } from "../../../src/files/rehydrate.ts";
 import type { FileStore } from "../../../src/files/store.ts";
+import type { FileEntry } from "../../../src/files/types.ts";
 import { fakeFetch } from "../../helpers/fake-fetch.ts";
 import { stub } from "../../helpers/stub.ts";
 
@@ -19,13 +20,16 @@ import { stub } from "../../helpers/stub.ts";
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 function storeWith(id: string, data: Buffer, mimeType: string, filename: string): FileStore {
-  const entry = {
+  const entry: FileEntry = {
     id,
     filename,
     mimeType,
     size: data.length,
     tags: [],
+    source: "manual",
+    conversationId: null,
     createdAt: "2026-05-07T00:00:00.000Z",
+    description: null,
   };
   return stub<FileStore>({
     saveFile: () => Promise.reject(new Error("not used")),
@@ -36,14 +40,19 @@ function storeWith(id: string, data: Buffer, mimeType: string, filename: string)
     resolveFilePath: () => Promise.reject(new Error("not used")),
     appendRegistry: () => Promise.reject(new Error("not used")),
     readRegistry: () => Promise.reject(new Error("not used")),
-    findEntry: async (wanted) => (wanted === id ? (entry as never) : null),
+    findEntry: async (wanted) => (wanted === id ? entry : null),
   });
 }
 
-/** Runs one prompt through the real Anthropic adapter, returning the request body it would send. */
-async function anthropicRequestBody(prompt: LanguageModelV4Message[]): Promise<{
+/** The part of an Anthropic Messages request body these tests read. */
+interface AnthropicRequestBody {
   messages: Array<{ role: string; content: Array<{ type: string; [k: string]: unknown }> }>;
-}> {
+}
+
+/** Runs one prompt through the real Anthropic adapter, returning the request body it would send. */
+async function anthropicRequestBody(
+  prompt: LanguageModelV4Message[],
+): Promise<AnthropicRequestBody> {
   let captured: unknown;
   const model = createAnthropic({
     apiKey: "sk-test",
@@ -65,7 +74,7 @@ async function anthropicRequestBody(prompt: LanguageModelV4Message[]): Promise<{
   }).languageModel("claude-sonnet-4-5");
 
   await model.doGenerate({ prompt });
-  return captured as never;
+  return captured as AnthropicRequestBody;
 }
 
 describe("rehydrated file parts survive a real provider converter", () => {

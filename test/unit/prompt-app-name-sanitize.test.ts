@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hostMetaToUiMeta, sanitizePlacements } from "../../src/connectors/runtime/defaults.ts";
+import { hostMetaToUiMeta } from "../../src/connectors/runtime/defaults.ts";
 import { composeSystemPrompt, type PromptAppInfo } from "../../src/prompt/compose.ts";
 
 /**
@@ -76,6 +76,7 @@ describe("the prompt path tolerates a malformed ui.name", () => {
   test.each([[123], [true], [{ a: 1 }], [["x"]]])(
     "a non-string ui.name renders instead of throwing: %p",
     (name) => {
+      // biome-ignore lint/plugin/never-cast: a non-string `ui.name`, which is the input under test
       const run = () => promptWith([{ name: "app", ui: { name } as never }]);
       expect(run).not.toThrow();
       expect(appBullets(run())).toHaveLength(1);
@@ -83,6 +84,7 @@ describe("the prompt path tolerates a malformed ui.name", () => {
   );
 
   test("a non-string app.name renders instead of throwing", () => {
+    // biome-ignore lint/plugin/never-cast: a non-string app name, which is the input under test
     const run = () => promptWith([{ name: 123 as never, ui: null }]);
     expect(run).not.toThrow();
     expect(appBullets(run())[0]).toBe("- 123 (no UI)");
@@ -94,15 +96,18 @@ describe("hostMetaToUiMeta guards placements", () => {
   // `placements && placements.length > 0` would admit it, and `sanitizePlacements`
   // would then throw on `for...of` out of catalog projection.
   test("a non-array with a length projects no UI and does not throw", () => {
-    const run = () => hostMetaToUiMeta({ host_version: "1.0", placements: { length: 1 } } as never);
+    const run = () =>
+      // biome-ignore lint/plugin/never-cast: a non-array `placements` with a length, which is the input under test
+      hostMetaToUiMeta({ host_version: "1.0", placements: { length: 1 } } as never);
     expect(run).not.toThrow();
     expect(run()).toBeNull();
   });
 
   test("a real placements array still passes through", () => {
     const ui = hostMetaToUiMeta({
+      host_version: "1.0",
       placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main" }],
-    } as never);
+    });
     expect(ui?.placements).toHaveLength(1);
   });
 });

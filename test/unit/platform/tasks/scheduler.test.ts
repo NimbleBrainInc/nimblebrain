@@ -39,6 +39,7 @@ import {
   runWithRequestContext,
 } from "../../../../src/runtime/request-context.ts";
 import { createSpendBalances } from "../../../../src/runtime/spend.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
 import { createMockModel } from "../../../helpers/mock-model.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
@@ -436,7 +437,7 @@ describe("Scheduler — timer arming", () => {
 
     try {
       scheduler.start();
-      runWithRequestContext({ identity: { id: "usr_caller" } as never, workspaceId: WS }, () =>
+      runWithRequestContext({ identity: makeIdentity({ id: "usr_caller" }), workspaceId: WS }, () =>
         scheduler.reload(),
       );
       expect(armedIn.length).toBeGreaterThanOrEqual(2);

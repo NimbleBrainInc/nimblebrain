@@ -226,10 +226,11 @@ describe("mergePalette", () => {
   });
 
   test("a malformed color throws, so the client paints canonical rather than half a brand", () => {
-    expect(() => mergePalette({ colors: { highlight: null } } as never)).toThrow();
+    expect(() => mergePalette({ colors: { highlight: null } })).toThrow();
   });
 
   test("ignores tokens and roles a brand may not set", () => {
+    // biome-ignore lint/plugin/never-cast: a `success` color and a `mono` font, which a brand may not set and which the merge must ignore
     const merged = mergePalette({
       colors: { success: ["#000000", "#ffffff"] },
       fonts: { mono: { stack: "x" } },
@@ -268,6 +269,7 @@ describe("loadBrand", () => {
 
   test("drops keys the schema does not define, as the config loader reports them", () => {
     const resolved = loadBrand({
+      // biome-ignore lint/plugin/never-cast: keys the brand schema does not define, which the loader must drop
       brand: {
         name: "ACME",
         colors: { primary: ["#B53707", "#FF8A4C"], success: ["#000000", "#000000"] },

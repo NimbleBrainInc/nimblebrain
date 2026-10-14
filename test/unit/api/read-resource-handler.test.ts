@@ -15,6 +15,7 @@ import type { ResourceData, ToolSource } from "../../../src/tools/types.ts";
 import { bytesToBase64 } from "../../../src/util/base64.ts";
 import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { readJson } from "../../helpers/http.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 import { stub } from "../../helpers/stub.ts";
 import { makeWorkspace } from "../../helpers/test-workspace.ts";
 
@@ -256,7 +257,7 @@ describe("handleReadResource", () => {
     const res = await handleReadResource(
       req({ server: "ws_0073c806fc50dc07-synapse-collateral", uri: "collateral://exports/e.pdf" }),
       runtime,
-      { workspaceId: "ws_007dc0488ce56f9e", identity: { id: "u1" } as never },
+      { workspaceId: "ws_007dc0488ce56f9e", identity: makeIdentity({ id: "u1" }) },
     );
     expect(res.status).toBe(400);
     const body = await readJson<ApiErrorBody>(res);
@@ -280,7 +281,7 @@ describe("handleReadResource", () => {
     const res = await handleReadResource(
       req({ server: "synapse-collateral", uri: "collateral://exports/e.pdf" }),
       runtime,
-      { workspaceId: "ws_0073c806fc50dc07", identity: { id: "u1" } as never },
+      { workspaceId: "ws_0073c806fc50dc07", identity: makeIdentity({ id: "u1" }) },
     );
     expect(res.status).toBe(200);
     expect(calls).toEqual([

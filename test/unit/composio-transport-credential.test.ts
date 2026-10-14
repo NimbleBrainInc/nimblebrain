@@ -155,7 +155,7 @@ describe("the transport's own SSRF posture, not just the URL gate's", () => {
     const transport = await createRemoteTransport(new URL(IN_CLUSTER), {
       type: "streamable-http",
       auth: { type: "provider", provider, config: {} },
-    } as never);
+    });
     if (!(transport instanceof StreamableHTTPClientTransport)) {
       throw new Error("expected a streamable-http transport");
     }
