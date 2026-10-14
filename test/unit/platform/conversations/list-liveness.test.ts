@@ -90,6 +90,9 @@ beforeEach(async () => {
   writeConversation(OTHERS_LIVE_ID, OTHER_ID);
   source = await createConversationsSource(makeRuntime(), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {

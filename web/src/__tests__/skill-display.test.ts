@@ -36,8 +36,7 @@ describe("skillProvenanceLabel", () => {
   // runtime never rewrites history to match a later vocabulary (ADR-0034).
   // The row reads as what it was, not as a blank.
   test("falls back to the stored string for a tier the union no longer lists", () => {
-    // biome-ignore lint/plugin/never-cast: a stored tier outside `SkillScope`, which is the input under test
-    expect(skillProvenanceLabel({ scope: "retired-tier" as never })).toBe("retired-tier");
+    expect(skillProvenanceLabel({ scope: "retired-tier" })).toBe("retired-tier");
   });
 
   test("no label or class exposes the tier's wire name", () => {

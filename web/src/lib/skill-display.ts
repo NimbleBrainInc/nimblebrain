@@ -126,13 +126,20 @@ export function skillLoadingSentence(
   }
 }
 
+/**
+ * A map with an entry for every tier this build knows, read by the recorded
+ * tier string. A recorded row can name a tier outside the union (see
+ * `skillProvenanceLabel`), so a lookup may miss and callers fall back.
+ */
+type ScopeMap = Readonly<Record<string, string | undefined>>;
+
 /** Token-driven scope color class (defined in index.css; no raw palette values). */
-export const SCOPE_CLASS: Record<SkillScope, string> = {
+export const SCOPE_CLASS: ScopeMap = {
   org: "ledger-scope--org",
   workspace: "ledger-scope--workspace",
   user: "ledger-scope--user",
   provided: "ledger-scope--connector",
-};
+} satisfies Record<SkillScope, string>;
 
 /**
  * What a reader is shown for a skill's tier.
@@ -145,16 +152,17 @@ export const SCOPE_CLASS: Record<SkillScope, string> = {
  * built-in authoring guide, and labels it "System". The map is per-surface for
  * that reason, not because either label is the wire value's real name.
  */
-export const SCOPE_LABEL: Record<SkillScope, string> = {
+export const SCOPE_LABEL: ScopeMap = {
   org: "org",
   workspace: "workspace",
   user: "user",
   provided: "connector",
-};
+} satisfies Record<SkillScope, string>;
 
 /** The subset of a ledger skill that identifies where it came from. */
 export interface SkillProvenanceInput {
-  scope: SkillScope;
+  /** The recorded tier: a `SkillScope`, or a tier name an older run recorded. */
+  scope: string;
   connector?: string;
 }
 
