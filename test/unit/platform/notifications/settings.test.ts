@@ -52,7 +52,7 @@ class FakeRuntime {
     stub<Task>({
       id: "auto_triage",
       name: "Triage replies",
-      schedule: { type: "event", match: { source: "precision-outbound" } },
+      schedule: { type: "event", match: { source: "acme-outbound" } },
     }),
     // A clock task is a legal thing for a route to name and a useless
     // one, so the picker has to be able to say so.
@@ -85,8 +85,8 @@ class FakeRuntime {
   async listNotificationSources() {
     return [
       {
-        source: "precision-outbound",
-        label: "Precision Outbound",
+        source: "acme-outbound",
+        label: "Acme Outbound",
         description: "Domain lifecycle.",
       },
     ];
@@ -157,7 +157,7 @@ async function settings(): Promise<NotificationsSettingsOutput> {
 }
 
 const route = (over: Partial<NotificationRouteInput> = {}): NotificationRouteInput => ({
-  match: { source: "precision-outbound", name: "domain.*", level: "attention" },
+  match: { source: "acme-outbound", name: "domain.*", level: "attention" },
   deliver: [{ kind: "tool", tool: TOOL, input: { channel: "#outbound", text: "{{title}}" } }],
   ...over,
 });
@@ -192,7 +192,7 @@ describe("a member cannot configure the workspace", () => {
 
   test("cannot raise a ceiling", async () => {
     const res = await exec("set_source_level", {
-      source: "precision-outbound",
+      source: "acme-outbound",
       maxLevel: "urgent",
     });
     expect(res.isError).toBe(true);
@@ -211,8 +211,8 @@ describe("the ceiling", () => {
   test("a declared source starts at info, and says nobody set it", async () => {
     const [source_] = (await settings()).sources;
     expect(source_).toEqual({
-      source: "precision-outbound",
-      label: "Precision Outbound",
+      source: "acme-outbound",
+      label: "Acme Outbound",
       description: "Domain lifecycle.",
       maxLevel: "info",
       configured: false,
@@ -221,14 +221,14 @@ describe("the ceiling", () => {
 
   test("raising it persists and reads back as configured", async () => {
     const res = await exec("set_source_level", {
-      source: "precision-outbound",
+      source: "acme-outbound",
       maxLevel: "urgent",
     });
     expect(res.isError).toBe(false);
     const out = structuredOutput<NotificationsSettingsOutput>(res);
     expect(out.sources[0]).toMatchObject({ maxLevel: "urgent", configured: true });
     expect(runtime.workspaces.get(WS)?.notifications?.sources).toEqual({
-      "precision-outbound": { maxLevel: "urgent" },
+      "acme-outbound": { maxLevel: "urgent" },
     });
   });
 

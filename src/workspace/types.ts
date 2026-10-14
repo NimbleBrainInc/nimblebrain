@@ -67,10 +67,11 @@ export interface Workspace {
    * separate so the secret never sits next to non-secret config and
    * the type system isn't carrying a `Redacted` for what's a public id.
    *
-   * Lifecycle is independent of connector install: setting up an OAuth
-   * app makes the connector installable for the whole workspace;
-   * uninstalling the connector does NOT remove this config (so a
-   * later re-install reuses it). Explicit removal goes through
+   * Setting up an OAuth app makes the connector installable for the
+   * whole workspace. The app lives as long as something uses it: the
+   * uninstall that removes the last installed connector built on it
+   * removes this record and its secret together, so a reinstall asks
+   * for both again. With nothing installed, an admin removes it through
    * `manage_connectors.remove_operator_setup`.
    */
   oauthOperatorApps?: Record<string, OAuthOperatorAppConfig>;
