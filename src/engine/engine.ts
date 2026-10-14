@@ -860,7 +860,8 @@ function coerceAndValidateToolInput(
       },
     };
   }
-  const validation = validateToolInput(coerced, schema);
+  // A schema that does not compile passes: the connector checks its own input.
+  const validation = validateToolInput(coerced, schema, { uncompilable: "pass" });
   if (!validation.valid) {
     return {
       input: coerced,
