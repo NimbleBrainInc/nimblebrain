@@ -583,19 +583,19 @@ export declare const TaskRunView: import("@sinclair/typebox").TObject<{
     trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
     error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
+    toolCalls: import("@sinclair/typebox").TNumber;
+    inputTokens: import("@sinclair/typebox").TNumber;
+    outputTokens: import("@sinclair/typebox").TNumber;
+    stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
     taskId: import("@sinclair/typebox").TString;
     idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     batchId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    inputTokens: import("@sinclair/typebox").TNumber;
-    outputTokens: import("@sinclair/typebox").TNumber;
     costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     startedAt: import("@sinclair/typebox").TString;
     completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    toolCalls: import("@sinclair/typebox").TNumber;
     iterations: import("@sinclair/typebox").TNumber;
     transient: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     resultPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
     spendAccountId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     outputSchemaValid: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     outputSchemaErrors: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -709,18 +709,27 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
         trigger?: "manual" | "event" | "scheduled" | undefined;
         error?: string | undefined;
         input?: unknown;
+        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
         idempotencyKey?: string | undefined;
         batchId?: string | undefined;
         costUsd?: number | undefined;
         completedAt?: string | undefined;
         transient?: boolean | undefined;
         resultPreview?: string | undefined;
-        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
         spendAccountId?: string | undefined;
         outputSchemaValid?: boolean | undefined;
         outputSchemaErrors?: string[] | undefined;
         unrecoveredToolFailures?: string[] | undefined;
         assessment?: {
+            reason?: {
+                code: string;
+                message: string;
+            } | undefined;
+            usage?: {
+                inputTokens?: number | undefined;
+                outputTokens?: number | undefined;
+                costUsd?: number | undefined;
+            } | undefined;
             criteria?: {
                 probabilities?: {
                     [x: string]: number;
@@ -737,18 +746,9 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
                 server: string;
                 calibrated: boolean;
             } | undefined;
-            reason?: {
-                code: string;
-                message: string;
-            } | undefined;
             schema?: {
                 errors?: string[] | undefined;
                 valid: boolean;
-            } | undefined;
-            usage?: {
-                inputTokens?: number | undefined;
-                outputTokens?: number | undefined;
-                costUsd?: number | undefined;
             } | undefined;
             stateTruncated?: boolean | undefined;
             human?: {
@@ -765,12 +765,12 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
         batchIndex?: number | undefined;
         id: string;
         status: "skipped" | "cancelled" | "running" | "success" | "degraded" | "failure" | "timeout" | "queued";
-        taskId: string;
-        label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
+        toolCalls: number;
         inputTokens: number;
         outputTokens: number;
+        taskId: string;
+        label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
         startedAt: string;
-        toolCalls: number;
         iterations: number;
         execution: "skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete";
     };
@@ -790,9 +790,9 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
             input?: unknown;
             id: string;
             name: string;
-            output: string;
             ok: boolean;
             ms: number;
+            output: string;
         }[];
         outputFiles: {
             id: string;
@@ -804,18 +804,27 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
         trigger?: "manual" | "event" | "scheduled" | undefined;
         error?: string | undefined;
         input?: unknown;
+        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
         idempotencyKey?: string | undefined;
         batchId?: string | undefined;
         costUsd?: number | undefined;
         completedAt?: string | undefined;
         transient?: boolean | undefined;
         resultPreview?: string | undefined;
-        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
         spendAccountId?: string | undefined;
         outputSchemaValid?: boolean | undefined;
         outputSchemaErrors?: string[] | undefined;
         unrecoveredToolFailures?: string[] | undefined;
         assessment?: {
+            reason?: {
+                code: string;
+                message: string;
+            } | undefined;
+            usage?: {
+                inputTokens?: number | undefined;
+                outputTokens?: number | undefined;
+                costUsd?: number | undefined;
+            } | undefined;
             criteria?: {
                 probabilities?: {
                     [x: string]: number;
@@ -832,18 +841,9 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
                 server: string;
                 calibrated: boolean;
             } | undefined;
-            reason?: {
-                code: string;
-                message: string;
-            } | undefined;
             schema?: {
                 errors?: string[] | undefined;
                 valid: boolean;
-            } | undefined;
-            usage?: {
-                inputTokens?: number | undefined;
-                outputTokens?: number | undefined;
-                costUsd?: number | undefined;
             } | undefined;
             stateTruncated?: boolean | undefined;
             human?: {
@@ -860,12 +860,12 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
         batchIndex?: number | undefined;
         id: string;
         status: "skipped" | "cancelled" | "running" | "success" | "degraded" | "failure" | "timeout" | "queued";
-        taskId: string;
-        label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
+        toolCalls: number;
         inputTokens: number;
         outputTokens: number;
+        taskId: string;
+        label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
         startedAt: string;
-        toolCalls: number;
         iterations: number;
         execution: "skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete";
     };
@@ -1038,19 +1038,19 @@ export declare const TasksStatusOutput: import("@sinclair/typebox").TObject<{
         trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
         error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
+        toolCalls: import("@sinclair/typebox").TNumber;
+        inputTokens: import("@sinclair/typebox").TNumber;
+        outputTokens: import("@sinclair/typebox").TNumber;
+        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
         taskId: import("@sinclair/typebox").TString;
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        inputTokens: import("@sinclair/typebox").TNumber;
-        outputTokens: import("@sinclair/typebox").TNumber;
         costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         startedAt: import("@sinclair/typebox").TString;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        toolCalls: import("@sinclair/typebox").TNumber;
         iterations: import("@sinclair/typebox").TNumber;
         transient: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         resultPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
         spendAccountId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         outputSchemaValid: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         outputSchemaErrors: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -1108,19 +1108,19 @@ export declare const TasksRunsOutput: import("@sinclair/typebox").TObject<{
         trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
         error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
+        toolCalls: import("@sinclair/typebox").TNumber;
+        inputTokens: import("@sinclair/typebox").TNumber;
+        outputTokens: import("@sinclair/typebox").TNumber;
+        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
         taskId: import("@sinclair/typebox").TString;
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        inputTokens: import("@sinclair/typebox").TNumber;
-        outputTokens: import("@sinclair/typebox").TNumber;
         costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         startedAt: import("@sinclair/typebox").TString;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        toolCalls: import("@sinclair/typebox").TNumber;
         iterations: import("@sinclair/typebox").TNumber;
         transient: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         resultPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
         spendAccountId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         outputSchemaValid: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         outputSchemaErrors: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -1225,7 +1225,6 @@ export type TaskWarning = Static<typeof TaskWarning>;
  * `as { run: ... }`.
  */
 export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
-    message?: string | undefined;
     result?: {
         error?: string | undefined;
         stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
@@ -1241,15 +1240,16 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
             input?: unknown;
             id: string;
             name: string;
-            output: string;
             ok: boolean;
             ms: number;
+            output: string;
         }[];
         outputFiles: {
             id: string;
             filename: string;
         }[];
     } | null | undefined;
+    message?: string | undefined;
     warnings?: {
         code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
         message: string;
@@ -1259,18 +1259,27 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         trigger?: "manual" | "event" | "scheduled" | undefined;
         error?: string | undefined;
         input?: unknown;
+        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
         idempotencyKey?: string | undefined;
         batchId?: string | undefined;
         costUsd?: number | undefined;
         completedAt?: string | undefined;
         transient?: boolean | undefined;
         resultPreview?: string | undefined;
-        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
         spendAccountId?: string | undefined;
         outputSchemaValid?: boolean | undefined;
         outputSchemaErrors?: string[] | undefined;
         unrecoveredToolFailures?: string[] | undefined;
         assessment?: {
+            reason?: {
+                code: string;
+                message: string;
+            } | undefined;
+            usage?: {
+                inputTokens?: number | undefined;
+                outputTokens?: number | undefined;
+                costUsd?: number | undefined;
+            } | undefined;
             criteria?: {
                 probabilities?: {
                     [x: string]: number;
@@ -1287,18 +1296,9 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
                 server: string;
                 calibrated: boolean;
             } | undefined;
-            reason?: {
-                code: string;
-                message: string;
-            } | undefined;
             schema?: {
                 errors?: string[] | undefined;
                 valid: boolean;
-            } | undefined;
-            usage?: {
-                inputTokens?: number | undefined;
-                outputTokens?: number | undefined;
-                costUsd?: number | undefined;
             } | undefined;
             stateTruncated?: boolean | undefined;
             human?: {
@@ -1315,12 +1315,12 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         batchIndex?: number | undefined;
         id: string;
         status: "skipped" | "cancelled" | "running" | "success" | "degraded" | "failure" | "timeout" | "queued";
-        taskId: string;
-        label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
+        toolCalls: number;
         inputTokens: number;
         outputTokens: number;
+        taskId: string;
+        label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
         startedAt: string;
-        toolCalls: number;
         iterations: number;
         execution: "skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete";
     };
@@ -1329,8 +1329,8 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
         message: string;
     }[] | undefined;
-    runId: string;
     status: "dispatched";
+    runId: string;
     enabled: boolean;
     taskId: string;
     message: string;
@@ -1340,8 +1340,8 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
         message: string;
     }[] | undefined;
-    runId: string;
     status: "queued";
+    runId: string;
     enabled: boolean;
     taskId: string;
     message: string;
@@ -1359,19 +1359,19 @@ export declare const TasksAssessOutput: import("@sinclair/typebox").TObject<{
         trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
         error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
+        toolCalls: import("@sinclair/typebox").TNumber;
+        inputTokens: import("@sinclair/typebox").TNumber;
+        outputTokens: import("@sinclair/typebox").TNumber;
+        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
         taskId: import("@sinclair/typebox").TString;
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        inputTokens: import("@sinclair/typebox").TNumber;
-        outputTokens: import("@sinclair/typebox").TNumber;
         costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         startedAt: import("@sinclair/typebox").TString;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        toolCalls: import("@sinclair/typebox").TNumber;
         iterations: import("@sinclair/typebox").TNumber;
         transient: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         resultPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
         spendAccountId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         outputSchemaValid: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         outputSchemaErrors: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -1758,6 +1758,7 @@ export declare const TaskBatchView: import("@sinclair/typebox").TObject<{
     idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     costUsd: import("@sinclair/typebox").TNumber;
     completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    updatedAt: import("@sinclair/typebox").TString;
     items: import("@sinclair/typebox").TNumber;
     concurrency: import("@sinclair/typebox").TNumber;
     budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1771,7 +1772,6 @@ export declare const TaskBatchView: import("@sinclair/typebox").TObject<{
         at: import("@sinclair/typebox").TString;
     }>>;
     state: import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">;
-    updatedAt: import("@sinclair/typebox").TString;
     stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     counts: import("@sinclair/typebox").TObject<{
         pending: import("@sinclair/typebox").TNumber;
@@ -1818,6 +1818,7 @@ export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        updatedAt: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1831,7 +1832,6 @@ export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
         }>>;
         state: import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">;
-        updatedAt: import("@sinclair/typebox").TString;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;
@@ -1868,6 +1868,7 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        updatedAt: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1881,7 +1882,6 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
         }>>;
         state: import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">;
-        updatedAt: import("@sinclair/typebox").TString;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;
@@ -1930,6 +1930,7 @@ export declare const TasksBatchControlOutput: import("@sinclair/typebox").TObjec
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        updatedAt: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1943,7 +1944,6 @@ export declare const TasksBatchControlOutput: import("@sinclair/typebox").TObjec
             at: import("@sinclair/typebox").TString;
         }>>;
         state: import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">;
-        updatedAt: import("@sinclair/typebox").TString;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;
@@ -1976,6 +1976,7 @@ export declare const TasksBatchesOutput: import("@sinclair/typebox").TObject<{
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        updatedAt: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1989,7 +1990,6 @@ export declare const TasksBatchesOutput: import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
         }>>;
         state: import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">;
-        updatedAt: import("@sinclair/typebox").TString;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;

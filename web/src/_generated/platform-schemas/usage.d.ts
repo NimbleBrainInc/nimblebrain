@@ -24,7 +24,7 @@ export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
     period: TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
     from: TOptional<import("@sinclair/typebox").TString>;
     to: TOptional<import("@sinclair/typebox").TString>;
-    groupBy: TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "conversation" | "model" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "conversation" | "model" | "turn" | "origin" | "provider">>]>>;
+    groupBy: TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "model" | "conversation" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "day" | "model" | "conversation" | "turn" | "origin" | "provider">>]>>;
     stackBy: TOptional<import("@sinclair/typebox").TUnsafe<"workspace" | "user" | "model" | "origin" | "provider">>;
     workspaceId: TOptional<import("@sinclair/typebox").TString>;
     userId: TOptional<import("@sinclair/typebox").TString>;
@@ -168,7 +168,7 @@ export declare const UsageReportOutput: import("@sinclair/typebox").TObject<{
         cacheHitRate: TOptional<import("@sinclair/typebox").TNumber>;
         stack: TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TNumber>>;
     }>>;
-    breakdowns: import("@sinclair/typebox").TObject<Record<"workspace" | "user" | "day" | "conversation" | "model" | "turn" | "origin" | "provider", TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+    breakdowns: import("@sinclair/typebox").TObject<Record<"workspace" | "user" | "day" | "model" | "conversation" | "turn" | "origin" | "provider", TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         key: import("@sinclair/typebox").TString;
         tokens: import("@sinclair/typebox").TObject<{
             /** Non-cached input tokens. */
@@ -191,7 +191,7 @@ export declare const UsageReportOutput: import("@sinclair/typebox").TObject<{
         cacheHitRate: TOptional<import("@sinclair/typebox").TNumber>;
         stack: TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TNumber>>;
     }>>>>>;
-    truncatedBreakdowns: TOptional<import("@sinclair/typebox").TObject<Record<"workspace" | "user" | "day" | "conversation" | "model" | "turn" | "origin" | "provider", TOptional<import("@sinclair/typebox").TObject<{
+    truncatedBreakdowns: TOptional<import("@sinclair/typebox").TObject<Record<"workspace" | "user" | "day" | "model" | "conversation" | "turn" | "origin" | "provider", TOptional<import("@sinclair/typebox").TObject<{
         returned: import("@sinclair/typebox").TInteger;
         total: import("@sinclair/typebox").TInteger;
     }>>>>>;
