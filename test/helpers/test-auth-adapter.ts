@@ -2,29 +2,34 @@
  * In-memory IdentityProvider for tests.
  *
  * Validates Bearer tokens via simple string comparison (no bcrypt).
- * Provisions a default user profile and workspace on first successful auth
- * (same pattern as DevIdentityProvider) so workspace resolution doesn't fail.
+ * On first successful auth, provisions the user profile (as DevIdentityProvider
+ * does). It seats the user in no workspace: authenticating is not membership,
+ * and no production provider grants one. A test seats `TEST_IDENTITY` itself,
+ * e.g. `provisionTestWorkspace(runtime, wsId, name, [TEST_IDENTITY.id])`.
  */
 
 import { existsSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
-  IdentityProvider,
-  UserIdentity,
-  ProviderCapabilities,
   CreateUserInput,
   CreateUserResult,
+  IdentityProvider,
+  ProviderCapabilities,
+  UserIdentity,
+  VerifiedIdentity,
 } from "../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User, UserStore } from "../../src/identity/user.ts";
-import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import type { IdentityStores } from "../../src/runtime/types.ts";
+import { makeIdentity } from "./identity.ts";
 
-export const TEST_IDENTITY: UserIdentity = {
+export const TEST_IDENTITY: UserIdentity = makeIdentity({
   id: "usr_test",
   email: "test@example.com",
   displayName: "Test User",
-  orgRole: "owner",
-};
+  orgRole: "admin",
+});
 
 export class TestAuthAdapter implements IdentityProvider {
   private initPromise?: Promise<void>;
@@ -39,17 +44,16 @@ export class TestAuthAdapter implements IdentityProvider {
   constructor(
     private apiKey: string,
     private userStore?: UserStore,
-    private workspaceStore?: WorkspaceStore,
     private workDir?: string,
   ) {}
 
-  async verifyRequest(req: Request): Promise<UserIdentity | null> {
+  async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const authHeader = req.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) return null;
     const token = authHeader.slice(7);
     if (token !== this.apiKey) return null;
     await this.ensureDefaults();
-    return TEST_IDENTITY;
+    return { ...TEST_IDENTITY, grant: FIRST_PARTY_GRANT };
   }
 
   async listUsers(): Promise<User[]> {
@@ -75,10 +79,8 @@ export class TestAuthAdapter implements IdentityProvider {
   }
 
   private ensureDefaults(): Promise<void> {
-    // Single-flight: concurrent requests share one in-flight promise so we
-    // don't double-provision the user/workspace. Without this, parallel
-    // authenticated requests all race past the init check and multiple
-    // addMember() calls collide on MemberConflictError.
+    // Single-flight: concurrent requests share one in-flight promise so
+    // parallel authenticated requests write the profile once.
     if (!this.initPromise) {
       this.initPromise = this.doEnsureDefaults();
     }
@@ -86,7 +88,7 @@ export class TestAuthAdapter implements IdentityProvider {
   }
 
   private async doEnsureDefaults(): Promise<void> {
-    if (!this.userStore || !this.workspaceStore) return;
+    if (!this.userStore) return;
 
     const existingUser = await this.userStore.get(TEST_IDENTITY.id);
     if (!existingUser) {
@@ -104,31 +106,21 @@ export class TestAuthAdapter implements IdentityProvider {
       if (this.workDir) {
         const userDir = join(this.workDir, "users", TEST_IDENTITY.id);
         if (!existsSync(userDir)) mkdirSync(userDir, { recursive: true });
-        await writeFile(join(userDir, "profile.json"), `${JSON.stringify(user, null, 2)}\n`, "utf-8");
-      }
-    }
-
-    const workspaces = await this.workspaceStore.list();
-    if (workspaces.length === 0) {
-      const ws = await this.workspaceStore.create("Default", "default");
-      await this.workspaceStore.addMember(ws.id, TEST_IDENTITY.id, "admin");
-    } else {
-      // Ensure test user is a member of the first workspace
-      const ws = workspaces[0]!;
-      const isMember = ws.members.some((m) => m.userId === TEST_IDENTITY.id);
-      if (!isMember) {
-        await this.workspaceStore.addMember(ws.id, TEST_IDENTITY.id, "admin");
+        await writeFile(
+          join(userDir, "profile.json"),
+          `${JSON.stringify(user, null, 2)}\n`,
+          "utf-8",
+        );
       }
     }
   }
 }
 
 /**
- * Create a TestAuthAdapter wired to a runtime's stores for workspace provisioning.
+ * A TestAuthAdapter over the runtime's stores, for
+ * `Runtime.start({ identityProvider: testAuthAdapter(key) })`: it provisions
+ * into the store instances the runtime reads and listens on.
  */
-export function createTestAuthAdapter(
-  apiKey: string,
-  runtime: { getUserStore(): UserStore; getWorkspaceStore(): WorkspaceStore; getWorkDir(): string },
-): TestAuthAdapter {
-  return new TestAuthAdapter(apiKey, runtime.getUserStore(), runtime.getWorkspaceStore(), runtime.getWorkDir());
+export function testAuthAdapter(apiKey: string): (stores: IdentityStores) => TestAuthAdapter {
+  return ({ workDir, userStore }) => new TestAuthAdapter(apiKey, userStore, workDir);
 }

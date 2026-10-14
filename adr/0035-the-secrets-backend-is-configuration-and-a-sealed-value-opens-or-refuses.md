@@ -75,13 +75,33 @@ through the same atomic write a `put` uses, keeping each file's modification
 time. One secret it cannot open, or one directory it cannot list, is logged and
 left as it is rather than failing boot.
 
+**A ring that recognizes none of the sealed secrets refuses to start.** Before
+the reconcile writes anything, if at least one sealed file carries a key id and
+not one carries an id the ring holds, the runtime throws, naming the ids on disk
+and the ring's. Every such state is data loss in progress: the outgoing key
+dropped before the reconcile re-wrapped what it sealed, a volume from another
+deployment, or the wrong key. The seal canary cannot tell, because it seals and
+opens under one key. Serving anyway would refuse every secret on use and seal
+anything written meanwhile under a key the rest cannot join. A mix, where some
+files are under a ring key and some are not, is a stray, and does not fail boot.
+A malformed file carries no key id and decides nothing. The `secrets`
+subcommand builds its own store and never reconciles, so it runs the same check
+before it writes.
+
 **After a reconcile that saw everything, plaintext is refused.** Sealing buys
 confidentiality; refusing plaintext once everything is sealed is what buys
 integrity, since otherwise anyone who can write the directory without holding
-the key can plant a credential of their choosing. A skipped file or an
-unreadable directory holds the refusal off, because a sweep that did not see
-everything has not earned it. The refusal is lazy, like every other one here, so
-a planted file cannot fail a probe.
+the key can plant a credential of their choosing. Only what could be hiding
+legitimate plaintext holds the refusal off: a directory the sweep could not
+list, and a plaintext file it read and could not re-seal. A sealed file it
+cannot open, or a file it cannot read at all, does not. Neither can be served
+as plaintext, both are audited and refused on use, and counting them would
+give the attacker this control exists for a switch to turn it off: one planted
+file carrying the sealed-value magic, and plaintext is accepted on every boot
+after. A legitimate plaintext file that was unreadable at boot and is made
+readable later is refused like any planted one until a sweep re-seals it: restart,
+or set it again. The refusal is lazy, like every other one here, so a planted file cannot
+fail a probe.
 
 **Operators write through a `secrets` subcommand, never the agent.** It resolves
 configuration and the work directory exactly as the server does, builds the same

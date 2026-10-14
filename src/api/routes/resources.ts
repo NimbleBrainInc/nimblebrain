@@ -1,10 +1,14 @@
 import { Hono } from "hono";
+import { compress } from "hono/compress";
 import { handleReadResource, handleResourceProxy, handleResourceUpload } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { errorLog } from "../middleware/error-log.ts";
-import { optionalWorkspace } from "../middleware/workspace.ts";
+import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
 import type { AppContext, AppEnv } from "../types.ts";
+
+/** Where an app's `ui://` resources are served, below the workspace prefix. */
+const APP_RESOURCES_ROUTE = `${WORKSPACE_ROUTE_PREFIX}/apps/:name/resources/*`;
 
 export function resourceRoutes(ctx: AppContext) {
   // maxTotalSize is snapshot at route construction; mirrors chat routes
@@ -14,23 +18,22 @@ export function resourceRoutes(ctx: AppContext) {
   const uploadLimit = bodyLimit(1_048_576, {
     multipart: ctx.runtime.getFilesConfig().maxTotalSize,
   });
-  // Workspace resolution is per-route, not global: reads/uploads are
-  // workspace-scoped (requireWorkspace), but the app-resource GET also serves
-  // identity apps (conversations, …) that have NO workspace — so it uses
-  // optionalWorkspace, which validates an `X-Workspace-Id` if present but
-  // doesn't demand one. `handleResourceProxy` routes identity apps to the
-  // identity host and still requires a workspace for workspace apps.
+  // Every route here is workspace-scoped. A read or an upload that reaches an
+  // identity source (conversations, files) still lands in the workspace in the
+  // URL, because those sources' data is workspace-owned. An identity app's
+  // `ui://` resource (conversations, …) is the same in every workspace and is
+  // served from the identity host; the workspace in the URL decides nothing for
+  // it, but the web shell renders every app inside a workspace, so one route
+  // serves both.
+  const auth = requireAuth(ctx.authOptions);
+  const logErrors = errorLog(ctx);
   return (
     new Hono<AppEnv>()
-      .use("*", requireAuth(ctx.authOptions))
-      .use("*", errorLog(ctx))
-      // optionalWorkspace: an identity source (conversations, files) has no
-      // workspace, so a header isn't required — `handleReadResource` routes
-      // identity sources to the identity host and still 400s a workspace source
-      // read without a workspace.
       .post(
-        "/v1/resources/read",
-        optionalWorkspace(ctx.workspaceStore),
+        `${WORKSPACE_ROUTE_PREFIX}/resources/read`,
+        auth,
+        logErrors,
+        requireWorkspace(ctx),
         bodyLimit(1_048_576),
         (c) =>
           handleReadResource(c.req.raw, ctx.runtime, {
@@ -38,31 +41,34 @@ export function resourceRoutes(ctx: AppContext) {
             identity: c.var.identity,
           }),
       )
-      // Uploads write to the focused workspace (the validated `X-Workspace-Id`, or
-      // the caller's personal workspace when unfocused), under the owner partition —
-      // files are workspace-owned. `optionalWorkspace` validates the header.
-      .post("/v1/resources", optionalWorkspace(ctx.workspaceStore), uploadLimit, (c) =>
-        handleResourceUpload(
-          c.req.raw,
-          ctx.runtime,
-          ctx.features,
-          c.var.identity,
-          c.var.workspaceId,
-        ),
+      // Uploads write to the workspace in the URL, under the owner partition.
+      .post(
+        `${WORKSPACE_ROUTE_PREFIX}/resources`,
+        auth,
+        logErrors,
+        requireWorkspace(ctx),
+        uploadLimit,
+        (c) =>
+          handleResourceUpload(
+            c.req.raw,
+            ctx.runtime,
+            ctx.features,
+            c.var.identity,
+            c.var.workspaceId,
+          ),
       )
-      .get("/v1/apps/:name/resources/*", optionalWorkspace(ctx.workspaceStore), (c) => {
+      // Compressed: an app's UI is one inlined HTML document, commonly several
+      // hundred KB, and the shell shows nothing until it arrives, so on a slow
+      // link the transfer is the whole wait. Scoped to this route, which answers
+      // one JSON body; the streamed `/mcp` and SSE responses must not pass
+      // through an encoder.
+      .get(APP_RESOURCES_ROUTE, compress(), auth, logErrors, requireWorkspace(ctx), (c) => {
         const name = decodeURIComponent(c.req.param("name"));
         // Extract the full resource path after /resources/
         const url = new URL(c.req.url);
-        const prefix = `/v1/apps/${c.req.param("name")}/resources/`;
+        const prefix = `/v1/workspaces/${c.req.param("wsId")}/apps/${c.req.param("name")}/resources/`;
         const resourcePath = decodeURIComponent(url.pathname.slice(prefix.length));
-        return handleResourceProxy(
-          name,
-          resourcePath,
-          ctx.runtime,
-          c.var.workspaceId,
-          c.var.identity,
-        );
+        return handleResourceProxy(name, resourcePath, ctx.runtime, c.var.workspaceId);
       })
   );
 }

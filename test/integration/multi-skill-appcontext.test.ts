@@ -2,11 +2,10 @@
  * A server that publishes more than one `always` skill keeps ALL of them when
  * the user enters its app.
  *
- * Regression guard. `loadConnectorSkills` used to skip the entered SOURCE, on the
- * premise that its guidance was recovered via `<app-guide>` — but `<app-guide>`
- * carries only the primary skill (the first `resources/list` entry). One skill
- * per server made that equivalent; six made it a five-sixths loss, silently, on
- * every turn sent from the app panel. Dedup is per-SKILL (`excludeSkill`), keyed
+ * `loadConnectorSkills` must not skip the entered SOURCE on the premise that its
+ * guidance is recovered via `<app-guide>` — `<app-guide>` carries only the
+ * primary skill (the first `resources/list` entry). With six skills, skipping
+ * would be a five-sixths loss, silently, on every turn sent from the app panel. Dedup is per-SKILL (`excludeSkill`), keyed
  * by publisher AND path, so only the body actually composed elsewhere is
  * withheld — and only on the server that published it.
  *
@@ -19,24 +18,21 @@
  * server. `appContext` is the only variable.
  */
 
-import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const SERVER_NAME = "ai-nimblebrain-multiskill-mcp";
 
@@ -74,26 +70,27 @@ function createMultiSkillServer(): Server {
 
   const server = new Server(
     { name: "multiskill", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: TOOL_NAMES.map((n) => ({
       name: n,
       description: `Do ${n}`,
       inputSchema: { type: "object", properties: {} },
     })),
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: SKILLS.map((s) => ({
       uri: `skill://${s.slug}/SKILL.md`,
       name: s.slug,
       mimeType: "text/markdown",
     })),
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  serveSkills(server, () => bodies);
+  server.setRequestHandler("resources/read", async (request) => {
     const text = bodies[request.params.uri];
     if (!text) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
@@ -128,18 +125,19 @@ ${NEIGHBOUR_PHRASE} — this rule must be in context on every turn.`;
 
   const server = new Server(
     { name: "neighbour", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [{ uri, name: "orientation", mimeType: "text/markdown" }],
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async () => ({
+  serveSkills(server, () => ({ [uri]: body }));
+  server.setRequestHandler("resources/read", async () => ({
     contents: [{ uri, mimeType: "text/markdown", text: body }],
   }));
 
@@ -188,7 +186,8 @@ let neighbour: McpSource;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createCapturingModel() },
+    identityProvider: devProvider,
+    languageModel: createCapturingModel(),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },
@@ -231,6 +230,7 @@ afterAll(async () => {
 describe("multi-skill server + appContext", () => {
   it("composes all six `always` skills when the app is NOT entered", async () => {
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
     });
@@ -242,6 +242,7 @@ describe("multi-skill server + appContext", () => {
 
   it("keeps all six when appContext names the server", async () => {
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
       appContext: { appName: "Multi Skill", serverName: SERVER_NAME },
@@ -254,6 +255,7 @@ describe("multi-skill server + appContext", () => {
 
   it("carries the primary exactly once — <app-guide>, not also the context channel", async () => {
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
       appContext: { appName: "Multi Skill", serverName: SERVER_NAME },
@@ -266,12 +268,14 @@ describe("multi-skill server + appContext", () => {
 
   it("promotes the entered server's tools to direct in the same turn", async () => {
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
     });
     const withoutApp = lastToolCount;
 
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
       appContext: { appName: "Multi Skill", serverName: SERVER_NAME },
@@ -286,14 +290,16 @@ describe("same skill path on two servers", () => {
   it("entering one server keeps the other's identically-pathed `always` skill", async () => {
     // Both publish `skill://orientation/SKILL.md`. Keying the exclusion on the
     // uri alone would drop the neighbour's copy the moment the first is entered
-    // — the same silent drop this PR closes, one scope out.
+    // — the same silent drop this file guards against, one scope out.
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
     });
     expect(lastPromptText()).toContain(NEIGHBOUR_PHRASE);
 
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Draft an email to a prospect.",
       appContext: { appName: "Multi Skill", serverName: SERVER_NAME },

@@ -7,17 +7,30 @@ import type { AuthMiddlewareOptions } from "./auth-middleware.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import type { McpServerHost } from "./mcp-server.ts";
-import type { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
+import type { RequestRateLimiter } from "./rate-limiter.ts";
+import type { ApiErrorBody } from "./schemas/responses.ts";
 
 // ---------------------------------------------------------------------------
-// Standardized API error response
+// JSON responses
 // ---------------------------------------------------------------------------
 
-/** Consistent error shape returned by all API endpoints. */
-export interface ApiErrorBody {
-  error: string; // machine-readable error code (snake_case)
-  message: string; // human-readable description
-  details?: Record<string, unknown>; // optional structured context
+/**
+ * A JSON response whose body is the named type `T`, from
+ * `src/api/schemas/responses.ts`. `T` is required: it is never inferred from
+ * the body, so `json({...})` without one does not compile. The named type is
+ * what the web shell and the tests import, so a body that moves without it
+ * fails the build. `check:rest-responses` refuses every other way to write a
+ * JSON response.
+ */
+export function json<T = never>(
+  body: NoInfer<T>,
+  status = 200,
+  headers?: Record<string, string>,
+): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...headers },
+  });
 }
 
 /** Build a JSON error response with a consistent shape. */
@@ -30,10 +43,7 @@ export function apiError(
 ): Response {
   const body: ApiErrorBody = { error, message };
   if (details) body.details = details;
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json", ...headers },
-  });
+  return json<ApiErrorBody>(body, status, headers);
 }
 
 /**
@@ -68,7 +78,6 @@ export interface AppContext {
   workspaceStore: WorkspaceStore;
   sseManager: SseEventManager;
   conversationEventManager: ConversationEventManager;
-  rateLimiter: LoginRateLimiter;
   chatLimiter: RequestRateLimiter;
   toolCallLimiter: RequestRateLimiter;
   /** Per-identity limiter for the remote `/mcp` surface (external clients + connector iframes). */
@@ -85,29 +94,18 @@ export interface AppContext {
    */
   hookAnonLimiter: RequestRateLimiter;
   hookWorkspaceLimiter: RequestRateLimiter;
-  /**
-   * True when no real identity provider is configured (local dev — a
-   * `DevIdentityProvider` is substituted). Request rate limiting is bypassed
-   * in this mode; see `requestRateLimit`.
-   */
-  isDevMode: boolean;
   eventSink: EventSink;
   /**
    * Whether auth cookies (`nb_session`, `nb_refresh`, OAuth-state) are issued
-   * with the `Secure` attribute. True for any auth-configured deployment — the
+   * with the `Secure` attribute. True under every identity provider: the
    * browser↔edge leg is HTTPS even though the container itself is reached over
-   * plain HTTP behind the TLS-terminating edge. False in dev mode, which serves
-   * plain HTTP with no TLS (localhost or a LAN IP), where a non-localhost origin
-   * would drop a `Secure` cookie. Derived from a deployment property, never from
-   * the listen address or a client-supplied forwarded-scheme header (both
-   * spoofable / misleading — the listen address is `0.0.0.0` in production).
-   *
-   * Edge case: running a real auth provider locally over http://localhost yields
-   * `Secure` cookies (auth is configured). That still works because modern
-   * browsers treat localhost as a secure context and accept Secure cookies there.
+   * plain HTTP behind the TLS-terminating edge, and browsers treat
+   * http://localhost as a secure context. Never derived from the listen address
+   * or a client-supplied forwarded-scheme header (both spoofable / misleading —
+   * the listen address is `0.0.0.0` in production). A browser reaching a server
+   * over plain HTTP at a non-localhost address drops these cookies.
    */
   secureCookies: boolean;
   appOrigin: string | undefined;
-  internalToken: string;
   mcpHost: McpServerHost;
 }

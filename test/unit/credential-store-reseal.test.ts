@@ -23,27 +23,30 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EngineEvent } from "../../src/engine/types.ts";
 import {
-  createCredentialSealer,
   type CredentialSealer,
+  createCredentialSealer,
   parseSealedValue,
 } from "../../src/tools/credential-seal.ts";
 import { type CredentialScope, FileCredentialStore } from "../../src/tools/credential-store.ts";
+import { payloadsOf } from "../helpers/engine-events.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const KEY_A = Buffer.alloc(32, 0x11);
 const KEY_B = Buffer.alloc(32, 0x22);
 
-const WS: CredentialScope = { kind: "workspace", wsId: "ws_test" };
+const WS: CredentialScope = { kind: "workspace", wsId: "ws_0076759dbbe19fcc" };
 const INSTANCE: CredentialScope = { kind: "instance" };
 const USER: CredentialScope = { kind: "user", userId: "usr_alex01" };
 const READ = { caller: "test", purpose: "unit test" };
 
 function fresh(sealer?: CredentialSealer) {
   const dir = mkdtempSync(join(tmpdir(), "nb-reseal-"));
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
+  // The audit stream only: the sweep also announces its outcome, and these tests
+  // assert on what an operator reads back from the log.
   const events: EngineEvent[] = [];
   const store = new FileCredentialStore(dir, {
-    eventSink: { emit: (e) => events.push(e) },
+    eventSink: { emit: (e) => e.type.startsWith("audit.") && events.push(e) },
     ...(sealer ? { sealer } : {}),
   });
   return { store, dir, events, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
@@ -51,7 +54,7 @@ function fresh(sealer?: CredentialSealer) {
 
 const SCOPE_DIRS: [CredentialScope, string[]][] = [
   [INSTANCE, ["credentials", "secrets"]],
-  [WS, ["workspaces", "ws_test", "credentials", "secrets"]],
+  [WS, ["workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets"]],
   [USER, ["users", "usr_alex01", "credentials", "secrets"]],
 ];
 
@@ -64,6 +67,20 @@ function seed(dir: string, segments: string[], key: string, contents: string): s
   // here is a file that may not exist when the sweep walks the directory.
   writeFileSync(path, contents, { mode: 0o600 });
   return path;
+}
+
+/**
+ * A file already sealed under the ring's key. A foreign-key file beside it is a
+ * stray the sweep skips; without it the ring recognizes nothing on disk and the
+ * store refuses to start, which is its own section below.
+ */
+function seedCurrent(dir: string, segments: string[], key: string): void {
+  seed(
+    dir,
+    segments,
+    key,
+    createCredentialSealer([KEY_A]).seal("workspace:ws_0076759dbbe19fcc", key, "ok"),
+  );
 }
 
 function readRaw(dir: string, segments: string[], key: string): string {
@@ -94,7 +111,12 @@ describe("the sweep converts what is already there", () => {
     const rotated = createCredentialSealer([KEY_A, KEY_B]);
     const { store, dir, cleanup } = fresh(rotated);
     try {
-      seed(dir, SCOPE_DIRS[1][1], "acme.key", outgoing.seal("workspace:ws_test", "acme.key", "v"));
+      seed(
+        dir,
+        SCOPE_DIRS[1][1],
+        "acme.key",
+        outgoing.seal("workspace:ws_0076759dbbe19fcc", "acme.key", "v"),
+      );
       await store.reconcile?.();
       const raw = readRaw(dir, SCOPE_DIRS[1][1], "acme.key");
       expect(parseSealedValue(raw)?.kid).toBe(rotated.sealingKid);
@@ -209,7 +231,7 @@ describe("mtime survives the sweep", () => {
         dir,
         SCOPE_DIRS[1][1],
         "acme.key",
-        outgoing.seal("workspace:ws_test", "acme.key", "v"),
+        outgoing.seal("workspace:ws_0076759dbbe19fcc", "acme.key", "v"),
       );
       utimesSync(path, LONG_AGO, LONG_AGO);
       await store.reconcile?.();
@@ -227,12 +249,13 @@ describe("one bad secret does not take the tenant down", () => {
   test("an unopenable value is skipped and the healthy ones still convert", async () => {
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
     try {
+      seedCurrent(dir, SCOPE_DIRS[1][1], "current.one");
       seed(dir, SCOPE_DIRS[1][1], "good.one", "v1");
       seed(
         dir,
         SCOPE_DIRS[1][1],
         "bad.one",
-        createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x"),
+        createCredentialSealer([KEY_B]).seal("workspace:ws_0076759dbbe19fcc", "bad.one", "x"),
       );
       seed(dir, SCOPE_DIRS[1][1], "good.two", "v2");
 
@@ -249,7 +272,12 @@ describe("one bad secret does not take the tenant down", () => {
   test("the skipped file is left exactly as it was", async () => {
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
     try {
-      const stranded = createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x");
+      seedCurrent(dir, SCOPE_DIRS[1][1], "current.one");
+      const stranded = createCredentialSealer([KEY_B]).seal(
+        "workspace:ws_0076759dbbe19fcc",
+        "bad.one",
+        "x",
+      );
       const path = seed(dir, SCOPE_DIRS[1][1], "bad.one", stranded);
       await store.reconcile?.();
       expect(readFileSync(path, "utf-8")).toBe(stranded);
@@ -261,15 +289,21 @@ describe("one bad secret does not take the tenant down", () => {
   test("a skip is audited rather than swallowed", async () => {
     const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_A]));
     try {
+      seedCurrent(dir, SCOPE_DIRS[1][1], "current.one");
       seed(
         dir,
         SCOPE_DIRS[1][1],
         "bad.one",
-        createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x"),
+        createCredentialSealer([KEY_B]).seal("workspace:ws_0076759dbbe19fcc", "bad.one", "x"),
       );
       await store.reconcile?.();
-      expect(events.map((e) => e.data.reason)).toEqual(["reseal_skipped"]);
-      expect(events[0]?.data).toMatchObject({ scope: "workspace:ws_test", key: "bad.one" });
+      expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
+        "reseal_skipped",
+      ]);
+      expect(events[0]?.data).toMatchObject({
+        scope: "workspace:ws_0076759dbbe19fcc",
+        key: "bad.one",
+      });
     } finally {
       cleanup();
     }
@@ -282,6 +316,247 @@ describe("one bad secret does not take the tenant down", () => {
       seed(dir, SCOPE_DIRS[0][1], "acme.key", "s3cret");
       await store.reconcile?.();
       expect(readRaw(dir, SCOPE_DIRS[0][1], "acme.key").startsWith("NBS1.")).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("only what may be plaintext holds strict mode off", () => {
+  // The attacker strict mode exists for can write the secrets directory and
+  // does not hold the key. If a file they can write were enough to hold the
+  // refusal off, the control would switch off at their say-so — so only a skip
+  // that could be hiding legitimate plaintext counts against it.
+  test("one planted sealed-looking file does not switch strict mode off", async () => {
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "good.one", "v1");
+      seed(dir, SCOPE_DIRS[1][1], "planted.key", "NBS1.x");
+      await store.reconcile?.();
+      seed(dir, SCOPE_DIRS[1][1], "injected.key", "attacker-chosen");
+      const got = await store.get(WS, "injected.key", READ);
+      expect(() => got?.reveal()).toThrow(/plaintext/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("nor does a file sealed under a key this ring does not hold", async () => {
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      seedCurrent(dir, SCOPE_DIRS[1][1], "current.one");
+      seed(dir, SCOPE_DIRS[1][1], "good.one", "v1");
+      seed(
+        dir,
+        SCOPE_DIRS[1][1],
+        "stray.key",
+        createCredentialSealer([KEY_B]).seal("workspace:ws_0076759dbbe19fcc", "stray.key", "x"),
+      );
+      await store.reconcile?.();
+      seed(dir, SCOPE_DIRS[1][1], "injected.key", "attacker-chosen");
+      const got = await store.get(WS, "injected.key", READ);
+      expect(() => got?.reveal()).toThrow(/plaintext/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("nor does a file the runtime cannot read", async () => {
+    // It cannot be served as plaintext either way, so it is no reason to keep
+    // accepting plaintext everywhere else.
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    const planted = seed(dir, SCOPE_DIRS[1][1], "planted.key", "whatever");
+    try {
+      chmodSync(planted, 0o000);
+      await store.reconcile?.();
+      seed(dir, SCOPE_DIRS[1][1], "injected.key", "attacker-chosen");
+      const got = await store.get(WS, "injected.key", READ);
+      expect(() => got?.reveal()).toThrow(/plaintext/);
+    } finally {
+      chmodSync(planted, 0o600);
+      cleanup();
+    }
+  });
+
+  test("the sealed file is still skipped, audited, and refused on use", async () => {
+    const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      const path = seed(dir, SCOPE_DIRS[1][1], "planted.key", "NBS1.x");
+      await store.reconcile?.();
+      expect(readFileSync(path, "utf-8")).toBe("NBS1.x");
+      expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
+        "reseal_skipped",
+      ]);
+      expect(events[0]?.data).toMatchObject({
+        scope: "workspace:ws_0076759dbbe19fcc",
+        key: "planted.key",
+      });
+      const got = await store.get(WS, "planted.key", READ);
+      expect(() => got?.reveal()).toThrow();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("plaintext that could not be re-sealed still holds it off", async () => {
+    // A legitimate plaintext secret is still on disk, so refusing plaintext now
+    // would refuse it.
+    const working = createCredentialSealer([KEY_A]);
+    const failing: CredentialSealer = {
+      ...working,
+      seal: () => {
+        throw new Error("seal failed");
+      },
+    };
+    const { store, dir, events, cleanup } = fresh(failing);
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "legacy.key", "still-readable");
+      await store.reconcile?.();
+      expect(readRaw(dir, SCOPE_DIRS[1][1], "legacy.key")).toBe("still-readable");
+      expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
+        "reseal_skipped",
+      ]);
+      expect((await store.get(WS, "legacy.key", READ))?.reveal()).toBe("still-readable");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("a ring that recognizes none of the sealed secrets refuses to start", () => {
+  // The canary seals and opens under one key, so it passes whatever that key is.
+  // Without this a wrong key boots clean, every secret is refused on use, and
+  // anything written meanwhile is sealed under the wrong key — stranded the
+  // moment the right one comes back.
+  const sealedUnder = (key: Buffer, name: string, value = "v") =>
+    createCredentialSealer([key]).seal("workspace:ws_0076759dbbe19fcc", name, value);
+
+  test("sealed under A, ring [B]: throws, naming both key ids", async () => {
+    const a = createCredentialSealer([KEY_A]);
+    const b = createCredentialSealer([KEY_B]);
+    const { store, dir, cleanup } = fresh(b);
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "acme.key", sealedUnder(KEY_A, "acme.key"));
+      const err = await store.reconcile?.().then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain(a.sealingKid);
+      expect((err as Error).message).toContain(b.sealingKid);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("and writes nothing, not even the plaintext beside them", async () => {
+    // A hand-seeded plaintext file re-sealed under the wrong key is one more
+    // secret stranded. The check runs before the sweep writes.
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_B]));
+    try {
+      const sealed = sealedUnder(KEY_A, "acme.key");
+      seed(dir, SCOPE_DIRS[1][1], "acme.key", sealed);
+      seed(dir, SCOPE_DIRS[0][1], "hand.seeded", "plain");
+      await expect(store.reconcile?.()).rejects.toThrow(/does not hold/);
+      expect(readRaw(dir, SCOPE_DIRS[1][1], "acme.key")).toBe(sealed);
+      expect(readRaw(dir, SCOPE_DIRS[0][1], "hand.seeded")).toBe("plain");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("ring [B, A]: boots and re-wraps under B", async () => {
+    // The rotation seam, which this must not close.
+    const ring = createCredentialSealer([KEY_B, KEY_A]);
+    const { store, dir, cleanup } = fresh(ring);
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "acme.key", sealedUnder(KEY_A, "acme.key", "kept"));
+      await store.reconcile?.();
+      expect(parseSealedValue(readRaw(dir, SCOPE_DIRS[1][1], "acme.key"))?.kid).toBe(
+        ring.sealingKid,
+      );
+      expect((await store.get(WS, "acme.key", READ))?.reveal()).toBe("kept");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a mix with one unknown stray, ring [A]: boots, stray skipped and audited", async () => {
+    // One stray file must not crash-loop a tenant.
+    const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "acme.key", sealedUnder(KEY_A, "acme.key", "fine"));
+      const stray = sealedUnder(KEY_B, "stray.key");
+      seed(dir, SCOPE_DIRS[1][1], "stray.key", stray);
+      await store.reconcile?.();
+      expect(readRaw(dir, SCOPE_DIRS[1][1], "stray.key")).toBe(stray);
+      expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
+        "reseal_skipped",
+      ]);
+      expect((await store.get(WS, "acme.key", READ))?.reveal()).toBe("fine");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("all plaintext, ring [A]: boots, re-seals, and turns strict mode on", async () => {
+    // Every deployment the first time sealing is switched on. No sealed file,
+    // so nothing for the ring to disagree with.
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "acme.key", "s3cret");
+      await store.reconcile?.();
+      expect(readRaw(dir, SCOPE_DIRS[1][1], "acme.key").startsWith("NBS1.")).toBe(true);
+      seed(dir, SCOPE_DIRS[1][1], "injected.key", "attacker-chosen");
+      const got = await store.get(WS, "injected.key", READ);
+      expect(() => got?.reveal()).toThrow(/plaintext/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("plaintext beside only foreign sealed files still refuses", async () => {
+    // On disk this is the wrong key loaded over a deployment where someone also
+    // hand-seeded a file, and the store cannot tell it apart from a stray. It
+    // refuses rather than seal the plaintext under a key the rest cannot join.
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "legacy.key", "plain");
+      seed(dir, SCOPE_DIRS[1][1], "foreign.key", sealedUnder(KEY_B, "foreign.key"));
+      await expect(store.reconcile?.()).rejects.toThrow(/does not hold/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a malformed sealed file carries no key id and decides nothing", async () => {
+    // `NBS1.x` names no key, so it is not evidence about the ring. Counting it
+    // would let one planted file stop a tenant booting.
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "planted.key", "NBS1.x");
+      await store.reconcile?.();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("the check is the method a writer without a reconcile calls", async () => {
+    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_B]));
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "acme.key", sealedUnder(KEY_A, "acme.key"));
+      await expect(store.assertKeyRecognized()).rejects.toThrow(/does not hold/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("an unsealed store has no key to check", async () => {
+    const { store, dir, cleanup } = fresh();
+    try {
+      seed(dir, SCOPE_DIRS[1][1], "acme.key", sealedUnder(KEY_A, "acme.key"));
+      await store.assertKeyRecognized();
+      await store.reconcile?.();
     } finally {
       cleanup();
     }
@@ -422,28 +697,10 @@ describe("strict mode — plaintext is refused once everything is sealed", () =>
       seed(dir, SCOPE_DIRS[1][1], "injected.key", "attacker-chosen");
       const got = await store.get(WS, "injected.key", READ);
       expect(() => got?.reveal()).toThrow();
-      expect(events.map((e) => e.data.reason)).toEqual(["plaintext_refused"]);
+      expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
+        "plaintext_refused",
+      ]);
       expect(JSON.stringify(events)).not.toContain("attacker-chosen");
-    } finally {
-      cleanup();
-    }
-  });
-
-  test("a sweep that skipped a file leaves plaintext still accepted", async () => {
-    // Conservative on purpose: a sweep that could not finish has not proved
-    // every secret is sealed, so it has not earned the right to call plaintext
-    // an injection.
-    const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
-    try {
-      seed(
-        dir,
-        SCOPE_DIRS[1][1],
-        "bad.one",
-        createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x"),
-      );
-      await store.reconcile?.();
-      seed(dir, SCOPE_DIRS[1][1], "legacy.key", "still-readable");
-      expect((await store.get(WS, "legacy.key", READ))?.reveal()).toBe("still-readable");
     } finally {
       cleanup();
     }

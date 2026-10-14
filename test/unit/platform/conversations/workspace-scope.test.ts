@@ -3,7 +3,7 @@
  *
  * Conversations are workspace-owned, so every read resolves inside exactly one
  * workspace — `RequestContext.workspaceId`, set by the door the request came
- * through, exactly as it works for `files__*` and `automations__*` (see
+ * through, exactly as it works for `files__*` and `tasks__*` (see
  * `test/unit/platform/files/source.test.ts`).
  *
  * These tests pin the property that matters: the workspace a read lands in is
@@ -22,20 +22,24 @@ import {
   listAllConversationFiles,
 } from "../../../../src/conversation/locator.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
-import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
-import type { Runtime } from "../../../../src/runtime/runtime.ts";
-import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { createConversationsSource } from "../../../../src/platform/conversations/source.ts";
 import {
   ConversationsListInput,
   ConversationsSearchInput,
   ConversationsStatsInput,
 } from "../../../../src/platform/schemas/conversations.ts";
+import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
+import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { conversationEventLines, type FixtureTurn } from "../../../helpers/conversation-events.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 const OWNER_ID = "usr_test";
 const PEER_ID = "usr_peer";
-/** Must match `personalWorkspaceIdFor(OWNER_ID)` — the personal-workspace derivation. */
-const WS_PERSONAL = `ws_user_${OWNER_ID}`;
+/** The owner's own workspace. */
+const WS_PERSONAL = "ws_cccccccccccccccc";
 const WS_A = "ws_aaaaaaaaaaaaaaaa";
 const WS_B = "ws_bbbbbbbbbbbbbbbb";
 
@@ -58,6 +62,7 @@ function writeConv(spec: ConvSpec): void {
   mkdirSync(dir, { recursive: true });
   const ts = spec.updatedAt ?? "2026-01-01T00:00:00.000Z";
   const meta: Record<string, unknown> = {
+    model: "anthropic:claude-sonnet-4-6",
     id: spec.id,
     createdAt: ts,
     updatedAt: ts,
@@ -71,19 +76,22 @@ function writeConv(spec: ConvSpec): void {
   if (spec.stampWorkspace !== false) meta.workspaceId = spec.wsId;
   const lines = [
     JSON.stringify(meta),
-    JSON.stringify({ role: "user", content: spec.message ?? `hello from ${spec.wsId}` }),
+    ...conversationEventLines([
+      { role: "user", content: spec.message ?? `hello from ${spec.wsId}`, timestamp: ts },
+    ] as FixtureTurn[]),
   ];
   writeFileSync(join(dir, `${spec.id}.jsonl`), `${lines.join("\n")}\n`);
 }
 
 function makeRuntime(): Runtime {
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? OWNER_ID,
-    getWorkspaceStore: () => ({ getWorkspacesDir: () => join(workDir, "workspaces") }),
-    onConversationsChanged: () => {},
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({ getWorkspacesDir: () => join(workDir, "workspaces") }),
+    onConversationsChanged: () => () => {},
     isTurnActive: () => false,
-  } as unknown as Runtime;
+  });
 }
 
 /** Run a conversations tool with `wsId` as the request's focused workspace. */
@@ -94,7 +102,7 @@ function exec(
 ): Promise<ToolResult> {
   return runWithRequestContext(
     {
-      identity: { id: OWNER_ID } as never,
+      identity: makeIdentity({ id: OWNER_ID }),
       ...(wsId ? { workspaceId: wsId } : {}),
     },
     () => source.execute(tool, args),
@@ -103,7 +111,7 @@ function exec(
 
 function payload(result: ToolResult): Record<string, unknown> {
   const first = result.content[0];
-  if (!first || first.type !== "text") throw new Error("expected a text block");
+  if (first?.type !== "text") throw new Error("expected a text block");
   return JSON.parse(first.text) as Record<string, unknown>;
 }
 
@@ -130,6 +138,9 @@ beforeEach(async () => {
   writeConv({ id: "conv_peer", wsId: WS_A, ownerId: PEER_ID });
   source = await createConversationsSource(makeRuntime(), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {
@@ -180,7 +191,7 @@ describe("conversations__list — ambient workspace scoping", () => {
   });
 
   test("denies when no workspace is in scope", async () => {
-    // e.g. an external `/mcp` call with no `X-Workspace-Id`. Deny rather than
+    // e.g. a background job with no workspace bound. Deny rather than
     // guess a workspace — the same posture as `files__*`.
     const result = await exec("list", {}, undefined);
     expect(result.isError).toBe(true);
@@ -235,10 +246,10 @@ describe("conversations__stats — ambient workspace scoping", () => {
 });
 
 describe("there is no cross-workspace conversation listing", () => {
-  // `ConversationLocator.list` used to take an OPTIONAL `workspaceId`, so
-  // forgetting it widened the read to every workspace — silently, and looking
-  // identical to a scoped call. The workspace is now a required positional
-  // argument, so the widening form does not exist to be reached.
+  // `ConversationLocator.list` takes the workspace as a required positional
+  // argument. Were it optional, forgetting it would widen the read to every
+  // workspace — silently, and looking identical to a scoped call. Required,
+  // the widening form does not exist to be reached.
   test("a listing covers only the named workspace", async () => {
     const locator = new ConversationLocator(join(workDir, "workspaces"));
     const result = await locator.list(WS_A, { limit: 100 }, { userId: OWNER_ID });
@@ -279,6 +290,9 @@ describe("conversations index — concurrent cold reads", () => {
     await source.stop();
     source = await createConversationsSource(makeRuntime(), new NoopEventSink());
     await source.start();
+    // List first, as the engine does: the SDK client validates a result against
+    // its tool's output schema only once it holds the `tools/list` that declares it.
+    await source.tools();
 
     const [a, b] = await Promise.all([
       exec("list", { limit: 1000 }, WS_A),

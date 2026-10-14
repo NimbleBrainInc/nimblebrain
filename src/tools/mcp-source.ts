@@ -1,32 +1,43 @@
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type {
   CallToolResult,
+  ClientCapabilities,
+  ClientOptions,
   CreateTaskResult,
+  Implementation,
+  Request as JsonRpcRequest,
+  McpSubscription,
+  PriorDiscovery,
+  RequestMethod,
+  RequestOptions,
+  ResultTypeMap,
   ServerCapabilities,
+  StandardSchemaV1,
   Task,
-} from "@modelcontextprotocol/sdk/types.js";
+  Transport,
+} from "@modelcontextprotocol/client";
 import {
-  CallToolResultSchema,
-  ListResourcesRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-  ResourceUpdatedNotificationSchema,
-  ToolListChangedNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
+  CLIENT_CAPABILITIES_META_KEY,
+  Client,
+  isInputRequiredResult,
+  ProtocolError,
+  ProtocolErrorCode,
+  SdkErrorCode,
+  SdkHttpError,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
+import { ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/core";
+import type { Server } from "@modelcontextprotocol/server";
+import { brandName } from "../brand/index.ts";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import {
   type ContentBlock,
   type EventSink,
   INFRA_ERROR_META_KEY,
+  NON_ADVANCING_META_KEY,
   SKILL_ACTIVATED_META_KEY,
   SKILL_SUPPRESSION_META_KEY,
   type ToolResult,
-  UNATTENDED_META_KEY,
 } from "../engine/types.ts";
 import {
   HOST_RESOURCES_LIST_METHOD,
@@ -37,31 +48,48 @@ import {
 } from "../host-resources/index.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
-import { getRequestContext } from "../runtime/request-context.ts";
+import { facetsClientExtension } from "../services/facets-extension.ts";
+import { lifecycleClientExtension } from "../services/lifecycle-extension.ts";
+import {
+  SKILLS_EXTENSION_ID,
+  SKILLS_LIST_METHOD,
+  SkillsListResultSchema,
+  skillsClientExtension,
+} from "../skills/skills-extension.ts";
 import { coerceInputForSchema } from "./coerce-input.ts";
+import {
+  inlineTaskClient,
+  TASKS_EXTENSION_ID,
+  type TaskClient,
+  type TaskStreamMessage,
+  TaskWire,
+  TaskWireError,
+  taskClientFor,
+} from "./mcp-task-client.ts";
 import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
 import { createRemoteTransport } from "./remote-transport.ts";
 import { scrubArgsForDispatch } from "./scrub-args.ts";
 import {
   RELAYED_SERVER_NOTIFICATIONS,
-  type RelayedServerNotificationMethod,
   relayableParams,
   type ServerNotification,
 } from "./server-notifications.ts";
+import { withStructuredContentText } from "./structured-content-text.ts";
 import {
+  type McpCaller,
   type ResourceData,
   TaskAlreadyTerminalError,
   TaskNotFoundError,
   type TaskOwnerContext,
   type Tool,
+  type ToolExecuteOptions,
   type ToolSource,
 } from "./types.ts";
 import type { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
 
 /**
- * Default time-to-live (ms) sent with task-augmented `tools/call` requests.
- * One hour fits research-run-style workloads; the server MAY clamp it down.
- * Override globally via `McpSource` constructor or per-connector in the future.
+ * How long a task handle is kept after its last update when the task declares
+ * no TTL (a server that names none, or a call answered without a task).
  */
 const DEFAULT_TASK_TTL_MS = 60 * 60 * 1000;
 
@@ -84,6 +112,20 @@ const TASK_SWEEPER_INTERVAL_MS = 60_000;
  */
 const TASK_CREATED_TIMEOUT_MS = 60_000;
 
+/** First retry delay after a failed `subscriptions/listen`; doubles per failure. */
+const LISTEN_RETRY_BASE_MS = 1_000;
+/** Ceiling on the listen retry delay. */
+const LISTEN_RETRY_MAX_MS = 60_000;
+/** Ceiling on a `resources/templates/list` read made while a prompt is assembled. */
+const RESOURCE_TEMPLATES_TIMEOUT_MS = 5_000;
+
+/** One entry of a server's `resources/templates/list`, as the host keeps it. */
+export interface ResourceTemplateInfo {
+  uriTemplate: string;
+  name: string;
+  title?: string;
+}
+
 /**
  * Per-connector context threaded into McpSource so its Client can answer
  * inbound `ai.nimblebrain/resources/*` requests. Owned by the caller
@@ -101,18 +143,18 @@ export interface ConnectorMcpContext {
 }
 
 /**
- * Inbound request schemas — the standard MCP `resources/{read,list}`
- * shapes with the method literal swapped for our namespaced extension.
- * `ZodObject.extend` overrides the matching key, so the schema's params
- * shape (uri / cursor / filter) carries through unchanged from the
- * spec-blessed types. Layer 3 migration is just `s/ai.nimblebrain\///`.
+ * Inbound params schemas for the two namespaced host-resource methods, taken
+ * from the spec `resources/{read,list}` requests' own `params` so the shape
+ * (uri / cursor / `_meta`) stays spec-blessed rather than restated here.
+ * Params rather than whole requests because these are custom methods: the
+ * SDK's three-argument registration validates the params and hands the
+ * handler the parsed params. Layer 3 migration is just `s/ai.nimblebrain\///`.
  */
-const NbReadResourceRequestSchema = ReadResourceRequestSchema.extend({
-  method: z.literal(HOST_RESOURCES_READ_METHOD),
-});
-const NbListResourcesRequestSchema = ListResourcesRequestSchema.extend({
-  method: z.literal(HOST_RESOURCES_LIST_METHOD),
-});
+const NbReadResourceParamsSchema = ReadResourceRequestSchema.shape.params;
+const NbListResourcesParamsSchema = ListResourcesRequestSchema.shape.params;
+
+/** How this runtime names itself to every server it connects to. */
+const CLIENT_INFO: Implementation = { name: "nimblebrain", version: "0.1.0" };
 
 export type { ResourceData } from "./types.ts";
 
@@ -280,21 +322,99 @@ export function sanitizeReportedVersion(raw: string): string | undefined {
 }
 
 /**
+ * How long a remote source's memoized `tools/list` is trusted before a read
+ * re-fetches it. A remote server redeployed at the same URL changes its tools
+ * with no signal to an already-connected client: a stateless server loses no
+ * session, and the new process cannot notify a client of the old one. Every
+ * read of a remote source's tools, the agent's run listing and the connector
+ * pages alike, is bounded by this one age.
+ */
+export const REMOTE_TOOL_LIST_MAX_AGE_MS = 60_000;
+
+/**
+ * How long {@link McpSource.tools} waits on a stale remote source's re-fetch
+ * before serving the memo. A run lists tools as it starts, so a source used
+ * less often than the max age would otherwise always start on its old list.
+ * The wait is paid once per max age per source, and only by the read that
+ * starts the re-fetch.
+ */
+export const REMOTE_TOOL_REFRESH_WAIT_MS = 1_500;
+
+/**
  * Whether two mapped tool lists differ in a way the LLM or UI would observe —
- * the set of tool names, or any tool's description / input schema / execution
- * metadata. Order-independent (`tools/list` ordering isn't guaranteed stable
- * across server restarts). Used to gate the `toolsChanged` fan-out so a
- * refresh that returns the identical surface doesn't needlessly invalidate
- * memoized tool unions downstream.
+ * the set of tool names, or any tool's description, input or output schema,
+ * annotations, `_meta` or execution metadata. Order-independent (`tools/list`
+ * ordering isn't guaranteed stable across server restarts). Used to keep the
+ * memo's array when a refresh returns the same surface, so the order the model
+ * sees (and the prompt cache) holds, and to gate the `toolsChanged` fan-out.
  */
 export function toolListChanged(a: readonly Tool[], b: readonly Tool[]): boolean {
   if (a.length !== b.length) return true;
   const signature = (tools: readonly Tool[]) =>
     tools
-      .map((t) => JSON.stringify([t.name, t.description, t.inputSchema, t.execution ?? null]))
+      .map((t) =>
+        JSON.stringify([
+          t.name,
+          t.description,
+          t.inputSchema,
+          t.outputSchema ?? null,
+          t.annotations ?? null,
+          t.meta ?? null,
+          t.execution ?? null,
+        ]),
+      )
       .sort()
       .join("\u0000");
   return signature(a) !== signature(b);
+}
+
+/**
+ * A `Client` whose 2025 `initialize` handshake claims extensions beyond the
+ * capabilities it was constructed with.
+ *
+ * SDK v2 fixes a client's capabilities at construction and sends that one
+ * value everywhere: in `initialize` on a 2025-era connection, and in the
+ * per-request `_meta` envelope on a 2026-07-28 one, the `server/discover`
+ * probe included. The era is known only after the probe, and capabilities
+ * cannot change once the transport is attached, so an era-specific claim goes
+ * on the one request only the 2025 era sends. `initialize` is sent through
+ * `request()` from the SDK's single handshake path, which this override
+ * extends by adding the extensions to the capabilities the SDK put there;
+ * every other request passes through untouched.
+ */
+class EraCapabilitiesClient extends Client {
+  constructor(
+    clientInfo: Implementation,
+    options: ClientOptions,
+    private readonly initializeExtensions: NonNullable<ClientCapabilities["extensions"]>,
+  ) {
+    super(clientInfo, options);
+  }
+
+  override request<M extends RequestMethod>(
+    request: { method: M; params?: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<ResultTypeMap[M]>;
+  override request<T extends StandardSchemaV1>(
+    request: JsonRpcRequest,
+    resultSchema: T,
+    options?: RequestOptions,
+  ): Promise<StandardSchemaV1.InferOutput<T>>;
+  override request(request: JsonRpcRequest, ...rest: [unknown?, unknown?]): Promise<unknown> {
+    let sent = request;
+    if (request.method === "initialize") {
+      const claimed = (request.params?.capabilities ?? {}) as ClientCapabilities;
+      const capabilities: ClientCapabilities = {
+        ...claimed,
+        extensions: { ...claimed.extensions, ...this.initializeExtensions },
+      };
+      sent = { ...request, params: { ...request.params, capabilities } };
+    }
+    // The implementation signature is wider than either SDK overload, so the
+    // super call goes through the overload-erased shape both funnel into.
+    const send = super.request as (r: JsonRpcRequest, ...a: unknown[]) => Promise<unknown>;
+    return send.call(this, sent, ...rest);
+  }
 }
 
 /**
@@ -326,6 +446,9 @@ export class McpSource implements ToolSource {
   /** A {@link refreshTools} in progress, shared so concurrent refreshes reuse
    *  one round-trip AND emit the change signal at most once. */
   private refreshInFlight: Promise<Tool[]> | null = null;
+  /** Bumped by {@link stop}, so a refresh begun on the old connection cannot
+   *  write the new connection's memo when its answer lands. */
+  private toolListGeneration = 0;
   private dead = false;
   /** A restart in progress, shared so concurrent recoveries reuse one
    *  stop()/start() cycle instead of stacking. Resource reads are NOT serialized
@@ -333,10 +456,17 @@ export class McpSource implements ToolSource {
    *  session-loss reads here at once; without this each would fire its own
    *  restart — a restart storm on a single source. */
   private restartInFlight: Promise<boolean> | null = null;
+  /** A {@link start} in progress. A connect flow registers a source before its
+   *  first start settles, so a restart can be asked for while it is still
+   *  connecting; {@link tryRestart} joins this instead of stopping it. */
+  private startInFlight: Promise<void> | null = null;
   /** Backoff schedule for `recover`'s re-establish loop. Defaults to
    *  `SESSION_RECOVERY_DELAYS_MS`; overridable so tests exercise the policy
    *  branches without real sleeps. */
   private recoveryDelaysMs?: readonly number[];
+  /** How long {@link tools} waits on a stale remote re-fetch. Defaults to
+   *  `REMOTE_TOOL_REFRESH_WAIT_MS`; overridable so tests need no real wait. */
+  private toolsRefreshWaitMs?: number;
   /** Timestamp of the last FAILED on-demand reconnect ({@link reconnectOnDemand}),
    *  or null when there is no unpaid failure — reset by any successful `start()`
    *  (so a heal via HealthMonitor / recover() clears it too, not just
@@ -347,6 +477,18 @@ export class McpSource implements ToolSource {
    *  with no successful connect between them; a healthy idle-close heals on the
    *  first call. */
   private lastReconnectFailedAt: number | null = null;
+  /** When this source went down involuntarily (a crash, or a start that failed),
+   *  or null while it is up or was never started. Kept across the failed
+   *  restarts of one outage and cleared only by a successful connect, so it
+   *  measures the whole outage, not the last attempt. A deliberate `stop()`
+   *  leaves it alone: {@link stopped} is what marks that terminal. Read by
+   *  {@link awaitRestartingSource} to tell a source that is restarting from one
+   *  that is gone. */
+  private downSince: number | null = null;
+  /** Timings for {@link awaitRestartingSource}. Defaults to
+   *  `RESTARTING_SOURCE_WAIT`; overridable so tests run the policy without real
+   *  waits. */
+  private restartingSourceWait: RestartingSourceWait = RESTARTING_SOURCE_WAIT;
   private startedAt: number | null = null;
   /** Optional `instructions` string returned by the MCP server during
    *  `initialize`. Captured after connect so callers (e.g. the system
@@ -356,6 +498,13 @@ export class McpSource implements ToolSource {
    *  Untrusted (the server sets it); display-only. Undefined until start()
    *  completes, if the server reports none, or after stop(). */
   private _serverVersion: string | undefined;
+  /**
+   * The server's `resources/templates/list`, fetched on first ask after each
+   * connect and kept until the next one. Null means not fetched on this
+   * connection. Survives `stop()`, so an idle-closed source still reports
+   * what it published while it was up.
+   */
+  private resourceTemplatesMemo: ResourceTemplateInfo[] | null = null;
   /**
    * For `inProcess` mode only — the linked-pair MCP server that this source
    * speaks to. Owned by McpSource (constructed in `start()` via
@@ -433,9 +582,37 @@ export class McpSource implements ToolSource {
   private readonly subscribedResourceUris = new Set<string>();
 
   /**
+   * The task operations on the current connection (see `mcp-task-client.ts`):
+   * the task wire on a 2026-07-28 connection, and on a 2025-era one an inline
+   * client that never attaches a task (ADR-0046). Built after every successful
+   * connect, dropped on `stop()`: a wire wraps the connection's transport, so
+   * it is as single-use as the transport is.
+   */
+  private taskClient: TaskClient | null = null;
+
+  /**
+   * The era the current connection negotiated, recorded once at connect
+   * (`onConnected`). An era is a property of a connection, so it is read here
+   * rather than re-derived per call, and reset with the connection.
+   */
+  private protocolEra: "legacy" | "modern" = "legacy";
+
+  /**
+   * The `subscriptions/listen` stream a 2026-07-28 connection receives change
+   * notifications on. That era sends none unsolicited, so without it
+   * `tools/list_changed`, `resources/updated` and the relayed notifications
+   * would go quiet. `null` on a legacy connection, which is pushed them.
+   */
+  private subscription: McpSubscription | null = null;
+  /** The tail of the serialized `listen()` calls (see `listen`). */
+  private listenQueue: Promise<void> = Promise.resolve();
+  /** Consecutive failed listens on the current client, for the retry backoff. */
+  private listenFailures = 0;
+
+  /**
    * `eventSink` is REQUIRED, not optional. Emitted events include
-   * `tool.progress` during task-augmented calls and `run.error` when the
-   * source crashes.
+   * `tool.task_status` during task-augmented calls and `connector.health` when
+   * the source crashes or restarts.
    *
    * Pass `new NoopEventSink()` only when a caller deliberately wants to
    * discard events (e.g. short-lived sources that aren't part of an agent
@@ -470,7 +647,7 @@ export class McpSource implements ToolSource {
   /**
    * The source name to put on an emitted event.
    *
-   * Consumers of `tool.progress` / `run.error` read this as a wire name. A
+   * Consumers of `tool.task_status` / `connector.health` read this as a wire name. A
    * personal connector emitting its bare name there is indistinguishable from a
    * workspace source installed under the same name, which is the exact
    * ambiguity the marker exists to remove.
@@ -485,6 +662,16 @@ export class McpSource implements ToolSource {
   }
 
   async start(): Promise<void> {
+    const starting = this.doStart();
+    this.startInFlight = starting;
+    try {
+      await starting;
+    } finally {
+      if (this.startInFlight === starting) this.startInFlight = null;
+    }
+  }
+
+  private async doStart(): Promise<void> {
     // Clear deliberate-teardown flags so a restart re-enables crash detection
     // on the new transport. Set in `stop()` to suppress onclose-emitted
     // `source.crashed` events during graceful teardown.
@@ -492,27 +679,13 @@ export class McpSource implements ToolSource {
     this.stopped = false;
 
     await this.initTransport();
-
-    this.client = this.buildClient();
-    // Inbound host-resources handlers registered before connect so they're
-    // ready the moment the connector issues its first request. No-op for
-    // in-process sources that don't pass a connectorContext.
-    this.registerConnectorHandlers(this.client);
-    // Native `tools/list_changed` subscription — must be on the client before
-    // connect so a notification arriving immediately after `initialize` isn't
-    // dropped.
-    this.registerToolsChangedHandler(this.client);
-    // Same reason, for `resources/updated` and the relayed notifications: a
-    // server that pushes one the instant it answers `initialize` must not find
-    // the handler missing.
-    this.registerResourceUpdatedHandler(this.client);
-    this.registerServerNotificationHandlers(this.client);
+    this.client = this.prepareClient();
 
     // Timeout MCP handshake — remote gets shorter timeout (15s vs 30s)
     const CONNECT_TIMEOUT = this.mode.type === "remote" ? 15_000 : 30_000;
 
     try {
-      await this.connectWithTimeout(CONNECT_TIMEOUT);
+      await this.connectOrFallBackToLegacy(CONNECT_TIMEOUT);
     } catch (err) {
       // One-shot OAuth retry: if we have an authProvider and the SDK threw
       // UnauthorizedError, drive the provider's pending flow, finish auth on the
@@ -522,7 +695,6 @@ export class McpSource implements ToolSource {
         await this.retryConnectWithOAuth(CONNECT_TIMEOUT);
         return;
       }
-
       await this.cleanupOnStartFailure();
       throw err;
     }
@@ -534,9 +706,6 @@ export class McpSource implements ToolSource {
     // and a fresh idle-close right after an out-of-band heal is never wrongly gated.
     this.lastReconnectFailedAt = null;
     this.startedAt = Date.now();
-    // Re-arm resource subscriptions on the new connection. Fire-and-forget:
-    // a hint that fails to re-establish costs latency, never correctness.
-    this.resubscribeResources();
 
     // Now that start has succeeded, wire transport close-detection.
     // Closes from this point on indicate a real mid-session disconnect
@@ -545,12 +714,19 @@ export class McpSource implements ToolSource {
     if (this.transport && this.mode.type === "remote") {
       this.transport.onclose = () => this.emitSourceCrashed("Remote transport closed");
     }
+    this.onConnected();
+    // Re-arm resource subscriptions on the new connection, once its era is
+    // known. Fire-and-forget: a hint that fails to re-establish costs latency,
+    // never correctness.
+    this.resubscribeResources();
 
     // Capture the server's initialize `instructions` field (may be undefined).
     // The MCP SDK stores it internally; we expose it via getInstructions() so
     // the system prompt composer can render it in the apps list.
     const instructions = this.client.getInstructions();
     this._instructions = typeof instructions === "string" ? instructions : undefined;
+    // A fresh connection may publish a different template set; re-read lazily.
+    this.resourceTemplatesMemo = null;
 
     // Capture the server's reported version (serverInfo.version, from the same
     // initialize response). The server is untrusted — a Composio gateway or a
@@ -653,12 +829,13 @@ export class McpSource implements ToolSource {
     try {
       const code = await authProvider.awaitPendingFlow();
       const authable = transport as AuthFinishableTransport;
-      if (typeof authable.finishAuth !== "function") {
+      const finishAuth = authable.finishAuth?.bind(authable);
+      if (typeof finishAuth !== "function") {
         throw new Error(
           `[mcp-source] transport does not support finishAuth (got ${transport.constructor.name})`,
         );
       }
-      await authable.finishAuth(code);
+      await authProvider.exchangeAuthorizationCode(() => finishAuth(code));
       log.debug("mcp", `[oauth] ${this.name}: finishAuth ok, recreating transport for retry`);
 
       // Drop the first-attempt transport+client. Both are single-use after a
@@ -674,20 +851,16 @@ export class McpSource implements ToolSource {
       transport.onclose = undefined;
       await this.cleanupOnStartFailure();
       await this.rebuildRemoteTransport();
-      this.client = this.buildClient();
-      // Re-register inbound host-resources handlers on the rebuilt Client —
-      // handler tables don't carry over from the prior instance.
-      this.registerConnectorHandlers(this.client);
-      this.registerToolsChangedHandler(this.client);
-      this.registerResourceUpdatedHandler(this.client);
-      this.registerServerNotificationHandlers(this.client);
+      // Handler tables don't carry over from the prior Client instance.
+      this.client = this.prepareClient();
       // Re-arm crash detection for the retry: cleanupOnStartFailure set
       // `stopping = true` to suppress its own teardown noise; we need it false
       // again before the new transport's onclose can fire usefully. If this
       // retry connect also fails, the catch below re-suppresses.
       this.stopping = false;
 
-      await this.connectWithTimeout(timeoutMs);
+      await this.connectOrFallBackToLegacy(timeoutMs);
+      this.onConnected();
       this.startedAt = Date.now();
       // This is a SECOND success seam (the headless OAuth auto-resolve retry).
       // The source is now enumerable, so it must emit the same tools-changed
@@ -702,13 +875,66 @@ export class McpSource implements ToolSource {
       // path onto the bottom seam instead of early-returning.
       this.emitToolsChanged();
       this.resubscribeResources();
+      this.resourceTemplatesMemo = null;
     } catch (retryErr) {
       await this.cleanupOnStartFailure();
       throw retryErr;
     }
   }
 
-  private async connectWithTimeout(timeoutMs: number): Promise<void> {
+  /**
+   * Connect, and if the `server/discover` probe met an HTTP 500, connect once
+   * more on the 2025 era. The SDK reads a 5xx as a server failure rather than
+   * era evidence, but a 2025-era server that answers any method it does not
+   * know with a 500 connected before this runtime probed, and must still
+   * connect (see `isEraProbeServerFailure` for why a gateway 5xx does not).
+   * Both connect seams (`start()` and the OAuth retry) go through here, so the
+   * fallback holds on either.
+   *
+   * The retry rebuilds the transport and client and passes a `legacy` prior,
+   * so the SDK skips the probe and runs the 2025 `initialize` handshake. A
+   * failure is thrown with the rebuilt transport still live, so the caller's
+   * own handling applies to it: `start()` can still take an `UnauthorizedError`
+   * from the handshake into the OAuth retry.
+   */
+  private async connectOrFallBackToLegacy(timeoutMs: number): Promise<void> {
+    try {
+      await this.connectWithTimeout(timeoutMs);
+      return;
+    } catch (err) {
+      if (!isEraProbeServerFailure(err)) throw err;
+      log.warn(
+        `[mcp] ${this.name}: server/discover probe failed (${
+          err instanceof Error ? err.message : String(err)
+        }); connecting on the 2025 era`,
+      );
+    }
+    if (this.transport) this.transport.onclose = undefined;
+    await this.cleanupOnStartFailure();
+    this.stopping = false;
+    await this.initTransport();
+    this.client = this.prepareClient();
+    await this.connectWithTimeout(timeoutMs, { kind: "legacy" });
+  }
+
+  /**
+   * A fresh client with every handler registered, before it connects, so none
+   * of them misses a request or notification the server sends the instant it
+   * answers the handshake. Called on every connect path, because handler tables
+   * do not carry across SDK Client instances.
+   */
+  private prepareClient(): Client {
+    const client = this.buildClient();
+    // Inbound host-resources handlers. No-op for in-process sources that don't
+    // pass a connectorContext.
+    this.registerConnectorHandlers(client);
+    this.registerToolsChangedHandler(client);
+    this.registerResourceUpdatedHandler(client);
+    this.registerServerNotificationHandlers(client);
+    return client;
+  }
+
+  private async connectWithTimeout(timeoutMs: number, prior?: PriorDiscovery): Promise<void> {
     if (!this.client || !this.transport) {
       throw new Error("[mcp-source] connectWithTimeout called before init");
     }
@@ -724,10 +950,155 @@ export class McpSource implements ToolSource {
       );
     });
     try {
-      await Promise.race([this.client.connect(this.transport), timeout]);
+      await Promise.race([
+        this.client.connect(this.transport, prior ? { prior } : undefined),
+        timeout,
+      ]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
+  }
+
+  /**
+   * What every successful connect does once the era is known, on both success
+   * seams (the bottom of `start()` and the OAuth retry): attach the task client
+   * (the task wire on 2026-07-28, inline calls on 2025), log the negotiated era, and on a 2026-07-28 connection open the listen
+   * stream its change notifications ride.
+   */
+  private onConnected(): void {
+    // Both success seams (the bottom of `start()` and the OAuth retry) pass
+    // through here, and the OAuth retry's first attempt ran
+    // `cleanupOnStartFailure()`, so the outage ends here, not in `start()`.
+    this.downSince = null;
+    const client = this.client;
+    const transport = this.transport;
+    if (!client || !transport) return;
+    this.protocolEra = client.getProtocolEra() === "modern" ? "modern" : "legacy";
+    const wire = TaskWire.attach(this.name, client, transport, CLIENT_INFO, McpSource.CAPABILITIES);
+    this.taskClient = wire
+      ? taskClientFor(wire)
+      : inlineTaskClient((params, signal) => client.callTool(params, { signal }));
+    this.logNegotiatedEra(client);
+    if (this.protocolEra === "modern") void this.listen();
+  }
+
+  /**
+   * One line per connect naming the protocol version this connection landed
+   * on, so an operator can see which era each connector speaks.
+   */
+  private logNegotiatedEra(client: Client): void {
+    const line =
+      `[mcp] connected source=${this.name} era=${this.protocolEra}` +
+      ` protocolVersion=${client.getNegotiatedProtocolVersion() ?? "unknown"}`;
+    // A platform app is the runtime talking to itself, always on the 2025
+    // in-memory transport; only a remote connection's era is news.
+    if (this.mode.type === "remote") log.info(line);
+    else log.debug("mcp", line);
+  }
+
+  /**
+   * (Re)open the `subscriptions/listen` stream with the filter this source
+   * needs now: the list-changed kinds the server advertises and every resource
+   * URI it has been asked to watch.
+   *
+   * One owner for the stream. Calls run one at a time, each reading the filter
+   * when its turn comes, so the stream acknowledged last is the widest asked
+   * for. A replaced stream is closed after its successor is acknowledged, so no
+   * window goes unwatched. Any close this source did not ask for (the server
+   * ending it, or the connection dropping it) re-listens, and a failed listen,
+   * or a stream that ends as soon as it opens, retries with backoff, both for
+   * as long as this client is the source's current one. A failure costs change notifications and nothing else, so it
+   * is logged, not thrown.
+   */
+  private listen(): Promise<void> {
+    const turn = this.listenQueue.then(() => this.openListenStream());
+    this.listenQueue = turn.catch(() => {});
+    return turn;
+  }
+
+  private async openListenStream(): Promise<void> {
+    const client = this.client;
+    if (!client || this.protocolEra !== "modern") return;
+    const caps = client.getServerCapabilities();
+    const filter = {
+      ...(caps?.tools?.listChanged ? { toolsListChanged: true } : {}),
+      ...(caps?.resources?.listChanged ? { resourcesListChanged: true } : {}),
+      ...(caps?.resources?.subscribe && this.subscribedResourceUris.size > 0
+        ? { resourceSubscriptions: [...this.subscribedResourceUris] }
+        : {}),
+    };
+    if (Object.keys(filter).length === 0) return;
+    let next: McpSubscription;
+    try {
+      next = await client.listen(filter);
+    } catch (err) {
+      this.retryListenLater(client, err instanceof Error ? err.message : String(err));
+      return;
+    }
+    if (this.client !== client) {
+      void next.close().catch(() => {});
+      return;
+    }
+    const previous = this.subscription;
+    this.subscription = next;
+    if (previous) void previous.close().catch(() => {});
+    const openedAt = Date.now();
+    void next.closed.then((why) => {
+      if (this.client !== client) return;
+      // A stream counts as a successful listen once it has stayed open a
+      // while, so a peer that acknowledges and hangs up at once is retried
+      // with backoff rather than re-listened in a tight loop.
+      const held = Date.now() - openedAt >= LISTEN_RETRY_BASE_MS;
+      if (held) this.listenFailures = 0;
+      if (why === "local" || this.subscription !== next) return;
+      this.subscription = null;
+      if (held) void this.listen();
+      else this.retryListenLater(client, "the stream ended as soon as it opened");
+    });
+  }
+
+  /** Count a failed listen and listen again after the backoff, while `client` is current. */
+  private retryListenLater(client: Client, reason: string): void {
+    this.listenFailures++;
+    const delayMs = Math.min(
+      LISTEN_RETRY_BASE_MS * 2 ** (this.listenFailures - 1),
+      LISTEN_RETRY_MAX_MS,
+    );
+    log.debug(
+      "mcp",
+      `[${this.name}] subscriptions/listen failed, retrying in ${delayMs}ms — ${reason}`,
+    );
+    const timer = setTimeout(() => {
+      if (this.client === client) void this.listen();
+    }, delayMs);
+    timer.unref?.();
+  }
+
+  /** The protocol version this connection negotiated, or `undefined` before connect and after `stop()`. */
+  getNegotiatedProtocolVersion(): string | undefined {
+    return this.client?.getNegotiatedProtocolVersion();
+  }
+
+  /**
+   * The extensions the server advertised, keyed by extension identifier: from
+   * `server/discover` on a 2026-07-28 connection, from the `initialize` result
+   * on a 2025-era one. Empty before connect, after `stop()`, and for a server
+   * that advertises none. The facets and skills readers take their extension
+   * settings from here rather than reaching into the SDK's capability shape.
+   */
+  serverExtensions(): Record<string, object> {
+    return this.client?.getServerCapabilities()?.extensions ?? {};
+  }
+
+  /**
+   * Reconnect a connection that dropped (an idle close, a crash) without
+   * waiting for the next health tick, and say whether a client is up
+   * afterward. A deliberately stopped source stays stopped. For a reader that
+   * needs the server's capabilities before it makes a call, such as the
+   * lifecycle binding at uninstall; {@link execute} reconnects on its own.
+   */
+  async ensureConnected(): Promise<boolean> {
+    return this.reconnectOnDemand();
   }
 
   private async cleanupOnStartFailure(): Promise<void> {
@@ -738,6 +1109,9 @@ export class McpSource implements ToolSource {
     // every failed connect would emit a parallel crash event for a
     // source the listener has never seen "running."
     this.stopping = true;
+    // A failed start is an outage whether or not the source was ever up, and a
+    // failed restart continues the outage already running: keep its start time.
+    this.downSince ??= Date.now();
     try {
       if (this.transport) await this.transport.close();
       if (this.inProcessServer) await this.inProcessServer.close();
@@ -749,6 +1123,10 @@ export class McpSource implements ToolSource {
     this.client = null;
     this.transport = null;
     this.inProcessServer = null;
+    this.taskClient = null;
+    this.subscription = null;
+    this.listenFailures = 0;
+    this.protocolEra = "legacy";
   }
 
   /**
@@ -770,8 +1148,9 @@ export class McpSource implements ToolSource {
   private emitSourceCrashed(error: string): void {
     if (this.stopping || this.dead) return;
     this.dead = true;
+    this.downSince ??= Date.now();
     this.eventSink.emit({
-      type: "run.error",
+      type: "connector.health",
       data: {
         source: this.eventSourceName,
         event: "source.crashed",
@@ -809,41 +1188,68 @@ export class McpSource implements ToolSource {
   }
 
   /**
-   * The client this source connects with, and the capabilities it claims.
-   * One builder, called on the initial start and again on the OAuth retry
-   * rebuild, so the two connections cannot claim different things.
+   * The capabilities this client claims on every era. One value, read by
+   * `buildClient` and by the task wire's per-request envelope, so a connection
+   * and its task calls cannot claim different things. On a 2026-07-28
+   * connection the SDK attaches it to every request's `_meta` envelope, the
+   * `server/discover` probe included.
    *
-   * `tasks` says this client honors task-augmented `tools/call`: a server with
-   * `execution.taskSupport` on a tool sees that we will attach
-   * `params.task: {ttl}` rather than block the request, and that we can cancel
-   * what we started. Advertised because it is exercised — `startToolAsTask`
-   * opens the stream, `getTaskStatus` polls, `cancelTask` cancels. `tasks.list`
-   * is not: nothing here calls `listTasks`, and SEP-2663 removes `tasks/list`
-   * from the spec, so claiming it invited a server to expect a client that
-   * would never arrive.
+   * No task capability is claimed here. The 2025-11-25 `tasks` capability is
+   * not claimed because the runtime never attaches a task on a 2025-era
+   * connection (ADR-0046). The 2026-07-28 tasks extension
+   * (`io.modelcontextprotocol/tasks`) is not claimed on the connection because
+   * that would opt every SDK call in, and the SDK cannot read a task result;
+   * the task wire claims it per request instead (`mcp-task-client.ts`).
    *
-   * The task calls go through the SDK's `client.experimental.tasks` surface,
-   * which is where tasks live in SDK v1. SDK v2 moves them to an extension;
-   * the migration is a separate change, not a rename.
+   * `io.modelcontextprotocol/skills` (SEP-2640) is claimed on both eras
+   * because skill discovery runs on both: {@link listSkills} enumerates, and
+   * the runtime verifies each `SKILL.md` it later reads against the listing.
+   * `ai.nimblebrain/facets` is claimed on both eras for the same reason: the
+   * briefing collector lists and reads facets over whichever era connected,
+   * and the extension needs no server→client channel.
+   * `ai.nimblebrain/lifecycle` is claimed on both eras too: the runtime reads
+   * a connector's binding and calls its handlers over either era, so a server
+   * knows it will be told.
+   */
+  private static readonly CAPABILITIES: ClientCapabilities = {
+    extensions: {
+      ...skillsClientExtension(),
+      ...facetsClientExtension(),
+      ...lifecycleClientExtension(),
+    },
+  };
+
+  /**
+   * What the 2025 `initialize` handshake claims on top of `CAPABILITIES`: the
+   * NimbleBrain-namespaced extensions (`ai.nimblebrain/host-resources`, per
+   * https://modelcontextprotocol.io/extensions/overview). The host-resources
+   * methods are server→client requests, a channel only the 2025 era has, so
+   * the extension is claimed only on the handshake of a connection that can
+   * reach them, and only by a source that serves them: one with a
+   * `connectorContext`, which is what registers the handlers
+   * ({@link registerConnectorHandlers}). A source without one (an in-process
+   * platform source, or a remote connector started on a path that does not
+   * thread the host-resources deps) claims nothing it would not answer
+   * (ADR-0023).
+   */
+  private static readonly INITIALIZE_EXTENSIONS: NonNullable<ClientCapabilities["extensions"]> =
+    hostExtensions();
+
+  /**
+   * The client this source connects with. One builder, called on the initial
+   * start and again on the OAuth retry rebuild.
    *
-   * The `extensions` block carries NimbleBrain-namespaced vendor capabilities
-   * (e.g. `ai.nimblebrain/host-resources`) per the MCP extensions spec —
-   * https://modelcontextprotocol.io/extensions/overview. Connectors read these
-   * from their ClientCapabilities to opt into connector→host resource reads.
-   * Phase 1 advertises the capability; handlers land in Phase 2.
+   * `versionNegotiation: auto` probes `server/discover` and falls back to the
+   * 2025 `initialize` handshake against a server that does not answer it, so
+   * each connection lands on the best era both ends speak; the verdict is
+   * logged per connect (`logNegotiatedEra`). Never pinned: the fleet and
+   * remote connectors move eras on their own schedules.
    */
   private buildClient(): Client {
-    return new Client(
-      { name: "nimblebrain", version: "0.1.0" },
-      {
-        capabilities: {
-          tasks: {
-            requests: { tools: { call: {} } },
-            cancel: {},
-          },
-          extensions: hostExtensions(),
-        },
-      },
+    return new EraCapabilitiesClient(
+      CLIENT_INFO,
+      { capabilities: McpSource.CAPABILITIES, versionNegotiation: { mode: "auto" } },
+      this.connectorContext ? McpSource.INITIALIZE_EXTENSIONS : {},
     );
   }
 
@@ -853,6 +1259,11 @@ export class McpSource implements ToolSource {
    * start) and after `buildClient()` (OAuth retry rebuild). No-op when
    * `connectorContext` is absent (in-process platform sources don't need
    * the surface).
+   *
+   * These are server→client requests, a channel only the 2025 era has: on a
+   * 2026-07-28 connection the SDK drops inbound requests. The capability is
+   * claimed in the 2025 `initialize` only (`INITIALIZE_EXTENSIONS`), so a
+   * connector sees it exactly where it can call these methods.
    *
    * Handlers do three things, in order: rate-limit check (throws
    * `-32004` on exhaustion), delegate to the resolver (which enforces
@@ -864,32 +1275,40 @@ export class McpSource implements ToolSource {
     const ctx = this.connectorContext;
     if (!ctx) return;
 
-    client.setRequestHandler(NbReadResourceRequestSchema, async (request) => {
-      ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
-      return ctx.hostResources.read(request.params.uri, {
-        workspaceId: ctx.workspaceId,
-        connectorId: ctx.connectorId,
-      });
-    });
+    client.setRequestHandler(
+      HOST_RESOURCES_READ_METHOD,
+      { params: NbReadResourceParamsSchema },
+      async (params) => {
+        ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
+        return ctx.hostResources.read(params.uri, {
+          workspaceId: ctx.workspaceId,
+          connectorId: ctx.connectorId,
+        });
+      },
+    );
 
-    client.setRequestHandler(NbListResourcesRequestSchema, async (request) => {
-      ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
-      const params = request.params ?? {};
-      return ctx.hostResources.list(
-        // Connector-supplied filter rides in `_meta` per MCP convention for
-        // extension-carried request data — spec `ListResourcesRequest`
-        // doesn't have a `filter` field. If the spec ever adds one, also
-        // accept it from `params.filter` here.
-        {
-          cursor: typeof params.cursor === "string" ? params.cursor : undefined,
-          filter:
-            ((params._meta as Record<string, unknown> | undefined)?.filter as
-              | { scheme?: string; mimeType?: string; tags?: string[] }
-              | undefined) ?? undefined,
-        },
-        { workspaceId: ctx.workspaceId, connectorId: ctx.connectorId },
-      );
-    });
+    client.setRequestHandler(
+      HOST_RESOURCES_LIST_METHOD,
+      { params: NbListResourcesParamsSchema },
+      async (parsed) => {
+        ctx.rateLimit.check(ctx.workspaceId, ctx.connectorId);
+        const params = parsed ?? {};
+        return ctx.hostResources.list(
+          // Connector-supplied filter rides in `_meta` per MCP convention for
+          // extension-carried request data — spec `ListResourcesRequest`
+          // doesn't have a `filter` field. If the spec ever adds one, also
+          // accept it from `params.filter` here.
+          {
+            cursor: typeof params.cursor === "string" ? params.cursor : undefined,
+            filter:
+              ((params._meta as Record<string, unknown> | undefined)?.filter as
+                | { scheme?: string; mimeType?: string; tags?: string[] }
+                | undefined) ?? undefined,
+          },
+          { workspaceId: ctx.workspaceId, connectorId: ctx.connectorId },
+        );
+      },
+    );
   }
 
   /**
@@ -907,7 +1326,7 @@ export class McpSource implements ToolSource {
    * MCP server may push the notification.
    */
   private registerToolsChangedHandler(client: Client): void {
-    client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+    client.setNotificationHandler("notifications/tools/list_changed", () => {
       this.cachedTools = null;
       this.toolsFetchedAt = null;
       this.emitToolsChanged();
@@ -956,7 +1375,7 @@ export class McpSource implements ToolSource {
    * transport-level seam to one consumer.
    */
   private registerResourceUpdatedHandler(client: Client): void {
-    client.setNotificationHandler(ResourceUpdatedNotificationSchema, (notification) => {
+    client.setNotificationHandler("notifications/resources/updated", (notification) => {
       const uri = notification.params?.uri;
       if (typeof uri === "string") this.emitResourceUpdated(uri);
     });
@@ -975,11 +1394,21 @@ export class McpSource implements ToolSource {
    * Idempotent per URI in the sense that matters: the URI is remembered and
    * re-subscribed after every reconnect, so a caller subscribes once and the
    * source keeps the promise across restarts.
+   *
+   * On a 2026-07-28 connection there is no `resources/subscribe`: the URI joins
+   * the `resourceSubscriptions` of the listen stream, which is reopened with it.
    */
   async subscribeResourceUpdates(uri: string): Promise<boolean> {
     if (this.getServerCapabilities()?.resources?.subscribe !== true) return false;
     const client = this.client;
     if (!client) return false;
+    if (this.protocolEra === "modern") {
+      if (!this.subscribedResourceUris.has(uri)) {
+        this.subscribedResourceUris.add(uri);
+        await this.listen();
+      }
+      return this.subscription !== null;
+    }
     try {
       await client.subscribeResource({ uri });
     } catch (err) {
@@ -1016,7 +1445,8 @@ export class McpSource implements ToolSource {
    * source comes up.
    */
   private resubscribeResources(): void {
-    if (this.subscribedResourceUris.size === 0) return;
+    // A modern connection re-arms every URI in the listen stream `onConnected` opens.
+    if (this.subscribedResourceUris.size === 0 || this.protocolEra === "modern") return;
     for (const uri of this.subscribedResourceUris) {
       void this.subscribeResourceUpdates(uri);
     }
@@ -1052,13 +1482,8 @@ export class McpSource implements ToolSource {
    * fans the notification out; what it means belongs to the views that get it.
    */
   private registerServerNotificationHandlers(client: Client): void {
-    for (const [method, schema] of Object.entries(RELAYED_SERVER_NOTIFICATIONS) as Array<
-      [
-        RelayedServerNotificationMethod,
-        (typeof RELAYED_SERVER_NOTIFICATIONS)[RelayedServerNotificationMethod],
-      ]
-    >) {
-      client.setNotificationHandler(schema, (notification) => {
+    for (const method of RELAYED_SERVER_NOTIFICATIONS) {
+      client.setNotificationHandler(method, (notification) => {
         const params = relayableParams(notification.params);
         this.emitServerNotification({ method, ...(params ? { params } : {}) });
       });
@@ -1097,9 +1522,8 @@ export class McpSource implements ToolSource {
    * before the handshake completes and after `stop()`.
    *
    * Exposed so a caller can honour the spec's rule that declared capabilities
-   * are authoritative — `listResources` already reads them through the client
-   * for exactly that reason — without reaching through {@link getClient}, which
-   * hands out the whole SDK surface for what is one read.
+   * are authoritative without reaching through {@link getClient}, which hands
+   * out the whole SDK surface for what is one read.
    */
   getServerCapabilities(): ServerCapabilities | undefined {
     return this.client?.getServerCapabilities();
@@ -1116,9 +1540,14 @@ export class McpSource implements ToolSource {
    * reconnecting an orphaned, registry-removed instance — see the field doc on
    * {@link stopped}. A self-dropped transport (idle close, network blip) leaves
    * this false, so it still reconnects.
+   *
+   * A restart in flight passes through `stop()`, which sets `stopped` until its
+   * `start()` clears it; that is not a teardown, so it reads false here. Read as
+   * true, a HealthMonitor check landing in that window would mark a live source
+   * dead for good.
    */
   isStopped(): boolean {
-    return this.stopped;
+    return this.stopped && this.restartInFlight === null;
   }
 
   /** Time (ms) since the source was last started, or null if never started. */
@@ -1176,6 +1605,47 @@ export class McpSource implements ToolSource {
     return false;
   }
 
+  /**
+   * Wait for a source that is expected back, so a restart shorter than the wait
+   * costs the caller latency instead of a strike. Returns whether a live client
+   * is available afterward.
+   *
+   * Expected back means not deliberately stopped and down for less than
+   * `horizonMs`. Only the source knows both, so it decides here rather than
+   * asking an outside observer. The call waits until the earlier of its own
+   * bound (`waitMs`) and the end of the horizon, and stops early on `signal`.
+   * Past the horizon it returns false at once, so a source that is not coming
+   * back costs at most one horizon of waiting per outage before every call
+   * strikes instantly again.
+   *
+   * While waiting it re-attempts the connection itself, at most once per
+   * `retryMs` across all waiters (spaced from `lastReconnectFailedAt`, and
+   * coalesced onto one stop()/start() by {@link tryRestart}). It cannot rely on
+   * HealthMonitor alone: that sweeps every 30s, longer than the wait.
+   */
+  private async awaitRestartingSource(signal?: AbortSignal): Promise<boolean> {
+    const { waitMs, horizonMs, retryMs } = this.restartingSourceWait;
+    if (this.downSince === null || this.isStopped()) return false;
+    const deadline = Math.min(Date.now() + waitMs, this.downSince + horizonMs);
+    while (!this.client) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0 || signal?.aborted) return false;
+      const nextAttemptAt = (this.lastReconnectFailedAt ?? 0) + retryMs;
+      if (Date.now() < nextAttemptAt) {
+        await settleWithin(null, Math.min(nextAttemptAt - Date.now(), remaining), signal);
+        continue;
+      }
+      if (this.isStopped()) return false;
+      const attempt = this.tryRestart().then(() => {
+        if (!this.client) this.lastReconnectFailedAt = Date.now();
+      });
+      // A connect can outlast the deadline (15s remote handshake timeout). Stop
+      // waiting then; the attempt runs on and serves the next call if it lands.
+      await settleWithin(attempt, remaining, signal);
+    }
+    return true;
+  }
+
   async stop(): Promise<void> {
     // Tell our onclose handlers this is a deliberate teardown — see
     // `stopping` field. Without this, every graceful stop would emit a
@@ -1184,6 +1654,9 @@ export class McpSource implements ToolSource {
     // Distinct durable marker for "deliberately stopped" (vs the failed-start
     // `stopping` that `cleanupOnStartFailure` also sets). Cleared by `start()`.
     this.stopped = true;
+    // A `start()` parked on an interactive OAuth flow settles now instead of at
+    // the flow's TTL, and a callback that arrives later finds no flow to finish.
+    if (this.mode.type === "remote") this.mode.authProvider?.abandonPendingFlow();
     // Abort any in-flight streams so their drainers unblock and the handle
     // map can be cleared without leaking outstanding `awaitToolTaskResult`
     // callers. Each drainer will reject its terminalDeferred, which is
@@ -1204,6 +1677,10 @@ export class McpSource implements ToolSource {
     this.taskHandles.clear();
 
     try {
+      // Not awaited: the cancel is a request to a server this source is leaving,
+      // which may never answer, and closing the transport below ends the stream
+      // either way.
+      if (this.subscription) void this.subscription.close().catch(() => {});
       if (this.client) await this.client.close();
       if (this.transport) await this.transport.close();
       // In-process: also close the linked Server so its handler tables and
@@ -1219,10 +1696,15 @@ export class McpSource implements ToolSource {
     this.client = null;
     this.transport = null;
     this.inProcessServer = null;
+    this.taskClient = null;
+    this.subscription = null;
+    this.listenFailures = 0;
+    this.protocolEra = "legacy";
     this.cachedTools = null;
     this.toolsFetchedAt = null;
     this.toolsFetchInFlight = null;
     this.refreshInFlight = null;
+    this.toolListGeneration += 1;
     this._instructions = undefined;
     this._serverVersion = undefined;
   }
@@ -1231,6 +1713,38 @@ export class McpSource implements ToolSource {
    *  Undefined until start() completes; cleared by stop(). */
   getInstructions(): string | undefined {
     return this._instructions;
+  }
+
+  /**
+   * The resource templates this server advertises (`resources/templates/list`,
+   * first page), memoized per connection. Empty when the server declares no
+   * `resources` capability, does not answer the method, or is not connected and
+   * has never answered. The prompt reads this on every assembly, so a failure is
+   * memoized as empty rather than retried each turn, and the request carries a
+   * short timeout so a slow server cannot stall a turn.
+   */
+  async resourceTemplates(): Promise<ResourceTemplateInfo[]> {
+    if (this.resourceTemplatesMemo) return this.resourceTemplatesMemo;
+    const client = this.client;
+    if (!client?.getServerCapabilities()?.resources) return [];
+    let list: ResourceTemplateInfo[] = [];
+    try {
+      const res = await client.listResourceTemplates(undefined, {
+        timeout: RESOURCE_TEMPLATES_TIMEOUT_MS,
+      });
+      list = res.resourceTemplates.map((t) => ({
+        uriTemplate: t.uriTemplate,
+        name: t.name,
+        ...(typeof t.title === "string" ? { title: t.title } : {}),
+      }));
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `resource-templates source=${this.name} error=${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (this.client === client) this.resourceTemplatesMemo = list;
+    return list;
   }
 
   /** Sanitized `serverInfo.version` from the MCP `initialize` response.
@@ -1323,10 +1837,19 @@ export class McpSource implements ToolSource {
    * namespace here is silent — the server said something about the tool and the
    * host simply never heard it, which is how a tool that declares
    * `destructiveHint` gets treated like a read-only one.
+   *
+   * A client that has not finished its handshake counts as not started. The
+   * client exists before `connect()` resolves (for a remote OAuth source, for
+   * the whole of pending auth, while the source is already registered), and the
+   * SDK answers `listTools()` on it with an empty list rather than an error, as
+   * if the server advertised no tools. Memoized, that empty list would outlive
+   * the connect.
    */
   private fetchToolList(): Promise<Tool[]> {
     if (this.toolsFetchInFlight) return this.toolsFetchInFlight;
-    if (!this.client) throw new Error(`McpSource "${this.name}" not started`);
+    if (!this.client?.getServerCapabilities()) {
+      throw new Error(`McpSource "${this.name}" not started`);
+    }
     const client = this.client;
     const p = (async () => {
       const response = await client.listTools();
@@ -1354,7 +1877,12 @@ export class McpSource implements ToolSource {
   }
 
   async tools(): Promise<Tool[]> {
-    if (this.cachedTools) return this.cachedTools;
+    if (this.cachedTools) {
+      if (this.isRemote() && this.toolListOlderThan(REMOTE_TOOL_LIST_MAX_AGE_MS)) {
+        return this.revalidateTools(this.cachedTools);
+      }
+      return this.cachedTools;
+    }
     const fetched = await this.fetchToolList();
     this.cachedTools = fetched;
     this.toolsFetchedAt = Date.now();
@@ -1367,9 +1895,9 @@ export class McpSource implements ToolSource {
    * seam for picking up a remote server whose tool surface changed WITHOUT a
    * lifecycle event (redeployed at the same URL, no reconnect, no native
    * `tools/list_changed`). When the resulting surface actually differs from
-   * what was cached, fans out via `emitToolsChanged()` so the workspace tool
-   * union and the engine's LLM tool list converge in lockstep with the UI; a
-   * no-op refresh stays silent to avoid needless union invalidation.
+   * what was cached, fans out via `emitToolsChanged()` so the source's change
+   * listeners re-read it; a no-op refresh keeps the memo's array and stays
+   * silent.
    *
    * Note: does NOT refresh the reported handshake version
    * ({@link getReportedVersion}) — that comes from the `initialize` response,
@@ -1382,15 +1910,20 @@ export class McpSource implements ToolSource {
   async refreshTools(): Promise<Tool[]> {
     if (this.refreshInFlight) return this.refreshInFlight;
     const previous = this.cachedTools;
+    const generation = this.toolListGeneration;
     const p = (async () => {
       const fetched = await this.fetchToolList();
-      this.cachedTools = fetched;
+      // A stop() or restart while the request was out began a new generation:
+      // the memo now belongs to the new connection, so this answer is dropped.
+      if (generation !== this.toolListGeneration) return fetched;
       this.toolsFetchedAt = Date.now();
+      // An unchanged surface keeps the memo's array, so a server that lists the
+      // same tools in another order does not reorder what the model sees.
+      if (previous !== null && !toolListChanged(previous, fetched)) return previous;
+      this.cachedTools = fetched;
       // previous === null means the memo was empty; the connect seam already
       // emits on first population, so only a real surface change re-fans-out.
-      if (previous !== null && toolListChanged(previous, fetched)) {
-        this.emitToolsChanged();
-      }
+      if (previous !== null) this.emitToolsChanged();
       return fetched;
     })();
     this.refreshInFlight = p;
@@ -1426,6 +1959,48 @@ export class McpSource implements ToolSource {
       }
       throw err;
     }
+  }
+
+  /** Whether the memo was fetched more than `maxAgeMs` ago (or never). */
+  private toolListOlderThan(maxAgeMs: number): boolean {
+    return this.toolsFetchedAt === null || Date.now() - this.toolsFetchedAt > maxAgeMs;
+  }
+
+  /**
+   * Re-fetch a stale remote memo for {@link tools}, waiting at most
+   * {@link REMOTE_TOOL_REFRESH_WAIT_MS} before serving `memo`. Only the read
+   * that starts the re-fetch waits: while one is in flight every other read is
+   * served the memo at once, so a hung server costs one wait per max age, not
+   * one per listing. A slow re-fetch still lands in the memo for the next read.
+   *
+   * A failed re-fetch counts as a check, so a server that is down is asked
+   * again after the max age rather than on every listing. A stateful server
+   * redeployed behind the same URL answers with a lost session; that restarts
+   * the source, which reconnects and drops the memo.
+   */
+  private async revalidateTools(memo: Tool[]): Promise<Tool[]> {
+    if (this.refreshInFlight) return memo;
+    const refresh = this.refreshTools().catch((err: unknown) => {
+      this.toolsFetchedAt = Date.now();
+      log.debug(
+        "mcp",
+        `[${this.name}] tool-list revalidation failed, serving cached — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      if (classifyConnectionFailure(err) === "session-lost") void this.tryRestart();
+      return null;
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<null>((resolve) => {
+      timer = setTimeout(
+        () => resolve(null),
+        this.toolsRefreshWaitMs ?? REMOTE_TOOL_REFRESH_WAIT_MS,
+      );
+    });
+    const fresh = await Promise.race([refresh, waited]);
+    clearTimeout(timer);
+    return fresh ?? memo;
   }
 
   /**
@@ -1495,6 +2070,7 @@ export class McpSource implements ToolSource {
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
+    options?: ToolExecuteOptions,
   ): Promise<ToolResult> {
     // A live client dispatches — even with `dead` set: a stale crash flag over a
     // working transport, or a torn one, both route their throw through recover()
@@ -1502,32 +2078,50 @@ export class McpSource implements ToolSource {
     // — the #581 policy), so short-circuiting on `dead` here would deny that
     // self-heal and surface a spurious "not started". Only a genuinely torn-down
     // (null) client errors, and only after an on-demand reconnect fails — healing
-    // the window between an idle-close and the next HealthMonitor tick.
-    if (!this.client && !(await this.reconnectOnDemand())) {
+    // the window between an idle-close and the next HealthMonitor tick. A source
+    // that is restarting is then waited for, bounded, so a brief restart does not
+    // cost the call a strike.
+    if (
+      !this.client &&
+      !(await this.reconnectOnDemand()) &&
+      !(await this.awaitRestartingSource(signal))
+    ) {
       // Deliberately NOT marked infrastructure. This branch is reached only
-      // after `reconnectOnDemand()` has already failed, and a failed reconnect
-      // is floored behind RECONNECT_COOLDOWN_MS — so every later call returns
-      // here instantly and for free. Exempting it from the strike count would
-      // remove the run's only brake on a source that is not coming back, and
-      // let the model re-issue the same dead call every iteration. Tripping at
-      // three is the correct outcome here; the sibling spelling of the same
-      // condition (a source absent from the registry, via
-      // `mapOrchestratorErrorToToolResult`) is unmarked for the same reason.
+      // after `reconnectOnDemand()` has failed and the source is either not
+      // expected back or did not return within the bounded wait. Past the
+      // restart horizon, and with a failed reconnect floored behind
+      // RECONNECT_COOLDOWN_MS, every later call returns here instantly and for
+      // free. Exempting it from the strike count would remove the run's only
+      // brake on a source that is not coming back, and let the model re-issue
+      // the same dead call every iteration. Tripping at three is the correct
+      // outcome here; the sibling spelling of the same condition (a source
+      // absent from the registry, via `mapOrchestratorErrorToToolResult`) is
+      // unmarked for the same reason.
       return {
         content: textContent(`McpSource "${this.name}" not started`),
         isError: true,
       };
     }
 
-    // Dispatch on whether the target tool supports task augmentation. Tools
-    // that do (execution.taskSupport: "optional" | "required") are driven via
-    // the SDK's streaming task API — the request returns a CreateTaskResult
-    // immediately and we consume the stream of taskStatus messages until the
-    // final `result` or `error`. Tools without task support use the
-    // traditional inline path.
+    // Dispatch on whether the call may come back as a task. Task augmentation
+    // is the 2026-07-28 tasks extension only (ADR-0046): the server alone
+    // decides per call (SEP-2663) and tool listings carry no task marker, so
+    // every call to a server advertising the extension takes the task path,
+    // which handles a complete answer as well. Everything else uses the inline
+    // path, and so does a call that asks for it (`options.inline`, the host's
+    // lifecycle calls). A call made for an outside client (`options.caller`)
+    // carries the client's side only on the inline path: the task path polls
+    // to completion, which an inline call under the request timeout would not.
+    // A 2025-era tool that requires a task is refused here, before anything is
+    // sent.
     const tool = this.findTool(toolName);
     const taskSupport = tool?.execution?.taskSupport;
-    const isTaskAugmented = taskSupport === "optional" || taskSupport === "required";
+    const refusal = this.taskRequiredRefusal(toolName, taskSupport);
+    if (refusal) return { content: textContent(refusal), isError: true };
+    const isTaskAugmented =
+      options?.inline !== true &&
+      this.protocolEra === "modern" &&
+      TASKS_EXTENSION_ID in this.serverExtensions();
 
     const dispatchArgs = this.prepareDispatchArgs(tool, input, toolName);
 
@@ -1555,13 +2149,44 @@ export class McpSource implements ToolSource {
         () =>
           isTaskAugmented
             ? this.callToolAsTask(toolName, dispatchArgs, signal)
-            : this.callToolInline(toolName, dispatchArgs, signal),
+            : this.callToolInline(toolName, dispatchArgs, signal, options?.caller),
         // A client cancellation isn't a crash — don't mark the span failed.
         { isExpectedError: () => signal?.aborted === true },
       );
     } catch (err) {
-      return this.handleExecuteError(err, toolName, dispatchArgs, signal, isTaskAugmented);
+      // An error that asks the client to change its request is the outside
+      // client's to act on, so it goes back to the door as it is.
+      if (options?.caller && isClientActionable(err)) throw err;
+      return this.handleExecuteError(
+        err,
+        toolName,
+        dispatchArgs,
+        signal,
+        isTaskAugmented,
+        options?.caller,
+      );
     }
+  }
+
+  /**
+   * Why a call to `toolName` cannot be made, or null when it can. A 2025-era
+   * tool whose `execution.taskSupport` is `"required"` runs only under the
+   * 2025-11-25 tasks utility, which the runtime does not speak (ADR-0046), so
+   * the call is refused before dispatch rather than sent to fail at the server.
+   * An `"optional"` one is called inline.
+   */
+  private taskRequiredRefusal(
+    toolName: string,
+    taskSupport: "optional" | "required" | "forbidden" | undefined,
+  ): string | null {
+    if (this.protocolEra !== "legacy" || taskSupport !== "required") return null;
+    return (
+      `Tool "${toolName}" on ${this.name} cannot be called: it requires a task ` +
+      `(execution.taskSupport "required"), and this server offers tasks only through the ` +
+      `MCP 2025-11-25 tasks utility, which ${brandName()} does not speak (see ADR-0046). ` +
+      `It can be called once the server supports the 2026-07-28 tasks extension ` +
+      `(${TASKS_EXTENSION_ID}).`
+    );
   }
 
   /**
@@ -1587,16 +2212,17 @@ export class McpSource implements ToolSource {
     dispatchArgs: Record<string, unknown>,
     signal: AbortSignal | undefined,
     isTaskAugmented: boolean,
+    caller?: McpCaller,
   ): ToolResult | Promise<ToolResult> {
     // Cancellation isn't a crash — the source is healthy, the client just asked
-    // to stop. Emit a terminal tool.progress for task-augmented calls so UIs
-    // watching the progress stream transition out of "working", then surface the
+    // to stop. Emit a terminal tool.task_status for task-augmented calls so a
+    // watcher of the task stream transitions out of "working", then surface the
     // error to the agent without marking the source dead or triggering restart.
     const wasAborted = signal?.aborted === true;
     if (wasAborted) {
       if (isTaskAugmented) {
         this.eventSink.emit({
-          type: "tool.progress",
+          type: "tool.task_status",
           data: {
             source: this.eventSourceName,
             tool: toolName,
@@ -1613,7 +2239,7 @@ export class McpSource implements ToolSource {
 
     return this.recover<ToolResult>(
       err,
-      () => this.callToolInline(toolName, dispatchArgs, signal),
+      () => this.callToolInline(toolName, dispatchArgs, signal, caller),
       {
         idempotent: !isTaskAugmented,
         // A throw on a tools/call is almost always the transport; recover even
@@ -1636,15 +2262,15 @@ export class McpSource implements ToolSource {
           // matters and why the marker is host-owned.
           //
           // It requires an allowlisted class AND that the throw is not an
-          // `McpError`. That second condition is stated as what it is — a
+          // `ProtocolError`. That second condition is stated as what it is — a
           // denylist of one type, not a proof of transport origin.
           //
           // It is load-bearing because three of the allowlisted classes are
           // decided by regex over the server's own error text: a connector answering
-          // `McpError(-32603, "Rate limit exceeded")` — FastMCP's default for an
+          // `ProtocolError(-32603, "Rate limit exceeded")` — FastMCP's default for an
           // unhandled exception — would otherwise exempt itself from the guard
           // permanently, and a connector relaying a persistent upstream 429 would be
-          // exempted exactly when the guard should trip. An `McpError` IS the
+          // exempted exactly when the guard should trip. An `ProtocolError` IS the
           // server answering, so it never earns the marker.
           //
           // Residual, deliberately accepted: a bare `Error` is not proof of
@@ -1655,7 +2281,11 @@ export class McpSource implements ToolSource {
           // would drop exactly the cases this exists to mark.
           const kind = classifyConnectionFailure(e);
           const infra =
-            INFRA_FAILURE_CLASSES.has(kind) && !(e instanceof McpError) ? infraErrorMeta() : {};
+            INFRA_FAILURE_CLASSES.has(kind) &&
+            !(e instanceof ProtocolError) &&
+            !(e instanceof TaskWireError)
+              ? infraErrorMeta()
+              : {};
           if (kind === "rate-limited") {
             return {
               content: textContent(
@@ -1821,7 +2451,7 @@ export class McpSource implements ToolSource {
    */
   async readResource(
     uri: string,
-    opts?: { logFailures?: boolean; reconnect?: boolean },
+    opts?: { logFailures?: boolean; reconnect?: boolean; signal?: AbortSignal },
   ): Promise<ResourceData | null> {
     if (!this.client) {
       // A torn-down client (a source degraded/crashed without re-creation) is the
@@ -1860,8 +2490,10 @@ export class McpSource implements ToolSource {
       }
       return null;
     };
+    // A caller's signal bounds the read and its recovery retry alike.
+    const request = opts?.signal ? { signal: opts.signal } : undefined;
     try {
-      return this.toResourceData(await this.client.readResource({ uri }));
+      return this.toResourceData(await this.client.readResource({ uri }, request));
     } catch (err) {
       // Route every failure through the shared recovery. A genuine MCP miss
       // (`shape.miss`) stays a silent null — e.g. a skill:// or app://instructions
@@ -1873,7 +2505,7 @@ export class McpSource implements ToolSource {
         err,
         async () => {
           if (!this.client) throw err; // restart produced no client — keep recovering
-          return this.toResourceData(await this.client.readResource({ uri }));
+          return this.toResourceData(await this.client.readResource({ uri }, request));
         },
         {
           idempotent: true,
@@ -1888,6 +2520,24 @@ export class McpSource implements ToolSource {
           reauth: logAndNull,
         },
       );
+    }
+  }
+
+  /**
+   * The server's whole `resources/list`, every page, best-effort. `ok: false`
+   * when there is no client or the listing failed, including a server whose
+   * cursor never converges (the SDK's page cap); a caller must not cache that
+   * as the server's listing. Failures do not route through session recovery:
+   * this is a discovery read, and a misbehaving server must not restart-storm
+   * the source.
+   */
+  async listResources(): Promise<{ resources: unknown[]; ok: boolean }> {
+    if (!this.client) return { resources: [], ok: false };
+    try {
+      const { resources } = await this.client.listResources(undefined, { cacheMode: "bypass" });
+      return { resources, ok: true };
+    } catch {
+      return { resources: [], ok: false };
     }
   }
 
@@ -1917,85 +2567,84 @@ export class McpSource implements ToolSource {
   }
 
   /**
-   * Enumerate the server's resources via `resources/list` (best-effort).
+   * Whether skill discovery asks this server for `skills/list` (SEP-2640).
    *
-   * Used for skill discovery (SEP-2640, `io.modelcontextprotocol/skills`): the
-   * runtime lists a source's resources and reads the `skill://<name>/SKILL.md`
-   * entrypoints. Returns `{ resources, ok, truncated }`: `ok: false` means the
-   * enumeration couldn't complete cleanly — a transport error mid-list (partial
-   * `resources`) or a torn-down client — so the caller declines to cache it as a
-   * stable "no skills" and retries next turn. Only a genuine successful response —
-   * a clean empty page (no skills / no `resources` capability) or a cap-bounded
-   * read — is `ok: true`. A caller treating `ok: true` as a complete enumeration
-   * must ALSO check `truncated`: a cap-bounded read succeeds with resources still
-   * unenumerated, and caching it as "this is everything" is the silent-skip this
-   * field exists to prevent.
-   * Unlike `readResource`, this probe does NOT route failures through
-   * session recovery — a server that simply doesn't list resources must not
-   * restart-storm the source. Pagination is followed up to a small page cap so a
-   * misbehaving server can't spin the request path.
+   * - `declared`: the server advertised `io.modelcontextprotocol/skills`
+   *   ({@link serverExtensions}, from `server/discover` or `initialize`).
+   *   Declaring is what commits a server to the method.
+   * - `none`: a 2026-07-28 connection without the declaration. The
+   *   extensions a modern server advertises are complete, so it has no skills.
+   * - `probe`: a 2025-era remote connection without the declaration (an
+   *   in-process source is the platform's own app and is `none`). Some SDKs omit
+   *   `capabilities.extensions` from the legacy `initialize` result (the
+   *   Python `mcp` SDK does), so a server that serves the extension cannot say
+   *   so there. Discovery asks once per window, and a server that does not
+   *   know the method means none: `-32601`, or `-32602` from the Python SDK,
+   *   which rejects an unknown method as a request that failed validation.
+   *
+   * This decides only whether to ask. What is a skill still comes from the
+   * server's own listing, never from a resource's URI scheme, which is the
+   * inference SEP-2640 forbids.
    */
-  async listResources(): Promise<{
-    resources: Array<{ uri: string; name?: string; mimeType?: string }>;
-    ok: boolean;
-    /**
-     * The 10-page ceiling was hit with a cursor still outstanding, so later
-     * resources exist and were not enumerated. Distinct from `ok: false`: the
-     * calls all SUCCEEDED, the result is just short. Callers that treat a
-     * successful enumeration as complete — caching it, or reporting "this
-     * server publishes no skills" — must consult this too.
-     */
-    truncated: boolean;
-  }> {
-    if (!this.client) return { resources: [], ok: false, truncated: false }; // torn-down client is transient — retry (cheap no-op)
-    // A server that advertised NO `resources` capability has none — that is a
-    // COMPLETE enumeration of nothing, not a failure. Without this the call
-    // throws `Method not found` and reports as a transport failure, which is
-    // both a wasted round trip per source and a permanent false positive for
-    // every tools-only server (among the in-process platform sources, `usage`
-    // and `compose`; the rest advertise `resources` and are probed).
-    //
-    // Only a POSITIVE "no resources" short-circuits. Absent capabilities means
-    // we do not know yet, and answering "complete, nothing here" on a guess is
-    // the same silent skip this signal exists to make impossible — so an
-    // unknown server is probed exactly as before.
-    //
-    // The trade this buys: a server that DOES implement `resources/list` but
-    // omits `resources` from its declared capabilities now reads as a clean
-    // empty and caches as complete, with no degraded signal. Declared
-    // capabilities are authoritative per spec, and probing past them would
-    // restore the always-firing false positive above — but it is the one new
-    // way this change can make a skill go dark.
-    const caps = this.client.getServerCapabilities();
-    if (caps && !caps.resources) {
-      return { resources: [], ok: true, truncated: false };
-    }
-    const resources: Array<{ uri: string; name?: string; mimeType?: string }> = [];
+  skillsDiscovery(): "declared" | "probe" | "none" {
+    if (SKILLS_EXTENSION_ID in this.serverExtensions()) return "declared";
+    // An in-process source is the platform's own app: its skills reach the
+    // model through the skills source and the filesystem pool, so an
+    // undeclared one is never asked.
+    if (this.mode.type === "inProcess") return "none";
+    return this.protocolEra === "modern" ? "none" : "probe";
+  }
+
+  /**
+   * Enumerate the server's skills via `skills/list` (SEP-2640), best-effort.
+   *
+   * Call only when {@link skillsDiscovery} is not `none`. Entries come back
+   * unvalidated, for the caller to check one at a time. On a `probe`, a
+   * `-32601` or `-32602` answer to the first page is a complete, empty
+   * listing: the server does not serve the extension. Otherwise a failed call leaves a
+   * partial result (`ok: false`), and the 10-page cap can stop the walk with
+   * a cursor outstanding (`truncated: true`); either way the result is not the
+   * server's whole listing, and a caller must not cache it as complete.
+   * Failures do not route through session recovery: this is a discovery probe,
+   * and a misbehaving server must not restart-storm the source.
+   */
+  async listSkills(): Promise<{ entries: unknown[]; ok: boolean; truncated: boolean }> {
+    if (!this.client) return { entries: [], ok: false, truncated: false };
+    const probing = this.skillsDiscovery() === "probe";
+    const entries: unknown[] = [];
     let cursor: string | undefined;
+    let page = 0;
     try {
-      for (let page = 0; page < 10; page++) {
-        const result = await this.client.listResources(cursor ? { cursor } : undefined);
-        for (const resource of result.resources ?? []) {
-          resources.push({ uri: resource.uri, name: resource.name, mimeType: resource.mimeType });
-        }
+      for (; page < 10; page++) {
+        // A raw request validated by our own schema, not the SDK's typed
+        // `skills/list`: SDK v2 strips `resultType` from a result before
+        // validating it against a schema that requires it, so it rejects every
+        // conforming `skills/list` result (modelcontextprotocol/typescript-sdk#2789).
+        const result = await this.client.request(
+          { method: SKILLS_LIST_METHOD, params: cursor ? { cursor } : {} },
+          SkillsListResultSchema,
+        );
+        entries.push(...result.skills);
         cursor = result.nextCursor;
         if (!cursor) break;
       }
       if (cursor) {
-        // Hit the page ceiling with more to read — surface it rather than silently
-        // drop later resources (a skill past the cap would go undiscovered).
-        log.warn("[mcp] listResources hit the 10-page cap; later resources not enumerated", {
+        log.warn("[mcp] listSkills hit the 10-page cap; later skills not enumerated", {
           source: this.name,
         });
-        return { resources, ok: true, truncated: true };
+        return { entries, ok: true, truncated: true };
       }
-    } catch {
-      // A transport error cut the enumeration short: report `ok: false` so the caller
-      // declines to cache this partial as a stable "no skills" (never recover/restart
-      // the source — this is a probe, not the app-surface readResource path).
-      return { resources, ok: false, truncated: false };
+    } catch (err) {
+      const code = (err as { code?: unknown } | null)?.code;
+      // Unknown method: `-32601` per JSON-RPC, `-32602` from the Python SDK,
+      // which validates a request against its known methods before routing.
+      // Only on an undeclared probe: from a declaring server either is a failure.
+      if (probing && page === 0 && (code === -32601 || code === -32602)) {
+        return { entries: [], ok: true, truncated: false };
+      }
+      return { entries, ok: false, truncated: false };
     }
-    return { resources, ok: true, truncated: false };
+    return { entries, ok: true, truncated: false };
   }
 
   /** Expose the underlying MCP client (kept for tests and rare introspection). */
@@ -2010,18 +2659,34 @@ export class McpSource implements ToolSource {
    * run-scoped abort cancels the in-flight RPC. Inline calls are expected to
    * finish within the stock MCP request timeout (~60s); use task-augmented
    * tools for anything longer.
+   *
+   * A call made for an outside client (`caller`) goes through
+   * `callToolForCaller`, and an `input_required` answer comes back as it is.
    */
   private async callToolInline(
     toolName: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    caller?: McpCaller,
   ): Promise<ToolResult> {
-    const result = await this.client?.callTool(
-      { name: toolName, arguments: args, ...unattendedCallMeta() },
-      undefined,
-      signal ? { signal } : undefined,
-    );
+    const result = caller
+      ? await this.callToolForCaller(toolName, args, caller, signal)
+      : await this.client?.callTool(
+          { name: toolName, arguments: args },
+          signal ? { signal } : undefined,
+        );
     if (!result) return { content: [], isError: true };
+    if (isInputRequiredResult(result)) {
+      const { inputRequests, requestState } = result;
+      return {
+        content: [],
+        isError: false,
+        inputRequired: {
+          ...(inputRequests ? { inputRequests } : {}),
+          ...(requestState !== undefined ? { requestState } : {}),
+        },
+      };
+    }
     const toolResult: ToolResult = {
       content: Array.isArray(result.content) ? (result.content as ContentBlock[]) : [],
       structuredContent: (result as Record<string, unknown>).structuredContent as
@@ -2039,7 +2704,39 @@ export class McpSource implements ToolSource {
     if (promoted !== toolResult) {
       log.debug("mcp", `lie-normalized source=${this.name} tool=${toolName} path=inline`);
     }
-    return promoted;
+    // An outside client reads `structuredContent` itself; only the agent loop
+    // needs it as text.
+    return caller ? promoted : this.forAgent(toolName, promoted);
+  }
+
+  /**
+   * One inline `tools/call` made for an outside client. It carries that
+   * client's capabilities in its envelope (a `_meta` key the caller sets wins
+   * over the SDK's own), its answers and the connector's echoed state on a
+   * retry, and its progress callback. The SDK hands an `input_required` answer
+   * back as it is (`allowInputRequired`) instead of trying to fulfil it here.
+   */
+  private callToolForCaller(
+    toolName: string,
+    args: Record<string, unknown>,
+    caller: McpCaller,
+    signal?: AbortSignal,
+  ) {
+    const { inputResponses, requestState, onProgress } = caller;
+    return this.client?.callTool(
+      {
+        name: toolName,
+        arguments: args,
+        ...(inputResponses ? { inputResponses } : {}),
+        ...(requestState !== undefined ? { requestState } : {}),
+        _meta: { [CLIENT_CAPABILITIES_META_KEY]: caller.capabilities },
+      },
+      {
+        allowInputRequired: true,
+        ...(signal ? { signal } : {}),
+        ...(onProgress ? { onprogress: onProgress, resetTimeoutOnProgress: true } : {}),
+      },
+    );
   }
 
   /**
@@ -2094,7 +2791,21 @@ export class McpSource implements ToolSource {
     if (promoted !== toolResult) {
       log.debug("mcp", `lie-normalized source=${this.name} tool=${toolName} path=task`);
     }
-    return promoted;
+    return this.forAgent(toolName, promoted);
+  }
+
+  /**
+   * A remote server's result as the agent loop reads it: its structured data
+   * carried in text, since the model sees text only. In-process platform tools
+   * put what the model should read in `content` already, and a tool with an
+   * MCP Apps UI (`_meta.ui.resourceUri`) sends `structuredContent` to render
+   * that UI, not for the model's context.
+   */
+  private forAgent(toolName: string, result: ToolResult): ToolResult {
+    if (this.mode.type === "inProcess") return result;
+    const ui = this.findTool(toolName)?.meta?.ui as { resourceUri?: unknown } | undefined;
+    if (typeof ui?.resourceUri === "string") return result;
+    return withStructuredContentText(result);
   }
 
   /**
@@ -2122,12 +2833,17 @@ export class McpSource implements ToolSource {
   async startToolAsTask(
     toolName: string,
     args: Record<string, unknown>,
-    opts: { ownerContext: TaskOwnerContext; signal?: AbortSignal; ttlMs?: number },
+    opts: { ownerContext: TaskOwnerContext; signal?: AbortSignal },
   ): Promise<CreateTaskResult> {
     const client = this.client;
     if (!client || this.dead) {
       throw new Error(`McpSource "${this.name}" not started`);
     }
+    const refusal = this.taskRequiredRefusal(
+      toolName,
+      this.findTool(toolName)?.execution?.taskSupport,
+    );
+    if (refusal) throw new Error(refusal);
 
     const abortController = new AbortController();
     const externalSignal = opts.signal;
@@ -2136,20 +2852,11 @@ export class McpSource implements ToolSource {
       else externalSignal.addEventListener("abort", () => abortController.abort(), { once: true });
     }
 
-    // Pass `task: { ttl }` via *options*, NOT inside `params`. The SDK's
-    // `Protocol.request` stamps `params.task = options.task` AFTER reading
-    // the caller's params, so any ttl we set in `params.task` here is
-    // overridden by the SDK's `optionsWithTask.task` (which auto-fills `{}`
-    // for tools advertising `taskSupport`). Putting it in options threads
-    // through correctly. See `@modelcontextprotocol/sdk` `protocol.js:654`
-    // and `experimental/tasks/client.js:67`.
-    const stream = client.experimental.tasks.callToolStream(
-      { name: toolName, arguments: args, ...unattendedCallMeta() },
-      undefined,
-      {
-        signal: abortController.signal,
-        task: { ttl: opts.ttlMs ?? DEFAULT_TASK_TTL_MS },
-      },
+    const taskClient = this.taskClient;
+    if (!taskClient) throw new Error(`McpSource "${this.name}" has no task client`);
+    const stream = taskClient.callToolStream(
+      { name: toolName, arguments: args },
+      { signal: abortController.signal, createTimeoutMs: TASK_CREATED_TIMEOUT_MS },
     );
 
     // Race the stream's first message against a hard ceiling. The SDK
@@ -2164,7 +2871,7 @@ export class McpSource implements ToolSource {
     if (first.done) {
       throw new Error(`Stream from ${this.name}:${toolName} ended before yielding taskCreated`);
     }
-    const firstMsg = first.value as { type: string; task?: Task; error?: { message?: string } };
+    const firstMsg: TaskStreamMessage = first.value;
     if (firstMsg.type === "error") {
       throw new Error(
         firstMsg.error?.message ?? `Task creation failed for ${this.name}:${toolName}`,
@@ -2199,7 +2906,7 @@ export class McpSource implements ToolSource {
     // Emit the initial progress event inline so callers see `taskCreated`
     // before `startToolAsTask` returns.
     this.eventSink.emit({
-      type: "tool.progress",
+      type: "tool.task_status",
       data: {
         source: this.name,
         tool: toolName,
@@ -2213,10 +2920,8 @@ export class McpSource implements ToolSource {
     // via `terminalDeferred.reject` — there's no outer `await` to catch them.
     void this.drainTaskStream(handle, stream, toolName);
 
-    // CreateTaskResult per MCP spec 2025-11-25 wraps the Task in a `task`
-    // field. The SDK's stream doesn't surface the outer envelope directly
-    // (it hands us the parsed inner Task), but the JSON-RPC contract the
-    // `/mcp` handler needs to re-emit is `{ task: Task }`.
+    // The SDK's stream hands us the parsed inner Task; callers read it from
+    // `{ task }` (the `/mcp` door re-emits it as a flat 2026 task).
     return { task };
   }
 
@@ -2252,10 +2957,10 @@ export class McpSource implements ToolSource {
     // For still-working tasks, prefer live upstream if possible so callers
     // get fresh `pollInterval` / `statusMessage` without having to wait for
     // the next `taskStatus` message.
-    const client = this.client;
-    if (client) {
+    const taskClient = this.taskClient;
+    if (taskClient) {
       try {
-        const upstream = await client.experimental.tasks.getTask(taskId);
+        const upstream = await taskClient.getTask(taskId);
         handle.latestTask = upstream;
         handle.expiresAt = computeExpiry(upstream);
         return upstream;
@@ -2338,7 +3043,7 @@ export class McpSource implements ToolSource {
    * `startToolAsTask` until the stream terminates.
    *
    * Responsibilities:
-   *   - Emit `tool.progress` for every `taskStatus` so the chat UI renders live.
+   *   - Emit `tool.task_status` for every `taskStatus`.
    *   - Refresh `handle.latestTask` on every `taskStatus`.
    *   - Resolve `handle.terminalDeferred` on `result`, reject on `error`.
    *   - On thrown errors (transport crash, abort), reject + stamp a
@@ -2347,17 +3052,11 @@ export class McpSource implements ToolSource {
    */
   private async drainTaskStream(
     handle: TaskHandle,
-    stream: AsyncGenerator<unknown, void, void>,
+    stream: AsyncGenerator<TaskStreamMessage, void, void>,
     toolName: string,
   ): Promise<void> {
     try {
-      for await (const raw of stream) {
-        const message = raw as {
-          type: string;
-          task?: Task;
-          result?: CallToolResult;
-          error?: { message?: string };
-        };
+      for await (const message of stream) {
         switch (message.type) {
           case "taskStatus":
             this.applyTaskStatus(handle, message.task, toolName);
@@ -2370,7 +3069,7 @@ export class McpSource implements ToolSource {
             if (this.settleTaskResult(handle, message.result)) return;
             break;
           case "error":
-            await this.settleTaskError(handle, message.error);
+            this.settleTaskError(handle, message.error);
             return;
         }
       }
@@ -2382,14 +3081,14 @@ export class McpSource implements ToolSource {
 
   /**
    * `taskStatus`: refresh `handle.latestTask` + expiry and emit a live
-   * `tool.progress`. No-op when the message carried no task.
+   * `tool.task_status`. No-op when the message carried no task.
    */
   private applyTaskStatus(handle: TaskHandle, task: Task | undefined, toolName: string): void {
     if (!task) return;
     handle.latestTask = task;
     handle.expiresAt = computeExpiry(task);
     this.eventSink.emit({
-      type: "tool.progress",
+      type: "tool.task_status",
       data: {
         source: this.name,
         tool: toolName,
@@ -2427,17 +3126,8 @@ export class McpSource implements ToolSource {
    *      preserves its historical return shape. Rejection is reserved for
    *      transport crashes / protocol violations so `execute()`'s catch branch
    *      makes the right restart decision.
-   *
-   * Contract: even when `recoverFailedTaskResult` salvages a payload,
-   * `latestTask.status` reflects what the SERVER reported (`failed`/`cancelled`)
-   * — the recovery only salvages the agent-visible content, not the terminal
-   * verdict. Status consumers see the honest server state; the agent sees the
-   * actual output.
    */
-  private async settleTaskError(
-    handle: TaskHandle,
-    error: { message?: string } | undefined,
-  ): Promise<void> {
+  private settleTaskError(handle: TaskHandle, error: { message?: string } | undefined): void {
     const message = error?.message ?? `Task ${handle.taskId} failed`;
     if (handle.cancelRequested) {
       const err = new Error(`Task ${handle.taskId} cancelled: ${message}`);
@@ -2453,8 +3143,7 @@ export class McpSource implements ToolSource {
       return;
     }
     const isAborted = handle.abortController.signal.aborted;
-    const recoveredResult = await this.recoverFailedTaskResult(handle, message, isAborted);
-    const callToolResult: CallToolResult = recoveredResult ?? {
+    const callToolResult: CallToolResult = {
       content: [{ type: "text", text: message }],
       isError: true,
     };
@@ -2467,46 +3156,6 @@ export class McpSource implements ToolSource {
     };
     handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
     handle.terminalDeferred.resolve(callToolResult);
-  }
-
-  /**
-   * Defense in depth: the upstream MCP SDK's task stream emits `type: 'error'`
-   * with an `McpError(InternalError, "Task <id> failed")` whenever the
-   * server-side status is `failed`, AND discards the server's `tasks/result`
-   * payload along the way. A connector that misclassified its own terminal status —
-   * e.g. a post-result exception flipping COMPLETED→FAILED while a usable payload
-   * already existed in the store — would surface to the agent as a useless string
-   * with the real output gone. Try one extra `tasks/result` fetch before settling
-   * for the generic error. Returns null when no result is genuinely available.
-   *
-   * Discriminator: `endsWith` on the known `handle.taskId`, NOT a regex on the
-   * bare message. McpError's constructor wraps the message as
-   * `"MCP error <code>: <message>"` (see
-   * node_modules/@modelcontextprotocol/sdk/.../types.js), so the production
-   * `error.message` is "MCP error -32603: Task <id> failed" — anchored regexes
-   * against the bare form silently fail to match and the recovery is a no-op.
-   * Using the taskId as the discriminator also tightens specificity: we won't
-   * accidentally recover on a connector-authored error that mentions a different
-   * task.
-   */
-  private async recoverFailedTaskResult(
-    handle: TaskHandle,
-    message: string,
-    isAborted: boolean,
-  ): Promise<CallToolResult | null> {
-    const isGenericTaskFailed = message.endsWith(`Task ${handle.taskId} failed`);
-    if (isAborted || !this.client || !isGenericTaskFailed) return null;
-    try {
-      const recovered = await this.client.experimental.tasks.getTaskResult(
-        handle.taskId,
-        CallToolResultSchema,
-      );
-      log.debug("mcp", `recovered tasks/result for failed task ${handle.taskId} on ${this.name}`);
-      return recovered;
-    } catch {
-      // No result genuinely available — caller falls through to the generic error.
-      return null;
-    }
   }
 
   /** Stream ended without a terminal message — protocol violation; reject. */
@@ -2634,6 +3283,12 @@ export class McpSource implements ToolSource {
     // inline session recovery (readResource / callTool) and HealthMonitor can
     // all reach here for the same source after a remote roll. See `restartInFlight`.
     if (this.restartInFlight) return this.restartInFlight;
+    // A connect already under way is joined, not restarted: stop() would tear
+    // down the connection it is building, failing the Connect a user waits on.
+    if (this.startInFlight) {
+      await this.startInFlight.catch(() => {});
+      return this.isAlive();
+    }
     this.restartInFlight = this.doRestart();
     try {
       return await this.restartInFlight;
@@ -2650,18 +3305,41 @@ export class McpSource implements ToolSource {
       this.toolsFetchedAt = null;
       this.dead = false;
       this.eventSink.emit({
-        type: "run.error",
+        type: "connector.health",
         data: { source: this.name, event: "source.restarted" },
       });
       return true;
     } catch (err) {
       this.eventSink.emit({
-        type: "run.error",
+        type: "connector.health",
         data: { source: this.name, event: "source.restart_failed", error: String(err) },
       });
       return false;
     }
   }
+}
+
+/**
+ * Whether a connect failed because the `server/discover` probe met an HTTP 500
+ * — the one probe failure a 2025-era server can cause just by being strict
+ * about methods it does not know. Only 500: it is the server's own answer.
+ * A 502, 503 or 504 comes from a proxy or gateway in front of the server (an
+ * edge whose upstream is restarting) and says nothing about the server's era;
+ * falling back on one would pin a 2026-07-28 server to the 2025 era for the
+ * life of the connection, and a 2026-only feature (the tasks extension) with
+ * it. Auth refusals and network failures are excluded too: those fail the
+ * legacy handshake the same way.
+ *
+ * The cost: a strict 2025-era server whose host turns its 500 into a 502 (an
+ * unhandled throw in a function behind a gateway, such as AWS Lambda behind
+ * API Gateway) never connects, and every re-probe fails with that 502.
+ */
+function isEraProbeServerFailure(err: unknown): boolean {
+  return (
+    err instanceof SdkHttpError &&
+    err.code === SdkErrorCode.EraNegotiationFailed &&
+    err.status === 500
+  );
 }
 
 /**
@@ -2704,7 +3382,7 @@ export function isMcpResourceMiss(err: unknown): boolean {
  * `source-absent` (a registry-lookup miss before any call) and `credential-lost`
  * (a `ConnectionRevalidator` probe verdict) are deliberately absent: they are not
  * thrown errors, so they cannot be classified from one. They reach recovery as
- * detector *signals* (handled by the recovery policy in Phase 2), never as
+ * detector *signals* (handled by the recovery policy, `policyFor`), never as
  * outputs of `classifyConnectionFailure`.
  */
 export type ConnectionFailure =
@@ -2718,6 +3396,18 @@ export type ConnectionFailure =
   | "none";
 
 /**
+ * Whether a connector's error asks the client to change its request: declare a
+ * capability the call needs (`-32021`). Nothing the runtime does on its own side
+ * can answer it. (A URL elicitation is an `input_required` request on
+ * 2026-07-28, which reaches the client as an answer, not an error.)
+ */
+function isClientActionable(err: unknown): boolean {
+  return (
+    err instanceof ProtocolError && err.code === ProtocolErrorCode.MissingRequiredClientCapability
+  );
+}
+
+/**
  * Classify a thrown error into a connection-failure class. Order matters:
  * `session-lost` (by message) is checked first, then the `-32001` `timeout`, then
  * `rate-limited`, `transient`, `auth-lost`, the standard protocol codes, and
@@ -2727,9 +3417,9 @@ export type ConnectionFailure =
  *   Matched on the "session not found" MESSAGE, NOT the HTTP status or code: the
  *   fleet servers' Python SDK returns it as HTTP 404 with a
  *   `{"code":-32600,"message":"Session not found"}` body (so the client's
- *   `StreamableHTTPError.code` is 404 and the `-32600` is body text), but remote
+ *   `SdkHttpError.code` is 404 and the `-32600` is body text), but remote
  *   connectors are untrusted/heterogeneous — the message is the reliable signal.
- * - **timeout** — `McpError(-32001, "Request timed out")`: the request was sent
+ * - **timeout** — `SdkError(RequestTimeout)` (or a peer's `-32001`): the request was sent
  *   but the response is slow (the tool, not the transport). Surfaces, never
  *   restarts — restarting strands the source's other tools without speeding the
  *   slow one (#581). Checked after the session message so a `-32001` carrying
@@ -2741,7 +3431,7 @@ export type ConnectionFailure =
  * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
  * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
  *   note its recovery *policy* is config-dependent — a static-auth remote can't
- *   reauth — but that decision is Phase 2's (see the SPEC §3.2), not this function's.
+ *   reauth — but that decision is the recovery policy's (`policyFor`), not this function's.
  * - **transport-dead** — a RECOGNIZED torn-transport shape (closed / refused /
  *   reset / timed out / fetch error / broken pipe).
  * - **none** — the server answered with a standard JSON-RPC *protocol* error
@@ -2757,6 +3447,9 @@ export type ConnectionFailure =
 export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   if (err === null || typeof err !== "object") return "none";
   const code = (err as { code?: unknown }).code;
+  // An HTTP status: the SDK's HTTP failures carry it beside a string code; a
+  // numeric code in the HTTP range is one a caller's own throw carried.
+  const status = err instanceof SdkHttpError ? err.status : code;
   const message = (err as { message?: unknown }).message;
   const msg = typeof message === "string" ? message : "";
 
@@ -2764,16 +3457,16 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   // MESSAGE regardless of the HTTP status / JSON-RPC code, because the signal is
   // the server's text, not the envelope: the fleet servers' Python MCP SDK returns
   // it as HTTP 404 with a `{"code":-32600,"message":"Session not found"}` body
-  // (so the SDK client's StreamableHTTPError has `code === 404`), but a remote
+  // (so the SDK client's SdkHttpError has `code === 404`), but a remote
   // connector is untrusted and heterogeneous — another server (or the same one in
-  // HTTP-200 + JSON-RPC-error mode) could surface it as `McpError(-32600)` or a
+  // HTTP-200 + JSON-RPC-error mode) could surface it as `ProtocolError(-32600)` or a
   // non-404 status. Gating on the status would silently strand those. Matching the
   // message also takes precedence over the `-32600 → none` branch below, so a
   // session loss carrying the -32600 code still recovers instead of surfacing.
   if (/session not found/i.test(msg)) {
     return "session-lost";
   }
-  // timeout — the SDK throws `McpError(-32001, "Request timed out")` when a call
+  // timeout — the SDK throws `SdkError(RequestTimeout)` (or a peer's `-32001`) when a call
   // exceeds the request timeout. This is NOT a session loss (that's the message
   // above) and NOT a transport crash: the request was sent, the response is just
   // slow. Restarting abandons the in-flight call and tears the source down for
@@ -2786,7 +3479,7 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   // a real liveness probe is the fix for that narrow case. Checked after the
   // session-message match so an artificial -32001+session-text still classifies
   // session-lost. (See #581 — a tool timeout was cascading connector restarts in prod.)
-  if (code === -32001) {
+  if (code === SdkErrorCode.RequestTimeout || code === -32001) {
     return "timeout";
   }
   // rate-limited — a gateway refused the request for pacing, not because anything
@@ -2801,7 +3494,7 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   //
   // Both signals are load-bearing, for DIFFERENT reasons:
   //
-  //  - `code` catches the transport's own throws. `StreamableHTTPError` sets
+  //  - `code` catches the transport's own throws. `SdkHttpError` sets
   //    `code = response.status`, so a refused POST and a refused mid-stream SSE
   //    reopen both arrive carrying a real numeric 429.
   //  - the MESSAGE catches the paths where that code is already gone.
@@ -2816,7 +3509,7 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   // fragments in transport error text (`127.0.0.1:429`) — so the status is read
   // from a message only where a keyword qualifies it.
   if (
-    code === 429 ||
+    status === 429 ||
     /\brate[ _-]?limit|\bthrottl(e|ed|ing)\b|\btoo many requests\b|\b(?:http|status(?:Code)?|code)["' :=]*429\b/i.test(
       msg,
     )
@@ -2825,9 +3518,9 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   }
   // transient — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
   if (
-    code === 502 ||
-    code === 503 ||
-    code === 504 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
     /bad[ _]gateway|service unavailable|gateway time-?out/i.test(msg)
   ) {
     return "transient";
@@ -2845,17 +3538,23 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   ) {
     return "none";
   }
-  // Recognized torn-transport shapes. (-32000 is the SDK's connection-closed code.)
-  if (
+  if (isTornTransport(code, msg)) return "transport-dead";
+  // Couldn't positively classify it — let the caller decide (recover vs surface).
+  return "unknown";
+}
+
+/**
+ * A recognized torn-transport shape. `ConnectionClosed` is the SDK's own
+ * connection-closed code; -32000 is the one a peer's JSON-RPC body carries.
+ */
+function isTornTransport(code: unknown, msg: string): boolean {
+  return (
+    code === SdkErrorCode.ConnectionClosed ||
     code === -32000 ||
     /connection closed|fetch failed|socket hang ?up|terminated|network error|econnre(set|fused)|timed? ?out|epipe|broken pipe/i.test(
       msg,
     )
-  ) {
-    return "transport-dead";
-  }
-  // Couldn't positively classify it — let the caller decide (recover vs surface).
-  return "unknown";
+  );
 }
 
 /**
@@ -2933,6 +3632,30 @@ const SESSION_RECOVERY_DELAYS_MS = [0, 500, 2000] as const;
  */
 const RECONNECT_COOLDOWN_MS = 30_000;
 
+/** Timings for {@link McpSource.awaitRestartingSource}. */
+interface RestartingSourceWait {
+  /** Longest one call waits for the source to come back. */
+  waitMs: number;
+  /** How long after going down a source still counts as restarting. */
+  horizonMs: number;
+  /** Minimum spacing between reconnect attempts made while waiting. */
+  retryMs: number;
+}
+
+/**
+ * A rolling restart leaves a remote endpoint unreachable while the new instance
+ * becomes ready, typically 30-60s; the horizon covers that window and no more,
+ * so a source down longer is treated as gone. The per-call wait is shorter than
+ * the horizon because the engine awaits every parallel call of an iteration
+ * together, so one waiting call holds back its siblings' results; across the
+ * calls a model makes during an outage, the waits add up to the horizon.
+ */
+const RESTARTING_SOURCE_WAIT: RestartingSourceWait = {
+  waitMs: 20_000,
+  horizonMs: 60_000,
+  retryMs: 3_000,
+};
+
 /**
  * Backoff for a tool-call (`execute`) recovery: a SINGLE immediate re-establish +
  * retry. A `tools/call` can be a mutation (and `idempotent: !isTaskAugmented`
@@ -2948,6 +3671,29 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Resolve when `work` settles, `ms` elapses, or `signal` aborts, whichever is
+ * first. Never rejects, and clears its timer and abort listener either way.
+ * `work` null waits on the time and the signal only.
+ */
+function settleWithin(
+  work: Promise<unknown> | null,
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+    if (signal?.aborted) done();
+    work?.then(done, done);
+  });
+}
+
+/**
  * Classes that mean the call never reached the tool's logic, so repeating it says
  * nothing about whether the tool works. Necessary but NOT sufficient for the
  * infrastructure marker — the throw must also be transport-level; see the call
@@ -2955,7 +3701,7 @@ function sleep(ms: number): Promise<void> {
  *
  * An allowlist, so `unknown` and `none` count and a new `ConnectionFailure`
  * member is not silently exempt. `timeout` and `auth-lost` are absent: both
- * arrive as `McpError`, and both describe a failure with no in-run remedy, which
+ * arrive as `ProtocolError`, and both describe a failure with no in-run remedy, which
  * still counts.
  */
 const INFRA_FAILURE_CLASSES: ReadonlySet<ConnectionFailure> = new Set([
@@ -2980,28 +3726,31 @@ function infraErrorMeta(): { _meta: Record<string, unknown> } {
 /**
  * Drop host-owned keys from `_meta` that arrived over the wire.
  *
- * `_meta` is otherwise forwarded verbatim so a connector's own out-of-band hints
- * reach the engine. The infrastructure marker cannot be among them: the
- * supervisor trusts it unconditionally, so a connector setting it on its own error
- * results would exempt itself from the loop guard permanently — and that guard
- * is the only thing that removes a tool from the model's toolset mid-run.
+ * The rule every `ai.nimblebrain/*` `_meta` key follows:
  *
- * Note the asymmetry with `NON_ADVANCING_META_KEY`, which is safe to accept from
- * the wire: a connector setting that one makes the guard STRICTER. This one makes
- * it weaker, so it is host-owned and stripped here rather than documented as a
- * convention callers are trusted to honour.
+ *   - A key is HOST-OWNED when the engine acts on it. The host's own sources set
+ *     it; a connector's copy is stripped here, so a server cannot steer the
+ *     engine by claiming one.
+ *   - A key is ACCEPTED from a connector only when believing it can make the host
+ *     stricter toward that connector and never looser, and only once something
+ *     reads it. Everything else in `_meta` is forwarded verbatim.
+ *   - No key ships without a named reader.
  *
- * `SKILL_ACTIVATED_META_KEY` is host-owned for the same reason — the engine
- * trusts it to mark a skill as already-delivered (suppressing future overlay
- * guidance), so a connector setting it could mute a curated overlay by name. It
- * is stripped from every source that crosses a real transport; only in-process
- * sources (`inProcess: true` — the `nb` system source, whose `use_skill` tool
- * legitimately emits it) carry it through.
+ * Every key the engine reads is host-owned today:
  *
- * `UNATTENDED_META_KEY` is stripped unconditionally, in-process included. The
- * host stamps it on the REQUEST to say who is calling; nothing downstream reads
- * it off a result, so a copy coming back is at best noise and at worst a
- * provenance claim made by the party being asked about.
+ * `INFRA_ERROR_META_KEY` is stripped unconditionally, in-process included: the
+ * supervisor trusts it to exempt an error from its strike count, so a source
+ * setting it on its own errors would escape the loop guard permanently. Only
+ * `McpSource` itself sets it, on failures it observed in transport.
+ *
+ * `NON_ADVANCING_META_KEY`, `SKILL_ACTIVATED_META_KEY`, and
+ * `SKILL_SUPPRESSION_META_KEY` are stripped from every source that crosses a real
+ * transport; in-process sources (`inProcess: true`: the platform's own tools,
+ * such as `nb__search` and the skill tools, which legitimately emit them) carry
+ * them through. A connector setting the skill keys could mute curated guidance
+ * by name. Accepting the non-advancing key from a connector could only tighten
+ * the guard on that connector, but no connector sets it, and accepting it would
+ * make the supervisor's internals a contract with every server.
  */
 function hostOwnedMetaStripped(
   meta: Record<string, unknown> | undefined,
@@ -3013,6 +3762,10 @@ function hostOwnedMetaStripped(
     const { [INFRA_ERROR_META_KEY]: _droppedInfra, ...rest } = out;
     out = rest;
   }
+  if (!opts.inProcess && NON_ADVANCING_META_KEY in out) {
+    const { [NON_ADVANCING_META_KEY]: _droppedNonAdvancing, ...rest } = out;
+    out = rest;
+  }
   if (!opts.inProcess && SKILL_ACTIVATED_META_KEY in out) {
     const { [SKILL_ACTIVATED_META_KEY]: _droppedActivation, ...rest } = out;
     out = rest;
@@ -3021,28 +3774,7 @@ function hostOwnedMetaStripped(
     const { [SKILL_SUPPRESSION_META_KEY]: _droppedSuppression, ...rest } = out;
     out = rest;
   }
-  if (UNATTENDED_META_KEY in out) {
-    const { [UNATTENDED_META_KEY]: _droppedUnattended, ...rest } = out;
-    out = rest;
-  }
   return out;
-}
-
-/**
- * The `_meta` an unattended dispatch stamps on its outbound `tools/call`, or
- * nothing at all — which is every chat turn and every scheduled run, since only
- * `dispatchUnattended` sets the reason.
- *
- * Spread into the call params so a source that never sees one sends `_meta`
- * exactly as it did before. Read from the ambient request context rather than
- * threaded through `execute`, because `ToolSource.execute` takes the tool's
- * input and nothing else — and this is metadata about the CALLER, which is what
- * the context is for.
- */
-function unattendedCallMeta(): { _meta?: Record<string, unknown> } {
-  const reason = getRequestContext()?.unattendedReason;
-  if (reason === undefined) return {};
-  return { _meta: { [UNATTENDED_META_KEY]: reason } };
 }
 
 /** Extract a human-readable message from an unknown throw. */

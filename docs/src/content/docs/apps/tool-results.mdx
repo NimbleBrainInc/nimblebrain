@@ -17,6 +17,8 @@ MCP tool results contain a `content` array of typed blocks:
 | `ImageContent` | Rendered previews, charts, screenshots | `{"type": "image", "data": "iVBOR...", "mimeType": "image/png"}` |
 | `AudioContent` | Voice responses, audio clips | `{"type": "audio", "data": "...", "mimeType": "audio/wav"}` |
 
+The model reads a result's text blocks. When a remote connector's tool returns `structuredContent` and no text block already carries it as JSON, NimbleBrain appends that JSON as a text block for the model. A tool with an MCP Apps UI (`_meta.ui.resourceUri`) is the exception: its `structuredContent` goes to the UI only, so put what the model needs in `content`.
+
 Every content block supports an optional `annotations` field from the [MCP spec](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations).
 
 ## The `audience` annotation

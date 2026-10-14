@@ -24,7 +24,7 @@ function makeFetch(responses: Array<Response | (() => never)>) {
     const next = responses[Math.min(calls, responses.length - 1)];
     calls++;
     if (typeof next === "function") next(); // throws (network error)
-    return Promise.resolve((next as Response).clone());
+    return Promise.resolve((next as Response).clone() as Response);
   };
   return { impl, calls: () => calls };
 }

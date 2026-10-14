@@ -12,10 +12,10 @@
  *     workspace's dir never appears.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ConnectorSkillCandidate } from "../../../src/engine/types.ts";
 import { collectActivatableSkills, toCatalogEntries } from "../../../src/skills/catalog.ts";
 import { loadScopedSkills } from "../../../src/skills/loader.ts";
@@ -95,7 +95,11 @@ describe("collectActivatableSkills", () => {
 
   test("empty pools produce an empty catalog", () => {
     expect(
-      collectActivatableSkills({ fsCapability: [], connectorCapability: [], connectorCandidates: [] }),
+      collectActivatableSkills({
+        fsCapability: [],
+        connectorCapability: [],
+        connectorCandidates: [],
+      }),
     ).toEqual([]);
   });
 });
@@ -139,9 +143,9 @@ describe("workspace wall — catalog contains only the scoped loader's output", 
   test("a skill in another workspace's dir does not appear", () => {
     // Two workspaces' skill dirs on disk; the catalog is built from ONE
     // workspace's scoped read — the same per-workspace dir
-    // `loadConversationSkills` resolves — so ws_b's skill can't leak in.
-    const wsADir = join(root, "workspaces", "ws_a", "skills");
-    const wsBDir = join(root, "workspaces", "ws_b", "skills");
+    // `loadConversationSkills` resolves — so ws_001c32f121060ff3's skill can't leak in.
+    const wsADir = join(root, "workspaces", "ws_00079598e311c160", "skills");
+    const wsBDir = join(root, "workspaces", "ws_001c32f121060ff3", "skills");
     writeDynamicSkill(wsADir, "mine");
     writeDynamicSkill(wsBDir, "theirs");
 

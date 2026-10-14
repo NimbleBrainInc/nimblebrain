@@ -11,19 +11,18 @@
 //
 // This set MIRRORS the backend identity-source set (`Runtime.getIdentitySource`
 // in `src/runtime/runtime.ts`). It is keyed by **source / server name** — the
-// value the resource host (`/v1/apps/:name/...`) and the bridge use — not the
+// value the resource host (`…/apps/:name/...`) and the bridge use — not the
 // placement route. Keep the two tiers in lockstep: a source is identity-scoped
-// on both or neither. Set: `conversations`, `files`, `automations`.
+// on both or neither. Set: `conversations`, `files`, `tasks`.
 //
-// The web tier can't import from `src/`, so this is a hand-kept mirror — the
-// same arrangement as `web/src/lib/namespaced-tool.ts`.
+// The web tier can't import from `src/`, so this is a hand-kept mirror.
 // ---------------------------------------------------------------------------
 
 /** Source/server names of the kernel identity apps. */
 export const IDENTITY_APP_SOURCES: ReadonlySet<string> = new Set([
   "conversations",
   "files",
-  "automations",
+  "tasks",
 ]);
 
 /** Whether an app (by source/server name) is a kernel identity app. */

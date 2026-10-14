@@ -15,57 +15,47 @@
  *     malformed call can't widen it) that fails closed on a line with no
  *     `userId`.
  *   - `scope: "org"` — every user's spend, attributed by owner. Gated to org
- *     admin/owner via `ORG_ADMIN_ROLES`, matching the
- *     `instructions__write_instructions` / `manage_users` precedent. Dev mode
- *     (no identity provider) bypasses the gate and the owner filter, so local
- *     development sees everything.
+ *     admin via `ORG_ADMIN_ROLES`, matching the
+ *     `manage_users` precedent.
  */
 
 import { textContent } from "../../engine/content-helpers.ts";
-import type { EventSink, ToolResult } from "../../engine/types.ts";
+import type { EventSink } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
+import {
+  defineInProcessApp,
+  type InProcessTool,
+  type ToolErrorResult,
+  type TypedToolResult,
+  typedTool,
+} from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
+import { WORKSPACE_OPTIONAL_META } from "../../tools/workspace-optional.ts";
 import { aggregateUsage } from "../../usage/aggregate.ts";
-import { type UsageGroupBy, UsageReportInput, type UsageReportOutput } from "../schemas/usage.ts";
-
-interface UsageReportArgs {
-  scope?: "user" | "org";
-  period?: string;
-  groupBy?: UsageGroupBy | UsageGroupBy[];
-  from?: string;
-  to?: string;
-}
+import { UsageReportInput, UsageReportOutput } from "../schemas/usage.ts";
 
 const USAGE_REPORT_DESCRIPTION =
   "Get aggregated usage (tokens, cost, LLM calls) recorded at the point of spend. " +
   'Defaults to `scope: "user"` — only your own spend. ' +
-  '`scope: "org"` reports every user\'s usage and requires org admin/owner; ' +
-  'pair it with `groupBy: "user"` for a per-user breakdown.';
+  '`scope: "org"` reports every user\'s usage and requires org admin; ' +
+  'pair it with `groupBy: "user"` for a per-user breakdown. ' +
+  "`workspaceId`, `userId`, `model`, and `origin` narrow the calls counted.";
 
 /**
  * Resolve the owner filter and scope for a request, enforcing the org-admin
  * gate. Returns either an error result (denied) or the resolved
  * `{ scope, ownerFilter }`.
  *
- * - Dev mode (no identity provider): no gate, no filter — see all
- *   conversations regardless of requested scope. Matches the dev-mode
- *   posture in `instructions.ts::checkScopePermission`.
  * - `scope: "org"`: requires `ORG_ADMIN_ROLES`. No owner filter (all users).
  * - `scope: "user"` (default): filter to the caller's own id. An
- *   unauthenticated caller in a non-dev instance is denied (no id to scope
+ *   unauthenticated caller is denied (no id to scope
  *   to — fail closed rather than leak the whole org).
  */
 function resolveScope(
   runtime: Runtime,
   requestedScope: "user" | "org",
 ): { scope: "user" | "org"; ownerFilter?: string } | { error: string } {
-  // Dev mode — no identity provider configured. See everything.
-  if (runtime.getIdentityProvider() === null) {
-    return { scope: requestedScope, ownerFilter: undefined };
-  }
-
   const identity = runtime.getCurrentIdentity();
   if (!identity) {
     return { error: "No authenticated identity." };
@@ -73,7 +63,7 @@ function resolveScope(
 
   if (requestedScope === "org") {
     if (!ORG_ADMIN_ROLES.has(identity.orgRole)) {
-      return { error: "Org-scope usage requires org admin or owner." };
+      return { error: "Org-scope usage requires org admin." };
     }
     return { scope: "org", ownerFilter: undefined };
   }
@@ -82,20 +72,37 @@ function resolveScope(
   return { scope: "user", ownerFilter: identity.id };
 }
 
+/** A refusal, read by the model as plain text. */
+function fail(message: string): ToolErrorResult {
+  return { content: textContent(message), isError: true };
+}
+
 export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSource {
   const tools: InProcessTool[] = [
-    {
+    typedTool({
       name: "report",
       description: USAGE_REPORT_DESCRIPTION,
+      meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: UsageReportInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: UsageReportOutput,
+      handler: async (args): Promise<TypedToolResult<typeof UsageReportOutput>> => {
         try {
-          const args = input as UsageReportArgs;
           const requestedScope = args.scope ?? "user";
 
           const resolved = resolveScope(runtime, requestedScope);
           if ("error" in resolved) {
-            return { content: textContent(resolved.error), isError: true };
+            return fail(resolved.error);
+          }
+          // A user-scope caller may name only themselves. Refused rather than
+          // returned empty, so asking for a peer's spend reads as not allowed
+          // instead of as "they spent nothing". The aggregator ANDs this with
+          // `ownerFilter` regardless, so it could not widen the read anyway.
+          if (
+            resolved.ownerFilter !== undefined &&
+            args.userId !== undefined &&
+            args.userId !== resolved.ownerFilter
+          ) {
+            return fail('Filtering by another user requires scope: "org".');
           }
 
           const period = args.period ?? "month";
@@ -108,14 +115,19 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
             from: args.from,
             to: args.to,
             ownerFilter: resolved.ownerFilter,
+            stackBy: args.stackBy,
+            filters: {
+              workspaceId: args.workspaceId,
+              userId: args.userId,
+              model: args.model,
+              origin: args.origin,
+            },
           });
 
           const out: UsageReportOutput = { scope: resolved.scope, ...report };
           return {
             content: textContent(JSON.stringify(out, null, 2)),
-            // Wire-format cast: `structuredContent` is `Record<string,
-            // unknown>`; the named `out` above is the load-bearing assertion.
-            structuredContent: out as unknown as Record<string, unknown>,
+            structuredContent: out,
             isError: false,
           };
         } catch (err) {
@@ -126,7 +138,7 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
           };
         }
       },
-    },
+    }),
   ];
 
   // No UI resource. Usage has one rendering, the `/org/usage` settings page,

@@ -37,7 +37,7 @@ import {
  * a {@link WorkspaceContext} that holds one and takes no workspace argument.
  *
  * There is no owner sub-partition, and that is deliberate. Conversations,
- * files and automations are authored by a user and private to them; a
+ * files and tasks are authored by a user and private to them; a
  * notification is authored by a *connector*, so ownership follows the
  * connector — any member who can reach its tools can read what it said. An
  * owner partition would file the inbox under whoever happened to be polling,
@@ -83,6 +83,14 @@ export interface NotificationListOptions {
   source?: string;
   /** Only items with a `seq` greater than this. */
   after?: number;
+  /** Only items with a `seq` less than this — the newest-first page before one held. */
+  before?: number;
+  /** Only these items, by `<source>:<eventId>`. */
+  ids?: readonly string[];
+  /** Only items whose `timestamp` is at or after this ISO 8601 instant. */
+  since?: string;
+  /** Only items whose title or event name contains this text, ignoring case. */
+  query?: string;
   /** Page size, clamped to {@link NOTIFICATION_LIST_MAX_LIMIT}. */
   limit?: number;
   /** Newest first (default) or oldest first. See {@link NotificationOrder}. */
@@ -190,6 +198,7 @@ export class NotificationStore {
         title: presentation.title,
         ...(presentation.subject ? { subject: presentation.subject } : {}),
         receivedAt: item.receivedAt,
+        unread: this.unreadCount(),
       },
     });
 
@@ -207,16 +216,39 @@ export class NotificationStore {
    * forward through what a tab open today saw live.
    */
   list(opts: NotificationListOptions = {}): Notification[] {
+    return this.listWithUnread(opts).items;
+  }
+
+  /**
+   * {@link list}'s page and the whole inbox's {@link unreadCount}, from one
+   * read of the day files. `notifications__list` answers with both.
+   */
+  listWithUnread(opts: NotificationListOptions = {}): {
+    items: Notification[];
+    unread: number;
+    hasMore: boolean;
+  } {
     const limit = clampLimit(opts.limit);
-    const items = this.#loadAll();
-    if (opts.order !== "asc") items.reverse();
-    const out: Notification[] = [];
-    for (const item of items) {
+    const all = this.#loadAll();
+    if (opts.order !== "asc") all.reverse();
+    const items: Notification[] = [];
+    let unread = 0;
+    let hasMore = false;
+    for (const item of all) {
+      if (!item.readAt) unread++;
       if (!matchesFilters(item, opts)) continue;
-      out.push(item);
-      if (out.length >= limit) break;
+      if (items.length < limit) items.push(item);
+      else hasMore = true;
     }
-    return out;
+    return { items, unread, hasMore };
+  }
+
+  /**
+   * How many items nobody has marked read, across the whole inbox. A page is
+   * capped, so a count taken from one would stop at the page size.
+   */
+  unreadCount(): number {
+    return this.#loadAll().reduce((n, item) => (item.readAt ? n : n + 1), 0);
   }
 
   /** One item by its `(source, eventId)` identity, or `undefined`. */
@@ -241,13 +273,19 @@ export class NotificationStore {
     if (wanted.size === 0) return [];
     const readAt = new Date().toISOString();
     const changed: Notification[] = [];
+    // Counted on the way through every day file, so the announcement after
+    // needs no second read.
+    let unread = 0;
 
     for (const day of this.#dayFiles()) {
       const items = this.#readDayFile(day);
       let dirty = false;
       for (const item of items) {
         if (item.readAt) continue;
-        if (!wanted.has(refKey(item.source, item.envelope.eventId))) continue;
+        if (!wanted.has(refKey(item.source, item.envelope.eventId))) {
+          unread++;
+          continue;
+        }
         item.readAt = readAt;
         if (readBy) item.readBy = readBy;
         dirty = true;
@@ -255,6 +293,7 @@ export class NotificationStore {
       }
       if (dirty) this.#rewriteDayFile(day, items);
     }
+    this.#announceRead(changed, unread);
     return changed;
   }
 
@@ -350,6 +389,24 @@ export class NotificationStore {
   }
 
   // -- internals ---------------------------------------------------------
+
+  /**
+   * `notification.read`, after the rewrite. Read state is shared across the
+   * workspace, so every member's count moves; the frame carries the count
+   * `markRead` took on its way through, so nobody re-reads to learn it. A
+   * mark that changed nothing says nothing.
+   */
+  #announceRead(changed: readonly Notification[], unread: number): void {
+    if (changed.length === 0) return;
+    this.#eventSink.emit({
+      type: "notification.read",
+      data: {
+        workspaceId: this.#wsId,
+        ids: changed.map((item) => notificationId(item)),
+        unread,
+      },
+    });
+  }
 
   #dayFile(day: string): string {
     return join(this.#dir, `${day}.jsonl`);
@@ -453,12 +510,30 @@ function refKey(source: string, eventId: string): string {
 function matchesFilters(item: Notification, opts: NotificationListOptions): boolean {
   if (opts.unreadOnly && item.readAt) return false;
   if (opts.source && item.source !== opts.source) return false;
-  if (opts.after !== undefined && item.seq <= opts.after) return false;
-  if (opts.level) {
-    const rank = NOTIFICATION_LEVEL_RANK[notificationPresentation(item.envelope).level];
-    if (rank < NOTIFICATION_LEVEL_RANK[opts.level]) return false;
+  if (opts.since !== undefined && Date.parse(item.envelope.timestamp) < Date.parse(opts.since)) {
+    return false;
   }
-  return true;
+  return inPosition(item, opts) && matchesQuery(item, opts.query) && atLevel(item, opts.level);
+}
+
+/** The positional filters: the `seq` window and the id set. */
+function inPosition(item: Notification, opts: NotificationListOptions): boolean {
+  if (opts.after !== undefined && item.seq <= opts.after) return false;
+  if (opts.before !== undefined && item.seq >= opts.before) return false;
+  return !opts.ids || opts.ids.includes(notificationId(item));
+}
+
+function matchesQuery(item: Notification, query: string | undefined): boolean {
+  if (!query) return true;
+  const needle = query.toLowerCase();
+  const { title } = notificationPresentation(item.envelope);
+  return title.toLowerCase().includes(needle) || item.envelope.name.toLowerCase().includes(needle);
+}
+
+function atLevel(item: Notification, level: NotificationLevel | undefined): boolean {
+  if (!level) return true;
+  const rank = NOTIFICATION_LEVEL_RANK[notificationPresentation(item.envelope).level];
+  return rank >= NOTIFICATION_LEVEL_RANK[level];
 }
 
 function clampLimit(limit: number | undefined): number {

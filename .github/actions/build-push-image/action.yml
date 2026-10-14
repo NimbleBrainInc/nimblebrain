@@ -27,17 +27,61 @@ inputs:
     description: Newline-separated build args (KEY=value)
     required: false
     default: ""
+  skip-existing:
+    description: >-
+      "true" skips the build when every tag in `tags` already exists in its
+      registry as an image of this commit (its `org.opencontainers.image.revision`
+      label, which every build sets, is `github.sha`). Only for tags that name one
+      source revision (a commit SHA), where such a tag is already the image this
+      build would push; a re-run after a partial push then completes instead of
+      failing on an immutable tag. A tag held by another commit's image fails.
+      Leave "false" for a tag that can name a different build (a semver tag).
+    required: false
+    default: "false"
 
 runs:
   using: composite
   steps:
-    - uses: docker/build-push-action@v7
+    - name: Check for existing tags
+      id: existing
+      if: inputs.skip-existing == 'true'
+      shell: bash
+      env:
+        TAGS: ${{ inputs.tags }}
+        REVISION: ${{ github.sha }}
+      # A tag counts as present only when its image carries this commit's full SHA
+      # in the revision label: a short-SHA tag can collide with an older commit's.
+      # An inspect error other than "not found" builds anyway, and the push then
+      # reports what the registry really holds.
+      run: |
+        all=true
+        while IFS= read -r tag; do
+          [ -z "$tag" ] && continue
+          if out=$(docker buildx imagetools inspect "$tag" --format '{{json .Image}}' 2>&1); then
+            if grep -qE "\"org\.opencontainers\.image\.revision\": *\"$REVISION\"" <<< "$out"; then
+              echo "exists: $tag"
+            else
+              echo "::error::$tag exists but is not an image of $REVISION (short-SHA collision, or built without the revision label)"
+              exit 1
+            fi
+          elif grep -qF ": not found" <<< "$out"; then
+            echo "missing: $tag"
+            all=false
+          else
+            echo "::warning::could not inspect $tag, building anyway: $out"
+            all=false
+          fi
+        done <<< "$TAGS"
+        echo "all=$all" >> "$GITHUB_OUTPUT"
+    - if: steps.existing.outputs.all != 'true'
+      uses: docker/build-push-action@v7
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.file }}
         platforms: linux/amd64
         push: true
         build-args: ${{ inputs.build-args }}
+        labels: org.opencontainers.image.revision=${{ github.sha }}
         tags: ${{ inputs.tags }}
         # mode=max caches intermediate (multi-stage) layers too, which the web
         # image needs — its bun install + vite build live in a build stage that

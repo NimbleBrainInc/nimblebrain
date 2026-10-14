@@ -12,14 +12,14 @@
  *   browser `<img>` GET, a download, any caller that has only the globally-unique
  *   file id) can construct the right workspace store. Tool calls and `/mcp` never
  *   need this — they carry the workspace in the request — so this exists for the
- *   one path that can't: a browser GET, which can't send `X-Workspace-Id`.
+ *   one path that doesn't: a browser GET of the bare `/v1/files/:fileId`.
  *
  * **Owner-scoped by construction.** `locate` only ever searches the caller's OWN
  * `<ownerId>` partitions, and its consumer reads through a store rooted at the
  * same `(wsId, ownerId)`. The owner partition is therefore both the gate and the
  * search scope: there is no client-supplied coordinate, and a request can only
  * ever reach the caller's own bytes. Reading a file SHARED by another owner
- * (Phase 2 `visibility: shared`) is a separate, visibility-checked path — never a
+ * (`visibility: shared`) is a separate, visibility-checked path — never a
  * widening of this locator to scan other owners.
  *
  * **Memo, not source of truth.** An `(ownerId, fileId) → wsId` memo makes the

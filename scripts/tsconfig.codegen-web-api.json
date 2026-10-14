@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "../.tmp-codegen-api",
+    "rootDir": "../src/api/schemas",
+    "skipLibCheck": true,
+    "strict": true,
+    "esModuleInterop": true
+  },
+  "include": ["../src/api/schemas/responses.ts", "../src/api/schemas/events.ts"]
+}

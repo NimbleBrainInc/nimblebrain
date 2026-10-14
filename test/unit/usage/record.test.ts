@@ -6,10 +6,11 @@
  * nothing here resets the process-global registry that the rest of the suite
  * shares (the convention documented in `test/unit/metrics.test.ts`).
  */
+
+import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
 import { llmCallsTotal, llmTokensTotal } from "../../../src/api/metrics.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { UsageLedger } from "../../../src/usage/ledger.ts";
@@ -56,19 +57,16 @@ describe("originOf", () => {
     runWithRequestContext({ identity: null, runId: "run-1", unattended: true }, () => {
       expect(originOf()).toBe("task");
     });
-    runWithRequestContext(
-      { identity: null, conversationId: "conv-1", unattended: true },
-      () => {
-        expect(originOf()).toBe("task");
-      },
-    );
+    runWithRequestContext({ identity: null, conversationId: "conv-1", unattended: true }, () => {
+      expect(originOf()).toBe("task");
+    });
   });
 });
 
 describe("each id in the ledger lands under its own name", () => {
-  // `sessionId` used to hold a conversation-or-run union told apart by
-  // `origin`. Each fact now has its own field, and `runId` — the engine's, per
-  // turn — is the one the union could not express at all.
+  // Each fact has its own field rather than a conversation-or-run union told
+  // apart by `origin`, and `runId` — the engine's, per turn — is one such a
+  // union could not express at all.
   function fieldsFor(
     ctx: Parameters<typeof runWithRequestContext>[0],
     event?: Record<string, unknown>,
@@ -100,7 +98,7 @@ describe("each id in the ledger lands under its own name", () => {
     expect(rec.taskRunId).toBeUndefined();
   });
 
-  test("an automation's run id lands in taskRunId, not conversationId", () => {
+  test("a task's run id lands in taskRunId, not conversationId", () => {
     // The original defect one layer up: a run id occupying a conversation
     // field. It must not reappear as a conversation under a new name.
     const rec = fieldsFor({ identity: null, runId: "run-42", unattended: true });
@@ -121,13 +119,13 @@ describe("each id in the ledger lands under its own name", () => {
   });
 
   test("a forked fast-slot call has no turn of its own", () => {
-    // Title/compaction/briefing emit no event, so there is no engine run to
+    // Title and compaction emit no event, so there is no engine run to
     // attribute them to — they belong to the scope they ran in.
     const rec = fieldsFor({ identity: null, conversationId: "conv-42" });
     expect(rec.runId).toBeUndefined();
   });
 
-  test("sessionId is no longer written", () => {
+  test("sessionId is not written", () => {
     expect(fieldsFor({ identity: null, conversationId: "conv-42" }).sessionId).toBeUndefined();
     expect(
       fieldsFor({ identity: null, runId: "run-42", unattended: true }).sessionId,
@@ -143,7 +141,7 @@ describe("each id in the ledger lands under its own name", () => {
 });
 
 describe("recordLlmCall", () => {
-  test("a run's own turn records task, and stays recoverable as automation spend", async () => {
+  test("a run's own turn records task, and stays recoverable as task spend", async () => {
     runWithRequestContext({ identity: null, runId: "run-7", unattended: true }, () => {
       recordLlmCall({
         source: "main",
@@ -206,7 +204,7 @@ describe("origin follows the scope, whatever the source", () => {
     expect(sample?.labels.origin).toBe("chat");
   });
 
-  test("the same call inside an automation records task", async () => {
+  test("the same call inside a task records task", async () => {
     runWithRequestContext({ identity: null, runId: "run-mid", unattended: true }, () => {
       recordLlmCall({ source: "compaction", model: "test-model-f", usage: USAGE });
     });
@@ -215,10 +213,8 @@ describe("origin follows the scope, whatever the source", () => {
     expect(sample?.labels.origin).toBe("task");
   });
 
-  test("with no scope at all it records system — still reachable, via the background briefing", async () => {
-    // `scheduleBriefingRefresh` runs its own context of `{identity, workspaceId}`
-    // with no `conversationId`, so `system` is a live value, not dead code.
-    recordLlmCall({ source: "briefing", model: "test-model-c", usage: USAGE });
+  test("with no scope at all it records system", async () => {
+    recordLlmCall({ source: "title", model: "test-model-c", usage: USAGE });
 
     const sample = await callSample({ model: "test-model-c" });
     expect(sample?.labels.origin).toBe("system");

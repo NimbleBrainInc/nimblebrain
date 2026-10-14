@@ -2,20 +2,25 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
+import type { ServerHandle } from "../../../src/api/server.ts";
+import { startServer } from "../../../src/api/server.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
   IdentityProvider,
   ProviderCapabilities,
   UserIdentity,
+  VerifiedIdentity,
 } from "../../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT } from "../../../src/identity/provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { startServer } from "../../../src/api/server.ts";
-import type { ServerHandle } from "../../../src/api/server.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { readJson } from "../../helpers/http.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 /**
  * Integration tests for per-identity request rate limiting on the chat,
@@ -33,12 +38,12 @@ import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-wo
  */
 
 const TOKEN = "rate-limit-test-token-abcdef";
-const IDENTITY: UserIdentity = {
+const IDENTITY: UserIdentity = makeIdentity({
   id: DEV_IDENTITY.id,
   email: "ratelimit@example.test",
   displayName: "Rate Limit Tester",
   orgRole: "member",
-};
+});
 
 class TokenAuthAdapter implements IdentityProvider {
   readonly capabilities: ProviderCapabilities = {
@@ -47,10 +52,10 @@ class TokenAuthAdapter implements IdentityProvider {
     managedUsers: false,
     authorizationServer: false,
   };
-  async verifyRequest(req: Request): Promise<UserIdentity | null> {
+  async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const auth = req.headers.get("authorization");
     if (!auth?.startsWith("Bearer ")) return null;
-    return auth.slice(7) === TOKEN ? IDENTITY : null;
+    return auth.slice(7) === TOKEN ? { ...IDENTITY, grant: FIRST_PARTY_GRANT } : null;
   }
   async listUsers(): Promise<User[]> {
     return [];
@@ -86,7 +91,8 @@ beforeAll(async () => {
 
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: () => new TokenAuthAdapter(),
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -94,7 +100,7 @@ beforeAll(async () => {
   await provisionTestWorkspace(runtime);
 
   // WITH a provider → not dev mode → rate limiting is active.
-  handle = startServer({ runtime, port: 0, provider: new TokenAuthAdapter() });
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -118,26 +124,28 @@ describe("chat rate limiting", () => {
   it("returns 429 after exceeding chat limit", async () => {
     // Exhaust the limit
     for (let i = 0; i < 3; i++) {
-      const res = await fetch(`${baseUrl}/v1/chat`, {
+      const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
         method: "POST",
-        headers: authHeaders({ "X-Workspace-Id": TEST_WORKSPACE_ID }),
+        headers: authHeaders(),
         body: JSON.stringify({ message: `msg ${i}`, workspaceId: TEST_WORKSPACE_ID }),
       });
       expect(res.status).toBe(200);
     }
 
     // Next request should be rate-limited
-    const res = await fetch(`${baseUrl}/v1/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: authHeaders({ "X-Workspace-Id": TEST_WORKSPACE_ID }),
+      headers: authHeaders(),
       body: JSON.stringify({ message: "over limit", workspaceId: TEST_WORKSPACE_ID }),
     });
 
     expect(res.status).toBe(429);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("rate_limited");
     expect(body.message).toBe("Rate limit exceeded");
-    expect(res.headers.get("Retry-After")).toBe("60");
+    const retryAfter = Number(res.headers.get("Retry-After"));
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeLessThanOrEqual(60);
   });
 
   it("does not rate-limit unrelated endpoints when chat is exhausted", async () => {
@@ -152,28 +160,28 @@ describe("tool-call rate limiting", () => {
   it("returns 429 after exceeding tool-call limit", async () => {
     // Exhaust the limit — these return 400/404 but still count
     for (let i = 0; i < 3; i++) {
-      await fetch(`${baseUrl}/v1/tools/call`, {
+      await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
         method: "POST",
-        headers: authHeaders({ "X-Workspace-Id": TEST_WORKSPACE_ID }),
+        headers: authHeaders(),
         body: JSON.stringify({ server: "x", tool: "y", arguments: {} }),
       });
     }
 
-    const res = await fetch(`${baseUrl}/v1/tools/call`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
       method: "POST",
-      headers: authHeaders({ "X-Workspace-Id": TEST_WORKSPACE_ID }),
+      headers: authHeaders(),
       body: JSON.stringify({ server: "x", tool: "y", arguments: {} }),
     });
 
     expect(res.status).toBe(429);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("rate_limited");
   });
 
   it("does not rate-limit shell or file endpoints when tools/call is exhausted", async () => {
-    // tools/call is exhausted, but /v1/shell should still work
-    const shellRes = await fetch(`${baseUrl}/v1/shell`, {
-      headers: authHeaders({ "X-Workspace-Id": TEST_WORKSPACE_ID }),
+    // tools/call is exhausted, but the workspace shell should still work
+    const shellRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`, {
+      headers: authHeaders(),
     });
     expect(shellRes.status).toBe(200);
   });
@@ -181,25 +189,25 @@ describe("tool-call rate limiting", () => {
 
 describe("mcp rate limiting", () => {
   it("returns 429 after exceeding the /mcp limit", async () => {
-    // Authenticated POSTs to /mcp. The body isn't a valid initialize, so the
+    // Authenticated POSTs to /mcp/<wsId>. The body isn't a valid initialize, so the
     // handler errors — but the limiter runs before the handler, so each call
     // still counts (same as the tool-call test counts 400s).
     for (let i = 0; i < 3; i++) {
-      await fetch(`${baseUrl}/mcp`, {
+      await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
         method: "POST",
         headers: authHeaders({ Accept: "application/json, text/event-stream" }),
         body: JSON.stringify({ jsonrpc: "2.0", id: i, method: "tools/list" }),
       });
     }
 
-    const res = await fetch(`${baseUrl}/mcp`, {
+    const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
       method: "POST",
       headers: authHeaders({ Accept: "application/json, text/event-stream" }),
       body: JSON.stringify({ jsonrpc: "2.0", id: 99, method: "tools/list" }),
     });
 
     expect(res.status).toBe(429);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("rate_limited");
   });
 });

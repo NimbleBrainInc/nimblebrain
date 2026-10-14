@@ -72,6 +72,7 @@ export function brokeredCatalogConfig(
   // The one cast: the typed blocks (`composio`, `smithery`) are declared
   // instances of a convention the type system cannot express — the key is a
   // value, not a literal — so reading by that key means widening once, here.
+  // biome-ignore lint/plugin/double-cast: the brokered-auth block is read by a key that is a runtime value
   const block = (entry as unknown as Record<string, unknown>)[kind];
   if (!block || typeof block !== "object" || Array.isArray(block)) return undefined;
   return block as Record<string, unknown>;

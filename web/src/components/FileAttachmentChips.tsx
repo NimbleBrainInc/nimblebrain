@@ -12,6 +12,22 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * A key per attached `File` object, so removing one chip leaves the others (and
+ * their previews) mounted. Two picks of the same file are two `File` objects,
+ * so a duplicate still gets a key of its own.
+ */
+const fileKeys = new WeakMap<File, number>();
+let nextFileKey = 0;
+function keyOf(file: File): number {
+  let key = fileKeys.get(file);
+  if (key === undefined) {
+    key = nextFileKey++;
+    fileKeys.set(file, key);
+  }
+  return key;
+}
+
 function Thumbnail({ file }: { file: File }) {
   const [src, setSrc] = useState<string | null>(null);
   const urlRef = useRef<string | null>(null);
@@ -35,8 +51,7 @@ export function FileAttachmentChips({ files, onRemove }: Props) {
     <div className="flex flex-wrap gap-1.5 px-4 pb-2">
       {files.map((file, idx) => (
         <div
-          // biome-ignore lint/suspicious/noArrayIndexKey: composite key with idx to handle duplicate files
-          key={`${file.name}-${file.size}-${idx}`}
+          key={keyOf(file)}
           className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-muted text-xs text-foreground border border-border"
         >
           {file.type.startsWith("image/") && <Thumbnail file={file} />}

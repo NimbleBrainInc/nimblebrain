@@ -8,7 +8,7 @@
  * throw `ConversationWorkspaceAccessDeniedError`.
  *
  * Reads stay owner-gated (covered elsewhere); this pins the active/resume path,
- * the current-member allow case, and the personal-workspace exemption.
+ * the current-member allow case, and a resume in the dev-mode default workspace.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -18,11 +18,12 @@ import { join } from "node:path";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ConversationWorkspaceAccessDeniedError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider, devWorkspace } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nb-resume-membership-${Date.now()}`);
-const WORKSPACE_A = "ws_workspace_a";
+const WORKSPACE_A = "ws_00883d7b29214d57";
 const OWNER = DEV_IDENTITY.id;
 
 afterAll(() => {
@@ -33,7 +34,8 @@ async function startRuntime(name: string): Promise<Runtime> {
   const workDir = join(testDir, name);
   mkdirSync(workDir, { recursive: true });
   return Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
   });
@@ -44,12 +46,21 @@ describe("resume requires current membership of the conversation's workspace", (
     const runtime = await startRuntime("chat-removed");
     await provisionTestWorkspace(runtime, WORKSPACE_A, "Alpha");
 
-    const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from A",
+      workspaceId: WORKSPACE_A,
+    });
     await runtime.getWorkspaceStore().removeMember(WORKSPACE_A, OWNER);
 
     let thrown: unknown;
     try {
-      await runtime.chat({ message: "still here?", conversationId: born.conversationId });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        message: "still here?",
+        conversationId: born.conversationId,
+        workspaceId: WORKSPACE_A,
+      });
     } catch (e) {
       thrown = e;
     }
@@ -65,12 +76,21 @@ describe("resume requires current membership of the conversation's workspace", (
     const runtime = await startRuntime("start-removed");
     await provisionTestWorkspace(runtime, WORKSPACE_A, "Alpha");
 
-    const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from A",
+      workspaceId: WORKSPACE_A,
+    });
     await runtime.getWorkspaceStore().removeMember(WORKSPACE_A, OWNER);
 
     let thrown: unknown;
     try {
-      await runtime.startTurn({ message: "still here?", conversationId: born.conversationId });
+      await runtime.startTurn({
+        identity: DEV_IDENTITY,
+        message: "still here?",
+        conversationId: born.conversationId,
+        workspaceId: WORKSPACE_A,
+      });
     } catch (e) {
       thrown = e;
     }
@@ -83,9 +103,14 @@ describe("resume requires current membership of the conversation's workspace", (
     const runtime = await startRuntime("still-member");
     await provisionTestWorkspace(runtime, WORKSPACE_A, "Alpha");
 
-    const born = await runtime.chat({ message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from A",
+      workspaceId: WORKSPACE_A,
+    });
     // No removal — Alice stays a member.
     const resumed = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "still here",
       conversationId: born.conversationId,
       workspaceId: WORKSPACE_A,
@@ -95,12 +120,20 @@ describe("resume requires current membership of the conversation's workspace", (
     await runtime.shutdown();
   });
 
-  it("does not gate a personal-workspace conversation (sole-member by construction)", async () => {
-    const runtime = await startRuntime("personal");
+  it("resumes a conversation born in the dev user's own workspace", async () => {
+    const runtime = await startRuntime("default-ws");
 
-    // Born unfocused → personal workspace; resume must not be gated.
-    const born = await runtime.chat({ message: "hello from home" });
+    // Born in the caller's own workspace, where they are a member; the resume
+    // names the same workspace and is not gated.
+    const home = await devWorkspace(runtime);
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from home",
+      workspaceId: home,
+    });
     const resumed = await runtime.chat({
+      identity: DEV_IDENTITY,
+      workspaceId: home,
       message: "still here",
       conversationId: born.conversationId,
     });

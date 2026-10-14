@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
-import { estimateCost } from "../../src/usage/cost.ts";
 import { getModelByString } from "../../src/model/catalog.ts";
+import { estimateCost } from "../../src/usage/cost.ts";
 
 describe("estimateCost", () => {
   const modelCases = [
@@ -9,9 +9,8 @@ describe("estimateCost", () => {
     { label: "gemini", modelString: "google:gemini-2.5-flash" },
   ] as const;
 
-  test.each(modelCases)(
-    "calculates cost correctly for $label model",
-    ({ modelString }) => {
+  for (const { label, modelString } of modelCases)
+    test(`calculates cost correctly for ${label} model`, () => {
       const model = getModelByString(modelString);
       expect(model).toBeDefined();
       expect(model!.cost.input).toBeGreaterThan(0);
@@ -24,20 +23,13 @@ describe("estimateCost", () => {
       const expected = (1000 * model!.cost.input + 500 * model!.cost.output) / 1_000_000;
       expect(cost).toBeCloseTo(expected, 8);
       expect(cost).toBeGreaterThan(0);
-    },
-  );
+    });
 
-  it("bare model string defaults to anthropic provider", () => {
-    const withPrefix = estimateCost("anthropic:claude-sonnet-4-6", {
-      inputTokens: 1000,
-      outputTokens: 500,
-    });
-    const withoutPrefix = estimateCost("claude-sonnet-4-6", {
-      inputTokens: 1000,
-      outputTokens: 500,
-    });
-    expect(withPrefix).toBe(withoutPrefix);
-    expect(withPrefix).toBeGreaterThan(0);
+  it("a model string with no provider is unpriced", () => {
+    expect(
+      estimateCost("anthropic:claude-sonnet-4-6", { inputTokens: 1000, outputTokens: 500 }),
+    ).toBeGreaterThan(0);
+    expect(estimateCost("claude-sonnet-4-6", { inputTokens: 1000, outputTokens: 500 })).toBe(0);
   });
 
   it("returns 0 for unknown model", () => {
@@ -94,8 +86,7 @@ describe("estimateCost", () => {
       cacheWriteTokens: 300,
     });
     // Cache writes bill at the 1-hour TTL rate the engine uses: 2x base input.
-    const expected =
-      (700 * model!.cost.input + 300 * (model!.cost.input * 2)) / 1_000_000;
+    const expected = (700 * model!.cost.input + 300 * (model!.cost.input * 2)) / 1_000_000;
     expect(cost).toBeCloseTo(expected, 8);
   });
 
@@ -109,9 +100,7 @@ describe("estimateCost", () => {
       cacheWriteTokens: 300,
     });
     const expected =
-      (500 * model!.cost.input +
-        200 * model!.cost.cacheRead! +
-        300 * (model!.cost.input * 2)) /
+      (500 * model!.cost.input + 200 * model!.cost.cacheRead! + 300 * (model!.cost.input * 2)) /
       1_000_000;
     expect(cost).toBeCloseTo(expected, 8);
   });
@@ -127,8 +116,7 @@ describe("estimateCost", () => {
       cacheWriteTokens: 50,
     });
     // Non-cached portion = max(100 - 200 - 50, 0) = 0
-    const expected =
-      (200 * model!.cost.cacheRead! + 50 * (model!.cost.input * 2)) / 1_000_000;
+    const expected = (200 * model!.cost.cacheRead! + 50 * (model!.cost.input * 2)) / 1_000_000;
     expect(cost).toBeCloseTo(expected, 8);
   });
 
@@ -164,8 +152,7 @@ describe("estimateCost", () => {
       cacheWriteTokens: 1000,
       cacheWrite1hTokens: 400,
     });
-    const expected =
-      (400 * (model!.cost.input * 2) + 600 * model!.cost.cacheWrite!) / 1_000_000;
+    const expected = (400 * (model!.cost.input * 2) + 600 * model!.cost.cacheWrite!) / 1_000_000;
     expect(cost).toBeCloseTo(expected, 8);
     // And it sits strictly between all-1h (2x) and all-5m (1.25x) pricing.
     const allOneHour = (1000 * (model!.cost.input * 2)) / 1_000_000;

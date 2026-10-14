@@ -10,32 +10,34 @@
  * cached answer for the TTL.
  *
  * The degraded fixtures each break a different leg — a throwing
- * `resources/list`, an endless cursor, a listed skill that cannot be read —
- * rather than returning zero resources. A clean enumeration that returns
+ * `skills/list`, an endless cursor, a listed `always` skill whose body cannot
+ * be read when it is composed — rather than listing zero skills. A clean enumeration that returns
  * nothing is NOT degraded — telling that from "never published" needs a
  * remembered baseline, which would page an operator on every legitimate
  * uninstall.
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import {
+  handleSkillsList,
+  SKILLS_EXTENSION_CAPABILITY,
+  serveSkills,
+  skillEntryFor,
+} from "../helpers/skills-server.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const FAILING_NAME = "ai-nimblebrain-failing-mcp";
 const HEALTHY_NAME = "ai-nimblebrain-healthy-mcp";
@@ -58,59 +60,44 @@ HEALTHY-MARKER — this rule must be in context on every turn.`;
 
 /** The two verbs every fixture below answers the same way. */
 function withPingTool(server: Server, toolName = "ping"): Server {
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
       { name: toolName, description: "Ping", inputSchema: { type: "object", properties: {} } },
     ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
   return server;
 }
 
-/** Server whose `resources/list` throws; `tools/list` still answers. */
+/** Capabilities of a server that declares the Skills extension. */
+const SKILLS_CAPS = { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } };
+
+/** Server whose `skills/list` throws; `tools/list` still answers. */
 function createFailingServer(): Server {
-  const server = withPingTool(
-    new Server({ name: "failing", version: "0.1.0" }, { capabilities: { tools: {}, resources: {} } }),
-  );
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    throw new Error("resources/list is unavailable");
+  const server = withPingTool(new Server({ name: "failing", version: "0.1.0" }, SKILLS_CAPS));
+  handleSkillsList(server, async () => {
+    throw new Error("skills/list is unavailable");
   });
   return server;
 }
 
-/** Server whose `resources/list` always returns a cursor — never finishes. */
+/** Server whose `skills/list` always returns a cursor — never finishes. */
 function createTruncatedServer(): Server {
-  const server = withPingTool(
-    new Server(
-      { name: "truncated", version: "0.1.0" },
-      { capabilities: { tools: {}, resources: {} } },
-    ),
-  );
-  let page = 0;
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    page++;
-    return {
-      resources: [{ uri: `res://filler/${page}`, name: `filler-${page}` }],
-      nextCursor: `page-${page}`,
-    };
-  });
+  const server = withPingTool(new Server({ name: "truncated", version: "0.1.0" }, SKILLS_CAPS));
+  handleSkillsList(server, () => ({ skills: [], nextCursor: "more" }));
   return server;
 }
 
-/** Server that LISTS one skill entrypoint but throws on every read. */
+/** Server that LISTS one `always` skill but throws on every read of its body. */
 function createUnreadableServer(): Server {
-  const server = withPingTool(
-    new Server(
-      { name: "unreadable", version: "0.1.0" },
-      { capabilities: { tools: {}, resources: {} } },
-    ),
-  );
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: [{ uri: "skill://broken/SKILL.md", name: "broken", mimeType: "text/markdown" }],
+  const server = withPingTool(new Server({ name: "unreadable", version: "0.1.0" }, SKILLS_CAPS));
+  const body = SKILL_BODY.replace("name: guide", "name: broken");
+  handleSkillsList(server, () => ({
+    skills: [skillEntryFor("skill://broken/SKILL.md", body)],
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async () => {
+  server.setRequestHandler("resources/read", async () => {
     throw new Error("resources/read is unavailable");
   });
   return server;
@@ -118,14 +105,9 @@ function createUnreadableServer(): Server {
 
 /** Ordinary server publishing one `always` skill — the control. */
 function createHealthyServer(): Server {
-  const server = withPingTool(
-    new Server({ name: "healthy", version: "0.1.0" }, { capabilities: { tools: {}, resources: {} } }),
-    "go",
-  );
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: [{ uri: "skill://guide/SKILL.md", name: "guide", mimeType: "text/markdown" }],
-  }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (req) => ({
+  const server = withPingTool(new Server({ name: "healthy", version: "0.1.0" }, SKILLS_CAPS), "go");
+  serveSkills(server, () => ({ "skill://guide/SKILL.md": SKILL_BODY }));
+  server.setRequestHandler("resources/read", async (req) => ({
     contents: [{ uri: req.params.uri, mimeType: "text/markdown", text: SKILL_BODY }],
   }));
   return server;
@@ -162,7 +144,8 @@ async function startSource(name: string, makeServer: () => Server): Promise<McpS
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },
@@ -191,7 +174,11 @@ describe("degraded skill discovery", () => {
   it("reports a failed enumeration with a machine-readable reason", async () => {
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "hello" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "hello",
+      });
       const calls = degradedCalls(warn);
       const failed = calls.find((f) => f.server === FAILING_NAME);
       expect(failed).toBeDefined();
@@ -207,7 +194,11 @@ describe("degraded skill discovery", () => {
     // leaving the operator one line for an outage that spans hours.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "again" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "again",
+      });
       expect(degradedCalls(warn).some((f) => f.server === FAILING_NAME)).toBe(true);
     } finally {
       warn.mockRestore();
@@ -217,7 +208,11 @@ describe("degraded skill discovery", () => {
   it("says nothing about a server that enumerates cleanly", async () => {
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "third" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "third",
+      });
       expect(degradedCalls(warn).some((f) => f.server === HEALTHY_NAME)).toBe(false);
     } finally {
       warn.mockRestore();
@@ -232,11 +227,19 @@ describe("degraded skill discovery", () => {
     // the TTL. The second turn proves the short set was not cached.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "capped" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "capped",
+      });
       const first = degradedCalls(warn).find((f) => f.server === TRUNCATED_NAME);
       expect(first?.reason).toBe("enumeration_truncated");
       warn.mockClear();
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "capped again" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "capped again",
+      });
       const second = degradedCalls(warn).find((f) => f.server === TRUNCATED_NAME);
       expect(second?.reason).toBe("enumeration_truncated");
     } finally {
@@ -245,18 +248,25 @@ describe("degraded skill discovery", () => {
   });
 
   it("reports a listed skill that cannot be read, and stays loud next turn", async () => {
-    // `resources/list` succeeds and names one skill entrypoint; every read
-    // throws. The read swallow is deliberate (one bad skill must not sink the
-    // discovery), so without the entrypoint count this caches zero skills as
-    // the complete answer — the same silent shortfall the PR exists to close.
+    // `skills/list` succeeds and names one `always` skill; every read of its
+    // body throws. The skill is needed every turn, so every turn tries the
+    // read and says why the skill did not compose.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "unreadable" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "unreadable",
+      });
       const first = degradedCalls(warn).find((f) => f.server === UNREADABLE_NAME);
       expect(first?.reason).toBe("skill_unreadable");
       expect(first?.recovered).toBe(0);
       warn.mockClear();
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "unreadable again" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "unreadable again",
+      });
       expect(degradedCalls(warn).some((f) => f.server === UNREADABLE_NAME)).toBe(true);
     } finally {
       warn.mockRestore();
@@ -264,16 +274,17 @@ describe("degraded skill discovery", () => {
   });
 
   it("says nothing about any other server — the signal must be rare to be worth reading", async () => {
-    // The tools-only in-process platform sources (`usage`, `compose`) advertise
-    // no `resources` capability; calling `resources/list` on one throws
-    // `Method not found`, which reads as a transport failure — so an ungated
-    // signal fires for them on every turn, in every workspace, forever. An
-    // alert that is always firing is not an alert. The healthy fixture and the
-    // resource-advertising platform sources must stay silent too: only the
+    // A source that does not declare the Skills extension is never asked for
+    // skills, so the platform's own sources stay silent; so must the healthy
+    // fixture. An alert that is always firing is not an alert: only the
     // deliberately degraded fixtures may appear.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "fifth" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "fifth",
+      });
       const servers = new Set(degradedCalls(warn).map((f) => f.server as string));
       expect(servers.size).toBeGreaterThan(0);
       for (const server of servers) {
@@ -286,22 +297,22 @@ describe("degraded skill discovery", () => {
 
   it("still composes the skills it could reach", async () => {
     // Three degraded neighbours must not take the healthy server's guidance
-    // with them. Assert on the discovered pool's CONTENT: the healthy `always`
-    // skill, marker and all, survives discovery next to the degraded fixtures.
-    // (An empty pool or a dropped body fails this — asserting only on types
-    // could not.)
+    // with them. Assert on CONTENT: the healthy `always` skill survives
+    // discovery next to the degraded fixtures, and its body loads. (An empty
+    // pool or a dropped body fails this — asserting only on types could not.)
     const { response } = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "fourth",
     });
     expect(typeof response).toBe("string");
-    const pool = await (
-      runtime as unknown as {
-        loadConnectorSkills: (wsId: string) => Promise<Array<{ body: string; manifest: unknown }>>;
-      }
-    ).loadConnectorSkills(TEST_WORKSPACE_ID);
-    const healthySkill = pool.find((s) => s.body.includes("HEALTHY-MARKER"));
-    expect(healthySkill).toBeDefined();
+    // biome-ignore lint/complexity/useLiteralKeys: loadConnectorSkills is private; bracket access is TypeScript's typed path to it
+    const pool = await runtime["loadConnectorSkills"](TEST_WORKSPACE_ID);
+    const healthySkill = pool.find((s) => s.manifest.name === `connector:${HEALTHY_NAME}:guide`);
+    expect(await healthySkill?.loadBody?.()).toEqual({
+      ok: true,
+      body: expect.stringContaining("HEALTHY-MARKER"),
+    });
   });
 
   it("reports source_unavailable only for a connector believed running — an auth-resting connector stays silent", async () => {
@@ -313,12 +324,12 @@ describe("degraded skill discovery", () => {
     // its source is the anomaly the reason exists for.
     const GHOST_NAME = "ai-nimblebrain-ghost-mcp";
     const lifecycle = runtime.getLifecycle();
-    const ref = {
+    const ref: ConnectorRef = {
       url: "http://127.0.0.1:9/mcp",
       serverName: GHOST_NAME,
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
-    } as unknown as ConnectorRef;
+    };
     await lifecycle.seedInstance(
       GHOST_NAME,
       "@nimblebraininc/ghost",
@@ -331,12 +342,20 @@ describe("degraded skill discovery", () => {
       const seeded = lifecycle.getInstances().find((i) => i.serverName === GHOST_NAME);
       expect(seeded?.state).toBe("not_authenticated");
 
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "ghost quiet" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "ghost quiet",
+      });
       expect(degradedCalls(warn).some((f) => f.server === GHOST_NAME)).toBe(false);
 
       if (seeded) seeded.state = "running";
       warn.mockClear();
-      await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "ghost loud" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "ghost loud",
+      });
       const ghost = degradedCalls(warn).find((f) => f.server === GHOST_NAME);
       expect(ghost?.reason).toBe("source_unavailable");
       expect(ghost?.recovered).toBe(0);

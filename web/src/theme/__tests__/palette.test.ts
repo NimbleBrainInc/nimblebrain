@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { getSpecThemeTokens } from "../../bridge/theme.ts";
+import { colors, pick } from "../palette.ts";
 import { paletteToExtAppsTokens, paletteToRootCss } from "../projections.ts";
 
 /**
@@ -89,11 +90,58 @@ describe("getSpecThemeTokens — protocol boundary", () => {
     // representative spec keys survive the filter
     expect(spec["--color-background-primary"]).toBe("#ffffff");
     expect(spec["--font-sans"]).toContain("Hanken Grotesk");
-    // out-of-spec tokens are injected into the iframe but do NOT cross the boundary
+    // out-of-spec tokens never go out on `styles.variables`; the mode-varying
+    // ones ride the `ai.nimblebrain/styles` extension instead
     expect(spec["--color-text-accent"]).toBeUndefined();
-    // the newly-added brand semantics do NOT cross the boundary
     expect(spec["--nb-color-processing"]).toBeUndefined();
   });
+});
+
+/**
+ * A value goes out under its MCP Apps spec key whenever the spec names one,
+ * because the spec key is the only one that crosses the protocol and the only
+ * one another host (Claude, ChatGPT) can send. A `--nb-*` key is for a value the
+ * spec has no key for, so the host sends exactly this set and no `--nb-*` twin
+ * of a spec key.
+ */
+const NB_EXTENSIONS = ["--nb-color-processing", "--nb-color-processing-light", "--nb-font-heading"];
+
+/** The spec keys that carry the status colours, the info ground and on-fill text. */
+const SPEC_STATUS_KEYS: Record<string, keyof typeof colors> = {
+  "--color-text-danger": "destructive",
+  "--color-text-success": "success",
+  "--color-text-warning": "warning",
+  "--color-background-info": "info-light",
+  "--color-text-inverse": "primary-foreground",
+};
+
+describe("the host sends spec keys, and --nb-* only where the spec has none", () => {
+  for (const mode of ["light", "dark"] as const) {
+    const map = paletteToExtAppsTokens(mode);
+    const wire = getSpecThemeTokens(mode);
+
+    test(`${mode}: the --nb-* keys are exactly the values with no spec equivalent`, () => {
+      expect(
+        Object.keys(map)
+          .filter((k) => k.startsWith("--nb-"))
+          .sort(),
+      ).toEqual([...NB_EXTENSIONS].sort());
+    });
+
+    for (const [spec, color] of Object.entries(SPEC_STATUS_KEYS)) {
+      test(`${mode}: ${spec} crosses the wire with the palette's ${color}`, () => {
+        expect(wire[spec]).toBe(pick(colors[color], mode));
+      });
+    }
+
+    // `--color-text-inverse` is the text on both the accent and the danger fill,
+    // so the two foregrounds must be one colour.
+    test(`${mode}: the accent and danger foregrounds are one colour`, () => {
+      expect(pick(colors["destructive-foreground"], mode)).toBe(
+        pick(colors["primary-foreground"], mode),
+      );
+    });
+  }
 });
 
 describe("paletteToRootCss — shell :root/.dark match current values", () => {
@@ -161,7 +209,7 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
     expect(darkBlock).toContain("--nb-shadow-sm: 0 1px 2px rgba(0,0,0,0.3);");
   });
 
-  test("the --radius base is no longer emitted (vestigial after the radius convergence)", () => {
+  test("no --radius base is emitted", () => {
     expect(rootBlock).not.toContain("--radius:");
   });
 });

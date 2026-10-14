@@ -27,7 +27,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { __internal__ } from "../api/events-client";
 import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 // The options the singleton handed to the connector on open. The
 // connector-level `onReconnect` is the singleton's internal fan-out to
@@ -52,7 +52,7 @@ const { act } = await import("react");
 const { useEvents } = await import("../hooks/useEvents");
 
 function Probe(props: { onReconnect: () => void }): null {
-  useEvents("tok", undefined, { onReconnect: props.onReconnect });
+  useEvents({ onReconnect: props.onReconnect });
   return null;
 }
 
@@ -85,9 +85,9 @@ describe("useEvents", () => {
     });
 
     // The hook opened exactly one underlying connection and registered
-    // its subscriptions on the singleton: nine event types + onReconnect.
+    // its subscriptions on the singleton: ten event types + onReconnect.
     expect(__internal__.hasConnection()).toBe(true);
-    expect(__internal__.subscriberCount()).toBe(10);
+    expect(__internal__.subscriberCount()).toBe(11);
   });
 
   test("singleton reconnect fires the consumer's onReconnect, and unmount unregisters it", () => {

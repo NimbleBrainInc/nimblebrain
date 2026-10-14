@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError } from "@modelcontextprotocol/server";
 import {
   DEFAULT_BURST,
   DEFAULT_RATE_PER_SEC,
@@ -23,37 +23,37 @@ describe("TokenBucketRateLimit defaults", () => {
 describe("TokenBucketRateLimit.check", () => {
   it("admits a single call without throwing", () => {
     const rl = new TokenBucketRateLimit();
-    expect(() => rl.check("ws_a", "connector_x")).not.toThrow();
+    expect(() => rl.check("ws_00079598e311c160", "connector_x")).not.toThrow();
   });
 
   it("admits up to `burst` calls back-to-back", () => {
-    let now = 1000;
+    const now = 1000;
     const rl = new TokenBucketRateLimit({ burst: 5, ratePerSec: 1, now: () => now });
     for (let i = 0; i < 5; i++) {
-      expect(() => rl.check("ws_a", "connector_x")).not.toThrow();
+      expect(() => rl.check("ws_00079598e311c160", "connector_x")).not.toThrow();
     }
   });
 
   it("rejects the (burst+1)th call within the same instant", () => {
-    let now = 1000;
+    const now = 1000;
     const rl = new TokenBucketRateLimit({ burst: 3, ratePerSec: 1, now: () => now });
-    rl.check("ws_a", "connector_x");
-    rl.check("ws_a", "connector_x");
-    rl.check("ws_a", "connector_x");
-    expect(() => rl.check("ws_a", "connector_x")).toThrow();
+    rl.check("ws_00079598e311c160", "connector_x");
+    rl.check("ws_00079598e311c160", "connector_x");
+    rl.check("ws_00079598e311c160", "connector_x");
+    expect(() => rl.check("ws_00079598e311c160", "connector_x")).toThrow();
   });
 
   it("rejected calls throw McpError with -32004 and retryAfterMs", () => {
-    let now = 1000;
+    const now = 1000;
     const rl = new TokenBucketRateLimit({ burst: 1, ratePerSec: 10, now: () => now });
-    rl.check("ws_a", "connector_x");
-    let caught: McpError | null = null;
+    rl.check("ws_00079598e311c160", "connector_x");
+    let caught: ProtocolError | null = null;
     try {
-      rl.check("ws_a", "connector_x");
+      rl.check("ws_00079598e311c160", "connector_x");
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
-    expect(caught).toBeInstanceOf(McpError);
+    expect(caught).toBeInstanceOf(ProtocolError);
     // Pin the JSON-RPC code so doc/impl drift fails CI rather than
     // silently shifting the contract that connector SDK retry logic
     // depends on. Rate limiting lives in the impl-defined server-error
@@ -68,23 +68,23 @@ describe("TokenBucketRateLimit.check", () => {
   it("refills over time at ratePerSec", () => {
     let now = 1000;
     const rl = new TokenBucketRateLimit({ burst: 1, ratePerSec: 10, now: () => now });
-    rl.check("ws_a", "connector_x");
-    expect(() => rl.check("ws_a", "connector_x")).toThrow();
+    rl.check("ws_00079598e311c160", "connector_x");
+    expect(() => rl.check("ws_00079598e311c160", "connector_x")).toThrow();
     // 100ms later, one new token has accrued (10/sec * 0.1sec = 1).
     now = 1100;
-    expect(() => rl.check("ws_a", "connector_x")).not.toThrow();
+    expect(() => rl.check("ws_00079598e311c160", "connector_x")).not.toThrow();
   });
 
   it("isolates buckets per (workspaceId, connectorId)", () => {
-    let now = 1000;
+    const now = 1000;
     const rl = new TokenBucketRateLimit({ burst: 1, ratePerSec: 1, now: () => now });
-    rl.check("ws_a", "connector_x");
+    rl.check("ws_00079598e311c160", "connector_x");
     // Different workspace — independent bucket, admits immediately.
-    expect(() => rl.check("ws_b", "connector_x")).not.toThrow();
+    expect(() => rl.check("ws_001c32f121060ff3", "connector_x")).not.toThrow();
     // Different connector in same workspace — also independent.
-    expect(() => rl.check("ws_a", "connector_y")).not.toThrow();
+    expect(() => rl.check("ws_00079598e311c160", "connector_y")).not.toThrow();
     // Same workspace+connector — exhausted.
-    expect(() => rl.check("ws_a", "connector_x")).toThrow();
+    expect(() => rl.check("ws_00079598e311c160", "connector_x")).toThrow();
   });
 
   it("does not refill past the burst ceiling", () => {
@@ -93,9 +93,9 @@ describe("TokenBucketRateLimit.check", () => {
     // Idle for 1000 seconds — bucket would mathematically refill to 1003,
     // but ceiling caps at 3. So only 3 calls succeed in a row.
     now = 1001 * 1000;
-    rl.check("ws_a", "connector_x");
-    rl.check("ws_a", "connector_x");
-    rl.check("ws_a", "connector_x");
-    expect(() => rl.check("ws_a", "connector_x")).toThrow();
+    rl.check("ws_00079598e311c160", "connector_x");
+    rl.check("ws_00079598e311c160", "connector_x");
+    rl.check("ws_00079598e311c160", "connector_x");
+    expect(() => rl.check("ws_00079598e311c160", "connector_x")).toThrow();
   });
 });

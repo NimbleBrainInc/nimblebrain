@@ -9,7 +9,7 @@ The `connectors` array lives in [`workspace.json`](/config/workspace-json/), **n
 
 Every entry is one remote MCP server, addressed by URL. The runtime orchestrates over remote MCP: it connects to a URL with a credential, and does not download, verify, or execute a server's code. There is no by-name or by-path entry, and nothing runs as a subprocess of the platform.
 
-NimbleBrain ships with no connectors by default. Platform capabilities (home, conversations, files, settings, usage, automations) are built in as in-process tool sources — install connectors to give a workspace domain-specific tools.
+NimbleBrain ships with no connectors by default. Platform capabilities (conversations, files, usage, tasks) are built in as in-process tool sources — install connectors to give a workspace domain-specific tools.
 
 <Aside type="note">
   Connectors are workspace-scoped. Two workspaces that install the same server hold independent credentials and independent connection state. See [`workspace.json`](/config/workspace-json/) for where the array lives and how workspaces are managed.
@@ -35,9 +35,9 @@ NimbleBrain ships with no connectors by default. Platform capabilities (home, co
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `url` | `string` | — | **Required.** The remote MCP endpoint. |
-| `serverName` | `string` | derived from `url` | The name the server registers under. Tools reach the agent as `<serverName>__<tool>`, so this is the stable identity every other surface looks the connector up by. Set automatically at install from the catalog entry's canonical id. |
+| `serverName` | `string` | — | **Required.** The name the server registers under. Tools reach the agent as `<serverName>__<tool>`, so this is the stable identity every other surface looks the connector up by. Set automatically at install from the catalog entry's canonical id. |
 | `transport` | `object` | `{ "type": "streamable-http" }` | How to reach the server. See [Remote transport configuration](#remote-transport-configuration). |
-| `ui` | `object \| null` | `null` | Host UI metadata, copied from the operator-trusted catalog entry at install. |
+| `ui` | `object \| null` | `null` | Host UI metadata, copied from the operator-trusted catalog entry at install. At every boot the runtime takes it from the catalog again, so a placement the catalog gains reaches connectors already installed; a connector no catalog entry names keeps this copy. |
 | `oauthScope` | `"workspace"` | `"workspace"` | Identity scope for the connection. One identity per (workspace, server), shared by the workspace's members. |
 | `scopes` | `string[]` | — | OAuth scopes to request. Omit for servers that derive their own (DCR). |
 | `oauthClient` | `object` | — | Pre-registered OAuth client for vendors without Dynamic Client Registration. `clientSecret` is a reference into the credential store, never an inline value — see [Credentials](/config/credentials/). |
@@ -54,8 +54,6 @@ The `ui` field is populated automatically when you install a connector whose cat
 ```json
 {
   "ui": {
-    "name": "Tasks",
-    "icon": "clipboard",
     "placements": [
       { "slot": "main", "resourceUri": "ui://tasks/index.html" }
     ]
@@ -65,8 +63,6 @@ The `ui` field is populated automatically when you install a connector whose cat
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `ui.name` | `string` | Human-readable app name shown in the sidebar. |
-| `ui.icon` | `string` | Emoji or icon identifier. |
 | `ui.placements` | `array` | Placement declarations (each a `slot` plus a `ui://` resource URI) that register the app's views. Re-validated at every registration, so a malformed one is dropped rather than rendered. |
 
 ## Remote transport configuration
@@ -158,7 +154,7 @@ Control how NimbleBrain handles dropped connections to remote servers.
 
 ```json
 {
-  "id": "ws_product",
+  "id": "ws_00622b820b0ec363",
   "name": "Product",
   "connectors": [
     {

@@ -2,6 +2,7 @@ import { estimateCost } from "../usage/cost.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { addUsage, emptyUsage } from "../usage/types.ts";
 import { canAccess } from "./index-cache.ts";
+import { previewTextOf } from "./preview.ts";
 import type {
   Conversation,
   ConversationAccessContext,
@@ -16,8 +17,7 @@ import type {
 
 /**
  * Derive cumulative usage + cost from a flat list of stored messages.
- * Used by the legacy (non-event-sourced) stores when building a
- * ConversationSummary. Cost is computed at read time from the catalog;
+ * Used by the in-memory store when building a ConversationSummary. Cost is computed at read time from the catalog;
  * never stored.
  */
 function deriveSummaryTotals(messages: StoredMessage[]): {
@@ -34,11 +34,10 @@ function deriveSummaryTotals(messages: StoredMessage[]): {
   return { usage, costUsd };
 }
 
-/** First user message's text content, or "" when there is none / it is non-string. */
+/** First user message's preview text, or "" when there is none. */
 function firstUserPreview(messages: StoredMessage[]): string {
   const firstUser = messages.find((m) => m.role === "user");
-  if (!firstUser) return "";
-  return typeof firstUser.content === "string" ? firstUser.content : "";
+  return firstUser ? previewTextOf(firstUser.content) : "";
 }
 
 /** True when the lowercased search term hits the title or the preview. */
@@ -90,7 +89,7 @@ export class InMemoryConversationStore implements ConversationStore {
       title: null,
       lastModel: null,
       ownerId: options.ownerId,
-      ...(options.model ? { model: options.model } : {}),
+      model: options.model,
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
     };
     this.conversations.set(id, conversation);
@@ -217,6 +216,8 @@ export class InMemoryConversationStore implements ConversationStore {
 
     const newConv = await this.create({
       ownerId: source.ownerId,
+      // A fork continues the source conversation, so it inherits the binding.
+      model: source.model,
       ...(source.workspaceId ? { workspaceId: source.workspaceId } : {}),
     });
 

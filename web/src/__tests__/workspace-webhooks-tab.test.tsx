@@ -10,6 +10,8 @@
 //   2. A registration written before delivery ids reports no URL rather than
 //      an address ending in "undefined" — plausible, copyable, admitted
 //      nowhere, and contradicting the door, which already refuses that record.
+//   3. The URL is a credential: masked at rest, yet copyable whole while masked,
+//      and revealable, so the page never hides what it exists to hand over.
 // ---------------------------------------------------------------------------
 
 // Deliberately does NOT `mock.module("../context/WorkspaceContext", …)`: bun
@@ -19,7 +21,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 interface ToolCall {
   source: string;
@@ -44,16 +46,16 @@ const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
+const { WorkspaceAppIconsContext } = await import("../context/WorkspaceAppIconsContext");
 const { WorkspaceWebhooksTab } = await import("../pages/settings/WorkspaceWebhooksTab");
 
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
 const WS: WorkspaceInfo = {
-  id: "ws_outbound",
+  id: "ws_005b519ef7efc353",
   name: "Outbound",
-  connectors: [],
+  connectorCount: 0,
   memberCount: 1,
-  isPersonal: false,
   userRole: "admin",
 };
 
@@ -72,17 +74,27 @@ function hook(over: Record<string, unknown> = {}) {
   };
 }
 
-async function mount(): Promise<HTMLDivElement> {
+async function mount(
+  installed: Array<{ serverName: string; displayName: string }> = [],
+): Promise<HTMLDivElement> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
+  // biome-ignore lint/plugin/double-cast: Each `installed` entry carries only the `serverName` and `displayName` the tab reads, not a full InstalledConnector.
+  const icons = {
+    iconFor: () => undefined,
+    connectors: { workspaceId: WS.id, installed },
+  } as unknown as React.ContextType<typeof WorkspaceAppIconsContext>;
   await act(async () => {
     root.render(
-      React.createElement(
-        WorkspaceProvider,
-        { initialWorkspaces: [WS], initialActiveId: WS.id },
-        React.createElement(WorkspaceWebhooksTab),
-      ),
+      React.createElement(WorkspaceProvider, {
+        initialWorkspaces: [WS],
+        initialActiveId: WS.id,
+        children: React.createElement(WorkspaceAppIconsContext.Provider, {
+          value: icons,
+          children: React.createElement(WorkspaceWebhooksTab),
+        }),
+      }),
     );
   });
   unmount = () => {
@@ -155,5 +167,59 @@ describe("a registration with no delivery id", () => {
     const text = container.textContent ?? "";
     expect(text).not.toContain("undefined");
     expect(text).toContain("Rotate to mint one");
+  });
+});
+
+describe("the delivery URL", () => {
+  const shown = (c: HTMLElement) =>
+    c.querySelector("[data-testid='webhook-url']")?.textContent ?? "";
+  const byLabel = (c: HTMLElement, label: string) =>
+    c.querySelector<HTMLButtonElement>(`button[aria-label='${label}']`)!;
+
+  test("is masked at rest, leaving its host and path readable", async () => {
+    listed = [hook()];
+    const container = await mount();
+    expect(shown(container)).toStartWith("https://example.invalid/v1/hooks/");
+    expect(shown(container)).not.toContain("an-opaque-delivery-id");
+    expect(container.textContent ?? "").not.toContain("an-opaque-delivery-id");
+  });
+
+  test("copies whole while masked", async () => {
+    listed = [hook()];
+    const written: string[] = [];
+    const nav = window.navigator;
+    Object.defineProperty(nav, "clipboard", {
+      configurable: true,
+      value: { writeText: async (t: string) => void written.push(t) },
+    });
+    const container = await mount();
+
+    await act(async () => byLabel(container, "Copy the delivery URL").click());
+    expect(written).toEqual(["https://example.invalid/v1/hooks/an-opaque-delivery-id"]);
+    expect(shown(container)).not.toContain("an-opaque-delivery-id");
+  });
+
+  test("reveals on request, and hides again", async () => {
+    listed = [hook()];
+    const container = await mount();
+
+    await act(async () => byLabel(container, "Reveal the delivery URL").click());
+    expect(shown(container)).toBe("https://example.invalid/v1/hooks/an-opaque-delivery-id");
+
+    await act(async () => byLabel(container, "Hide the delivery URL").click());
+    expect(shown(container)).not.toContain("an-opaque-delivery-id");
+  });
+});
+
+describe("the connector", () => {
+  test("is named as the sidebar names it, not by its server name", async () => {
+    listed = [hook()];
+    const container = await mount([
+      { serverName: "acme-billing-mcp", displayName: "Acme Billing" },
+    ]);
+    const text = container.textContent ?? "";
+    expect(text).toContain("Acme Billing");
+    expect(text).toContain("Receives events from acme");
+    expect(text).not.toContain("acme-billing-mcp");
   });
 });

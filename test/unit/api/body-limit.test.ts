@@ -2,6 +2,18 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { BodyLimitOptions } from "../../../src/api/middleware/body-limit.ts";
 import { bodyLimit } from "../../../src/api/middleware/body-limit.ts";
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
+import { readJson } from "../../helpers/http.ts";
+
+/** The middleware's 413: an `apiError` body whose details name the bound it hit. */
+type PayloadTooLarge = ApiErrorBody & {
+  details: { limit: number; received: number; contentType: string };
+};
+
+/** What the test app's own `/test` route answers when a request gets through. */
+interface TestRouteBody {
+  ok: boolean;
+}
 
 function createTestApp(maxBytes = 1024, opts?: BodyLimitOptions) {
   const app = new Hono();
@@ -19,9 +31,9 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "2048", "Content-Type": "application/json" },
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<PayloadTooLarge>(res);
     expect(body.error).toBe("payload_too_large");
-    expect(body.message).toBe("Payload too large");
+    expect(body.message).toBe("Request body is 2 KB; the limit is 1 KB.");
   });
 
   test("413 body includes limit, received, and contentType", async () => {
@@ -31,7 +43,7 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "4096", "Content-Type": "application/json" },
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<PayloadTooLarge>(res);
     expect(body.details).toEqual({
       limit: 1024,
       received: 4096,
@@ -46,7 +58,7 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "512" },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<TestRouteBody>(res);
     expect(body.ok).toBe(true);
   });
 
@@ -56,7 +68,7 @@ describe("bodyLimit middleware", () => {
       method: "POST",
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<TestRouteBody>(res);
     expect(body.ok).toBe(true);
   });
 
@@ -67,7 +79,7 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "abc", "Content-Type": "application/json" },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<TestRouteBody>(res);
     expect(body.ok).toBe(true);
   });
 
@@ -87,7 +99,7 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "2048" },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<TestRouteBody>(res);
     expect(body.ok).toBe(true);
   });
 
@@ -101,7 +113,7 @@ describe("bodyLimit middleware", () => {
       },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<TestRouteBody>(res);
     expect(body.ok).toBe(true);
   });
 
@@ -115,10 +127,25 @@ describe("bodyLimit middleware", () => {
       },
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<PayloadTooLarge>(res);
     expect(body.details?.limit).toBe(4096);
     expect(body.details?.received).toBe(8192);
     expect(body.details?.contentType).toContain("multipart/form-data");
+  });
+
+  test("an upload over the total limit names the size and the limit in its message", async () => {
+    const app = createTestApp(1_048_576, { multipart: 104_857_600 });
+    const res = await app.request("/test", {
+      method: "POST",
+      headers: {
+        "Content-Length": String(125_829_120),
+        "Content-Type": "multipart/form-data; boundary=abc",
+      },
+    });
+    expect(res.status).toBe(413);
+    const body = await readJson<PayloadTooLarge>(res);
+    expect(body.error).toBe("payload_too_large");
+    expect(body.message).toBe("Upload is 120.0 MB; the limit is 100.0 MB.");
   });
 
   test("non-multipart content-types stay bounded by the base limit even when multipart is set", async () => {
@@ -131,7 +158,7 @@ describe("bodyLimit middleware", () => {
       },
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<PayloadTooLarge>(res);
     expect(body.details?.limit).toBe(1024);
   });
 
@@ -337,7 +364,7 @@ describe("bodyLimit middleware", () => {
   // Regression guard: bodyLimit must stay scoped to the route it's attached
   // to. Mounting it via `.use("*")` on a sub-app that is itself mounted at
   // `/` makes it leak across sibling sub-apps — that's how the multipart
-  // limit on /v1/chat/stream was silently shadowed by the 1MB JSON limit
+  // limit on the chat stream route was silently shadowed by the 1MB JSON limit
   // on another sub-app in an earlier iteration of this fix.
   test("per-handler bodyLimit does not leak across sibling sub-apps", async () => {
     const parent = new Hono();
@@ -367,7 +394,7 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "4096", "Content-Type": "application/json" },
     });
     expect(oversizedJson.status).toBe(413);
-    const body = await oversizedJson.json();
+    const body = await readJson<PayloadTooLarge>(oversizedJson);
     expect(body.details?.limit).toBe(1024);
   });
 });

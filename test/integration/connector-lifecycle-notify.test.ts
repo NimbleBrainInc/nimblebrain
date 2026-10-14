@@ -1,35 +1,40 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import { ensureHooks } from "../../src/hooks/reconcile.ts";
 import type { HookReconcileDeps } from "../../src/hooks/reconcile.ts";
+import { ensureHooks } from "../../src/hooks/reconcile.ts";
 import type { HookIdentity } from "../../src/hooks/token.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { UserStore } from "../../src/identity/user.ts";
 import type { LifecycleNotifyDeps } from "../../src/lifecycle/notify.ts";
 import {
   notifyReady,
   notifyReadyOnRunning,
   resetReadyNotifications,
 } from "../../src/lifecycle/notify.ts";
-import type { LifecycleDeclaration } from "../../src/lifecycle/types.ts";
+import type { LifecycleBinding } from "../../src/lifecycle/types.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
+import { LIFECYCLE_EXTENSION_ID } from "../../src/services/lifecycle-extension.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
-import { ToolRegistry } from "../../src/tools/registry.ts";
 import {
   createManageConnectorsTool,
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
+import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolResult } from "../../src/tools/types.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
+import { stub } from "../helpers/stub.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /**
  * The kernel's two lifecycle calls, driven through the install and uninstall
@@ -56,23 +61,31 @@ const ADMIN: UserIdentity = {
   preferences: {},
 };
 
-const SHARED_WS = "ws_helix";
+const SHARED_WS = "ws_003eba8844413cd9";
 /** `slugifyServerName("ai.granola/mcp")`, which is what the install records. */
 const CONNECTOR = "ai-granola-mcp";
 const NOTICE = "Setting up your sending workspace — watch the panel.";
 
-const DECL: LifecycleDeclaration = {
+const DECL: LifecycleBinding = {
   on_ready: "workspace_ready",
   on_removing: "workspace_removing",
 };
 
-/** A handler as a well-behaved server advertises it: no required arguments. */
+/**
+ * A handler as a well-behaved server advertises it: marked for its event, with
+ * no required arguments, and a `ready` handler declaring `reason`.
+ */
 function handler(name: string): Tool {
+  const event = name.endsWith("_removing") ? "removing" : "ready";
   return {
     name,
     description: "Lifecycle handler",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: {
+      type: "object",
+      properties: event === "ready" ? { reason: { type: "string" } } : {},
+    },
     source: CONNECTOR,
+    meta: { [LIFECYCLE_EXTENSION_ID]: { event } },
   };
 }
 
@@ -113,7 +126,7 @@ interface Harness {
 }
 
 async function buildHarness(
-  opts: { declaration?: LifecycleDeclaration; hooks?: boolean } = {},
+  opts: { declaration?: LifecycleBinding; hooks?: boolean } = {},
 ): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-lifecycle-notify-"));
   const credStore = installTestCredentialStore(workDir);
@@ -121,7 +134,7 @@ async function buildHarness(
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
-  await workspaceStore.create("Helix", "helix");
+  await seedWorkspace(workspaceStore, SHARED_WS, { name: "Helix" });
   await workspaceStore.addMember(SHARED_WS, ADMIN.id, "admin");
 
   const calls: { tool: string; input: Record<string, unknown> }[] = [];
@@ -163,37 +176,37 @@ async function buildHarness(
   };
 
   const uninstall = lifecycle.uninstall.bind(lifecycle);
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
-    getLifecycle: () => ({
-      ...lifecycle,
-      getInstance: lifecycle.getInstance.bind(lifecycle),
-      getInstances: lifecycle.getInstances.bind(lifecycle),
-      seedInstance: lifecycle.seedInstance.bind(lifecycle),
-      notifyInstalled: lifecycle.notifyInstalled.bind(lifecycle),
-      syncBoundSkills: lifecycle.syncBoundSkills.bind(lifecycle),
-      setConnectorSkillFetch: lifecycle.setConnectorSkillFetch.bind(lifecycle),
-      // Wrapped so the ORDER of the notification and the teardown is
-      // observable. "Before teardown" is the whole contract: after it there is
-      // no source to call.
-      uninstall: async (...args: Parameters<typeof uninstall>) => {
-        trace.push("uninstall");
-        return uninstall(...args);
-      },
-    }),
+    getLifecycle: () =>
+      stub<ConnectorLifecycleManager>({
+        ...lifecycle,
+        getInstance: lifecycle.getInstance.bind(lifecycle),
+        getInstances: lifecycle.getInstances.bind(lifecycle),
+        seedInstance: lifecycle.seedInstance.bind(lifecycle),
+        notifyInstalled: lifecycle.notifyInstalled.bind(lifecycle),
+        syncBoundSkills: lifecycle.syncBoundSkills.bind(lifecycle),
+        setConnectorSkillFetch: lifecycle.setConnectorSkillFetch.bind(lifecycle),
+        // Wrapped so the ORDER of the notification and the teardown is
+        // observable. "Before teardown" is the whole contract: after it there is
+        // no source to call.
+        uninstall: async (...args: Parameters<typeof uninstall>) => {
+          trace.push("uninstall");
+          return uninstall(...args);
+        },
+      }),
     getRegistryForWorkspace: () => workspaceRegistry,
-    getPermissionStore: () => ({ deleteConnector: async () => {} }),
-    getUserStore: () => ({ get: async () => null }),
-    getUserConnectorStore: () => ({ get: async () => null }),
+    getPermissionStore: () => stub<PermissionStore>({ deleteConnector: async () => {} }),
+    getUserStore: () => stub<UserStore>({ get: async () => null }),
     getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
     getHookReconcileDeps: () => hookDeps,
     getLifecycleNotifyDeps: () => lifecycleDeps,
-  } as unknown as Runtime;
+  });
 
   const ctx: ManageConnectorsContext = {
     runtime,
@@ -249,36 +262,10 @@ describe("a fresh install", () => {
     expect(messageOf(result)).toContain(NOTICE);
   });
 
-  test("a manifest naming a handler the server does not serve is a warning, not a failure", async () => {
-    h = await buildHarness({ declaration: { on_ready: "not_a_tool" } });
-    const result = await install();
-
-    // By this line the ref is persisted and the source is running, so the
-    // install HAS succeeded — reporting otherwise sends the operator to a retry
-    // the duplicate-install path short-circuits.
-    expect(result.isError).toBe(false);
-    const sc = result.structuredContent as { ok?: boolean; warning?: string; notice?: string };
-    expect(sc.ok).toBe(true);
-    expect(sc.warning).toContain("not_a_tool");
-    expect(sc.notice).toBeUndefined();
-
-    // Two things at once, and they pulled against each other once already.
-    // A contract violation describes a connector whose source started fine, so
-    // narrating it as an eager-start failure sent the operator to click Connect
-    // on a live connection — it must NOT be labelled that.
-    expect(messageOf(result)).not.toContain("eager-start failed");
-    // But it must still be SAID. The engine feeds the model a tool result's
-    // `content` and never its `structuredContent`, and the web client's install
-    // call types its return without `warning` — so this sentence is the only
-    // surface either audience reads, and a warning absent from it reaches
-    // nobody at all.
-    expect(messageOf(result)).toContain("not_a_tool");
-  });
-
-  test("a connector declaring no lifecycle block installs with no notice and no call", async () => {
+  test("a connector that does not advertise the extension installs with no notice and no call", async () => {
     h = await buildHarness({ declaration: undefined });
     // `declarationFor` answering `undefined` is the ordinary case: almost no
-    // connector declares this block, and the seam is inert until one does.
+    // connector advertises the extension, and the seam is inert until one does.
     h.lifecycleDeps.declarationFor = async () => undefined;
     const result = await install();
     expect(result.isError).toBe(false);
@@ -326,6 +313,10 @@ describe("uninstall", () => {
 describe("the two reconciles racing a fresh install", () => {
   test("hooks coalesce into one mint; the lifecycle calls do not coalesce at all", async () => {
     h = await buildHarness({ hooks: true });
+    // Installed, because the hook reconcile reads the connector's MCP endpoint from its ref.
+    await new WorkspaceStore(h.workDir).update(SHARED_WS, {
+      connectors: [{ url: "https://granola.internal/mcp", serverName: CONNECTOR }],
+    });
 
     // The connection-running observer's shape and the install handler's shape,
     // started together — the exact overlap `eagerStartRemoteSource` produces.

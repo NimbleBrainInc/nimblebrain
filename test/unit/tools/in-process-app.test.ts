@@ -2,7 +2,7 @@
  * `defineInProcessApp` contract tests.
  *
  * `defineInProcessApp` is the base layer every in-process platform source
- * (files, conversations, automations, home, settings, usage, nb) is built
+ * (files, conversations, tasks, home, settings, usage, nb) is built
  * on. These tests verify the guarantees the helper enforces for its
  * handlers, so the same class of bug can't recur in one source after
  * another:
@@ -16,11 +16,6 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  EmptyResultSchema,
-  ResourceListChangedNotificationSchema,
-  ResourceUpdatedNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { textContent } from "../../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
@@ -30,6 +25,7 @@ import {
   type InProcessTool,
 } from "../../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
+import { textOf } from "../../helpers/resource-contents.ts";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -39,7 +35,7 @@ function okResult(payload: object): ToolResult {
 
 function parseFirst(result: ToolResult): unknown {
   const first = result.content[0];
-  if (!first || first.type !== "text") throw new Error("expected text block");
+  if (first?.type !== "text") throw new Error("expected text block");
   return JSON.parse(first.text);
 }
 
@@ -70,10 +66,7 @@ function createDef(handler: InProcessTool["handler"]): InProcessTool {
 }
 
 async function buildSource(name: string, tools: InProcessTool[]): Promise<McpSource> {
-  const source = defineInProcessApp(
-    { name, version: "1.0.0", tools },
-    new NoopEventSink(),
-  );
+  const source = defineInProcessApp({ name, version: "1.0.0", tools }, new NoopEventSink());
   await source.start();
   return source;
 }
@@ -131,7 +124,9 @@ describe("defineInProcessApp — schema validation", () => {
     });
 
     expect(result.isError).toBe(false);
-    expect(calls).toEqual([{ filename: "x.txt", base64_data: "aGVsbG8=", mime_type: "text/plain" }]);
+    expect(calls).toEqual([
+      { filename: "x.txt", base64_data: "aGVsbG8=", mime_type: "text/plain" },
+    ]);
   });
 
   test("skips validation for tools with no declared constraints", async () => {
@@ -201,9 +196,7 @@ describe("McpSource — resource notifications", () => {
    * `notifications/resources/*` to leave the server.
    */
   async function buildResourceSource(name: string): Promise<McpSource> {
-    const resources = new Map<string, InProcessResource>([
-      ["instructions://workspace", "<p>hi</p>"],
-    ]);
+    const resources = new Map<string, InProcessResource>([["notes://today", "<p>hi</p>"]]);
     const built = defineInProcessApp(
       {
         name,
@@ -223,7 +216,7 @@ describe("McpSource — resource notifications", () => {
     expect(client).not.toBeNull();
 
     const received: Array<unknown> = [];
-    client!.setNotificationHandler(ResourceListChangedNotificationSchema, async (n) => {
+    client!.setNotificationHandler("notifications/resources/list_changed", async (n) => {
       received.push(n);
     });
 
@@ -244,7 +237,7 @@ describe("McpSource — resource notifications", () => {
     expect(client).not.toBeNull();
 
     const received: Array<{ method: string; params?: { uri?: string } }> = [];
-    client!.setNotificationHandler(ResourceUpdatedNotificationSchema, async (n) => {
+    client!.setNotificationHandler("notifications/resources/updated", async (n) => {
       received.push(n as { method: string; params?: { uri?: string } });
     });
 
@@ -277,10 +270,10 @@ describe("McpSource — resource notifications", () => {
     // Issued raw, bypassing the client's own capability assertion, to show
     // the server end really has no handler.
     await expect(
-      client!.request(
-        { method: "resources/subscribe", params: { uri: "instructions://workspace" } },
-        EmptyResultSchema,
-      ),
+      client!.request({
+        method: "resources/subscribe",
+        params: { uri: "notes://today" },
+      }),
     ).rejects.toThrow(/Method not found/i);
   });
 
@@ -319,7 +312,7 @@ describe("defineInProcessApp — parametric resources", () => {
 
   test("listResources entries are merged into resources/list alongside static map entries", async () => {
     const staticMap = new Map<string, InProcessResource>([
-      ["instructions://workspace", { text: "ws body", mimeType: "text/markdown" }],
+      ["notes://today", { text: "ws body", mimeType: "text/markdown" }],
     ]);
     source = defineInProcessApp(
       {
@@ -339,7 +332,7 @@ describe("defineInProcessApp — parametric resources", () => {
     const result = await source.getClient()!.listResources();
     const uris = result.resources.map((r) => r.uri);
     expect(uris).toEqual([
-      "instructions://workspace",
+      "notes://today",
       "instructions://connectors/foo",
       "instructions://connectors/bar",
     ]);
@@ -377,7 +370,7 @@ describe("defineInProcessApp — parametric resources", () => {
     expect(result.contents).toHaveLength(1);
     const first = result.contents[0]!;
     expect(first.uri).toBe("instructions://connectors/ipinfo");
-    expect(first.text).toBe("body for ipinfo");
+    expect(textOf(first)).toBe("body for ipinfo");
     expect(first.mimeType).toBe("text/markdown");
   });
 
@@ -404,7 +397,9 @@ describe("defineInProcessApp — parametric resources", () => {
     expect(e).toBeDefined();
     // ErrorCode.InvalidParams === -32602
     expect(e?.code).toBe(-32602);
-    expect(String(e?.message ?? "")).toContain("Resource not found: instructions://connectors/missing");
+    expect(String(e?.message ?? "")).toContain(
+      "Resource not found: instructions://connectors/missing",
+    );
   });
 
   test("static map miss with no resourceHandler still raises InvalidParams (regression)", async () => {
@@ -512,11 +507,11 @@ describe("defineInProcessApp — parametric resources", () => {
     await source.start();
 
     const first = await source.getClient()!.readResource({ uri: "prompt://composed/foo" });
-    expect(first.contents[0]?.text).toBe("lazy body 1");
+    expect(textOf(first.contents[0])).toBe("lazy body 1");
 
     // Each read invokes the callback again — body assembled per request.
     const second = await source.getClient()!.readResource({ uri: "prompt://composed/foo" });
-    expect(second.contents[0]?.text).toBe("lazy body 2");
+    expect(textOf(second.contents[0])).toBe("lazy body 2");
     expect(calls).toBe(2);
   });
 
@@ -532,16 +527,14 @@ describe("defineInProcessApp — parametric resources", () => {
         name: "html-string",
         version: "1.0.0",
         tools: [],
-        resources: new Map<string, InProcessResource>([
-          ["ui://settings/panel", "<p>panel</p>"],
-        ]),
+        resources: new Map<string, InProcessResource>([["ui://settings/panel", "<p>panel</p>"]]),
       },
       new NoopEventSink(),
     );
     await source.start();
 
     const result = await source.getClient()!.readResource({ uri: "ui://settings/panel" });
-    expect(result.contents[0]?.text).toBe("<p>panel</p>");
+    expect(textOf(result.contents[0])).toBe("<p>panel</p>");
     expect(result.contents[0]?.mimeType).toBe("text/html;profile=mcp-app");
 
     const listed = await source.getClient()!.listResources();
@@ -602,17 +595,10 @@ describe("defineInProcessApp — parametric resources", () => {
     );
     await source.start();
 
-    // The server didn't register resources/* handlers — listResources should
-    // be rejected with MethodNotFound. (Capabilities are also unset on the
-    // initialize response, but the absence of the handler is the observable
-    // contract clients react to.)
-    let captured: unknown;
-    try {
-      await source.getClient()!.listResources();
-    } catch (err) {
-      captured = err;
-    }
-    const e = captured as { code?: number } | undefined;
-    expect(e?.code).toBe(-32601);
+    // No resources capability on the handshake, so a conforming client does
+    // not ask: the SDK answers `listResources()` with an empty list without
+    // sending the request.
+    expect(source.getServerCapabilities()?.resources).toBeUndefined();
+    expect((await source.getClient()!.listResources()).resources).toEqual([]);
   });
 });

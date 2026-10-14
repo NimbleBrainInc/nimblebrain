@@ -5,7 +5,7 @@ description: NimbleBrain's ext-apps host implementation — the JSON-RPC protoco
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The MCP App Bridge is NimbleBrain's implementation of the [ext-apps specification (2026-01-26)](https://apps.extensions.modelcontextprotocol.io/api/) — the standard protocol that enables [MCP Apps](/concepts/mcp-apps) to render inside host applications with bidirectional tool access. NimbleBrain extends the spec with `synapse/` namespace methods for data-change notifications, semantic actions, file transfer, and keyboard forwarding.
+The MCP App Bridge is NimbleBrain's implementation of the [ext-apps specification (2026-01-26)](https://apps.extensions.modelcontextprotocol.io/api/) — the standard protocol that enables [MCP Apps](/concepts/mcp-apps) to render inside host applications with bidirectional tool access. Where the spec has no method for something the shell needs, NimbleBrain adds an [`ai.nimblebrain/` extension](/extensions/overview/#between-an-app-view-and-the-host): semantic actions, a file picker, keyboard forwarding, and the app's location for the top bar.
 
 All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 
@@ -32,7 +32,6 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/notifications/tool-result` | Notification | Forwarded tool result from the agent. |
 | `ui/notifications/tool-input` | Notification | Tool arguments being sent to a tool on the app's server. |
 | `ui/notifications/host-context-changed` | Notification | Host context changed (theme toggle, locale, etc.). |
-| `notifications/tasks/status` | Notification | Status update for a long-running task. Forwarded verbatim from the MCP server. See [Tasks](#tasks). |
 | `notifications/resources/list_changed` | Notification | The app's own MCP server sent this; the host relays it verbatim. See [below](#notificationsresourceslist_changed). |
 
 #### App to Host
@@ -43,13 +42,12 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/notifications/initialized` | Notification | App confirms handshake complete. Host must not send tool data before this. |
 | `ui/notifications/size-changed` | Notification | Report content dimensions for auto-sizing inline views. |
 | `ui/notifications/request-teardown` | Notification | App requests the host to tear down the iframe. Currently a no-op. |
-| `tools/call` | Request | Call a tool on the app's MCP server. Returns `CallToolResult`. |
+| `tools/call` | Request | Call a tool on the app's MCP server. Returns `CallToolResult`, or a task when the call opts in to the [tasks extension](#tasks). |
 | `resources/read` | Request | Read a resource from the app's MCP server. Returns `ReadResourceResult`. See [below](#resourcesread). |
 | `resources/list` | Request | List the app's MCP server's resources, paginated. Returns `ListResourcesResult`. See [below](#resourceslist-and-resourcestemplateslist). |
 | `resources/templates/list` | Request | List the app's MCP server's resource templates, paginated. Returns `ListResourceTemplatesResult`. |
-| `tasks/get` | Request | Non-blocking fetch of a long-running task's current state. See [Tasks](#tasks). |
-| `tasks/result` | Request | Block until a task reaches a terminal state and return its payload. See [Tasks](#tasks). |
-| `tasks/cancel` | Request | Best-effort cancel of a running task. See [Tasks](#tasks). |
+| `tasks/get` | Request | A task's current state, with its outcome once it has ended. See [Tasks](#tasks). |
+| `tasks/cancel` | Request | Ask the server to cancel a task. See [Tasks](#tasks). |
 | `ui/message` | Request | Send a message to the conversation. |
 | `ui/open-link` | Request | Open a URL in a new browser tab. |
 | `ui/update-model-context` | Request | Push structured state visible to the LLM. See [below](#uiupdate-model-context). |
@@ -57,7 +55,7 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/request-display-mode` | Request | Ask to be displayed differently. Answered with the mode actually in effect. See [below](#uirequest-display-mode). |
 | `notifications/message` | Notification | A log line for the host's console. |
 
-A request for any other method gets a JSON-RPC `-32601` (method not found) error, so the call fails right away instead of waiting. The host ignores any other notification.
+A request for any other method (`tasks/result` and `tasks/list` among them) gets a JSON-RPC `-32601` (method not found) error, so the call fails right away instead of waiting. The host ignores any other notification.
 
 ### NimbleBrain extensions (`ai.nimblebrain/`)
 
@@ -66,8 +64,12 @@ These have no spec equivalent. Each name is both the method and the identifier t
 | Method | Direction | Description |
 |--------|-----------|-------------|
 | `ai.nimblebrain/action` | App → Host | Request a semantic action from the shell. |
+| `ai.nimblebrain/notify` | App → Host | Show the user a notice (success, info, warning or error), labelled with your app; answered `{}`. See [below](#ainimblebrainnotify). |
 | `ai.nimblebrain/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ files: [...] }`. See [below](#ainimblebrainrequest-file). |
+| `ai.nimblebrain/upload-files` | App → Host | Store `File`s the app already holds (dropped on it, say), the way a pick is stored; answered `{ files: [...] }`. Offered only to the platform's Files app. See [below](#ainimblebrainupload-files). |
 | `ai.nimblebrain/keydown` | App → Host | Forward keyboard shortcuts to the host. |
+| `ai.nimblebrain/location` | App → Host | Report the app's trail, root first, so the shell's top bar shows its title and breadcrumb. See [below](#ainimblebrainlocation). |
+| `ai.nimblebrain/navigate` | Host → App | Go to one of the trail entries the app sent, when the user picks it in the top bar. |
 
 ## Initialization handshake
 
@@ -78,7 +80,7 @@ The app initiates the handshake per the ext-apps spec:
 3. **App → Host:** `ui/notifications/initialized` notification
 4. Host sends notifications only after receiving `initialized`
 
-Until `initialized` arrives, the host posts the app nothing but the answers to its own requests, so the first frame an app receives is the `ui/initialize` response. A notification raised earlier (a host-context change, tool input or result, a task status, a relayed server notification) is held and delivered, in order, once the handshake completes.
+Until `initialized` arrives, the host posts the app nothing but the answers to its own requests, so the first frame an app receives is the `ui/initialize` response. A notification raised earlier (a host-context change, tool input or result, a relayed server notification) is held and delivered, in order, once the handshake completes.
 
 ```json
 // 1. App sends
@@ -109,10 +111,11 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
       "message": { "text": {} },
       "updateModelContext": { "text": {}, "structuredContent": {} },
       "experimental": {
-        "io.modelcontextprotocol/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } },
+        "io.modelcontextprotocol/tasks": {},
         "ai.nimblebrain/action": {},
         "ai.nimblebrain/request-file": {},
-        "ai.nimblebrain/keydown": {}
+        "ai.nimblebrain/keydown": {},
+        "ai.nimblebrain/location": {}
       }
     },
     "hostContext": {
@@ -124,6 +127,12 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
         },
         "css": {
           "fonts": "@font-face { font-family: 'Hanken Grotesk'; src: url('https://app.example.com/assets/hanken-grotesk.woff2') format('woff2'); font-weight: 100 900; font-style: normal; font-display: swap; }"
+        }
+      },
+      "ai.nimblebrain/styles": {
+        "variables": {
+          "--color-text-accent": "#818cf8",
+          "--nb-color-processing": "#a78bfa"
         }
       }
     }
@@ -140,9 +149,13 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
 
 **Everything the host serves, it declares.** An SDK checks the declaration before it sends: without `serverTools` or `serverResources` a tool call or resource read throws at the call site, and without `message` or `updateModelContext` the send is dropped. So read `hostCapabilities` to decide whether to show a control, not to decide whether the host is NimbleBrain.
 
-**Non-spec capabilities live in `experimental`, keyed by identifier** — MCP Tasks at `io.modelcontextprotocol/tasks`, the NimbleBrain extensions under `ai.nimblebrain/`. A client that validates the response against the ext-apps schema, such as the official `App`, drops any field the schema does not name and keeps the contents of `experimental` (from ext-apps 1.7.5). That is the whole reason they travel there rather than as siblings.
+**Non-spec capabilities live in `experimental`, keyed by identifier** — the MCP tasks extension at `io.modelcontextprotocol/tasks` (an empty object: the host serves it), the NimbleBrain extensions under `ai.nimblebrain/`. A client that validates the response against the ext-apps schema, such as the official `App`, drops any field the schema does not name and keeps the contents of `experimental` (from ext-apps 1.7.5). That is the whole reason they travel there rather than as siblings.
 
 The spec negotiates extensions under `capabilities.extensions`, not `experimental`. The ext-apps bridge capability object has no `extensions` field, so `experimental` carrying the extension identifier is as close as this channel reaches. When ext-apps adds one, the identifiers move there.
+
+**Theme colours arrive as the spec's `hostContext.styles.variables`**, and only under keys the spec's variable enum names: one key outside it makes a spec client reject the whole host context. Status colours go out as `--color-text-danger`, `--color-text-success`, `--color-text-warning` and `--color-background-info`, and text on a filled accent or danger surface as `--color-text-inverse`, the same keys any MCP Apps host sends. The host sends no `--nb-*` twin of a spec key: the `--nb-*` extensions carry only values the spec has no key for.
+
+**The other tokens that change between light and dark arrive as `hostContext["ai.nimblebrain/styles"].variables`**: `--color-text-accent`, `--nb-color-processing` and `--nb-color-processing-light`. The spec's host context keeps unknown top-level keys, so a strict client passes this field through where it would reject the same keys in `styles.variables`. The host sends it on `ui/initialize` and on every `host-context-changed`, so these follow a theme toggle. The style block injected at load is written once, so it carries only tokens that look the same in both modes, plus a load-time value for the spec keys; see [Theming](/apps/theming/).
 
 **Host fonts arrive as `hostContext.styles.css.fonts`**, a block of `@font-face` CSS the app injects into its own document — an iframe inherits none from the shell, so a `--font-*` variable alone names a typeface the app cannot render. It is read once, at the handshake.
 
@@ -154,7 +167,7 @@ If you're using the `@nimblebrain/synapse` SDK, `connect()` handles the entire h
 
 ### `ui/notifications/tool-result`
 
-Sent when the agent calls one of your app's tools during a conversation. The params follow the standard MCP `CallToolResult` shape.
+Sent when the agent calls one of your app's tools during a conversation. The params are the tool's standard MCP `CallToolResult`, including `isError: true` when the tool reported an error.
 
 ```json
 {
@@ -169,7 +182,7 @@ Sent when the agent calls one of your app's tools during a conversation. The par
 
 ### `ui/notifications/host-context-changed`
 
-Sent when the user toggles themes, changes locale, or other host context changes. Theme tokens are nested under `styles.variables`.
+Sent when the user toggles themes, changes locale, or other host context changes. Theme tokens are nested under `styles.variables` (spec keys) and `ai.nimblebrain/styles.variables` (the NimbleBrain tokens that change with the mode).
 
 ```json
 {
@@ -181,6 +194,11 @@ Sent when the user toggles themes, changes locale, or other host context changes
       "variables": {
         "--color-background-primary": "#0f172a",
         "--color-text-primary": "#e2e8f0"
+      }
+    },
+    "ai.nimblebrain/styles": {
+      "variables": {
+        "--color-text-accent": "#818cf8"
       }
     }
   }
@@ -212,7 +230,7 @@ The app's own MCP server sent `notifications/resources/list_changed`, and the ho
 }
 ```
 
-The host is a relay, not an interpreter. A notification reaches the views as the server sent it (its `params`, when it sent any, are passed on), and it reaches only that server's views, in the workspace whose connection received it. The host's own apps that hold one person's data (conversations, files, automations) belong to no workspace, so their notifications reach only that person's views, whichever workspace is open. It is the host's only change signal: an app refreshes when its server sends this notification and the host relays it. It comes from the server rather than being inferred by the host, so it covers every write the server makes (a call from your own iframe, the agent's, or one the server makes on its own), and a write the server does not announce reaches no view. To use it, have your server send the notification when its data changes; a server that advertises `resources.listChanged` (FastMCP and the TypeScript SDK both do when they serve resources) can send it from inside the tool call that made the write. A server sends it only for a real change, so a view that re-reads on it cannot loop.
+The host is a relay, not an interpreter. A notification reaches the views as the server sent it (its `params`, when it sent any, are passed on), and it reaches only that server's views, in the workspace whose connection received it. The host's own apps that hold one person's data (conversations, files, tasks) belong to no workspace, so their notifications reach only that person's views, whichever workspace is open. It is the host's only change signal: an app refreshes when its server sends this notification and the host relays it. It comes from the server rather than being inferred by the host, so it covers every write the server makes (a call from your own iframe, the agent's, or one the server makes on its own), and a write the server does not announce reaches no view. To use it, have your server send the notification when its data changes; a server that advertises `resources.listChanged` (FastMCP and the TypeScript SDK both do when they serve resources) can send it from inside the tool call that made the write. A server sends it only for a real change, so a view that re-reads on it cannot loop.
 
 What the host relays, and how often, is the host's decision rather than the server's, because the server is untrusted:
 
@@ -257,21 +275,36 @@ Call a tool on your app's MCP server. This is a JSON-RPC **request** — the res
 }
 ```
 
-**Error response:**
+**Tool error response.** A tool that ran and reported an error answers a `CallToolResult` with `isError: true`, not a JSON-RPC error, so its `structuredContent` reaches your view:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "call-1",
+  "result": {
+    "isError": true,
+    "content": [{ "type": "text", "text": "{\"error\":{\"code\":\"not_found\",\"message\":\"City not found\"}}" }],
+    "structuredContent": { "error": { "code": "not_found", "message": "City not found" } }
+  }
+}
+```
+
+**Error response.** A JSON-RPC error means no result came back. Usually the call never ran: the tool is not yours or not callable from an app, or the host could not reach your server. A refusal from your server keeps its code and `data`; a transport failure is `-32000`. A timeout (`-32001`) or a connection closed mid-call (`-32000`) means the answer was lost, and the call may have run, so do not blindly retry a call that writes.
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": "call-1",
   "error": {
-    "code": -32000,
-    "message": "City not found"
+    "code": -32602,
+    "message": "MCP error -32602: Tool \"get_weather\" is not callable from an app: its visibility does not include \"app\".",
+    "data": { "reason": "not_app_callable", "toolName": "get_weather" }
   }
 }
 ```
 
 <Aside type="note">
-Tool calls are scoped to your app's MCP server: the bridge routes `tools/call` with your app's server name. A server named in `_meta["ai.nimblebrain/server"]` or in a top-level `server` is ignored, and a tool name qualified with another server's name (`other__tool`) is refused.
+Tool calls are scoped to your app's MCP server: the bridge routes `tools/call` with your app's server name. A server named in `_meta["ai.nimblebrain/server"]` or in a top-level `server` is ignored, and a tool name qualified with another server's name (`other__tool`) is refused. A call to one of your own server's tools is refused too when the tool's `_meta.ui.visibility` does not include `"app"` (a tool that declares `["model"]`): the error is `-32602` with `data.reason: "not_app_callable"`. A tool that declares `["app"]` is callable from your view but hidden from the agent.
 </Aside>
 
 ### `resources/read`
@@ -339,20 +372,9 @@ A listing always answers from your app's own server, never another app's. A serv
 
 ### Tasks
 
-Long-running tools (work that exceeds the stock MCP request timeout) run as **task-augmented** calls. To start one, send a `tools/call` whose `params` include a `task` object; the response is a `CreateTaskResult` carrying a `taskId`. You then track progress two ways:
+Long-running tools (work that exceeds the stock MCP request timeout) run as tasks, through the MCP tasks extension (`io.modelcontextprotocol/tasks`, MCP `2026-07-28`). The host declares it in `ui/initialize` as `hostCapabilities.experimental["io.modelcontextprotocol/tasks"]: {}`.
 
-- **Status notifications** — the host forwards each `notifications/tasks/status` from the server to your iframe verbatim. Filter on the `taskId` you own.
-- **Polling** — call `tasks/get`, `tasks/result`, or `tasks/cancel` with the `taskId`.
-
-A task id is answered only for the server that ran the task: your app's own server, where your `tools/call` started it. The host sends the `taskId` and names that server; any other field you put in `params` is not forwarded. A task another server ran answers `-32602`, the same as a task that does not exist.
-
-| Method | Blocking | Returns |
-|--------|----------|---------|
-| `tasks/get` | No | Current task state (`GetTaskResult`). |
-| `tasks/result` | Yes — blocks until terminal | The original request's payload (for `tools/call`, a `CallToolResult`). |
-| `tasks/cancel` | No | The (final) task state. Cancelling an already-terminal task surfaces as JSON-RPC `-32602`. |
-
-**Start a task-augmented call:**
+**Opt a call in.** A `tools/call` opts in by naming the extension in its `_meta` client capabilities. The server alone decides whether to run it as a task, so the answer is either a complete `CallToolResult` (the server answered outright) or a task. Without that claim the call is an ordinary one and answers a `CallToolResult`. A `params.task` object (the 2025-11-25 tasks utility) is ignored: the call runs as an ordinary one.
 
 ```json
 {
@@ -362,29 +384,68 @@ A task id is answered only for the server that ran the task: your app's own serv
   "params": {
     "name": "start_research",
     "arguments": { "query": "competitive landscape" },
-    "task": { "ttl": 3600000 }
+    "_meta": {
+      "io.modelcontextprotocol/clientCapabilities": {
+        "extensions": { "io.modelcontextprotocol/tasks": {} }
+      }
+    }
   }
 }
 ```
 
-**Fetch the result when ready:**
+**A task answer** is the task itself, flat, as the server sent it:
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "tasks/result",
-  "id": "res-2",
-  "params": { "taskId": "tsk_abc123" }
+  "id": "call-2",
+  "result": {
+    "resultType": "task",
+    "taskId": "dGFza18x",
+    "status": "working",
+    "createdAt": "2026-07-28T00:00:00Z",
+    "lastUpdatedAt": "2026-07-28T00:00:00Z",
+    "ttlMs": 3600000,
+    "pollIntervalMs": 1000
+  }
 }
 ```
 
-<Aside type="tip">
-The `@nimblebrain/synapse` SDK's `callToolAsTask` handles the full flow — starting the task, subscribing to status notifications, and awaiting the result. See [Long-running tools](/apps/synapse) for the dual-channel (task + entity) pattern.
-</Aside>
+`ttlMs`, `pollIntervalMs` and `statusMessage` are present when the server sets them. A result from the server may also carry `resultType: "complete"`, the `2026-07-28` marker of a complete answer; the host passes it through.
+
+**Poll and cancel.** The host sends no status notifications; poll with `tasks/get`, at the task's `pollIntervalMs`.
+
+| Method | Returns |
+|--------|---------|
+| `tasks/get` | The task, flat. Once it ends, the outcome is inline: `result` (a `CallToolResult`) when `status` is `completed`, `error` (`{ code, message }`) when it is `failed`. A tool that ran and reported an error completed: its `CallToolResult` carries `isError: true`. |
+| `tasks/cancel` | An acknowledgement, with no task fields. Cancelling is cooperative: the server may still finish the work, and a task already ended stays as it ended. |
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "get-2",
+  "result": {
+    "resultType": "complete",
+    "taskId": "dGFza18x",
+    "status": "completed",
+    "createdAt": "2026-07-28T00:00:00Z",
+    "lastUpdatedAt": "2026-07-28T00:02:10Z",
+    "ttlMs": 3600000,
+    "result": {
+      "content": [{ "type": "text", "text": "Report ready" }],
+      "structuredContent": { "reportId": "r_42" }
+    }
+  }
+}
+```
+
+A task whose `status` is `input_required` passes through as it is; the host answers no input request, so your app decides what to do (typically cancel and report).
+
+A task id is answered only for the server that ran the task: your app's own server, where your `tools/call` started it. The host sends the `taskId` and names that server; any other field you put in `params` is not forwarded. A task another server ran answers `-32602`, the same as a task that does not exist or that the server has forgotten.
 
 ### `ui/message`
 
-Send a message to the conversation. Follows the ext-apps spec format with `role` and `content` array. Context can be attached via `_meta` on the content block.
+Send a message to the conversation. Follows the ext-apps spec format with `role` and `content` array.
 
 ```json
 {
@@ -394,19 +455,13 @@ Send a message to the conversation. Follows the ext-apps spec format with `role`
     "role": "user",
     "content": [{
       "type": "text",
-      "text": "Show me the 5-day forecast for Honolulu",
-      "_meta": {
-        "ai.nimblebrain/context": {
-          "action": "forecast",
-          "entity": { "type": "city", "id": "honolulu" }
-        }
-      }
+      "text": "Show me the 5-day forecast for Honolulu"
     }]
   }
 }
 ```
 
-The `_meta["ai.nimblebrain/context"]` object is optional. When present, it helps the agent understand the source and intent of the message.
+To tell the agent what the user is looking at or acting on, send [`ui/update-model-context`](#uiupdate-model-context) first: the host attaches the app's latest model context to the turn.
 
 The host answers `{}`, and `{ "isError": true }` when the handler threw — the message did not reach the conversation, so an app that cares can say so. Sent without an `id` it is a notification, which takes no answer — an app on an older SDK sends it that way.
 
@@ -522,7 +577,7 @@ A log line, forwarded to the host's browser console with your app's name. A noti
 
 ### `ai.nimblebrain/action`
 
-Request a semantic action from the shell. Your app declares *intent* and the shell resolves it — no need to know routes or layout details.
+Ask the shell to open an app or a conversation. Your app names what to open and the shell resolves it, so the app never depends on the shell's routes.
 
 ```json
 {
@@ -537,21 +592,13 @@ Request a semantic action from the shell. Your app declares *intent* and the she
 
 The `action` field is required. All other fields in `params` are action-specific.
 
-**Built-in actions (handled by the bridge):**
-
-| Action | Params | Description |
-|--------|--------|-------------|
-| `navigate` | `{ route: string }` | Navigate to a route in the shell (e.g., `/app/tasks`). Invokes the `onNavigate` callback. |
-
-**Consumer-level actions (handled by shell callbacks):**
-
 | Action | Params | Description |
 |--------|--------|-------------|
 | `openConversation` | `{ id: string }` | Open the chat panel and load a specific conversation. |
-| `startChat` | `{ prompt?: string }` | Open the chat panel. Optionally pre-fill a prompt. |
-| `openApp` | `{ name: string }` | Navigate to an installed app by server name. |
+| `openApp` | `{ name: string, target?: string }` | Open an installed app, named by its route, server name or sidebar label. `target` is a view inside it, by the stable address that app reports in [`ai.nimblebrain/location`](#ainimblebrainlocation); the shell sends it to that app as [`ai.nimblebrain/navigate`](#ainimblebrainnavigate) once the app has reported its location, whether it was already open or not. An app opened by this action gets the target at its first report. |
+| `openConnectorSettings` | none | Open this connector's settings page in the current workspace. The connector is always the one that sent the action. |
 
-The bridge handles `navigate` directly. All other actions are dispatched to the registered `onAction` callback, or as an `nb:action` custom event on `window` if no callback is registered.
+The bridge adds `serverName`, the server whose view sent the action, to every action's params, replacing any `serverName` the app passed. It hands every action to the registered `onAction` callback, or dispatches it as an `nb:action` custom event on `window` when no callback is registered. The shell ignores an action it does not know. To put a message into the conversation, use [`ui/message`](#uimessage); to open an external page, [`ui/open-link`](#uiopen-link).
 
 <Aside type="note">
 `ai.nimblebrain/action` is a NimbleBrain platform extension — it is not part of the ext-apps specification. The host declares it as `experimental["ai.nimblebrain/action"]`.
@@ -584,7 +631,31 @@ Open the OS file picker. The host uploads each chosen file to the workspace file
 
 **The result is always `{ files: [...] }`**, for one file or many, and a cancel answers `{ files: [] }`. A JSON-RPC result is an object by definition and MCP types it as one, so a client that validates against the spec cannot parse a bare array or `null` — it never settles the call, and the picker hangs rather than failing.
 
-Every param is optional: `accept` takes the same value as an `<input type="file">` accept attribute and defaults to any file, `multiple` defaults to `false`, and `maxSize` defaults to 25 MB. `maxSize` is enforced in the browser as a fast fail; the server remains the source of truth, and an oversize file or a failed upload comes back as a JSON-RPC error rather than an empty list.
+Every param is optional: `accept` takes the same value as an `<input type="file">` accept attribute and defaults to any file, `multiple` defaults to `false`, and `maxSize` defaults to the instance's per-file limit. An app may ask for a smaller `maxSize`, never a larger one. The host also holds the chosen files to the instance's total per upload, and refuses a set over it before uploading anything, with an error that names the limit. Both are enforced in the browser as a fast fail; the server remains the source of truth, and an oversize file or a failed upload comes back as a JSON-RPC error rather than an empty list.
+
+**The limits arrive in `hostContext.uploads`** as `{ maxFileSize, maxTotalSize }`, in bytes, so an app can state them before the user picks.
+
+**The call succeeds only when every chosen file was stored.** When any file is refused (over `maxSize`, or refused by the server for its type or size), the host answers a JSON-RPC error whose `data` names each refused file and why, and lists the files it stored anyway:
+
+```json
+// Host → App
+{
+  "jsonrpc": "2.0",
+  "id": "syn-7",
+  "error": {
+    "code": -32602,
+    "message": "1 of 2 files refused: File \"setup.exe\" has disallowed type: application/x-msdownload. 1 stored.",
+    "data": {
+      "files": [
+        { "id": "fl_abc123", "filename": "notes.txt", "mimeType": "text/plain", "size": 14 }
+      ],
+      "errors": ["File \"setup.exe\" has disallowed type: application/x-msdownload"]
+    }
+  }
+}
+```
+
+An error does not mean nothing was stored: read `error.data.files`. The browser's `maxSize` check runs before any upload, so it stores nothing; the server stores every file that passes. The refusal is an error rather than an extra result field because the SDK's `pickFiles()` returns the result's `files` alone. With `@nimblebrain/synapse`, the rejection carries the same `data` on the thrown error.
 
 <Aside type="note">
 `ai.nimblebrain/request-file` is a NimbleBrain platform extension — it is not part of the ext-apps specification. The host declares it as `experimental["ai.nimblebrain/request-file"]`.
@@ -594,13 +665,121 @@ Every param is optional: `accept` takes the same value as an `<input type="file"
 **SDK compatibility.** With the `@nimblebrain/synapse` SDK, call `pickFile()` for a single entry or `pickFiles()` for the list — both read this one shape, from the release that moves `connect()` onto the spec's own client onwards. **Releases through 0.18.0 read the bare shapes** (an array, a single object, or `null`) and throw on `{ files }`, reporting it as an out-of-date *host* — so an app on 0.18.0 or earlier has to move its pin in the same deploy as the host.
 </Aside>
 
+### `ai.nimblebrain/upload-files`
+
+Store files the app already holds, such as files dropped on it. It is offered only to the platform's own Files app: a pick has a step the user takes, and this stores whatever the app hands over, so no other app is declared it, and a request from one is refused with `-32601`.
+
+A sandboxed app cannot reach the upload endpoint itself, and a tool call is no way to carry a file (its arguments are JSON, capped at 1 MB), so it hands the `File` objects to the host, which uploads them exactly as it uploads a pick.
+
+```js
+// App → Host. `files` holds File objects; postMessage clones them whole.
+{
+  jsonrpc: "2.0",
+  id: "syn-8",
+  method: "ai.nimblebrain/upload-files",
+  params: { files: [file1, file2], maxSize: 10485760 }
+}
+```
+
+`files` holds 1 to 100 `File`s; an entry that is not a `File` refuses the whole request before anything is stored. `maxSize` is optional and, as for a pick, can lower the instance's per-file limit but not raise it. From there it is a pick: the same total limit, the same `{ files: [...] }` answer, and the same refusal, a JSON-RPC error whose `data` lists the files stored anyway and why each other was refused.
+
+With `@nimblebrain/synapse`, call `uploadFiles(app, files)` (0.24.0+), and use `hostSupports(app, "uploadFiles")` to decide whether to offer a drop target. The host declares it as `experimental["ai.nimblebrain/upload-files"]` to the Files app alone.
+
+### `ai.nimblebrain/notify`
+
+Show the user a notice: the toast the shell uses for its own saves and errors. Use it to confirm an action that finished (a save, a move, an upload) and for what the user would otherwise miss, such as an export finishing or a background step failing. Keep in your own view what the user has to act on there, such as a field that failed validation or an item that could not be deleted.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "ai.nimblebrain/notify",
+  "params": {
+    "level": "success",
+    "title": "Report exported",
+    "description": "Saved to Files."
+  }
+}
+```
+
+| Param | Required | |
+|-------|----------|---|
+| `level` | yes | `success`, `info`, `warning` or `error`. It sets the notice's colour and icon, how long it stays (success 5 s, info 6 s; warning and error until dismissed), and whether a screen reader announces it at once (error) or politely. |
+| `title` | yes | 1–120 characters, trimmed. |
+| `description` | no | Up to 500 characters. |
+
+The host answers `{}` once the notice is shown. Every notice names the app that sent it, by the name the sidebar shows for it: the connector's catalog title, else its server name. A built-in app, such as Files, is named by its sidebar `label`. It is the same from your app's page and from a chat, and never comes from the message, so the request cannot pick it. The host answers with an error, and shows nothing, for:
+
+- `-32602` and the reason: an unknown `level`, an empty or over-long `title`, or an over-long `description`;
+- `-32000`: more than 5 notices from your app in 10 seconds.
+
+The MCP Apps spec has no notice. Its `notifications/message` is a log line for the host's console (see [above](#notificationsmessage)) and is never shown as a notice. Send `ai.nimblebrain/notify` only where the host declared `experimental["ai.nimblebrain/notify"]`.
+
+### `ai.nimblebrain/keydown`
+
+Forward a keyboard shortcut to the shell. An iframe that has focus receives every keystroke, so without this the shell's shortcuts stop working while the user is inside an app. The host re-dispatches the key as a `keydown` on its own document.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ai.nimblebrain/keydown",
+  "params": { "key": "k", "metaKey": true, "ctrlKey": false, "shiftKey": false, "altKey": false }
+}
+```
+
+It is a notification and takes no answer. With `@nimblebrain/synapse`, pass `forwardKeys` to `connect()` to forward shortcuts, and the SDK sends only when the host declared `experimental["ai.nimblebrain/keydown"]`.
+
+### `ai.nimblebrain/location`
+
+Tell the shell where the app is, so its top bar shows the current view's title and, below the app's root, a breadcrumb of the levels above it. A sandboxed iframe's URL and history are invisible to the host, so only the app can say this. Send the **whole trail**, root first, on every navigation inside the app:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ai.nimblebrain/location",
+  "params": {
+    "trail": [
+      { "id": "people://contacts", "label": "People" },
+      { "id": "people://contacts/123", "label": "Jane Doe" }
+    ]
+  }
+}
+```
+
+- **Each message replaces the last.** The host keeps no history of its own, so a message that never arrived corrects itself on the next, and a deep link straight to a detail view needs nothing special.
+- **`id` is the view's stable address.** Use the MCP resource URI of what the view shows when there is one (`people://contacts/123`), otherwise a path-like address of your own (`contacts/123`), never a value that changes between visits such as a list index. The host does not parse it; it hands it back in `ai.nimblebrain/navigate`, and the same address lets anything that knows the resource, such as the agent, open that view.
+- **`label`** is what the bar shows: 1 to 200 characters. A trail holds 1 to 32 entries. A message outside these bounds is dropped.
+- **Depth is the trail's length.** The bar shows the last entry's label as the title and the entries before it as a breadcrumb, each of which goes to its own entry. Past three entries above the title, the middle ones fold into `…`; the root and the parent stay. Where the bar is too narrow for a breadcrumb, a back control goes to the entry before the last. Either way the bar moves up the app's structure, not through browser history.
+- **Send the trail when a view first renders**, not only on navigation, so a reload or a fresh mount replaces whatever the bar showed before.
+
+It is a notification and takes no answer. The host declares it as `experimental["ai.nimblebrain/location"]`, and the declaration also means **the host shows your title**: drop your view's own title and back link when it is present, and keep them on a host without it.
+
+A view that sends nothing still gets a title: the bar shows the name of the sidebar entry that opened it, with no breadcrumb.
+
+### `ai.nimblebrain/navigate`
+
+Sent by the host when the user picks an entry in the top bar (a breadcrumb, or back), or when an `openApp` action names a view inside your app, naming the view to go to by its `id`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ai.nimblebrain/navigate",
+  "params": { "id": "people://contacts" }
+}
+```
+
+Navigate there, then send the new trail. The `id` is either one of your trail's own or another address your app reports, such as a record the agent read from your tools, so resolve any address you would report, not only the entries on screen.
+
+The host sends it only to an app that has sent a trail, so it needs no declaration of its own. That is also when: an app opened at a view gets it at its first `ai.nimblebrain/location`, because the handshake completes before an app has subscribed to anything, and a notification no handler is waiting for is lost. Subscribe to `navigate` no later than you send your first location (`useTrail` does both in one render).
+
 ## Security model
 
-The bridge enforces three security boundaries:
+The bridge enforces four security boundaries:
 
-1. **Origin isolation** — The host only processes messages from the iframe's `contentWindow`. Messages from other sources are silently dropped.
-2. **Tool scoping** — `tools/call` requests are always routed to the app's own MCP server. An iframe cannot call tools on another app's server.
-3. **Resource and task scoping** — `resources/read`, `resources/list` and `resources/templates/list` answer from the app's own MCP server, and `tasks/get`, `tasks/result` and `tasks/cancel` answer only for a task that server ran. Every iframe shares one `/mcp` session, so the bridge names that server on the request; the iframe cannot name another. A URI another server serves reads as not found, the same as one that does not exist, and so does a task another server ran.
+1. **Workspace scoping** — The host reaches the platform over the workspace's own MCP endpoint, `/mcp/<workspaceId>`, for the workspace on screen, one request at a time on the endpoint's `2026-07-28` protocol. There is no session: each request goes to the path of the workspace on screen when it is sent.
+2. **Origin isolation** — The host only processes messages from the iframe's `contentWindow`. Messages from other sources are silently dropped.
+3. **Tool scoping** — `tools/call` requests are always routed to the app's own MCP server. An iframe cannot call tools on another app's server.
+4. **Resource and task scoping** — `resources/read`, `resources/list` and `resources/templates/list` answer from the app's own MCP server, and `tasks/get` and `tasks/cancel` answer only for a task that server ran. Every iframe's requests reach the platform as one client, so the bridge names that server on the request; the iframe cannot name another. A URI another server serves reads as not found, the same as one that does not exist, and so does a task another server ran.
 
 ## Example: making a tool call from an iframe
 
@@ -632,8 +811,14 @@ The bridge enforces three security boundaries:
       }
 
       // Tool call response (CallToolResult)
+      // A tool error is a result too: check `isError`.
       if (msg.id === 'weather-1' && msg.result) {
         const data = msg.result.structuredContent || msg.result;
+        if (msg.result.isError) {
+          document.getElementById('output').textContent =
+            'Tool error: ' + JSON.stringify(data);
+          return;
+        }
         document.getElementById('output').textContent =
           JSON.stringify(data, null, 2);
       }
@@ -675,7 +860,7 @@ The bridge enforces three security boundaries:
 
 ## Applying theme tokens
 
-Synapse applies the host's theme tokens for you. Without it, apply them yourself: they arrive in the `ui/initialize` response as `hostContext.styles.variables`, and again in every `ui/notifications/host-context-changed`.
+Synapse applies the host's theme tokens for you. Without it, apply them yourself: they arrive in the `ui/initialize` response as `hostContext.styles.variables` and `hostContext["ai.nimblebrain/styles"].variables`, and again in every `ui/notifications/host-context-changed`.
 
 ```javascript
 window.addEventListener('message', (event) => {
@@ -685,11 +870,13 @@ window.addEventListener('message', (event) => {
   // The handshake response (the id your ui/initialize request used)
   if (msg.id === 'init-1' && msg.result) {
     applyTokens(msg.result.hostContext?.styles?.variables);
+    applyTokens(msg.result.hostContext?.['ai.nimblebrain/styles']?.variables);
   }
 
   // A later change (theme toggle and the like)
   if (msg.method === 'ui/notifications/host-context-changed') {
     applyTokens(msg.params?.styles?.variables);
+    applyTokens(msg.params?.['ai.nimblebrain/styles']?.variables);
   }
 });
 

@@ -36,7 +36,7 @@ export type {
   StoredMessage,
 } from "./conversation/index.ts";
 // Conversation
-export { InMemoryConversationStore, JsonlConversationStore } from "./conversation/index.ts";
+export { InMemoryConversationStore } from "./conversation/index.ts";
 export type {
   EngineConfig,
   EngineEvent,
@@ -61,9 +61,10 @@ export {
   listModels,
   listProviders,
 } from "./model/catalog.ts";
-export type { ProvidersConfig } from "./model/registry.ts";
 // Model
-export { buildModelResolver, buildRegistry, resolveModelString } from "./model/registry.ts";
+export { isQualifiedModelId, ModelNotQualifiedError } from "./model/model-id.ts";
+export type { ProvidersConfig } from "./model/registry.ts";
+export { buildModelResolver, buildRegistry } from "./model/registry.ts";
 export type { StreamResult } from "./model/stream.ts";
 export { callModel } from "./model/stream.ts";
 // Prompt

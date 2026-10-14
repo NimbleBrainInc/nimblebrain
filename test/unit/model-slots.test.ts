@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { listModels, listProviders } from "../../src/model/catalog.ts";
-import { resolveModelString } from "../../src/model/registry.ts";
-import { MODEL_SLOTS, isModelSlot, parseModelSlotRef } from "../../src/model/slots.ts";
+import { isQualifiedModelId } from "../../src/model/model-id.ts";
+import { isModelSlot, MODEL_SLOTS, parseModelSlotRef } from "../../src/model/slots.ts";
 
 describe("parseModelSlotRef", () => {
-  // The bug: workspace.json agent profiles document a BARE slot name
-  // (`"model": "reasoning"`), and only the `alias:` form used to resolve.
+  // workspace.json agent profiles document a BARE slot name
+  // (`"model": "reasoning"`), so it must resolve, not only the `alias:` form.
   test.each([...MODEL_SLOTS])("resolves the bare slot name %s", (slot) => {
     expect(parseModelSlotRef(slot)).toBe(slot);
   });
@@ -56,25 +56,17 @@ describe("slot names vs the model catalog", () => {
     }
   });
 
-  // The mechanism behind the bug: a bare string with no catalog entry is NOT
-  // rejected, it is stamped with `anthropic:`. That fallback is deliberate
-  // (pinned/bespoke ids served under their own name), which is why slot
-  // resolution must happen BEFORE it rather than inside it.
-  test.each([...MODEL_SLOTS])(
-    "resolveModelString would stamp anthropic: on bare %s — the failure slot parsing prevents",
-    (slot) => {
-      expect(resolveModelString(slot)).toBe(`anthropic:${slot}`);
-    },
-  );
-
-  test("resolveModelString leaves a qualified id alone", () => {
-    expect(resolveModelString("nebius:openai/gpt-oss-120b")).toBe("nebius:openai/gpt-oss-120b");
+  // A bare slot name is not a model id: it names no provider, so read as one it
+  // would be refused. Slot resolution therefore has to happen before the
+  // qualified-id check, never inside it.
+  test.each([...MODEL_SLOTS])("bare %s is not a qualified model id", (slot) => {
+    expect(isQualifiedModelId(slot)).toBe(false);
   });
 });
 
 describe("the reasoning slot is gone", () => {
   // It never had a runtime consumer — `default` serves every chat turn, `fast`
-  // serves titles, the briefing and both folds — so it was a configurable field
+  // serves titles and both folds — so it was a configurable field
   // implying routing the engine never did.
   test("is not a slot name", () => {
     expect(isModelSlot("reasoning")).toBe(false);

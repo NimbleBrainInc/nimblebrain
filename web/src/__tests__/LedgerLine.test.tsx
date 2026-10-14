@@ -24,7 +24,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
@@ -35,9 +35,7 @@ const { LedgerLine } = await import("../components/LedgerLine");
 type SkillsLoadedContext = import("../hooks/chat-store").SkillsLoadedContext;
 
 const WS_ID = "ws_0123456789abcdef";
-const BOOTSTRAP_WS = [
-  { id: WS_ID, name: "Acme", memberCount: 1, connectors: [], isPersonal: true },
-];
+const BOOTSTRAP_WS = [{ id: WS_ID, name: "Acme", memberCount: 1, connectorCount: 0 }];
 
 function byClass(root: Element, cls: string): Element[] {
   return Array.from(root.getElementsByTagName("*")).filter((el) => el.classList.contains(cls));
@@ -64,11 +62,15 @@ async function mount(skills: SkillsLoadedContext | undefined): Promise<Mounted> 
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(
-        WorkspaceProvider,
-        { initialWorkspaces: BOOTSTRAP_WS, initialActiveId: WS_ID },
-        React.createElement(MemoryRouter, null, React.createElement(LedgerLine, { skills })),
-      ),
+      React.createElement(WorkspaceProvider, {
+        initialWorkspaces: BOOTSTRAP_WS,
+        initialActiveId: WS_ID,
+        children: React.createElement(
+          MemoryRouter,
+          null,
+          React.createElement(LedgerLine, { skills }),
+        ),
+      }),
     );
   });
   return {

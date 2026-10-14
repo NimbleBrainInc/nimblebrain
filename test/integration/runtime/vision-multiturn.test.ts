@@ -22,14 +22,18 @@ import type {
 } from "@ai-sdk/provider";
 import { type ServerHandle, startServer } from "../../../src/api/server.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { postChatTurn } from "../../helpers/chat-turn.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 /**
  * A LanguageModelV4 that records every prompt it receives and returns
  * scripted responses. Lets the test inspect the user-message content the
  * engine actually sent to `model.doStream` on each iteration.
  */
-function createRecordingModel(scripted: Array<{ text: string; toolCalls?: { id: string; name: string; input: string }[] }>): {
+function createRecordingModel(
+  scripted: Array<{ text: string; toolCalls?: { id: string; name: string; input: string }[] }>,
+): {
   model: LanguageModelV4;
   prompts: LanguageModelV4CallOptions["prompt"][];
 } {
@@ -87,10 +91,39 @@ function createRecordingModel(scripted: Array<{ text: string; toolCalls?: { id: 
 }
 
 const PNG_BYTES = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
-  0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, // IHDR chunk header
-  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1 image
-  0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89,
+  0x89,
+  0x50,
+  0x4e,
+  0x47,
+  0x0d,
+  0x0a,
+  0x1a,
+  0x0a, // PNG signature
+  0x00,
+  0x00,
+  0x00,
+  0x0d,
+  0x49,
+  0x48,
+  0x44,
+  0x52, // IHDR chunk header
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x01, // 1x1 image
+  0x08,
+  0x06,
+  0x00,
+  0x00,
+  0x00,
+  0x1f,
+  0x15,
+  0xc4,
+  0x89,
 ]);
 
 let runtime: Runtime;
@@ -103,20 +136,21 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   // Two scripted turns:
   //  1. Model "calls" a tool — forces the engine to issue a second iteration.
-  //     The system tool `nb__list_apps` exists on every workspace (no connectors
+  //     The system tool `nb__workspace_info` exists on every workspace (no connectors
   //     required), so we don't need to install anything to satisfy the call.
   //  2. Model produces final text.
   const { model, prompts } = createRecordingModel([
     {
       text: "Looking at the image now…",
-      toolCalls: [{ id: "call_1", name: "nb__list_apps", input: "{}" }],
+      toolCalls: [{ id: "call_1", name: "nb__workspace_info", input: "{}" }],
     },
     { text: "Done — that's John Doe, VP Sales at Acme." },
   ]);
   recorded = { prompts };
 
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: model },
+    identityProvider: devProvider,
+    languageModel: model,
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -139,13 +173,8 @@ describe("vision survives the multi-turn agent loop", () => {
     const file = new File([new Uint8Array(PNG_BYTES)], "linkedin.png", { type: "image/png" });
     form.append("files", file);
 
-    const res = await fetch(`${baseUrl}/v1/chat/stream`, {
-      method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
-      body: form,
-    });
+    const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, { body: form });
     expect(res.status).toBe(200);
-    await res.text();
 
     // Two iterations: turn 1 (model emits tool call) + turn 2 (model emits final text).
     expect(recorded.prompts.length).toBe(2);
@@ -154,11 +183,9 @@ describe("vision survives the multi-turn agent loop", () => {
       const prompt = recorded.prompts[turn]!;
       const userMsg = prompt.find((m) => m.role === "user");
       expect(userMsg).toBeDefined();
-      if (!userMsg || userMsg.role !== "user") return;
+      if (userMsg?.role !== "user") return;
 
-      const filePart = userMsg.content.find(
-        (c): c is LanguageModelV4FilePart => c.type === "file",
-      );
+      const filePart = userMsg.content.find((c): c is LanguageModelV4FilePart => c.type === "file");
       expect(filePart).toBeDefined();
       if (!filePart) return;
       expect(filePart.mediaType).toBe("image/png");

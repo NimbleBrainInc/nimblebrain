@@ -11,10 +11,10 @@
  *   - uninstalling a connector drops its position, so a reinstall bootstraps.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { updateRegistrations } from "../../../src/hooks/registrations.ts";
 import {
   readNotificationsConfig,
@@ -173,5 +173,31 @@ describe("clearCursor", () => {
 
   test("is a no-op for a connector that never had one", async () => {
     expect(await clearCursor(store, wsId, "never-installed")).toBe(false);
+  });
+});
+
+describe("writeCursor from a position", () => {
+  test("lands when the stored cursor is still the one the read started from", async () => {
+    expect(await writeCursor(store, wsId, "acme", "cur_1", { from: undefined })).toBe(true);
+    expect(await writeCursor(store, wsId, "acme", "cur_2", { from: "cur_1" })).toBe(true);
+    expect(readCursor(await record(), "acme")).toBe("cur_2");
+  });
+
+  test("a bootstrap that lost the race does not overwrite the position that won", async () => {
+    // The install-time position landed while the poller's own bootstrap was in
+    // flight. The poller's horizon is later, and writing it would step over
+    // every event the install caused.
+    await writeCursor(store, wsId, "acme", "cur_install", { from: undefined });
+
+    expect(await writeCursor(store, wsId, "acme", "cur_late", { from: undefined })).toBe(false);
+    expect(readCursor(await record(), "acme")).toBe("cur_install");
+  });
+
+  test("a read in flight across an uninstall does not bring the cursor back", async () => {
+    await writeCursor(store, wsId, "acme", "cur_1");
+    await clearCursor(store, wsId, "acme");
+
+    expect(await writeCursor(store, wsId, "acme", "cur_2", { from: "cur_1" })).toBe(false);
+    expect(readCursor(await record(), "acme")).toBeUndefined();
   });
 });

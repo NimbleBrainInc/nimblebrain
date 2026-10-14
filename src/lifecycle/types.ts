@@ -44,17 +44,12 @@ export const LIFECYCLE_EVENTS = ["on_ready", "on_removing"] as const;
 export type LifecycleEvent = (typeof LIFECYCLE_EVENTS)[number];
 
 /**
- * The `lifecycle` block, as a server declares it. Both entries optional; a
- * server may declare either alone.
- *
- * ```json
- * "lifecycle": { "on_ready": "workspace_ready", "on_removing": "workspace_removing" }
- * ```
- *
- * The value is the tool that handles the event, named in the server's own bare
- * vocabulary.
+ * The handlers a connection's server binds through the `ai.nimblebrain/lifecycle`
+ * extension (`src/services/lifecycle-extension.ts`), by event. Both optional; a
+ * server may bind either alone. Each value is the tool that handles the event,
+ * in the server's own bare vocabulary.
  */
-export type LifecycleDeclaration = Partial<Record<LifecycleEvent, string>>;
+export type LifecycleBinding = Partial<Record<LifecycleEvent, string>>;
 
 /**
  * Why `on_ready` is firing.

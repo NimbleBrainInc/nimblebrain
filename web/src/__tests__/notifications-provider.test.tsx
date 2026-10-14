@@ -2,14 +2,19 @@
 // NotificationsProvider — the live-then-reconciled contract.
 //
 // Pins:
-//   1. `notification.created` triggers a REFETCH, not a render from the frame.
-//      The frame is a summary (no body, no link, no payload), so rendering
-//      from it would put a different item on screen than a reload would.
+//   1. `notification.created` triggers a REFETCH, not a count from the frame.
+//      The count is the server's `unread`, over the whole inbox, not a tally
+//      of whatever page came back.
 //   2. A burst of frames is ONE read. A poll cycle delivers a batch; forty
 //      events must not be forty `notifications__list` calls.
-//   3. A reconnect refetches. The workspace stream has no `Last-Event-Id`
+//   3. A `notification.read` frame refetches. Read state is shared across the
+//      workspace, so a teammate's mark must clear this bell.
+//   4. A reconnect refetches. The workspace stream has no `Last-Event-Id`
 //      replay, so everything that arrived during the gap is simply absent —
 //      without this an inbox left open through a deploy is silently stale.
+//   5. Every read and mark names the provider's workspace. The active
+//      workspace is a module variable other writers move, so a call addressed
+//      through it can answer for a workspace the provider never asked about.
 //
 // Drives the REAL events-client singleton through `setConnectorForTest`
 // rather than mocking `../hooks/useEvents`: a module mock is process-global
@@ -21,26 +26,43 @@ import { realClient } from "../../test/setup";
 import { __internal__ } from "../api/events-client";
 import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const WS = "ws_outbound";
+const WS = "ws_005b519ef7efc353";
 
 let listCalls = 0;
 let listed: Array<Record<string, unknown>> = [];
 let markReadArgs: unknown[] = [];
+let addressed: Array<string | undefined> = [];
+let listArgs: unknown[] = [];
+/** The server's total, when a test needs it to differ from the page. */
+let serverUnread: number | null = null;
 
 mock.module("../api/client", () => ({
   ...realClient,
-  callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
-    if (tool === "mark_read") {
-      markReadArgs.push(args);
-      return { content: [{ type: "text", text: JSON.stringify({ marked: [], skipped: [] }) }] };
-    }
-    listCalls += 1;
-    return {
-      content: [{ type: "text", text: JSON.stringify({ notifications: listed }) }],
-    };
-  }),
+  callTool: mock(
+    async (
+      _source: string,
+      tool: string,
+      args: Record<string, unknown>,
+      opts?: { workspaceId?: string },
+    ) => {
+      addressed.push(opts?.workspaceId);
+      if (tool === "mark_read") {
+        markReadArgs.push(args);
+        const ids = (args as { ids: string[] }).ids;
+        const readAt = "2026-09-01T19:00:00.000Z";
+        listed = listed.map((n) => (ids.includes(n.id as string) ? { ...n, readAt } : n));
+        return { content: [{ type: "text", text: JSON.stringify({ marked: ids, skipped: [] }) }] };
+      }
+      listCalls += 1;
+      listArgs.push(args);
+      const unread = serverUnread ?? listed.filter((n) => !n.readAt).length;
+      return {
+        content: [{ type: "text", text: JSON.stringify({ notifications: listed, unread }) }],
+      };
+    },
+  ),
 }));
 
 const React = await import("react");
@@ -58,17 +80,17 @@ class FakeConnection implements EventConnection {
 /**
  * Renders nothing and reports what the context holds.
  *
- * `markAllRead` is handed out through `markAllRef` so the mark-read test can
+ * `markRead` is handed out through `markReadRef` so the mark-read test can
  * call it without a DOM affordance — this file is about the provider, and the
  * page has its own test.
  */
-let markAllRef: (() => Promise<void>) | null = null;
+let markReadRef: ((ids: string[]) => Promise<void>) | null = null;
 
 function probeElement(seen: { unread: number }) {
   function Probe() {
     const value = useNotifications();
     seen.unread = value.unread;
-    markAllRef = value.markAllRead;
+    markReadRef = value.markRead;
     return null;
   }
   return React.createElement(Probe);
@@ -82,11 +104,10 @@ async function mount(seen: { unread: number }): Promise<void> {
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(
-        NotificationsProvider,
-        { token: "t", workspaceId: WS },
-        probeElement(seen),
-      ),
+      React.createElement(NotificationsProvider, {
+        workspaceId: WS,
+        children: probeElement(seen),
+      }),
     );
   });
   unmount = () => {
@@ -106,6 +127,9 @@ beforeEach(() => {
   listCalls = 0;
   listed = [];
   markReadArgs = [];
+  addressed = [];
+  listArgs = [];
+  serverUnread = null;
   lastOptions = null;
   __internal__.resetForTest();
   __internal__.setConnectorForTest((options: ConnectEventsOptions) => {
@@ -137,8 +161,8 @@ describe("a live frame", () => {
     await mount(seen);
     expect(listCalls).toBe(1);
 
-    // The frame says an urgent item arrived. What lands on screen is whatever
-    // the refetch returns — here, deliberately, a different level.
+    // The frame says an item arrived. The count on the bell is whatever the
+    // refetch returns, not one added for the frame.
     listed = [notification({ level: "info" })];
     await act(async () => {
       lastOptions?.onEvent("notification.created", {
@@ -150,12 +174,34 @@ describe("a live frame", () => {
         level: "urgent",
         title: "from the frame",
         receivedAt: "2026-09-01T18:43:00.000Z",
+        unread: 1,
       });
     });
     await settle();
 
     expect(listCalls).toBe(2);
     expect(seen.unread).toBe(1);
+  });
+
+  test("a read frame refetches, so a teammate's mark clears the bell", async () => {
+    listed = [notification()];
+    const seen = { unread: 0 };
+    await mount(seen);
+    expect(seen.unread).toBe(1);
+
+    // Read state is shared across the workspace: someone else marked it.
+    listed = [notification({ readAt: "2026-09-01T19:00:00.000Z" })];
+    await act(async () => {
+      lastOptions?.onEvent("notification.read", {
+        workspaceId: WS,
+        ids: ["acme:evt_1"],
+        unread: 0,
+      });
+    });
+    await settle();
+
+    expect(listCalls).toBe(2);
+    expect(seen.unread).toBe(0);
   });
 
   test("a burst of frames is one read", async () => {
@@ -174,6 +220,7 @@ describe("a live frame", () => {
           level: "info",
           title: `t${i}`,
           receivedAt: "2026-09-01T18:43:00.000Z",
+          unread: 1,
         });
       }
     });
@@ -188,7 +235,15 @@ describe("a live frame", () => {
     listCalls = 0;
 
     await act(async () => {
-      lastOptions?.onEvent("notification.delivery_failed", { workspaceId: WS });
+      lastOptions?.onEvent("notification.delivery_failed", {
+        workspaceId: WS,
+        id: "n1",
+        seq: 1,
+        routeId: "rt_1",
+        target: "slack",
+        attempts: 3,
+        outcome: "failed",
+      });
     });
     await settle();
 
@@ -211,20 +266,51 @@ describe("a reconnect", () => {
   });
 });
 
+describe("the count", () => {
+  test("is the server's total, not a tally of the page", async () => {
+    listed = [notification()];
+    serverUnread = 140;
+    const seen = { unread: 0 };
+    await mount(seen);
+    expect(seen.unread).toBe(140);
+    // One item is enough to carry the count; the list is the page's to read.
+    expect(listArgs).toEqual([{ limit: 1 }]);
+  });
+});
+
 describe("marking read", () => {
-  test("paints before the call returns, and sends the ids", async () => {
+  test("drops the count, sends the ids, and re-reads the store's count", async () => {
     listed = [notification()];
     const seen = { unread: 0 };
     await mount(seen);
     expect(seen.unread).toBe(1);
+    listCalls = 0;
 
-    // The list the server would return has NOT changed — the drop to zero can
-    // only come from the optimistic paint.
     await act(async () => {
       await markAll();
     });
     expect(seen.unread).toBe(0);
     expect(markReadArgs).toEqual([{ ids: ["acme:evt_1"] }]);
+    expect(listCalls).toBe(1);
+  });
+});
+
+describe("addressing", () => {
+  test("every read and mark names the provider's workspace", async () => {
+    listed = [notification()];
+    const seen = { unread: 0 };
+    await mount(seen);
+    await act(async () => {
+      lastOptions?.onReconnect?.();
+    });
+    await settle();
+    await act(async () => {
+      await markAll();
+    });
+
+    // Mount, reconnect, the mark, and the re-read after it.
+    expect(addressed.length).toBe(4);
+    expect(addressed.every((wsId) => wsId === WS)).toBe(true);
   });
 });
 
@@ -246,5 +332,5 @@ function notification(over: Record<string, unknown> = {}): Record<string, unknow
 }
 
 async function markAll(): Promise<void> {
-  await markAllRef?.();
+  await markReadRef?.(["acme:evt_1"]);
 }

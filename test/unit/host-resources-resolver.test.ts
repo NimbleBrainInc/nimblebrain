@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError } from "@modelcontextprotocol/server";
+import { createFileStore, type FileStore } from "../../src/files/store.ts";
+import type { FileEntry } from "../../src/files/types.ts";
 import {
   FileBackedHostResourcesResolver,
   type HostResourceContext,
 } from "../../src/host-resources/index.ts";
-import { createFileStore, type FileStore } from "../../src/files/store.ts";
-import type { FileEntry } from "../../src/files/types.ts";
+import { blobOf, textOf } from "../helpers/resource-contents.ts";
 
 // The resolver is the single chokepoint between a connector's inbound
 // host-resources request and the workspace-owned FileStore. Files are
@@ -17,10 +18,11 @@ import type { FileEntry } from "../../src/files/types.ts";
 // in) — passing it to the factory so a `files://` read resolves in that
 // workspace's partition only. The URI is bare (carries just the file id); the
 // scope rides on the ctx, never the URI. It enforces the scheme allowlist and
-// surfaces the MCP-standard error codes (`-32602` for invalid scheme, `-32002`
-// for resource not found).
+// surfaces the specification's error code, `-32602`, for both an invalid scheme
+// and a resource not found; the data tells them apart (`{ uri }` alone means
+// not found).
 
-const RESOURCE_NOT_FOUND = -32002;
+const RESOURCE_NOT_FOUND = -32602;
 const INVALID_PARAMS = -32602;
 
 let rootDir: string;
@@ -32,10 +34,16 @@ let rootDir: string;
 let storeA: FileStore;
 let storeB: FileStore;
 
-// ctx carries the connector's workspace — the LIVE store selector. `ws_a` →
-// `storeA`, `ws_b` → `storeB` (see `storeForWorkspace`).
-const ctxA: HostResourceContext = { workspaceId: "ws_a", connectorId: "connector_x" };
-const ctxB: HostResourceContext = { workspaceId: "ws_b", connectorId: "connector_x" };
+// ctx carries the connector's workspace — the LIVE store selector. `ws_00079598e311c160` →
+// `storeA`, `ws_001c32f121060ff3` → `storeB` (see `storeForWorkspace`).
+const ctxA: HostResourceContext = {
+  workspaceId: "ws_00079598e311c160",
+  connectorId: "connector_x",
+};
+const ctxB: HostResourceContext = {
+  workspaceId: "ws_001c32f121060ff3",
+  connectorId: "connector_x",
+};
 
 /**
  * The resolver's store factory: maps `ctx.workspaceId` → that workspace's store,
@@ -45,8 +53,8 @@ const ctxB: HostResourceContext = { workspaceId: "ws_b", connectorId: "connector
  * catches.
  */
 function storeForWorkspace(wsId: string): FileStore {
-  if (wsId === "ws_a") return storeA;
-  if (wsId === "ws_b") return storeB;
+  if (wsId === "ws_00079598e311c160") return storeA;
+  if (wsId === "ws_001c32f121060ff3") return storeB;
   throw new Error(`unexpected workspace id: ${wsId}`);
 }
 
@@ -58,17 +66,19 @@ async function seedFile(store: FileStore, name: string, body: string, mime: stri
     mimeType: mime,
     size: saved.size,
     createdAt: new Date().toISOString(),
-    description: undefined,
+    description: null,
     tags: [],
-  } as unknown as FileEntry;
+    source: "manual",
+    conversationId: null,
+  };
   await store.appendRegistry(entry);
   return saved.id;
 }
 
 beforeEach(async () => {
   rootDir = await mkdtemp(join(tmpdir(), "nb-host-resources-resolver-"));
-  storeA = createFileStore(join(rootDir, "ws_a", "files"));
-  storeB = createFileStore(join(rootDir, "ws_b", "files"));
+  storeA = createFileStore(join(rootDir, "ws_00079598e311c160", "files"));
+  storeB = createFileStore(join(rootDir, "ws_001c32f121060ff3", "files"));
 });
 
 afterEach(async () => {
@@ -87,8 +97,8 @@ describe("FileBackedHostResourcesResolver.read", () => {
     const entry = result.contents[0];
     expect(entry?.uri).toBe(`files://${id}`);
     expect(entry?.mimeType).toBe("text/csv");
-    expect(entry?.text).toBe("company,email\nfoo,foo@x");
-    expect(entry?.blob).toBeUndefined();
+    expect(textOf(entry)).toBe("company,email\nfoo,foo@x");
+    expect(blobOf(entry)).toBeUndefined();
   });
 
   it("returns base64 blob contents for a binary mime", async () => {
@@ -101,77 +111,80 @@ describe("FileBackedHostResourcesResolver.read", () => {
       mimeType: "application/octet-stream",
       size: saved.size,
       createdAt: new Date().toISOString(),
-      description: undefined,
+      description: null,
       tags: [],
-    } as unknown as FileEntry);
+      source: "manual",
+      conversationId: null,
+    });
 
     const result = await makeResolver().read(`files://${saved.id}`, ctxA);
     const entry = result.contents[0];
-    expect(entry?.text).toBeUndefined();
-    expect(typeof entry?.blob).toBe("string");
+    expect(textOf(entry)).toBeUndefined();
+    expect(typeof blobOf(entry)).toBe("string");
     // Round-trip the base64 back to bytes and compare byte-for-byte —
     // tolerant of any binary/utf-8 mojibake in the test infrastructure.
-    expect(Buffer.from(entry?.blob as string, "base64").equals(rawBytes)).toBe(true);
+    expect(Buffer.from(blobOf(entry) as string, "base64").equals(rawBytes)).toBe(true);
   });
 
   it("rejects URIs whose scheme is not in the allowlist", async () => {
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       await makeResolver().read("entities://e_abc", ctxA);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
-    expect(caught).toBeInstanceOf(McpError);
+    expect(caught).toBeInstanceOf(ProtocolError);
     expect(caught?.code).toBe(INVALID_PARAMS);
     const data = caught?.data as { supported?: string[] } | undefined;
     expect(data?.supported).toContain("files");
   });
 
-  it("returns -32002 for unknown file ids (workspace has the id space, but id not present)", async () => {
-    let caught: McpError | null = null;
+  it("returns resource-not-found for unknown file ids (workspace has the id space, but id not present)", async () => {
+    let caught: ProtocolError | null = null;
     try {
       await makeResolver().read("files://fl_doesnotexist", ctxA);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
+    expect(caught?.data).toEqual({ uri: "files://fl_doesnotexist" });
   });
 
-  it("collapses cross-workspace lookups into -32002 (no info leak)", async () => {
+  it("collapses cross-workspace lookups into resource-not-found (no info leak)", async () => {
     // A connector running in workspace A asking for a file id that EXISTS in
     // workspace B. The resolver passes `ctx.workspaceId` to the factory, yields
     // A's store, which doesn't have it — "not found", the SAME response a
     // genuinely-missing id gets. This prevents cross-workspace inventory
     // enumeration.
-    const idInB = await seedFile(storeB, "secret.txt", "ws_b only", "text/plain");
-    let caught: McpError | null = null;
+    const idInB = await seedFile(storeB, "secret.txt", "ws_001c32f121060ff3 only", "text/plain");
+    let caught: ProtocolError | null = null;
     try {
       await makeResolver().read(`files://${idInB}`, ctxA);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
     // The same lookup from workspace B succeeds, proving the file does exist.
     const ok = await makeResolver().read(`files://${idInB}`, ctxB);
-    expect(ok.contents[0]?.text).toBe("ws_b only");
+    expect(textOf(ok.contents[0])).toBe("ws_001c32f121060ff3 only");
   });
 
   it("scopes by ctx.workspaceId — a file in workspace A is ABSENT under workspace B", async () => {
     // Seed a file into workspace A. Read it back under ctx A (its own
     // workspace) → found.
-    const id = await seedFile(storeA, "a-only.txt", "ws_a only", "text/plain");
+    const id = await seedFile(storeA, "a-only.txt", "ws_00079598e311c160 only", "text/plain");
     const okA = await makeResolver().read(`files://${id}`, ctxA);
-    expect(okA.contents[0]?.text).toBe("ws_a only");
+    expect(textOf(okA.contents[0])).toBe("ws_00079598e311c160 only");
 
     // The SAME id under ctx workspace B: the resolver passes `ctx.workspaceId`
-    // to the store factory, which lands in storeB (no such file) → -32002. If
+    // to the store factory, which lands in storeB (no such file) → resource-not-found. If
     // the resolver stopped honoring `ctx.workspaceId` (the regression this
     // guards), B would read A's store and leak the file across workspaces.
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       await makeResolver().read(`files://${id}`, ctxB);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
   });
@@ -183,13 +196,13 @@ describe("FileBackedHostResourcesResolver.read", () => {
       // 10-byte cap, way below the 100-byte fixture
       10,
     );
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       await resolver.read(`files://${id}`, ctxA);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
-    expect(caught).toBeInstanceOf(McpError);
+    expect(caught).toBeInstanceOf(ProtocolError);
     // Pin the JSON-RPC code so doc/impl drift fails CI. `-32005` lives in
     // the impl-defined server-error range, alongside `-32004 Rate limited`
     // — both are deliberate quota responses, not server faults.
@@ -223,35 +236,34 @@ describe("FileBackedHostResourcesResolver.list", () => {
   });
 
   it("rejects an unsupported scheme filter with -32602", async () => {
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
       await makeResolver().list({ filter: { scheme: "entities" } }, ctxA);
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
     expect(caught?.code).toBe(INVALID_PARAMS);
   });
 
   // Tag-shape validation. A buggy connector sending `tags: "draft"` (string)
-  // instead of `tags: ["draft"]` (array) used to throw `TypeError: .every
-  // is not a function` and surface as a generic dispatch failure — no
-  // useful diagnostic. Now: reject with `-32602`, mirroring the
+  // instead of `tags: ["draft"]` (array) would otherwise throw `TypeError:
+  // .every is not a function` and surface as a generic dispatch failure —
+  // no useful diagnostic. So: reject with `-32602`, mirroring the
   // scheme-filter branch. Silently treating non-array as "no filter"
   // was rejected as misleading (the connector gets all files back instead
   // of a clear error).
   it("rejects non-array tags filter with -32602", async () => {
-    let caught: McpError | null = null;
+    let caught: ProtocolError | null = null;
     try {
-      // Pass a string where the type cast expects string[]. Coerced
-      // through `unknown` because the resolver's TS signature would
-      // otherwise reject this at compile time — the runtime guard is
-      // what we're exercising.
+      // The runtime guard is what this exercises, so the filter carries a
+      // value the resolver's signature rejects.
       await makeResolver().list(
+        // biome-ignore lint/plugin/double-cast: a `tags` filter that is a string, where the type promises string[]
         { filter: { tags: "draft" as unknown as string[] } },
         ctxA,
       );
     } catch (e) {
-      caught = e as McpError;
+      caught = e as ProtocolError;
     }
     expect(caught?.code).toBe(INVALID_PARAMS);
   });

@@ -20,10 +20,14 @@ export declare const NOTIFICATION_LIST_DEFAULT_LIMIT = 20;
 export declare const NOTIFICATION_LIST_MAX_LIMIT = 100;
 export declare const NotificationsListInput: import("@sinclair/typebox").TObject<{
     unreadOnly: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     after: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-    order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
+    before: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    ids: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+    since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    query: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"asc" | "desc">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
 export type NotificationsListInput = Static<typeof NotificationsListInput>;
@@ -36,16 +40,16 @@ export type NotificationsMarkReadInput = Static<typeof NotificationsMarkReadInpu
  *
  * Four of the six are terminal because retrying changes nothing until
  * configuration does, and the split is the delivering side's own — the
- * unattended dispatch's for a tool, the automations event trigger's for an
+ * unattended dispatch's for a tool, the tasks event trigger's for an
  * agent — read rather than re-derived:
  *
  * | Outcome | Terminal | Means |
  * |---|---|---|
  * | `pending` | no | a tool target, written before the attempt; a retry is due |
- * | `deferred` | no | an agent target inside its automation's debounce window |
- * | `delivered` | yes | the tool ran, or the automation's run started |
- * | `denied` | yes | a gate refused the author this tool, or the route names no automation of theirs that takes events |
- * | `skipped` | yes | the author is no longer a member, or the automation is off or declined the item |
+ * | `deferred` | no | an agent target inside its task's debounce window |
+ * | `delivered` | yes | the tool ran, or the task's run started |
+ * | `denied` | yes | a gate refused the author this tool, or the route names no task of theirs that takes events |
+ * | `skipped` | yes | the author is no longer a member, or the task is off or declined the item |
  * | `failed` | yes | the work was owed and did not happen |
  *
  * The two non-terminal outcomes are what make the ledger the delivery state
@@ -55,7 +59,10 @@ export type NotificationsMarkReadInput = Static<typeof NotificationsMarkReadInpu
  * window lives only in the memory of the process that opened it. There is no
  * queue anywhere else holding either fact.
  */
-export type DeliveryOutcome = "pending" | "delivered" | "deferred" | "denied" | "skipped" | "failed";
+export declare const DELIVERY_OUTCOMES: readonly ["pending", "delivered", "deferred", "denied", "skipped", "failed"];
+export type DeliveryOutcome = (typeof DELIVERY_OUTCOMES)[number];
+/** Which kind of target a route's `deliver` entry names. */
+export declare const DELIVERY_TARGET_KINDS: readonly ["tool", "agent"];
 /**
  * How one route target fared for one notification.
  *
@@ -74,37 +81,42 @@ export type DeliveryOutcome = "pending" | "delivered" | "deferred" | "denied" | 
  * It lives in this directory rather than in `src/notifications/` because it
  * crosses to the web on `NotificationView`, and this is the one directory the
  * web codegen compiles; the domain re-exports it.
+ *
+ * Every row the ledger has ever held carries the required fields: the
+ * delivery writer that introduced the ledger stamps all of them, and nothing
+ * wrote a row before it.
  */
-export interface DeliveryRecord {
+export declare const DeliveryRecord: import("@sinclair/typebox").TObject<{
     /** The route that matched, from the workspace record. */
-    routeId: string;
-    /** What the route aimed at — a tool name, or an automation id. */
-    target: string;
+    routeId: import("@sinclair/typebox").TString;
+    /** What the route aimed at — a tool name, or a task id. */
+    target: import("@sinclair/typebox").TString;
     /** Position in the route's `deliver` list. Part of the row's identity. */
-    index: number;
+    index: import("@sinclair/typebox").TNumber;
     /** Which kind of target `target` names. */
-    kind: "tool" | "agent";
-    attempts: number;
-    lastError?: string;
-    outcome: DeliveryOutcome;
+    kind: import("@sinclair/typebox").TUnsafe<"agent" | "tool">;
+    attempts: import("@sinclair/typebox").TNumber;
+    lastError: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
     /**
      * Why, for a non-`delivered` outcome — the dispatch's own classification
      * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
      * deferred agent target. Opaque to the browser, which renders it as text.
      */
-    classification?: string;
+    classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /** ISO 8601 instant this row last changed. */
-    updatedAt: string;
+    updatedAt: import("@sinclair/typebox").TString;
     /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
-    nextAttemptAt?: string;
+    nextAttemptAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /**
-     * The automation run this notification's batch started. Agent targets only,
+     * The task run this notification's batch started. Agent targets only,
      * and present only once a run actually started — which is exactly the
-     * question an operator asks of a route that wakes an automation, and the
-     * answer `automations__run_result` is addressed with.
+     * question an operator asks of a route that wakes a task, and the
+     * answer `tasks__run_result` is addressed with.
      */
-    runId?: string;
-}
+    runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+}>;
+export type DeliveryRecord = Static<typeof DeliveryRecord>;
 /**
  * The wire shape of one inbox item — what `notifications__list` returns, and
  * the only projection of a stored record that leaves the runtime.
@@ -118,17 +130,17 @@ export interface DeliveryRecord {
  * tool result's `structuredContent` does, and carries exactly as much
  * authority: it is data a connector wrote, not an instruction.
  */
-export interface NotificationView {
+export declare const NotificationView: import("@sinclair/typebox").TObject<{
     /** `<source>:<eventId>`. What `notifications__mark_read` is addressed with. */
-    id: string;
+    id: import("@sinclair/typebox").TString;
     /** Monotonic position in this workspace's inbox. */
-    seq: number;
+    seq: import("@sinclair/typebox").TNumber;
     /** The connector that emitted it, stamped by the runtime. */
-    source: string;
+    source: import("@sinclair/typebox").TString;
     /** The server's own event name. */
-    name: string;
+    name: import("@sinclair/typebox").TString;
     /** The level the emitting connector chose. */
-    level: NotificationLevel;
+    level: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
     /**
      * The level routes were matched against, when the workspace's ceiling for
      * this source held it below {@link level}. Absent when nothing was clamped,
@@ -140,17 +152,17 @@ export interface NotificationView {
      * what explains why one did or did not fire. Lowering a ceiling afterwards
      * does not rewrite history.
      */
-    effectiveLevel?: NotificationLevel;
-    title: string;
-    subject?: string;
-    body?: string;
-    link?: {
-        resource: string;
-    };
+    effectiveLevel: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+    title: import("@sinclair/typebox").TString;
+    subject: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    link: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        resource: import("@sinclair/typebox").TString;
+    }>>;
     /** When the emitting server says the fact happened. */
-    timestamp: string;
+    timestamp: import("@sinclair/typebox").TString;
     /** When this runtime wrote it. */
-    receivedAt: string;
+    receivedAt: import("@sinclair/typebox").TString;
     /**
      * When somebody marked it read. **Read state is shared across the
      * workspace**, deliberately: a notification is authored by a connector, not
@@ -159,36 +171,158 @@ export interface NotificationView {
      * which is the field that keeps the choice visible in the record instead of
      * implied by its absence.
      */
-    readAt?: string;
+    readAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /** The member who marked it read. Absent while unread. */
-    readBy?: string;
+    readBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /**
      * One row per route target that matched. Absent while none has — an empty
      * ledger is not a fact worth rendering, and omitting it keeps every item in
      * a routeless workspace one field smaller.
      */
-    deliveries?: DeliveryRecord[];
-    data: Record<string, unknown>;
-}
-export interface NotificationsListOutput {
-    notifications: NotificationView[];
+    deliveries: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        /** The route that matched, from the workspace record. */
+        routeId: import("@sinclair/typebox").TString;
+        /** What the route aimed at — a tool name, or a task id. */
+        target: import("@sinclair/typebox").TString;
+        /** Position in the route's `deliver` list. Part of the row's identity. */
+        index: import("@sinclair/typebox").TNumber;
+        /** Which kind of target `target` names. */
+        kind: import("@sinclair/typebox").TUnsafe<"agent" | "tool">;
+        attempts: import("@sinclair/typebox").TNumber;
+        lastError: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
+        /**
+         * Why, for a non-`delivered` outcome — the dispatch's own classification
+         * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+         * deferred agent target. Opaque to the browser, which renders it as text.
+         */
+        classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        /** ISO 8601 instant this row last changed. */
+        updatedAt: import("@sinclair/typebox").TString;
+        /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
+        nextAttemptAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        /**
+         * The task run this notification's batch started. Agent targets only,
+         * and present only once a run actually started — which is exactly the
+         * question an operator asks of a route that wakes a task, and the
+         * answer `tasks__run_result` is addressed with.
+         */
+        runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    }>>>;
+    data: import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>;
+}>;
+export type NotificationView = Static<typeof NotificationView>;
+export declare const NotificationsListOutput: import("@sinclair/typebox").TObject<{
+    notifications: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        /** `<source>:<eventId>`. What `notifications__mark_read` is addressed with. */
+        id: import("@sinclair/typebox").TString;
+        /** Monotonic position in this workspace's inbox. */
+        seq: import("@sinclair/typebox").TNumber;
+        /** The connector that emitted it, stamped by the runtime. */
+        source: import("@sinclair/typebox").TString;
+        /** The server's own event name. */
+        name: import("@sinclair/typebox").TString;
+        /** The level the emitting connector chose. */
+        level: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
+        /**
+         * The level routes were matched against, when the workspace's ceiling for
+         * this source held it below {@link level}. Absent when nothing was clamped,
+         * because an unclamped item's effective level IS its level and a second copy
+         * of one value is a field that can disagree with itself.
+         *
+         * Stamped when the item was written, not derived on read: it records the
+         * ceiling that was in force at the moment routes were evaluated, which is
+         * what explains why one did or did not fire. Lowering a ceiling afterwards
+         * does not rewrite history.
+         */
+        effectiveLevel: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+        title: import("@sinclair/typebox").TString;
+        subject: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        link: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+            resource: import("@sinclair/typebox").TString;
+        }>>;
+        /** When the emitting server says the fact happened. */
+        timestamp: import("@sinclair/typebox").TString;
+        /** When this runtime wrote it. */
+        receivedAt: import("@sinclair/typebox").TString;
+        /**
+         * When somebody marked it read. **Read state is shared across the
+         * workspace**, deliberately: a notification is authored by a connector, not
+         * by a person, so the queue it forms is the workspace's and "has anyone
+         * dealt with this" is the question it answers. {@link readBy} names who,
+         * which is the field that keeps the choice visible in the record instead of
+         * implied by its absence.
+         */
+        readAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        /** The member who marked it read. Absent while unread. */
+        readBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        /**
+         * One row per route target that matched. Absent while none has — an empty
+         * ledger is not a fact worth rendering, and omitting it keeps every item in
+         * a routeless workspace one field smaller.
+         */
+        deliveries: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            /** The route that matched, from the workspace record. */
+            routeId: import("@sinclair/typebox").TString;
+            /** What the route aimed at — a tool name, or a task id. */
+            target: import("@sinclair/typebox").TString;
+            /** Position in the route's `deliver` list. Part of the row's identity. */
+            index: import("@sinclair/typebox").TNumber;
+            /** Which kind of target `target` names. */
+            kind: import("@sinclair/typebox").TUnsafe<"agent" | "tool">;
+            attempts: import("@sinclair/typebox").TNumber;
+            lastError: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
+            /**
+             * Why, for a non-`delivered` outcome — the dispatch's own classification
+             * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+             * deferred agent target. Opaque to the browser, which renders it as text.
+             */
+            classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            /** ISO 8601 instant this row last changed. */
+            updatedAt: import("@sinclair/typebox").TString;
+            /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
+            nextAttemptAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            /**
+             * The task run this notification's batch started. Agent targets only,
+             * and present only once a run actually started — which is exactly the
+             * question an operator asks of a route that wakes a task, and the
+             * answer `tasks__run_result` is addressed with.
+             */
+            runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        }>>>;
+        data: import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>;
+    }>>;
+    /**
+     * Items nobody has marked read in this workspace's whole inbox, whatever
+     * the filters. A page is capped, so its own unread rows are not this count.
+     */
+    unread: import("@sinclair/typebox").TNumber;
+    /**
+     * Whether more items match these filters beyond this page, in the direction
+     * it was read. Newest first, that means a `before` read would return more.
+     */
+    hasMore: import("@sinclair/typebox").TBoolean;
     /**
      * Highest `seq` in this page, absent when the page is empty. Pass it back as
      * `after` to continue — forward through a backlog under `order: "asc"`, or
      * as a "what has arrived since" mark under the default newest-first order,
      * which does not walk backwards.
      */
-    cursor?: number;
-}
-export interface NotificationsMarkReadOutput {
+    cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+}>;
+export type NotificationsListOutput = Static<typeof NotificationsListOutput>;
+export declare const NotificationsMarkReadOutput: import("@sinclair/typebox").TObject<{
     /** Ids that were unread in this workspace and are now read. */
-    marked: string[];
+    marked: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
     /**
      * Ids that named nothing markable here — unknown, already read, malformed,
      * or belonging to another workspace, which this session cannot reach.
      */
-    skipped: string[];
-}
+    skipped: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
+}>;
+export type NotificationsMarkReadOutput = Static<typeof NotificationsMarkReadOutput>;
 /**
  * Level a newly declared source is held to until an admin raises it.
  *
@@ -221,7 +355,7 @@ export type NotificationPlaceholder = (typeof NOTIFICATION_PLACEHOLDERS)[number]
 export declare const NotificationRouteMatch: import("@sinclair/typebox").TObject<{
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+    level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
 }>;
 export type NotificationRouteMatch = Static<typeof NotificationRouteMatch>;
 export declare const NotificationDeliverTarget: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
@@ -230,7 +364,7 @@ export declare const NotificationDeliverTarget: import("@sinclair/typebox").TUni
     input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
 }>, import("@sinclair/typebox").TObject<{
     kind: import("@sinclair/typebox").TLiteral<"agent">;
-    automation: import("@sinclair/typebox").TString;
+    task: import("@sinclair/typebox").TString;
 }>]>;
 export type NotificationDeliverTarget = Static<typeof NotificationDeliverTarget>;
 /** Most targets one route may fan out to. */
@@ -261,7 +395,7 @@ export declare const NotificationRouteInput: import("@sinclair/typebox").TObject
     match: import("@sinclair/typebox").TObject<{
         source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
     }>;
     deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
         kind: import("@sinclair/typebox").TLiteral<"tool">;
@@ -269,7 +403,7 @@ export declare const NotificationRouteInput: import("@sinclair/typebox").TObject
         input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
     }>, import("@sinclair/typebox").TObject<{
         kind: import("@sinclair/typebox").TLiteral<"agent">;
-        automation: import("@sinclair/typebox").TString;
+        task: import("@sinclair/typebox").TString;
     }>]>>;
 }>;
 export type NotificationRouteInput = Static<typeof NotificationRouteInput>;
@@ -279,7 +413,7 @@ export declare const NotificationsSetRoutesInput: import("@sinclair/typebox").TO
         match: import("@sinclair/typebox").TObject<{
             source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
         }>;
         deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
             kind: import("@sinclair/typebox").TLiteral<"tool">;
@@ -287,14 +421,14 @@ export declare const NotificationsSetRoutesInput: import("@sinclair/typebox").TO
             input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
         }>, import("@sinclair/typebox").TObject<{
             kind: import("@sinclair/typebox").TLiteral<"agent">;
-            automation: import("@sinclair/typebox").TString;
+            task: import("@sinclair/typebox").TString;
         }>]>>;
     }>>;
 }>;
 export type NotificationsSetRoutesInput = Static<typeof NotificationsSetRoutesInput>;
 export declare const NotificationsSetSourceLevelInput: import("@sinclair/typebox").TObject<{
     source: import("@sinclair/typebox").TString;
-    maxLevel: import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">;
+    maxLevel: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
 }>;
 export type NotificationsSetSourceLevelInput = Static<typeof NotificationsSetSourceLevelInput>;
 export declare const NotificationsSettingsInput: import("@sinclair/typebox").TObject<{}>;
@@ -312,33 +446,64 @@ export type NotificationsSendTestInput = Static<typeof NotificationsSendTestInpu
  * ceiling writes no ledger row at all, which from the outside is
  * indistinguishable from a route that fired and delivered nothing.
  */
-export interface NotificationsSendTestOutput {
+export declare const NotificationsSendTestOutput: import("@sinclair/typebox").TObject<{
     /** `<source>:<eventId>` of the item written to the inbox. */
-    notificationId: string;
+    notificationId: import("@sinclair/typebox").TString;
     /** The source it was attributed to, and whose ceiling therefore applied. */
-    source: string;
+    source: import("@sinclair/typebox").TString;
     /** The level the item was stored at, after the ceiling clamped it. */
-    effectiveLevel: NotificationLevel;
+    effectiveLevel: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
     /** Whether the route matched the test item at all. */
-    matched: boolean;
+    matched: import("@sinclair/typebox").TBoolean;
     /** Why not, when `matched` is false — operator-facing prose. */
-    reason?: string;
+    reason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /** Each target's ledger row, as it stood when the dispatch returned. */
-    deliveries: DeliveryRecord[];
-}
+    deliveries: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        /** The route that matched, from the workspace record. */
+        routeId: import("@sinclair/typebox").TString;
+        /** What the route aimed at — a tool name, or a task id. */
+        target: import("@sinclair/typebox").TString;
+        /** Position in the route's `deliver` list. Part of the row's identity. */
+        index: import("@sinclair/typebox").TNumber;
+        /** Which kind of target `target` names. */
+        kind: import("@sinclair/typebox").TUnsafe<"agent" | "tool">;
+        attempts: import("@sinclair/typebox").TNumber;
+        lastError: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        outcome: import("@sinclair/typebox").TUnsafe<"deferred" | "delivered" | "denied" | "failed" | "pending" | "skipped">;
+        /**
+         * Why, for a non-`delivered` outcome — the dispatch's own classification
+         * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
+         * deferred agent target. Opaque to the browser, which renders it as text.
+         */
+        classification: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        /** ISO 8601 instant this row last changed. */
+        updatedAt: import("@sinclair/typebox").TString;
+        /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
+        nextAttemptAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        /**
+         * The task run this notification's batch started. Agent targets only,
+         * and present only once a run actually started — which is exactly the
+         * question an operator asks of a route that wakes a task, and the
+         * answer `tasks__run_result` is addressed with.
+         */
+        runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    }>>;
+}>;
+export type NotificationsSendTestOutput = Static<typeof NotificationsSendTestOutput>;
 /** One connector that declares an outbox, and the ceiling it is held to. */
-export interface NotificationSourceView {
+export declare const NotificationSourceView: import("@sinclair/typebox").TObject<{
     /** The connector's server name — what the runtime stamps on an item's `source`. */
-    source: string;
+    source: import("@sinclair/typebox").TString;
     /** Display name from the catalog, falling back to the server name. */
-    label: string;
+    label: import("@sinclair/typebox").TString;
     /** What the connector says its outbox carries. Operator-facing prose. */
-    description?: string;
+    description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /** The effective ceiling: what an admin set, or {@link DEFAULT_SOURCE_MAX_LEVEL}. */
-    maxLevel: NotificationLevel;
+    maxLevel: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
     /** False while the source is still at the default — nobody has raised it. */
-    configured: boolean;
-}
+    configured: import("@sinclair/typebox").TBoolean;
+}>;
+export type NotificationSourceView = Static<typeof NotificationSourceView>;
 /**
  * Why a route is dormant, written by the runtime rather than by an admin.
  *
@@ -348,63 +513,136 @@ export interface NotificationSourceView {
  * the author is a member again — the same self-healing-on-re-add a scheduled
  * run gets — so it is a report, not a setting.
  */
-export interface NotificationRouteDisabled {
+export declare const NotificationRouteDisabled: import("@sinclair/typebox").TObject<{
     /** One line an admin can act on. */
-    reason: string;
+    reason: import("@sinclair/typebox").TString;
     /**
      * ISO 8601 instant the runtime FIRST observed the condition since the note
      * was last cleared. Re-observing it does not move the timestamp: the note is
      * re-derived on every matching notification, and rewriting the operator
      * record each time would put it on the delivery path.
      */
-    at: string;
-}
+    at: import("@sinclair/typebox").TString;
+}>;
+export type NotificationRouteDisabled = Static<typeof NotificationRouteDisabled>;
 /** One stored route, with the principal it dispatches under. */
-export interface NotificationRouteView {
-    id: string;
+export declare const NotificationRouteView: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
     /** The admin who last wrote this route. Stamped server-side; never sent. */
-    createdBy: string;
-    match: NotificationRouteMatch;
-    deliver: NotificationDeliverTarget[];
+    createdBy: import("@sinclair/typebox").TString;
+    match: import("@sinclair/typebox").TObject<{
+        source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+    }>;
+    deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<{
+        input?: {
+            [x: string]: unknown;
+        } | undefined;
+        tool: string;
+        kind: "tool";
+    } | {
+        kind: "agent";
+        task: string;
+    }> & {
+        type: "object";
+    }>;
     /** Present while the runtime is refusing to dispatch this route. */
-    disabled?: NotificationRouteDisabled;
-}
+    disabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        /** One line an admin can act on. */
+        reason: import("@sinclair/typebox").TString;
+        /**
+         * ISO 8601 instant the runtime FIRST observed the condition since the note
+         * was last cleared. Re-observing it does not move the timestamp: the note is
+         * re-derived on every matching notification, and rewriting the operator
+         * record each time would put it on the delivery path.
+         */
+        at: import("@sinclair/typebox").TString;
+    }>>;
+}>;
+export type NotificationRouteView = Static<typeof NotificationRouteView>;
 /**
  * Everything the workspace settings surface needs to render and validate the
- * notifications configuration, in one read.
+ * notifications configuration, in one read. `set_source_level` and
+ * `set_routes` return it too, re-read after the write.
  *
  * The pickers and the validator are fed from the same call deliberately: a
  * route the editor could offer but the handler would refuse is the drift this
  * shape exists to prevent.
  */
-export interface NotificationsSettingsOutput {
-    sources: NotificationSourceView[];
-    routes: NotificationRouteView[];
+export declare const NotificationsSettingsOutput: import("@sinclair/typebox").TObject<{
+    sources: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        /** The connector's server name — what the runtime stamps on an item's `source`. */
+        source: import("@sinclair/typebox").TString;
+        /** Display name from the catalog, falling back to the server name. */
+        label: import("@sinclair/typebox").TString;
+        /** What the connector says its outbox carries. Operator-facing prose. */
+        description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        /** The effective ceiling: what an admin set, or {@link DEFAULT_SOURCE_MAX_LEVEL}. */
+        maxLevel: import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">;
+        /** False while the source is still at the default — nobody has raised it. */
+        configured: import("@sinclair/typebox").TBoolean;
+    }>>;
+    routes: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        /** The admin who last wrote this route. Stamped server-side; never sent. */
+        createdBy: import("@sinclair/typebox").TString;
+        match: import("@sinclair/typebox").TObject<{
+            source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
+        }>;
+        deliver: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<{
+            input?: {
+                [x: string]: unknown;
+            } | undefined;
+            tool: string;
+            kind: "tool";
+        } | {
+            kind: "agent";
+            task: string;
+        }> & {
+            type: "object";
+        }>;
+        /** Present while the runtime is refusing to dispatch this route. */
+        disabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+            /** One line an admin can act on. */
+            reason: import("@sinclair/typebox").TString;
+            /**
+             * ISO 8601 instant the runtime FIRST observed the condition since the note
+             * was last cleared. Re-observing it does not move the timestamp: the note is
+             * re-derived on every matching notification, and rewriting the operator
+             * record each time would put it on the delivery path.
+             */
+            at: import("@sinclair/typebox").TString;
+        }>>;
+    }>>;
     /** Tool names a `kind: "tool"` target may name — this workspace's installed set. */
-    deliverableTools: string[];
+    deliverableTools: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
     /**
-     * Automations the caller owns in this workspace, for a `kind: "agent"`
+     * Tasks the caller owns in this workspace, for a `kind: "agent"`
      * target, with whether each one is actually wakeable.
      *
-     * An automation without an event schedule can be named by a route and will
+     * A task without an event schedule can be named by a route and will
      * refuse every item it is sent, so the editor can say so at write time rather
      * than leaving an operator to find it in the ledger.
      */
-    automations: {
-        id: string;
-        name: string;
-        eventScheduled: boolean;
-    }[];
+    tasks: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        name: import("@sinclair/typebox").TString;
+        eventScheduled: import("@sinclair/typebox").TBoolean;
+    }>>;
     /** The placeholders a tool input may carry. */
-    placeholders: readonly string[];
+    placeholders: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
     /**
      * Whether a matching route's targets actually run. True for both kinds: a
-     * tool target dispatches, and an agent target wakes the automation it names.
+     * tool target dispatches, and an agent target wakes the task it names.
      *
      * Kept as a field rather than dropped now that it is unconditionally true —
      * the editor reads it to decide what to say about a saved route, and a client
      * that has to know the answer from its own version is a client that gets it
      * wrong after a rollback.
      */
-    routesExecuted: boolean;
-}
+    routesExecuted: import("@sinclair/typebox").TBoolean;
+}>;
+export type NotificationsSettingsOutput = Static<typeof NotificationsSettingsOutput>;

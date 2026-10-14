@@ -11,24 +11,19 @@
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 import { realClient } from "./setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 type CallToolArgs = { server: string; tool: string; args: Record<string, unknown> };
 const callToolCalls: CallToolArgs[] = [];
 
 mock.module("../src/api/client", () => ({
   ...realClient,
-  callTool: async (server: string, tool: string, args: Record<string, unknown>) => {
+  callToolWithoutWorkspace: async (server: string, tool: string, args: Record<string, unknown>) => {
     callToolCalls.push({ server, tool, args });
     if (server === "skills" && tool === "list") {
       return { structuredContent: { skills: [] }, isError: false };
@@ -109,8 +104,7 @@ describe("ProfileSkillsTab (the /profile/skills surface)", () => {
     expect(nameInput).not.toBeNull();
     expect(bodyInput).not.toBeNull();
 
-    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window
-      .Event;
+    const WindowEvent = window.Event;
     await act(async () => {
       const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       setVal?.call(nameInput, "personal-voice");
@@ -120,7 +114,7 @@ describe("ProfileSkillsTab (the /profile/skills surface)", () => {
       bodyInput!.dispatchEvent(new WindowEvent("input", { bubbles: true }));
     });
     await act(async () => {
-      clickByText(mounted!.container, "Save");
+      clickByText(mounted!.container, "Create");
     });
     await act(async () => {
       await Promise.resolve();

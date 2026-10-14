@@ -18,22 +18,27 @@ import { afterEach, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createEchoModel } from "../helpers/echo-model.ts";
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeIdentity } from "../helpers/identity.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const TEST_USER_ID = "usr_cfg";
-const SHARED_WS_ID = "ws_cfgshared00000";
+const SHARED_WS_ID = "ws_0026af4f2a1874d8";
 
 interface Observation {
   fastModel: string | undefined;
 }
 
-function buildProbe(): { observations: Observation[]; source: ReturnType<typeof defineInProcessApp> } {
+function buildProbe(): {
+  observations: Observation[];
+  source: ReturnType<typeof defineInProcessApp>;
+} {
   const observations: Observation[] = [];
   const tool: InProcessTool = {
     name: "observe",
@@ -47,7 +52,10 @@ function buildProbe(): { observations: Observation[]; source: ReturnType<typeof 
   };
   return {
     observations,
-    source: defineInProcessApp({ name: "probe", version: "1.0.0", tools: [tool] }, new NoopEventSink()),
+    source: defineInProcessApp(
+      { name: "probe", version: "1.0.0", tools: [tool] },
+      new NoopEventSink(),
+    ),
   };
 }
 
@@ -62,7 +70,7 @@ afterEach(async () => {
   if (workDir) rmSync(workDir, { recursive: true, force: true });
 });
 
-it("a chat in a shared workspace uses THAT workspace's model overrides, not the caller's personal ones", async () => {
+it("a chat in a shared workspace uses THAT workspace's model overrides, not the caller's default workspace's", async () => {
   workDir = mkdtempSync(join(tmpdir(), "nb-chat-cfg-"));
   mkdirSync(workDir, { recursive: true });
 
@@ -77,32 +85,32 @@ it("a chat in a shared workspace uses THAT workspace's model overrides, not the 
   });
 
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: model },
+    identityProvider: devProvider,
+    languageModel: model,
     logging: { disabled: true },
     workDir,
   });
 
   const wsStore = runtime.getWorkspaceStore();
 
+  // The caller's own workspace — created first, so it is their default —
+  // deliberately configured DIFFERENTLY. If the config source regressed to the
+  // caller's default workspace, this value appears.
+  const ownWs = await wsStore.create("Own", {
+    members: [{ userId: TEST_USER_ID, role: "admin" }],
+  });
+  await wsStore.update(ownWs.id, { models: { fast: "anthropic:personal-fast-model" } });
+
   // The shared workspace the chat runs in — its config is the one that must apply.
-  await wsStore.create("Shared", SHARED_WS_ID.slice(3));
+  await seedWorkspace(wsStore, SHARED_WS_ID, { name: "Shared" });
   await wsStore.addMember(SHARED_WS_ID, TEST_USER_ID, "admin");
   await wsStore.update(SHARED_WS_ID, { models: { fast: "anthropic:shared-fast-model" } });
-
-  // The caller's personal workspace, deliberately configured DIFFERENTLY. If
-  // the config source regressed to the personal workspace, this value appears.
-  const personalWsId = personalWorkspaceIdFor(TEST_USER_ID);
-  await wsStore.create("Personal", personalWsId.slice(3), {
-    isPersonal: true,
-    ownerUserId: TEST_USER_ID,
-  });
-  await wsStore.update(personalWsId, { models: { fast: "anthropic:personal-fast-model" } });
 
   const sharedReg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
   sharedReg.addSource(probe.source);
 
   await runtime.chat({
-    identity: { id: TEST_USER_ID, displayName: "Cfg User" },
+    identity: makeIdentity({ id: TEST_USER_ID, displayName: "Cfg User" }),
     workspaceId: SHARED_WS_ID,
     message: "config source check",
   });

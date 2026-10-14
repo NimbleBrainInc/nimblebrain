@@ -1,4 +1,8 @@
-import { DEFAULT_CREDENTIAL_STORE_BACKEND, type SecretsConfig } from "../config/secrets.ts";
+import {
+  credentialStoreBackendName,
+  DEFAULT_CREDENTIAL_STORE_BACKEND,
+  type SecretsConfig,
+} from "../config/secrets.ts";
 import type { EventSink } from "../engine/types.ts";
 import {
   type CredentialSealer,
@@ -188,7 +192,7 @@ export function createCredentialStore(ctx: {
   eventSink?: EventSink;
   secrets?: SecretsConfig;
 }): CredentialStore {
-  const name = ctx.secrets?.backend ?? DEFAULT_CREDENTIAL_STORE_BACKEND;
+  const name = credentialStoreBackendName(ctx.secrets);
   const backend = getCredentialStoreBackend(name);
   if (!backend) {
     const registered = registeredCredentialStoreBackends();

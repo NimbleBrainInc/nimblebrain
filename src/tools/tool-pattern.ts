@@ -16,7 +16,7 @@
  *
  * **The retired `ws_<id>-` prefix is stripped from BOTH sides.** Names are bare
  * now, so a pattern authored against the prefix would match nothing — and those
- * patterns live in skill frontmatter and automation records this repo cannot
+ * patterns live in skill frontmatter and task records this repo cannot
  * migrate.
  *
  * **The `my_` personal-connector marker is stripped from NEITHER.** It is the
@@ -70,4 +70,35 @@ export function toolNameMatchesPattern(toolName: string, pattern: string): boole
     `^${normalizedPattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`,
   );
   return regex.test(normalizedName);
+}
+
+/**
+ * The tools a run limited to `allowedTools` reaches whatever its list says:
+ * search and activation, which are how it finds and promotes the tools it is
+ * allowed. Every other `nb__` tool reads or changes something beyond those
+ * tools (a connector's resources, the owner's preferences, a skill's body), so
+ * it passes only when the list names it.
+ */
+const RUN_DISCOVERY_TOOLS: ReadonlySet<string> = new Set(["nb__search", "nb__manage_tools"]);
+
+/** Whether a run limited to `allowedTools` may reach `toolName`. */
+export function isToolAllowedForRun(toolName: string, allowedTools: string[]): boolean {
+  if (RUN_DISCOVERY_TOOLS.has(bareToolName(toolName))) return true;
+  return allowedTools.some((pattern) => toolNameMatchesPattern(toolName, pattern));
+}
+
+/**
+ * The `allowedTools` entries that match none of `toolNames`, in list order. An
+ * entry naming a discovery tool always matches, since a run reaches those
+ * whatever its list says.
+ */
+export function unmatchedAllowedTools(
+  allowedTools: readonly string[],
+  toolNames: readonly string[],
+): string[] {
+  return allowedTools.filter(
+    (pattern) =>
+      !RUN_DISCOVERY_TOOLS.has(bareToolName(pattern)) &&
+      !toolNames.some((name) => toolNameMatchesPattern(name, pattern)),
+  );
 }

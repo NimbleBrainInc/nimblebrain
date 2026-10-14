@@ -13,11 +13,10 @@
  * filesystem.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { ToolResult } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
@@ -31,10 +30,19 @@ import {
   WorkspaceAccessDenied,
   WorkspaceToolUnavailable,
 } from "../../../src/orchestrator/index.ts";
+import type { RoutedToolCall } from "../../../src/orchestrator/route.ts";
 import { PermissionStore } from "../../../src/permissions/permission-store.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
-import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
+
+/** The routed call as the variant the test expects, or a failed test. */
+function asKind<K extends RoutedToolCall["kind"]>(
+  routed: RoutedToolCall,
+  kind: K,
+): Extract<RoutedToolCall, { kind: K }> {
+  expect(routed.kind).toBe(kind);
+  return routed as Extract<RoutedToolCall, { kind: K }>;
+}
 
 // ── Stub source ───────────────────────────────────────────────────
 
@@ -47,7 +55,7 @@ function makeStubSource(name: string): ToolSource {
       return [];
     },
     async execute(): Promise<ToolResult> {
-      return { content: [{ type: "text" as const, text: `[${name}] dispatched` }] };
+      return { content: [{ type: "text" as const, text: `[${name}] dispatched` }], isError: false };
     },
   };
 }
@@ -130,10 +138,11 @@ function makeStubRuntime(opts: StubRuntimeOpts): StubRuntime {
 
 // ── Test scaffolding ──────────────────────────────────────────────
 
-const SHARED_WS = "ws_helix";
-const OTHER_WS = "ws_acme";
+const SHARED_WS = "ws_003eba8844413cd9";
+const OTHER_WS = "ws_000f7ed6658f9d30";
 const USER_ID = "u1";
-const PERSONAL_WS = personalWorkspaceIdFor(USER_ID); // ws_user_u1
+/** A workspace only the caller belongs to. */
+const PERSONAL_WS = "ws_0000000000000001";
 
 let workDir = "";
 
@@ -172,7 +181,7 @@ describe("routeToolCall — happy path", () => {
       runtime: buildHappyRuntime(),
     });
 
-    expect(routed.context.workspaceId).toBe(SHARED_WS);
+    expect(asKind(routed, "workspace").context.workspaceId).toBe(SHARED_WS);
     expect(routed.toolName).toBe("crm__search");
     expect(routed.source.name).toBe("crm");
   });
@@ -247,8 +256,8 @@ describe("routeToolCall — strict invariant (no ambient workspace)", () => {
 });
 
 describe("routeToolCall — the wall (cross-workspace reach is unexpressible)", () => {
-  // A session bounded to one workspace cannot reach another — and no longer
-  // because reach is denied, but because no name can express it. Rejected before
+  // A session bounded to one workspace cannot reach another — not because
+  // reach is denied, but because no name can express it. Rejected before
   // any workspace resolution, so no WorkspaceContext is constructed.
   test("a `ws_<id>-` name is rejected as a retired wire form, whatever workspace it names", async () => {
     const runtime = makeStubRuntime({
@@ -303,11 +312,10 @@ describe("routeToolCall — the wall (cross-workspace reach is unexpressible)", 
   });
 });
 
-describe("routeToolCall — personal workspace", () => {
-  // A session bounded to the user's personal workspace routes its tools. The
-  // wsId is derived via `personalWorkspaceIdFor(userId)` to guard against
-  // hand-built `ws_user_<id>` forms.
-  test("a call to the bound personal workspace succeeds", async () => {
+describe("routeToolCall — a workspace only the caller belongs to", () => {
+  // A session bounded to a workspace the caller alone belongs to routes its
+  // tools like any other.
+  test("a call to the bound workspace succeeds", async () => {
     const routed = await routeToolCall({
       identityId: USER_ID,
       namespacedName: "gmail__send",
@@ -315,7 +323,7 @@ describe("routeToolCall — personal workspace", () => {
       runtime: buildHappyRuntime(),
     });
 
-    expect(routed.context.workspaceId).toBe(PERSONAL_WS);
+    expect(asKind(routed, "workspace").context.workspaceId).toBe(PERSONAL_WS);
     expect(routed.toolName).toBe("gmail__send");
     expect(routed.source.name).toBe("gmail");
   });
@@ -342,8 +350,8 @@ describe("routeToolCall — context isolation", () => {
 
     expect(first.context).not.toBe(second.context);
     expect(first.context.getRoot()).not.toBe(second.context.getRoot());
-    expect(first.context.workspaceId).toBe(SHARED_WS);
-    expect(second.context.workspaceId).toBe(PERSONAL_WS);
+    expect(asKind(first, "workspace").context.workspaceId).toBe(SHARED_WS);
+    expect(asKind(second, "workspace").context.workspaceId).toBe(PERSONAL_WS);
     expect(runtime.contextCallCount()).toBe(2);
   });
 });
@@ -360,7 +368,7 @@ describe("routeToolCall — no ambient state", () => {
       runtime: buildHappyRuntime(),
     });
 
-    expect(routed.context.workspaceId).toBe(SHARED_WS);
+    expect(asKind(routed, "workspace").context.workspaceId).toBe(SHARED_WS);
   });
 });
 
@@ -487,8 +495,8 @@ describe("routeToolCall — self-heal on a recoverable source miss", () => {
 describe("routeToolCall — personal connectors (identity-door grant gate)", () => {
   // A personal connector is an IDENTITY-owned source, reached as a BARE identity
   // tool and resolved by userId (never through a workspace registry). It is
-  // grant-gated in EVERY workspace — including the caller's own personal one, a
-  // personal workspace being just a workspace (no free-at-home). The workspace
+  // grant-gated in EVERY workspace — including one the caller alone belongs to
+  // (no free-at-home). The workspace
   // wall (`ws_<id>-` calls) is never involved — a personal connector is never a
   // namespaced workspace tool, so a grant can never widen the wall.
 
@@ -502,15 +510,14 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     });
   }
 
-  test("the caller's own personal workspace is grant-gated too — no grant → denied (no free-at-home)", async () => {
-    // A personal workspace is just a workspace; it gets no special treatment.
-    const store = new PermissionStore(workDir); // nothing granted, not even to the personal ws
+  test("a workspace only the caller belongs to is grant-gated too — no grant → denied (no free-at-home)", async () => {
+    const store = new PermissionStore(workDir); // nothing granted anywhere
     let thrown: unknown = null;
     try {
       await routeToolCall({
         identityId: USER_ID,
         namespacedName: "my_granola__read_notes",
-        workspaceId: PERSONAL_WS, // the caller's own personal workspace
+        workspaceId: PERSONAL_WS,
         runtime: runtimeWithPersonalConnector(store),
       });
     } catch (err) {
@@ -520,7 +527,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
     expect((thrown as ConnectorGrantDenied).workspaceId).toBe(PERSONAL_WS);
   });
 
-  test("granted to the personal workspace → reachable there, dispatched as identity", async () => {
+  test("granted to a workspace → reachable there, dispatched as identity", async () => {
     const store = new PermissionStore(workDir);
     await store.grantConnector(USER_ID, "granola", PERSONAL_WS);
     const routed = await routeToolCall({
@@ -645,7 +652,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
   });
 
   test("a kernel identity source wins over a personal connector of the same name", async () => {
-    // Shadowing guard: the kernel source (conversations/files/automations) is
+    // Shadowing guard: the kernel source (conversations/files/tasks) is
     // resolved first, so a personal connector can never shadow it.
     const kernel = makeStubSource("files");
     const runtime = makeStubRuntime({
@@ -712,7 +719,7 @@ describe("routeToolCall — bare names are workspace-scoped, with no legacy fall
     // The marker is stripped at the door: everything downstream keys on
     // `serverName`, including `assertToolAllowed`, whose store defaults to allow.
     expect(routed.toolName).toBe("gmail__send");
-    expect(routed.policyOwner).toEqual({ scope: "user", userId: USER_ID });
+    expect(asKind(routed, "identity").policyOwner).toEqual({ scope: "user", userId: USER_ID });
   });
 
   test("a marker with no tool segment is rejected, not dispatched as `<connector>__`", async () => {
@@ -793,5 +800,4 @@ describe("routeToolCall — a bare name that resolves in the workspace IS the wo
       ).rejects.toBeInstanceOf(UnknownToolSource);
     }
   });
-
 });

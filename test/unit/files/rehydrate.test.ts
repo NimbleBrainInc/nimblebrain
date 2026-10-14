@@ -65,6 +65,8 @@ function fakeStore(byId: Record<string, FakeStoreEntry>): FakeStore {
       } satisfies FileEntry;
     },
     appendTombstone: () => Promise.reject(new Error("not used")),
+    appendFolder: () => Promise.reject(new Error("not used")),
+    readFolders: () => Promise.resolve([]),
     deleteFile: () => Promise.reject(new Error("not used")),
     ensureFilesDir: () => Promise.reject(new Error("not used")),
     readExtractedText: async (id) => {
@@ -82,7 +84,7 @@ const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PDF_BYTES = Buffer.from("%PDF-1.4");
 const DEFAULT_OPTIONS = { model: "anthropic:claude-sonnet-4-6", maxExtractedTextSize: 1024 };
 
-function userMessage(content: StoredMessage["content"]): StoredMessage {
+function userMessage(content: Extract<StoredMessage, { role: "user" }>["content"]): StoredMessage {
   return {
     role: "user",
     content,
@@ -100,7 +102,12 @@ describe("rehydrateUserResources", () => {
       [
         userMessage([
           { type: "text", text: "what's in this picture?" },
-          { type: "resource_link", uri: "files://fl_test1", mimeType: "image/png", name: "photo.png" },
+          {
+            type: "resource_link",
+            uri: "files://fl_test1",
+            mimeType: "image/png",
+            name: "photo.png",
+          },
         ]),
       ],
       store,
@@ -127,7 +134,16 @@ describe("rehydrateUserResources", () => {
     });
 
     const out = await rehydrateUserResources(
-      [userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "doc.pdf" }])],
+      [
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_pdf1",
+            mimeType: "application/pdf",
+            name: "doc.pdf",
+          },
+        ]),
+      ],
       store,
       DEFAULT_OPTIONS,
     );
@@ -154,7 +170,16 @@ describe("rehydrateUserResources", () => {
       });
 
       const out = await rehydrateUserResources(
-        [userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "doc.pdf" }])],
+        [
+          userMessage([
+            {
+              type: "resource_link",
+              uri: "files://fl_pdf1",
+              mimeType: "application/pdf",
+              name: "doc.pdf",
+            },
+          ]),
+        ],
         store,
         { model, maxExtractedTextSize: 1024 },
       );
@@ -172,7 +197,16 @@ describe("rehydrateUserResources", () => {
     });
 
     const out = await rehydrateUserResources(
-      [userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "doc.pdf" }])],
+      [
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_pdf1",
+            mimeType: "application/pdf",
+            name: "doc.pdf",
+          },
+        ]),
+      ],
       store,
       { model: "openai:o3-mini", maxExtractedTextSize: 1024 },
     );
@@ -194,7 +228,14 @@ describe("rehydrateUserResources", () => {
 
     const out = await rehydrateUserResources(
       [
-        userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "old.pdf" }]),
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_pdf1",
+            mimeType: "application/pdf",
+            name: "old.pdf",
+          },
+        ]),
         userMessage([{ type: "text", text: "next turn" }]),
       ],
       store,
@@ -216,7 +257,16 @@ describe("rehydrateUserResources", () => {
   test("missing file -> text marker, no throw", async () => {
     const store = fakeStore({});
     const out = await rehydrateUserResources(
-      [userMessage([{ type: "resource_link", uri: "files://fl_missing", mimeType: "image/png", name: "ghost.png" }])],
+      [
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_missing",
+            mimeType: "image/png",
+            name: "ghost.png",
+          },
+        ]),
+      ],
       store,
       DEFAULT_OPTIONS,
     );
@@ -251,7 +301,16 @@ describe("rehydrateUserResources", () => {
     });
 
     const out = await rehydrateUserResources(
-      [userMessage([{ type: "resource_link", uri: "files://fl_drift", mimeType: "image/png", name: "ghost.png" }])],
+      [
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_drift",
+            mimeType: "image/png",
+            name: "ghost.png",
+          },
+        ]),
+      ],
       store,
       DEFAULT_OPTIONS,
     );
@@ -270,7 +329,16 @@ describe("rehydrateUserResources", () => {
     });
 
     const out = await rehydrateUserResources(
-      [userMessage([{ type: "resource_link", uri: "files://fl_svg", mimeType: "image/svg+xml", name: "logo.svg" }])],
+      [
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_svg",
+            mimeType: "image/svg+xml",
+            name: "logo.svg",
+          },
+        ]),
+      ],
       store,
       DEFAULT_OPTIONS,
     );
@@ -292,7 +360,16 @@ describe("rehydrateUserResources", () => {
     });
 
     const out = await rehydrateUserResources(
-      [userMessage([{ type: "resource_link", uri: "files://fl_big", mimeType: "application/pdf", name: "big.pdf" }])],
+      [
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_big",
+            mimeType: "application/pdf",
+            name: "big.pdf",
+          },
+        ]),
+      ],
       store,
       DEFAULT_OPTIONS,
     );
@@ -326,8 +403,18 @@ describe("rehydrateUserResources", () => {
     const out = await rehydrateUserResources(
       [
         userMessage([
-          { type: "resource_link", uri: "files://fl_a", mimeType: "application/pdf", name: "a.pdf" },
-          { type: "resource_link", uri: "files://fl_b", mimeType: "application/pdf", name: "b.pdf" },
+          {
+            type: "resource_link",
+            uri: "files://fl_a",
+            mimeType: "application/pdf",
+            name: "a.pdf",
+          },
+          {
+            type: "resource_link",
+            uri: "files://fl_b",
+            mimeType: "application/pdf",
+            name: "b.pdf",
+          },
         ]),
       ],
       store,
@@ -356,7 +443,14 @@ describe("rehydrateUserResources", () => {
 
     const out = await rehydrateUserResources(
       [
-        userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "doc.pdf" }]),
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_pdf1",
+            mimeType: "application/pdf",
+            name: "doc.pdf",
+          },
+        ]),
         userMessage([{ type: "text", text: "follow up" }]),
       ],
       store,
@@ -384,12 +478,23 @@ describe("rehydrateUserResources", () => {
     // important behaviour is: bytes loaded once, sidecar write attempted
     // (or skipped on failure), and the next turn would hit the cache.
     const store = fakeStore({
-      fl_pdf1: { data: Buffer.from("%PDF-1.4\n%%EOF"), mimeType: "application/pdf", filename: "doc.pdf" },
+      fl_pdf1: {
+        data: Buffer.from("%PDF-1.4\n%%EOF"),
+        mimeType: "application/pdf",
+        filename: "doc.pdf",
+      },
     });
 
     const out = await rehydrateUserResources(
       [
-        userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "doc.pdf" }]),
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_pdf1",
+            mimeType: "application/pdf",
+            name: "doc.pdf",
+          },
+        ]),
         userMessage([{ type: "text", text: "follow up" }]),
       ],
       store,
@@ -415,7 +520,14 @@ describe("rehydrateUserResources", () => {
 
     const out = await rehydrateUserResources(
       [
-        userMessage([{ type: "resource_link", uri: "files://fl_pdf1", mimeType: "application/pdf", name: "doc.pdf" }]),
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_pdf1",
+            mimeType: "application/pdf",
+            name: "doc.pdf",
+          },
+        ]),
         userMessage([{ type: "text", text: "follow up" }]),
       ],
       store,
@@ -436,7 +548,16 @@ describe("rehydrateUserResources", () => {
     const store = fakeStore({});
 
     const out = await rehydrateUserResources(
-      [userMessage([{ type: "resource_link", uri: "files://fl_gone", mimeType: "application/pdf", name: "ghost.pdf" }])],
+      [
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_gone",
+            mimeType: "application/pdf",
+            name: "ghost.pdf",
+          },
+        ]),
+      ],
       store,
       DEFAULT_OPTIONS,
     );
@@ -461,7 +582,16 @@ describe("rehydrateUserResources", () => {
     });
 
     const out = await rehydrateUserResources(
-      [userMessage([{ type: "resource_link", uri: "files://fl_drift", mimeType: "application/pdf", name: "report.pdf" }])],
+      [
+        userMessage([
+          {
+            type: "resource_link",
+            uri: "files://fl_drift",
+            mimeType: "application/pdf",
+            name: "report.pdf",
+          },
+        ]),
+      ],
       store,
       DEFAULT_OPTIONS,
     );

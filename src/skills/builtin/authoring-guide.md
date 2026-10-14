@@ -30,8 +30,9 @@ competes for context window space, and so does this guide.
 Skills are created and managed through the `nb__skills` tools:
 
 - `skills__create` — write a new skill at org / workspace / user scope
-- `skills__update` — patch manifest fields and/or change the body. Not `status`:
-  that is the durable off switch and it is refused here
+- `skills__update` — patch manifest fields and/or change the body. An omitted
+  field keeps its value; `null` clears one (`description` takes none). Not
+  `status`: that is the durable off switch and it is refused here
 - `skills__delete` — remove a skill (snapshots to `_versions/` first)
 - `skills__activate` / `skills__deactivate` — mute or un-mute a skill for THIS
   conversation. Nothing is written; other conversations and workspaces are
@@ -168,6 +169,12 @@ space-separated string, e.g. `policy_search__find`). This is distinct from
 `nb__search` with scope `tools` to confirm the tools exist; if they're
 missing, tell the user to install the providing app from the Apps section of
 settings.
+
+In the skill's body, describe the capability ("search the CRM for the contact"),
+not a tool's name. A name like `github__search_issues` changes with how the
+connector is installed (a personal connection carries `my_`) and with the
+connector, so a body that names one stops working without saying so. Names
+belong in `allowed-tools` and `tool-affinity`, as `<connector>__*` globs.
 
 ## What skills cannot do
 

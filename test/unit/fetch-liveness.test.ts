@@ -40,8 +40,7 @@ describe("wrapFetchWithLiveness", () => {
     });
     // A ping frame followed by two data frames — the ping is exactly the
     // keep-alive the decoder would swallow, and it must still count as liveness.
-    const base = async () =>
-      streamingResponse(["event: ping\n\n", "data: a\n\n", "data: b\n\n"]);
+    const base = async () => streamingResponse(["event: ping\n\n", "data: a\n\n", "data: b\n\n"]);
 
     const res = await wrapFetchWithLiveness(base)("https://example.test", {
       signal: controller.signal,

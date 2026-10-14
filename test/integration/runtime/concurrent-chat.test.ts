@@ -2,10 +2,12 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { RunInProgressError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-concurrent-chat-${Date.now()}`);
 
@@ -19,13 +21,15 @@ describe("concurrent chat rejection", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
 
     // First call — seed a conversation so we have an id to contend on.
     const first = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "first",
       workspaceId: TEST_WORKSPACE_ID,
     });
@@ -35,16 +39,16 @@ describe("concurrent chat rejection", () => {
     // before the first internal await, so by the time control returns here the
     // conversation is registered as active.
     const inFlight = runtime.chat({
+      identity: DEV_IDENTITY,
       message: "in-flight",
       conversationId: convId,
       workspaceId: TEST_WORKSPACE_ID,
     });
 
-    expect(runtime.isConversationActive(convId)).toBe(true);
-
     // A concurrent call on the same conversation must reject cleanly.
     await expect(
       runtime.chat({
+        identity: DEV_IDENTITY,
         message: "interrupting",
         conversationId: convId,
         workspaceId: TEST_WORKSPACE_ID,
@@ -53,10 +57,10 @@ describe("concurrent chat rejection", () => {
 
     // Let the in-flight call finish; lock must release.
     await inFlight;
-    expect(runtime.isConversationActive(convId)).toBe(false);
 
     // And a subsequent call on the same conversation must succeed normally.
     const third = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "after",
       conversationId: convId,
       workspaceId: TEST_WORKSPACE_ID,
@@ -71,23 +75,34 @@ describe("concurrent chat rejection", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
 
-    const a = await runtime.chat({ message: "a", workspaceId: TEST_WORKSPACE_ID });
-    const b = await runtime.chat({ message: "b", workspaceId: TEST_WORKSPACE_ID });
+    const a = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "a",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    const b = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "b",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
     expect(a.conversationId).not.toBe(b.conversationId);
 
     // Parallel resumes on the two distinct conversations must both succeed.
     const [ra, rb] = await Promise.all([
       runtime.chat({
+        identity: DEV_IDENTITY,
         message: "a2",
         conversationId: a.conversationId,
         workspaceId: TEST_WORKSPACE_ID,
       }),
       runtime.chat({
+        identity: DEV_IDENTITY,
         message: "b2",
         conversationId: b.conversationId,
         workspaceId: TEST_WORKSPACE_ID,
@@ -104,17 +119,15 @@ describe("concurrent chat rejection", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
 
-    // Seed a conversation as Alice. The post-Stage-2 chat surface no
-    // longer rejects on missing `workspaceId` (T006 deletes the field
-    // entirely), so we provoke a throw by resuming Alice's conversation
-    // as Bob — `ConversationAccessDeniedError` from the single-owner
-    // gate. The point of this test is the lock-release contract, not
-    // the throw mechanism.
+    // Seed a conversation as Alice, then provoke a throw by resuming it as
+    // Bob — the single-owner gate refuses him. The point of this test is the
+    // lock-release contract, not the throw mechanism.
     const alice = {
       id: "usr_alice",
       email: "alice@example.com",
@@ -130,14 +143,33 @@ describe("concurrent chat rejection", () => {
       preferences: {},
     };
 
-    const seed = await runtime.chat({ message: "seed", identity: alice });
+    await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, alice.id, "member");
+    await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, bob.id, "member");
+    const seed = await runtime.chat({
+      message: "seed",
+      identity: alice,
+      workspaceId: TEST_WORKSPACE_ID,
+    });
     const convId = seed.conversationId;
 
     await expect(
-      runtime.chat({ message: "bad", conversationId: convId, identity: bob }),
+      runtime.chat({
+        message: "bad",
+        conversationId: convId,
+        identity: bob,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
     ).rejects.toThrow();
 
-    expect(runtime.isConversationActive(convId)).toBe(false);
+    // The refused call released the lock: the owner's next turn runs.
+    await expect(
+      runtime.chat({
+        message: "after",
+        conversationId: convId,
+        identity: alice,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
+    ).resolves.toBeDefined();
 
     await runtime.shutdown();
   });

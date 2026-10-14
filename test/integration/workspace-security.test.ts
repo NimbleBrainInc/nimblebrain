@@ -10,21 +10,23 @@
  * - DevIdentityProvider: workspace gets config connectors populated
  */
 
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
-
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { BriefingBlock, ConnectorRef, ConnectorUiMeta } from "../../src/connectors/runtime/types.ts";
+import type { ConnectorRef, ConnectorUiMeta } from "../../src/connectors/runtime/types.ts";
+import type { EngineEvent, EventSink, ToolResult } from "../../src/engine/types.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { UserStore } from "../../src/identity/user.ts";
 import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
-import { ToolRegistry, SharedSourceRef } from "../../src/tools/registry.ts";
-import type { Workspace } from "../../src/workspace/types.ts";
+import { SharedSourceRef, ToolRegistry } from "../../src/tools/registry.ts";
+import type { Tool, ToolSource } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import type { ToolSource, Tool } from "../../src/tools/types.ts";
-import type { EngineEvent, EventSink, ToolResult } from "../../src/engine/types.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,21 +34,6 @@ import type { EngineEvent, EventSink, ToolResult } from "../../src/engine/types.
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "nb-sec-integ-"));
-}
-
-function makeWorkspace(
-  id: string,
-  name: string,
-  connectors: Workspace["connectors"],
-): Workspace {
-  return {
-    id,
-    name,
-    members: [],
-    connectors: connectors,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
 }
 
 function makeSource(name: string, toolNames: string[]): ToolSource {
@@ -63,6 +50,7 @@ function makeSource(name: string, toolNames: string[]): ToolSource {
     tools: async () => tools,
     execute: async (toolName: string): Promise<ToolResult> => ({
       content: [{ type: "text", text: `executed ${name}/${toolName}` }],
+      isError: false,
     }),
   };
 }
@@ -70,15 +58,6 @@ function makeSource(name: string, toolNames: string[]): ToolSource {
 // ---------------------------------------------------------------------------
 // Shared test fixtures
 // ---------------------------------------------------------------------------
-
-// Two workspaces
-const wsEng = makeWorkspace("ws_eng", "Engineering", [
-  { url: "https://crm.example.com/mcp", serverName: "crm" },
-]);
-
-const wsMkt = makeWorkspace("ws_mkt", "Marketing", [
-  { url: "https://dropbox.example.com/mcp", serverName: "dropbox" },
-]);
 
 // Sources
 const protectedSources = [
@@ -120,12 +99,12 @@ function buildRegistry(): PlacementRegistry {
   reg.register(
     "crm",
     [{ slot: "sidebar.apps", resourceUri: "ui://crm/main" }],
-    "ws_eng",
+    "ws_002fbb9fda6654ca",
   );
   reg.register(
     "dropbox",
     [{ slot: "sidebar.apps", resourceUri: "ui://dropbox/main" }],
-    "ws_mkt",
+    "ws_004be15224386eaa",
   );
   return reg;
 }
@@ -135,14 +114,14 @@ function buildRegistry(): PlacementRegistry {
 // ---------------------------------------------------------------------------
 
 describe("Workspace security: per-workspace registry isolation", () => {
-  test("ws_eng registry has CRM tools but not Dropbox", async () => {
+  test("ws_002fbb9fda6654ca registry has CRM tools but not Dropbox", async () => {
     const reg = buildEngRegistry();
     expect(reg.hasSource("crm")).toBe(true);
     expect(reg.hasSource("dropbox")).toBe(false);
     expect(reg.hasSource("conversations")).toBe(true);
   });
 
-  test("ws_mkt registry has Dropbox tools but not CRM", async () => {
+  test("ws_004be15224386eaa registry has Dropbox tools but not CRM", async () => {
     const reg = buildMktRegistry();
     expect(reg.hasSource("dropbox")).toBe(true);
     expect(reg.hasSource("crm")).toBe(false);
@@ -174,9 +153,9 @@ describe("Workspace security: per-workspace registry isolation", () => {
 // ---------------------------------------------------------------------------
 
 describe("Workspace security: PlacementRegistry.forWorkspace", () => {
-  test("ws_eng gets CRM placement + all ambient, no Dropbox", () => {
+  test("ws_002fbb9fda6654ca gets CRM placement + all ambient, no Dropbox", () => {
     const names = buildRegistry()
-      .forWorkspace("ws_eng")
+      .forWorkspace("ws_002fbb9fda6654ca")
       .map((p) => p.serverName);
 
     // Ambient placements present (no wsId)
@@ -192,9 +171,9 @@ describe("Workspace security: PlacementRegistry.forWorkspace", () => {
     expect(names).not.toContain("dropbox");
   });
 
-  test("ws_mkt gets Dropbox placement + all ambient, no CRM", () => {
+  test("ws_004be15224386eaa gets Dropbox placement + all ambient, no CRM", () => {
     const names = buildRegistry()
-      .forWorkspace("ws_mkt")
+      .forWorkspace("ws_004be15224386eaa")
       .map((p) => p.serverName);
 
     expect(names).toContain("conversations");
@@ -205,20 +184,18 @@ describe("Workspace security: PlacementRegistry.forWorkspace", () => {
     expect(names).not.toContain("crm");
   });
 
-  test("ws_eng placement count = ambient count + workspace connector count", () => {
-    expect(buildRegistry().forWorkspace("ws_eng")).toHaveLength(5);
+  test("ws_002fbb9fda6654ca placement count = ambient count + workspace connector count", () => {
+    expect(buildRegistry().forWorkspace("ws_002fbb9fda6654ca")).toHaveLength(5);
   });
 
-  test("ws_mkt placement count = ambient count + workspace connector count", () => {
-    expect(buildRegistry().forWorkspace("ws_mkt")).toHaveLength(5);
+  test("ws_004be15224386eaa placement count = ambient count + workspace connector count", () => {
+    expect(buildRegistry().forWorkspace("ws_004be15224386eaa")).toHaveLength(5);
   });
 
   test("workspace with no installed connectors only gets ambient placements", () => {
-    const result = buildRegistry().forWorkspace("ws_empty");
+    const result = buildRegistry().forWorkspace("ws_002e1fc3b4a15a41");
     const names = result.map((p) => p.serverName);
-    expect(names).toEqual(
-      expect.arrayContaining(["conversations", "home", "files", "settings"]),
-    );
+    expect(names).toEqual(expect.arrayContaining(["conversations", "home", "files", "settings"]));
     expect(names).not.toContain("crm");
     expect(names).not.toContain("dropbox");
     expect(result).toHaveLength(4);
@@ -245,16 +222,11 @@ describe("Workspace security: DevIdentityProvider populates workspace connectors
     const originalWarn = console.warn;
     console.warn = () => {};
 
-    // DevIdentityProvider now provisions a workspace at first verifyRequest
-    // (Phase 1 of workspace-lifecycle-refactor). The runtime code path is
-    // simulated here — we construct the provider then call verifyRequest.
-    const adapter = new DevIdentityProvider(workDir, userStore, wsStore);
-    await adapter.verifyRequest(new Request("http://localhost/v1/chat"));
+    const adapter = new DevIdentityProvider(workDir, userStore);
+    await adapter.verifyRequest(new Request("http://localhost/v1/bootstrap"));
 
-    // Explicitly create the named test workspace (distinct from the auto-
-    // provisioned ws_default that the adapter creates for usr_default).
-    const ws = await wsStore.create("Test Workspace", "test");
-    await wsStore.addMember(ws.id, "usr_default", "owner");
+    const ws = await wsStore.create("Test Workspace");
+    await wsStore.addMember(ws.id, "usr_default", "admin");
 
     console.warn = originalWarn;
 
@@ -267,7 +239,7 @@ describe("Workspace security: DevIdentityProvider populates workspace connectors
 });
 
 // ---------------------------------------------------------------------------
-// Cross-workspace data leak regressions (bayze incident, 2026-04)
+// Cross-workspace data leak regressions
 // ---------------------------------------------------------------------------
 
 describe("Workspace security: same connector installed in two workspaces", () => {
@@ -278,60 +250,77 @@ describe("Workspace security: same connector installed in two workspaces", () =>
 
   test("PlacementRegistry: re-registering for a second workspace does not wipe the first", () => {
     const pr = new PlacementRegistry();
-    pr.register("crm", placements, "ws_eng");
-    pr.register("crm", placements, "ws_mkt");
+    pr.register("crm", placements, "ws_002fbb9fda6654ca");
+    pr.register("crm", placements, "ws_004be15224386eaa");
 
-    const eng = pr.forWorkspace("ws_eng").filter((e) => e.wsId === "ws_eng");
-    const mkt = pr.forWorkspace("ws_mkt").filter((e) => e.wsId === "ws_mkt");
+    const eng = pr
+      .forWorkspace("ws_002fbb9fda6654ca")
+      .filter((e) => e.wsId === "ws_002fbb9fda6654ca");
+    const mkt = pr
+      .forWorkspace("ws_004be15224386eaa")
+      .filter((e) => e.wsId === "ws_004be15224386eaa");
     expect(eng).toHaveLength(2);
     expect(mkt).toHaveLength(2);
   });
 
   test("PlacementRegistry: unregister is scoped to the given workspace", () => {
     const pr = new PlacementRegistry();
-    pr.register("crm", placements, "ws_eng");
-    pr.register("crm", placements, "ws_mkt");
+    pr.register("crm", placements, "ws_002fbb9fda6654ca");
+    pr.register("crm", placements, "ws_004be15224386eaa");
 
-    pr.unregister("crm", "ws_eng");
+    pr.unregister("crm", "ws_002fbb9fda6654ca");
 
-    expect(pr.forWorkspace("ws_eng").filter((e) => e.wsId === "ws_eng")).toHaveLength(0);
-    expect(pr.forWorkspace("ws_mkt").filter((e) => e.wsId === "ws_mkt")).toHaveLength(2);
+    expect(
+      pr.forWorkspace("ws_002fbb9fda6654ca").filter((e) => e.wsId === "ws_002fbb9fda6654ca"),
+    ).toHaveLength(0);
+    expect(
+      pr.forWorkspace("ws_004be15224386eaa").filter((e) => e.wsId === "ws_004be15224386eaa"),
+    ).toHaveLength(2);
   });
 
   test("PlacementRegistry: re-registering an ambient source does not wipe workspace entries", () => {
     const pr = new PlacementRegistry();
-    pr.register("crm", placements, "ws_eng");
+    pr.register("crm", placements, "ws_002fbb9fda6654ca");
     pr.register("platform", [placements[0]]); // ambient, no wsId
     pr.register("platform", [placements[0]]); // re-register ambient
 
-    expect(pr.forWorkspace("ws_eng").filter((e) => e.wsId === "ws_eng")).toHaveLength(2);
+    expect(
+      pr.forWorkspace("ws_002fbb9fda6654ca").filter((e) => e.wsId === "ws_002fbb9fda6654ca"),
+    ).toHaveLength(2);
   });
 
   test("ConnectorLifecycleManager: seeding the same connector in two workspaces keeps them distinct", async () => {
-    const events: EngineEvent[] = [];
-    const sink: EventSink = { emit: (e) => events.push(e) };
-    const lifecycle = new ConnectorLifecycleManager(sink);
+    // Seeding a url connector checks for stored OAuth tokens through the credential store.
+    const workDir = makeTmpDir();
+    installTestCredentialStore(workDir);
+    try {
+      const events: EngineEvent[] = [];
+      const sink: EventSink = { emit: (e) => events.push(e) };
+      const lifecycle = new ConnectorLifecycleManager(sink);
 
-    const ref: ConnectorRef = { url: "https://crm.example.com/mcp", serverName: "crm" };
-    const meta = {
-      manifestName: "ai.nimblebrain/crm",
-      version: "1.0.0",
-      ui: { name: "CRM", icon: "cards" } as ConnectorUiMeta,
-      briefing: null as BriefingBlock | null,
-    };
+      const ref: ConnectorRef = { url: "https://crm.example.com/mcp", serverName: "crm" };
+      const meta = {
+        manifestName: "ai.nimblebrain/crm",
+        version: "1.0.0",
+        ui: { name: "CRM", icon: "cards" } as ConnectorUiMeta,
+      };
 
-    await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_eng");
-    await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_mkt");
+      await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_002fbb9fda6654ca");
+      await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_004be15224386eaa");
 
-    const eng = lifecycle.getInstance("crm", "ws_eng");
-    const mkt = lifecycle.getInstance("crm", "ws_mkt");
+      const eng = lifecycle.getInstance("crm", "ws_002fbb9fda6654ca");
+      const mkt = lifecycle.getInstance("crm", "ws_004be15224386eaa");
 
-    expect(eng?.wsId).toBe("ws_eng");
-    expect(mkt?.wsId).toBe("ws_mkt");
-    // Distinct objects — one workspace's instance must not be the other's.
-    expect(eng).not.toBe(mkt);
-    // The unscoped snapshot exposes both — the bug was that a serverName-only
-    // filter would return both when asked for one workspace's instances.
-    expect(lifecycle.getInstances()).toHaveLength(2);
+      expect(eng?.wsId).toBe("ws_002fbb9fda6654ca");
+      expect(mkt?.wsId).toBe("ws_004be15224386eaa");
+      // Distinct objects — one workspace's instance must not be the other's.
+      expect(eng).not.toBe(mkt);
+      // The unscoped snapshot exposes both — the bug was that a serverName-only
+      // filter would return both when asked for one workspace's instances.
+      expect(lifecycle.getInstances()).toHaveLength(2);
+    } finally {
+      resetTestCredentialStore();
+      rmSync(workDir, { recursive: true, force: true });
+    }
   });
 });

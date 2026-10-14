@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import type { McpUiResourcePermissions } from "@modelcontextprotocol/ext-apps";
-import { fontOrigin } from "./fonts.ts";
+import { brandFontOrigins, fontOrigin } from "./fonts.ts";
 import type { ThemeMode } from "./theme.ts";
 import { buildThemeStyleBlock, getHostThemeMode } from "./theme.ts";
 
@@ -123,8 +123,12 @@ export function buildCSP(options?: CreateIframeOptions): string {
     // `allow-same-origin`, so it has an opaque origin. Naming the host origin
     // explicitly is what lets the app load the `styles.css.fonts` files the
     // host serves. Fonts are inert resources and the host already authors this
-    // document, so this grants no reach the frame didn't already have.
-    ["font-src 'self' data:", fontOrigin(), resourceExtras.trim()].filter(Boolean).join(" "),
+    // document, so this grants no reach the frame didn't already have. A
+    // tenant brand's font origins join for the same reason: the host sends
+    // those faces too.
+    ["font-src 'self' data:", fontOrigin(), ...brandFontOrigins(), resourceExtras.trim()]
+      .filter(Boolean)
+      .join(" "),
     `connect-src ${connectSrc}`,
     `frame-src ${frameSrc}`,
     "object-src 'none'",

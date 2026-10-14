@@ -7,7 +7,7 @@
  * string that might be refused for the wrong reason.
  *
  * It lives here, not in `src/`, because `package.json` ships `src/` to
- * consumers — a builder for a form the platform no longer emits would be dead
+ * consumers — a builder for a form the platform does not emit would be dead
  * code in the published package. `scripts/check-tool-namespace.ts` scans `src/`
  * and `web/src/` only, so fixtures are unaffected by its lint.
  */

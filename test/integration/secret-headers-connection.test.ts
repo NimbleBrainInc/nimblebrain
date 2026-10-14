@@ -22,12 +22,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorMcpDeps } from "../../src/connectors/runtime/startup.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { UserStore } from "../../src/identity/user.ts";
 import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import {
@@ -42,13 +44,18 @@ import {
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import { type FakeConnectorServer, startFakeConnectorServer } from "../helpers/fake-connector-server.ts";
+import {
+  type FakeConnectorServer,
+  startFakeConnectorServer,
+} from "../helpers/fake-connector-server.ts";
+import { stub } from "../helpers/stub.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ENTRY_ID = "com.acme/db-query";
 const SERVER_NAME = "com-acme-db-query";
 const HEADER = "X-Db-Url";
 const KEY = "acme.db_url";
-const WS = "ws_tenanta";
+const WS = "ws_00741647fd740fac";
 
 const ADMIN: UserIdentity = {
   id: "usr_admin_secret_conn",
@@ -134,11 +141,11 @@ function entry(url: string): CatalogListing {
  * host-resources handles are unused: nothing in these tests calls a tool.
  */
 function connectorMcpDeps(wsId: string): ConnectorMcpDeps {
-  return { workspaceId: wsId } as unknown as ConnectorMcpDeps;
+  return stub<ConnectorMcpDeps>({ workspaceId: wsId });
 }
 
 function tool() {
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getCredentialStore: () => store,
     getEventSink: () => new NoopEventSink(),
@@ -147,12 +154,12 @@ function tool() {
     getConnectorCatalog: () => new ConnectorCatalog(catalogDir),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
-    getPermissionStore: () => ({ deleteConnector: async () => {} }),
-    getUserStore: () => ({ get: async () => null }),
+    getPermissionStore: () => stub<PermissionStore>({ deleteConnector: async () => {} }),
+    getUserStore: () => stub<UserStore>({ get: async () => null }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => true,
     getConnectorMcpDeps: connectorMcpDeps,
-  } as unknown as Runtime;
+  });
   return createManageConnectorsTool({
     runtime,
     getIdentity: () => ADMIN,
@@ -181,7 +188,7 @@ beforeEach(async () => {
   lifecycle.bindWorkspaceRegistries(() => registries);
 
   workspaceStore = new WorkspaceStore(workDir);
-  await workspaceStore.create("Tenant A", "tenanta");
+  await seedWorkspace(workspaceStore, WS, { name: "Tenant A" });
   await workspaceStore.addMember(WS, ADMIN.id, "admin");
 });
 

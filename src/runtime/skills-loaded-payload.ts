@@ -82,7 +82,7 @@ export function collectLoadedSkills(input: {
  *
  * Each entry carries:
  *   - `id` — sourcePath, or an in-memory sentinel for skills synthesized at
- *     runtime (workspace identity overrides, etc.)
+ *     runtime
  *   - `name` / `connector` — the skill's own name and, for connector-published
  *     guidance, who published it. Split out of the manifest name so no display
  *     surface has to reverse-engineer either from `id`.

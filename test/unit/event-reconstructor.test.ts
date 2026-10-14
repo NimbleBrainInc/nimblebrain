@@ -16,6 +16,14 @@ import type {
   UserMessageEvent,
 } from "../../src/conversation/types.ts";
 
+type StoredPart = Exclude<StoredMessage["content"], string>[number];
+
+/** A reconstructed message's content parts; every message these tests read carries parts. */
+function partsOf(m: StoredMessage): StoredPart[] {
+  if (typeof m.content === "string") throw new Error("expected content parts, got a string");
+  return m.content;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers — event factories
 // ---------------------------------------------------------------------------
@@ -64,6 +72,7 @@ function llmText(runId: string, text: string, opts?: LlmEventOpts): LlmResponseE
     content: [{ type: "text", text }],
     usage: buildUsage(opts),
     llmMs: opts?.llmMs ?? 500,
+    finishReason: "stop",
   };
 }
 
@@ -79,9 +88,10 @@ function llmToolCall(
     type: "llm.response",
     runId,
     model: opts?.model ?? "claude-sonnet-4-5-20250929",
-    content: [{ type: "tool-call", toolCallId, toolName, input }],
+    content: [{ type: "tool-call", toolCallId, toolName, input: JSON.stringify(input) }],
     usage: buildUsage(opts),
     llmMs: opts?.llmMs ?? 500,
+    finishReason: "tool-calls",
   };
 }
 
@@ -100,10 +110,11 @@ function llmParallelToolCalls(
       type: "tool-call" as const,
       toolCallId: c.toolCallId,
       toolName: c.toolName,
-      input: c.input ?? {},
+      input: JSON.stringify(c.input ?? {}),
     })),
     usage: buildUsage(opts),
     llmMs: opts?.llmMs ?? 500,
+    finishReason: "tool-calls",
   };
 }
 
@@ -157,9 +168,7 @@ describe("reconstructMessages", () => {
   });
 
   it("converts a single user.message to a user StoredMessage", () => {
-    const events: ConversationEvent[] = [
-      userMessage("Hello"),
-    ];
+    const events: ConversationEvent[] = [userMessage("Hello")];
     const messages = reconstructMessages(events);
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe("user");
@@ -168,9 +177,7 @@ describe("reconstructMessages", () => {
   });
 
   it("preserves userId on user messages", () => {
-    const events: ConversationEvent[] = [
-      userMessage("Hi", { userId: "user-123" }),
-    ];
+    const events: ConversationEvent[] = [userMessage("Hi", { userId: "user-123" })];
     const messages = reconstructMessages(events);
     expect(messages[0].userId).toBe("user-123");
   });
@@ -239,7 +246,9 @@ describe("reconstructMessages", () => {
 
     // Final assistant text
     expect(messages[3].role).toBe("assistant");
-    expect(messages[3].content).toEqual([{ type: "text", text: "I found information about cats." }]);
+    expect(messages[3].content).toEqual([
+      { type: "text", text: "I found information about cats." },
+    ]);
   });
 
   it("parses string tool-call input from JSONL (AI SDK V3 format)", () => {
@@ -254,7 +263,7 @@ describe("reconstructMessages", () => {
         type: "llm.response",
         runId: "run-1",
         model: "claude-haiku-4-5-20251001",
-        content: [{ type: "tool-call", toolCallId: "tc-1", toolName: "seed_data", input: "{}" as unknown }],
+        content: [{ type: "tool-call", toolCallId: "tc-1", toolName: "seed_data", input: "{}" }],
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
       } as LlmResponseEvent,
@@ -293,9 +302,9 @@ describe("reconstructMessages", () => {
     expect(messages).toHaveLength(6);
     expect(messages[0].role).toBe("user");
     expect(messages[1].role).toBe("assistant"); // tool call 1
-    expect(messages[2].role).toBe("tool");       // tool result 1
+    expect(messages[2].role).toBe("tool"); // tool result 1
     expect(messages[3].role).toBe("assistant"); // tool call 2
-    expect(messages[4].role).toBe("tool");       // tool result 2
+    expect(messages[4].role).toBe("tool"); // tool result 2
     expect(messages[5].role).toBe("assistant"); // final text
 
     // All assistant messages in this run should have iterations=3
@@ -358,14 +367,42 @@ describe("reconstructMessages", () => {
     const messages = reconstructMessages(events);
     expect(messages).toHaveLength(2);
     const assistant = messages[1]!;
-    const reasoningBlock = assistant.content.find(
-      (c): c is { type: "reasoning"; text: string } => c.type === "reasoning",
+    const reasoningBlock = partsOf(assistant).find(
+      (c): c is Extract<StoredPart, { type: "reasoning" }> => c.type === "reasoning",
     );
-    const textBlock = assistant.content.find(
-      (c): c is { type: "text"; text: string } => c.type === "text",
+    const textBlock = partsOf(assistant).find(
+      (c): c is Extract<StoredPart, { type: "text" }> => c.type === "text",
     );
     expect(reasoningBlock?.text).toBe("Computing 6 * 7 carefully...");
     expect(textBlock?.text).toBe("The answer is 42.");
+  });
+
+  it("accepts tool-call input stored as an already-parsed object", () => {
+    // The stream persists input as a JSON string (the other fixtures here);
+    // `parseToolInput` also takes an object, which the event type does not
+    // admit.
+    const objectInput: LlmResponseEvent = {
+      ...llmToolCall("run-1", "tc-1", "lookup"),
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tc-1",
+          toolName: "lookup",
+          // biome-ignore lint/plugin/double-cast: a tool-call input stored as a parsed object, where the event type promises a JSON string
+          input: { id: "x" } as unknown as string,
+        },
+      ],
+    };
+    const messages = reconstructMessages([
+      userMessage("Look up X"),
+      runStart("run-1"),
+      objectInput,
+      toolStart("run-1", "tc-1", "lookup"),
+      toolDone("run-1", "tc-1", "lookup"),
+      runDone("run-1"),
+    ]);
+    const call = partsOf(messages[1]!).find((c) => c.type === "tool-call");
+    expect(call).toMatchObject({ toolCallId: "tc-1", input: { id: "x" } });
   });
 
   it("attaches reasoning to the FIRST assistant message of a turn (tool-call before text)", () => {
@@ -375,7 +412,12 @@ describe("reconstructMessages", () => {
       ...llmToolCall("run-1", "tc-1", "lookup", { id: "x" }),
       content: [
         { type: "reasoning", text: "Need to look this up." },
-        { type: "tool-call", toolCallId: "tc-1", toolName: "lookup", input: { id: "x" } },
+        {
+          type: "tool-call",
+          toolCallId: "tc-1",
+          toolName: "lookup",
+          input: JSON.stringify({ id: "x" }),
+        },
       ],
     };
     const finalText = llmText("run-1", "Found it.");
@@ -392,8 +434,8 @@ describe("reconstructMessages", () => {
     const assistantMessages = messages.filter((m) => m.role === "assistant");
     expect(assistantMessages).toHaveLength(2);
 
-    const firstReasoning = assistantMessages[0]!.content.find((c) => c.type === "reasoning");
-    const secondReasoning = assistantMessages[1]!.content.find((c) => c.type === "reasoning");
+    const firstReasoning = partsOf(assistantMessages[0]!).find((c) => c.type === "reasoning");
+    const secondReasoning = partsOf(assistantMessages[1]!).find((c) => c.type === "reasoning");
     expect(firstReasoning).toBeDefined();
     expect(secondReasoning).toBeUndefined();
   });
@@ -419,7 +461,9 @@ describe("reconstructMessages", () => {
     expect(placeholder.role).toBe("assistant");
     expect(placeholder.metadata!.finishReason).toBe("length");
     // Carries explicit marker text so LLM history isn't an empty msg
-    const text = placeholder.content.find((c): c is { type: "text"; text: string } => c.type === "text");
+    const text = partsOf(placeholder).find(
+      (c): c is Extract<StoredPart, { type: "text" }> => c.type === "text",
+    );
     expect(text?.text).toContain("cut off");
   });
 
@@ -439,13 +483,23 @@ describe("reconstructMessages", () => {
           text: "Plan: search then fetch.",
           providerMetadata: { anthropic: { signature: "sig-A" } },
         },
-        { type: "tool-call", toolCallId: "tc-1", toolName: "search", input: { q: "x" } },
+        {
+          type: "tool-call",
+          toolCallId: "tc-1",
+          toolName: "search",
+          input: JSON.stringify({ q: "x" }),
+        },
         {
           type: "reasoning",
           text: "Now fetch the top result.",
           providerMetadata: { anthropic: { signature: "sig-B" } },
         },
-        { type: "tool-call", toolCallId: "tc-2", toolName: "fetch", input: { id: 1 } },
+        {
+          type: "tool-call",
+          toolCallId: "tc-2",
+          toolName: "fetch",
+          input: JSON.stringify({ id: 1 }),
+        },
       ],
     };
     const events: ConversationEvent[] = [
@@ -470,8 +524,7 @@ describe("reconstructMessages", () => {
     // Both signatures must round-trip via providerOptions so the AI SDK
     // Anthropic provider re-emits both thinking blocks on the next call.
     const reasonings = assistant!.content.filter(
-      (c): c is { type: "reasoning"; text: string; providerOptions?: unknown } =>
-        c.type === "reasoning",
+      (c): c is Extract<StoredPart, { type: "reasoning" }> => c.type === "reasoning",
     );
     expect(reasonings).toHaveLength(2);
     expect(reasonings[0]!.providerOptions).toEqual({ anthropic: { signature: "sig-A" } });
@@ -491,7 +544,12 @@ describe("reconstructMessages", () => {
           text: "Need to look this up.",
           providerMetadata: { anthropic: { signature: "sig-abc-123" } },
         },
-        { type: "tool-call", toolCallId: "tc-1", toolName: "lookup", input: { id: "x" } },
+        {
+          type: "tool-call",
+          toolCallId: "tc-1",
+          toolName: "lookup",
+          input: JSON.stringify({ id: "x" }),
+        },
       ],
     };
     const events: ConversationEvent[] = [
@@ -505,9 +563,8 @@ describe("reconstructMessages", () => {
     const messages = reconstructMessages(events);
     const assistant = messages.find((m) => m.role === "assistant");
     expect(assistant).toBeDefined();
-    const reasoning = assistant!.content.find(
-      (c): c is { type: "reasoning"; text: string; providerOptions?: unknown } =>
-        c.type === "reasoning",
+    const reasoning = partsOf(assistant!).find(
+      (c): c is Extract<StoredPart, { type: "reasoning" }> => c.type === "reasoning",
     );
     expect(reasoning?.providerOptions).toEqual({ anthropic: { signature: "sig-abc-123" } });
   });
@@ -531,9 +588,9 @@ describe("reconstructMessages", () => {
       withSig,
       runDone("run-1"),
     ]);
-    const reasoning = withSigMessages[1]!.content.find((c) => c.type === "reasoning");
+    const reasoning = partsOf(withSigMessages[1]!).find((c) => c.type === "reasoning");
     expect(reasoning).toBeDefined();
-    expect(withSigMessages[1]!.content.find((c) => c.type === "text")).toBeUndefined();
+    expect(partsOf(withSigMessages[1]!).find((c) => c.type === "text")).toBeUndefined();
   });
 
   it("placeholder falls back to marker text when reasoning has no provider metadata", () => {
@@ -552,11 +609,11 @@ describe("reconstructMessages", () => {
       runDone("run-1"),
     ]);
     const placeholder = messages[1]!;
-    const text = placeholder.content.find(
-      (c): c is { type: "text"; text: string } => c.type === "text",
+    const text = partsOf(placeholder).find(
+      (c): c is Extract<StoredPart, { type: "text" }> => c.type === "text",
     );
     expect(text?.text).toContain("cut off");
-    expect(placeholder.content.find((c) => c.type === "reasoning")).toBeUndefined();
+    expect(partsOf(placeholder).find((c) => c.type === "reasoning")).toBeUndefined();
   });
 
   it("forwards finishReason from llm.response into assistant message metadata", () => {
@@ -574,19 +631,8 @@ describe("reconstructMessages", () => {
     expect(messages[1].metadata!.finishReason).toBe("length");
   });
 
-  it("omits finishReason from metadata when the event lacks it (legacy)", () => {
-    const events: ConversationEvent[] = [
-      userMessage("Hi"),
-      runStart("run-1"),
-      llmText("run-1", "Hello"),
-      runDone("run-1"),
-    ];
-    const messages = reconstructMessages(events);
-    expect(messages[1].metadata!.finishReason).toBeUndefined();
-  });
-
   it("populates usage in assistant metadata so cost can be derived later", () => {
-    // costUsd is no longer stored on metadata — cost is computed at the API
+    // costUsd is not stored on metadata — cost is computed at the API
     // boundary from (model, usage). The reconstructor's job is to make the
     // inputs available; downstream consumers compute the dollar value.
     const events: ConversationEvent[] = [
@@ -632,7 +678,13 @@ describe("reconstructMessages", () => {
         { toolCallId: "tc-d", toolName: "files__read" },
       ]),
       // No tool.start or tool.done events — run was cut short
-      { ts: ts(5), type: "run.done", runId: "run-1", stopReason: "token_budget", totalMs: 1000 } as RunDoneEvent,
+      {
+        ts: ts(5),
+        type: "run.done",
+        runId: "run-1",
+        stopReason: "token_budget",
+        totalMs: 1000,
+      } as RunDoneEvent,
     ];
     const messages = reconstructMessages(events);
 
@@ -751,14 +803,30 @@ describe("reconstructMessages", () => {
         model: "claude-sonnet-4-5-20250929",
         content: [
           { type: "text", text: "Let me read those files for you." },
-          { type: "tool-call", toolCallId: "tc-1", toolName: "files__read", input: {} },
-          { type: "tool-call", toolCallId: "tc-2", toolName: "files__read", input: {} },
+          {
+            type: "tool-call",
+            toolCallId: "tc-1",
+            toolName: "files__read",
+            input: JSON.stringify({}),
+          },
+          {
+            type: "tool-call",
+            toolCallId: "tc-2",
+            toolName: "files__read",
+            input: JSON.stringify({}),
+          },
         ],
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
       } as LlmResponseEvent,
       // Run ends without executing tools
-      { ts: ts(5), type: "run.done", runId: "run-1", stopReason: "token_budget", totalMs: 1000 } as RunDoneEvent,
+      {
+        ts: ts(5),
+        type: "run.done",
+        runId: "run-1",
+        stopReason: "token_budget",
+        totalMs: 1000,
+      } as RunDoneEvent,
     ];
     const messages = reconstructMessages(events);
 
@@ -835,32 +903,6 @@ describe("deriveUsageMetrics", () => {
     const metrics = deriveUsageMetrics(events);
     expect(metrics.totalInputTokens).toBe(0);
     expect(metrics.totalOutputTokens).toBe(0);
-    expect(metrics.lastModel).toBeNull();
-  });
-
-  it("does not crash on legacy events with flat token fields and no `usage`", () => {
-    // Pre-unification on-disk shape: token counts at the top level instead
-    // of nested under `usage`. The reader must skip these without crashing
-    // (the conversation load path goes through deriveUsageMetrics — a
-    // crash here takes down the entire conversation list).
-    const legacyEvent = {
-      ts: "2025-01-01T00:00:00Z",
-      type: "llm.response" as const,
-      runId: "r1",
-      model: "claude-sonnet-4-5",
-      content: [{ type: "text" as const, text: "hi" }],
-      inputTokens: 100,
-      outputTokens: 50,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-      llmMs: 200,
-    };
-    const metrics = deriveUsageMetrics([legacyEvent as unknown as ConversationEvent]);
-    // Legacy events contribute zero — the deliberate "ignore old data"
-    // choice. The point of this test is the absence of a TypeError.
-    expect(metrics.totalInputTokens).toBe(0);
-    expect(metrics.totalOutputTokens).toBe(0);
-    expect(metrics.totalCostUsd).toBe(0);
     expect(metrics.lastModel).toBeNull();
   });
 });
@@ -962,10 +1004,14 @@ describe("reconstructMessages structural invariants", () => {
         { toolCallId: "c", toolName: "read" },
         { toolCallId: "d", toolName: "read" },
       ]),
-      toolStart("r1", "a", "read"), toolDone("r1", "a", "read", "A"),
-      toolStart("r1", "b", "read"), toolDone("r1", "b", "read", "B"),
-      toolStart("r1", "c", "read"), toolDone("r1", "c", "read", "C"),
-      toolStart("r1", "d", "read"), toolDone("r1", "d", "read", "D"),
+      toolStart("r1", "a", "read"),
+      toolDone("r1", "a", "read", "A"),
+      toolStart("r1", "b", "read"),
+      toolDone("r1", "b", "read", "B"),
+      toolStart("r1", "c", "read"),
+      toolDone("r1", "c", "read", "C"),
+      toolStart("r1", "d", "read"),
+      toolDone("r1", "d", "read", "D"),
       llmText("r1", "Read all 4"),
       runDone("r1"),
     ];
@@ -980,8 +1026,10 @@ describe("reconstructMessages structural invariants", () => {
         { toolCallId: "a1", toolName: "search" },
         { toolCallId: "a2", toolName: "search" },
       ]),
-      toolStart("r1", "a1", "search"), toolDone("r1", "a1", "search", "x"),
-      toolStart("r1", "a2", "search"), toolDone("r1", "a2", "search", "y"),
+      toolStart("r1", "a1", "search"),
+      toolDone("r1", "a1", "search", "x"),
+      toolStart("r1", "a2", "search"),
+      toolDone("r1", "a2", "search", "y"),
       llmText("r1", "Found stuff"),
       runDone("r1"),
       userMessage("Now do more"),
@@ -991,9 +1039,12 @@ describe("reconstructMessages structural invariants", () => {
         { toolCallId: "b2", toolName: "write" },
         { toolCallId: "b3", toolName: "write" },
       ]),
-      toolStart("r2", "b1", "write"), toolDone("r2", "b1", "write", "ok"),
-      toolStart("r2", "b2", "write"), toolDone("r2", "b2", "write", "ok"),
-      toolStart("r2", "b3", "write"), toolDone("r2", "b3", "write", "ok"),
+      toolStart("r2", "b1", "write"),
+      toolDone("r2", "b1", "write", "ok"),
+      toolStart("r2", "b2", "write"),
+      toolDone("r2", "b2", "write", "ok"),
+      toolStart("r2", "b3", "write"),
+      toolDone("r2", "b3", "write", "ok"),
       llmText("r2", "All written"),
       runDone("r2"),
     ];
@@ -1024,7 +1075,8 @@ describe("reconstructMessages structural invariants", () => {
         { toolCallId: "b", toolName: "read" },
         { toolCallId: "c", toolName: "read" },
       ]),
-      toolStart("r1", "a", "read"), toolDone("r1", "a", "read", "A"),
+      toolStart("r1", "a", "read"),
+      toolDone("r1", "a", "read", "A"),
       // b and c never ran
       runError("r1", "API error"),
     ];
@@ -1043,8 +1095,8 @@ describe("reconstructMessages structural invariants", () => {
         model: "claude-sonnet-4-5-20250929",
         content: [
           { type: "text", text: "I'll read the files now." },
-          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: {} },
-          { type: "tool-call", toolCallId: "tc2", toolName: "read", input: {} },
+          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: JSON.stringify({}) },
+          { type: "tool-call", toolCallId: "tc2", toolName: "read", input: JSON.stringify({}) },
         ],
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
@@ -1056,10 +1108,134 @@ describe("reconstructMessages structural invariants", () => {
 
     // Text should be preserved even though tools were dropped
     const textMsg = messages.find(
-      (m) => m.role === "assistant" && Array.isArray(m.content) &&
+      (m) =>
+        m.role === "assistant" &&
+        Array.isArray(m.content) &&
         m.content.some((p) => "type" in p && p.type === "text"),
     );
     expect(textMsg).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stopped runs (run.done stopReason "cancelled")
+// ---------------------------------------------------------------------------
+
+const CANCELLED_MARKER = "[This turn was stopped before it finished.]";
+
+function runCancelled(runId: string): RunDoneEvent {
+  return { ts: ts(5), type: "run.done", runId, stopReason: "cancelled", totalMs: 1000 };
+}
+
+/** Every text part across a reconstruction, in order. */
+function allText(messages: StoredMessage[]): string[] {
+  return messages.flatMap((m) =>
+    Array.isArray(m.content)
+      ? m.content.flatMap((p) => ("type" in p && p.type === "text" ? [p.text as string] : []))
+      : [],
+  );
+}
+
+describe("reconstructMessages — cancelled runs", () => {
+  it("tells the model a turn that produced nothing was stopped", () => {
+    const events: ConversationEvent[] = [
+      userMessage("Write a long essay"),
+      runStart("r1"),
+      runCancelled("r1"),
+      userMessage("Actually, just a summary"),
+    ];
+    const messages = reconstructMessages(events);
+
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(allText([messages[1]!])).toEqual([CANCELLED_MARKER]);
+    const text = allText(messages).join("\n");
+    expect(text).not.toContain("model error");
+    expect(text).not.toContain("without producing any response");
+  });
+
+  it("closes a stopped run after its tool results", () => {
+    const events: ConversationEvent[] = [
+      userMessage("Go"),
+      runStart("r1"),
+      llmToolCall("r1", "tc1", "search"),
+      toolStart("r1", "tc1", "search"),
+      toolDone("r1", "tc1", "search", "found"),
+      runCancelled("r1"),
+      userMessage("Stop there"),
+    ];
+    const messages = reconstructMessages(events);
+
+    assertValidMessageStructure(messages);
+    assertNoAdjacentUserMessages(messages);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "user"]);
+    expect(allText([messages[3]!])).toEqual([CANCELLED_MARKER]);
+  });
+
+  it("appends the marker to a stopped run's trailing text-only assistant message", () => {
+    const events: ConversationEvent[] = [
+      userMessage("Go"),
+      runStart("r1"),
+      {
+        ts: ts(2),
+        type: "llm.response",
+        runId: "r1",
+        model: "claude-sonnet-4-5-20250929",
+        content: [
+          { type: "text", text: "Reading the file now." },
+          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: JSON.stringify({}) },
+        ],
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 500,
+      } as LlmResponseEvent,
+      // tc1 was in flight when the user pressed Stop: no tool.done.
+      runCancelled("r1"),
+      userMessage("Never mind"),
+    ];
+    const messages = reconstructMessages(events);
+
+    assertValidMessageStructure(messages);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(allText([messages[1]!])).toEqual(["Reading the file now.", CANCELLED_MARKER]);
+  });
+
+  it("leaves a trailing assistant message carrying reasoning unchanged", () => {
+    const reasoning = {
+      type: "reasoning",
+      text: "thinking",
+      providerMetadata: { anthropic: { signature: "sig" } },
+    };
+    const events: ConversationEvent[] = [
+      userMessage("Go"),
+      runStart("r1"),
+      {
+        ts: ts(2),
+        type: "llm.response",
+        runId: "r1",
+        model: "claude-sonnet-4-5-20250929",
+        content: [
+          reasoning,
+          { type: "text", text: "Partial answer" },
+          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: JSON.stringify({}) },
+        ],
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 500,
+      } as LlmResponseEvent,
+      runCancelled("r1"),
+    ];
+    const messages = reconstructMessages(events);
+
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(allText(messages)).not.toContain(CANCELLED_MARKER);
+  });
+
+  it("adds no marker to a run that completed", () => {
+    const events: ConversationEvent[] = [
+      userMessage("Hi"),
+      runStart("r1"),
+      llmText("r1", "Hello"),
+      runDone("r1"),
+    ];
+    expect(allText(reconstructMessages(events))).not.toContain(CANCELLED_MARKER);
   });
 });
 
@@ -1071,8 +1247,9 @@ describe("reconstructMessages structural invariants", () => {
 function toolResultValue(messages: StoredMessage[]): string {
   const toolMsg = messages.find((m) => m.role === "tool");
   if (!toolMsg) throw new Error("no tool message in reconstruction");
-  const part = (toolMsg.content as Array<Record<string, unknown>>)[0]!;
-  return ((part.output as Record<string, unknown>).value as string) ?? "";
+  const part = toolMsg.role === "tool" ? toolMsg.content[0] : undefined;
+  if (part?.type !== "tool-result") throw new Error("no tool result in the tool message");
+  return part.output.type === "text" ? part.output.value : "";
 }
 
 /** Pull the UI-metadata tool output carried on the assistant message. */
@@ -1182,8 +1359,8 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
     // continues rather than answers.
     expect(synthetic!.role).toBe("user");
     expect(synthetic!.metadata?.skill).toBe("gmail");
-    const text =
-      synthetic!.content[0]?.type === "text" ? synthetic!.content[0].text : "";
+    const first = partsOf(synthetic!)[0];
+    const text = first?.type === "text" ? first.text : "";
     expect(text).toContain("<connector-skill>");
     expect(text).toContain("</connector-skill>");
     expect(text).toContain("Confirm the recipient before sending.");
@@ -1253,7 +1430,8 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
     ];
 
     const synthetic = findConnectorSkillMessage(reconstructMessages(events))!;
-    const text = synthetic.content[0]?.type === "text" ? synthetic.content[0].text : "";
+    const first = partsOf(synthetic)[0];
+    const text = first?.type === "text" ? first.text : "";
     expect(text).toContain("&lt;/connector-skill>");
     // Only the wrapper's own closing tag remains real.
     expect(text.split("</connector-skill>").length - 1).toBe(1);
@@ -1327,7 +1505,9 @@ describe("reconstructMessages — skill.activated", () => {
     expect(marked).toHaveLength(1);
     expect(marked[0]!.role).toBe("tool");
     expect(marked[0]!.metadata?.skill).toBe("runbook");
-    const withoutActivation = reconstructMessages(events.filter((e) => e.type !== "skill.activated"));
+    const withoutActivation = reconstructMessages(
+      events.filter((e) => e.type !== "skill.activated"),
+    );
     expect(messages).toHaveLength(withoutActivation.length);
   });
 

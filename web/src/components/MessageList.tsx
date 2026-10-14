@@ -1,8 +1,12 @@
 import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
-import type { SkillsLoadedContext } from "../hooks/chat-store";
-import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
+import type {
+  ChatMessage,
+  PreparingTool,
+  SkillsLoadedContext,
+  StreamingState,
+} from "../hooks/chat-store";
 import { ledgerChanges } from "../lib/ledger-changes";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 import type { DisplayDetail } from "../lib/tool-display";
@@ -40,6 +44,8 @@ function UsageChip({ usage }: { usage: NonNullable<ChatMessage["usage"]> }) {
   );
 }
 
+// Stored user messages from older hosts start with an `[App Context: …]` line;
+// it renders collapsed rather than as message text.
 const APP_CONTEXT_RE = /^\[App Context:[^\]]*\]\n/;
 
 function formatRelativeTime(iso: string): string {
@@ -76,9 +82,14 @@ function stopReasonMessage(stopReason: string): string {
       // A turn whose run ended without a terminal event — the process stopped
       // mid-run (a deploy, a restart). The work is gone; the partial output
       // above is all there is. Without this case it falls to the generic
-      // branch and reads "Run ended: interrupted", which is worse than the
-      // sentence the client used to stamp on this same state.
+      // branch and reads "Run ended: interrupted", which tells the user
+      // neither what happened nor what to do next.
       return "This response was interrupted before it finished. Send another message to continue.";
+    case "cancelled":
+      // The run's abort signal fired: the Stop button, a timeout, the per-run
+      // event cap, or shutdown. Whatever the turn produced before the stop is
+      // shown above; the wording holds for every one of those causes.
+      return "This response was stopped before it finished.";
     case "content_filter":
       return "The response was blocked by content filtering. Try rephrasing your request.";
     case "error":
@@ -539,7 +550,7 @@ export function MessageList({
   // Track which messages existed on mount/load so we don't animate them.
   // Only messages added after the initial render get the entrance animation.
   const initialCountRef = useRef(messages.length);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on conversation identity (first message timestamp)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the first message's timestamp changes only when another conversation replaces the list; appending (a new turn, streaming) leaves it, and must keep the baseline
   useEffect(() => {
     // When conversation changes (messages replaced wholesale), update the baseline
     initialCountRef.current = messages.length;
@@ -553,6 +564,12 @@ export function MessageList({
     );
   }
 
+  // Messages carry no id, so a message is keyed by its position within its
+  // conversation, named by its first message's timestamp: opening another
+  // conversation remounts every message rather than handing the new one the
+  // old one's view state (an expanded chip) at the same index.
+  const conversationMark = messages[0]?.timestamp ?? "";
+
   // Which turns announce their equipment. A sequence-level decision, so it is
   // made here where the sequence lives — `LedgerLine` renders what it is given.
   const ledgerRows = ledgerChanges(messages);
@@ -563,8 +580,8 @@ export function MessageList({
         <div className={`py-6 flex flex-col gap-10 ${compact ? "px-4" : "px-8 max-w-4xl mx-auto"}`}>
           {messages.map((msg, idx) => (
             <MessageItem
-              // biome-ignore lint/suspicious/noArrayIndexKey: messages lack stable IDs and don't reorder
-              key={idx}
+              // biome-ignore lint/suspicious/noArrayIndexKey: a conversation's messages change only at the end (appended, or truncated on retry), never reordered, and the prefix changes with the conversation
+              key={`${conversationMark}:${idx}`}
               msg={msg}
               ledgerSkills={ledgerRows[idx]}
               isNew={idx >= initialCountRef.current}

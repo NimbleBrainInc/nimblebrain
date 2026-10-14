@@ -1,15 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import { authenticateRequest, isAuthError } from "../../../src/api/auth-middleware.ts";
 import {
-  type AuthMode,
-  authenticateRequest,
-  isAuthError,
-  resolveAuthMode,
-} from "../../../src/api/auth-middleware.ts";
-import type {
-  IdentityProvider,
-  UserIdentity,
-  CreateUserResult,
+  type CreateUserResult,
+  FIRST_PARTY_GRANT,
+  type IdentityProvider,
+  type UserIdentity,
+  type VerifiedIdentity,
 } from "../../../src/identity/provider.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";
 import type { User } from "../../../src/identity/user.ts";
@@ -18,14 +15,13 @@ const noopSink = new NoopEventSink();
 
 // ── Test helpers ──────────────────────────────────────────────────
 
-const TEST_INTERNAL_TOKEN = "internal-token-for-testing-12345";
-
 function makeIdentity(overrides?: Partial<UserIdentity>): UserIdentity {
   return {
     id: "usr_abc123",
     email: "test@example.com",
     displayName: "Test User",
     orgRole: "admin" as OrgRole,
+    preferences: {},
     ...overrides,
   };
 }
@@ -39,17 +35,17 @@ function createMockProvider(validToken: string, identity: UserIdentity): Identit
       managedUsers: false,
       authorizationServer: false,
     },
-    async verifyRequest(req: Request): Promise<UserIdentity | null> {
+    async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
       const auth = req.headers.get("authorization");
       if (auth === `Bearer ${validToken}`) {
-        return identity;
+        return { ...identity, grant: FIRST_PARTY_GRANT };
       }
       // Also check session cookie
       const cookie = req.headers.get("cookie") ?? "";
       for (const pair of cookie.split(";")) {
         const [name, ...rest] = pair.trim().split("=");
         if (name === "nb_session" && rest.join("=") === "valid-session") {
-          return identity;
+          return { ...identity, grant: FIRST_PARTY_GRANT };
         }
       }
       return null;
@@ -77,46 +73,6 @@ function makeRequest(
   });
 }
 
-// ── resolveAuthMode ───────────────────────────────────────────────
-
-describe("resolveAuthMode", () => {
-  it("returns adapter mode when provider is provided", () => {
-    const provider = createMockProvider("key", makeIdentity());
-    const mode = resolveAuthMode(provider);
-    expect(mode.type).toBe("adapter");
-  });
-
-  it("returns dev mode when no provider is provided", () => {
-    const mode = resolveAuthMode(null);
-    expect(mode.type).toBe("dev");
-  });
-});
-
-// ── Dev mode ──────────────────────────────────────────────────────
-
-describe("authenticateRequest — dev mode", () => {
-  const options = {
-    mode: { type: "dev" } as AuthMode,
-    internalToken: TEST_INTERNAL_TOKEN,
-    eventSink: noopSink,
-  };
-
-  it("allows unauthenticated requests", async () => {
-    const req = makeRequest("/v1/chat", { method: "POST" });
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(false);
-  });
-
-  it("returns undefined identity in dev mode", async () => {
-    const req = makeRequest("/v1/shell");
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(false);
-    if (!isAuthError(result)) {
-      expect(result.identity).toBeUndefined();
-    }
-  });
-});
-
 // ── Adapter mode ──────────────────────────────────────────────────
 
 describe("authenticateRequest — adapter mode", () => {
@@ -125,13 +81,12 @@ describe("authenticateRequest — adapter mode", () => {
   const provider = createMockProvider(validAdapterKey, identity);
 
   const options = {
-    mode: { type: "adapter", provider } as AuthMode,
-    internalToken: TEST_INTERNAL_TOKEN,
+    provider,
     eventSink: noopSink,
   };
 
   it("accepts valid Bearer token and returns identity", async () => {
-    const req = makeRequest("/v1/shell", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: `Bearer ${validAdapterKey}` },
     });
     const result = await authenticateRequest(req, options);
@@ -145,7 +100,7 @@ describe("authenticateRequest — adapter mode", () => {
   });
 
   it("rejects invalid Bearer token with 401", async () => {
-    const req = makeRequest("/v1/shell", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: "Bearer wrong-key" },
     });
     const result = await authenticateRequest(req, options);
@@ -155,8 +110,20 @@ describe("authenticateRequest — adapter mode", () => {
     }
   });
 
+  it("rejects an unverified Bearer token on a workspace's chat route with 401", async () => {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/chat/start", {
+      method: "POST",
+      headers: { Authorization: "Bearer not-a-provider-token" },
+    });
+    const result = await authenticateRequest(req, options);
+    expect(isAuthError(result)).toBe(true);
+    if (isAuthError(result)) {
+      expect(result.status).toBe(401);
+    }
+  });
+
   it("accepts valid session cookie via adapter", async () => {
-    const req = makeRequest("/v1/shell", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Cookie: "nb_session=valid-session" },
     });
     const result = await authenticateRequest(req, options);
@@ -169,7 +136,7 @@ describe("authenticateRequest — adapter mode", () => {
   });
 
   it("rejects unauthenticated requests with 401", async () => {
-    const req = makeRequest("/v1/shell");
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell");
     const result = await authenticateRequest(req, options);
     expect(isAuthError(result)).toBe(true);
     if (isAuthError(result)) {
@@ -178,7 +145,7 @@ describe("authenticateRequest — adapter mode", () => {
   });
 
   it("does not leak user existence info in 401 response", async () => {
-    const req = makeRequest("/v1/shell", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: "Bearer bad-key" },
     });
     const result = await authenticateRequest(req, options);
@@ -191,59 +158,6 @@ describe("authenticateRequest — adapter mode", () => {
   });
 });
 
-// ── Internal token ────────────────────────────────────────────────
-
-describe("authenticateRequest — internal token", () => {
-  const provider = createMockProvider("some-key", makeIdentity());
-  const options = {
-    mode: { type: "adapter", provider } as AuthMode,
-    internalToken: TEST_INTERNAL_TOKEN,
-    eventSink: noopSink,
-  };
-
-  it("allows internal token on POST /v1/chat", async () => {
-    const req = makeRequest("/v1/chat", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${TEST_INTERNAL_TOKEN}` },
-    });
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(false);
-  });
-
-  it("allows internal token on POST /v1/chat/stream", async () => {
-    const req = makeRequest("/v1/chat/stream", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${TEST_INTERNAL_TOKEN}` },
-    });
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(false);
-  });
-
-  it("rejects internal token on non-chat endpoints with 403", async () => {
-    const req = makeRequest("/v1/shell", {
-      headers: { Authorization: `Bearer ${TEST_INTERNAL_TOKEN}` },
-    });
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(true);
-    if (isAuthError(result)) {
-      expect(result.status).toBe(403);
-    }
-  });
-
-  it("internal token works even in dev mode", async () => {
-    const devOptions = {
-      mode: { type: "dev" } as AuthMode,
-      internalToken: TEST_INTERNAL_TOKEN,
-    };
-    const req = makeRequest("/v1/chat", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${TEST_INTERNAL_TOKEN}` },
-    });
-    const result = await authenticateRequest(req, devOptions);
-    expect(isAuthError(result)).toBe(false);
-  });
-});
-
 // ── authenticateRequest returns identity ──────────────────────────
 
 describe("authenticateRequest — identity in return value", () => {
@@ -251,11 +165,11 @@ describe("authenticateRequest — identity in return value", () => {
     const identity = makeIdentity({ email: "identity-test@example.com" });
     const provider = createMockProvider("my-key", identity);
     const options = {
-      mode: { type: "adapter", provider } as AuthMode,
-      internalToken: TEST_INTERNAL_TOKEN,
+      provider,
+      eventSink: noopSink,
     };
 
-    const req = makeRequest("/v1/shell", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: "Bearer my-key" },
     });
     const result = await authenticateRequest(req, options);
@@ -275,18 +189,18 @@ describe("authenticateRequest — identity in return value", () => {
     const provider2 = createMockProvider("key-2", identity2);
 
     const options1 = {
-      mode: { type: "adapter", provider: provider1 } as AuthMode,
-      internalToken: TEST_INTERNAL_TOKEN,
+      provider: provider1,
+      eventSink: noopSink,
     };
     const options2 = {
-      mode: { type: "adapter", provider: provider2 } as AuthMode,
-      internalToken: TEST_INTERNAL_TOKEN,
+      provider: provider2,
+      eventSink: noopSink,
     };
 
-    const req1 = makeRequest("/v1/shell", {
+    const req1 = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: "Bearer key-1" },
     });
-    const req2 = makeRequest("/v1/shell", {
+    const req2 = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: "Bearer key-2" },
     });
 

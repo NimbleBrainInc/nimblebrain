@@ -63,8 +63,8 @@ import { SMITHERY_CREDENTIAL_PROVIDER } from "./transport-credential.ts";
  * Owner-namespaced identity Smithery keys connections on, carried as
  * `metadata.userId` so a namespace's connections can be filtered per owner.
  *
- * Same formula as Composio's: workspace ids are not globally unique across
- * tenants (`ws_01abc` exists in every tenant), so `NB_TENANT_ID` is what
+ * Same formula as Composio's: a workspace id is unique only within its
+ * tenant (nothing stops two tenants holding the same one), so `NB_TENANT_ID` is what
  * disambiguates the broker-side namespace. Vendor-free — no client load.
  */
 export function smitheryUserId(owner: ConnectorOwner): string {

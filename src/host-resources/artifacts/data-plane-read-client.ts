@@ -1,7 +1,6 @@
 import {
   createMintingFetch,
   getDefaultServiceTokenCache,
-  resolveAuthorizerTokenUrl,
   type ServiceTokenCache,
 } from "../../oauth/tenant-key-mint.ts";
 
@@ -84,7 +83,7 @@ export interface ArtifactDataPlaneConfig {
 }
 
 /**
- * Resolve the artifacts data-plane endpoint + authorizer issuer from the
+ * Resolve the artifacts data-plane endpoint + authorizer token endpoint from the
  * deploy-provisioned env. Mirrors `remote-transport.ts`'s posture: a missing
  * var is a hard, named error, because an artifact read is unreachable without
  * it and a downstream failure would not name the cause.
@@ -98,13 +97,10 @@ export function readArtifactDataPlaneConfigFromEnv(
       "NB_ARTIFACTS_DATA_PLANE_URL is not set; cannot resolve artifact:// references",
     );
   }
-  const tokenUrl = resolveAuthorizerTokenUrl({
-    tokenUrl: env.NB_FLEET_AUTHORIZER_TOKEN_URL,
-    issuer: env.NB_FLEET_AUTHORIZER_ISSUER,
-  });
+  const tokenUrl = env.NB_FLEET_AUTHORIZER_TOKEN_URL;
   if (!tokenUrl) {
     throw new ArtifactReadError(
-      "authorizer token endpoint is not set; cannot mint an artifacts read token (set NB_FLEET_AUTHORIZER_TOKEN_URL, or NB_FLEET_AUTHORIZER_ISSUER for the legacy `<issuer>/token` fallback)",
+      "NB_FLEET_AUTHORIZER_TOKEN_URL is not set; cannot mint an artifacts read token",
     );
   }
   return { baseUrl, tokenUrl };

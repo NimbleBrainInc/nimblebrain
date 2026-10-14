@@ -8,8 +8,9 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
 import {
-  createCredentialSealer,
   CredentialSealError,
+  type CredentialSealFailure,
+  createCredentialSealer,
   isSealedValue,
   parseSealedValue,
   readCredentialKeyRing,
@@ -19,7 +20,7 @@ const KEY_A = Buffer.alloc(32, 0x11);
 const KEY_B = Buffer.alloc(32, 0x22);
 const KEY_C = Buffer.alloc(32, 0x33);
 
-const WS = "workspace:ws_test";
+const WS = "workspace:ws_0076759dbbe19fcc";
 const INSTANCE = "instance";
 
 function sealerFor(...keys: Buffer[]) {
@@ -69,7 +70,7 @@ describe("the wire format", () => {
     // they all still claim to be sealed, so `open` refuses them.
     for (const damaged of [
       `${sealed}\n`,
-      ` ${sealed}`.trimStart() + " ",
+      `${` ${sealed}`.trimStart()} `,
       sealed.slice(0, -4),
       sealed.split(".").slice(0, 4).join("."),
       "NBS1.",
@@ -111,7 +112,7 @@ describe("tampering", () => {
   // Each flip pins its reason, not just a throw. A decoded flip re-encodes
   // canonically, so every field past the magic reaches the ring lookup or the
   // cipher; a mutation that only fails the grammar shows up as `malformed`.
-  const EXPECTED: Record<(typeof FIELDS)[number], string> = {
+  const EXPECTED: Record<(typeof FIELDS)[number], CredentialSealFailure> = {
     magic: "malformed",
     kid: "unknown_kid",
     salt: "auth_failed",
@@ -152,9 +153,7 @@ describe("tampering", () => {
       .find(
         (c) =>
           c !== last &&
-          Buffer.from(salt.slice(0, -1) + c, "base64url").equals(
-            Buffer.from(salt, "base64url"),
-          ),
+          Buffer.from(salt.slice(0, -1) + c, "base64url").equals(Buffer.from(salt, "base64url")),
       );
     expect(alt).toBeDefined();
     parts[2] = salt.slice(0, -1) + alt;
@@ -234,7 +233,9 @@ describe("the scope and key are bound into the value", () => {
     const s = sealerFor(KEY_A);
     const sealed = s.seal(WS, "acme.db_url", "workspace-value");
     expect(() => s.open(INSTANCE, "acme.db_url", sealed)).toThrow(CredentialSealError);
-    expect(() => s.open("workspace:ws_other", "acme.db_url", sealed)).toThrow(CredentialSealError);
+    expect(() => s.open("workspace:ws_005820c54ca342ad", "acme.db_url", sealed)).toThrow(
+      CredentialSealError,
+    );
     expect(() => s.open("user:usr_alex01", "acme.db_url", sealed)).toThrow(CredentialSealError);
   });
 
@@ -345,9 +346,7 @@ describe("the ring — the first seals, every one opens", () => {
       // a ring entry without disclosing the key behind it, and an operator can
       // tell "the outgoing key was dropped too early" from "this file came from
       // somewhere else" without touching the ciphertext.
-      expect((err as CredentialSealError).message).toContain(
-        sealerFor(KEY_A).sealingKid,
-      );
+      expect((err as CredentialSealError).message).toContain(sealerFor(KEY_A).sealingKid);
       expect((err as CredentialSealError).message).toContain(sealerFor(KEY_B).sealingKid);
     }
   });

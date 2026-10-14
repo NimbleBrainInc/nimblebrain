@@ -39,10 +39,10 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import {
-  type ResourceListChangedNotification,
-  ResourceListChangedNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import type {
+  NotificationMethod,
+  ResourceListChangedNotification,
+} from "@modelcontextprotocol/client";
 import { serverNotificationsRelayedTotal } from "../api/metrics.ts";
 import type { EventSink } from "../engine/types.ts";
 import { isIdentitySource, isPersonalConnectorName } from "./identity-sources.ts";
@@ -54,20 +54,20 @@ export const RESOURCES_LIST_CHANGED: ResourceListChangedNotification["method"] =
   "notifications/resources/list_changed";
 
 /**
- * The server notifications a host relays to that server's views, each with the
- * SDK schema its handler is registered under. This is the one home for the
- * list: `McpSource` registers a handler per entry, and the bridge advertises a
- * capability per entry.
+ * The server notifications a host relays to that server's views, each a spec
+ * method the SDK parses against its own schema before the handler runs. This
+ * is the one home for the list: `McpSource` registers a handler per entry, and
+ * the bridge advertises a capability per entry.
  *
  * `tools/list_changed` and `prompts/list_changed` are also forwardable under
  * MCP Apps, but only behind capabilities this host does not advertise, so they
  * are not listed. Adding one here is the whole change on the runtime side.
  */
-export const RELAYED_SERVER_NOTIFICATIONS = {
-  [RESOURCES_LIST_CHANGED]: ResourceListChangedNotificationSchema,
-} as const;
+export const RELAYED_SERVER_NOTIFICATIONS = [
+  RESOURCES_LIST_CHANGED,
+] as const satisfies readonly NotificationMethod[];
 
-export type RelayedServerNotificationMethod = keyof typeof RELAYED_SERVER_NOTIFICATIONS;
+export type RelayedServerNotificationMethod = (typeof RELAYED_SERVER_NOTIFICATIONS)[number];
 
 /** One relayed notification, as a view receives it. */
 export interface ServerNotification {
@@ -256,7 +256,7 @@ export function createServerNotificationRelay(
  *
  * Its own store rather than `RequestContext.identity`: the owner of a change is
  * a fact about the write, and a write can happen where the ambient request is
- * someone else's or no one's — a scheduled automation run fires on a timer that
+ * someone else's or no one's — a scheduled task run fires on a timer that
  * can carry a stale context. Scoping the user to the one call that sends the
  * notification means the relay reads exactly what the announcer named.
  */

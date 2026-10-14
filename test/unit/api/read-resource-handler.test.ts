@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { handleReadResource } from "../../../src/api/handlers.ts";
 import { artifactResolutionsTotal } from "../../../src/api/metrics.ts";
+import type { ApiErrorBody, ReadResourceResponse } from "../../../src/api/schemas/responses.ts";
 import {
   ArtifactNotFoundError,
   type ArtifactResolver,
@@ -9,24 +10,34 @@ import {
   setArtifactResolver,
 } from "../../../src/host-resources/artifacts/index.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
-import type { ResourceData } from "../../../src/tools/types.ts";
+import type { ToolRegistry } from "../../../src/tools/registry.ts";
+import type { ResourceData, ToolSource } from "../../../src/tools/types.ts";
 import { bytesToBase64 } from "../../../src/util/base64.ts";
+import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { readJson } from "../../helpers/http.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
+import { stub } from "../../helpers/stub.ts";
+import { makeWorkspace } from "../../helpers/test-workspace.ts";
 
 /**
  * Inject a fake `artifact://` resolver whose `read` runs `impl`. Only `read` is
- * exercised by the handler, so a partial cast is the whole seam.
+ * exercised by the handler, so a stub with `read` alone is the whole seam.
  */
-function stubArtifactResolver(impl: (uri: string, ws: string) => unknown): void {
-  setArtifactResolver({
-    read: async (uri: string, ws: string) => impl(uri, ws),
-  } as unknown as ArtifactResolver);
+function stubArtifactResolver(
+  impl: (uri: string, ws: string) => Awaited<ReturnType<ArtifactResolver["read"]>>,
+): void {
+  setArtifactResolver(
+    stub<ArtifactResolver>({
+      read: async (uri: string, ws: string) => impl(uri, ws),
+    }),
+  );
 }
 
 interface StubOptions {
   sources?: string[];
   identitySources?: string[];
   resource?: ResourceData | null;
-  /** Workspace ids the calling identity is a member of (for qualified-name resolution). */
+  /** Workspace ids the calling identity is a member of. */
   memberOf?: string[];
   captureCall?: (args: { server: string; uri: string; workspaceId: string }) => void;
   captureIdentityCall?: (args: { server: string; uri: string }) => void;
@@ -43,12 +54,13 @@ function makeStubRuntime(opts: StubOptions = {}): Runtime {
   const identitySources = new Set(opts.identitySources ?? []);
   const memberOf = opts.memberOf ?? [];
   const recoverable = new Set(opts.recoverable ?? []);
-  const registry = {
+  const registry = stub<ToolRegistry>({
     hasSource: (name: string) => sources.has(name),
     hasEstablishedSource: (name: string) => sources.has(name),
-  };
-  return {
-    getIdentitySource: (name: string) => (identitySources.has(name) ? { name } : undefined),
+  });
+  return stub<Runtime>({
+    getIdentitySource: (name: string) =>
+      identitySources.has(name) ? stub<ToolSource>({ name }) : undefined,
     ensureWorkspaceRegistry: async () => registry,
     // Mirrors the real contract: true when already registered, otherwise a
     // best-effort re-spawn reporting whether the source is registered after it.
@@ -58,9 +70,10 @@ function makeStubRuntime(opts: StubOptions = {}): Runtime {
       sources.add(name);
       return true;
     },
-    getWorkspaceStore: () => ({
-      getWorkspacesForUser: async () => memberOf.map((id) => ({ id })),
-    }),
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({
+        getWorkspacesForUser: async () => memberOf.map((id) => makeWorkspace({ id })),
+      }),
     readAppResource: async (server: string, uri: string, workspaceId: string) => {
       opts.captureCall?.({ server, uri, workspaceId });
       return opts.resource === undefined ? null : opts.resource;
@@ -69,11 +82,11 @@ function makeStubRuntime(opts: StubOptions = {}): Runtime {
       opts.captureIdentityCall?.({ server, uri });
       return opts.resource === undefined ? null : opts.resource;
     },
-  } as unknown as Runtime;
+  });
 }
 
 function req(body: unknown): Request {
-  return new Request("http://x/v1/resources/read", {
+  return new Request("http://x/v1/workspaces/w1/resources/read", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -81,18 +94,6 @@ function req(body: unknown): Request {
 }
 
 describe("handleReadResource", () => {
-  it("rejects missing workspaceId with 400", async () => {
-    const runtime = makeStubRuntime();
-    const res = await handleReadResource(
-      req({ server: "calendar", uri: "ui://calendar/main" }),
-      runtime,
-      {},
-    );
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe("bad_request");
-  });
-
   it("rejects missing server with 400", async () => {
     const runtime = makeStubRuntime();
     const res = await handleReadResource(req({ uri: "ui://x/y" }), runtime, { workspaceId: "w" });
@@ -115,7 +116,7 @@ describe("handleReadResource", () => {
       { workspaceId: "w1" },
     );
     expect(res.status).toBe(403);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("workspace_access_denied");
   });
 
@@ -144,11 +145,11 @@ describe("handleReadResource", () => {
       { workspaceId: "w1" },
     );
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("resource_not_found");
   });
 
-  it("returns ReadResourceResult shape for text resources", async () => {
+  it("returns ReadResourceResponse shape for text resources", async () => {
     const runtime = makeStubRuntime({
       resource: { text: "hello world", mimeType: "text/plain" },
     });
@@ -158,7 +159,7 @@ describe("handleReadResource", () => {
       { workspaceId: "w1" },
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ReadResourceResponse>(res);
     expect(body.contents).toHaveLength(1);
     expect(body.contents[0]).toEqual({
       uri: "ui://calendar/greeting",
@@ -178,7 +179,7 @@ describe("handleReadResource", () => {
       { workspaceId: "w1" },
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ReadResourceResponse>(res);
     expect(body.contents[0].uri).toBe("collateral://exports/e.pdf");
     expect(body.contents[0].mimeType).toBe("application/pdf");
     expect(body.contents[0].text).toBeUndefined();
@@ -191,12 +192,12 @@ describe("handleReadResource", () => {
       resource: { text: "{}", mimeType: "application/json" },
       captureCall: (c) => calls.push(c),
     });
-    await handleReadResource(
-      req({ server: "calendar", uri: "custom://whatever/123" }),
-      runtime,
-      { workspaceId: "w1" },
-    );
-    expect(calls).toEqual([{ server: "calendar", uri: "custom://whatever/123", workspaceId: "w1" }]);
+    await handleReadResource(req({ server: "calendar", uri: "custom://whatever/123" }), runtime, {
+      workspaceId: "w1",
+    });
+    expect(calls).toEqual([
+      { server: "calendar", uri: "custom://whatever/123", workspaceId: "w1" },
+    ]);
   });
 
   it("routes an identity source to readIdentityAppResource, resolving files in the focused workspace", async () => {
@@ -209,13 +210,11 @@ describe("handleReadResource", () => {
     // Files are workspace-owned: the source is still reached through the identity
     // door (no workspace registry), but the read resolves in the focused workspace,
     // threaded via workspaceId.
-    const res = await handleReadResource(
-      req({ server: "files", uri: "files://fl_abc" }),
-      runtime,
-      { workspaceId: "ws_a" },
-    );
+    const res = await handleReadResource(req({ server: "files", uri: "files://fl_abc" }), runtime, {
+      workspaceId: "ws_00079598e311c160",
+    });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ReadResourceResponse>(res);
     expect(body.contents[0].text).toBe("hello world\n");
     expect(calls).toEqual([{ server: "files", uri: "files://fl_abc" }]);
   });
@@ -223,17 +222,17 @@ describe("handleReadResource", () => {
   it("returns 404 when an identity resource is missing", async () => {
     const runtime = makeStubRuntime({ identitySources: ["files"], resource: null });
     const res = await handleReadResource(req({ server: "files", uri: "files://fl_x" }), runtime, {
-      workspaceId: "ws_a",
+      workspaceId: "ws_00079598e311c160",
     });
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("resource_not_found");
   });
 
   it("returns 400 for invalid JSON body", async () => {
     const runtime = makeStubRuntime();
     const res = await handleReadResource(
-      new Request("http://x/v1/resources/read", {
+      new Request("http://x/v1/workspaces/w1/resources/read", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "not json",
@@ -244,55 +243,54 @@ describe("handleReadResource", () => {
     expect(res.status).toBe(400);
   });
 
-  // Cross-workspace: a qualified `ws_<id>-<source>` server names its OWN
-  // workspace. The owning workspace — not the ambient X-Workspace-Id — is
-  // authoritative, and the registry/readAppResource are keyed on the BARE
-  // source name. Regression for the preview-from-another-workspace 403.
-  it("resolves a qualified server to its owning workspace, ignoring X-Workspace-Id", async () => {
+  // The workspace is the one in the URL path (ADR-0037). A qualified
+  // `ws_<id>-<source>` server is refused — never routed to the workspace it
+  // names, never stripped to its bare remainder.
+  it("refuses a qualified server with a 400, even for a member of the named workspace", async () => {
     const calls: Array<{ server: string; uri: string; workspaceId: string }> = [];
     const runtime = makeStubRuntime({
-      sources: ["synapse-collateral"], // registry keyed on the bare source name
-      memberOf: ["ws_nimblebrain_shared"],
+      sources: ["synapse-collateral"],
+      memberOf: ["ws_0073c806fc50dc07"],
       resource: { text: "ok", mimeType: "text/plain" },
       captureCall: (c) => calls.push(c),
     });
     const res = await handleReadResource(
-      req({ server: "ws_nimblebrain_shared-synapse-collateral", uri: "collateral://exports/e.pdf" }),
+      req({ server: "ws_0073c806fc50dc07-synapse-collateral", uri: "collateral://exports/e.pdf" }),
       runtime,
-      // Ambient workspace is the user's PERSONAL workspace, not where the doc lives.
-      { workspaceId: "ws_user_u1", identity: { id: "u1" } as never },
+      { workspaceId: "ws_007dc0488ce56f9e", identity: makeIdentity({ id: "u1" }) },
     );
-    expect(res.status).toBe(200);
-    // readAppResource gets the bare source + the workspace parsed from the name.
-    expect(calls).toEqual([
-      { server: "synapse-collateral", uri: "collateral://exports/e.pdf", workspaceId: "ws_nimblebrain_shared" },
-    ]);
+    expect(res.status).toBe(400);
+    const body = await readJson<ApiErrorBody>(res);
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toContain("uses the retired ws_<id>- server-name form");
+    expect(body.message).toContain('"synapse-collateral"');
+    expect(body.details).toEqual({
+      server: "ws_0073c806fc50dc07-synapse-collateral",
+      reason: "legacy_namespaced_form",
+    });
+    expect(calls).toEqual([]);
   });
 
-  it("returns 403 for a qualified server the caller is not a member of", async () => {
+  it("resolves a bare server in the workspace in the URL", async () => {
+    const calls: Array<{ server: string; uri: string; workspaceId: string }> = [];
     const runtime = makeStubRuntime({
       sources: ["synapse-collateral"],
-      memberOf: ["ws_some_other"], // not a member of ws_nimblebrain_shared
       resource: { text: "ok", mimeType: "text/plain" },
+      captureCall: (c) => calls.push(c),
     });
     const res = await handleReadResource(
-      req({ server: "ws_nimblebrain_shared-synapse-collateral", uri: "collateral://exports/e.pdf" }),
+      req({ server: "synapse-collateral", uri: "collateral://exports/e.pdf" }),
       runtime,
-      { workspaceId: "ws_user_u1", identity: { id: "u1" } as never },
+      { workspaceId: "ws_0073c806fc50dc07", identity: makeIdentity({ id: "u1" }) },
     );
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.error).toBe("workspace_access_denied");
-  });
-
-  it("returns 401 for a qualified server with no identity", async () => {
-    const runtime = makeStubRuntime({ sources: ["synapse-collateral"], memberOf: ["ws_x"] });
-    const res = await handleReadResource(
-      req({ server: "ws_x-synapse-collateral", uri: "collateral://exports/e.pdf" }),
-      runtime,
-      { workspaceId: "ws_x" },
-    );
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        server: "synapse-collateral",
+        uri: "collateral://exports/e.pdf",
+        workspaceId: "ws_0073c806fc50dc07",
+      },
+    ]);
   });
 });
 
@@ -300,21 +298,6 @@ describe("handleReadResource — artifact:// branch", () => {
   // The artifact resolver is a process-wide singleton (test seam). Reset it
   // after each case so an injected fake never leaks into another test.
   afterEach(() => setArtifactResolver(undefined));
-
-  it("returns 400 when no workspace is in scope", async () => {
-    const runtime = makeStubRuntime();
-    let called = false;
-    stubArtifactResolver(() => {
-      called = true;
-      return { contents: [] };
-    });
-    const res = await handleReadResource(req({ uri: "artifact://abc123" }), runtime, {});
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe("bad_request");
-    // The workspace gate fires before the resolver is ever consulted.
-    expect(called).toBe(false);
-  });
 
   it("maps ArtifactNotFoundError to 404", async () => {
     const runtime = makeStubRuntime();
@@ -325,7 +308,7 @@ describe("handleReadResource — artifact:// branch", () => {
       workspaceId: "w1",
     });
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("resource_not_found");
   });
 
@@ -338,7 +321,7 @@ describe("handleReadResource — artifact:// branch", () => {
       workspaceId: "w1",
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("resource_too_large");
   });
 
@@ -352,7 +335,7 @@ describe("handleReadResource — artifact:// branch", () => {
       workspaceId: "w1",
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -365,7 +348,7 @@ describe("handleReadResource — artifact:// branch", () => {
       workspaceId: "w1",
     });
     expect(res.status).toBe(502);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("resource_read_failed");
   });
 
@@ -380,7 +363,7 @@ describe("handleReadResource — artifact:// branch", () => {
       workspaceId: "w1",
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ReadResourceResponse>(res);
     expect(body.contents).toEqual([
       { uri: "artifact://abc123", mimeType: "text/plain", text: "resolved body" },
     ]);

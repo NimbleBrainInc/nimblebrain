@@ -33,3 +33,17 @@ export function capPreview(text: string): string {
   const cut = lastSpace > PREVIEW_MAX_CHARS * 0.75 ? head.slice(0, lastSpace) : head;
   return `${cut}…`;
 }
+
+/**
+ * The preview text of a user message's content: its first text part. `""`
+ * when there is no text.
+ */
+export function previewTextOf(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  for (const part of content) {
+    if (part && typeof part === "object" && "type" in part && part.type === "text") {
+      return (part as { text?: string }).text ?? "";
+    }
+  }
+  return "";
+}

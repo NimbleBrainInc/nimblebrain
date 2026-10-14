@@ -10,17 +10,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 interface ToolCall {
   tool: string;
@@ -38,7 +33,7 @@ const ARCHIVES = [
     archivedAt: "2026-01-02T03:04:05.000Z",
   },
   {
-    name: "ws_orphan-1",
+    name: "ws_0057ae5b54fe4216-1",
     workspaceId: null,
     workspaceName: null,
     sizeBytes: 10,
@@ -48,19 +43,21 @@ const ARCHIVES = [
 
 mock.module("../api/client", () => ({
   ...realClient,
-  callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
-    calls.push({ tool, args });
-    if (args.action === "purge_archive") {
+  callToolWithoutWorkspace: mock(
+    async (_source: string, tool: string, args: Record<string, unknown>) => {
+      calls.push({ tool, args });
+      if (args.action === "purge_archive") {
+        return {
+          content: [{ type: "text", text: "Purged." }],
+          structuredContent: { purged: true, name: args.archive, sizeBytes: 2048 },
+        };
+      }
       return {
-        content: [{ type: "text", text: "Purged." }],
-        structuredContent: { purged: true, name: args.archive, sizeBytes: 2048 },
+        content: [{ type: "text", text: "2 archive(s)." }],
+        structuredContent: { archives: ARCHIVES },
       };
-    }
-    return {
-      content: [{ type: "text", text: "2 archive(s)." }],
-      structuredContent: { archives: ARCHIVES },
-    };
-  }),
+    },
+  ),
 }));
 
 let confirmReturn = true;
@@ -121,7 +118,7 @@ describe("OrgArchivesTab", () => {
     const rows = container.querySelectorAll("tbody tr");
     expect(rows).toHaveLength(2);
     expect(rows[0]?.textContent).toContain("Research");
-    expect(rows[1]?.textContent).toContain("ws_orphan-1");
+    expect(rows[1]?.textContent).toContain("ws_0057ae5b54fe4216-1");
     expect(rows[1]?.textContent).toContain("Unknown");
   });
 
@@ -145,7 +142,7 @@ describe("OrgArchivesTab", () => {
     confirmReturn = false;
     const container = await mount();
 
-    await clickPurge(container, "ws_orphan-1");
+    await clickPurge(container, "ws_0057ae5b54fe4216-1");
 
     expect(windowConfirm).toHaveBeenCalledTimes(1);
     expect(calls.some((c) => c.args.action === "purge_archive")).toBe(false);

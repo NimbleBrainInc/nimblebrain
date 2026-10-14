@@ -1,13 +1,14 @@
-# 0023. The client advertises `tasks` and `extensions`, and nothing it does not serve
+# 0023. The client advertises `extensions`, and nothing it does not serve
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0046, ADR-0050
 - Date: 2026-09-03
 - Serves: orchestrate remote MCP
 
 ## Context
 
-MCP's `initialize` handshake is where a client tells every server what it can
-do. A server reads that block and changes its behaviour: it will hand back a
+A client tells every server what it can do: in the `initialize` handshake on a
+2025-era connection, and in every request's `_meta` envelope on a `2026-07-28`
+one. A server reads that block and changes its behaviour: it will hand back a
 task rather than block a request, or route a question back through the client,
 or emit log notifications, depending on what the client claimed.
 
@@ -26,15 +27,38 @@ collide.
 **One builder produces the client and its claims** (`buildClient`,
 `src/tools/mcp-source.ts`), called on the initial start and again on the OAuth
 retry rebuild, so two connections to the same server cannot claim different
-things. It advertises exactly two blocks.
+things. It advertises one block, `extensions`, and a claim in it is made only
+on the eras where it is served. The tasks extension is claimed per request, not
+on the connection.
 
-**`tasks`, because it is exercised.** The client honours task-augmented
-`tools/call` and can cancel what it started: a server that marks a tool with
-`execution.taskSupport` sees that this client will attach a task rather than
-block the request. The stream is opened, polled, and cancelled by real code paths
-(ADR-0029), so the claim is backed. `tasks/list` is not claimed — nothing here
-lists tasks, and SEP-2663 removes the method from the spec, so claiming it would
-invite a client that never arrives.
+**Tasks are claimed per request, on the task wire** (ADR-0046). The client
+claims no 2025-11-25 `tasks` capability, because it never attaches a task on a
+2025-era connection. It does not claim the 2026-07-28 tasks extension
+(`io.modelcontextprotocol/tasks`) on the connection either: a connection-level
+claim would opt every SDK call in, and the SDK cannot read a task result. The
+task wire (`src/tools/mcp-task-client.ts`) names the extension in the client
+capabilities of each `tools/call` it sends to a server that advertised it, then
+polls and cancels what it started (ADR-0029), so each claim is backed by the
+code that sent it. `tasks/list` is not claimed: nothing here lists tasks, and
+SEP-2663 removes the method from the spec.
+
+- *Amended by ADR-0046:* the 2025-11-25 `tasks` capability is no longer
+  claimed, because the 2025-11-25 tasks utility is not spoken. A task is opted
+  in per `tools/call` under the 2026-07-28 tasks extension
+  (`io.modelcontextprotocol/tasks`), in that request's own `_meta` client
+  capabilities.
+
+**A claim is per era, because what is served is.** The host-resources methods
+are server→client requests, and `2026-07-28` removed that channel, so
+`ai.nimblebrain/host-resources` is claimed in the 2025 `initialize` and on no
+`2026-07-28` request, the `server/discover` probe included. SDK v2 fixes a
+client's capabilities at construction and sends them on both eras, before the
+era is known; the builder constructs the client with the claims that hold on
+every era and adds the 2025-only ones to `initialize`, the one request only
+that era sends. The claim is also per source: only a source that registers the
+host-resources handlers (one built with a connector context) makes it, so a
+source that would answer the methods with method-not-found never advertises
+them.
 
 **`extensions`, for NimbleBrain-namespaced vendor capabilities** (ADR-0024) —
 never `experimental`. `extensions` is the coordinated mechanism, the keys are
@@ -43,7 +67,9 @@ whether to use an extension or fall back. The field is taken from the SDK's
 generated spec types, which track the specification's draft schema and run ahead
 of the revision the SDK negotiates on the wire; it travels on the SDK's
 authority, not the pinned revision's, and that gap closes on its own as the
-revision lands.
+revision lands. The block also carries the official extensions this client
+consumes: `io.modelcontextprotocol/skills` is claimed on both eras, because
+skill discovery (`skills/list`, ADR-0011) runs on both.
 
 **Sampling, elicitation, roots, and logging are not advertised**, and this is not
 a not-yet.
@@ -58,13 +84,21 @@ a not-yet.
   correct implementation of "block this call until someone answers" in a
   scheduled automation, so the honest advertisement is silence.
 
+- *Amended by ADR-0050:* a call `/mcp/<wsId>` makes inline for an outside
+  client sends that client's own capabilities to the connector, and the
+  connector's input requests (elicitation, sampling, roots) go back to that
+  client to answer, each elicitation naming the connector. The answerer is the
+  client's person, and nothing here waits. The runtime still claims none of
+  them on its own calls.
+
 The same rule binds the other direction. An in-process source does not advertise
 `resources.subscribe`, because it registers no handler for it (ADR-0022).
 
 ## Consequences
 
-- Every capability in the handshake is backed by code that runs. A server that
-  adapts to what this client claims gets the behaviour it adapted to.
+- Every capability the client claims is backed by code that runs on that era.
+  A server that adapts to what this client claims gets the behaviour it adapted
+  to.
 - The runtime cannot use sampling to borrow a server's model choice, cannot ask
   a user a mid-call question through MCP, and gets no server log stream. The
   first two are permanent for a server-side host; the third is a deprecation to

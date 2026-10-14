@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { renderHook, act } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
-import { ChatProvider, useChatContext, useChatConfigContext } from "../src/context/ChatContext";
+import { ChatProvider, useChatConfigContext, useChatContext } from "../src/context/ChatContext";
 import type { AppContext } from "../src/types";
 
 // --------------------------------------------------------------------------
@@ -10,21 +10,21 @@ import type { AppContext } from "../src/types";
 // --------------------------------------------------------------------------
 
 function wrapper({ children }: { children: ReactNode }) {
-	return (
-		<MemoryRouter>
-			<ChatProvider>{children}</ChatProvider>
-		</MemoryRouter>
-	);
+  return (
+    <MemoryRouter>
+      <ChatProvider>{children}</ChatProvider>
+    </MemoryRouter>
+  );
 }
 
 function wrapperWithId(id: string) {
-	return function Wrapper({ children }: { children: ReactNode }) {
-		return (
-			<MemoryRouter>
-				<ChatProvider initialConversationId={id}>{children}</ChatProvider>
-			</MemoryRouter>
-		);
-	};
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return (
+      <MemoryRouter>
+        <ChatProvider initialConversationId={id}>{children}</ChatProvider>
+      </MemoryRouter>
+    );
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -39,171 +39,171 @@ function wrapperWithId(id: string) {
  * every test that mounted the control directly stayed green.
  */
 describe("config seeded from the bootstrap", () => {
-	/** Exactly the shape `App` builds from `/v1/bootstrap`. */
-	const BOOTSTRAP = {
-		configuredProviders: ["anthropic"],
-		newConversationModel: "anthropic:claude-opus-4-6",
-		availableModels: {
-			anthropic: [{ id: "claude-opus-4-6", name: "Claude Opus 4.6" }],
-		},
-		preferences: { displayName: "Dev" },
-	};
+  /** Exactly the shape `App` builds from `/v1/bootstrap`. */
+  const BOOTSTRAP = {
+    configuredProviders: ["anthropic"],
+    newConversationModel: "anthropic:claude-opus-4-6",
+    availableModels: {
+      anthropic: [{ id: "claude-opus-4-6", name: "Claude Opus 4.6" }],
+    },
+    preferences: { displayName: "Dev" },
+  };
 
-	function bootstrapWrapper({ children }: { children: ReactNode }) {
-		return (
-			<MemoryRouter>
-				<ChatProvider initialConfig={BOOTSTRAP}>{children}</ChatProvider>
-			</MemoryRouter>
-		);
-	}
+  function bootstrapWrapper({ children }: { children: ReactNode }) {
+    return (
+      <MemoryRouter>
+        <ChatProvider initialConfig={BOOTSTRAP}>{children}</ChatProvider>
+      </MemoryRouter>
+    );
+  }
 
-	it("carries the fields the composer needs, without a config round-trip", () => {
-		const { result } = renderHook(() => useChatConfigContext(), { wrapper: bootstrapWrapper });
-		expect(result.current.newConversationModel).toBe("anthropic:claude-opus-4-6");
-		expect(result.current.availableModels?.anthropic?.[0]?.id).toBe("claude-opus-4-6");
-	});
+  it("carries the fields the composer needs, without a config round-trip", () => {
+    const { result } = renderHook(() => useChatConfigContext(), { wrapper: bootstrapWrapper });
+    expect(result.current.newConversationModel).toBe("anthropic:claude-opus-4-6");
+    expect(result.current.availableModels?.anthropic?.[0]?.id).toBe("claude-opus-4-6");
+  });
 });
 
 describe("ChatContext", () => {
-	it("provides all useChat return values", () => {
-		const { result } = renderHook(() => useChatContext(), { wrapper });
+  it("provides all useChat return values", () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
 
-		expect(result.current.messages).toEqual([]);
-		expect(result.current.isStreaming).toBe(false);
-		expect(result.current.conversationId).toBeNull();
-		expect(result.current.error).toBeNull();
-		expect(typeof result.current.sendMessage).toBe("function");
-		expect(typeof result.current.newConversation).toBe("function");
-		expect(typeof result.current.loadConversation).toBe("function");
-	});
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.conversationId).toBeNull();
+    expect(result.current.error).toBeNull();
+    expect(typeof result.current.sendMessage).toBe("function");
+    expect(typeof result.current.newConversation).toBe("function");
+    expect(typeof result.current.loadConversation).toBe("function");
+  });
 
-	it("throws when used outside a ChatProvider", () => {
-		expect(() => {
-			renderHook(() => useChatContext());
-		}).toThrow("useChatContext must be used within a ChatProvider");
-	});
+  it("throws when used outside a ChatProvider", () => {
+    expect(() => {
+      renderHook(() => useChatContext());
+    }).toThrow("useChatContext must be used within a ChatProvider");
+  });
 
-	it("passes initialConversationId to useChat", () => {
-		const { result } = renderHook(() => useChatContext(), {
-			wrapper: wrapperWithId("conv-123"),
-		});
+  it("passes initialConversationId to useChat", () => {
+    const { result } = renderHook(() => useChatContext(), {
+      wrapper: wrapperWithId("conv-123"),
+    });
 
-		expect(result.current.conversationId).toBe("conv-123");
-	});
+    expect(result.current.conversationId).toBe("conv-123");
+  });
 
-	it("sendMessage accepts optional appContext parameter", () => {
-		const { result } = renderHook(() => useChatContext(), { wrapper });
+  it("sendMessage accepts optional appContext parameter", () => {
+    const { result } = renderHook(() => useChatContext(), { wrapper });
 
-		expect(result.current.sendMessage.length).toBeGreaterThanOrEqual(0);
+    expect(result.current.sendMessage.length).toBeGreaterThanOrEqual(0);
 
-		const ctx: AppContext = { appName: "my-app", serverName: "my-server" };
-		const promise = result.current.sendMessage("hello", ctx);
-		expect(promise).toBeInstanceOf(Promise);
-	});
+    const ctx: AppContext = { appName: "my-app", serverName: "my-server" };
+    const promise = result.current.sendMessage("hello", ctx);
+    expect(promise).toBeInstanceOf(Promise);
+  });
 
-	it("newConversation resets state", async () => {
-		const { result } = renderHook(() => useChatContext(), {
-			wrapper: wrapperWithId("conv-456"),
-		});
+  it("newConversation resets state", async () => {
+    const { result } = renderHook(() => useChatContext(), {
+      wrapper: wrapperWithId("conv-456"),
+    });
 
-		expect(result.current.conversationId).toBe("conv-456");
+    expect(result.current.conversationId).toBe("conv-456");
 
-		act(() => {
-			result.current.newConversation();
-		});
+    act(() => {
+      result.current.newConversation();
+    });
 
-		expect(result.current.conversationId).toBeNull();
-		expect(result.current.messages).toEqual([]);
-		expect(result.current.error).toBeNull();
-		expect(result.current.isStreaming).toBe(false);
-	});
+    expect(result.current.conversationId).toBeNull();
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.error).toBeNull();
+    expect(result.current.isStreaming).toBe(false);
+  });
 });
 
 describe("ChatConfigContext", () => {
-	it("provides config values", () => {
-		const { result } = renderHook(() => useChatConfigContext(), { wrapper });
+  it("provides config values", () => {
+    const { result } = renderHook(() => useChatConfigContext(), { wrapper });
 
-		expect(result.current.configuredProviders).toEqual([]);
-		expect(typeof result.current.refreshConfig).toBe("function");
-	});
+    expect(result.current.configuredProviders).toEqual([]);
+    expect(typeof result.current.refreshConfig).toBe("function");
+  });
 
-	// The model a turn runs on is resolved server-side, and fixed at create for
-	// any conversation with a pin. A client-held selection would be per-browser
-	// and per-device, so the context must not carry one again.
-	it("exposes no client-side model selection", () => {
-		const { result } = renderHook(() => useChatConfigContext(), { wrapper });
+  // The model a turn runs on is resolved server-side, and fixed at create for
+  // any conversation with a pin. A client-held selection would be per-browser
+  // and per-device, so the context must not carry one again.
+  it("exposes no client-side model selection", () => {
+    const { result } = renderHook(() => useChatConfigContext(), { wrapper });
 
-		expect(result.current).not.toHaveProperty("selectedModel");
-		expect(result.current).not.toHaveProperty("setSelectedModel");
-		// Nor the resolved default it would be chosen against: no surface read
-		// it, and `get_config` publishes effective values under `resolved`.
-		expect(result.current).not.toHaveProperty("defaultModel");
-		expect(localStorage.getItem("nb:selectedModel")).toBeNull();
-	});
+    expect(result.current).not.toHaveProperty("selectedModel");
+    expect(result.current).not.toHaveProperty("setSelectedModel");
+    // Nor the resolved default it would be chosen against: no surface read
+    // it, and `get_config` publishes effective values under `resolved`.
+    expect(result.current).not.toHaveProperty("defaultModel");
+    expect(localStorage.getItem("nb:selectedModel")).toBeNull();
+  });
 
-	it("throws when used outside a ChatProvider", () => {
-		expect(() => {
-			renderHook(() => useChatConfigContext());
-		}).toThrow("useChatConfigContext must be used within a ChatProvider");
-	});
+  it("throws when used outside a ChatProvider", () => {
+    expect(() => {
+      renderHook(() => useChatConfigContext());
+    }).toThrow("useChatConfigContext must be used within a ChatProvider");
+  });
 
-	it("accepts initialConfig from bootstrap", () => {
-		function wrapperWithConfig({ children }: { children: ReactNode }) {
-			return (
-				<MemoryRouter>
-					<ChatProvider
-						initialConfig={{
-							configuredProviders: ["anthropic", "openai"],
-							preferences: { theme: "dark" },
-						}}
-					>
-						{children}
-					</ChatProvider>
-				</MemoryRouter>
-			);
-		}
+  it("accepts initialConfig from bootstrap", () => {
+    function wrapperWithConfig({ children }: { children: ReactNode }) {
+      return (
+        <MemoryRouter>
+          <ChatProvider
+            initialConfig={{
+              configuredProviders: ["anthropic", "openai"],
+              preferences: { theme: "dark" },
+            }}
+          >
+            {children}
+          </ChatProvider>
+        </MemoryRouter>
+      );
+    }
 
-		const { result } = renderHook(() => useChatConfigContext(), {
-			wrapper: wrapperWithConfig,
-		});
+    const { result } = renderHook(() => useChatConfigContext(), {
+      wrapper: wrapperWithConfig,
+    });
 
-		expect(result.current.configuredProviders).toEqual(["anthropic", "openai"]);
-		expect(result.current.preferences).toEqual({ theme: "dark" });
-	});
+    expect(result.current.configuredProviders).toEqual(["anthropic", "openai"]);
+    expect(result.current.preferences).toEqual({ theme: "dark" });
+  });
 
-	it("config context value is stable when chat state changes", () => {
-		// Verify that the config context object reference doesn't change
-		// when only chat (streaming) state changes. This is the key property
-		// that prevents shell re-renders during streaming.
-		const refs: unknown[] = [];
+  it("config context value is stable when chat state changes", () => {
+    // Verify that the config context object reference doesn't change
+    // when only chat (streaming) state changes. This is the key property
+    // that prevents shell re-renders during streaming.
+    const refs: unknown[] = [];
 
-		function wrapperBoth({ children }: { children: ReactNode }) {
-			return (
-			<MemoryRouter>
-				<ChatProvider>{children}</ChatProvider>
-			</MemoryRouter>
-		);
-		}
+    function wrapperBoth({ children }: { children: ReactNode }) {
+      return (
+        <MemoryRouter>
+          <ChatProvider>{children}</ChatProvider>
+        </MemoryRouter>
+      );
+    }
 
-		const { result } = renderHook(
-			() => {
-				const config = useChatConfigContext();
-				const chat = useChatContext();
-				return { config, chat };
-			},
-			{ wrapper: wrapperBoth },
-		);
+    const { result } = renderHook(
+      () => {
+        const config = useChatConfigContext();
+        const chat = useChatContext();
+        return { config, chat };
+      },
+      { wrapper: wrapperBoth },
+    );
 
-		refs.push(result.current.config);
+    refs.push(result.current.config);
 
-		// Trigger a chat state change (newConversation resets messages)
-		act(() => {
-			result.current.chat.newConversation();
-		});
+    // Trigger a chat state change (newConversation resets messages)
+    act(() => {
+      result.current.chat.newConversation();
+    });
 
-		refs.push(result.current.config);
+    refs.push(result.current.config);
 
-		// Config reference should be the same object — no unnecessary re-renders
-		expect(refs[0]).toBe(refs[1]);
-	});
+    // Config reference should be the same object — no unnecessary re-renders
+    expect(refs[0]).toBe(refs[1]);
+  });
 });

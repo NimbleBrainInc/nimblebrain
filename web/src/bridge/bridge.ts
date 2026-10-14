@@ -6,7 +6,7 @@
 //
 // Spec-compliant methods:
 //   tools/call, resources/read, resources/list, resources/templates/list,
-//   tasks/get, tasks/result, tasks/cancel,
+//   tasks/get, tasks/cancel (the tasks extension, io.modelcontextprotocol/tasks),
 //   ui/initialize, ui/notifications/initialized,
 //   ui/notifications/tool-result, ui/notifications/tool-input,
 //   ui/notifications/host-context-changed, ui/notifications/size-changed,
@@ -17,64 +17,63 @@
 // answers to its own requests; earlier notifications are held until then.
 //
 // Spec-compliant notifications forwarded host→iframe:
-//   notifications/tasks/status (subscribed once per bridge instance)
 //   the app server's own notifications on RELAYED_TO_VIEWS
 //     (relayed-notifications.ts), verbatim, via the `server.notification` SSE
 //     relay in hooks/useServerNotificationRelay.ts
 //
 // NimbleBrain extensions (ai.nimblebrain/ namespace — no spec equivalent):
-//   ai.nimblebrain/action, ai.nimblebrain/keydown, ai.nimblebrain/request-file
+//   ai.nimblebrain/action, ai.nimblebrain/keydown, ai.nimblebrain/request-file,
+//   ai.nimblebrain/location (in) and ai.nimblebrain/navigate (out)
 //   Each is served only because it is declared: see host-capabilities.ts.
 // ---------------------------------------------------------------------------
 
-import {
-  type CallToolRequest,
-  CallToolResultSchema,
-  type CancelTaskRequest,
-  CancelTaskResultSchema,
-  CreateTaskResultSchema,
-  ErrorCode,
-  type GetTaskPayloadRequest,
-  GetTaskPayloadResultSchema,
-  type GetTaskRequest,
-  GetTaskResultSchema,
-  TaskStatusNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import { getActiveWorkspaceId, uploadResource, type WorkspaceFile } from "../api/client";
-import { isIdentityApp } from "../lib/identity-apps";
+import { getActiveWorkspaceId, uploadResource } from "../api/client";
+import { humanBytes } from "../api/format-error";
 import { appNameFromToolName } from "../lib/namespaced-tool";
-import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
+import {
+  CLIENT_CAPABILITIES_META_KEY,
+  type McpAnswer,
+  type McpError,
+  sendMcpRequest,
+} from "../mcp-bridge-client";
+import type { FileEntry } from "../types";
 import { openAppChannel } from "./app-channel";
 import {
   ACTION_METHOD,
-  CHAT_CONTEXT_META_KEY,
+  HOST_STYLES_EXTENSION,
   KEYDOWN_METHOD,
+  LOCATION_METHOD,
+  NAVIGATE_METHOD,
+  NOTIFY_METHOD,
   REQUEST_FILE_METHOD,
+  UPLOAD_FILES_APPS,
+  UPLOAD_FILES_METHOD,
 } from "./extensions";
-import { buildHostCapabilities } from "./host-capabilities";
-import { buildHostStyles } from "./host-extensions";
+import { buildHostCapabilities, TASKS_EXTENSION_ID } from "./host-capabilities";
+import { buildHostStyles, type UploadLimits } from "./host-extensions";
 import type { LoggingMessageNotification } from "./schemas";
-import { getHostThemeMode, getSpecThemeTokens } from "./theme";
+import { getHostThemeMode, getModeExtensionTokens, getSpecThemeTokens } from "./theme";
 import type {
+  AppNotice,
   BridgeCallbacks,
   ExtAppsHostContextChangedNotification,
   ExtAppsInitializeResponse,
   ExtAppsToolInputNotification,
+  ExtAppsToolResultNotification,
   ResourcesListMessage,
   ResourcesReadMessage,
   SynapseRequestFileMessage,
+  SynapseUploadFilesMessage,
   UiActionMessage,
-  UiChatContext,
   UiMessageMessage,
   UiToolResultError,
-  UiToolResultMessage,
   UiToolResultResponse,
   UiUpdateModelContextMessage,
 } from "./types";
 import { validateAppToHostMessage } from "./validate";
 
 // ---------------------------------------------------------------------------
-// App state store (module-level, shared across bridges)
+// App state (ui/update-model-context), one entry per live bridge
 // ---------------------------------------------------------------------------
 
 interface AppStateEntry {
@@ -83,26 +82,57 @@ interface AppStateEntry {
   updatedAt: string;
 }
 
-const appStateStore = new Map<string, AppStateEntry>();
+/**
+ * State belongs to the view that pushed it: `ui/update-model-context` is that
+ * view's current context (MCP Apps), not a durable record of the app. So each
+ * bridge owns its entry and `destroy()` releases it, and a reopened view
+ * reports nothing until it pushes. Entries are re-inserted on every push, so
+ * iteration order is push order.
+ */
+const appStateByBridge = new Map<symbol, { appName: string; entry: AppStateEntry }>();
 
-/** Get the latest app state pushed via ui/update-model-context. */
+/**
+ * Bridges whose iframe is out of the viewport (scrolled away in the chat, or
+ * hidden). A bridge is on screen until its observer says otherwise, so a host
+ * without `IntersectionObserver` treats every live view as on screen.
+ */
+const offScreenBridges = new Set<symbol>();
+
+/**
+ * The app state the prompt should carry for `appName`, from its live views.
+ *
+ * Several views of one app can be live at once (its full-page slot beside an
+ * inline view in the chat, or two inline views), and the prompt has one state
+ * slot. A view on screen beats one off screen: an inline view from an earlier
+ * turn can push when it mounts, scrolled out of sight, after the slot the user
+ * is looking at last pushed. Among views equally on or off screen, the most
+ * recent push wins: it comes from the view the user last changed.
+ */
 export function getAppState(appName: string): AppStateEntry | undefined {
-  return appStateStore.get(appName);
-}
-
-/** Clear app state (call when app is unmounted). */
-export function clearAppState(appName: string): void {
-  appStateStore.delete(appName);
+  let latestOnScreen: AppStateEntry | undefined;
+  let latest: AppStateEntry | undefined;
+  for (const [key, view] of appStateByBridge) {
+    if (view.appName !== appName) continue;
+    latest = view.entry;
+    if (!offScreenBridges.has(key)) latestOnScreen = view.entry;
+  }
+  return latestOnScreen ?? latest;
 }
 
 /** Handle returned by createBridge. Used to send messages and tear down. */
 export interface BridgeHandle {
-  /** Send a ui/notifications/tool-result notification (agent-side tool result). */
-  sendToolResult(result: { content: unknown[]; structuredContent?: Record<string, unknown> }): void;
+  /**
+   * Send a ui/notifications/tool-result notification (agent-side tool result).
+   * The params are the tool's `CallToolResult`, `isError` included, so a view
+   * can tell a refusal from a result.
+   */
+  sendToolResult(result: ExtAppsToolResultNotification["params"]): void;
   /** Send ui/notifications/host-context-changed (ext-apps spec). */
   setHostContext(context: Record<string, unknown>): void;
   /** Send ui/notifications/tool-input (ext-apps spec). */
   sendToolInput(params: { arguments: Record<string, unknown> }): void;
+  /** Send ai.nimblebrain/navigate: ask the app to go to one of its trail entries. */
+  navigate(id: string): void;
   /** Remove all event listeners and clean up. */
   destroy(): void;
 }
@@ -111,7 +141,7 @@ export interface BridgeHandle {
  * Create a bridge between the host page and an app iframe.
  *
  * Listens for postMessage events from the iframe and routes them per the
- * ext-apps spec, plus NimbleBrain synapse/ extensions.
+ * ext-apps spec, plus NimbleBrain ai.nimblebrain/* extensions.
  */
 export function createBridge(
   iframe: HTMLIFrameElement,
@@ -119,6 +149,20 @@ export function createBridge(
   callbacks?: BridgeCallbacks,
 ): BridgeHandle {
   let destroyed = false;
+  // This app's notice budget; `ai.nimblebrain/notify` past it is refused.
+  const notifyLimiter = createNoticeLimiter();
+  // This bridge's key in `appStateByBridge`, released in `destroy()`.
+  const stateKey = Symbol(appName);
+  const screenObserver =
+    typeof IntersectionObserver === "undefined"
+      ? null
+      : new IntersectionObserver((entries) => {
+          const last = entries[entries.length - 1];
+          if (!last || destroyed) return;
+          if (last.isIntersecting) offScreenBridges.delete(stateKey);
+          else offScreenBridges.add(stateKey);
+        });
+  screenObserver?.observe(iframe);
 
   // Nothing reaches the app before it has sent `ui/notifications/initialized`
   // except the answers to its own requests — the `ui/initialize` response
@@ -187,7 +231,7 @@ export function createBridge(
     }
 
     // Dispatch by method. Every spec method, the two ui/notifications/*
-    // lifecycle signals, and the synapse/ extensions are distinct `method`
+    // lifecycle signals, and the ai.nimblebrain/* extensions are distinct `method`
     // values, so one switch reproduces the original per-method routing. A
     // message with no method, or with one this host does not serve, lands in
     // `default`.
@@ -196,7 +240,7 @@ export function createBridge(
       // ext-apps protocol: ui/initialize REQUEST (has id + method)
       // -----------------------------------------------------------------
       case "ui/initialize":
-        handleInitialize(msg.id, callbacks, postToIframe);
+        handleInitialize(msg.id, appName, callbacks, postToIframe);
         break;
 
       // -----------------------------------------------------------------
@@ -240,46 +284,15 @@ export function createBridge(
         break;
 
       // -----------------------------------------------------------------
-      // Spec: tasks/get — non-blocking fetch of current task state.
-      // Tasks surface is MCP-only; when the flag is off the iframe SDK
-      // won't call it (capability isn't advertised), so there's no REST
-      // fallback path here.
+      // The tasks extension (io.modelcontextprotocol/tasks, SEP-2663):
+      // tasks/get answers the flat task, its outcome inlined once terminal;
+      // tasks/cancel acknowledges. tasks/result and tasks/list are not part
+      // of it and fall through to `default` (-32601).
       // -----------------------------------------------------------------
-      case "tasks/get": {
-        const { id, params } = msg;
-        forwardTaskRequest(TASKS_GET_METHOD, params, GetTaskResultSchema, id, appName).then(
-          postToIframe,
-        );
+      case "tasks/get":
+      case "tasks/cancel":
+        forwardTaskRequest(msg.method, msg.params, msg.id, appName).then(postToIframe);
         break;
-      }
-
-      // -----------------------------------------------------------------
-      // Spec: tasks/result — blocks until terminal; returns the payload
-      // of the original request (for tools/call, a CallToolResult).
-      // -----------------------------------------------------------------
-      case "tasks/result": {
-        const { id, params } = msg;
-        forwardTaskRequest(
-          TASKS_RESULT_METHOD,
-          params,
-          GetTaskPayloadResultSchema,
-          id,
-          appName,
-        ).then(postToIframe);
-        break;
-      }
-
-      // -----------------------------------------------------------------
-      // Spec: tasks/cancel — best-effort cancel; returns the (final)
-      // task state. Cancelling a terminal task surfaces as `-32602`.
-      // -----------------------------------------------------------------
-      case "tasks/cancel": {
-        const { id, params } = msg;
-        forwardTaskRequest(TASKS_CANCEL_METHOD, params, CancelTaskResultSchema, id, appName).then(
-          postToIframe,
-        );
-        break;
-      }
 
       // -----------------------------------------------------------------
       // Spec: ui/message — { role, content: [{ type, text, _meta? }] }
@@ -314,7 +327,7 @@ export function createBridge(
       // Spec: ui/update-model-context
       // -----------------------------------------------------------------
       case "ui/update-model-context":
-        handleUpdateModelContext(msg.params, msg.id, appName, postToIframe);
+        handleUpdateModelContext(msg.params, msg.id, stateKey, appName, postToIframe);
         break;
 
       // -----------------------------------------------------------------
@@ -355,14 +368,43 @@ export function createBridge(
       // Extension: ai.nimblebrain/action — semantic host actions
       // -----------------------------------------------------------------
       case ACTION_METHOD:
-        handleSynapseAction(msg.params, callbacks);
+        handleSynapseAction(msg.params, callbacks, appName);
+        break;
+
+      // -----------------------------------------------------------------
+      // Extension: ai.nimblebrain/location — the app's trail, root first
+      // -----------------------------------------------------------------
+      case LOCATION_METHOD:
+        callbacks?.onLocation?.(msg.params.trail);
+        break;
+
+      // -----------------------------------------------------------------
+      // Extension: ai.nimblebrain/notify — a notice, labelled with the app
+      // -----------------------------------------------------------------
+      case NOTIFY_METHOD:
+        postToIframe(handleNotify(msg.id, msg.params, notifyLimiter, callbacks));
         break;
 
       // -----------------------------------------------------------------
       // Extension: ai.nimblebrain/request-file — native file picker
       // -----------------------------------------------------------------
       case REQUEST_FILE_METHOD:
-        handleRequestFile(msg.params, msg.id, postToIframe);
+        handleRequestFile(msg.params, msg.id, postToIframe, readUploadLimits(callbacks));
+        break;
+
+      // -----------------------------------------------------------------
+      // Extension: ai.nimblebrain/upload-files — files the app already holds
+      // -----------------------------------------------------------------
+      case UPLOAD_FILES_METHOD:
+        if (!UPLOAD_FILES_APPS.has(appName)) {
+          postToIframe({
+            jsonrpc: "2.0",
+            id: msg.id,
+            error: { code: -32601, message: `${UPLOAD_FILES_METHOD} is not offered to this app` },
+          });
+          break;
+        }
+        handleUploadFiles(msg.params, msg.id, postToIframe, readUploadLimits(callbacks));
         break;
 
       // -----------------------------------------------------------------
@@ -394,79 +436,21 @@ export function createBridge(
 
   window.addEventListener("message", handleMessage);
 
-  // ---------------------------------------------------------------------
-  // Subscribe once to `notifications/tasks/status` on the MCP bridge
-  // client and forward each one verbatim to this iframe as a JSON-RPC
-  // notification. Multiple bridges share the singleton MCP client; each
-  // subscribes independently so every iframe sees every status, filtered
-  // on the iframe side by the taskId it owns. Teardown in `destroy()`
-  // removes this bridge's handler so post-destroy notifications do not
-  // reach the iframe.
-  //
-  // Notes:
-  //   - `_meta` is preserved (per spec, status notifications don't
-  //     require related-task meta, but we never strip what's there).
-  //   - The SDK's `setNotificationHandler` replaces any prior handler
-  //     for the same method; that's an intentional tradeoff — the most
-  //     recent bridge wins, but because each handler only `postToIframe`s
-  //     (and the bridge's own `destroyed` guard short-circuits after
-  //     teardown), multi-bridge behavior is correct as long as handlers
-  //     are added in the order they expect to receive.
-  //
-  // If the MCP client isn't available (e.g. token/workspace not ready),
-  // we silently skip subscription and never throw — task notifications
-  // are OPTIONAL in the spec and iframes fall back to polling via
-  // `tasks/get`.
-  // ---------------------------------------------------------------------
-  let notificationTeardown: (() => void) | null = null;
-  void subscribeTaskStatus();
-
-  async function subscribeTaskStatus(): Promise<void> {
-    try {
-      const client = await getMcpBridgeClient();
-      if (destroyed) return;
-      const handler = (
-        notification: Awaited<ReturnType<typeof TaskStatusNotificationSchema.parseAsync>>,
-      ): void => {
-        if (destroyed) return;
-        // Forward verbatim — preserve params._meta, including any
-        // progressToken or related-task entries the server attached.
-        postToIframe({
-          jsonrpc: "2.0",
-          method: notification.method,
-          params: notification.params,
-        });
-      };
-      client.setNotificationHandler(TaskStatusNotificationSchema, handler);
-      notificationTeardown = () => {
-        client.removeNotificationHandler(TASK_STATUS_METHOD);
-      };
-    } catch {
-      // Subscription is best-effort — polling is the contract.
-    }
-  }
-
   return {
-    sendToolResult(result: {
-      content: unknown[];
-      structuredContent?: Record<string, unknown>;
-    }): void {
+    sendToolResult(result: ExtAppsToolResultNotification["params"]): void {
       postToIframe({
         jsonrpc: "2.0",
         method: "ui/notifications/tool-result",
-        params: {
-          content: result.content,
-          structuredContent: result.structuredContent,
-        },
-      } as UiToolResultMessage);
+        params: result,
+      } satisfies ExtAppsToolResultNotification);
     },
 
     setHostContext(context: Record<string, unknown>): void {
-      // Filter spec-allowed theme keys centrally so every caller
-      // (SlotRenderer's theme toggle, future ones) can't bypass the
-      // ext-apps strict-Zod contract. Sending `--nb-*` or out-of-spec
-      // tokens to a strict client like Reboot tears down the connection
-      // on every host-context-changed notification.
+      // Derive the theme variables from the mode centrally, so every caller
+      // (SlotRenderer's theme toggle, future ones) sends the same split: spec
+      // keys on `styles.variables`, where a strict ext-apps client (Reboot)
+      // tears down the connection on any other key, and the mode-varying rest
+      // on the `ai.nimblebrain/styles` extension.
       const filtered = filterHostContextForSpec(context);
       const msg: ExtAppsHostContextChangedNotification = {
         jsonrpc: "2.0",
@@ -485,21 +469,18 @@ export function createBridge(
       postToIframe(msg);
     },
 
+    navigate(id: string): void {
+      postToIframe({ jsonrpc: "2.0", method: NAVIGATE_METHOD, params: { id } });
+    },
+
     destroy(): void {
       destroyed = true;
       held.length = 0;
+      appStateByBridge.delete(stateKey);
+      offScreenBridges.delete(stateKey);
+      screenObserver?.disconnect();
       closeChannel();
       window.removeEventListener("message", handleMessage);
-      // Unsubscribe from notifications/tasks/status so post-destroy
-      // emissions from the MCP client don't reach the iframe.
-      if (notificationTeardown) {
-        try {
-          notificationTeardown();
-        } catch {
-          // Swallow — teardown is best-effort, the iframe is going away.
-        }
-        notificationTeardown = null;
-      }
     },
   };
 }
@@ -520,16 +501,76 @@ function isResponse(data: unknown): boolean {
 
 /**
  * Whether notification `next` says everything held notification `prev` does.
- * The host sends a host context whole, a task status is that task's current
- * state, and any other notification repeated verbatim adds nothing.
+ * The host sends a host context whole, and any other notification repeated
+ * verbatim adds nothing.
  */
 function supersedes(next: unknown, prev: unknown): boolean {
-  const a = next as { method?: unknown; params?: { taskId?: unknown } };
-  const b = prev as { method?: unknown; params?: { taskId?: unknown } };
+  const a = next as { method?: unknown };
+  const b = prev as { method?: unknown };
   if (a.method !== b.method) return false;
   if (a.method === "ui/notifications/host-context-changed") return true;
-  if (a.method === TASK_STATUS_METHOD) return a.params?.taskId === b.params?.taskId;
   return JSON.stringify(next) === JSON.stringify(prev);
+}
+
+const NOTICE_LEVELS = new Set(["success", "info", "warning", "error"]);
+const MAX_NOTICE_TITLE = 120;
+const MAX_NOTICE_DESCRIPTION = 500;
+/** At most this many notices per app in any window of `NOTICE_WINDOW_MS`. */
+const NOTICE_BURST = 5;
+const NOTICE_WINDOW_MS = 10_000;
+
+/** A per-bridge limiter: true while the app is within its notice budget. */
+export function createNoticeLimiter(now: () => number = Date.now): () => boolean {
+  const sent: number[] = [];
+  return () => {
+    const t = now();
+    while (sent.length > 0 && t - (sent[0] as number) >= NOTICE_WINDOW_MS) sent.shift();
+    if (sent.length >= NOTICE_BURST) return false;
+    sent.push(t);
+    return true;
+  };
+}
+
+/**
+ * Answer an `ai.nimblebrain/notify` request. Level and lengths are checked
+ * here, not by the schema, so a bad value is answered with the reason rather
+ * than dropped and left waiting. A burst past the limit is refused, so one app
+ * cannot fill the screen.
+ */
+function handleNotify(
+  id: string | number,
+  params: { level: string; title: string; description?: string },
+  withinLimit: () => boolean,
+  callbacks: BridgeCallbacks | undefined,
+): Record<string, unknown> {
+  const refuse = (code: number, message: string) => ({
+    jsonrpc: "2.0",
+    id,
+    error: { code, message },
+  });
+  if (!NOTICE_LEVELS.has(params.level)) {
+    return refuse(-32602, "level must be one of success, info, warning, error");
+  }
+  const title = params.title.trim();
+  if (title.length === 0 || title.length > MAX_NOTICE_TITLE) {
+    return refuse(-32602, `title must be 1 to ${MAX_NOTICE_TITLE} characters`);
+  }
+  if (params.description !== undefined && params.description.length > MAX_NOTICE_DESCRIPTION) {
+    return refuse(-32602, `description must be at most ${MAX_NOTICE_DESCRIPTION} characters`);
+  }
+  if (!callbacks?.onNotify) return refuse(-32601, `${NOTIFY_METHOD} is not served here`);
+  if (!withinLimit()) {
+    return refuse(
+      -32000,
+      `Too many notices: at most ${NOTICE_BURST} in ${NOTICE_WINDOW_MS / 1000} seconds`,
+    );
+  }
+  callbacks.onNotify({
+    level: params.level as AppNotice["level"],
+    title,
+    ...(params.description ? { description: params.description } : {}),
+  });
+  return { jsonrpc: "2.0", id, result: {} };
 }
 
 /**
@@ -549,12 +590,15 @@ function answerIfRequest(
   postToIframe({ jsonrpc: "2.0", id: msg.id, result });
 }
 
+/** JSON-RPC: the method does not exist or is not served. */
+const METHOD_NOT_FOUND = -32601;
+
 /**
  * Answer a message whose method this host does not serve. A request
- * (`prompts/list`, `sampling/createMessage`, …) gets JSON-RPC method-not-found,
- * so the view's call fails at once instead of waiting on a reply that never
- * comes. A notification needs no reply, and a message with no method is not a
- * request, so both are dropped.
+ * (`prompts/list`, `sampling/createMessage`, `tasks/result`, …) gets JSON-RPC
+ * method-not-found, so the view's call fails at once instead of waiting on a
+ * reply that never comes. A notification needs no reply, and a message with no
+ * method is not a request, so both are dropped.
  */
 function answerUnserved(msg: { method?: unknown; id?: unknown }, postToIframe: PostToIframe): void {
   if (typeof msg.method !== "string") return;
@@ -562,7 +606,7 @@ function answerUnserved(msg: { method?: unknown; id?: unknown }, postToIframe: P
   postToIframe({
     jsonrpc: "2.0",
     id: msg.id,
-    error: { code: ErrorCode.MethodNotFound, message: `Method not found: ${msg.method}` },
+    error: { code: METHOD_NOT_FOUND, message: `Method not found: ${msg.method}` },
   });
 }
 
@@ -686,16 +730,18 @@ function base64ToBytes(blob: string): Uint8Array | null {
 
 function handleInitialize(
   id: unknown,
+  appName: string,
   callbacks: BridgeCallbacks | undefined,
   postToIframe: PostToIframe,
 ): void {
   if (typeof id !== "string" && typeof id !== "number") return;
 
   const extMode = getHostThemeMode();
-  // Filter to spec-valid keys only. Strict ext-apps SDK clients (Reboot's
-  // React runtime validates via Zod) reject unknown keys on this field.
-  // NB extensions and out-of-spec tokens still flow through the iframe's
-  // injected `<style>` block — they just don't cross the protocol.
+  // Spec-valid keys only on `styles.variables`. Strict ext-apps SDK clients
+  // (Reboot's React runtime validates via Zod) reject unknown keys on this
+  // field. The non-spec tokens that vary with the mode go on the
+  // `ai.nimblebrain/styles` extension below; the mode-independent rest reach
+  // the app only through the iframe's injected `<style>` block.
   const extTokens = getSpecThemeTokens(extMode);
   // Spec-standardized fields (theme, styles) take precedence over any
   // same-named keys returned by `getHostExtensions()`, so callers can
@@ -709,7 +755,7 @@ function handleInitialize(
   // custom properties — extensions there would tear down the connection.
   //
   const extensions = readHostExtensions(callbacks);
-  const hostCapabilities = buildHostCapabilities();
+  const hostCapabilities = buildHostCapabilities(appName);
   const response: ExtAppsInitializeResponse = {
     jsonrpc: "2.0",
     id,
@@ -727,6 +773,7 @@ function handleInitialize(
         origin: window.location.origin,
         theme: extMode,
         styles: buildHostStyles(extTokens),
+        [HOST_STYLES_EXTENSION]: { variables: getModeExtensionTokens(extMode) },
       },
     },
   };
@@ -739,9 +786,11 @@ function handleInitialize(
  *
  * Every app is scoped to its own server, whatever its name. A server the app
  * names in `_meta` or in a top-level `server` is ignored, and a qualified tool
- * name naming another server is refused. This is the only place the scope can
- * be enforced: the browser holds ONE `/mcp` session shared by every iframe and
- * the agent, so the server sees no caller to attribute a call to.
+ * name naming another server is refused. Every iframe's requests reach `/mcp`
+ * as one client with one credential, so the server sees no caller to
+ * attribute a call to; the bridge names the app's server on the call
+ * (`callToolViaMcp`), and `/mcp` holds it to that server and to tools whose
+ * `ui.visibility` includes "app".
  */
 function handleToolsCall(
   params: ToolsCallParams,
@@ -767,14 +816,21 @@ function handleToolsCall(
   }
 
   callToolViaMcp(appName, params, id).then(postToIframe, (err: unknown) => {
-    const errorMsg = err instanceof Error ? err.message : "Tool call failed";
-    const errorResponse: UiToolResultError = {
+    postToIframe({
       jsonrpc: "2.0",
       id,
-      error: { code: -32000, message: errorMsg },
-    };
-    postToIframe(errorResponse);
+      error: toolCallError(err),
+    } satisfies UiToolResultError);
   });
+}
+
+/**
+ * The JSON-RPC error for a `tools/call` that got no JSON-RPC answer from `/mcp`
+ * (a network failure, a body that is not one): `-32000` with its message. The
+ * call may have run.
+ */
+function toolCallError(err: unknown): UiToolResultError["error"] {
+  return { code: -32000, message: err instanceof Error ? err.message : "Tool call failed" };
 }
 
 /**
@@ -807,8 +863,8 @@ function handleResourcesRead(
 }
 
 /**
- * The `_meta` key that scopes a read, a listing or a task request on `/mcp` to
- * one source. Must equal
+ * The `_meta` key that scopes a read, a listing, a task request or a tool call
+ * on `/mcp` to one source. Must equal
  * `RESOURCE_SOURCE_META_KEY` in `src/api/mcp-server.ts` (the runtime image ships
  * `src/` alone, so the two cannot share a module); pinned equal by
  * `test/unit/tools/server-notifications.test.ts`.
@@ -820,8 +876,8 @@ export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
  * server and forward the result — pagination included — or a JSON-RPC error.
  *
  * Scoped like `resources/read` and `tools/call`: the app's own server, whatever
- * it names. The bridge alone knows which iframe asked (every iframe shares one
- * `/mcp` session), so it names the server in the request's `_meta` and `/mcp`
+ * it names. The bridge alone knows which iframe asked (every iframe's requests
+ * reach `/mcp` as one client), so it names the server in the request's `_meta` and `/mcp`
  * lists that one source. The iframe's own `_meta` is not forwarded; only its
  * `cursor` is.
  */
@@ -837,14 +893,10 @@ function handleResourceListing(
     _meta: { [RESOURCE_SOURCE_META_KEY]: appName },
   };
 
-  withSessionRetry(async () => {
-    const client = await getMcpBridgeClient();
-    return method === "resources/list"
-      ? client.listResources(request)
-      : client.listResourceTemplates(request);
-  })
-    .then((result) => {
-      postToIframe({ jsonrpc: "2.0", id, result });
+  sendMcpRequest(method, request)
+    .then((answer) => {
+      if ("error" in answer) throw new Error(answer.error.message);
+      postToIframe({ jsonrpc: "2.0", id, result: answer.result });
     })
     .catch((err: unknown) => {
       const errorMsg = err instanceof Error ? err.message : "Resource listing failed";
@@ -864,15 +916,10 @@ function handleUiMessage(
   if (Array.isArray(params.content)) {
     const textBlock = params.content.find((b: Record<string, unknown>) => b.type === "text");
     if (textBlock?.text) {
-      const context = textBlock._meta?.[CHAT_CONTEXT_META_KEY] as UiChatContext | undefined;
       if (callbacks?.onChat) {
-        callbacks.onChat(textBlock.text, context);
+        callbacks.onChat(textBlock.text);
       } else {
-        window.dispatchEvent(
-          new CustomEvent("nb:chat", {
-            detail: { message: textBlock.text, context },
-          }),
-        );
+        window.dispatchEvent(new CustomEvent("nb:chat", { detail: { message: textBlock.text } }));
       }
     }
   }
@@ -901,12 +948,13 @@ function serveUiMessage(
 }
 
 /**
- * Handle a spec `ui/update-model-context`: store the app's latest visible
+ * Handle a spec `ui/update-model-context`: store this view's latest visible
  * state (with a text summary when present) and ack when the message had an id.
  */
 function handleUpdateModelContext(
   params: UiUpdateModelContextMessage["params"],
   id: string | number | undefined,
+  stateKey: symbol,
   appName: string,
   postToIframe: PostToIframe,
 ): void {
@@ -915,10 +963,11 @@ function handleUpdateModelContext(
     Array.isArray(content) && content.length > 0 && content[0].type === "text"
       ? content[0].text
       : undefined;
-  appStateStore.set(appName, {
-    state: structuredContent ?? {},
-    summary,
-    updatedAt: new Date().toISOString(),
+  // Delete first so the re-insert moves this view to the end of push order.
+  appStateByBridge.delete(stateKey);
+  appStateByBridge.set(stateKey, {
+    appName,
+    entry: { state: structuredContent ?? {}, summary, updatedAt: new Date().toISOString() },
   });
   // The same helper the served requests use: id `0` is an id, and a frame
   // without one is a notification that takes no answer.
@@ -926,18 +975,20 @@ function handleUpdateModelContext(
 }
 
 /**
- * Handle an ai.nimblebrain/action: route `navigate` to onNavigate, otherwise invoke
- * onAction (or dispatch an `nb:action` event when no callback is wired).
+ * Handle an ai.nimblebrain/action: invoke onAction, or dispatch an `nb:action`
+ * event when no callback is wired. The shell resolves the action by name.
+ *
+ * `serverName` is the server whose view sent the action, set here and last so
+ * a param of the same name from the app cannot replace it. An action about
+ * "this connector" reads it; the app never names itself.
  */
 function handleSynapseAction(
   params: UiActionMessage["params"],
   callbacks: BridgeCallbacks | undefined,
+  appName: string,
 ): void {
-  const { action, ...actionParams } = params;
-  if (action === "navigate" && actionParams.route && callbacks?.onNavigate) {
-    callbacks.onNavigate(actionParams.route as string);
-    return;
-  }
+  const { action, ...rest } = params;
+  const actionParams = { ...rest, serverName: appName };
   if (callbacks?.onAction) {
     callbacks.onAction(action, actionParams);
   } else {
@@ -945,20 +996,42 @@ function handleSynapseAction(
   }
 }
 
+/** The picker's per-file cap when the host supplies no upload limits. */
+const DEFAULT_PICKER_MAX_SIZE = 26_214_400; // 25 MB
+
+/**
+ * The host's upload limits, or `undefined` when it supplies none. Wrapped for
+ * the same reason as `readHostExtensions`: a throwing callback must not leave
+ * the app's picker call unanswered.
+ */
+function readUploadLimits(callbacks: BridgeCallbacks | undefined): UploadLimits | undefined {
+  try {
+    return callbacks?.getUploadLimits?.();
+  } catch (err) {
+    console.error("getUploadLimits threw — the picker applies no host limits:", err);
+    return undefined;
+  }
+}
+
 /**
  * Handle an ai.nimblebrain/request-file: open the native file picker and forward the
- * uploaded entries — or a JSON-RPC `-32602` error — back to the iframe.
+ * uploaded entries — or a JSON-RPC `-32602` error — back to the iframe. A refusal
+ * carries `data: { files, errors }` so the app learns which files were refused and
+ * which were stored anyway.
  */
 function handleRequestFile(
   params: SynapseRequestFileMessage["params"] | undefined,
   id: string,
   postToIframe: PostToIframe,
+  limits: UploadLimits | undefined,
 ): void {
   const accept = params?.accept ?? "";
-  const maxSize = params?.maxSize ?? 26_214_400; // 25 MB
+  // An app may ask for less than the instance allows, never more.
+  const requested = params?.maxSize ?? limits?.maxFileSize ?? DEFAULT_PICKER_MAX_SIZE;
+  const maxSize = limits ? Math.min(requested, limits.maxFileSize) : requested;
   const multiple = params?.multiple ?? false;
 
-  pickFiles(accept, maxSize, multiple)
+  pickFiles(accept, maxSize, multiple, limits?.maxTotalSize)
     .then((result) => {
       postToIframe({ jsonrpc: "2.0", id, result });
     })
@@ -967,50 +1040,112 @@ function handleRequestFile(
       postToIframe({
         jsonrpc: "2.0",
         id,
-        error: { code: -32602, message: errorMsg },
+        error: {
+          code: -32602,
+          message: errorMsg,
+          ...(err instanceof FilesRefusedError ? { data: err.data } : {}),
+        },
       });
     });
 }
 
+/**
+ * Store files the app already holds (`ai.nimblebrain/upload-files`), such as
+ * files dropped on it. They take the picker's path from the point a pick has
+ * its files: the same limits, the same upload, the same answer and refusal.
+ * An entry that is not a `File` (the schema can only say "an array") refuses
+ * the whole request before anything is stored.
+ */
+function handleUploadFiles(
+  params: SynapseUploadFilesMessage["params"],
+  id: string,
+  postToIframe: PostToIframe,
+  limits: UploadLimits | undefined,
+): void {
+  const answer = (promise: Promise<RequestFileResult>) =>
+    promise
+      .then((result) => postToIframe({ jsonrpc: "2.0", id, result }))
+      .catch((err: unknown) => postToIframe({ jsonrpc: "2.0", id, error: uploadError(err) }));
+
+  if (!params.files.every((file) => file instanceof File)) {
+    answer(Promise.reject(new Error("Every entry in `files` must be a File.")));
+    return;
+  }
+  const requested = params.maxSize ?? limits?.maxFileSize ?? DEFAULT_PICKER_MAX_SIZE;
+  const maxSize = limits ? Math.min(requested, limits.maxFileSize) : requested;
+  answer(processPickedFiles(params.files as File[], maxSize, limits?.maxTotalSize));
+}
+
+/** The JSON-RPC error a failed pick or upload answers, carrying a refusal's `data`. */
+function uploadError(err: unknown): { code: number; message: string; data?: RequestFileRefusal } {
+  return {
+    code: -32602,
+    message: err instanceof Error ? err.message : "File upload failed",
+    ...(err instanceof FilesRefusedError ? { data: err.data } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
-// MCP transport helpers — wire `tools/call` / `resources/read` through the
-// platform's `/mcp` streamable HTTP endpoint via the MCP SDK `Client`.
+// MCP transport helpers — every request an app makes of its server goes to
+// `/mcp/<wsId>` through `sendMcpRequest`.
 //
 // Rules:
-//   - All JSON-RPC dispatch goes through the SDK `Client` (no hand-crafted
-//     method strings or wire payloads).
-//   - Response shape forwarded to the iframe MUST match the spec'd MCP
-//     path: `{ content, structuredContent }` for tools (non-task),
-//     `{ contents }` for resources. For task-augmented calls the full
-//     CreateTaskResult is preserved as-is (see §Non-Negotiable Rule 4:
-//     CallToolResult / task results forwarded verbatim, never unwrapped).
-//   - Errors translate to JSON-RPC `{ code: -32000, message }` envelopes
-//     consistent with the REST path so iframes don't need to branch on
-//     which transport ran.
-//   - the target-source authz is handled at the call site — this helper
-//     receives the already-resolved server name.
+//   - What reaches `/mcp` is built here from the fields the method needs, plus
+//     the app's own server under `RESOURCE_SOURCE_META_KEY`. Nothing else the
+//     iframe put in `_meta` is forwarded.
+//   - What reaches the iframe is the server's answer verbatim: a
+//     `CallToolResult` (`isError` and `structuredContent` included), a flat
+//     task, a `ReadResourceResult`. Never unwrapped or rebuilt.
+//   - A tool execution error is a result, never a JSON-RPC error. A JSON-RPC
+//     error means no result came back: a server's refusal keeps its code and
+//     `data`; a timeout (`-32001`) may follow a call that ran; no JSON-RPC
+//     answer at all is `-32000`.
+//   - the target-source authz is handled at the call site — these helpers
+//     receive the already-resolved server name.
 // ---------------------------------------------------------------------------
 
 /**
- * Shape of a `tools/call` dispatched from an iframe. We don't rely on the
- * bridge's typed union here because ext-apps permits a task-augmented
- * envelope whose `task` field is forwarded through to `/mcp` verbatim.
+ * Shape of a `tools/call` dispatched from an iframe. A 2025-era `task` field,
+ * or anything else beside `name` and `arguments`, is not forwarded.
  */
 interface ToolsCallParams {
   name: string;
   arguments?: Record<string, unknown>;
-  /** When present, the call is task-augmented per MCP draft 2025-11-25. */
-  task?: { ttl?: number; pollInterval?: number };
+  _meta?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
 /**
- * Forward a `tools/call` through the MCP SDK bridge client. Builds the
- * iframe-facing response envelope so the caller can `postToIframe` directly.
+ * Whether an app's `tools/call` opts in to the tasks extension: its `_meta`
+ * client capabilities name `io.modelcontextprotocol/tasks`. Without that
+ * claim the call is an ordinary one, answered with a `CallToolResult`.
+ */
+function optsInToTasks(meta: Record<string, unknown> | undefined): boolean {
+  const capabilities = meta?.[CLIENT_CAPABILITIES_META_KEY] as
+    | { extensions?: Record<string, unknown> }
+    | undefined;
+  const extensions = capabilities?.extensions;
+  return (
+    typeof extensions === "object" &&
+    extensions !== null &&
+    extensions[TASKS_EXTENSION_ID] !== undefined
+  );
+}
+
+/** The iframe-facing JSON-RPC response for an answer from `/mcp`. */
+function toIframe(id: string | number, answer: McpAnswer): Record<string, unknown> {
+  return "error" in answer
+    ? { jsonrpc: "2.0", id, error: answer.error }
+    : { jsonrpc: "2.0", id, result: answer.result };
+}
+
+/**
+ * Forward a `tools/call` to `/mcp`. Builds the iframe-facing response envelope
+ * so the caller can `postToIframe` directly.
  *
- * Task-augmented calls (`params.task` present) route through the generic
- * `request()` path with `CreateTaskResultSchema` so the `CreateTaskResult`
- * reaches the iframe without being rejected by `CallToolResultSchema`.
+ * An app that opts in to the tasks extension is answered either a complete
+ * `CallToolResult` or a flat task (`resultType: "task"`), whichever the server
+ * chose; both pass through as they came.
  */
 async function callToolViaMcp(
   server: string,
@@ -1018,7 +1153,7 @@ async function callToolViaMcp(
   id: string,
 ): Promise<UiToolResultResponse | UiToolResultError | Record<string, unknown>> {
   // The `/mcp` endpoint expects a tool name whose shape encodes its scope.
-  // Two transformations:
+  // Three transformations:
   //
   //   1. Qualified: iframes pass either `<tool>` (bare) or
   //      `<source>__<tool>` (already qualified). A bare name is qualified
@@ -1027,15 +1162,15 @@ async function callToolViaMcp(
   //      site (`handleToolsCall`) — which is where it must happen, because by
   //      here the app the call came from is no longer in scope.
   //   2. Scoped: BOTH doors dispatch the same bare `<source>__<tool>` form.
-  //      Identity apps (conversations, …) always did. Workspace apps used to
-  //      prefix `ws_<active>-`; they no longer do, because the workspace a call
-  //      lands in comes from the request's validated `X-Workspace-Id`, not from
-  //      the name. Restating it in the name only gave the model 39 opaque
-  //      characters to echo — and drop.
+  //      The workspace a call lands in is the one in the URL (`/mcp/<wsId>`),
+  //      not the name.
   //
-  //      The active-workspace check stays. The server refuses a workspace call
-  //      on a session with no workspace anyway (`WorkspaceToolUnavailable`), but
-  //      failing here is a clearer error and saves a round trip.
+  //      The active-workspace check stays: with no workspace there is no MCP
+  //      endpoint to call, and failing here is a clearer error.
+  //   3. Named: `server` goes on the wire under `RESOURCE_SOURCE_META_KEY`, as
+  //      it does for reads, so `/mcp` knows the call is this app's and holds it
+  //      to the MCP Apps app scope: a tool whose `ui.visibility` lacks "app" is
+  //      refused there, since only the runtime knows each tool's visibility.
   //      A personal connector's marker needs no special handling here, and that
   //      is a property of the code rather than an assumption. `server` is the
   //      name the iframe was mounted under, which comes from
@@ -1047,7 +1182,7 @@ async function callToolViaMcp(
   //      `BlockTimeline` refuses to mount one. Both halves fail safe; neither
   //      relies on the other.
   const qualifiedName = params.name.includes("__") ? params.name : `${server}__${params.name}`;
-  if (!isIdentityApp(server) && !getActiveWorkspaceId()) {
+  if (!getActiveWorkspaceId()) {
     return {
       jsonrpc: "2.0",
       id,
@@ -1058,166 +1193,77 @@ async function callToolViaMcp(
     } satisfies UiToolResultError;
   }
 
-  return withSessionRetry(async () => {
-    const client = await getMcpBridgeClient();
-
-    if (params.task) {
-      // Task-augmented: the server returns CreateTaskResult, not
-      // CallToolResult. The typed `client.callTool()` would reject that;
-      // use the generic `request()` path with the right schema and
-      // forward the result verbatim (Non-Negotiable Rule 4).
-      const method: CallToolRequest["method"] = "tools/call";
-      const result = await client.request(
-        {
-          method,
-          params: {
-            name: qualifiedName,
-            arguments: params.arguments ?? {},
-            task: params.task,
-          },
-        },
-        CreateTaskResultSchema,
-      );
-      return { jsonrpc: "2.0", id, result };
-    }
-
-    const result = await client.callTool(
-      {
-        name: qualifiedName,
-        arguments: params.arguments ?? {},
-      },
-      CallToolResultSchema,
-    );
-
-    if (result.isError) {
-      const errorText =
-        (result.content as Array<{ text?: string }> | undefined)
-          ?.map((b) => b.text ?? "")
-          .filter(Boolean)
-          .join("\n") || "Tool error";
-      return {
-        jsonrpc: "2.0",
-        id,
-        error: { code: -32000, message: errorText },
-      } satisfies UiToolResultError;
-    }
-
-    // Forward the full CallToolResult shape (content + structuredContent).
-    return {
-      jsonrpc: "2.0",
-      id,
-      result: {
-        content: result.content as UiToolResultResponse["result"]["content"],
-        structuredContent: result.structuredContent as Record<string, unknown> | undefined,
-      },
-    } satisfies UiToolResultResponse;
-  });
+  const answer = await sendMcpRequest(
+    "tools/call",
+    {
+      name: qualifiedName,
+      arguments: params.arguments ?? {},
+      _meta: { [RESOURCE_SOURCE_META_KEY]: server },
+    },
+    { tasks: optsInToTasks(params._meta) },
+  );
+  return toIframe(id, answer);
 }
 
 /**
- * Forward a `resources/read` through the MCP SDK bridge client, scoped to
- * `server` — the calling app's own.
- * Returns the ReadResourceResult shape (`{ contents }`) so the caller can
- * assemble the JSON-RPC response envelope for the iframe.
+ * Forward a `resources/read` to `/mcp`, scoped to `server` — the calling app's
+ * own. Resolves the ReadResourceResult (`{ contents }`); a JSON-RPC error from
+ * `/mcp` rejects with its message.
  */
-async function readResourceViaMcp(server: string, uri: string): Promise<{ contents: unknown[] }> {
+async function readResourceViaMcp(server: string, uri: string): Promise<Record<string, unknown>> {
   // `server` goes on the wire under `RESOURCE_SOURCE_META_KEY`, as it does for
   // listings, and `/mcp` reads from that one source. It is the only thing that
-  // can: every iframe shares one `/mcp` session, so without it a read resolves
-  // across the whole workspace and the user's files.
-  return withSessionRetry(async () => {
-    const client = await getMcpBridgeClient();
-    const result = await client.readResource({
-      uri,
-      _meta: { [RESOURCE_SOURCE_META_KEY]: server },
-    });
-    return { contents: result.contents as unknown[] };
+  // can: the bridge sends every iframe's requests as one client, so without it
+  // a read resolves across the whole workspace and the user's files.
+  const answer = await sendMcpRequest("resources/read", {
+    uri,
+    _meta: { [RESOURCE_SOURCE_META_KEY]: server },
   });
+  if ("error" in answer) throw new Error(answer.error.message);
+  return answer.result;
 }
 
 // ---------------------------------------------------------------------------
-// Tasks surface — `tasks/{get,result,cancel}` and status-notification
-// forwarding.
-//
-// Method-literal types are derived from the SDK request schemas so a spec
-// rename surfaces as a TypeScript error at the call sites rather than a
-// runtime 404 against `/mcp`. Never hand-type these strings.
+// Tasks — `tasks/get` and `tasks/cancel` of the tasks extension
 // ---------------------------------------------------------------------------
 
-const TASKS_GET_METHOD: GetTaskRequest["method"] = "tasks/get";
-const TASKS_RESULT_METHOD: GetTaskPayloadRequest["method"] = "tasks/result";
-const TASKS_CANCEL_METHOD: CancelTaskRequest["method"] = "tasks/cancel";
-/** Matches `TaskStatusNotificationSchema.method` — used for `removeNotificationHandler`. */
-const TASK_STATUS_METHOD = "notifications/tasks/status" as const;
+/** The task methods the bridge forwards. */
+type TaskMethod = "tasks/get" | "tasks/cancel";
 
-/** Params accepted on the three tasks/* iframe messages. */
+/** Params accepted on the two tasks/* iframe messages. */
 interface TasksParams {
   taskId: string;
   [key: string]: unknown;
 }
 
 /**
- * Translate an unknown error from the MCP SDK's `client.request()` into the
- * JSON-RPC error shape the iframe expects. Spec §8 mandates `-32602` for
- * "invalid taskId" / "not found" / "terminal-task cancel"; `-32603` for
- * internal server errors; and `-32000` as the catch-all we use elsewhere
- * in the bridge.
+ * Forward a `tasks/get` or `tasks/cancel` to `/mcp`, scoped to the app's own
+ * server. Returns the full JSON-RPC response (success or error) ready to
+ * `postToIframe`.
  *
- * We pass through any explicit numeric `code` the SDK surfaced from the
- * server (so server-authored `-32602` stays `-32602`). Everything else
- * degrades to `-32603` / `-32000` depending on whether the message hints
- * at a server-side internal error.
- */
-function translateTaskError(err: unknown): { code: number; message: string } {
-  // SDK errors expose `.code` / `.message` mirrors of the JSON-RPC error
-  // envelope when the server returned one. Preserve the server's code.
-  const maybeCoded = err as { code?: unknown; message?: unknown } | null | undefined;
-  if (maybeCoded && typeof maybeCoded.code === "number") {
-    const code = maybeCoded.code;
-    const message =
-      typeof maybeCoded.message === "string" ? maybeCoded.message : "Task request failed";
-    return { code, message };
-  }
-  const message = err instanceof Error ? err.message : "Task request failed";
-  return { code: -32603, message };
-}
-
-/**
- * Forward a `tasks/*` request through the MCP bridge client, scoped to the
- * server that ran the task. Returns the full JSON-RPC response (success or
- * error) ready to `postToIframe`.
- *
- * The caller picks the method constant + result schema. What reaches `/mcp` is
- * the `taskId` and the scope, and nothing else the iframe sent. The scope is
- * the app's own server, whatever it names, under `RESOURCE_SOURCE_META_KEY`, as
- * for a resource read. Every iframe shares one `/mcp` session, so without it
- * `/mcp` would answer for any task the session holds. Errors are mapped via
- * `translateTaskError`.
+ * What reaches `/mcp` is the `taskId` and the scope, and nothing else the
+ * iframe sent. The scope is the app's own server, whatever it names, under
+ * `RESOURCE_SOURCE_META_KEY`, as for a resource read: `/mcp` answers only a
+ * task that server ran, and any other as not found (`-32602`). The answer
+ * passes through: `tasks/get` the flat task, with `result` or `error` inlined
+ * once it is `completed` or `failed`; an `input_required` status too, which
+ * the app handles. A request that got no JSON-RPC answer is `-32000`.
  */
 async function forwardTaskRequest(
-  method: GetTaskRequest["method"] | GetTaskPayloadRequest["method"] | CancelTaskRequest["method"],
-  params: TasksParams,
-  schema:
-    | typeof GetTaskResultSchema
-    | typeof GetTaskPayloadResultSchema
-    | typeof CancelTaskResultSchema,
-  id: string,
+  method: TaskMethod,
+  params: TasksParams | undefined,
+  id: string | number,
   appName: string,
 ): Promise<Record<string, unknown>> {
-  const scoped = { taskId: params.taskId, _meta: { [RESOURCE_SOURCE_META_KEY]: appName } };
+  const scoped = { taskId: params?.taskId, _meta: { [RESOURCE_SOURCE_META_KEY]: appName } };
   try {
-    // `withSessionRetry` only re-runs on the specific session-not-found
-    // shape; any other error (incl. spec-mandated `-32602` for missing
-    // tasks) propagates through this catch and gets translated to the
-    // JSON-RPC error envelope the iframe expects.
-    return await withSessionRetry(async () => {
-      const client = await getMcpBridgeClient();
-      const result = await client.request({ method, params: scoped }, schema);
-      // Forward the result verbatim (Non-Negotiable Rule 4: never unwrap).
-      return { jsonrpc: "2.0", id, result };
-    });
+    return toIframe(id, await sendMcpRequest(method, scoped));
   } catch (err) {
-    return { jsonrpc: "2.0", id, error: translateTaskError(err) };
+    const error: McpError = {
+      code: -32000,
+      message: err instanceof Error ? err.message : "Task request failed",
+    };
+    return { jsonrpc: "2.0", id, error };
   }
 }
 
@@ -1226,14 +1272,16 @@ async function forwardTaskRequest(
 // ---------------------------------------------------------------------------
 
 /**
- * Filter `ui/notifications/host-context-changed` params so only spec-valid
- * theme variable keys cross the wire. Strict ext-apps SDK clients (Reboot's
- * React runtime validates via Zod) reject unknown keys on
- * `hostContext.styles.variables`; sending `--nb-*` or out-of-spec tokens
- * tears down the connection. Centralized here so callers can't skip it.
+ * Derive the theme variables of `ui/notifications/host-context-changed` params
+ * from the mode they carry. Strict ext-apps SDK clients (Reboot's React runtime
+ * validates via Zod) reject unknown keys on `hostContext.styles.variables`, and
+ * sending `--nb-*` or out-of-spec tokens there tears down the connection, so
+ * that field gets the spec keys alone. The out-of-spec tokens that vary with
+ * the mode ride the `ai.nimblebrain/styles` extension beside it, so a toggle
+ * refreshes them too. Centralized here so callers can't skip it.
  *
- * Only the `styles.variables` branch is filtered — other host-context
- * fields (theme mode, future additions) pass through unchanged.
+ * Only the theme variables are touched: other host-context fields (theme mode,
+ * workspace, future additions) pass through unchanged.
  */
 function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, unknown> {
   const styles = ctx.styles as { variables?: Record<string, string> } | undefined;
@@ -1245,24 +1293,26 @@ function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, 
       ...styles,
       variables: getSpecThemeTokens(mode),
     },
+    [HOST_STYLES_EXTENSION]: { variables: getModeExtensionTokens(mode) },
   };
 }
 
 /**
  * Open the OS file picker, then upload the selected files to the
- * workspace file store via `POST /v1/resources`. Returns the
- * persisted `WorkspaceFile` entries — bytes never traverse the
+ * workspace file store via `POST /v1/workspaces/:wsId/resources`. Returns the
+ * persisted `FileEntry` entries — bytes never traverse the
  * iframe-bridge boundary, so files of any size the server's
  * `maxFileSize` allows work without base64 inflation or hitting the
  * 1 MB tool-call JSON cap.
  *
- * `maxSize` is enforced client-side as a fast-fail; the server is
- * still the source of truth (`getFilesConfig().maxFileSize`).
+ * `maxSize` and `maxTotalSize` are enforced client-side as a fast-fail; the
+ * server is still the source of truth (`getFilesConfig()`).
  */
 async function pickFiles(
   accept: string,
   maxSize: number,
   multiple: boolean,
+  maxTotalSize: number | undefined,
 ): Promise<RequestFileResult> {
   return new Promise((resolve, reject) => {
     const input = document.createElement("input");
@@ -1300,7 +1350,7 @@ async function pickFiles(
       document.body.removeChild(input);
       // Validate + upload off-thread; settle the picker Promise with the
       // result (or the size/upload error) exactly as the change fires.
-      processPickedFiles(input.files, maxSize).then(resolve, reject);
+      processPickedFiles(input.files, maxSize, maxTotalSize).then(resolve, reject);
     });
 
     input.click();
@@ -1314,30 +1364,92 @@ async function pickFiles(
  * `null` and never settles the call. One shape covers both pickers: the SDK's
  * `pickFile` takes the first entry, `pickFiles` takes them all, and a cancel is
  * an empty list rather than a second shape.
+ *
+ * The call resolves only when every picked file was stored. When any was refused
+ * it rejects with this shape as the JSON-RPC `error.data`: `files` are the entries
+ * that were stored anyway, `errors` name each refused file and why. It is an error
+ * rather than an extra result field because the SDK's `pickFiles` returns
+ * `result.files` alone, so a result field would never reach the app.
  */
 interface RequestFileResult {
-  files: WorkspaceFile[];
+  files: FileEntry[];
+}
+
+interface RequestFileRefusal extends RequestFileResult {
+  errors: string[];
+}
+
+/** How many refusals the error message names before summarising the rest. */
+const REFUSALS_IN_MESSAGE = 3;
+
+/** Some picked files were refused. `data` becomes the JSON-RPC `error.data`. */
+class FilesRefusedError extends Error {
+  readonly data: RequestFileRefusal;
+
+  constructor(picked: number, data: RequestFileRefusal) {
+    const named = data.errors.slice(0, REFUSALS_IN_MESSAGE).join("; ");
+    const more = data.errors.length - REFUSALS_IN_MESSAGE;
+    const stored = data.files.length > 0 ? ` ${data.files.length} stored.` : "";
+    super(
+      `${data.errors.length} of ${picked} ${picked === 1 ? "file" : "files"} refused: ${named}${more > 0 ? `; and ${more} more` : ""}.${stored}`,
+    );
+    this.name = "FilesRefusedError";
+    this.data = data;
+  }
 }
 
 /**
- * Validate picked files against `maxSize`, upload them via `POST /v1/resources`,
- * and resolve to the persisted entries — an empty list when nothing was chosen.
- * Throws on the first oversize file or an upload failure.
+ * The per-file reasons the upload route puts in `details.errors` when it refuses
+ * every file. Any other failure (auth, a request over the total limit, the
+ * network) names no file, and answers `undefined`.
+ */
+function refusedFileErrors(err: unknown): string[] | undefined {
+  const errors = (err as { details?: { errors?: unknown } } | null)?.details?.errors;
+  if (!Array.isArray(errors) || errors.length === 0) return undefined;
+  return errors.every((e) => typeof e === "string") ? errors : undefined;
+}
+
+/**
+ * Validate picked files against `maxSize` and `maxTotalSize`, upload them via
+ * `POST /v1/workspaces/:wsId/resources`, and resolve to the persisted entries —
+ * an empty list when nothing was chosen. Throws `FilesRefusedError` when any
+ * file was refused: every oversize file, before anything is uploaded, or the
+ * files the server refused, after it stored the rest. A set over the total is
+ * refused before upload with an error naming the limit. Any other upload
+ * failure is rethrown as is.
  */
 async function processPickedFiles(
-  files: FileList | null,
+  files: FileList | readonly File[] | null,
   maxSize: number,
+  maxTotalSize: number | undefined,
 ): Promise<RequestFileResult> {
   if (!files || files.length === 0) return { files: [] };
   const selected = Array.from(files);
-  for (const file of selected) {
-    if (file.size > maxSize) {
-      throw new Error(
-        `File "${file.name}" exceeds maximum size of ${Math.round(maxSize / 1_048_576)} MB`,
-      );
-    }
+  const oversize = selected
+    .filter((file) => file.size > maxSize)
+    .map((file) => `File "${file.name}" exceeds maximum size of ${humanBytes(maxSize)}`);
+  if (oversize.length > 0) {
+    throw new FilesRefusedError(selected.length, { files: [], errors: oversize });
   }
-  const result = await uploadResource(selected);
+  // Over the total, the server refuses the whole request before reading it, so
+  // no file is at fault and nothing is stored: a plain error, not a refusal.
+  const total = selected.reduce((sum, file) => sum + file.size, 0);
+  if (maxTotalSize !== undefined && total > maxTotalSize) {
+    throw new Error(
+      `The selected files total ${humanBytes(total)}; an upload can be up to ${humanBytes(maxTotalSize)}.`,
+    );
+  }
+  let result: Awaited<ReturnType<typeof uploadResource>>;
+  try {
+    result = await uploadResource(selected);
+  } catch (err) {
+    const errors = refusedFileErrors(err);
+    if (errors) throw new FilesRefusedError(selected.length, { files: [], errors });
+    throw err;
+  }
+  if (result.errors && result.errors.length > 0) {
+    throw new FilesRefusedError(selected.length, { files: result.files, errors: result.errors });
+  }
   return { files: result.files };
 }
 

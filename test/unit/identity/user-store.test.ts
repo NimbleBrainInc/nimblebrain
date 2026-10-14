@@ -1,13 +1,13 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { User } from "../../../src/identity/user.ts";
 import {
   resolveUserDisplayName,
   UserConflictError,
   UserStore,
 } from "../../../src/identity/user.ts";
-import type { User } from "../../../src/identity/user.ts";
 
 let workDir: string;
 let store: UserStore;
@@ -49,9 +49,9 @@ describe("UserStore", () => {
     test("throws conflict error for duplicate email", async () => {
       await store.create({ email: "dup@example.com", displayName: "First" });
 
-      expect(
-        store.create({ email: "dup@example.com", displayName: "Second" }),
-      ).rejects.toThrow(UserConflictError);
+      expect(store.create({ email: "dup@example.com", displayName: "Second" })).rejects.toThrow(
+        UserConflictError,
+      );
     });
 
     test("respects optional fields", async () => {
@@ -161,9 +161,9 @@ describe("UserStore", () => {
       await store.create({ email: "taken@example.com", displayName: "Taken" });
       const user = await store.create({ email: "mine@example.com", displayName: "Mine" });
 
-      expect(
-        store.update(user.id, { email: "taken@example.com" }),
-      ).rejects.toThrow(UserConflictError);
+      expect(store.update(user.id, { email: "taken@example.com" })).rejects.toThrow(
+        UserConflictError,
+      );
     });
   });
 

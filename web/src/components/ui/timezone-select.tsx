@@ -4,9 +4,7 @@ import { cn } from "@/lib/utils";
 
 const IANA_TIMEZONES: string[] =
   "supportedValuesOf" in Intl
-    ? (Intl as unknown as { supportedValuesOf: (key: string) => string[] }).supportedValuesOf(
-        "timeZone",
-      )
+    ? Intl.supportedValuesOf("timeZone")
     : [
         "UTC",
         "America/New_York",

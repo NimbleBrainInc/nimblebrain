@@ -2,7 +2,7 @@
 // Bridge spec-surface tests
 //
 // Three spec requests the host answers, and the capabilities it advertises for
-// them. Each was previously absent, and an absent handler on this bridge is
+// them. An absent handler on this bridge is
 // silent — the switch drops the message and the app's promise never settles —
 // so these assert that something comes back at all as much as what it says.
 //
@@ -15,42 +15,39 @@
 //   - `notifications/message`: reaches the console. The `logging` capability
 //     is advertised, so it has to land somewhere.
 //
-// Plus: the tasks capability is advertised where an app built on the spec's
-// own client can still see it — `hostCapabilities.experimental`, keyed by
-// identifier — as well as in the sibling field today's SDK reads.
+// Plus: the tasks extension is advertised where an app built on the spec's own
+// client can still see it — `hostCapabilities.experimental`, keyed by its
+// identifier.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { realClient } from "../../../test/setup";
-import { REQUEST_FILE_METHOD } from "../../bridge/extensions";
+import { realClient, realMcpBridgeClient } from "../../../test/setup";
+import {
+  LOCATION_METHOD,
+  NAVIGATE_METHOD,
+  REQUEST_FILE_METHOD,
+  UPLOAD_FILES_METHOD,
+} from "../../bridge/extensions";
+import type { UploadLimits } from "../../bridge/host-extensions";
 
 /**
  * A module namespace is readonly, so the upload is swapped here rather than on
  * the imported binding. Defaults to throwing: a test that reaches the uploader
  * without meaning to should say so, not silently upload nothing.
  */
-let uploadStub: (files: File[]) => Promise<{ files: unknown[] }> = async () => {
+let uploadStub: (files: File[]) => Promise<{ files: unknown[]; errors?: string[] }> = async () => {
   throw new Error("uploadResource not stubbed in this test");
 };
 
 mock.module("../../api/client", () => ({
   ...realClient,
-  getActiveWorkspaceId: () => "ws_test",
+  getActiveWorkspaceId: () => "ws_0076759dbbe19fcc",
   uploadResource: (files: File[]) => uploadStub(files),
 }));
 
 mock.module("../../mcp-bridge-client", () => ({
-  getMcpBridgeClient: async () => ({
-    callTool: mock(async () => ({ content: [], structuredContent: {} })),
-    readResource: mock(async () => ({ contents: [] })),
-    request: mock(async () => ({})),
-    setNotificationHandler: mock(() => {}),
-    removeNotificationHandler: mock(() => {}),
-  }),
-  resetMcpBridgeClient: () => {
-    /* noop */
-  },
-  withSessionRetry: async <T>(op: () => Promise<T>): Promise<T> => op(),
+  ...realMcpBridgeClient,
+  sendMcpRequest: mock(async () => ({ result: { content: [] } })),
 }));
 
 const { createBridge } = await import("../../bridge/bridge");
@@ -83,8 +80,7 @@ function makeTestIframe(): TestIframe {
   });
 
   function send(data: unknown): void {
-    const WindowMessageEvent = (window as unknown as { MessageEvent: typeof MessageEvent })
-      .MessageEvent;
+    const WindowMessageEvent = window.MessageEvent;
     const event = new WindowMessageEvent("message", { data });
     Object.defineProperty(event, "source", {
       configurable: true,
@@ -197,7 +193,9 @@ describe("ui/initialize — advertised capabilities", () => {
       },
     });
     const reply = (await frame.waitFor(isReplyTo("init-exp"))) as { result: unknown };
-    const tasks = { cancel: {}, requests: { tools: { call: {} } } };
+    // The tasks extension's capability is an empty object: an app opts each
+    // call in on the request, so there is nothing more to declare.
+    const tasks = {};
 
     const sent = reply.result as { hostCapabilities: Record<string, unknown> };
     // Every literal is pinned, not just its presence: each is the exact string
@@ -207,20 +205,24 @@ describe("ui/initialize — advertised capabilities", () => {
     expect(sent.hostCapabilities.experimental).toEqual({
       "io.modelcontextprotocol/tasks": tasks,
       "ai.nimblebrain/action": {},
+      "ai.nimblebrain/notify": {},
       "ai.nimblebrain/request-file": {},
       "ai.nimblebrain/keydown": {},
+      "ai.nimblebrain/location": {},
     });
 
     // What the official `App` keeps: it stores the parsed result, not the raw
     // frame, so a key this parse strips is a key no app built on it can read.
     // `experimental` is the one slot in `hostCapabilities` that survives it,
-    // which is why all four travel there.
+    // which is why every one of them travels there.
     const parsed = McpUiInitializeResultSchema.parse(reply.result);
     expect(parsed.hostCapabilities.experimental).toEqual({
       "io.modelcontextprotocol/tasks": tasks,
       "ai.nimblebrain/action": {},
+      "ai.nimblebrain/notify": {},
       "ai.nimblebrain/request-file": {},
       "ai.nimblebrain/keydown": {},
+      "ai.nimblebrain/location": {},
     });
   });
 });
@@ -386,16 +388,16 @@ describe("notifications/message", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Request ids, and answering the two requests that used to go unanswered
+// Request ids, and answering `ui/message` and `ui/open-link`
 //
 // A JSON-RPC id is a string or a number, and the MCP SDK numbers requests from
-// zero — so an app built on the spec's own client sends numeric ids. The
-// schemas took `Type.String()` for these methods, which made the validator drop
-// every such frame: the link never opened, the message never arrived, and the
-// app's promise never settled.
+// zero — so an app built on the spec's own client sends numeric ids. A schema
+// of `Type.String()` for these methods would make the validator drop every such
+// frame: the link never opens, the message never arrives, and the app's promise
+// never settles.
 //
-// `ui/message` and `ui/open-link` are requests in the spec. The host served
-// both and answered neither, which a client with a deadline reads as a failure.
+// `ui/message` and `ui/open-link` are requests in the spec. A host that serves
+// them without answering reads as a failure to a client with a deadline.
 // Both forms still arrive — an app on an older SDK sends them as notifications,
 // which take no answer.
 // ---------------------------------------------------------------------------
@@ -519,12 +521,118 @@ describe("spec request ids", () => {
   });
 });
 
+describe("ai.nimblebrain/upload-files", () => {
+  // Files the app already holds (dropped on it) take the picker's path from the
+  // point a pick has its files, so they answer and refuse exactly as a pick does.
+
+  test("an app other than Files is refused, and nothing is uploaded", async () => {
+    const origUpload = uploadStub;
+    let calls = 0;
+    uploadStub = async () => {
+      calls += 1;
+      return { files: [] };
+    };
+    try {
+      const frame = mount("db-query");
+      await handshake(frame);
+      frame.send({
+        jsonrpc: "2.0",
+        id: "drop-other",
+        method: UPLOAD_FILES_METHOD,
+        params: { files: [new File(["x"], "planted.md")] },
+      });
+
+      const reply = (await frame.waitFor(isReplyTo("drop-other"), 2000)) as {
+        error: { code: number };
+      };
+      expect(reply.error.code).toBe(-32601);
+      expect(calls).toBe(0);
+    } finally {
+      uploadStub = origUpload;
+    }
+  });
+
+  test("uploads the files it was given and answers { files }", async () => {
+    const entry = { id: "fl_abc", filename: "notes.txt", mimeType: "text/plain", size: 5 };
+    const uploaded: File[][] = [];
+    const origUpload = uploadStub;
+    uploadStub = async (files: File[]) => {
+      uploaded.push(files);
+      return { files: [entry] };
+    };
+    try {
+      const frame = mount("files");
+      await handshake(frame);
+      const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+      frame.send({
+        jsonrpc: "2.0",
+        id: "drop-one",
+        method: UPLOAD_FILES_METHOD,
+        params: { files: [file] },
+      });
+
+      const reply = (await frame.waitFor(isReplyTo("drop-one"), 2000)) as { result: unknown };
+      expect(reply.result).toEqual({ files: [entry] });
+      expect(uploaded).toEqual([[file]]);
+    } finally {
+      uploadStub = origUpload;
+    }
+  });
+
+  test("an entry that is not a File refuses the request and uploads nothing", async () => {
+    const origUpload = uploadStub;
+    let calls = 0;
+    uploadStub = async () => {
+      calls += 1;
+      return { files: [] };
+    };
+    try {
+      const frame = mount("files");
+      await handshake(frame);
+      frame.send({
+        jsonrpc: "2.0",
+        id: "drop-bad",
+        method: UPLOAD_FILES_METHOD,
+        params: { files: [{ name: "a.txt", data: "aGk=" }] },
+      });
+
+      const reply = (await frame.waitFor(isReplyTo("drop-bad"), 2000)) as {
+        error: { code: number; message: string };
+      };
+      expect(reply.error.code).toBe(-32602);
+      expect(reply.error.message).toContain("must be a File");
+      expect(calls).toBe(0);
+    } finally {
+      uploadStub = origUpload;
+    }
+  });
+
+  test("a file over the limit is refused before upload, with the refusal as data", async () => {
+    const frame = mount("files");
+    await handshake(frame);
+    const big = new File(["0123456789"], "big.bin");
+    frame.send({
+      jsonrpc: "2.0",
+      id: "drop-big",
+      method: UPLOAD_FILES_METHOD,
+      params: { files: [big], maxSize: 4 },
+    });
+
+    const reply = (await frame.waitFor(isReplyTo("drop-big"), 2000)) as {
+      error: { code: number; data: { files: unknown[]; errors: string[] } };
+    };
+    expect(reply.error.code).toBe(-32602);
+    expect(reply.error.data.files).toEqual([]);
+    expect(reply.error.data.errors[0]).toContain("big.bin");
+  });
+});
+
 describe("ai.nimblebrain/request-file", () => {
-  // A JSON-RPC result is an object, and MCP types it as one. The picker used to
-  // answer a bare array, a bare object, or `null` — shapes a client that
-  // validates against the spec cannot parse, so the call never settled and the
-  // picker hung with no error. Both paths are asserted on the wire, because the
-  // wrapper is the whole fix and the old shapes were also "truthy and plausible".
+  // A JSON-RPC result is an object, and MCP types it as one. A bare array, a
+  // bare object, or `null` is a shape a client that validates against the spec
+  // cannot parse, so the call never settles and the picker hangs with no error.
+  // Both paths are asserted on the wire, because the wrapper is what makes the
+  // result parse and the bare shapes are also "truthy and plausible".
   //
   // The OS picker cannot be opened here, so each path is driven at its own
   // seam: a cancel through the `cancel` event the browser fires on the input,
@@ -551,7 +659,7 @@ describe("ai.nimblebrain/request-file", () => {
         picker = el;
         // The bridge calls click() to open the dialog; dismiss it instead.
         el.click = () => {
-          el.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("cancel"));
+          el.dispatchEvent(new window.Event("cancel"));
         };
       }
       return el;
@@ -587,7 +695,7 @@ describe("ai.nimblebrain/request-file", () => {
       params: { multiple: false },
     });
 
-    window.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("focus"));
+    window.dispatchEvent(new window.Event("focus"));
 
     await expect(frame.waitFor(isReplyTo("pick-focus"), 600)).rejects.toThrow();
   });
@@ -609,7 +717,7 @@ describe("ai.nimblebrain/request-file", () => {
       Object.defineProperty(el, "files", { configurable: true, get: () => [file] });
       // The bridge calls click() to open the picker; fire the selection instead.
       el.click = () => {
-        el.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("change"));
+        el.dispatchEvent(new window.Event("change"));
       };
       return el;
     }) as typeof document.createElement;
@@ -653,7 +761,7 @@ describe("ai.nimblebrain/request-file", () => {
       if (tag !== "input") return el;
       Object.defineProperty(el, "files", { configurable: true, get: () => picked });
       el.click = () => {
-        el.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("change"));
+        el.dispatchEvent(new window.Event("change"));
       };
       return el;
     }) as typeof document.createElement;
@@ -677,5 +785,254 @@ describe("ai.nimblebrain/request-file", () => {
       document.createElement = origCreate as typeof document.createElement;
       uploadStub = origUpload;
     }
+  });
+
+  // A refused file must reach the app. The SDK's `pickFiles` returns
+  // `result.files` alone, so a refusal is a JSON-RPC error whose `data` names
+  // each refused file and why, and the entries stored anyway.
+
+  /** Pick `picked` with `upload` as the server, and answer the reply. */
+  async function pickWith(
+    id: string,
+    picked: File[],
+    upload: typeof uploadStub,
+    maxSize: number | null = 1024,
+    limits?: UploadLimits,
+  ): Promise<{ result?: unknown; error?: { code: number; message: string; data?: unknown } }> {
+    const origUpload = uploadStub;
+    uploadStub = upload;
+    const origCreate = document.createElement.bind(document);
+    document.createElement = ((tag: string) => {
+      const el = origCreate(tag) as HTMLInputElement;
+      if (tag !== "input") return el;
+      Object.defineProperty(el, "files", { configurable: true, get: () => picked });
+      el.click = () => {
+        el.dispatchEvent(new window.Event("change"));
+      };
+      return el;
+    }) as typeof document.createElement;
+
+    try {
+      const frame = mount("db-query", limits ? { getUploadLimits: () => limits } : undefined);
+      await handshake(frame);
+      frame.send({
+        jsonrpc: "2.0",
+        id,
+        method: REQUEST_FILE_METHOD,
+        // `null` sends no `maxSize`, as an app that takes the host's default does.
+        params: { multiple: true, ...(maxSize === null ? {} : { maxSize }) },
+      });
+      return (await frame.waitFor(isReplyTo(id), 2000)) as {
+        result?: unknown;
+        error?: { code: number; message: string; data?: unknown };
+      };
+    } finally {
+      document.createElement = origCreate as typeof document.createElement;
+      uploadStub = origUpload;
+    }
+  }
+
+  test("a mixed upload answers the refused files, and the stored ones, in error.data", async () => {
+    const stored = { id: "fl_a", filename: "notes.txt", mimeType: "text/plain", size: 1 };
+    const refused = 'File "setup.exe" has disallowed type: application/x-msdownload';
+    const reply = await pickWith(
+      "pick-mixed",
+      [
+        new File(["a"], "notes.txt", { type: "text/plain" }),
+        new File(["b"], "setup.exe", { type: "application/x-msdownload" }),
+      ],
+      async () => ({ files: [stored], errors: [refused] }),
+    );
+
+    expect(reply.result).toBeUndefined();
+    expect(reply.error?.code).toBe(-32602);
+    expect(reply.error?.data).toEqual({ files: [stored], errors: [refused] });
+    expect(reply.error?.message).toContain(refused);
+    expect(reply.error?.message).toContain("1 of 2 files refused");
+  });
+
+  test("an upload the server refused entirely answers its per-file reasons", async () => {
+    const reasons = [
+      'File "a.exe" has disallowed type: application/x-msdownload',
+      'File "b.exe" has disallowed type: application/x-msdownload',
+    ];
+    const reply = await pickWith(
+      "pick-all-refused",
+      [new File(["a"], "a.exe"), new File(["b"], "b.exe")],
+      async () => {
+        // What `uploadResource` throws for the route's 400: the reasons ride in `details`.
+        throw Object.assign(new Error("All uploads were rejected"), {
+          code: "file_upload_error",
+          status: 400,
+          details: { errors: reasons },
+        });
+      },
+    );
+
+    expect(reply.error?.data).toEqual({ files: [], errors: reasons });
+    expect(reply.error?.message).toContain("2 of 2 files refused");
+  });
+
+  test("a failure that names no file answers its message and no data", async () => {
+    const reply = await pickWith("pick-too-large", [new File(["a"], "a.txt")], async () => {
+      throw Object.assign(new Error("Upload is 30 MB; the limit is 25 MB per upload."), {
+        code: "payload_too_large",
+        status: 413,
+        details: { size: 1, limit: 1 },
+      });
+    });
+
+    expect(reply.error).toEqual({
+      code: -32602,
+      message: "Upload is 30 MB; the limit is 25 MB per upload.",
+    });
+  });
+
+  test("a set over the host's total limit is refused before upload, naming the limit", async () => {
+    let uploaded = false;
+    const reply = await pickWith(
+      "pick-over-total",
+      [new File(["x".repeat(1536)], "a.bin"), new File(["x".repeat(1536)], "b.bin")],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      4096,
+      { maxFileSize: 4096, maxTotalSize: 2048 },
+    );
+
+    expect(uploaded).toBe(false);
+    expect(reply.error).toEqual({
+      code: -32602,
+      message: "The selected files total 3.0 KB; an upload can be up to 2.0 KB.",
+    });
+  });
+
+  test("an app's maxSize above the host's per-file limit is held to the host's", async () => {
+    let uploaded = false;
+    const reply = await pickWith(
+      "pick-host-cap",
+      [new File(["x".repeat(2048)], "big.bin")],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      1_048_576,
+      { maxFileSize: 1024, maxTotalSize: 1_048_576 },
+    );
+
+    expect(uploaded).toBe(false);
+    expect(reply.error?.data).toMatchObject({ errors: [expect.any(String)] });
+  });
+
+  test("an app that sends no maxSize is held to the host's per-file limit", async () => {
+    let uploaded = false;
+    const reply = await pickWith(
+      "pick-host-default",
+      [new File(["x".repeat(2048)], "big.bin")],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      null,
+      { maxFileSize: 1024, maxTotalSize: 1_048_576 },
+    );
+
+    expect(uploaded).toBe(false);
+    expect(reply.error?.data).toMatchObject({
+      errors: ['File "big.bin" exceeds maximum size of 1.0 KB'],
+    });
+  });
+
+  test("an app that sends no maxSize may pick up to a host limit above 25 MB", async () => {
+    // Only a host limit above the 25 MB fallback shows the default is the
+    // host's: below it, the host cap alone gives the same answer.
+    const big = new File(["x"], "big.bin");
+    Object.defineProperty(big, "size", { value: 30 * 1_048_576 });
+    let uploaded = false;
+    await pickWith(
+      "pick-host-default-high",
+      [big],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      null,
+      { maxFileSize: 50 * 1_048_576, maxTotalSize: 100 * 1_048_576 },
+    );
+
+    expect(uploaded).toBe(true);
+  });
+
+  test("every oversize file is refused before anything is uploaded", async () => {
+    let uploaded = false;
+    const reply = await pickWith(
+      "pick-oversize",
+      [
+        new File(["x".repeat(2048)], "big-1.bin"),
+        new File(["ok"], "small.txt"),
+        new File(["x".repeat(2048)], "big-2.bin"),
+      ],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      1024,
+    );
+
+    expect(uploaded).toBe(false);
+    const data = reply.error?.data as { files: unknown[]; errors: string[] };
+    expect(data.files).toEqual([]);
+    expect(data.errors).toHaveLength(2);
+    expect(data.errors[0]).toContain('"big-1.bin"');
+    expect(data.errors[1]).toContain('"big-2.bin"');
+  });
+});
+
+describe("ai.nimblebrain/location and ai.nimblebrain/navigate", () => {
+  const TRAIL = [
+    { id: "people", label: "People" },
+    { id: "contact/dh-123", label: "Dan Hoover" },
+  ];
+
+  test("a trail reaches onLocation whole, root first", async () => {
+    const trails: unknown[] = [];
+    const frame = mount("people", { onLocation: (trail) => trails.push(trail) });
+    await handshake(frame);
+
+    frame.send({ jsonrpc: "2.0", method: LOCATION_METHOD, params: { trail: TRAIL } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(trails).toEqual([TRAIL]);
+  });
+
+  test("a malformed trail never reaches the shell", async () => {
+    const trails: unknown[] = [];
+    const frame = mount("people", { onLocation: (trail) => trails.push(trail) });
+    await handshake(frame);
+
+    // Empty, an empty label, and a missing id: each fails the schema.
+    for (const trail of [[], [{ id: "a", label: "" }], [{ label: "No id" }]]) {
+      frame.send({ jsonrpc: "2.0", method: LOCATION_METHOD, params: { trail } });
+    }
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(trails).toEqual([]);
+  });
+
+  test("navigate is held until the handshake completes, then delivered", async () => {
+    const frame = makeTestIframe();
+    const bridge = createBridge(frame.iframe, "people");
+    activeFrame = frame;
+    activeBridge = bridge;
+
+    bridge.navigate("people");
+    expect(frame.inbox).toEqual([]);
+
+    await handshake(frame);
+    frame.send({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+    const sent = await frame.waitFor((m) => (m as { method?: string })?.method === NAVIGATE_METHOD);
+
+    expect(sent).toEqual({ jsonrpc: "2.0", method: NAVIGATE_METHOD, params: { id: "people" } });
   });
 });

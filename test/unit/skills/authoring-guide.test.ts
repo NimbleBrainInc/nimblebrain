@@ -6,10 +6,10 @@
  * relies on, and keeps its top-level structure stable across edits.
  */
 
+import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "bun:test";
 import matter from "gray-matter";
 import { parseSkillFile } from "../../../src/skills/loader.ts";
 import { validateFrontmatter } from "../../../src/skills/schemas/skill-manifest.ts";
@@ -79,7 +79,7 @@ describe("authoring-guide Layer 1 skill", () => {
     if (!block) throw new Error("no ```yaml example block found in the guide body");
     const example = matter(block[1] as string);
     const result = validateFrontmatter(example.data);
-    if (!result.ok) {
+    if (result.ok === false) {
       throw new Error(`worked example frontmatter is invalid: ${result.errors.join("; ")}`);
     }
     expect(result.ok).toBe(true);

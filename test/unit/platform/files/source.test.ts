@@ -12,23 +12,33 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import type { ContentBlock, ToolResult } from "../../../../src/engine/types.ts";
 import { workspaceFilesDir } from "../../../../src/files/paths.ts";
 import { createFileStore } from "../../../../src/files/store.ts";
+import { DEFAULT_FILE_CONFIG } from "../../../../src/files/types.ts";
 import { createFilesSource } from "../../../../src/platform/files/source.ts";
-import type { ContentBlock, ToolResult } from "../../../../src/engine/types.ts";
+import type {
+  FilesCreateOutput,
+  FilesInfoOutput,
+  FilesReadPdfPagesOutput,
+  FilesSearchOutput,
+  FilesTagOutput,
+} from "../../../../src/platform/schemas/files.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
-import type { FilesReadPdfPagesOutput } from "../../../../src/platform/schemas/files.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
+import { structuredOutput } from "../../../helpers/tool-result.ts";
 
 /** The owner and focused workspace every handler call in this file runs as. */
 const OWNER_ID = "usr_test";
-const WS_ID = "ws_user_usr_test";
+const WS_ID = "ws_00859aff6f095b0e";
 
 function parseFirst(result: ToolResult): unknown {
   const first = result.content[0];
-  if (!first || first.type !== "text") throw new Error("expected text block");
+  if (first?.type !== "text") throw new Error("expected text block");
   return JSON.parse(first.text);
 }
 
@@ -48,14 +58,7 @@ function findResourceLink(result: ToolResult): {
   size?: number;
 } {
   for (const block of result.content as ContentBlock[]) {
-    if ((block as { type?: string }).type === "resource_link") {
-      return block as unknown as {
-        uri: string;
-        name: string;
-        mimeType?: string;
-        size?: number;
-      };
-    }
+    if (block.type === "resource_link") return block;
   }
   throw new Error("expected a resource_link block in tool result");
 }
@@ -66,13 +69,13 @@ function makeRuntime(workDir: string): Runtime {
   // where the workspace comes from the request context (see `exec`) and the owner
   // from the current identity. The mock roots each store at the matching workspace
   // partition so the on-disk round-trip is exercised faithfully.
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? OWNER_ID,
     getWorkspaceFileStore: (wsId: string, ownerId: string) =>
       createFileStore(workspaceFilesDir(workDir, wsId, ownerId)),
-    getFilesConfig: () => ({ maxExtractedTextSize: 204_800 }),
-  } as unknown as Runtime;
+    getFilesConfig: () => DEFAULT_FILE_CONFIG,
+  });
 }
 
 /**
@@ -81,9 +84,8 @@ function makeRuntime(workDir: string): Runtime {
  * workspace-owned store has no workspace in scope and `getStore()` throws.
  */
 function exec(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
-  return runWithRequestContext(
-    { identity: null, workspaceId: WS_ID },
-    () => source.execute(tool, args),
+  return runWithRequestContext({ identity: null, workspaceId: WS_ID }, () =>
+    source.execute(tool, args),
   );
 }
 
@@ -105,7 +107,8 @@ function makeTextPdf(pageTexts: string[]): Buffer {
     const content = `BT /F1 24 Tf 72 720 Td (${pdfString(pageTexts[index]!)}) Tj ET`;
     objects[pageId] =
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentId} 0 R >>`;
-    objects[contentId] = `<< /Length ${Buffer.byteLength(content, "utf-8")} >>\nstream\n${content}\nendstream`;
+    objects[contentId] =
+      `<< /Length ${Buffer.byteLength(content, "utf-8")} >>\nstream\n${content}\nendstream`;
   }
 
   let body = "%PDF-1.4\n";
@@ -135,6 +138,9 @@ beforeEach(async () => {
   seedWorkspaceRoot(workDir, WS_ID);
   source = createFilesSource(makeRuntime(workDir), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {
@@ -160,7 +166,7 @@ describe("files app", () => {
       body: encoded,
     });
     expect(created.isError).toBe(false);
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
     expect(id).toMatch(/^fl_/);
 
     const read = await exec("read", { id });
@@ -206,7 +212,7 @@ describe("files app", () => {
       body: pngBase64,
     });
     expect(created.isError).toBe(false);
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
 
     const read = await exec("read", { id });
     expect(read.isError).toBe(false);
@@ -235,8 +241,8 @@ describe("files app", () => {
 
   test("create rejects a plain-text body under the base64 default", async () => {
     // `Buffer.from(s, "base64")` drops every character outside the alphabet, so
-    // an un-encoded body used to decode to garbage and save successfully. The
-    // caller only found out by opening the file.
+    // an un-encoded body would decode to garbage and save successfully, and the
+    // caller would only find out by opening the file.
     const result = await exec("create", {
       manifest: { filename: "notes.md", mimeType: "text/markdown" },
       body: "# Conventions\n\nAlways cite the source.",
@@ -258,7 +264,7 @@ describe("files app", () => {
       encoding: "text",
     });
     expect(created.isError).toBe(false);
-    const { id, size } = parseFirst(created) as { id: string; size: number };
+    const { id, size } = parseFirst(created) as FilesCreateOutput;
     expect(size).toBe(Buffer.byteLength(payload, "utf8"));
 
     const read = await exec("read", { id });
@@ -275,7 +281,7 @@ describe("files app", () => {
     });
     expect(created.isError).toBe(false);
 
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
     const read = await exec("read", { id });
     expect(read.structuredContent).toMatchObject({ extractedText: payload });
   });
@@ -312,7 +318,7 @@ describe("files app", () => {
       });
       expect(created.isError).toBe(false);
 
-      const { id } = parseFirst(created) as { id: string };
+      const { id } = parseFirst(created) as FilesCreateOutput;
       const read = await exec("read", { id });
       expect(read.structuredContent).toMatchObject({ extractedText: payload });
     }
@@ -346,6 +352,57 @@ describe("files app", () => {
     expect(parseFirst(created)).toMatchObject({ size: 0 });
   });
 
+  test("search returns matching files and the match count", async () => {
+    const created = await exec("create", {
+      manifest: { filename: "quarterly-report.txt", mimeType: "text/plain" },
+      body: "q3 numbers",
+      encoding: "text",
+    });
+    const { id } = parseFirst(created) as FilesCreateOutput;
+    await exec("create", {
+      manifest: { filename: "unrelated.txt", mimeType: "text/plain" },
+      body: "other",
+      encoding: "text",
+    });
+
+    const result = await exec("search", { query: "quarterly" });
+    expect(result.isError).toBe(false);
+    const structured = structuredOutput<FilesSearchOutput>(result);
+    expect(structured.total).toBe(1);
+    expect(structured.files.map((f) => f.id)).toEqual([id]);
+  });
+
+  test("info returns the file's record", async () => {
+    const created = await exec("create", {
+      manifest: { filename: "notes.md", mimeType: "text/markdown" },
+      body: "# Notes",
+      encoding: "text",
+    });
+    const { id } = parseFirst(created) as FilesCreateOutput;
+
+    const result = await exec("info", { id });
+    expect(result.isError).toBe(false);
+    expect(structuredOutput<FilesInfoOutput>(result)).toMatchObject({
+      id,
+      filename: "notes.md",
+      mimeType: "text/markdown",
+    });
+  });
+
+  test("tag adds and removes tags and returns the result", async () => {
+    const created = await exec("create", {
+      manifest: { filename: "tagged.txt", mimeType: "text/plain" },
+      body: "tag me",
+      encoding: "text",
+    });
+    const { id } = parseFirst(created) as FilesCreateOutput;
+
+    await exec("tag", { id, add: ["draft", "finance"] });
+    const result = await exec("tag", { id, remove: ["draft"] });
+    expect(result.isError).toBe(false);
+    expect(structuredOutput<FilesTagOutput>(result)).toEqual({ id, tags: ["finance"] });
+  });
+
   test("read of nonexistent id surfaces a clean message (not a raw fs error)", async () => {
     const result = await exec("read", { id: "fl_doesnotexist" });
     expect(result.isError).toBe(true);
@@ -367,7 +424,7 @@ describe("files app", () => {
       body: pdf.toString("base64"),
     });
     expect(created.isError).toBe(false);
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
 
     const result = await exec("read_pdf_pages", { id, pages: [2] });
     expect(result.isError).toBe(false);
@@ -384,7 +441,7 @@ describe("files app", () => {
     expect(text).not.toContain("page three should stay hidden");
     expect(JSON.stringify(result)).not.toContain(pdf.toString("base64"));
 
-    const structured = result.structuredContent as unknown as FilesReadPdfPagesOutput;
+    const structured = structuredOutput<FilesReadPdfPagesOutput>(result);
     expect(structured).toMatchObject({
       id,
       filename: "report.pdf",
@@ -410,7 +467,7 @@ describe("files app", () => {
       body: pdf.toString("base64"),
     });
     expect(created.isError).toBe(false);
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
 
     const result = await exec("read_pdf_pages", { id, pages: [99, 1, 1] });
     expect(result.isError).toBe(false);
@@ -420,7 +477,7 @@ describe("files app", () => {
     expect(text).toContain("only page");
     expect(text).toContain("Missing pages: 99 (PDF has 1 page).");
 
-    const structured = result.structuredContent as unknown as FilesReadPdfPagesOutput;
+    const structured = structuredOutput<FilesReadPdfPagesOutput>(result);
     expect(structured.requestedPages).toEqual([1, 99]);
     expect(structured.missingPages).toEqual([99]);
     expect(structured.pages.map((page) => page.page)).toEqual([1]);
@@ -432,7 +489,7 @@ describe("files app", () => {
       body: Buffer.from("not a pdf").toString("base64"),
     });
     expect(created.isError).toBe(false);
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
 
     const result = await exec("read_pdf_pages", { id, pages: [1] });
     expect(result.isError).toBe(true);

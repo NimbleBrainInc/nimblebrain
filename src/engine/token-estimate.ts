@@ -361,8 +361,7 @@ export interface EstimatableTool {
 
 /**
  * Pre-flight estimate of the tokens a tool description will cost when
- * surfaced to the model. Mirrors the legacy formula (name + description +
- * input schema as text) but keeps `JSON.stringify` confined to the schema
+ * surfaced to the model: name + description + input schema as text. Keeps `JSON.stringify` confined to the schema
  * object — which today is plain JSON but is shape-coupled to objects that
  * may eventually carry binary defaults, so we centralize the call site.
  *

@@ -53,7 +53,7 @@
  * their CSS — verified in `conversations/ui/dist`, which keeps its
  * five `color-mix()` declarations verbatim with no `@supports` block. Note this
  * is a property of the build, not of how the CSS is authored: four of the five
- * connectors ship a real `index.css`, and only `automations` is a template string.
+ * connectors ship a real `index.css`, and only `tasks` is a template string.
  * Non-colour properties are left alone — a degraded `border-color` or
  * `box-shadow` shifts an edge; a degraded `background` behind text removes the
  * text.
@@ -110,7 +110,8 @@ describe("colourMixes", () => {
   });
 
   test("an author-written fallback does not excuse it — Tailwind's own wins", () => {
-    const css = ".x {\n  background: transparent;\n  background: color-mix(in srgb, var(--a) 10%, transparent);\n}";
+    const css =
+      ".x {\n  background: transparent;\n  background: color-mix(in srgb, var(--a) 10%, transparent);\n}";
     expect(colourMixes(css).map((f) => f.line)).toEqual([3]);
   });
 
@@ -124,7 +125,8 @@ describe("colourMixes", () => {
   });
 
   test("sees a declaration inside a single-line rule", () => {
-    const css = ".x:hover { color: var(--a); background: color-mix(in srgb, var(--b) 10%, transparent); }";
+    const css =
+      ".x:hover { color: var(--a); background: color-mix(in srgb, var(--b) 10%, transparent); }";
     expect(colourMixes(css).map((f) => f.line)).toEqual([1]);
   });
 
@@ -133,6 +135,8 @@ describe("colourMixes", () => {
   });
 
   test("a non-colour property on a single line is still left alone", () => {
-    expect(colourMixes(".x { border-color: color-mix(in oklch, var(--a) 20%, transparent); }")).toEqual([]);
+    expect(
+      colourMixes(".x { border-color: color-mix(in oklch, var(--a) 20%, transparent); }"),
+    ).toEqual([]);
   });
 });

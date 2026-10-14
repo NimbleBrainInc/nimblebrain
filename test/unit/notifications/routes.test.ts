@@ -12,36 +12,35 @@
  * bound would take five minutes.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
-import type {
-  UnattendedDispatchOptions,
-  UnattendedDispatchResult,
-} from "../../../src/orchestrator/unattended-dispatch.ts";
+import type { NotificationRoute } from "../../../src/notifications/config.ts";
 import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
-import type {
-  EventWakeAck,
-  EventWakeRequest,
-} from "../../../src/platform/automations/event-trigger.ts";
 import {
+  RETRY_TICK_MS,
   RouteDispatcher,
   type RouteDispatcherDeps,
-  RETRY_TICK_MS,
 } from "../../../src/notifications/routes.ts";
 import { NotificationStore } from "../../../src/notifications/store.ts";
 import { clampLevel, type Notification } from "../../../src/notifications/types.ts";
 import type {
+  UnattendedDispatchOptions,
+  UnattendedDispatchResult,
+} from "../../../src/orchestrator/unattended-dispatch.ts";
+import type {
   DeliveryRecord,
   NotificationLevel,
 } from "../../../src/platform/schemas/notifications.ts";
+import type { EventWakeAck, EventWakeRequest } from "../../../src/platform/tasks/event-trigger.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { stub } from "../../helpers/stub.ts";
 
-const SOURCE = "precision-outbound";
+const SOURCE = "acme-outbound";
 const AUTHOR = "usr_admin";
 const TOOL = "slack__send_message";
 
@@ -106,7 +105,7 @@ function dispatcher(overrides: Partial<RouteDispatcherDeps> = {}): RouteDispatch
 
 /** Write the workspace's notifications block: ceilings and routes. */
 async function configure(block: Record<string, unknown>): Promise<void> {
-  await workspaceStore.update(wsId, { notifications: block } as never);
+  await workspaceStore.update(wsId, { notifications: block });
 }
 
 /** One route delivering to `TOOL`, with the match and input a test needs. */
@@ -142,11 +141,15 @@ function seed(
  * to `level` — the poller's job, done here so a ledger assertion reads against
  * the same number the poller would have stamped.
  */
-async function seedClamped(level: NotificationLevel, name = "domain.active"): Promise<Notification> {
+async function seedClamped(
+  level: NotificationLevel,
+  name = "domain.active",
+): Promise<Notification> {
   const ws = await workspaceStore.get(wsId);
   const ceiling =
-    ((ws?.notifications as { sources?: Record<string, { maxLevel: NotificationLevel }> } | undefined)
-      ?.sources?.[SOURCE]?.maxLevel as NotificationLevel | undefined) ?? "info";
+    ((
+      ws?.notifications as { sources?: Record<string, { maxLevel: NotificationLevel }> } | undefined
+    )?.sources?.[SOURCE]?.maxLevel as NotificationLevel | undefined) ?? "info";
   const envelope = parseNotificationEnvelope({
     eventId: `evt_${name}_${level}`,
     name,
@@ -337,7 +340,11 @@ describe("each dispatch outcome maps to a ledger row and an event", () => {
       classification: "owner_not_member",
       error: "not a member",
     });
-    expect(row).toMatchObject({ outcome: "skipped", attempts: 1, classification: "owner_not_member" });
+    expect(row).toMatchObject({
+      outcome: "skipped",
+      attempts: 1,
+      classification: "owner_not_member",
+    });
     expect(row.nextAttemptAt).toBeUndefined();
   });
 
@@ -354,7 +361,7 @@ describe("each dispatch outcome maps to a ledger row and an event", () => {
   });
 
   test("a route naming a tool the door refuses is denied by the door, not by this module", async () => {
-    // `automations__create` is barred by the unattended policy. This module
+    // `tasks__create` is barred by the unattended policy. This module
     // does not know that and must not: it makes the call and reads the answer.
     answers = [
       { outcome: "denied", classification: "tool_not_allowed", error: "not available unattended" },
@@ -365,15 +372,18 @@ describe("each dispatch outcome maps to a ledger row and an event", () => {
           id: "rt_auto",
           createdBy: AUTHOR,
           match: {},
-          deliver: [{ kind: "tool", tool: "automations__create", input: {} }],
+          deliver: [{ kind: "tool", tool: "tasks__create", input: {} }],
         },
       ],
     });
     const item = seed();
     await dispatcher().onItem(wsId, item);
 
-    expect(calls[0]?.tool).toBe("automations__create");
-    expect(ledger(item)[0]).toMatchObject({ outcome: "denied", classification: "tool_not_allowed" });
+    expect(calls[0]?.tool).toBe("tasks__create");
+    expect(ledger(item)[0]).toMatchObject({
+      outcome: "denied",
+      classification: "tool_not_allowed",
+    });
   });
 });
 
@@ -383,10 +393,7 @@ describe("targets are independent", () => {
   test("a failing target does not stop the ones after it", async () => {
     answers = [{ outcome: "denied", classification: "tool_not_allowed" }, { outcome: "ok" }];
     await configure({
-      routes: [
-        toolRoute({}, { text: "first" }, "rt_a"),
-        toolRoute({}, { text: "second" }, "rt_b"),
-      ],
+      routes: [toolRoute({}, { text: "first" }, "rt_a"), toolRoute({}, { text: "second" }, "rt_b")],
     });
     const item = seed();
     await dispatcher().onItem(wsId, item);
@@ -405,11 +412,9 @@ describe("an author who is no longer a member", () => {
     error: "not a member",
   };
 
-  async function storedRoute(): Promise<Record<string, unknown> | undefined> {
+  async function storedRoute(): Promise<NotificationRoute | undefined> {
     const ws = await workspaceStore.get(wsId);
-    const routes = (ws?.notifications as { routes?: Array<Record<string, unknown>> } | undefined)
-      ?.routes;
-    return routes?.[0];
+    return ws?.notifications?.routes?.[0];
   }
 
   test("disables the route on the workspace record, with a reason the editor shows", async () => {
@@ -524,13 +529,12 @@ describe("a retry whose attempt cannot even start", () => {
 
     let broken = false;
     const disp = dispatcher({
-      workspaceStore: {
-        ...workspaceStore,
+      workspaceStore: stub<WorkspaceStore>({
         get: async (id: string) => {
           if (broken) throw new Error("workspace record is unreadable");
           return workspaceStore.get(id);
         },
-      } as unknown as typeof workspaceStore,
+      }),
     });
     await disp.onItem(wsId, item);
     expect(ledger(item)[0]).toMatchObject({ outcome: "pending", attempts: 1 });
@@ -698,7 +702,7 @@ describe("a route naming one tool twice", () => {
 });
 
 describe("an agent target", () => {
-  /** Every offer the dispatcher made to the automations side, in order. */
+  /** Every offer the dispatcher made to the tasks side, in order. */
   let offers: EventWakeRequest[];
   /** What the stub answers; the last entry repeats. */
   let acks: EventWakeAck[];
@@ -710,18 +714,18 @@ describe("an agent target", () => {
 
   function waking(): Partial<RouteDispatcherDeps> {
     return {
-      wakeAutomation: (req) => {
+      wakeTask: (req) => {
         offers.push(req);
         return acks.length > 1 ? (acks.shift() as EventWakeAck) : acks[0]!;
       },
     };
   }
 
-  function agentRoute(id = "rt_triage", automation = "auto_triage"): Record<string, unknown> {
-    return { id, createdBy: AUTHOR, match: {}, deliver: [{ kind: "agent", automation }] };
+  function agentRoute(id = "rt_triage", task = "auto_triage"): Record<string, unknown> {
+    return { id, createdBy: AUTHOR, match: {}, deliver: [{ kind: "agent", task }] };
   }
 
-  test("offers the item to the automation and leaves the row deferred", async () => {
+  test("offers the item to the task and leaves the row deferred", async () => {
     await configure({ routes: [agentRoute()] });
     const item = seed();
     await dispatcher(waking()).onItem(wsId, item);
@@ -730,9 +734,9 @@ describe("an agent target", () => {
     expect(offers).toHaveLength(1);
     expect(offers[0]).toMatchObject({
       wsId,
-      automationId: "auto_triage",
-      // The route's author is the automation's owner, which is what scopes the
-      // lookup — a route cannot reach somebody else's automation by naming it.
+      taskId: "auto_triage",
+      // The route's author is the task's owner, which is what scopes the
+      // lookup — a route cannot reach somebody else's task by naming it.
       ownerId: AUTHOR,
     });
     expect(offers[0]?.item.envelope.eventId).toBe(item.envelope.eventId);
@@ -773,13 +777,13 @@ describe("an agent target", () => {
     expect(eventsOfType("notification.delivered")).toHaveLength(1);
   });
 
-  test("a refused offer is terminal at once, with the outcome the automations side chose", async () => {
+  test("a refused offer is terminal at once, with the outcome the tasks side chose", async () => {
     acks = [
       {
         accepted: false,
         outcome: "denied",
         classification: "not_event_scheduled",
-        reason: "that automation does not run on events",
+        reason: "that task does not run on events",
       },
     ];
     await configure({ routes: [agentRoute()] });
@@ -789,7 +793,7 @@ describe("an agent target", () => {
     expect(ledger(item)[0]).toMatchObject({
       outcome: "denied",
       classification: "not_event_scheduled",
-      lastError: "that automation does not run on events",
+      lastError: "that task does not run on events",
       attempts: 1,
     });
     expect(eventsOfType("notification.delivery_failed")[0]).toMatchObject({
@@ -798,14 +802,14 @@ describe("an agent target", () => {
     });
   });
 
-  test("a runtime with no automations answers the route rather than staying silent", async () => {
+  test("a runtime with no tasks answers the route rather than staying silent", async () => {
     await configure({ routes: [agentRoute()] });
     const item = seed();
     await dispatcher().onItem(wsId, item);
 
     expect(ledger(item)[0]).toMatchObject({
       outcome: "denied",
-      classification: "automations_unavailable",
+      classification: "tasks_unavailable",
     });
   });
 
@@ -817,7 +821,7 @@ describe("an agent target", () => {
           createdBy: AUTHOR,
           match: {},
           deliver: [
-            { kind: "agent", automation: "auto_triage" },
+            { kind: "agent", task: "auto_triage" },
             { kind: "tool", tool: TOOL, input: { text: "{{title}}" } },
           ],
         },

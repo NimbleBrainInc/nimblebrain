@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import type { ToolCallDisplay } from "../src/hooks/useChat";
+import type { ToolCallDisplay } from "../src/hooks/chat-store";
 import { describeCall, registerToolRenderer } from "../src/lib/tool-display";
 import { clearRenderersForTest } from "../src/lib/tool-display/registry";
 import { dominantVerb, inferVerb, phraseFor } from "../src/lib/tool-display/verbs";
@@ -10,7 +10,6 @@ afterEach(() => clearRenderersForTest());
 function call(overrides: Partial<ToolCallDisplay> & { name: string }): ToolCallDisplay {
   return {
     id: overrides.id ?? `call_${Math.random().toString(36).slice(2, 8)}`,
-    name: overrides.name,
     status: "done",
     ok: true,
     ms: 10,
@@ -172,7 +171,9 @@ describe("describeCall — Tier 0 generic", () => {
   });
 
   it("truncates long summaries", () => {
-    const d = describeCall(call({ name: "search_knowledge_base", input: { query: "x".repeat(200) } }));
+    const d = describeCall(
+      call({ name: "search_knowledge_base", input: { query: "x".repeat(200) } }),
+    );
     expect(d.summary).toContain("…");
     expect(d.summary!.length).toBeLessThanOrEqual(120);
   });

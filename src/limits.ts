@@ -6,17 +6,6 @@ export const MAX_ITERATIONS = 50;
 /** Maximum characters in a tool result before truncation for the LLM. */
 export const MAX_TOOL_RESULT_CHARS = 50_000;
 
-/**
- * Maximum number of times the engine will auto-resume a single assistant
- * turn that was cut off at the model's output ceiling (`finishReason:
- * "length"`) with no pending tool call. Each resume re-prompts the model to
- * continue from its partial text and consumes one iteration. Past this cap
- * the run ends with `stopReason: "length"` so a pathologically long answer
- * can't spin forever. Sized so normal long-form answers complete while a
- * runaway is bounded.
- */
-export const MAX_LENGTH_CONTINUATIONS = 4;
-
 // --- Runtime Defaults ---
 
 export const DEFAULT_MAX_ITERATIONS = 25;
@@ -41,10 +30,10 @@ export const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
  */
 export const DEFAULT_MAX_DIRECT_TOOLS = 30;
 
-// --- Automations ---
+// --- Tasks ---
 
 /**
- * Page size for `automations__list`. A tenant's automation count grows without
+ * Page size for `tasks__list`. A tenant's task count grows without
  * bound (one record per scheduled send), and an unpaged list is re-serialized
  * into the model's context on every call — at a few hundred records that is the
  * whole response budget, which is how a caller ends up silently working from a
@@ -54,5 +43,5 @@ export const DEFAULT_MAX_DIRECT_TOOLS = 30;
  * value at runtime and the schema needs it at module load; importing it from
  * the schema module closes a cycle (TDZ at first call).
  */
-export const AUTOMATIONS_LIST_DEFAULT_LIMIT = 100;
-export const AUTOMATIONS_LIST_MAX_LIMIT = 500;
+export const TASKS_LIST_DEFAULT_LIMIT = 100;
+export const TASKS_LIST_MAX_LIMIT = 500;

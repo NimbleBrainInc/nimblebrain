@@ -243,7 +243,11 @@ const server = Bun.serve({
         });
       }
       if (req.method === "POST") {
-        const msg = (await req.json()) as { id?: number | string; method?: string; params?: unknown };
+        const msg = (await req.json()) as {
+          id?: number | string;
+          method?: string;
+          params?: unknown;
+        };
         if (msg.method === "initialize") {
           return json({
             jsonrpc: "2.0",
@@ -277,9 +281,7 @@ const server = Bun.serve({
               jsonrpc: "2.0",
               id: msg.id,
               result: {
-                content: [
-                  { type: "text", text: "Mock: 3 meetings in the last 7 days." },
-                ],
+                content: [{ type: "text", text: "Mock: 3 meetings in the last 7 days." }],
                 isError: false,
               },
             });
@@ -288,7 +290,11 @@ const server = Bun.serve({
         if (msg.method === "notifications/initialized") {
           return new Response(null, { status: 202 });
         }
-        return json({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "Method not found" } });
+        return json({
+          jsonrpc: "2.0",
+          id: msg.id,
+          error: { code: -32601, message: "Method not found" },
+        });
       }
       if (req.method === "GET") {
         // No SSE stream needed for this mock; reply 405.

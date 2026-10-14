@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
+/** Pixels one arrow key press moves the handle. */
+const KEY_STEP = 16;
+
 interface ResizeHandleProps {
   initialWidth: number;
   onWidthChange: (width: number) => void;
@@ -17,7 +20,7 @@ export function ResizeHandle({
   max = 520,
   className,
 }: ResizeHandleProps) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLHRElement>(null);
   const cbRef = useRef(onWidthChange);
   cbRef.current = onWidthChange;
 
@@ -75,13 +78,31 @@ export function ResizeHandle({
     };
   }, [min, max]);
 
+  // The panel sits right of the handle, so Left widens it and Right narrows it,
+  // as a drag in that direction would.
+  function onKeyDown(e: React.KeyboardEvent) {
+    const step = e.key === "ArrowLeft" ? KEY_STEP : e.key === "ArrowRight" ? -KEY_STEP : 0;
+    if (step === 0) return;
+    e.preventDefault();
+    const w = Math.max(min, Math.min(max, liveWidthRef.current + step));
+    liveWidthRef.current = w;
+    cbRef.current(w);
+  }
+
   return (
     <>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: drag handle uses pointer events for resize */}
-      <div
+      {/* A focusable separator is the ARIA window splitter: arrow keys resize. */}
+      <hr
         ref={ref}
+        tabIndex={0}
+        aria-label="Resize chat panel"
+        aria-orientation="vertical"
+        aria-valuenow={initialWidth}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        onKeyDown={onKeyDown}
         onDoubleClick={onDoubleClick}
-        className={`hidden sm:block w-1 shrink-0 cursor-col-resize bg-border hover:bg-ring active:bg-primary transition-colors ${className ?? ""}`}
+        className={`hidden sm:block m-0 w-1 shrink-0 border-0 cursor-col-resize bg-border hover:bg-ring active:bg-primary focus-visible:bg-ring focus-visible:outline-none transition-colors ${className ?? ""}`}
       />
       {dragging && <div className="fixed inset-0 z-[60] cursor-col-resize" />}
     </>

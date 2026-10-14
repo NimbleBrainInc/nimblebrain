@@ -7,18 +7,19 @@
  * registry and on-disk binary storage.
  *
  * Both this tool source and the chat multipart ingest path
- * (`src/api/handlers.ts::handleChat` / `handleChatStream`) share a single
+ * (`src/api/handlers.ts::parseChatBody`) share a single
  * `FileStore` implementation from `src/files/store.ts`. Storage identity —
  * directory layout, ID scheme, registry semantics — lives there. This
  * module only defines the tool schemas and adapts calls into the store.
  *
- * Tools (8): list, search, read, read_pdf_pages, create, info, tag, delete
+ * Tools (12): list, search, read, read_pdf_pages, create, info, tag, delete, move,
+ *   create_folder, update_folder, delete_folder
  * Resources: ui://files/browser (React SPA)
  * Placements: sidebar files link at priority 3
  */
 
 import { textContent } from "../../engine/content-helpers.ts";
-import type { ContentBlock, EventSink, ToolResult } from "../../engine/types.ts";
+import type { ContentBlock, EventSink } from "../../engine/types.ts";
 import { extractPdfPages, extractText } from "../../files/extract.ts";
 import { IMAGE_TYPES, isExtractable, PDF_TYPES } from "../../files/ingest.ts";
 import { isTextMime, resolveMimeType } from "../../files/mime.ts";
@@ -33,32 +34,50 @@ import {
   type InProcessResource,
   type InProcessTool,
   MCP_APP_MIME_TYPE,
+  type ToolErrorResult,
+  type ToolSuccessResult,
+  type TypedToolResult,
+  typedTool,
 } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import {
+  FilesCreateFolderInput,
   FilesCreateInput,
+  FilesCreateOutput,
+  FilesDeleteFolderInput,
+  FilesDeleteFolderOutput,
   FilesDeleteInput,
+  FilesDeleteOutput,
+  FilesFolderOutput,
   FilesInfoInput,
+  FilesInfoOutput,
   FilesListInput,
+  FilesListOutput,
+  FilesMoveInput,
+  FilesMoveOutput,
   FilesReadInput,
+  FilesReadOutput,
   FilesReadPdfPagesInput,
-  type FilesReadPdfPagesOutput,
+  FilesReadPdfPagesOutput,
   FilesSearchInput,
+  FilesSearchOutput,
   FilesTagInput,
+  FilesTagOutput,
+  FilesUpdateFolderInput,
 } from "../schemas/files.ts";
+import {
+  createFolder,
+  deleteFolder,
+  ensureFolderPath,
+  moveFiles,
+  updateFolder,
+} from "./folders.ts";
+import { listFiles } from "./query.ts";
 import { loadFilesUi } from "./ui-resource.ts";
 
 // ---------------------------------------------------------------------------
 // Tool handler helpers
 // ---------------------------------------------------------------------------
-
-interface ListInput {
-  limit?: number;
-  offset?: number;
-  tags?: string[];
-  mimeType?: string;
-  sort?: "createdAt" | "filename" | "size";
-}
 
 function filterEntries(
   entries: FileEntry[],
@@ -75,33 +94,7 @@ function filterEntries(
   return out;
 }
 
-async function handleList(store: FileStore, args: ListInput): Promise<object> {
-  const limit = args.limit ?? 20;
-  const offset = args.offset ?? 0;
-  const sort = args.sort ?? "createdAt";
-
-  const all = await store.readRegistry();
-  const files = filterEntries(all, args.tags, args.mimeType);
-
-  if (sort === "createdAt") {
-    files.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  } else if (sort === "filename") {
-    files.sort((a, b) => a.filename.localeCompare(b.filename));
-  } else if (sort === "size") {
-    files.sort((a, b) => b.size - a.size);
-  }
-
-  return { files: files.slice(offset, offset + limit), total: files.length };
-}
-
-interface SearchInput {
-  query: string;
-  tags?: string[];
-  mimeType?: string;
-  limit?: number;
-}
-
-async function handleSearch(store: FileStore, args: SearchInput): Promise<object> {
+async function handleSearch(store: FileStore, args: FilesSearchInput): Promise<FilesSearchOutput> {
   const limit = args.limit ?? 20;
   const query = args.query.toLowerCase();
 
@@ -118,6 +111,30 @@ async function handleSearch(store: FileStore, args: SearchInput): Promise<object
   return { files: files.slice(0, limit), total: files.length };
 }
 
+/**
+ * A success: the model reads `data` as JSON text, and the SDK checks
+ * `structuredContent` against the tool's output schema.
+ */
+function ok<T>(data: T): ToolSuccessResult<T> {
+  return {
+    content: textContent(JSON.stringify(data, null, 2)),
+    structuredContent: data,
+    isError: false,
+  };
+}
+
+function fail(message: string): ToolErrorResult {
+  return { content: textContent(JSON.stringify({ error: message })), isError: true };
+}
+
+function notFound(id: string): ToolErrorResult {
+  return fail(`File not found: ${id}`);
+}
+
+function failure(err: unknown): ToolErrorResult {
+  return fail(err instanceof Error ? err.message : String(err));
+}
+
 function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1_048_576) return `${Math.round(bytes / 1024)} KB`;
@@ -130,28 +147,22 @@ function humanSize(bytes: number): string {
  * (text/code, PDF, DOCX, XLSX) the text block includes the extracted text
  * up to `maxExtractedTextSize`.
  *
- * Bytes were previously surfaced as a base64 string in the tool result.
- * The model could not consume base64 as image/PDF input — providers handle
- * those via native file parts on user uploads (see `src/files/rehydrate.ts`)
- * — so the base64 path produced unusable payloads while inflating the
- * conversation log and replay tokens by 5–10× per byte. This handler is the
+ * Bytes are never surfaced as a base64 string in the tool result. The
+ * model cannot consume base64 as image/PDF input — providers handle those
+ * via native file parts on user uploads (see `src/files/rehydrate.ts`) —
+ * so base64 would be an unusable payload that inflates the conversation
+ * log and replay tokens by 5–10× per byte. This handler is the
  * single seam where that leak is closed for the agent-pull direction; the
  * user-attachment direction is already lean via `ingest.ts`.
  */
 async function handleRead(
   store: FileStore,
   maxExtractedTextSize: number,
-  args: { id: string },
-): Promise<ToolResult> {
-  // `findEntry` so a missing id is a clean "not found" without touching
-  // bytes. Mirrors the prior behavior of the pre-change `readFile` throw.
+  args: FilesReadInput,
+): Promise<TypedToolResult<typeof FilesReadOutput>> {
+  // `findEntry` so a missing id is a clean "not found" without touching bytes.
   const entry = await store.findEntry(args.id);
-  if (!entry) {
-    return {
-      content: textContent(JSON.stringify({ error: `File not found: ${args.id}` })),
-      isError: true,
-    };
-  }
+  if (!entry) return notFound(args.id);
 
   const sizeText = humanSize(entry.size);
   const intro = `Read ${entry.filename} (${sizeText}, ${entry.mimeType}).`;
@@ -172,7 +183,7 @@ async function handleRead(
     description: sizeText,
   } as ContentBlock;
 
-  const structured: Record<string, unknown> = {
+  const structured: FilesReadOutput = {
     id: entry.id,
     filename: entry.filename,
     mimeType: entry.mimeType,
@@ -233,35 +244,18 @@ async function handleRead(
 async function handleReadPdfPages(
   store: FileStore,
   args: FilesReadPdfPagesInput,
-): Promise<ToolResult> {
+): Promise<TypedToolResult<typeof FilesReadPdfPagesOutput>> {
   const entry = await store.findEntry(args.id);
-  if (!entry) {
-    return {
-      content: textContent(JSON.stringify({ error: `File not found: ${args.id}` })),
-      isError: true,
-    };
-  }
+  if (!entry) return notFound(args.id);
 
   if (!PDF_TYPES.has(entry.mimeType)) {
-    return {
-      content: textContent(
-        JSON.stringify({ error: `File is not a PDF: ${entry.filename} (${entry.mimeType})` }),
-      ),
-      isError: true,
-    };
+    return fail(`File is not a PDF: ${entry.filename} (${entry.mimeType})`);
   }
 
   const requestedPages = Array.from(new Set(args.pages)).sort((a, b) => a - b);
   const read = await store.readFile(args.id);
   const extracted = await extractPdfPages(read.data, requestedPages);
-  if (!extracted) {
-    return {
-      content: textContent(
-        JSON.stringify({ error: `PDF page text extraction failed: ${entry.id}` }),
-      ),
-      isError: true,
-    };
-  }
+  if (!extracted) return fail(`PDF page text extraction failed: ${entry.id}`);
 
   const sizeText = humanSize(entry.size);
   const link: ContentBlock = {
@@ -300,26 +294,9 @@ async function handleReadPdfPages(
 
   return {
     content: [link, { type: "text", text }],
-    structuredContent: out as unknown as Record<string, unknown>,
+    structuredContent: out,
     isError: false,
   };
-}
-
-/**
- * Strict input shape for `files__create`. Mirrors the JSON Schema:
- * `manifest` holds the file metadata; `body` is the content, read
- * according to `encoding`. Field names match `FileEntry` (camelCase) —
- * no kebab/snake acceptance.
- */
-interface CreateInput {
-  manifest: {
-    filename: string;
-    mimeType: string;
-    tags?: string[];
-    description?: string;
-  };
-  body: string;
-  encoding?: "base64" | "text";
 }
 
 /** The standard base64 alphabet with padding. Not base64url — see below. */
@@ -376,7 +353,12 @@ function decodeCreateBody(body: string, encoding: "base64" | "text"): Buffer {
   return Buffer.from(compact, "base64");
 }
 
-async function handleCreate(store: FileStore, args: CreateInput): Promise<object> {
+/** `placeIn` resolves `manifest.folder` to a folder id, creating missing levels. */
+async function handleCreate(
+  store: FileStore,
+  args: FilesCreateInput,
+  placeIn: (path: string) => Promise<string | null>,
+): Promise<FilesCreateOutput> {
   // TODO: apply the same MIME allowlist as chat-multipart ingest
   // (`ALLOWED_MIMES` in `src/files/ingest.ts`). The tool currently accepts
   // any `mimeType` the LLM supplies; the chat path rejects anything
@@ -389,7 +371,11 @@ async function handleCreate(store: FileStore, args: CreateInput): Promise<object
   // a specific type is trusted as-is. Same recovery as the upload handlers,
   // so an agent-written `.typ` is readable just like an uploaded one.
   const mimeType = resolveMimeType(manifest.filename, manifest.mimeType);
+  const folderId = await placeIn(manifest.folder ?? "");
   const saved = await store.saveFile(decoded, manifest.filename, mimeType);
+  // Provenance comes from the request, never the caller: the conversation in a
+  // chat, the run in an unattended task run.
+  const ctx = getRequestContext();
   const entry: FileEntry = {
     id: saved.id,
     filename: manifest.filename,
@@ -399,15 +385,17 @@ async function handleCreate(store: FileStore, args: CreateInput): Promise<object
     // The LLM invokes this tool; human-uploaded-via-UI is "manual",
     // chat-multipart is "chat", app-generated is "app".
     source: "agent",
-    conversationId: null,
+    conversationId: ctx?.conversationId ?? null,
+    runId: ctx?.runId ?? null,
     createdAt: new Date().toISOString(),
     description: manifest.description ?? null,
+    folderId,
   };
   await store.appendRegistry(entry);
-  return { id: saved.id, filename: manifest.filename, size: saved.size };
+  return { id: saved.id, filename: manifest.filename, size: saved.size, folderId };
 }
 
-async function handleInfo(store: FileStore, args: { id: string }): Promise<object> {
+async function handleInfo(store: FileStore, args: FilesInfoInput): Promise<FilesInfoOutput> {
   const entry = await store.findEntry(args.id);
   if (!entry) {
     throw new Error(`File not found: ${args.id}`);
@@ -415,13 +403,7 @@ async function handleInfo(store: FileStore, args: { id: string }): Promise<objec
   return entry;
 }
 
-interface TagInput {
-  id: string;
-  add?: string[];
-  remove?: string[];
-}
-
-async function handleTag(store: FileStore, args: TagInput): Promise<object> {
+async function handleTag(store: FileStore, args: FilesTagInput): Promise<FilesTagOutput> {
   const entry = await store.findEntry(args.id);
   if (!entry) {
     throw new Error(`File not found: ${args.id}`);
@@ -438,7 +420,7 @@ async function handleTag(store: FileStore, args: TagInput): Promise<object> {
   return { id: args.id, tags: newTags };
 }
 
-async function handleDelete(store: FileStore, args: { id: string }): Promise<object> {
+async function handleDelete(store: FileStore, args: FilesDeleteInput): Promise<FilesDeleteOutput> {
   const entry = await store.findEntry(args.id);
   if (!entry) {
     throw new Error(`File not found: ${args.id}`);
@@ -454,65 +436,83 @@ async function handleDelete(store: FileStore, args: { id: string }): Promise<obj
 /** Create the "files" platform source — in-process MCP server. */
 export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSource {
   /**
-   * Resolve the caller's workspace-owned file store. Files live at
+   * Resolve the caller's workspace-owned file store, and the key naming its
+   * partition. Files live at
    * `workspaces/<wsId>/files/<ownerId>/`, so this needs both the owner (the
    * authenticated identity) and the workspace, which rides
    * `RequestContext.workspaceId` (set on both doors). No workspace in scope
-   * (e.g. an external `/mcp` call with no header) ⇒ deny rather than guess a
-   * workspace.
+   * (e.g. a background job with no bound workspace) ⇒ deny rather than guess
+   * a workspace.
    */
-  function getStore(): FileStore {
+  function partition(): { key: string; store: FileStore } {
     // Resolve the owner through the one shared rule (`resolveRequestUserId`) —
-    // the same path automations' source, the REST file handlers, and chat
-    // rehydration use, so "who am I" never drifts between sources. Fail-closed
-    // in production (throws when an identity provider is configured but the
-    // request carries no identity); DEV_IDENTITY only in dev.
+    // the same path tasks' source, the REST file handlers, and chat
+    // rehydration use, so "who am I" never drifts between sources. Fail-closed:
+    // a request with no identity throws.
     const ownerId = runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined);
     // Files are workspace-owned: the workspace comes from the request context
-    // (set on both doors). Deny when none is in scope — e.g. an external
-    // `/mcp` call with no `X-Workspace-Id`.
+    // (set on both doors). Deny when none is in scope.
     const wsId = getRequestContext()?.workspaceId;
     if (!wsId) {
       throw new Error("files: no workspace in scope (files are workspace-owned)");
     }
-    return runtime.getWorkspaceFileStore(wsId, ownerId);
+    return { key: `${wsId}/${ownerId}`, store: runtime.getWorkspaceFileStore(wsId, ownerId) };
   }
 
-  function ok(data: object): ToolResult {
-    return { content: textContent(JSON.stringify(data, null, 2)), isError: false };
+  function getStore(): FileStore {
+    return partition().store;
   }
 
-  function fail(message: string): ToolResult {
-    return { content: textContent(JSON.stringify({ error: message })), isError: true };
+  /**
+   * Folder writes read the partition's folders, check them, then append. Two
+   * at once (a turn's parallel `create`s into one new path) would both pass the
+   * check and both append, so they run one at a time per partition.
+   */
+  const folderWrites = new Map<string, Promise<unknown>>();
+  function folderWrite<T>(write: (store: FileStore) => Promise<T>): Promise<T> {
+    const { key, store } = partition();
+    const run = (folderWrites.get(key) ?? Promise.resolve()).then(() => write(store));
+    const settled = run.catch(() => undefined);
+    folderWrites.set(key, settled);
+    void settled.then(() => {
+      if (folderWrites.get(key) === settled) folderWrites.delete(key);
+    });
+    return run;
   }
 
   const tools: InProcessTool[] = [
-    {
+    typedTool({
       name: "list",
-      description: "List your files with pagination, filtering by tags or MIME type, and sorting.",
+      description:
+        "List your files: in one folder (with the folders inside it) or across all of them, " +
+        "filtered by text, kind, source, conversation, run, creation time, tags, or MIME type, " +
+        "sorted and paged. Each file carries its folder path, and the result counts matches by kind and source.",
       inputSchema: FilesListInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: FilesListOutput,
+      handler: async (input) => {
         try {
-          return ok(await handleList(getStore(), input as unknown as ListInput));
+          const out: FilesListOutput = await listFiles(getStore(), input);
+          return ok(out);
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "search",
       description:
         "Search files by keyword. Case-insensitive substring match on filename, description, and tags.",
       inputSchema: FilesSearchInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: FilesSearchOutput,
+      handler: async (input) => {
         try {
-          return ok(await handleSearch(getStore(), input as unknown as SearchInput));
+          return ok(await handleSearch(getStore(), input));
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "read",
       description:
         "Read a file by ID. Returns a resource_link reference and a human-readable summary. " +
@@ -522,84 +522,162 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
         "is returned — images attached to a user message are delivered to the model via native " +
         "file input on the next turn, not through this tool.",
       inputSchema: FilesReadInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: FilesReadOutput,
+      handler: async (input) => {
         try {
-          return await handleRead(
-            getStore(),
-            runtime.getFilesConfig().maxExtractedTextSize,
-            input as unknown as { id: string },
-          );
+          return await handleRead(getStore(), runtime.getFilesConfig().maxExtractedTextSize, input);
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "read_pdf_pages",
       description:
         "Read extracted text from specific 1-based pages of a PDF by file ID. " +
         "Use this for oversized PDFs or when the user asks about pages beyond the truncated attachment preview. " +
         "Returns bounded per-page text only, never the whole PDF or base64 bytes. Max 10 pages per call.",
       inputSchema: FilesReadPdfPagesInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: FilesReadPdfPagesOutput,
+      handler: async (input) => {
         try {
-          return await handleReadPdfPages(getStore(), input as unknown as FilesReadPdfPagesInput);
+          return await handleReadPdfPages(getStore(), input);
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "create",
       description:
         "Create a new file in your file store. `manifest` is the file metadata; `body` is the content — " +
         'base64 by default, or written verbatim when you pass encoding: "text" (use that for markdown, code, or anything else you are composing yourself).',
       inputSchema: FilesCreateInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: FilesCreateOutput,
+      handler: async (input) => {
         try {
-          return ok(await handleCreate(getStore(), input as unknown as CreateInput));
+          return ok(
+            await handleCreate(getStore(), input, (path) =>
+              folderWrite((store) => ensureFolderPath(store, path)),
+            ),
+          );
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "info",
       description: "Get file metadata by ID (no file content returned).",
       inputSchema: FilesInfoInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: FilesInfoOutput,
+      handler: async (input) => {
         try {
-          return ok(await handleInfo(getStore(), input as unknown as { id: string }));
+          return ok(await handleInfo(getStore(), input));
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "tag",
       description: "Add or remove tags on a file.",
       inputSchema: FilesTagInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: FilesTagOutput,
+      handler: async (input) => {
         try {
-          return ok(await handleTag(getStore(), input as unknown as TagInput));
+          return ok(await handleTag(getStore(), input));
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "delete",
       description:
         "Delete a file by ID. Removes the file from disk and marks it as deleted in the registry.",
       inputSchema: FilesDeleteInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: FilesDeleteOutput,
+      handler: async (input) => {
         try {
-          return ok(await handleDelete(getStore(), input as unknown as { id: string }));
+          return ok(await handleDelete(getStore(), input));
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
-    },
+    }),
+    typedTool({
+      name: "move",
+      description:
+        'Move files into a folder, by id; "root" is the top level. Every id must name one of your files, or none moves.',
+      inputSchema: FilesMoveInput,
+      outputSchema: FilesMoveOutput,
+      handler: async (input) => {
+        try {
+          const { ids, folderId } = input;
+          const out: FilesMoveOutput = {
+            ids,
+            folderId: await folderWrite((store) => moveFiles(store, ids, folderId)),
+          };
+          return ok(out);
+        } catch (err) {
+          return failure(err);
+        }
+      },
+    }),
+    typedTool({
+      name: "create_folder",
+      description:
+        "Create a folder, at the top level or inside `parentId`. A name must be unique among the folders beside it. To put a new file in a folder by path, pass `manifest.folder` to `create` instead; it creates missing folders.",
+      inputSchema: FilesCreateFolderInput,
+      outputSchema: FilesFolderOutput,
+      handler: async (input) => {
+        try {
+          const { manifest } = input;
+          const out: FilesFolderOutput = await folderWrite((store) =>
+            createFolder(store, manifest),
+          );
+          return ok(out);
+        } catch (err) {
+          return failure(err);
+        }
+      },
+    }),
+    typedTool({
+      name: "update_folder",
+      description:
+        'Rename a folder (`manifest.name`) or move it (`manifest.parentId`; "root" is the top level). Its files and folders go with it.',
+      inputSchema: FilesUpdateFolderInput,
+      outputSchema: FilesFolderOutput,
+      handler: async (input) => {
+        try {
+          const { id, manifest } = input;
+          const out: FilesFolderOutput = await folderWrite((store) =>
+            updateFolder(store, { id, ...manifest }),
+          );
+          return ok(out);
+        } catch (err) {
+          return failure(err);
+        }
+      },
+    }),
+    typedTool({
+      name: "delete_folder",
+      description:
+        "Delete an empty folder. A folder that holds files or folders is refused; move or delete what is inside first.",
+      inputSchema: FilesDeleteFolderInput,
+      outputSchema: FilesDeleteFolderOutput,
+      handler: async (input) => {
+        try {
+          const { id } = input;
+          await folderWrite((store) => deleteFolder(store, id));
+          const out: FilesDeleteFolderOutput = { deleted: true };
+          return ok(out);
+        } catch (err) {
+          return failure(err);
+        }
+      },
+    }),
   ];
 
   const resources = new Map<string, InProcessResource>([

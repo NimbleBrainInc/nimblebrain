@@ -64,18 +64,32 @@ export function readCursor(
  * Called only after every envelope the poll returned reached the inbox: a
  * cursor written ahead of the write it describes is an event nobody will ever
  * read again, and the inbox is the guarantee.
+ *
+ * With `from`, the write is a compare-and-set: it lands only if the stored
+ * cursor is still the one the read started from (`undefined` meaning none).
+ * A read holds a position, not a lock, and two other writers can move the
+ * cursor while one is in flight: `positionOutbox` (`position.ts`) at install, and
+ * {@link clearCursor} at uninstall. A bootstrap that lost the race to the
+ * install-time position would otherwise overwrite it with a later horizon and
+ * step over every event the install caused; a read that lost to an uninstall
+ * would bring back a cursor the uninstall dropped. Returns whether it wrote.
  */
 export async function writeCursor(
   store: WorkspaceStore,
   wsId: string,
   connector: string,
   cursor: string,
-): Promise<void> {
+  opts?: { from: string | undefined },
+): Promise<boolean> {
+  let written = false;
   await mutateCursors(store, wsId, (cursors) => {
+    if (opts && cursors[connector] !== opts.from) return null;
     if (cursors[connector] === cursor) return null;
     cursors[connector] = cursor;
+    written = true;
     return cursors;
   });
+  return written;
 }
 
 /**

@@ -6,7 +6,7 @@
  * as a privacy sub-partition:
  *
  *   workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl          private user chats
- *   workspaces/<wsId>/conversations/_runs/<automationId>/<convId>.jsonl  automation runs
+ *   workspaces/<wsId>/conversations/_runs/<taskId>/<convId>.jsonl  task runs
  *
  * The flat `{workDir}/conversations/<convId>.jsonl` layout is gone. Any new
  * occurrence of the flat construction — joining `"conversations"` directly onto

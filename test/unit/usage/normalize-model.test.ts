@@ -8,7 +8,9 @@ describe("normalizeModel", () => {
     // org/model path that must survive intact.
     expect(normalizeModel("xai:grok-4.5")).toBe("grok-4.5");
     expect(normalizeModel("nebius:Qwen/Qwen3-32B")).toBe("Qwen/Qwen3-32B");
-    expect(normalizeModel("nebius:deepseek-ai/DeepSeek-V4-Pro")).toBe("deepseek-ai/DeepSeek-V4-Pro");
+    expect(normalizeModel("nebius:deepseek-ai/DeepSeek-V4-Pro")).toBe(
+      "deepseek-ai/DeepSeek-V4-Pro",
+    );
   });
 
   it("still strips the original providers and the date suffix", () => {

@@ -1,19 +1,21 @@
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type {
+  BlobResourceContents,
+  TextResourceContents,
+  Tool,
+  ToolAnnotations,
+  Transport,
+} from "@modelcontextprotocol/server";
 import {
-  CallToolRequestSchema,
-  ErrorCode,
-  ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  ListToolsRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-  type ToolAnnotations,
-} from "@modelcontextprotocol/sdk/types.js";
+  InMemoryTransport,
+  ProtocolError,
+  ProtocolErrorCode,
+  Server,
+} from "@modelcontextprotocol/server";
+import type { Static, TSchema } from "@sinclair/typebox";
 import type { PlacementDeclaration } from "../connectors/runtime/types.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
 import { bytesToBase64 } from "../util/base64.ts";
+import { toWireJson } from "../util/wire-json.ts";
 import { coerceInputForSchema } from "./coerce-input.ts";
 import { McpSource } from "./mcp-source.ts";
 import { validateToolInput } from "./validate-input.ts";
@@ -27,7 +29,7 @@ import { validateToolInput } from "./validate-input.ts";
  * interchangeable:
  *
  *  - `meta` goes on the wire as `_meta`, the free-form reverse-DNS namespace.
- *    Platform conventions live here — `"ai.nimblebrain/internal": true` hides a
+ *    The MCP Apps `ui` block lives here — `ui: { visibility: ["app"] }` hides a
  *    tool from the agent's tool list.
  *  - `annotations` goes on the wire as `annotations`, the spec's closed set of
  *    behavioural hints (`destructiveHint` and friends).
@@ -50,6 +52,68 @@ export interface InProcessTool {
   /** See the note on {@link InProcessTool}: this obliges `handler` to return
    * `structuredContent`. */
   outputSchema?: Record<string, unknown>;
+}
+
+/**
+ * A failed call. An output schema binds only a success result (the SDK client
+ * validates `structuredContent` when `isError` is false), so a failure carries
+ * any `structuredContent` it likes, or none.
+ */
+export type ToolErrorResult = ToolResult & { isError: true };
+
+/** A successful call whose `structuredContent` is `T`. */
+export type ToolSuccessResult<T> = Omit<ToolResult, "structuredContent" | "isError"> & {
+  structuredContent: T;
+  isError: false;
+};
+
+/**
+ * A tool output schema. Its root is an object on every MCP revision: 2025-11-25
+ * requires that, and the SDK server rewraps any other root as `{ result: … }`.
+ * A union of object shapes is `ObjectUnion` (`src/platform/schemas/_shared.ts`).
+ */
+export type OutputSchema = TSchema & { type: "object" };
+
+/** What the handler of a tool declaring output schema `O` returns. */
+export type TypedToolResult<O extends OutputSchema> =
+  | ToolSuccessResult<Static<O>>
+  | ToolErrorResult;
+
+/**
+ * An {@link InProcessTool} whose handler reads the static type of its TypeBox
+ * `inputSchema` and, when it declares a TypeBox `outputSchema`, returns that
+ * schema's static type as `structuredContent` on every success.
+ */
+export interface TypedInProcessTool<
+  S extends TSchema,
+  O extends OutputSchema | undefined = undefined,
+> extends Omit<InProcessTool, "inputSchema" | "handler" | "outputSchema"> {
+  inputSchema: S;
+  outputSchema?: O;
+  handler: (
+    input: Static<S>,
+  ) => Promise<[O] extends [OutputSchema] ? TypedToolResult<O> : ToolResult>;
+}
+
+/**
+ * Register a tool whose handler takes its input as `Static<S>`. `tools/call`
+ * runs `validateToolInput` against `inputSchema` before it calls a handler, so
+ * a handler never sees input its schema rejects, and it reads typed fields
+ * without a cast of its own.
+ *
+ * With an `outputSchema`, the compiler holds each success result to
+ * `Static<O>`, and `tools/list` publishes the schema, so a client knows the
+ * result's shape without reading this source. Keep an output schema open (no
+ * `additionalProperties: false`): the SDK client validates every success result
+ * against it, and a result it rejects fails the call.
+ */
+export function typedTool<S extends TSchema, O extends OutputSchema | undefined = undefined>(
+  tool: TypedInProcessTool<S, O>,
+): InProcessTool {
+  // `InProcessTool.handler` takes the `Record<string, unknown>` the SDK hands
+  // `tools/call`; the input has already passed validation against `S`, which
+  // that parameter type cannot express. Identical at runtime: the same object.
+  return tool as InProcessTool;
 }
 
 /**
@@ -131,7 +195,7 @@ export interface DefineInProcessAppOptions {
   instructions?: string;
   /**
    * URI templates advertised via `resources/templates/list`. Use for
-   * parametric URIs (e.g. `instructions://connectors/{name}`) where the catalog
+   * parametric URIs (e.g. `notes://{id}`) where the catalog
    * is dynamic but the shape is known.
    */
   templates?: ResourceTemplate[];
@@ -218,23 +282,16 @@ export function defineInProcessApp(
         // Host conventions ride on `_meta` (free-form by spec); the spec's own
         // hints ride on `annotations`. Both survive the round trip and reach
         // `McpSource.tools()` under the same names.
-        server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        server.setRequestHandler("tools/list", async () => ({
           tools: tools.map((t) => ({
             name: t.name,
             description: t.description,
-            inputSchema: t.inputSchema as {
-              type: "object";
-              properties?: Record<string, unknown>;
-              required?: string[];
-            },
+            // The SDK's own schema types, not a restated copy — the spec
+            // tightened what a JSON Schema value may hold, and a hand-written
+            // shape here would go stale the next time it moves.
+            inputSchema: toWireJson(t.inputSchema) as Tool["inputSchema"],
             ...(t.outputSchema
-              ? {
-                  outputSchema: t.outputSchema as {
-                    type: "object";
-                    properties?: Record<string, unknown>;
-                    required?: string[];
-                  },
-                }
+              ? { outputSchema: toWireJson(t.outputSchema) as NonNullable<Tool["outputSchema"]> }
               : {}),
             ...(t.annotations ? { annotations: t.annotations } : {}),
             ...(t.meta ? { _meta: t.meta } : {}),
@@ -252,7 +309,7 @@ export function defineInProcessApp(
         // trigger the source's crash-restart path — for an in-process
         // server, that's a server rebuild for every typo. The agent loop
         // already handles `isError: true` cleanly.
-        server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        server.setRequestHandler("tools/call", async (request) => {
           const toolName = request.params.name;
           const tool = tools.find((t) => t.name === toolName);
           if (!tool) {
@@ -282,7 +339,7 @@ export function defineInProcessApp(
           // URI itself. Static map entries are listed first; dynamic entries
           // from `listResources()` are appended on every call so the catalog
           // can react to workspace state without restarting the server.
-          server.setRequestHandler(ListResourcesRequestSchema, async () => {
+          server.setRequestHandler("resources/list", async () => {
             const staticEntries = Array.from(resources.entries()).map(([uri, value]) => {
               const mimeType = typeof value === "string" ? defaultMimeType(uri) : value.mimeType;
               return {
@@ -304,11 +361,15 @@ export function defineInProcessApp(
           // resources/read — resolve the URI, then shape one `contents[]`
           // entry. A missing URI raises `-32602`, which the SDK transports as a
           // JSON-RPC error, matching how external MCP servers signal not-found.
-          server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+          server.setRequestHandler("resources/read", async (request) => {
             const uri = request.params.uri;
             const value = await resolveResourceValue(uri, resources, resourceHandler);
             if (value === undefined) {
-              throw new McpError(ErrorCode.InvalidParams, `Resource not found: ${uri}`, { uri });
+              throw new ProtocolError(
+                ProtocolErrorCode.InvalidParams,
+                `Resource not found: ${uri}`,
+                { uri },
+              );
             }
             return { contents: [await buildResourceContents(uri, value)] };
           });
@@ -317,7 +378,7 @@ export function defineInProcessApp(
           // declared. SDK rejects the request with MethodNotFound otherwise,
           // matching how a server that doesn't advertise templates behaves.
           if (hasTemplates) {
-            server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+            server.setRequestHandler("resources/templates/list", async () => ({
               resourceTemplates: templates.map((t) => ({
                 uriTemplate: t.uriTemplate,
                 name: t.name,
@@ -391,21 +452,21 @@ async function resolveResourceValue(
 async function buildResourceContents(
   uri: string,
   value: InProcessResource,
-): Promise<Record<string, unknown>> {
+): Promise<TextResourceContents | BlobResourceContents> {
   if (typeof value === "string") {
     return { uri, mimeType: defaultMimeType(uri), text: value };
   }
-  const entry: Record<string, unknown> = { uri };
-  if (value.mimeType) entry.mimeType = value.mimeType;
-  if (value.blob) {
-    // SDK schema accepts base64-encoded blob strings.
-    entry.blob = bytesToBase64(value.blob);
-  } else {
-    const text = value.text;
-    entry.text = typeof text === "function" ? await text() : (text ?? "");
-  }
-  if (value.meta) entry._meta = value.meta;
-  return entry;
+  // Built per arm rather than mutated into place: `ResourceContents` is a union
+  // of a text entry and a blob entry, and only one of the two keys may be set.
+  const base = {
+    uri,
+    ...(value.mimeType ? { mimeType: value.mimeType } : {}),
+    ...(value.meta ? { _meta: value.meta } : {}),
+  };
+  // SDK schema accepts base64-encoded blob strings.
+  if (value.blob) return { ...base, blob: bytesToBase64(value.blob) };
+  const text = value.text;
+  return { ...base, text: typeof text === "function" ? await text() : (text ?? "") };
 }
 
 /**

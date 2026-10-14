@@ -1,9 +1,14 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { loadInstanceConfig, saveInstanceConfig } from "../../../src/identity/instance.ts";
 import type { InstanceConfig } from "../../../src/identity/instance.ts";
+import { loadInstanceConfig, saveInstanceConfig } from "../../../src/identity/instance.ts";
+import {
+  _resetCredentialStoreForTest,
+  FileCredentialStore,
+  setCredentialStore,
+} from "../../../src/tools/credential-store.ts";
 
 let workDir: string;
 
@@ -24,7 +29,6 @@ describe("loadInstanceConfig", () => {
         clientId: "my-client",
         allowedDomains: ["example.com", "test.com"],
       },
-      orgName: "Acme Corp",
     };
     await writeFile(join(workDir, "instance.json"), JSON.stringify(config));
 
@@ -36,7 +40,6 @@ describe("loadInstanceConfig", () => {
         clientId: "my-client",
         allowedDomains: ["example.com", "test.com"],
       },
-      orgName: "Acme Corp",
     });
   });
 
@@ -45,7 +48,6 @@ describe("loadInstanceConfig", () => {
       auth: {
         adapter: "workos",
         clientId: "client_123",
-        redirectUri: "http://localhost:3000/v1/auth/callback",
         organizationId: "org_789",
       },
       orgId: "org-789",
@@ -57,18 +59,18 @@ describe("loadInstanceConfig", () => {
     expect(result).toEqual(config);
   });
 
-  test("loads workos auth with redirectUri omitted (provider derives it)", async () => {
-    // Post-WORKOS_REDIRECT_URI world: instance.json may carry no redirectUri;
-    // the provider fills it from publicOrigin(). Loading must succeed and leave
-    // the field absent (not throw, not default to a string).
-    const config = {
-      auth: {
-        adapter: "workos",
-        clientId: "client_123",
-        organizationId: "org_789",
-      },
-    };
-    await writeFile(join(workDir, "instance.json"), JSON.stringify(config));
+  test("ignores a redirectUri in instance.json (the provider derives it)", async () => {
+    await writeFile(
+      join(workDir, "instance.json"),
+      JSON.stringify({
+        auth: {
+          adapter: "workos",
+          clientId: "client_123",
+          redirectUri: "https://other.example.com/v1/auth/callback",
+          organizationId: "org_789",
+        },
+      }),
+    );
 
     const result = await loadInstanceConfig(workDir);
     expect(result?.auth).toEqual({
@@ -76,17 +78,52 @@ describe("loadInstanceConfig", () => {
       clientId: "client_123",
       organizationId: "org_789",
     });
-    expect((result?.auth as { redirectUri?: string }).redirectUri).toBeUndefined();
   });
 
-  test("rejects workos auth with a non-string redirectUri", async () => {
+  test("rejects workos auth with an empty or whitespace organizationId", async () => {
+    for (const organizationId of ["", "   "]) {
+      await writeFile(
+        join(workDir, "instance.json"),
+        JSON.stringify({ auth: { adapter: "workos", clientId: "client_123", organizationId } }),
+      );
+      await expect(loadInstanceConfig(workDir)).rejects.toThrow(
+        "workos auth 'organizationId' must not be empty",
+      );
+    }
+  });
+
+  test("rejects a workos organizationId reference that resolves to an empty value", async () => {
+    // References resolve before validation, so a seeded-but-blank secret meets
+    // the same check as a literal "".
+    const store = new FileCredentialStore(workDir);
+    setCredentialStore(store);
+    try {
+      await store.put({ kind: "instance" }, "workos.org", "");
+      await writeFile(
+        join(workDir, "instance.json"),
+        JSON.stringify({
+          auth: {
+            adapter: "workos",
+            clientId: "client_123",
+            organizationId: { ref: "credential", key: "workos.org" },
+          },
+        }),
+      );
+      await expect(loadInstanceConfig(workDir)).rejects.toThrow(
+        "workos auth 'organizationId' must not be empty",
+      );
+    } finally {
+      _resetCredentialStoreForTest();
+    }
+  });
+
+  test("loads workos auth with organizationId omitted (no organization scope)", async () => {
     await writeFile(
       join(workDir, "instance.json"),
-      JSON.stringify({ auth: { adapter: "workos", clientId: "client_123", redirectUri: 42 } }),
+      JSON.stringify({ auth: { adapter: "workos", clientId: "client_123" } }),
     );
-    await expect(loadInstanceConfig(workDir)).rejects.toThrow(
-      "workos auth 'redirectUri' must be a string",
-    );
+    const result = await loadInstanceConfig(workDir);
+    expect(result?.auth).toEqual({ adapter: "workos", clientId: "client_123" });
   });
 
   test("loads workos auth with custom adminRoleSlugs", async () => {
@@ -94,7 +131,6 @@ describe("loadInstanceConfig", () => {
       auth: {
         adapter: "workos",
         clientId: "client_123",
-        redirectUri: "http://localhost:3000/v1/auth/callback",
         organizationId: "org_789",
         adminRoleSlugs: ["org-admin", "owner"],
       },
@@ -112,7 +148,6 @@ describe("loadInstanceConfig", () => {
         auth: {
           adapter: "workos",
           clientId: "client_123",
-          redirectUri: "http://localhost:3000/v1/auth/callback",
           adminRoleSlugs: [],
         },
       }),
@@ -122,9 +157,46 @@ describe("loadInstanceConfig", () => {
     );
   });
 
+  test("loads workos auth with firstPartyClientIds, an empty list included", async () => {
+    for (const firstPartyClientIds of [["client_test_channels"], []]) {
+      const config: InstanceConfig = {
+        auth: { adapter: "workos", clientId: "client_123", firstPartyClientIds },
+      };
+      await writeFile(join(workDir, "instance.json"), JSON.stringify(config));
+      expect(await loadInstanceConfig(workDir)).toEqual(config);
+    }
+  });
+
+  test("rejects a firstPartyClientIds that is not an array of strings", async () => {
+    for (const firstPartyClientIds of ["client_test_channels", [7]]) {
+      await writeFile(
+        join(workDir, "instance.json"),
+        JSON.stringify({
+          auth: { adapter: "workos", clientId: "client_123", firstPartyClientIds },
+        }),
+      );
+      await expect(loadInstanceConfig(workDir)).rejects.toThrow(
+        "'firstPartyClientIds' must be an array of strings",
+      );
+    }
+  });
+
   test("returns null when instance.json is missing", async () => {
     const result = await loadInstanceConfig(workDir);
     expect(result).toBeNull();
+  });
+
+  test("loads the dev adapter", async () => {
+    await writeFile(join(workDir, "instance.json"), JSON.stringify({ auth: { adapter: "dev" } }));
+
+    const config = await loadInstanceConfig(workDir);
+    expect(config).toEqual({ auth: { adapter: "dev" } });
+  });
+
+  test("throws on a non-string auth adapter", async () => {
+    await writeFile(join(workDir, "instance.json"), JSON.stringify({ auth: { adapter: 42 } }));
+
+    await expect(loadInstanceConfig(workDir)).rejects.toThrow('unknown auth adapter "42"');
   });
 
   test("throws on malformed JSON", async () => {
@@ -151,7 +223,9 @@ describe("loadInstanceConfig", () => {
       JSON.stringify({ auth: { adapter: "oidc", issuer: "https://x.com" } }),
     );
 
-    await expect(loadInstanceConfig(workDir)).rejects.toThrow("oidc auth requires string 'clientId'");
+    await expect(loadInstanceConfig(workDir)).rejects.toThrow(
+      "oidc auth requires string 'clientId'",
+    );
   });
 });
 
@@ -164,7 +238,6 @@ describe("saveInstanceConfig", () => {
         clientId: "client-1",
         allowedDomains: ["example.com"],
       },
-      orgName: "Test Org",
       orgId: "org-1",
       integrations: { github: { token: "ghp_xxx" } },
     };

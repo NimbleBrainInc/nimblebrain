@@ -7,32 +7,36 @@
  *     usage aggregates regardless of which workspace the spend happened in.
  *   - `scope: "user"` (default) is gated to the caller's own spend via the
  *     aggregator's ownerFilter — a member can't see peers' usage.
- *   - `scope: "org"` requires org admin/owner; a member is denied.
- *   - Dev mode (no identity provider) bypasses the gate and sees everything.
+ *   - `scope: "org"` requires org admin; a member is denied.
+ *   - The dev user is an org admin: it reads the org scope on its role, and
+ *     its user scope is its own spend.
  *   - The response echoes the resolved `scope`.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import type { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { usageMonthDir, usageMonthOf } from "../../../../src/usage/paths.ts";
-import type { UsageLedgerEntry } from "../../../../src/usage/types.ts";
 import type { UsageReportOutput } from "../../../../src/platform/schemas/usage.ts";
 import { createUsageSource } from "../../../../src/platform/usage/source.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
+import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { MAX_BREAKDOWN_ROWS } from "../../../../src/usage/aggregate.ts";
+import { usageMonthDir, usageMonthOf } from "../../../../src/usage/paths.ts";
+import type { UsageLedgerEntry } from "../../../../src/usage/types.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 
 interface FakeIdentity {
   id: string;
-  orgRole: "owner" | "admin" | "member";
+  orgRole: "admin" | "member";
 }
 
 class FakeRuntime {
   identity: FakeIdentity | null = null;
-  hasIdentityProvider = false;
 
   constructor(private workDir: string) {}
 
@@ -41,10 +45,7 @@ class FakeRuntime {
     return this.workDir;
   }
   getCurrentIdentity() {
-    return this.identity;
-  }
-  getIdentityProvider() {
-    return this.hasIdentityProvider ? ({} as object) : null;
+    return this.identity && makeIdentity(this.identity);
   }
 }
 
@@ -53,9 +54,7 @@ const AT = "2026-04-10T12:00:00Z";
 /**
  * Seed one user's spend into the ledger.
  *
- * The tool used to walk every workspace's conversation files to find a user's
- * usage across workspaces; the ledger carries `userId` and `workspaceId` on the
- * line, so there is nothing to walk and the owner scoping is a field predicate.
+ * The ledger carries `userId` and `workspaceId` on the line, so there is nothing to walk and the owner scoping is a field predicate.
  * The `workspaceId` is kept on the fixture because the calls really did happen
  * in different workspaces — that a cross-workspace read still aggregates by
  * owner is the property these tests exist for.
@@ -64,7 +63,7 @@ async function seedSpend(
   workDir: string,
   wsId: string,
   ownerId: string,
-  sessionId: string,
+  conversationId: string,
   input: number,
   output: number,
 ): Promise<void> {
@@ -79,7 +78,7 @@ async function seedSpend(
     llmMs: 100,
     userId: ownerId,
     workspaceId: wsId,
-    sessionId,
+    conversationId,
   };
   await appendFile(join(dir, "test.jsonl"), `${JSON.stringify(entry)}\n`);
 }
@@ -95,8 +94,8 @@ beforeEach(async () => {
   runtime = new FakeRuntime(workDir);
   // Two owners in two different workspaces — usage must aggregate by owner ACROSS
   // workspaces via the cross-workspace walk. alice has 100/50, bob has 400/200.
-  await seedSpend(workDir, "ws_alice", "usr_alice", "conv_0000000000000a1c", 100, 50);
-  await seedSpend(workDir, "ws_bob", "usr_bob", "conv_0000000000000b0b", 400, 200);
+  await seedSpend(workDir, "ws_00148bca567ef156", "usr_alice", "conv_0000000000000a1c", 100, 50);
+  await seedSpend(workDir, "ws_0021762e0e7b3844", "usr_bob", "conv_0000000000000b0b", 400, 200);
 });
 
 afterEach(async () => {
@@ -106,8 +105,11 @@ afterEach(async () => {
 });
 
 async function buildSource(): Promise<McpSource> {
-  source = createUsageSource(runtime as unknown as never, new NoopEventSink());
+  source = createUsageSource(stub<Runtime>(runtime), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 
@@ -121,7 +123,6 @@ function parse(result: { content?: Array<{ type: string; text?: string }> }): Us
 describe("usage source — scope: user", () => {
   test("members see only their own conversations (ownerFilter)", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = { id: "usr_alice", orgRole: "member" };
 
     const client = src.getClient()!;
@@ -140,7 +141,6 @@ describe("usage source — scope: user", () => {
 
   test("defaults to user scope when scope omitted", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = { id: "usr_bob", orgRole: "member" };
 
     const client = src.getClient()!;
@@ -154,7 +154,6 @@ describe("usage source — scope: user", () => {
 
   test("unauthenticated caller (provider present, no identity) is denied", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = null;
 
     const client = src.getClient()!;
@@ -166,7 +165,6 @@ describe("usage source — scope: user", () => {
 describe("usage source — scope: org", () => {
   test("org admin sees all users, attributed by owner with groupBy:user", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = { id: "usr_admin", orgRole: "admin" };
 
     const client = src.getClient()!;
@@ -186,7 +184,6 @@ describe("usage source — scope: org", () => {
 
   test("org admin can request user and day breakdowns in one report", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = { id: "usr_admin", orgRole: "admin" };
 
     const client = src.getClient()!;
@@ -207,7 +204,6 @@ describe("usage source — scope: org", () => {
 
   test("member is denied org scope", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = true;
     runtime.identity = { id: "usr_alice", orgRole: "member" };
 
     const client = src.getClient()!;
@@ -219,11 +215,12 @@ describe("usage source — scope: org", () => {
   });
 });
 
-describe("usage source — dev mode", () => {
-  test("no identity provider: org scope sees everything without a gate", async () => {
+describe("usage source — the dev user", () => {
+  const DEV_USER: FakeIdentity = { id: "usr_default", orgRole: "admin" };
+
+  test("reads the org scope as an org admin", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = false;
-    runtime.identity = null;
+    runtime.identity = DEV_USER;
 
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -237,16 +234,159 @@ describe("usage source — dev mode", () => {
     expect(data.totals.conversations).toBe(2);
   });
 
-  test("no identity provider: user scope is unfiltered (dev sees all)", async () => {
+  test("its user scope is its own spend, not everyone's", async () => {
     const src = await buildSource();
-    runtime.hasIdentityProvider = false;
-    runtime.identity = null;
+    runtime.identity = DEV_USER;
 
     const client = src.getClient()!;
     const result = await client.callTool({ name: "report", arguments: { period: "all" } });
     const data = parse(result as { content?: Array<{ type: string; text?: string }> });
 
-    // Dev mode: no ownerFilter, so both conversations are visible.
-    expect(data.totals.conversations).toBe(2);
+    expect(data.totals.conversations).toBe(0);
+  });
+
+  test("a call with no identity is refused", async () => {
+    const src = await buildSource();
+    runtime.identity = null;
+
+    const client = src.getClient()!;
+    const result = await client.callTool({ name: "report", arguments: { period: "all" } });
+    expect(result.isError).toBe(true);
+  });
+});
+
+describe("usage source — filters", () => {
+  test("a member filtering by another user is refused, not shown an empty report", async () => {
+    const src = await buildSource();
+    runtime.identity = { id: "usr_alice", orgRole: "member" };
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "report",
+      arguments: { period: "all", userId: "usr_bob" },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  test("a member filtering by themselves gets their own spend", async () => {
+    const src = await buildSource();
+    runtime.identity = { id: "usr_alice", orgRole: "member" };
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "report",
+      arguments: { period: "all", userId: "usr_alice" },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = parse(result as { content?: Array<{ type: string; text?: string }> });
+    expect(data.totals.tokens.input).toBe(100);
+  });
+
+  test("a member's workspace filter still sees only their own spend", async () => {
+    const src = await buildSource();
+    runtime.identity = { id: "usr_alice", orgRole: "member" };
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "report",
+      arguments: { period: "all", workspaceId: "ws_0021762e0e7b3844" },
+    });
+    const data = parse(result as { content?: Array<{ type: string; text?: string }> });
+    expect(data.totals.llmCalls).toBe(0);
+  });
+
+  test("org scope narrows by workspace and user, and groups by workspace", async () => {
+    const src = await buildSource();
+    runtime.identity = { id: "usr_admin", orgRole: "admin" };
+
+    const client = src.getClient()!;
+    const byWorkspace = parse(
+      (await client.callTool({
+        name: "report",
+        arguments: { scope: "org", period: "all", groupBy: "workspace" },
+      })) as { content?: Array<{ type: string; text?: string }> },
+    );
+    expect(byWorkspace.breakdown.map((b) => b.key).sort()).toEqual([
+      "ws_00148bca567ef156",
+      "ws_0021762e0e7b3844",
+    ]);
+
+    const filtered = parse(
+      (await client.callTool({
+        name: "report",
+        arguments: {
+          scope: "org",
+          period: "all",
+          workspaceId: "ws_0021762e0e7b3844",
+          userId: "usr_bob",
+        },
+      })) as { content?: Array<{ type: string; text?: string }> },
+    );
+    expect(filtered.totals.tokens.input).toBe(400);
+  });
+
+  test("the schema rejects an origin outside the enum", async () => {
+    const src = await buildSource();
+    runtime.identity = { id: "usr_admin", orgRole: "admin" };
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "report",
+      arguments: { scope: "org", period: "all", origin: "batch" },
+    });
+    expect(result.isError).toBe(true);
+  });
+});
+
+describe("usage source — the report's optional fields", () => {
+  test("task runs, unpriced calls, a stacked day split, and a capped breakdown match the output schema", async () => {
+    // A task-run line on a model no catalog knows (`runs`, `unpricedCalls`),
+    // and enough conversations to cap that breakdown (`truncatedBreakdowns`).
+    const dir = usageMonthDir(workDir, usageMonthOf(AT));
+    const task: UsageLedgerEntry = {
+      ts: AT,
+      source: "main",
+      origin: "task",
+      model: "unknown",
+      usage: { inputTokens: 10, outputTokens: 5 },
+      llmMs: 0,
+      userId: "usr_alice",
+      taskRunId: "run_0000000000000001",
+    };
+    const chats = Array.from({ length: MAX_BREAKDOWN_ROWS }, (_, i) => ({
+      ts: AT,
+      source: "main",
+      origin: "chat",
+      model: "claude-sonnet-4-5-20250929",
+      usage: { inputTokens: 1, outputTokens: 1 },
+      llmMs: 1,
+      userId: "usr_alice",
+      conversationId: `conv_${String(i).padStart(16, "0")}`,
+    }));
+    await appendFile(
+      join(dir, "test.jsonl"),
+      [task, ...chats].map((e) => `${JSON.stringify(e)}\n`).join(""),
+    );
+
+    const src = await buildSource();
+    runtime.identity = { id: "usr_admin", orgRole: "admin" };
+    const result = await src.getClient()!.callTool({
+      name: "report",
+      arguments: {
+        scope: "org",
+        period: "all",
+        groupBy: ["day", "conversation"],
+        stackBy: "model",
+      },
+    });
+
+    // A success that failed its output schema would come back as an error.
+    expect(result.isError).toBeFalsy();
+    const report = result.structuredContent as UsageReportOutput;
+    expect(report).toEqual(parse(result as { content?: Array<{ type: string; text?: string }> }));
+    expect(report.totals.runs).toBe(1);
+    expect(report.totals.unpricedCalls).toBeGreaterThanOrEqual(1);
+    expect(report.breakdowns.day?.[0]?.stack).toBeDefined();
+    expect(report.truncatedBreakdowns?.conversation?.returned).toBe(MAX_BREAKDOWN_ROWS);
   });
 });

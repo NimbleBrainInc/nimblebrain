@@ -1,28 +1,54 @@
 import { describe, expect, it } from "bun:test";
-import { MAX_ITERATIONS } from "../../src/limits.ts";
-import { AgentEngine } from "../../src/engine/engine.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { createMockModel } from "../helpers/mock-model.ts";
-import { StaticToolRouter } from "../../src/adapters/static-router.ts";
+import type {
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4Message,
+} from "@ai-sdk/provider";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { StaticToolRouter } from "../../src/adapters/static-router.ts";
+import { type ConfirmationGate, createPrivilegeHook } from "../../src/config/privilege.ts";
+import type { StoredMessage } from "../../src/conversation/types.ts";
+import { textContent } from "../../src/engine/content-helpers.ts";
+import { AgentEngine } from "../../src/engine/engine.ts";
 import type {
   EngineConfig,
   EngineEvent,
+  EngineEventOf,
   EventSink,
   ToolCall,
   ToolPromotionControls,
+  ToolPromotionResult,
   ToolResult,
   ToolSchema,
 } from "../../src/engine/types.ts";
 import { DEFAULT_THINKING_EFFORT, SKILL_ACTIVATED_META_KEY } from "../../src/engine/types.ts";
+import { MAX_ITERATIONS } from "../../src/limits.ts";
 import { log } from "../../src/observability/log.ts";
-import { textContent } from "../../src/engine/content-helpers.ts";
 import {
   getRequestContext,
-  runWithRequestContext,
   type RequestContext,
+  runWithRequestContext,
 } from "../../src/runtime/request-context.ts";
-import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
+import { synthesizeConnectorSkill } from "../../src/skills/connector-skills.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { createMockModel } from "../helpers/mock-model.ts";
+
+/** A provider message carrying the `metadata` a reconstructed StoredMessage holds. */
+type HistoryMessage = LanguageModelV4Message & Pick<StoredMessage, "metadata">;
+
+// Fixture schemas declare the arguments the tests send: the engine rejects a
+// key a closed `properties` list does not name.
+const MANAGE_TOOLS_INPUT = {
+  type: "object",
+  properties: {
+    add: { type: "array", items: { type: "string" } },
+    remove: { type: "array", items: { type: "string" } },
+  },
+};
+const SEARCH_INPUT = {
+  type: "object",
+  properties: { scope: { type: "string" }, query: { type: "string" } },
+};
 
 const defaultConfig: EngineConfig = {
   model: "test-model",
@@ -38,7 +64,10 @@ function makeEngine(
 ) {
   return new AgentEngine(
     model ?? createEchoModel(),
-    new StaticToolRouter(tools?.schemas ?? [], tools?.handler ?? (() => ({ content: textContent(""), isError: false }))),
+    new StaticToolRouter(
+      tools?.schemas ?? [],
+      tools?.handler ?? (() => ({ content: textContent(""), isError: false })),
+    ),
     events ?? new NoopEventSink(),
   );
 }
@@ -46,9 +75,12 @@ function makeEngine(
 describe("AgentEngine", () => {
   it("returns text from a simple echo response", async () => {
     const engine = makeEngine();
-    const result = await engine.run(defaultConfig, "You are a test.", [
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-    ], []);
+    const result = await engine.run(
+      defaultConfig,
+      "You are a test.",
+      [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+      [],
+    );
 
     expect(result.output).toBe("Hello");
     expect(result.stopReason).toBe("complete");
@@ -67,7 +99,7 @@ describe("AgentEngine", () => {
     const events: EventSink = {
       emit(event: EngineEvent) {
         if (event.type === "text.delta") {
-          chunks.push(event.data["text"] as string);
+          chunks.push(event.data.text as string);
         }
       },
     };
@@ -78,7 +110,12 @@ describe("AgentEngine", () => {
       events,
     );
 
-    await engine.run(defaultConfig, "", [{ role: "user", content: [{ type: "text", text: "Hi" }] }], []);
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      [],
+    );
     expect(chunks).toEqual(["Hello world"]);
   });
 
@@ -90,7 +127,12 @@ describe("AgentEngine", () => {
         return {
           content: [
             { type: "text", text: "Let me check." },
-            { type: "tool-call", toolCallId: "call_1", toolName: "test__greet", input: JSON.stringify({ name: "World" }) },
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "test__greet",
+              input: JSON.stringify({ name: "World" }),
+            },
           ],
           inputTokens: 50,
           outputTokens: 20,
@@ -106,15 +148,18 @@ describe("AgentEngine", () => {
     const tools = {
       schemas: [{ name: "test__greet", description: "Greet someone", inputSchema: {} }],
       handler: (call: ToolCall): ToolResult => ({
-        content: textContent(`Hello, ${call.input["name"]}!`),
+        content: textContent(`Hello, ${call.input.name}!`),
         isError: false,
       }),
     };
 
     const engine = makeEngine(model, tools);
-    const result = await engine.run(defaultConfig, "", [
-      { role: "user", content: [{ type: "text", text: "Greet the world" }] },
-    ], tools.schemas);
+    const result = await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Greet the world" }] }],
+      tools.schemas,
+    );
 
     expect(result.output).toBe("Let me check.\n\nDone!");
     expect(result.toolCalls).toHaveLength(1);
@@ -130,7 +175,7 @@ describe("AgentEngine", () => {
   it("lifts a failed tool result's structuredContent.reason onto errorReason", async () => {
     // The exact envelope McpSource.execute returns on mid-session auth loss
     // (a disconnected OAuth/Composio connector). The engine must surface that
-    // reason on the ToolCallRecord so downstream consumers (the automations
+    // reason on the ToolCallRecord so downstream consumers (the tasks
     // de-masker) can tell an unreachable connector from a generic tool error.
     let callCount = 0;
     const model = createMockModel(() => {
@@ -208,11 +253,15 @@ describe("AgentEngine", () => {
     });
 
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__search", description: "Search tools", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__search",
+        description: "Search tools",
+        inputSchema: SEARCH_INPUT,
+      },
       {
         name: "newsapi__get_top_headlines",
         description: "Get top headlines",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: { type: "object", properties: { country: { type: "string" } } },
       },
     ];
 
@@ -314,12 +363,20 @@ describe("AgentEngine", () => {
     });
 
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__search", description: "Search tools", inputSchema: { type: "object", properties: {} } },
-      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__search",
+        description: "Search tools",
+        inputSchema: SEARCH_INPUT,
+      },
+      {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      },
       {
         name: "newsapi__get_top_headlines",
         description: "Get top headlines",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: { type: "object", properties: { country: { type: "string" } } },
       },
     ];
 
@@ -327,7 +384,7 @@ describe("AgentEngine", () => {
     let activeControls: ToolPromotionControls | null = null;
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__search") {
           return {
             content: textContent("Found newsapi__get_top_headlines"),
@@ -339,7 +396,8 @@ describe("AgentEngine", () => {
           expect(activeControls).not.toBeNull();
           const add = (call.input.add as string[] | undefined) ?? [];
           const remove = (call.input.remove as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           const released = remove.map((n) => activeControls!.removeTool(n));
           return {
             content: textContent("ok"),
@@ -438,7 +496,11 @@ describe("AgentEngine", () => {
     });
 
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      },
       { name: "a__one", description: "Tool A", inputSchema: { type: "object", properties: {} } },
       { name: "b__two", description: "Tool B", inputSchema: { type: "object", properties: {} } },
       { name: "c__three", description: "Tool C", inputSchema: { type: "object", properties: {} } },
@@ -448,12 +510,13 @@ describe("AgentEngine", () => {
     let activeControls: ToolPromotionControls | null = null;
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           expect(activeControls).not.toBeNull();
           const add = (call.input.add as string[] | undefined) ?? [];
           const remove = (call.input.remove as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           const released = remove.map((n) => activeControls!.removeTool(n));
           return {
             content: textContent("ok"),
@@ -489,7 +552,7 @@ describe("AgentEngine", () => {
     expect(events.filter((e) => e.type === "tool.released")).toHaveLength(1); // a__one
   });
 
-  it("nb__manage_tools rejects internal tools per-item without affecting other items", async () => {
+  it("nb__manage_tools rejects app-only tools per-item without affecting other items", async () => {
     let callCount = 0;
     const seenToolLists: string[][] = [];
     const model = createMockModel((options) => {
@@ -524,7 +587,11 @@ describe("AgentEngine", () => {
     });
 
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      },
       {
         name: "app__public",
         description: "Public tool",
@@ -534,7 +601,7 @@ describe("AgentEngine", () => {
         name: "internal__secret",
         description: "Internal secret tool",
         inputSchema: { type: "object", properties: {} },
-        meta: { "ai.nimblebrain/internal": true },
+        meta: { ui: { visibility: ["app"] } },
       },
     ];
 
@@ -542,11 +609,12 @@ describe("AgentEngine", () => {
     let activeControls: ToolPromotionControls | null = null;
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           expect(activeControls).not.toBeNull();
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -580,8 +648,72 @@ describe("AgentEngine", () => {
     expect(manageCall).toBeDefined();
     // Per-item failure does not fail the whole call; structuredContent reports it.
     expect(manageCall?.ok).toBe(true);
-    // Only the public tool was promoted; the internal one was rejected per-item.
+    // Only the public tool was promoted; the app-only one was rejected per-item.
     expect(events.filter((e) => e.type === "tool.promoted")).toHaveLength(1);
+  });
+
+  it("refuses a model call that names an app-only tool, without running it", async () => {
+    let callCount = 0;
+    const model = createMockModel(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_hidden",
+              toolName: "internal__secret",
+              input: JSON.stringify({}),
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call_public",
+              toolName: "app__public",
+              input: JSON.stringify({}),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "Done" }], inputTokens: 10, outputTokens: 5 };
+    });
+
+    const toolSchemas: ToolSchema[] = [
+      {
+        name: "app__public",
+        description: "Public tool",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "internal__secret",
+        description: "Internal secret tool",
+        inputSchema: { type: "object", properties: {} },
+        meta: { ui: { visibility: ["app"] } },
+      },
+    ];
+
+    const executed: string[] = [];
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        executed.push(call.name);
+        return { content: textContent("ran"), isError: false };
+      }),
+      { emit: () => {} },
+    );
+
+    const result = await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Call both" }] }],
+      [toolSchemas[0]!],
+    );
+
+    expect(executed).toEqual(["app__public"]);
+    const hidden = result.toolCalls.find((c) => c.name === "internal__secret");
+    expect(hidden?.ok).toBe(false);
+    expect(result.toolCalls.find((c) => c.name === "app__public")?.ok).toBe(true);
   });
 
   it("nb__manage_tools add rejects role/feature-ineligible tools per-item", async () => {
@@ -618,7 +750,11 @@ describe("AgentEngine", () => {
     });
 
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      },
       {
         name: "nb__manage_users",
         description: "Manage users",
@@ -630,11 +766,12 @@ describe("AgentEngine", () => {
     let activeControls: ToolPromotionControls | null = null;
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           expect(activeControls).not.toBeNull();
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -703,8 +840,16 @@ describe("AgentEngine", () => {
     });
 
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__search", description: "Search tools", inputSchema: { type: "object", properties: {} } },
-      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__search",
+        description: "Search tools",
+        inputSchema: SEARCH_INPUT,
+      },
+      {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      },
     ];
 
     const events: EngineEvent[] = [];
@@ -756,7 +901,11 @@ describe("AgentEngine", () => {
     // 5 promotable tools, cap=4 (one initial + 3 promoted slots). Promoting
     // all 5 in one batch should evict the two earliest (a, b).
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      },
       { name: "app__a", description: "A", inputSchema: { type: "object", properties: {} } },
       { name: "app__b", description: "B", inputSchema: { type: "object", properties: {} } },
       { name: "app__c", description: "C", inputSchema: { type: "object", properties: {} } },
@@ -789,10 +938,11 @@ describe("AgentEngine", () => {
 
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -826,9 +976,7 @@ describe("AgentEngine", () => {
     expect(events.filter((e) => e.type === "tool.promoted")).toHaveLength(5);
     const evicted = events
       .filter(
-        (e) =>
-          e.type === "tool.released" &&
-          (e.data as { reason?: string }).reason === "evicted",
+        (e) => e.type === "tool.released" && (e.data as { reason?: string }).reason === "evicted",
       )
       .map((e) => (e.data as { toolName: string }).toolName);
     expect(evicted).toEqual(["app__a", "app__b"]);
@@ -836,11 +984,31 @@ describe("AgentEngine", () => {
 
   it("LRU eviction: never evicts initial tools even when cap is exceeded", async () => {
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
-      { name: "initial__a", description: "Initial A", inputSchema: { type: "object", properties: {} } },
-      { name: "initial__b", description: "Initial B", inputSchema: { type: "object", properties: {} } },
-      { name: "promoted__x", description: "Promoted X", inputSchema: { type: "object", properties: {} } },
-      { name: "promoted__y", description: "Promoted Y", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      },
+      {
+        name: "initial__a",
+        description: "Initial A",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "initial__b",
+        description: "Initial B",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "promoted__x",
+        description: "Promoted X",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "promoted__y",
+        description: "Promoted Y",
+        inputSchema: { type: "object", properties: {} },
+      },
     ];
 
     let callCount = 0;
@@ -868,10 +1036,11 @@ describe("AgentEngine", () => {
 
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -909,9 +1078,7 @@ describe("AgentEngine", () => {
 
     const evictedNames = events
       .filter(
-        (e) =>
-          e.type === "tool.released" &&
-          (e.data as { reason?: string }).reason === "evicted",
+        (e) => e.type === "tool.released" && (e.data as { reason?: string }).reason === "evicted",
       )
       .map((e) => (e.data as { toolName: string }).toolName);
     // Initial tools never evicted (they're not in promotedLastUsed).
@@ -931,7 +1098,11 @@ describe("AgentEngine", () => {
     // Without refresh, a would be the oldest and evicted. With refresh,
     // b is the LRU victim.
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      },
       { name: "app__a", description: "A", inputSchema: { type: "object", properties: {} } },
       { name: "app__b", description: "B", inputSchema: { type: "object", properties: {} } },
       { name: "app__c", description: "C", inputSchema: { type: "object", properties: {} } },
@@ -961,7 +1132,12 @@ describe("AgentEngine", () => {
       if (callCount === 2) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "use_a", toolName: "app__a", input: JSON.stringify({}) },
+            {
+              type: "tool-call",
+              toolCallId: "use_a",
+              toolName: "app__a",
+              input: JSON.stringify({}),
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -986,10 +1162,11 @@ describe("AgentEngine", () => {
 
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -1024,9 +1201,7 @@ describe("AgentEngine", () => {
 
     const evictedNames = events
       .filter(
-        (e) =>
-          e.type === "tool.released" &&
-          (e.data as { reason?: string }).reason === "evicted",
+        (e) => e.type === "tool.released" && (e.data as { reason?: string }).reason === "evicted",
       )
       .map((e) => (e.data as { toolName: string }).toolName);
     expect(evictedNames).toEqual(["app__b"]);
@@ -1039,7 +1214,11 @@ describe("AgentEngine", () => {
     // undoing the agent's intentional promotion. With the guard, the
     // promotion sticks and the cap is "soft" for this run.
     const toolSchemas: ToolSchema[] = [
-      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      },
       { name: "init__a", description: "A", inputSchema: { type: "object", properties: {} } },
       { name: "init__b", description: "B", inputSchema: { type: "object", properties: {} } },
       { name: "init__c", description: "C", inputSchema: { type: "object", properties: {} } },
@@ -1074,10 +1253,11 @@ describe("AgentEngine", () => {
 
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -1115,9 +1295,7 @@ describe("AgentEngine", () => {
     // itself) was protected by the self-eviction guard.
     const evictedNames = events
       .filter(
-        (e) =>
-          e.type === "tool.released" &&
-          (e.data as { reason?: string }).reason === "evicted",
+        (e) => e.type === "tool.released" && (e.data as { reason?: string }).reason === "evicted",
       )
       .map((e) => (e.data as { toolName: string }).toolName);
     expect(evictedNames).toHaveLength(0);
@@ -1156,9 +1334,21 @@ describe("AgentEngine", () => {
     // Outer toolset: nb__manage_tools (promotable) + a tool that, when
     // called, spawns an inner engine.run().
     const outerSchemas: ToolSchema[] = [
-      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
-      { name: "spawn_child", description: "Run a child engine", inputSchema: { type: "object", properties: {} } },
-      { name: "outer__only", description: "Outer tool", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      },
+      {
+        name: "spawn_child",
+        description: "Run a child engine",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "outer__only",
+        description: "Outer tool",
+        inputSchema: { type: "object", properties: {} },
+      },
     ];
 
     // Inner toolset: distinct from outer's. The inner agent will try to
@@ -1166,8 +1356,16 @@ describe("AgentEngine", () => {
     // NOT in the outer's directTools. If isolation is broken, the outer's
     // directTools would gain inner__discovered.
     const innerSchemas: ToolSchema[] = [
-      { name: "nb__manage_tools", description: "Patch tool list", inputSchema: { type: "object", properties: {} } },
-      { name: "inner__discovered", description: "Inner-only tool", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      },
+      {
+        name: "inner__discovered",
+        description: "Inner-only tool",
+        inputSchema: { type: "object", properties: {} },
+      },
     ];
 
     const outerToolListsSeen: string[][] = [];
@@ -1226,7 +1424,7 @@ describe("AgentEngine", () => {
     let activeInnerControls: ToolPromotionControls | null = null;
     const events: EngineEvent[] = [];
 
-    const innerRouter = new StaticToolRouter(innerSchemas, (call) => {
+    const innerRouter = new StaticToolRouter(innerSchemas, async (call) => {
       if (call.name === "nb__manage_tools") {
         const add = (call.input.add as string[] | undefined) ?? [];
         // Inner's manage_tools handler reaches the controls in reqCtx.
@@ -1237,7 +1435,8 @@ describe("AgentEngine", () => {
         if (!controls) {
           return { content: textContent("no controls"), isError: true };
         }
-        const promoted = add.map((n) => controls.addTool(n));
+        const promoted: ToolPromotionResult[] = [];
+        for (const n of add) promoted.push(await controls.addTool(n));
         return {
           content: textContent("ok"),
           structuredContent: { promoted, released: [] },
@@ -1254,7 +1453,8 @@ describe("AgentEngine", () => {
         const add = (call.input.add as string[] | undefined) ?? [];
         const controls = getRequestContext()?.toolPromotion;
         if (!controls) return { content: textContent("no controls"), isError: true };
-        const promoted = add.map((n) => controls.addTool(n));
+        const promoted: ToolPromotionResult[] = [];
+        for (const n of add) promoted.push(await controls.addTool(n));
         return {
           content: textContent("ok"),
           structuredContent: { promoted, released: [] },
@@ -1266,7 +1466,7 @@ describe("AgentEngine", () => {
         // Without the per-engine toolPromotion factory, the child's
         // manage_tools would leak into the outer run.
         const innerEngine = new AgentEngine(innerModel, innerRouter, {
-          emit: (event) => events.push({ ...event, data: { ...event.data, scope: "inner" } }),
+          emit: (event) => events.push(event),
         });
         await innerEngine.run(
           {
@@ -1293,7 +1493,7 @@ describe("AgentEngine", () => {
     });
 
     const outerEngine = new AgentEngine(outerModel, outerRouter, {
-      emit: (event) => events.push({ ...event, data: { ...event.data, scope: "outer" } }),
+      emit: (event) => events.push(event),
     });
 
     // Wrap the whole flow in a request context so reqCtx exists for the
@@ -1354,7 +1554,12 @@ describe("AgentEngine", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "call_ui", toolName: "app__render", input: JSON.stringify({}) },
+            {
+              type: "tool-call",
+              toolCallId: "call_ui",
+              toolName: "app__render",
+              input: JSON.stringify({}),
+            },
           ],
           inputTokens: 50,
           outputTokens: 20,
@@ -1381,20 +1586,28 @@ describe("AgentEngine", () => {
 
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, () => ({ content: textContent("rendered"), isError: false })),
+      new StaticToolRouter(toolSchemas, () => ({
+        content: textContent("rendered"),
+        isError: false,
+      })),
       sink,
     );
 
-    await engine.run(defaultConfig, "", [{ role: "user", content: [{ type: "text", text: "render" }] }], toolSchemas);
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "render" }] }],
+      toolSchemas,
+    );
 
     const toolStart = events.find((e) => e.type === "tool.start");
     expect(toolStart).toBeDefined();
-    expect(toolStart!.data["resourceUri"]).toBe("ui://app/viewer");
+    expect(toolStart!.data.resourceUri).toBe("ui://app/viewer");
 
     const toolDone = events.find((e) => e.type === "tool.done");
     expect(toolDone).toBeDefined();
-    expect(toolDone!.data["resourceUri"]).toBe("ui://app/viewer");
-    expect(toolDone!.data["result"]).toEqual({ content: textContent("rendered"), isError: false });
+    expect(toolDone!.data.resourceUri).toBe("ui://app/viewer");
+    expect(toolDone!.data.result).toEqual({ content: textContent("rendered"), isError: false });
   });
 
   it("surfaces resource_link blocks on tool.done and in the result record", async () => {
@@ -1445,11 +1658,7 @@ describe("AgentEngine", () => {
     const events: EngineEvent[] = [];
     const sink: EventSink = { emit: (e) => events.push(e) };
 
-    const engine = new AgentEngine(
-      model,
-      new StaticToolRouter(tools.schemas, tools.handler),
-      sink,
-    );
+    const engine = new AgentEngine(model, new StaticToolRouter(tools.schemas, tools.handler), sink);
 
     const result = await engine.run(
       defaultConfig,
@@ -1460,7 +1669,7 @@ describe("AgentEngine", () => {
 
     const toolDone = events.find((e) => e.type === "tool.done");
     expect(toolDone).toBeDefined();
-    expect(toolDone!.data["resourceLinks"]).toEqual([
+    expect(toolDone!.data.resourceLinks).toEqual([
       {
         uri: "collateral://exports/exp_abc123.pdf",
         name: "Document export",
@@ -1468,7 +1677,7 @@ describe("AgentEngine", () => {
       },
     ]);
     // resourceUri is separate (no UI annotation) — stays undefined.
-    expect(toolDone!.data["resourceUri"]).toBeUndefined();
+    expect(toolDone!.data.resourceUri).toBeUndefined();
 
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0]!.resourceLinks).toEqual([
@@ -1514,19 +1723,27 @@ describe("AgentEngine", () => {
       sink,
     );
 
-    await engine.run(defaultConfig, "", [
-      { role: "user", content: [{ type: "text", text: "go" }] },
-    ], toolSchemas);
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "go" }] }],
+      toolSchemas,
+    );
 
     const toolDone = events.find((e) => e.type === "tool.done");
     expect(toolDone).toBeDefined();
-    expect(toolDone!.data["resourceLinks"]).toBeUndefined();
+    expect(toolDone!.data.resourceLinks).toBeUndefined();
   });
 
   it("stops at max_iterations", async () => {
     const model = createMockModel(() => ({
       content: [
-        { type: "tool-call", toolCallId: `call_${Date.now()}`, toolName: "test__noop", input: JSON.stringify({}) },
+        {
+          type: "tool-call",
+          toolCallId: `call_${Date.now()}`,
+          toolName: "test__noop",
+          input: JSON.stringify({}),
+        },
       ],
       inputTokens: 10,
       outputTokens: 5,
@@ -1565,16 +1782,9 @@ describe("AgentEngine", () => {
       expect(result.finishReason).toBe("stop");
     });
 
-    it("derives stopReason='length' when truncation persists past auto-resume", async () => {
-      // A single recoverable length-truncation now auto-resumes rather than
-      // ending the run (see engine-length-continuation.test.ts). The run only
-      // surfaces stopReason 'length' once the bounded resume is exhausted, so
-      // drive a model that keeps hitting the ceiling.
+    it("derives stopReason='length' from finish=length", async () => {
       const model = createEchoModel({
-        responses: Array.from({ length: 8 }, () => ({
-          text: "x",
-          finishReason: "length" as const,
-        })),
+        responses: [{ text: "x", finishReason: "length" }],
       });
       const result = await makeEngine(model).run(
         defaultConfig,
@@ -1669,13 +1879,13 @@ describe("AgentEngine", () => {
       // the Anthropic-specific shape without leaking through other layers.
       // Sonnet 4.6 supports the `enabled` shape directly — the engine
       // passes the budget through verbatim.
-      const capturedOptions: Array<Record<string, unknown>> = [];
+      const capturedOptions: LanguageModelV4CallOptions[] = [];
       const recordingModel: LanguageModelV4 = {
         ...createEchoModel({ responses: [{ text: "ok" }] }),
       };
       const orig = recordingModel.doStream.bind(recordingModel);
       recordingModel.doStream = async (callOptions) => {
-        capturedOptions.push(callOptions as unknown as Record<string, unknown>);
+        capturedOptions.push(callOptions);
         return orig(callOptions);
       };
 
@@ -1687,7 +1897,7 @@ describe("AgentEngine", () => {
         {
           ...defaultConfig,
           model: "anthropic:claude-sonnet-4-6",
-          thinking: { mode: "enabled", budgetTokens: 4096 },
+          thinking: { mode: "enabled", budgetTokens: 4096, effort: "high", source: "operator" },
         },
         "",
         [{ role: "user", content: [{ type: "text", text: "x" }] }],
@@ -1709,11 +1919,11 @@ describe("AgentEngine", () => {
         thinking: EngineConfig["thinking"],
         maxOutputTokens?: number,
       ): Promise<Record<string, Record<string, unknown>>> {
-        const captured: Array<Record<string, unknown>> = [];
+        const captured: LanguageModelV4CallOptions[] = [];
         const m: LanguageModelV4 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
         const orig = m.doStream.bind(m);
         m.doStream = async (o) => {
-          captured.push(o as unknown as Record<string, unknown>);
+          captured.push(o);
           return orig(o);
         };
         await new AgentEngine(
@@ -1733,15 +1943,23 @@ describe("AgentEngine", () => {
         // The tier the operator chose reaches the wire unchanged. Nothing is
         // derived from the output ceiling, so `xhigh` is reachable — under the
         // old budget→effort bands no budget ever produced it.
-        const po = await providerOptionsFor("anthropic:claude-opus-5", { mode: "effort", effort: "xhigh", source: "operator" });
-        expect(po.anthropic?.thinking).toEqual({ type: "adaptive" });
+        const po = await providerOptionsFor("anthropic:claude-opus-5", {
+          mode: "effort",
+          effort: "xhigh",
+          source: "operator",
+        });
+        expect(po.anthropic?.thinking).toEqual({ type: "adaptive", display: "summarized" });
         expect(po.anthropic?.effort).toBe("xhigh");
       });
 
       it("sizes a budget from the tier for budget-shaped Anthropic models", async () => {
         // Sonnet 4.6 takes `enabled` + a token budget. The tier is converted
         // here, not upstream, so the resolver stays provider-neutral.
-        const po = await providerOptionsFor("anthropic:claude-sonnet-4-6", { mode: "effort", effort: "high", source: "operator" });
+        const po = await providerOptionsFor("anthropic:claude-sonnet-4-6", {
+          mode: "effort",
+          effort: "high",
+          source: "operator",
+        });
         expect(po.anthropic?.thinking).toEqual({
           type: "enabled",
           budgetTokens: Math.floor((16384 - 4096) * 0.6),
@@ -1749,7 +1967,11 @@ describe("AgentEngine", () => {
       });
 
       it("maps effort to reasoningEffort for OpenAI", async () => {
-        const po = await providerOptionsFor("openai:gpt-5.1", { mode: "effort", effort: "high" });
+        const po = await providerOptionsFor("openai:gpt-5.1", {
+          mode: "effort",
+          effort: "high",
+          source: "operator",
+        });
         expect(po.openai?.reasoningEffort).toBe("high");
       });
 
@@ -1801,7 +2023,11 @@ describe("AgentEngine", () => {
         // only, erroring elsewhere, and does no per-model gating. `high` is
         // accepted by every OpenAI reasoning model.
         for (const effort of ["xhigh", "max"] as const) {
-          const po = await providerOptionsFor("openai:gpt-5.1", { mode: "effort", effort });
+          const po = await providerOptionsFor("openai:gpt-5.1", {
+            mode: "effort",
+            effort,
+            source: "operator",
+          });
           expect(po.openai?.reasoningEffort).toBe("high");
         }
       });
@@ -1811,13 +2037,21 @@ describe("AgentEngine", () => {
         // registry names this instance `nebius`. Same wire parameter as OpenAI,
         // different options key — an `openai` key here reaches the wire as
         // nothing at all, with no error.
-        const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", { mode: "effort", effort: "low", source: "operator" });
+        const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", {
+          mode: "effort",
+          effort: "low",
+          source: "operator",
+        });
         expect(po.nebius?.reasoningEffort).toBe("low");
         expect(po.openai).toBeUndefined();
       });
 
       it("clamps Nebius tiers above its ladder to high", async () => {
-        const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", { mode: "effort", effort: "max", source: "operator" });
+        const po = await providerOptionsFor("nebius:deepseek-ai/DeepSeek-R1", {
+          mode: "effort",
+          effort: "max",
+          source: "operator",
+        });
         expect(po.nebius?.reasoningEffort).toBe("high");
       });
 
@@ -1834,13 +2068,21 @@ describe("AgentEngine", () => {
         // `openai` key here would be dropped with no error and every call would
         // run at the model's own default. A provider-options key follows its
         // adapter, not the wire protocol it speaks.
-        const po = await providerOptionsFor("xai:grok-4.5", { mode: "effort", effort: "low", source: "operator" });
+        const po = await providerOptionsFor("xai:grok-4.5", {
+          mode: "effort",
+          effort: "low",
+          source: "operator",
+        });
         expect(po.xai?.reasoningEffort).toBe("low");
         expect(po.openai).toBeUndefined();
       });
 
       it("clamps xai tiers above its ladder to high", async () => {
-        const po = await providerOptionsFor("xai:grok-4.5", { mode: "effort", effort: "max", source: "operator" });
+        const po = await providerOptionsFor("xai:grok-4.5", {
+          mode: "effort",
+          effort: "max",
+          source: "operator",
+        });
         expect(po.xai?.reasoningEffort).toBe("high");
       });
 
@@ -1849,7 +2091,11 @@ describe("AgentEngine", () => {
         // with the parameter omitted) yet rejects `reasoningEffort` at EVERY
         // tier. A permissive default — OpenAI's table shape — would 400 every
         // call to it, which is why xai's table is fail-closed like Google's.
-        const po = await providerOptionsFor("xai:grok-4.20-0309-reasoning", { mode: "effort", effort: "high", source: "operator" });
+        const po = await providerOptionsFor("xai:grok-4.20-0309-reasoning", {
+          mode: "effort",
+          effort: "high",
+          source: "operator",
+        });
         expect(po.xai).toBeUndefined();
       });
 
@@ -1870,19 +2116,31 @@ describe("AgentEngine", () => {
       });
 
       it("sizes a thinkingBudget from the tier for Gemini 2.5", async () => {
-        const po = await providerOptionsFor("google:gemini-2.5-flash", { mode: "effort", effort: "low", source: "operator" });
+        const po = await providerOptionsFor("google:gemini-2.5-flash", {
+          mode: "effort",
+          effort: "low",
+          source: "operator",
+        });
         expect(po.google?.thinkingConfig).toEqual({
           thinkingBudget: Math.floor((16384 - 4096) * 0.15),
         });
       });
 
       it("sends a thinkingLevel to Gemini 3+, which does not take a budget", async () => {
-        const po = await providerOptionsFor("google:gemini-3.6-flash", { mode: "effort", effort: "high", source: "operator" });
+        const po = await providerOptionsFor("google:gemini-3.6-flash", {
+          mode: "effort",
+          effort: "high",
+          source: "operator",
+        });
         expect(po.google?.thinkingConfig).toEqual({ thinkingLevel: "high" });
       });
 
       it("clamps Gemini 3's level to high, its ladder's top", async () => {
-        const po = await providerOptionsFor("google:gemini-3.6-flash", { mode: "effort", effort: "max", source: "operator" });
+        const po = await providerOptionsFor("google:gemini-3.6-flash", {
+          mode: "effort",
+          effort: "max",
+          source: "operator",
+        });
         expect(po.google?.thinkingConfig).toEqual({ thinkingLevel: "high" });
       });
 
@@ -1892,7 +2150,9 @@ describe("AgentEngine", () => {
         // documented as GPT-5.1-only and an error elsewhere. Gemini 2.5 Pro
         // cannot disable thinking at all. In each case saying nothing leaves
         // the model at its own default, which is the honest outcome.
-        expect(await providerOptionsFor("anthropic:claude-sonnet-4-6", { mode: "off" })).toEqual({});
+        expect(await providerOptionsFor("anthropic:claude-sonnet-4-6", { mode: "off" })).toEqual(
+          {},
+        );
         expect(await providerOptionsFor("openai:gpt-5.1", { mode: "off" })).toEqual({});
         expect(await providerOptionsFor("google:gemini-2.5-pro", { mode: "off" })).toEqual({});
 
@@ -1908,15 +2168,27 @@ describe("AgentEngine", () => {
       });
 
       it("picks a level the specific Gemini 3 model accepts", async () => {
-        // gemini-3-pro-preview supports only low and high — and `medium` is the
-        // platform default, so an ungated mapping 400s on a stock install.
+        // gemini-3.1-flash-lite-image supports only minimal and high — and
+        // `medium` is the platform default, so an ungated mapping 400s on a
+        // stock install.
         expect(
-          (await providerOptionsFor("google:gemini-3-pro-preview", { mode: "effort", effort: "medium", source: "operator" })).google?.thinkingConfig,
-        ).toEqual({ thinkingLevel: "low" });
+          (
+            await providerOptionsFor("google:gemini-3.1-flash-lite-image", {
+              mode: "effort",
+              effort: "medium",
+              source: "operator",
+            })
+          ).google?.thinkingConfig,
+        ).toEqual({ thinkingLevel: "minimal" });
         // A model that does offer medium keeps it.
         expect(
-          (await providerOptionsFor("google:gemini-3.6-flash", { mode: "effort", effort: "medium" }))
-            .google?.thinkingConfig,
+          (
+            await providerOptionsFor("google:gemini-3.6-flash", {
+              mode: "effort",
+              effort: "medium",
+              source: "operator",
+            })
+          ).google?.thinkingConfig,
         ).toEqual({ thinkingLevel: "medium" });
       });
 
@@ -1928,7 +2200,7 @@ describe("AgentEngine", () => {
         for (const maxOutputTokens of [3000, 4096]) {
           const on = await providerOptionsFor(
             "google:gemini-2.5-flash",
-            { mode: "effort", effort: "max" },
+            { mode: "effort", effort: "max", source: "operator" },
             maxOutputTokens,
           );
           const off = await providerOptionsFor(
@@ -1944,54 +2216,53 @@ describe("AgentEngine", () => {
       });
 
       it("lets the provider default stand when the fallback tier isn't offered", async () => {
-        // gemini-3-pro-preview offers only {low, high}; the platform fallback
-        // is medium. Stepping down to `low` would make a tier nobody chose
-        // override Google's own default (high) — and it inverted against
-        // `off`, which finds no `minimal`, sends nothing, and gets high. The
-        // default path asking for less reasoning than `off` is plainly wrong.
-        const dflt = await providerOptionsFor("google:gemini-3-pro-preview", {
+        // gemini-3.1-flash-lite-image offers only {minimal, high}; the platform
+        // fallback is medium. Stepping down would make a tier nobody chose
+        // override Google's own default, so the default path sends nothing.
+        const dflt = await providerOptionsFor("google:gemini-3.1-flash-lite-image", {
           mode: "effort",
           effort: "medium",
           source: "platform",
         });
-        const off = await providerOptionsFor("google:gemini-3-pro-preview", { mode: "off" });
         expect(dflt).toEqual({});
+        // Likewise `off` on a model with no `minimal` (gemini-3.1-pro-preview)
+        // finds nothing to send, so the default path never asks for less
+        // reasoning than `off` does.
+        const off = await providerOptionsFor("google:gemini-3.1-pro-preview", { mode: "off" });
         expect(off).toEqual({});
 
         // An operator who names a tier still gets the nearest one offered —
         // they asked, so stepping is honoring the request, not inventing it.
-        const chosen = await providerOptionsFor("google:gemini-3-pro-preview", {
+        const chosen = await providerOptionsFor("google:gemini-3.1-flash-lite-image", {
           mode: "effort",
           effort: "medium",
           source: "operator",
         });
-        expect(chosen.google?.thinkingConfig).toEqual({ thinkingLevel: "low" });
+        expect(chosen.google?.thinkingConfig).toEqual({ thinkingLevel: "minimal" });
       });
 
       it("does not let a bare budget pick a Gemini 3 level", async () => {
         // A token budget says nothing about depth, so the tier riding along
         // with it is the platform's. Letting it choose a level made
-        // `thinkingBudgetTokens: 8000` downgrade gemini-3-pro-preview to `low`
-        // (Google's default is high), and on flash-lite-image pick `minimal` —
+        // `thinkingBudgetTokens: 8000` on flash-lite-image pick `minimal` —
         // byte-identical to `off`, so setting a thinking budget turned thinking
         // off. Reachable from the panel: the budget field renders on Default.
-        for (const model of ["google:gemini-3-pro-preview", "google:gemini-3.1-flash-lite-image"]) {
-          const po = await providerOptionsFor(model, {
-            mode: "enabled",
-            budgetTokens: 8000,
-            effort: DEFAULT_THINKING_EFFORT,
-            source: "mode",
-          });
-          expect(`${model}: ${JSON.stringify(po)}`).toBe(`${model}: {}`);
-        }
+        const model = "google:gemini-3.1-flash-lite-image";
+        const po = await providerOptionsFor(model, {
+          mode: "enabled",
+          budgetTokens: 8000,
+          effort: DEFAULT_THINKING_EFFORT,
+          source: "mode",
+        });
+        expect(po).toEqual({});
         // An operator who names the tier still gets the nearest offered.
-        const chosen = await providerOptionsFor("google:gemini-3-pro-preview", {
+        const chosen = await providerOptionsFor(model, {
           mode: "enabled",
           budgetTokens: 8000,
           effort: "medium",
           source: "operator",
         });
-        expect(chosen.google?.thinkingConfig).toEqual({ thinkingLevel: "low" });
+        expect(chosen.google?.thinkingConfig).toEqual({ thinkingLevel: "minimal" });
       });
 
       it("warns once, then stays silent, for an unmapped Google model", async () => {
@@ -2002,18 +2273,22 @@ describe("AgentEngine", () => {
           const model = "google:gemini-flash-latest";
           for (let i = 0; i < 2; i++) {
             expect(
-              await providerOptionsFor(model, { mode: "effort", effort: "max", source: "operator" }),
+              await providerOptionsFor(model, {
+                mode: "effort",
+                effort: "max",
+                source: "operator",
+              }),
             ).toEqual({});
           }
           expect(warnings.filter((w) => w.includes("gemini-flash-latest"))).toHaveLength(1);
           // A configured mode with no named depth is still operator intent,
           // and it reports — the tier is the platform's, the instruction isn't.
-          await providerOptionsFor("google:gemini-robotics-er-1.6-preview", {
+          await providerOptionsFor("google:deep-research-preview-04-2026", {
             mode: "effort",
             effort: DEFAULT_THINKING_EFFORT,
             source: "mode",
           });
-          expect(warnings.filter((w) => w.includes("gemini-robotics"))).toHaveLength(1);
+          expect(warnings.filter((w) => w.includes("deep-research-preview"))).toHaveLength(1);
 
           // The platform's own fallback isn't an instruction, so it stays quiet.
           await providerOptionsFor("google:gemini-omni-flash-preview", {
@@ -2027,21 +2302,86 @@ describe("AgentEngine", () => {
         }
       });
 
+      it("warns once per model and requested tier when an operator tier steps down or drops", async () => {
+        const warnings: string[] = [];
+        const original = log.warn;
+        (log as { warn: (m: string) => void }).warn = (m: string) => warnings.push(m);
+        try {
+          const dropped = { mode: "effort", effort: "medium", source: "operator" } as const;
+          for (let i = 0; i < 2; i++) {
+            expect(await providerOptionsFor("openai:gpt-5-pro", dropped)).toEqual({});
+          }
+          expect(
+            warnings.filter((w) => w.includes('thinkingEffort="medium" for "openai:gpt-5-pro"')),
+          ).toHaveLength(1);
+          expect(warnings[0]).toContain("sending no tier (provider default)");
+
+          await providerOptionsFor("openai:gpt-5-pro", {
+            mode: "effort",
+            effort: "low",
+            source: "operator",
+          });
+          expect(warnings.filter((w) => w.includes('for "openai:gpt-5-pro"'))).toHaveLength(2);
+
+          const stepped = await providerOptionsFor("google:gemini-3.1-flash-lite-image", {
+            mode: "effort",
+            effort: "low",
+            source: "operator",
+          });
+          expect(stepped.google?.thinkingConfig).toEqual({ thinkingLevel: "minimal" });
+          await providerOptionsFor("google:gemini-3.1-flash-lite-image", {
+            mode: "enabled",
+            budgetTokens: 8000,
+            effort: "low",
+            source: "operator",
+          });
+          const googleWarnings = warnings.filter((w) =>
+            w.includes('thinkingEffort="low" for "google:gemini-3.1-flash-lite-image"'),
+          );
+          expect(googleWarnings).toHaveLength(1);
+          expect(googleWarnings[0]).toContain('sending "minimal"');
+
+          const unknownXai = "xai:unmeasured-tier-warning";
+          for (let i = 0; i < 2; i++) {
+            expect(await providerOptionsFor(unknownXai, dropped)).toEqual({});
+          }
+          const xaiWarnings = warnings.filter((w) => w.includes(unknownXai));
+          expect(xaiWarnings).toHaveLength(1);
+          expect(xaiWarnings[0]).toContain("no measured effort ladder");
+          expect(xaiWarnings[0]).toContain("sending no tier (provider default)");
+
+          // A measured empty xAI ladder is a known model limitation, not a
+          // coverage gap; the fallback and mode-selected tiers are also silent.
+          await providerOptionsFor("xai:grok-build-0.1", dropped);
+          await providerOptionsFor("openai:gpt-5-pro", {
+            ...dropped,
+            source: "platform",
+          });
+          await providerOptionsFor("openai:gpt-5-pro", { ...dropped, source: "mode" });
+          await providerOptionsFor("openai:gpt-5.1", dropped);
+          expect(warnings).toHaveLength(4);
+        } finally {
+          (log as { warn: (m: string) => void }).warn = original;
+        }
+      });
+
       it("holds a Gemini budget inside the model's own documented range", async () => {
         // 2.5 Pro caps at 32768. Sized off a 65536 catalog ceiling the derived
         // budget would be 61440 — accepted by the adapter, rejected by Google.
         const po = await providerOptionsFor(
           "google:gemini-2.5-pro",
-          { mode: "enabled", budgetTokens: 60_000, effort: "max" },
+          { mode: "enabled", budgetTokens: 60_000, effort: "max", source: "operator" },
           65_536,
         );
         expect(po.google?.thinkingConfig).toEqual({ thinkingBudget: 32_768 });
       });
 
       it("stays silent on off when a Gemini 3 model has no minimal level", async () => {
-        // gemini-3-pro-preview offers only low and high. Stepping up to `low`
+        // gemini-3.1-pro-preview offers no minimal. Stepping up to `low`
         // would answer "don't reason" with an instruction to reason.
-        expect(await providerOptionsFor("google:gemini-3-pro-preview", { mode: "off" })).toEqual({});
+        expect(await providerOptionsFor("google:gemini-3.1-pro-preview", { mode: "off" })).toEqual(
+          {},
+        );
         // A model that does offer minimal still gets it.
         expect(
           (await providerOptionsFor("google:gemini-3.6-flash", { mode: "off" })).google
@@ -2053,7 +2393,11 @@ describe("AgentEngine", () => {
         // The `-latest` aliases and the non-gemini- reasoning entries have no
         // table row; a version-prefix guess routed them to the wrong dialect.
         expect(
-          await providerOptionsFor("google:gemini-flash-latest", { mode: "effort", effort: "high" }),
+          await providerOptionsFor("google:gemini-flash-latest", {
+            mode: "effort",
+            effort: "high",
+            source: "operator",
+          }),
         ).toEqual({});
       });
 
@@ -2071,8 +2415,9 @@ describe("AgentEngine", () => {
           mode: "enabled",
           budgetTokens: 8000,
           effort: "max",
+          source: "operator",
         });
-        expect(po.anthropic?.thinking).toEqual({ type: "adaptive" });
+        expect(po.anthropic?.thinking).toEqual({ type: "adaptive", display: "summarized" });
         expect(po.anthropic?.effort).toBe("max");
       });
 
@@ -2086,6 +2431,7 @@ describe("AgentEngine", () => {
             mode: "enabled",
             budgetTokens: 50_000,
             effort: "medium",
+            source: "operator",
           });
           const budget =
             (po.anthropic?.thinking as { budgetTokens?: number } | undefined)?.budgetTokens ??
@@ -2095,18 +2441,22 @@ describe("AgentEngine", () => {
       });
 
       it("says nothing to a provider it doesn't know", async () => {
-        expect(await providerOptionsFor("mystery:some-model", { mode: "effort", effort: "max" })).toEqual(
-          {},
-        );
+        expect(
+          await providerOptionsFor("mystery:some-model", {
+            mode: "effort",
+            effort: "max",
+            source: "operator",
+          }),
+        ).toEqual({});
       });
     });
 
     it("translates thinking=adaptive without budget", async () => {
-      const captured: Array<Record<string, unknown>> = [];
+      const captured: LanguageModelV4CallOptions[] = [];
       const model: LanguageModelV4 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
       const orig = model.doStream.bind(model);
       model.doStream = async (o) => {
-        captured.push(o as unknown as Record<string, unknown>);
+        captured.push(o);
         return orig(o);
       };
 
@@ -2122,17 +2472,17 @@ describe("AgentEngine", () => {
       );
 
       const po = captured[0]!.providerOptions as
-        | { anthropic?: { thinking?: { type: string } } }
+        | { anthropic?: { thinking?: { type: string; display?: string } } }
         | undefined;
-      expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
+      expect(po?.anthropic?.thinking).toEqual({ type: "adaptive", display: "summarized" });
     });
 
     it("does NOT set providerOptions when thinking is undefined", async () => {
-      const captured: Array<Record<string, unknown>> = [];
+      const captured: LanguageModelV4CallOptions[] = [];
       const model: LanguageModelV4 = { ...createEchoModel({ responses: [{ text: "ok" }] }) };
       const orig = model.doStream.bind(model);
       model.doStream = async (o) => {
-        captured.push(o as unknown as Record<string, unknown>);
+        captured.push(o);
         return orig(o);
       };
 
@@ -2196,9 +2546,8 @@ describe("AgentEngine", () => {
       const secondPrompt = sentMessages[1]!;
       const assistant = secondPrompt.find((m) => m.role === "assistant");
       expect(assistant).toBeDefined();
-      const reasoning = (assistant!.content as Array<Record<string, unknown>>).find(
-        (c) => c.type === "reasoning",
-      );
+      const content = assistant?.role === "assistant" ? assistant.content : [];
+      const reasoning = content.find((c) => c.type === "reasoning");
       expect(reasoning).toBeDefined();
       // The critical assertion — providerOptions must be set, not just
       // providerMetadata, because that's what the Anthropic prompt path reads.
@@ -2228,12 +2577,7 @@ describe("AgentEngine", () => {
         model,
         new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
         sink,
-      ).run(
-        defaultConfig,
-        "",
-        [{ role: "user", content: [{ type: "text", text: "x" }] }],
-        [],
-      );
+      ).run(defaultConfig, "", [{ role: "user", content: [{ type: "text", text: "x" }] }], []);
 
       const reasoningDeltas = events.filter((e) => e.type === "reasoning.delta");
       expect(reasoningDeltas).toHaveLength(1);
@@ -2268,16 +2612,58 @@ describe("AgentEngine", () => {
         model,
         new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
         sink,
-      ).run(
-        defaultConfig,
-        "",
-        [{ role: "user", content: [{ type: "text", text: "x" }] }],
-        [],
-      );
+      ).run(defaultConfig, "", [{ role: "user", content: [{ type: "text", text: "x" }] }], []);
 
       const llmDone = events.find((e) => e.type === "llm.done");
       expect(llmDone).toBeDefined();
       expect((llmDone!.data as Record<string, unknown>).finishReason).toBe("length");
+      // No raw reason reported → the field is absent, not undefined-valued.
+      expect("finishReasonRaw" in (llmDone!.data as Record<string, unknown>)).toBe(false);
+    });
+
+    it("carries the raw finish reason on llm.done and the engine result", async () => {
+      const events: EngineEvent[] = [];
+      const sink: EventSink = {
+        emit(event: EngineEvent) {
+          events.push(event);
+        },
+      };
+
+      const model = createEchoModel({
+        responses: [{ text: "", finishReason: "other", finishReasonRaw: "compaction" }],
+      });
+      const result = await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        sink,
+      ).run(defaultConfig, "", [{ role: "user", content: [{ type: "text", text: "x" }] }], []);
+
+      const llmDone = events.find((e) => e.type === "llm.done");
+      expect((llmDone!.data as Record<string, unknown>).finishReasonRaw).toBe("compaction");
+      expect(result.stopReason).toBe("other");
+      expect(result.finishReasonRaw).toBe("compaction");
+    });
+
+    it("omits an empty raw finish reason from llm.done and the engine result", async () => {
+      const events: EngineEvent[] = [];
+      const sink: EventSink = {
+        emit(event: EngineEvent) {
+          events.push(event);
+        },
+      };
+
+      const model = createEchoModel({
+        responses: [{ text: "", finishReason: "other", finishReasonRaw: "" }],
+      });
+      const result = await new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        sink,
+      ).run(defaultConfig, "", [{ role: "user", content: [{ type: "text", text: "x" }] }], []);
+
+      const llmDone = events.find((e) => e.type === "llm.done");
+      expect("finishReasonRaw" in (llmDone!.data as Record<string, unknown>)).toBe(false);
+      expect("finishReasonRaw" in result).toBe(false);
     });
 
     // The estimate is computed in `callOnce`, over the prompt the cache policy
@@ -2317,7 +2703,12 @@ describe("AgentEngine", () => {
   it("respects absolute MAX_ITERATIONS ceiling of 25", async () => {
     const model = createMockModel(() => ({
       content: [
-        { type: "tool-call", toolCallId: `call_${Date.now()}`, toolName: "test__noop", input: JSON.stringify({}) },
+        {
+          type: "tool-call",
+          toolCallId: `call_${Date.now()}`,
+          toolName: "test__noop",
+          input: JSON.stringify({}),
+        },
       ],
       inputTokens: 1,
       outputTokens: 1,
@@ -2356,7 +2747,12 @@ describe("AgentEngine", () => {
 
       return {
         content: [
-          { type: "tool-call", toolCallId: `call_${callCount}`, toolName: "test__noop", input: JSON.stringify({}) },
+          {
+            type: "tool-call",
+            toolCallId: `call_${callCount}`,
+            toolName: "test__noop",
+            input: JSON.stringify({}),
+          },
         ],
         inputTokens: 10,
         outputTokens: 5,
@@ -2393,7 +2789,7 @@ describe("AgentEngine", () => {
   it("merges the final-step hint into a trailing user message on a single-iteration run", async () => {
     // maxIterations: 1 → iteration 0 IS the final iteration, and the tail is the
     // initial user prompt (a user message). This is the only path that exercises
-    // the merge branch (`...last.content` spread); it ships in automations that
+    // the merge branch (`...last.content` spread); it ships in tasks that
     // cap iterations at 1.
     let capturedPrompt: Array<{ role: string; content: unknown }> = [];
     const model = createMockModel((opts) => {
@@ -2433,7 +2829,12 @@ describe("AgentEngine", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "call_1", toolName: "test__fail", input: JSON.stringify({}) },
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "test__fail",
+              input: JSON.stringify({}),
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -2454,9 +2855,12 @@ describe("AgentEngine", () => {
     };
 
     const engine = makeEngine(model, tools);
-    const result = await engine.run(defaultConfig, "", [
-      { role: "user", content: [{ type: "text", text: "Go" }] },
-    ], tools.schemas);
+    const result = await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+      tools.schemas,
+    );
 
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0]!.ok).toBe(false);
@@ -2465,7 +2869,9 @@ describe("AgentEngine", () => {
   });
 
   it("does not mutate the caller's message array", async () => {
-    const messages: LanguageModelV4Message[] = [{ role: "user", content: [{ type: "text", text: "Hello" }] }];
+    const messages: LanguageModelV4Message[] = [
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+    ];
     const original = [...messages];
 
     const engine = makeEngine();
@@ -2483,9 +2889,12 @@ describe("AgentEngine", () => {
     };
 
     const engine = makeEngine(undefined, undefined, events);
-    await engine.run(defaultConfig, "", [
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-    ], []);
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+      [],
+    );
 
     expect(eventTypes).toEqual(["run.start", "text.delta", "llm.done", "run.done"]);
   });
@@ -2504,7 +2913,12 @@ describe("AgentEngine", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "call_1", toolName: "test__noop", input: JSON.stringify({}) },
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "test__noop",
+              input: JSON.stringify({}),
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -2522,10 +2936,17 @@ describe("AgentEngine", () => {
       handler: (): ToolResult => ({ content: textContent("ok"), isError: false }),
     };
 
-    const engine = new AgentEngine(model, new StaticToolRouter(tools.schemas, tools.handler), events);
-    await engine.run(defaultConfig, "", [
-      { role: "user", content: [{ type: "text", text: "Go" }] },
-    ], tools.schemas);
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(tools.schemas, tools.handler),
+      events,
+    );
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+      tools.schemas,
+    );
 
     expect(eventTypes).toEqual([
       "run.start",
@@ -2582,7 +3003,12 @@ describe("AgentEngine", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "call_1", toolName: "test__danger", input: JSON.stringify({}) },
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "test__danger",
+              input: JSON.stringify({}),
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -2635,7 +3061,12 @@ describe("AgentEngine", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "call_1", toolName: "test__greet", input: JSON.stringify({}) },
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "test__greet",
+              input: JSON.stringify({}),
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -2703,7 +3134,7 @@ describe("AgentEngine", () => {
       {
         ...defaultConfig,
         hooks: {
-          transformPrompt: (prompt) => prompt + "\nExtra instruction.",
+          transformPrompt: (prompt) => `${prompt}\nExtra instruction.`,
         },
       },
       "Base prompt.",
@@ -2722,9 +3153,24 @@ describe("AgentEngine", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "c1", toolName: "test__slow", input: JSON.stringify({ n: 1 }) },
-            { type: "tool-call", toolCallId: "c2", toolName: "test__slow", input: JSON.stringify({ n: 2 }) },
-            { type: "tool-call", toolCallId: "c3", toolName: "test__slow", input: JSON.stringify({ n: 3 }) },
+            {
+              type: "tool-call",
+              toolCallId: "c1",
+              toolName: "test__slow",
+              input: JSON.stringify({ n: 1 }),
+            },
+            {
+              type: "tool-call",
+              toolCallId: "c2",
+              toolName: "test__slow",
+              input: JSON.stringify({ n: 2 }),
+            },
+            {
+              type: "tool-call",
+              toolCallId: "c3",
+              toolName: "test__slow",
+              input: JSON.stringify({ n: 3 }),
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -2752,7 +3198,12 @@ describe("AgentEngine", () => {
     );
 
     const start = performance.now();
-    const result = await engine.run(defaultConfig, "", [{ role: "user", content: [{ type: "text", text: "Go" }] }], tools.schemas);
+    const result = await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+      tools.schemas,
+    );
     const elapsed = performance.now() - start;
 
     expect(result.toolCalls).toHaveLength(3);
@@ -2829,8 +3280,18 @@ describe("AgentEngine", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "c1", toolName: "test__ok", input: JSON.stringify({}) },
-            { type: "tool-call", toolCallId: "c2", toolName: "test__fail", input: JSON.stringify({}) },
+            {
+              type: "tool-call",
+              toolCallId: "c1",
+              toolName: "test__ok",
+              input: JSON.stringify({}),
+            },
+            {
+              type: "tool-call",
+              toolCallId: "c2",
+              toolName: "test__fail",
+              input: JSON.stringify({}),
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -2860,7 +3321,12 @@ describe("AgentEngine", () => {
       new NoopEventSink(),
     );
 
-    const result = await engine.run(defaultConfig, "", [{ role: "user", content: [{ type: "text", text: "Go" }] }], tools.schemas);
+    const result = await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+      tools.schemas,
+    );
 
     expect(result.toolCalls).toHaveLength(2);
     const okCall = result.toolCalls.find((tc) => tc.name === "test__ok");
@@ -2890,6 +3356,9 @@ describe("AgentEngine", () => {
 // ---------------------------------------------------------------------------
 
 describe("prompt caching", () => {
+  // Cache markers are Anthropic's dialect, chosen by the model's provider.
+  const anthropicConfig: EngineConfig = { ...defaultConfig, model: "anthropic:test-model" };
+
   it("sets cacheControl on the system message", async () => {
     let capturedPrompt: LanguageModelV4Message[] = [];
     const model = createMockModel((options) => {
@@ -2907,9 +3376,12 @@ describe("prompt caching", () => {
       new NoopEventSink(),
     );
 
-    await engine.run(defaultConfig, "You are a test.", [
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-    ], []);
+    await engine.run(
+      anthropicConfig,
+      "You are a test.",
+      [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+      [],
+    );
 
     const systemMsg = capturedPrompt.find((m) => m.role === "system");
     expect(systemMsg).toBeDefined();
@@ -2935,10 +3407,15 @@ describe("prompt caching", () => {
       new NoopEventSink(),
     );
 
-    await engine.run(defaultConfig, "You are a test.", [
-      { role: "user", content: [{ type: "text", text: "First" }] },
-      { role: "user", content: [{ type: "text", text: "Second" }] },
-    ], []);
+    await engine.run(
+      anthropicConfig,
+      "You are a test.",
+      [
+        { role: "user", content: [{ type: "text", text: "First" }] },
+        { role: "user", content: [{ type: "text", text: "Second" }] },
+      ],
+      [],
+    );
 
     // System message has cache control
     const systemMsg = capturedPrompt[0]!;
@@ -2978,7 +3455,7 @@ describe("prompt caching", () => {
       new NoopEventSink(),
     );
 
-    await engine.run(defaultConfig, "", messages, []);
+    await engine.run(anthropicConfig, "", messages, []);
 
     // Original message should not have providerOptions added
     expect((originalMsg as Record<string, unknown>).providerOptions).toBeUndefined();
@@ -2998,7 +3475,12 @@ describe("audience filtering", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "call_1", toolName: "test__render", input: JSON.stringify({}) },
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "test__render",
+              input: JSON.stringify({}),
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -3023,15 +3505,18 @@ describe("audience filtering", () => {
         content: [
           { type: "text", text: "Rendered 3 pages" },
           { type: "text", text: "huge-base64-data-here", annotations: { audience: ["user"] } },
-        ] as unknown as ToolResult["content"],
+        ],
         isError: false,
       }),
     };
 
     const engine = makeEngine(model, tools);
-    await engine.run(defaultConfig, "", [
-      { role: "user", content: [{ type: "text", text: "Render it" }] },
-    ], tools.schemas);
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Render it" }] }],
+      tools.schemas,
+    );
 
     // LLM should only see the non-user-only text
     expect(feedbackContent).toBe("Rendered 3 pages");
@@ -3046,7 +3531,12 @@ describe("audience filtering", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "call_1", toolName: "test__plain", input: JSON.stringify({}) },
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "test__plain",
+              input: JSON.stringify({}),
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -3073,9 +3563,12 @@ describe("audience filtering", () => {
     };
 
     const engine = makeEngine(model, tools);
-    await engine.run(defaultConfig, "", [
-      { role: "user", content: [{ type: "text", text: "Go" }] },
-    ], tools.schemas);
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+      tools.schemas,
+    );
 
     expect(feedbackContent).toBe("plain result with no annotations");
   });
@@ -3088,7 +3581,12 @@ describe("audience filtering", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "call_1", toolName: "test__both", input: JSON.stringify({}) },
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "test__both",
+              input: JSON.stringify({}),
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -3110,16 +3608,23 @@ describe("audience filtering", () => {
       schemas: [{ name: "test__both", description: "Both", inputSchema: {} }],
       handler: (): ToolResult => ({
         content: [
-          { type: "text", text: "shared content", annotations: { audience: ["user", "assistant"] } },
-        ] as unknown as ToolResult["content"],
+          {
+            type: "text",
+            text: "shared content",
+            annotations: { audience: ["user", "assistant"] },
+          },
+        ],
         isError: false,
       }),
     };
 
     const engine = makeEngine(model, tools);
-    await engine.run(defaultConfig, "", [
-      { role: "user", content: [{ type: "text", text: "Go" }] },
-    ], tools.schemas);
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+      tools.schemas,
+    );
 
     expect(feedbackContent).toBe("shared content");
   });
@@ -3134,7 +3639,12 @@ describe("audience filtering", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "call_1", toolName: "test__render", input: JSON.stringify({}) },
+            {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: "test__render",
+              input: JSON.stringify({}),
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -3162,30 +3672,29 @@ describe("audience filtering", () => {
         content: [
           { type: "text", text: "summary" },
           { type: "text", text: "user-data", annotations: { audience: ["user"] } },
-        ] as unknown as ToolResult["content"],
+        ],
         isError: false,
       })),
       sink,
     );
 
-    await engine.run(defaultConfig, "", [
-      { role: "user", content: [{ type: "text", text: "Go" }] },
-    ], toolSchemas);
+    await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+      toolSchemas,
+    );
 
     // tool.done should have the full result (unfiltered) since it has resourceUri
     const toolDone = events.find((e) => e.type === "tool.done");
     expect(toolDone).toBeDefined();
-    expect(toolDone!.data["result"]).toBeDefined();
+    expect(toolDone!.data.result).toBeDefined();
   });
 });
 
-
-// NOTE: The task polling tests that lived here previously exercised the
-// legacy `_taskResult` + pollTask infrastructure that was deleted when MCP
-// task support moved to the SDK's `client.experimental.tasks.callToolStream`
-// API inside McpSource. Task-augmented execution is now an McpSource-internal
-// concern and is covered in `test/unit/mcp-source-tasks.test.ts`.
-
+// NOTE: Task-augmented execution is an McpSource-internal concern (the SDK's
+// `client.experimental.tasks.callToolStream` API) and is covered in
+// `test/unit/mcp-source-tasks.test.ts`.
 
 // ---------------------------------------------------------------------------
 // Error path coverage — message sanitization edge cases
@@ -3210,16 +3719,21 @@ describe("message sanitization", () => {
     );
 
     // Message with empty text blocks that should be filtered
-    await engine.run(defaultConfig, "", [
-      {
-        role: "assistant",
-        content: [
-          { type: "text", text: "" },
-          { type: "text", text: "actual content" },
-        ],
-      } as LanguageModelV4Message,
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-    ], []);
+    await engine.run(
+      defaultConfig,
+      "",
+      [
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "" },
+            { type: "text", text: "actual content" },
+          ],
+        } as LanguageModelV4Message,
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
+      ],
+      [],
+    );
 
     // The assistant message should have the empty block filtered
     const assistantMsg = capturedPrompt.find((m) => m.role === "assistant");
@@ -3246,13 +3760,18 @@ describe("message sanitization", () => {
     );
 
     // Message where all content is empty text — should become "(empty)"
-    await engine.run(defaultConfig, "", [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "" }],
-      } as LanguageModelV4Message,
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-    ], []);
+    await engine.run(
+      defaultConfig,
+      "",
+      [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+        } as LanguageModelV4Message,
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
+      ],
+      [],
+    );
 
     const assistantMsg = capturedPrompt.find((m) => m.role === "assistant");
     expect(assistantMsg).toBeDefined();
@@ -3278,9 +3797,12 @@ describe("message sanitization", () => {
       new NoopEventSink(),
     );
 
-    await engine.run(defaultConfig, "System prompt here", [
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-    ], []);
+    await engine.run(
+      defaultConfig,
+      "System prompt here",
+      [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+      [],
+    );
 
     const systemMsg = capturedPrompt.find((m) => m.role === "system");
     expect(systemMsg).toBeDefined();
@@ -3313,10 +3835,18 @@ describe("cache breakpoint edge cases", () => {
 
     // Only pass assistant messages — no user message to add breakpoint to.
     // The engine should still work without crashing.
-    await engine.run(defaultConfig, "", [
-      { role: "assistant", content: [{ type: "text", text: "prior turn" }] } as LanguageModelV4Message,
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-    ], []);
+    await engine.run(
+      defaultConfig,
+      "",
+      [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "prior turn" }],
+        } as LanguageModelV4Message,
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
+      ],
+      [],
+    );
 
     // Should complete normally
     expect(capturedPrompt.length).toBeGreaterThan(0);
@@ -3344,7 +3874,12 @@ describe("malformed tool call input", () => {
       if (callCount === 1) {
         return {
           content: [
-            { type: "tool-call", toolCallId: "call_bad", toolName: "test__noop", input: "not-valid-json{{{" },
+            {
+              type: "tool-call",
+              toolCallId: "call_bad",
+              toolName: "test__noop",
+              input: "not-valid-json{{{",
+            },
           ],
           inputTokens: 10,
           outputTokens: 5,
@@ -3367,11 +3902,7 @@ describe("malformed tool call input", () => {
 
     const events: EngineEvent[] = [];
     const sink: EventSink = { emit: (e) => events.push(e) };
-    const engine = new AgentEngine(
-      model,
-      new StaticToolRouter(tools.schemas, tools.handler),
-      sink,
-    );
+    const engine = new AgentEngine(model, new StaticToolRouter(tools.schemas, tools.handler), sink);
 
     // Unparseable tool input must NOT throw out of the run. The engine feeds an
     // invalid-input result back (never invoking the handler) so the model can
@@ -3379,9 +3910,12 @@ describe("malformed tool call input", () => {
     let thrown: Error | null = null;
     let result: Awaited<ReturnType<typeof engine.run>> | undefined;
     try {
-      result = await engine.run(defaultConfig, "", [
-        { role: "user", content: [{ type: "text", text: "Go" }] },
-      ], tools.schemas);
+      result = await engine.run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+        tools.schemas,
+      );
     } catch (e) {
       thrown = e as Error;
     }
@@ -3412,9 +3946,12 @@ describe("malformed tool call input", () => {
 
     let thrown: Error | null = null;
     try {
-      await engine.run(defaultConfig, "", [
-        { role: "user", content: [{ type: "text", text: "Go" }] },
-      ], []);
+      await engine.run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+        [],
+      );
     } catch (e) {
       thrown = e as Error;
     }
@@ -3424,7 +3961,7 @@ describe("malformed tool call input", () => {
 
     const errorEvent = events.find((e) => e.type === "run.error");
     expect(errorEvent).toBeDefined();
-    expect(errorEvent!.data["error"]).toContain("API connection refused");
+    expect(errorEvent!.data.error).toContain("API connection refused");
   });
 
   describe("tool result size limit", () => {
@@ -3579,7 +4116,11 @@ describe("malformed tool call input", () => {
         responses: [
           {
             toolCalls: [
-              { toolCallId: "call_1", toolName: "test__greet", input: JSON.stringify({ name: 123 }) },
+              {
+                toolCallId: "call_1",
+                toolName: "test__greet",
+                input: JSON.stringify({ name: 123 }),
+              },
             ],
           },
           { text: "done" },
@@ -3613,7 +4154,11 @@ describe("malformed tool call input", () => {
         responses: [
           {
             toolCalls: [
-              { toolCallId: "call_1", toolName: "test__greet", input: JSON.stringify({ name: "Alice" }) },
+              {
+                toolCallId: "call_1",
+                toolName: "test__greet",
+                input: JSON.stringify({ name: "Alice" }),
+              },
             ],
           },
           { text: "done" },
@@ -3652,7 +4197,11 @@ describe("malformed tool call input", () => {
         responses: [
           {
             toolCalls: [
-              { toolCallId: "call_1", toolName: "test__anything", input: JSON.stringify({ foo: 42 }) },
+              {
+                toolCallId: "call_1",
+                toolName: "test__anything",
+                input: JSON.stringify({ foo: 42 }),
+              },
             ],
           },
           { text: "done" },
@@ -3684,7 +4233,11 @@ describe("malformed tool call input", () => {
         responses: [
           {
             toolCalls: [
-              { toolCallId: "call_1", toolName: "test__greet", input: JSON.stringify({ name: 123 }) },
+              {
+                toolCallId: "call_1",
+                toolName: "test__greet",
+                input: JSON.stringify({ name: 123 }),
+              },
             ],
           },
           { text: "done" },
@@ -3708,6 +4261,370 @@ describe("malformed tool call input", () => {
     });
   });
 
+  describe("unknown tool arguments", () => {
+    // The shape FastMCP generates from a Python signature: declared
+    // properties, no `additionalProperties`, so JSON Schema alone admits any key.
+    const settingsSchema: ToolSchema = {
+      name: "acme__update_settings",
+      description: "Update workspace settings",
+      inputSchema: {
+        type: "object",
+        properties: {
+          domain_purchasing: { type: "boolean", description: "Allow buying domains" },
+          mail_provider: { type: "string", enum: ["smtp", "ses"] },
+          tags: { type: "array", items: { type: "string" } },
+        },
+        required: ["domain_purchasing"],
+      },
+    };
+
+    /** Run one model call to `schema.name` with `input`; report whether the handler ran. */
+    async function callOnce(schema: ToolSchema, input: Record<string, unknown>) {
+      let executed = false;
+      const model = createEchoModel({
+        responses: [
+          {
+            toolCalls: [
+              { toolCallId: "call_1", toolName: schema.name, input: JSON.stringify(input) },
+            ],
+          },
+          { text: "done" },
+        ],
+      });
+      const engine = makeEngine(model, {
+        schemas: [schema],
+        handler: () => {
+          executed = true;
+          return { content: textContent("ok"), isError: false };
+        },
+      });
+      const result = await engine.run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+        [schema],
+      );
+      return { executed, call: result.toolCalls[0]! };
+    }
+
+    it("rejects an undeclared key, naming it first and then every declared argument", async () => {
+      const lines: Array<{ msg: string; fields: unknown }> = [];
+      const original = log.info;
+      (log as { info: (m: string, f?: unknown) => void }).info = (msg, fields) =>
+        lines.push({ msg, fields });
+      let outcome: Awaited<ReturnType<typeof callOnce>>;
+      try {
+        outcome = await callOnce(settingsSchema, {
+          buy_domains_enabled: true,
+          email_provider: "ses",
+        });
+      } finally {
+        (log as { info: typeof original }).info = original;
+      }
+
+      expect(outcome.executed).toBe(false);
+      expect(outcome.call.ok).toBe(false);
+      const output = outcome.call.output;
+      expect(output).toContain('"buy_domains_enabled", "email_provider"');
+      expect(output.indexOf("buy_domains_enabled")).toBeLessThan(output.indexOf("Valid arguments"));
+      expect(output).toContain("- domain_purchasing (boolean, required): Allow buying domains");
+      expect(output).toContain('- mail_provider (string, one of "smtp", "ses")');
+      expect(output).toContain("- tags (array of string)");
+      expect(lines).toContainEqual({
+        msg: "[engine] invalid_input.unknown_keys",
+        fields: { tool: "acme__update_settings", keys: ["buy_domains_enabled", "email_provider"] },
+      });
+    });
+
+    it("dispatches a call that uses only declared keys", async () => {
+      const outcome = await callOnce(settingsSchema, { domain_purchasing: true });
+      expect(outcome.executed).toBe(true);
+      expect(outcome.call.ok).toBe(true);
+    });
+
+    it("says so when the tool declares no arguments", async () => {
+      const outcome = await callOnce(
+        {
+          name: "acme__ping",
+          description: "Ping",
+          inputSchema: { type: "object", properties: {} },
+        },
+        { verbose: true },
+      );
+      expect(outcome.executed).toBe(false);
+      expect(outcome.call.output).toContain("This tool takes no arguments.");
+    });
+
+    const openSchemas: Array<[string, Record<string, unknown>]> = [
+      ["additionalProperties: true", { additionalProperties: true }],
+      ["an additionalProperties schema", { additionalProperties: { type: "string" } }],
+      ["patternProperties", { patternProperties: { "^x_": { type: "string" } } }],
+      ["unevaluatedProperties: true", { unevaluatedProperties: true }],
+      [
+        "if/then",
+        // biome-ignore lint/suspicious/noThenProperty: `then` is a JSON Schema keyword here, not a thenable.
+        { if: { required: ["a"] }, then: { properties: { x_extra: { type: "string" } } } },
+      ],
+      [
+        "dependentSchemas",
+        { dependentSchemas: { a: { properties: { x_extra: { type: "string" } } } } },
+      ],
+      ["dependencies", { dependencies: { a: { properties: { x_extra: { type: "string" } } } } }],
+      [
+        "a $ref inside an allOf branch",
+        { allOf: [{ $ref: "#/$defs/extra" }], $defs: { extra: {} } },
+      ],
+    ];
+    for (const [label, opener] of openSchemas) {
+      it(`passes an undeclared key when the schema opens the key set with ${label}`, async () => {
+        const outcome = await callOnce(
+          {
+            name: "acme__open",
+            description: "Open",
+            inputSchema: { type: "object", properties: { a: { type: "string" } }, ...opener },
+          },
+          { a: "1", x_extra: "2" },
+        );
+        expect(outcome.executed).toBe(true);
+      });
+    }
+
+    it("accepts a key declared only in an allOf branch", async () => {
+      const outcome = await callOnce(
+        {
+          name: "acme__composed",
+          description: "Composed",
+          inputSchema: {
+            type: "object",
+            properties: { a: { type: "string" } },
+            allOf: [{ properties: { b: { type: "string" } }, required: ["b"] }],
+          },
+        },
+        { a: "1", b: "2" },
+      );
+      expect(outcome.executed).toBe(true);
+    });
+
+    it("accepts a key declared in an anyOf branch of a root-composed schema", async () => {
+      const outcome = await callOnce(
+        {
+          name: "acme__either",
+          description: "Either",
+          inputSchema: {
+            type: "object",
+            anyOf: [
+              { properties: { id: { type: "string" } }, required: ["id"] },
+              { properties: { slug: { type: "string" } }, required: ["slug"] },
+            ],
+          },
+        },
+        { slug: "s" },
+      );
+      expect(outcome.executed).toBe(true);
+    });
+
+    it("accepts a key declared only in a oneOf branch, and refuses one no branch declares", async () => {
+      const schema = {
+        name: "acme__oneof",
+        description: "One of",
+        inputSchema: {
+          type: "object",
+          oneOf: [
+            { properties: { id: { type: "string" } }, required: ["id"] },
+            { properties: { slug: { type: "string" } }, required: ["slug"] },
+          ],
+        },
+      };
+      expect((await callOnce(schema, { id: "i" })).executed).toBe(true);
+      const refused = await callOnce(schema, { name: "n" });
+      expect(refused.executed).toBe(false);
+      expect(refused.call.output).toContain('no argument named "name"');
+    });
+
+    it("leaves a root $ref schema to plain validation", async () => {
+      const outcome = await callOnce(
+        {
+          name: "acme__ref",
+          description: "Ref",
+          inputSchema: {
+            $ref: "#/$defs/Args",
+            $defs: { Args: { type: "object", properties: { a: { type: "string" } } } },
+          },
+        },
+        { a: "1", other: 2 },
+      );
+      expect(outcome.executed).toBe(true);
+    });
+
+    it("validates a tool called in the same message that promotes it", async () => {
+      const promoted: ToolSchema = { ...settingsSchema, name: "acme__promoted" };
+      const manageTools: ToolSchema = {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      };
+      const model = createEchoModel({
+        responses: [
+          {
+            toolCalls: [
+              {
+                toolCallId: "call_manage",
+                toolName: "nb__manage_tools",
+                input: JSON.stringify({ add: ["acme__promoted"] }),
+              },
+              {
+                toolCallId: "call_promoted",
+                toolName: "acme__promoted",
+                input: JSON.stringify({ buy_domains_enabled: true }),
+              },
+            ],
+          },
+          { text: "done" },
+        ],
+      });
+      let activeControls: ToolPromotionControls | null = null;
+      const executed: string[] = [];
+      const engine = makeEngine(model, {
+        schemas: [manageTools, promoted],
+        handler: async (call) => {
+          executed.push(call.name);
+          if (call.name === "nb__manage_tools") {
+            for (const name of (call.input.add as string[]) ?? [])
+              await activeControls?.addTool(name);
+          }
+          return { content: textContent("ok"), isError: false };
+        },
+      });
+
+      const result = await engine.run(
+        {
+          ...defaultConfig,
+          toolPromotion: {
+            isToolEligible: () => true,
+            registerControls: (controls) => {
+              activeControls = controls;
+              return () => {
+                activeControls = null;
+              };
+            },
+          },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+        [manageTools],
+      );
+
+      expect(executed).toEqual(["nb__manage_tools"]);
+      const promotedCall = result.toolCalls.find((c) => c.name === "acme__promoted")!;
+      expect(promotedCall.ok).toBe(false);
+      expect(promotedCall.output).toContain('"buy_domains_enabled"');
+      expect(promotedCall.output).toContain("domain_purchasing (boolean, required)");
+    });
+  });
+
+  describe("input validation precedes the confirmation gate", () => {
+    // A privileged tool: the privilege hook asks the gate before it runs.
+    const createSkill: ToolSchema = {
+      name: "skills__create",
+      description: "Create a skill",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          scope: { type: "string", enum: ["workspace", "platform"] },
+          triggers: { type: "array", items: { type: "string" } },
+        },
+        required: ["name", "scope"],
+      },
+    };
+
+    /** One model call to skills__create through the privilege hook; records what the gate was asked and what ran. */
+    async function callThroughGate(
+      input: Record<string, unknown>,
+      opts: { rewrite?: (call: ToolCall) => ToolCall } = {},
+    ) {
+      const confirmed: Array<Record<string, unknown>> = [];
+      const gate: ConfirmationGate = {
+        supportsInteraction: true,
+        confirm: async (_description, details) => {
+          confirmed.push(details);
+          return true;
+        },
+      };
+      const privilegeHook = createPrivilegeHook(gate, new NoopEventSink());
+      const executed: Array<Record<string, unknown>> = [];
+      const model = createEchoModel({
+        responses: [
+          {
+            toolCalls: [
+              { toolCallId: "call_1", toolName: createSkill.name, input: JSON.stringify(input) },
+            ],
+          },
+          { text: "done" },
+        ],
+      });
+      const engine = makeEngine(model, {
+        schemas: [createSkill],
+        handler: (call) => {
+          executed.push(call.input);
+          return { content: textContent("ok"), isError: false };
+        },
+      });
+      const result = await engine.run(
+        {
+          ...defaultConfig,
+          hooks: {
+            beforeToolCall: async (call) => {
+              const gated = await privilegeHook(call);
+              return gated && opts.rewrite ? opts.rewrite(gated) : gated;
+            },
+          },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+        [createSkill],
+      );
+      return { confirmed, executed, call: result.toolCalls[0]! };
+    }
+
+    it("never asks to confirm a call with an undeclared argument", async () => {
+      const outcome = await callThroughGate({ name: "n", scope: "workspace", owner: "x" });
+      expect(outcome.confirmed).toEqual([]);
+      expect(outcome.executed).toEqual([]);
+      expect(outcome.call.ok).toBe(false);
+      expect(outcome.call.output).toContain('has no argument named "owner"');
+    });
+
+    it("never asks to confirm a call that fails schema validation", async () => {
+      const outcome = await callThroughGate({ name: "n", scope: "everywhere" });
+      expect(outcome.confirmed).toEqual([]);
+      expect(outcome.executed).toEqual([]);
+      expect(outcome.call.output).toContain("Invalid tool input");
+    });
+
+    it("asks to confirm a valid call with the coerced input, and dispatches that input", async () => {
+      const outcome = await callThroughGate({
+        name: "n",
+        scope: "workspace",
+        triggers: JSON.stringify(["a", "b"]),
+      });
+      const coerced = { name: "n", scope: "workspace", triggers: ["a", "b"] };
+      expect(outcome.confirmed).toEqual([coerced]);
+      expect(outcome.executed).toEqual([coerced]);
+      expect(outcome.call.ok).toBe(true);
+    });
+
+    it("checks a call the hook rewrites before dispatching it", async () => {
+      const outcome = await callThroughGate(
+        { name: "n", scope: "workspace" },
+        { rewrite: (call) => ({ ...call, input: { ...call.input, owner: "x" } }) },
+      );
+      expect(outcome.confirmed).toHaveLength(1);
+      expect(outcome.executed).toEqual([]);
+      expect(outcome.call.output).toContain('has no argument named "owner"');
+    });
+  });
+
   describe("context-overflow recovery", () => {
     it("re-invokes transformContext with overflowAttempt=1 and retries once on a context-overflow error", async () => {
       let callCount = 0;
@@ -3723,10 +4640,9 @@ describe("malformed tool call input", () => {
       const model = createMockModel(() => {
         callCount += 1;
         if (callCount === 1) {
-          throw Object.assign(
-            new Error("prompt is too long: 1257504 tokens > 1000000 maximum"),
-            { status: 400 },
-          );
+          throw Object.assign(new Error("prompt is too long: 1257504 tokens > 1000000 maximum"), {
+            status: 400,
+          });
         }
         return {
           content: [{ type: "text", text: "recovered" }],
@@ -3776,10 +4692,7 @@ describe("malformed tool call input", () => {
       const model = createMockModel(() => {
         callCount += 1;
         // Both calls overflow.
-        throw Object.assign(
-          new Error("prompt is too long: still too big"),
-          { status: 400 },
-        );
+        throw Object.assign(new Error("prompt is too long: still too big"), { status: 400 });
       });
 
       const engine = new AgentEngine(
@@ -3836,14 +4749,13 @@ describe("malformed tool call input", () => {
 
   describe("cancellation via config.signal", () => {
     it("aborts the loop between iterations when config.signal fires after a tool call", async () => {
-      // Regression for the orphan-and-write bug: before this PR, the
-      // engine only forwarded `config.signal` to `tools.execute`. A
-      // run whose signal aborted mid-flight would let the current tool
-      // call honor it (good) but still proceed to the NEXT LLM call,
-      // wasting a model round-trip and generating downstream tool
-      // calls the caller no longer wants. The fix is a check at the
-      // top of every iteration; this test exercises that check
-      // end-to-end.
+      // Guards the orphan-and-write bug. Forwarding `config.signal`
+      // only to `tools.execute` would let a run whose signal aborted
+      // mid-flight have the current tool call honor it (good) but still
+      // proceed to the NEXT LLM call, wasting a model round-trip and
+      // generating downstream tool calls the caller no longer wants.
+      // The engine checks the signal at the top of every iteration;
+      // this test exercises that check end-to-end.
       const controller = new AbortController();
       let modelCalls = 0;
       const model = createMockModel(() => {
@@ -3910,6 +4822,82 @@ describe("malformed tool call input", () => {
       expect(toolCallCount).toBe(1);
     });
 
+    it("ends an aborted run with run.done stopReason cancelled, not run.error", async () => {
+      // Stop is not a failure: the persisted terminal event must say the run
+      // was cancelled so the transcript and the replayed history label it
+      // honestly. The throw still propagates for the caller's abort handling.
+      const controller = new AbortController();
+      let modelCalls = 0;
+      const model = createMockModel(() => {
+        modelCalls++;
+        if (modelCalls === 1) {
+          return {
+            content: [
+              { type: "tool-call", toolCallId: "call_1", toolName: "test__noop", input: "{}" },
+            ],
+            inputTokens: 10,
+            outputTokens: 5,
+          };
+        }
+        // The user presses Stop while the second model call is in flight.
+        controller.abort();
+        throw new DOMException("The operation was aborted.", "AbortError");
+      });
+      const events: EngineEvent[] = [];
+      const engine = makeEngine(
+        model,
+        {
+          schemas: [
+            {
+              name: "test__noop",
+              description: "noop",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+          handler: () => ({ content: textContent("noop"), isError: false }),
+        },
+        { emit: (e) => events.push(e) },
+      );
+
+      await expect(
+        engine.run(
+          { ...defaultConfig, signal: controller.signal },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "go" }] }],
+          [],
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      expect(events.find((e) => e.type === "run.error")).toBeUndefined();
+      const done = events.filter((e) => e.type === "run.done");
+      expect(done).toHaveLength(1);
+      expect(done[0]!.data.stopReason).toBe("cancelled");
+      expect(done[0]!.data.iterations).toBe(2);
+      expect(typeof done[0]!.data.totalMs).toBe("number");
+      expect(done[0]!.data.runId).toBe(events.find((e) => e.type === "run.start")!.data.runId);
+    });
+
+    it("emits run.done cancelled for a signal aborted before the first model call", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const events: EngineEvent[] = [];
+      const engine = makeEngine(undefined, undefined, { emit: (e) => events.push(e) });
+
+      await expect(
+        engine.run(
+          { ...defaultConfig, signal: controller.signal },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "go" }] }],
+          [],
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      expect(events.find((e) => e.type === "run.error")).toBeUndefined();
+      const done = events.find((e) => e.type === "run.done");
+      expect(done?.data.stopReason).toBe("cancelled");
+      expect(done?.data.iterations).toBe(1);
+    });
+
     it("throws immediately when signal is already aborted on entry", async () => {
       // Pre-aborted signals should fail-fast on the first iteration's
       // boundary check, before any model call. Important for the
@@ -3944,8 +4932,8 @@ describe("malformed tool call input", () => {
     it("threads run cancellation into model.doStream via a linked signal", async () => {
       // Regression for the in-flight LLM stream cancellation gap: the run
       // signal must reach the model call so AI SDK providers can abort the
-      // underlying fetch. The engine now passes a COMPOSED signal (run signal
-      // ∨ per-call idle watchdog, see model/stream.ts), so it is no longer
+      // underlying fetch. The engine passes a COMPOSED signal (run signal
+      // ∨ per-call idle watchdog, see model/stream.ts), so it is not
       // identical to `config.signal` — but aborting the run must still abort
       // the signal the model received.
       const controller = new AbortController();
@@ -4017,7 +5005,7 @@ describe("malformed tool call input", () => {
       // generic cancel). Drift here would silently collapse all
       // cancellations into the same status.
       const controller = new AbortController();
-      const customReason = new Error("Automation foo timed out after 600s");
+      const customReason = new Error("Task foo timed out after 600s");
       controller.abort(customReason);
 
       const engine = makeEngine();
@@ -4043,8 +5031,11 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
   };
 
   /** Capture every `connector.skill.injected` event the engine emits. */
-  function injectionSink(): { sink: EventSink; injected: EngineEvent[] } {
-    const injected: EngineEvent[] = [];
+  function injectionSink(): {
+    sink: EventSink;
+    injected: EngineEventOf<"connector.skill.injected">[];
+  } {
+    const injected: EngineEventOf<"connector.skill.injected">[] = [];
     const sink: EventSink = {
       emit(event) {
         if (event.type === "connector.skill.injected") injected.push(event);
@@ -4097,10 +5088,10 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
     );
 
     expect(injected).toHaveLength(1);
-    expect(injected[0]!.data["skillName"]).toBe("gmail");
-    expect(injected[0]!.data["toolName"]).toBe("gmail__send");
-    expect(injected[0]!.data["skillBody"]).toBe(GMAIL_CANDIDATE.body);
-    expect(injected[0]!.data["scope"]).toBe("connector");
+    expect(injected[0]!.data.skillName).toBe("gmail");
+    expect(injected[0]!.data.toolName).toBe("gmail__send");
+    expect(injected[0]!.data.skillBody).toBe(GMAIL_CANDIDATE.body);
+    expect(injected[0]!.data.scope).toBe("connector");
   });
 
   it("does not inject when the called tool matches no candidate affinity", async () => {
@@ -4131,13 +5122,13 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
     );
 
     // A prior turn's reconstructed synthetic message rides the incoming
-    // history. Typed as a bare provider message; the engine reads `.metadata`
-    // through a cast, mirroring the runtime where these are StoredMessages.
-    const priorInjection = {
+    // history: a provider message carrying a StoredMessage's `metadata`, which
+    // the engine reads as the runtime's StoredMessages carry it.
+    const priorInjection: HistoryMessage = {
       role: "assistant",
       content: [{ type: "text", text: "<connector-skill>...</connector-skill>" }],
       metadata: { synthetic: "connector_skill_injected", skill: "gmail" },
-    } as unknown as LanguageModelV4Message;
+    };
 
     await engine.run(
       { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },
@@ -4201,6 +5192,113 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
   });
 });
 
+describe("AgentEngine — connector skills bound by declared tool-affinity", () => {
+  // Two skills one server publishes, as the runtime builds them: one declares
+  // the tool it governs, the other declares nothing and keeps the whole server.
+  const candidates = [
+    synthesizeConnectorSkill({
+      serverName: "acme",
+      skillName: "writing",
+      description: "How to draft email",
+      body: "Write in the user's voice.",
+      uri: "skill://writing/SKILL.md",
+      toolAffinity: ["draft_email"],
+    }),
+    synthesizeConnectorSkill({
+      serverName: "acme",
+      skillName: "usage",
+      description: "How to use acme",
+      body: "General acme guidance.",
+      uri: "skill://usage/SKILL.md",
+    }),
+  ].map((s) => ({
+    name: s.manifest.name,
+    body: s.body,
+    scope: "provided",
+    toolAffinity: s.manifest.toolAffinity ?? [],
+  }));
+
+  const schemas: ToolSchema[] = [
+    { name: "nb__manage_tools", description: "Patch tool list", inputSchema: {} },
+    { name: "acme__draft_email", description: "Draft", inputSchema: {} },
+    { name: "acme__update_settings", description: "Settings", inputSchema: {} },
+  ];
+
+  /** Promote `toolName` on iteration 1, then stop; return the injected skill names. */
+  async function injectedOnPromoting(toolName: string): Promise<string[]> {
+    const injected: string[] = [];
+    let controls: ToolPromotionControls | null = null;
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call" as const,
+              toolCallId: "promote",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: [toolName] }),
+            },
+          ],
+        };
+      }
+      return { content: [{ type: "text", text: "done" }] };
+    });
+    const engine = makeEngine(
+      model,
+      {
+        schemas,
+        handler: async (call) => {
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const promoted: ToolPromotionResult[] = [];
+          for (const name of add) promoted.push(await controls!.addTool(name));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released: [] },
+            isError: false,
+          };
+        },
+      },
+      {
+        emit(event) {
+          if (event.type === "connector.skill.injected") injected.push(event.data.skillName);
+        },
+      },
+    );
+    await engine.run(
+      {
+        ...defaultConfig,
+        connectorSkillCandidates: candidates,
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (c) => {
+            controls = c;
+            return () => {
+              controls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "go" }] }],
+      [schemas[0]!],
+    );
+    return injected;
+  }
+
+  it("injects a skill declaring draft_email on promoting <server>__draft_email", async () => {
+    expect(await injectedOnPromoting("acme__draft_email")).toEqual([
+      "connector:acme:writing",
+      "connector:acme:usage",
+    ]);
+  });
+
+  it("does not inject that skill on promoting <server>__update_settings; the undeclared one still fires", async () => {
+    expect(await injectedOnPromoting("acme__update_settings")).toEqual(["connector:acme:usage"]);
+  });
+});
+
 describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () => {
   const GMAIL_CANDIDATE = {
     name: "gmail",
@@ -4223,11 +5321,11 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
   /** Capture `skill.activated` + `connector.skill.injected` events. */
   function activationSink(): {
     sink: EventSink;
-    activated: EngineEvent[];
-    injected: EngineEvent[];
+    activated: EngineEventOf<"skill.activated">[];
+    injected: EngineEventOf<"connector.skill.injected">[];
   } {
-    const activated: EngineEvent[] = [];
-    const injected: EngineEvent[] = [];
+    const activated: EngineEventOf<"skill.activated">[] = [];
+    const injected: EngineEventOf<"connector.skill.injected">[] = [];
     const sink: EventSink = {
       emit(event) {
         if (event.type === "skill.activated") activated.push(event);
@@ -4244,7 +5342,9 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
       handler: (call: ToolCall): ToolResult => {
         if (call.name === "nb__use_skill") {
           return {
-            content: textContent("_gmail_ — scope: connector\n\n<activated-skill>...</activated-skill>"),
+            content: textContent(
+              "_gmail_ — scope: connector\n\n<activated-skill>...</activated-skill>",
+            ),
             isError: false,
             _meta: {
               [SKILL_ACTIVATED_META_KEY]: {
@@ -4299,11 +5399,11 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
     );
 
     expect(activated).toHaveLength(1);
-    expect(activated[0]!.data["skillName"]).toBe("gmail");
-    expect(activated[0]!.data["toolCallId"]).toBe("u1");
-    expect(activated[0]!.data["scope"]).toBe("connector");
-    expect(activated[0]!.data["tokens"]).toBe(12);
-    expect(typeof activated[0]!.data["runId"]).toBe("string");
+    expect(activated[0]!.data.skillName).toBe("gmail");
+    expect(activated[0]!.data.toolCallId).toBe("u1");
+    expect(activated[0]!.data.scope).toBe("connector");
+    expect(activated[0]!.data.tokens).toBe(12);
+    expect(typeof activated[0]!.data.runId).toBe("string");
   });
 
   it("suppresses surface-once overlay injection for a skill activated earlier in the run", async () => {
@@ -4330,10 +5430,7 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
   it("emits skill.activated once when the same skill is activated twice in one run", async () => {
     const { sink, activated } = activationSink();
     const engine = makeEngine(
-      batchedCalls([
-        [{ id: "u1", name: "nb__use_skill" }],
-        [{ id: "u2", name: "nb__use_skill" }],
-      ]),
+      batchedCalls([[{ id: "u1", name: "nb__use_skill" }], [{ id: "u2", name: "nb__use_skill" }]]),
       activationTools(),
       sink,
     );
@@ -4346,7 +5443,7 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
     );
 
     expect(activated).toHaveLength(1);
-    expect(activated[0]!.data["toolCallId"]).toBe("u1");
+    expect(activated[0]!.data.toolCallId).toBe("u1");
   });
 
   it("seeds the dedup set from a history activation marker (fallback scan)", async () => {
@@ -4360,7 +5457,7 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
     // A prior turn's reconstructed activation tool-result carries the marker
     // in message metadata (the runtime normally lifts it into
     // `alreadyInjectedConnectorSkills`; the engine's own scan is the fallback).
-    const priorActivation = {
+    const priorActivation: HistoryMessage = {
       role: "tool",
       content: [
         {
@@ -4371,7 +5468,7 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
         },
       ],
       metadata: { synthetic: "skill_activated", skill: "gmail" },
-    } as unknown as LanguageModelV4Message;
+    };
 
     await engine.run(
       { ...defaultConfig, connectorSkillCandidates: [GMAIL_CANDIDATE] },
@@ -4410,5 +5507,219 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
     );
 
     expect(activated).toHaveLength(0);
+  });
+});
+
+describe("AgentEngine — promotion after a connector comes up mid-run", () => {
+  const SEARCH: ToolSchema = {
+    name: "nb__search",
+    description: "Search",
+    inputSchema: SEARCH_INPUT,
+  };
+  const MANAGE: ToolSchema = {
+    name: "nb__manage_tools",
+    description: "Patch tool list",
+    inputSchema: MANAGE_TOOLS_INPUT,
+  };
+  const NEWS: ToolSchema = {
+    name: "newsapi__get_top_headlines",
+    description: "Get top headlines",
+    inputSchema: { type: "object", properties: {} },
+  };
+
+  function toolCall(id: string, toolName: string, input: Record<string, unknown>) {
+    return {
+      content: [
+        { type: "tool-call" as const, toolCallId: id, toolName, input: JSON.stringify(input) },
+      ],
+      inputTokens: 10,
+      outputTokens: 5,
+    };
+  }
+  const done = {
+    content: [{ type: "text" as const, text: "Done" }],
+    inputTokens: 10,
+    outputTokens: 5,
+  };
+
+  /** A router over a mutable list, so a test can bring a connector up or down mid-run. */
+  function promotionRun(
+    model: LanguageModelV4,
+    router: { availableTools(): Promise<ToolSchema[]> },
+    onCall: (call: ToolCall) => ToolResult | undefined,
+  ) {
+    let controls: ToolPromotionControls | null = null;
+    const promotions: ToolPromotionResult[] = [];
+    const executed: string[] = [];
+    const engine = new AgentEngine(
+      model,
+      {
+        availableTools: () => router.availableTools(),
+        execute: async (call) => {
+          executed.push(call.name);
+          if (call.name === "nb__manage_tools") {
+            for (const n of (call.input.add as string[]) ?? []) {
+              promotions.push(await controls!.addTool(n));
+            }
+            return { content: textContent("ok"), isError: false };
+          }
+          return onCall(call) ?? { content: textContent("ok"), isError: false };
+        },
+      },
+      new NoopEventSink(),
+    );
+    const result = engine.run(
+      {
+        ...defaultConfig,
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (c) => {
+            controls = c;
+            return () => {
+              controls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "go" }] }],
+      [SEARCH, MANAGE],
+    );
+    return { result, promotions, executed };
+  }
+
+  it("promotes a tool whose connector came up after the run started", async () => {
+    const routerTools: ToolSchema[] = [SEARCH, MANAGE];
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) return toolCall("c1", "nb__search", { scope: "tools", query: "news" });
+      if (n === 2) return toolCall("c2", "nb__manage_tools", { add: [NEWS.name] });
+      if (n === 3) return toolCall("c3", NEWS.name, {});
+      return done;
+    });
+    const run = promotionRun(
+      model,
+      new StaticToolRouter(routerTools, () => ({ content: [], isError: false })),
+      (call) => {
+        // The connector finishes reconnecting while the search runs.
+        if (call.name === "nb__search") routerTools.push(NEWS);
+        return undefined;
+      },
+    );
+    await run.result;
+
+    expect(run.promotions.map((p) => p.ok)).toEqual([true]);
+    expect(run.executed).toContain(NEWS.name);
+  });
+
+  it("promotes a known tool name in the first iteration once its connector is up", async () => {
+    const routerTools: ToolSchema[] = [SEARCH, MANAGE];
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) {
+        // Up after the run's opening listing, before the first tool call.
+        routerTools.push(NEWS);
+        return toolCall("c1", "nb__manage_tools", { add: [NEWS.name] });
+      }
+      return done;
+    });
+    const run = promotionRun(
+      model,
+      new StaticToolRouter(routerTools, () => ({ content: [], isError: false })),
+      () => undefined,
+    );
+    await run.result;
+
+    expect(run.promotions.map((p) => p.ok)).toEqual([true]);
+  });
+
+  it("keeps an app-only tool refused after its connector drops out of a refresh", async () => {
+    const PANEL: ToolSchema = {
+      name: "crm__panel",
+      description: "App-only panel",
+      inputSchema: { type: "object", properties: {} },
+      meta: { ui: { visibility: ["app"] } },
+    };
+    const routerTools: ToolSchema[] = [SEARCH, MANAGE, PANEL];
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) {
+        routerTools.splice(routerTools.indexOf(PANEL), 1);
+        // A miss forces a refresh that no longer lists the panel's connector.
+        return toolCall("c1", "nb__manage_tools", { add: ["ghost__tool"] });
+      }
+      if (n === 2) return toolCall("c2", PANEL.name, {});
+      return done;
+    });
+    const run = promotionRun(
+      model,
+      new StaticToolRouter(routerTools, () => ({ content: [], isError: false })),
+      () => undefined,
+    );
+    await run.result;
+
+    expect(run.promotions.map((p) => p.reason)).toEqual(["not_found"]);
+    expect(run.executed).not.toContain(PANEL.name);
+  });
+
+  it("shares one refresh between concurrent misses in an iteration", async () => {
+    const NEWS_B: ToolSchema = { ...NEWS, name: "newsapi__search" };
+    let listings = 0;
+    const router = {
+      availableTools: async () => {
+        listings++;
+        if (listings === 1) return [SEARCH, MANAGE];
+        // Slow enough that the second add arrives while the first waits.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return [SEARCH, MANAGE, NEWS, NEWS_B];
+      },
+    };
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) {
+        return {
+          content: [
+            ...toolCall("c1", "nb__manage_tools", { add: [NEWS.name] }).content,
+            ...toolCall("c2", "nb__manage_tools", { add: [NEWS_B.name] }).content,
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return done;
+    });
+    const run = promotionRun(model, router, () => undefined);
+    await run.result;
+
+    expect(run.promotions.map((p) => p.ok)).toEqual([true, true]);
+    // The run-start listing plus one shared refresh.
+    expect(listings).toBe(2);
+  });
+
+  it("keeps the run's lookups when a refresh fails", async () => {
+    let listings = 0;
+    const router = {
+      availableTools: async () => {
+        listings++;
+        if (listings > 1) throw new Error("workspace store unavailable");
+        return [SEARCH, MANAGE, NEWS];
+      },
+    };
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) return toolCall("c1", "nb__manage_tools", { add: ["ghost__tool"] });
+      if (n === 2) return toolCall("c2", "nb__manage_tools", { add: [NEWS.name] });
+      return done;
+    });
+    const run = promotionRun(model, router, () => undefined);
+    const result = await run.result;
+
+    expect(run.promotions.map((p) => p.ok)).toEqual([false, true]);
+    expect(result.stopReason).toBe("complete");
   });
 });

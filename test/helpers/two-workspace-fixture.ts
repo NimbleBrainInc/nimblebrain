@@ -1,17 +1,17 @@
 /**
- * Two-workspace fixture for the Stage 2 cross-workspace
- * contract.
+ * Two-workspace fixture for the cross-workspace contract.
  *
  * Boots a `Runtime` with two workspaces visible to a single identity:
- *   1. A shared workspace (default id `ws_helix`).
- *   2. The identity's personal workspace at `personalWorkspaceIdFor(userId)`.
+ *   1. A shared workspace (default id `ws_003eba8844413cd9`).
+ *   2. A workspace the identity alone belongs to (the `personal` handle),
+ *      created first so it is the identity's default workspace.
  *
  * Each workspace gets its own in-process MCP source with a single counter-
  * incrementing echo tool. Tests can read the per-source counters to verify
- * dispatch topology (e.g. that a `ws_helix/...` tool call did NOT land in
- * the personal workspace's source).
+ * dispatch topology (e.g. that a `ws_003eba8844413cd9/...` tool call did NOT land in
+ * the identity's own workspace's source).
  *
- * Reuse: T011's smoke variant imports this fixture to drive an external MCP
+ * Reuse: a smoke variant can import this fixture to drive an external MCP
  * client end-to-end. Anything that bakes in test-only assumptions
  * (test-mode auth, in-memory stores, etc.) belongs in the test file, not
  * here. The fixture leans on the same public `Runtime.start()` /
@@ -19,10 +19,8 @@
  */
 
 import { mkdirSync, rmSync } from "node:fs";
-import { namespacedToolName } from "./namespaced-tool-name.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { EventSink } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
@@ -31,31 +29,29 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ChatRequest } from "../../src/runtime/types.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
-import {} from "../../src/tools/namespace.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import {
-  personalWorkspaceIdFor,
-  type WorkspaceStore,
-} from "../../src/workspace/workspace-store.ts";
+import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { devProvider } from "./dev-provider.ts";
 import { createEchoModel, type EchoModelOptions } from "./echo-model.ts";
+import { namespacedToolName } from "./namespaced-tool-name.ts";
+import { seedWorkspace } from "./test-workspace.ts";
 
 // ── Public option / handle shapes ──────────────────────────────────
 
 /**
  * Options for `createTwoWorkspaceFixture`. All fields optional; defaults
- * are designed to mirror the load-bearing Stage 2 chat surface a single
- * user would actually see: one shared workspace + one personal workspace.
+ * are designed to mirror the load-bearing chat surface a single
+ * user would actually see: one shared workspace + one workspace of their own.
  */
 export interface TwoWorkspaceFixtureOptions {
   /**
-   * Identity that owns the personal workspace and authenticates chat
+   * Identity that belongs to both workspaces and authenticates chat
    * requests. Defaults to a neutral `user_a` placeholder so the fixture
    * is safe to import from OSS test files.
    */
   identity?: UserIdentity;
   /**
-   * Shared workspace id. Defaults to `ws_helix`. Must be a valid `ws_*`
-   * id; `WorkspaceStore.create` re-prefixes the slug.
+   * Shared workspace id. Defaults to `ws_003eba8844413cd9`. Must satisfy the loading
+   * pattern; the workspace is seeded with it as an existing workspace.
    */
   sharedWorkspaceId?: string;
   /**
@@ -87,11 +83,11 @@ export interface TwoWorkspaceFixtureOptions {
  * `qualifiedToolName` fields are the load-bearing strings tests assert on:
  *
  *  - `qualifiedToolName` is the `ws_<id>-<source>__<tool>` form the
- *    orchestrator (post-T006) parses on every tool call.
+ *    orchestrator parses on every tool call.
  *  - `callCount()` is the topology probe — a non-zero counter on the
  *    *wrong* workspace would fail the "naive: dispatch to current
- *    workspace" failure mode (lesson 1).
- *  - `auditTrail()` is the attribution probe (Stage 1 lesson 2) — the
+ *    workspace" failure mode.
+ *  - `auditTrail()` is the attribution probe — the
  *    sequence of `RequestContext.workspaceId` values that were active
  *    each time this source's handler ran. A correct orchestrator stamps
  *    the parsed-from-namespace workspace; the failure mode (stamping the
@@ -99,7 +95,7 @@ export interface TwoWorkspaceFixtureOptions {
  *    here.
  */
 export interface WorkspaceHandle {
-  /** Canonical workspace id, e.g. `ws_helix` or `ws_user_<userId>`. */
+  /** Canonical workspace id, e.g. `ws_003eba8844413cd9` or an opaque `ws_<16-hex>`. */
   id: string;
   /** Human display name. */
   name: string;
@@ -133,8 +129,8 @@ export interface WorkspaceHandle {
  * `type === "tool.done"` and assert per-call attribution.
  *
  * The fixture deliberately stores events as `{type, data}` envelopes
- * (matching `EngineEvent`) rather than narrowing here — Stage 2's
- * orchestrator will add a `workspaceId` field to `tool.done.data`, and
+ * (matching `EngineEvent`) rather than narrowing here — the
+ * orchestrator stamps a `workspaceId` field on `tool.done.data`, and
  * the test that asserts that exact contract lives in the test file, not
  * this helper.
  */
@@ -153,7 +149,7 @@ export interface TwoWorkspaceFixture {
   identity: UserIdentity;
   /** Shared workspace handle. */
   shared: WorkspaceHandle;
-  /** Personal workspace handle (id from `personalWorkspaceIdFor(identity.id)`). */
+  /** Handle for the workspace the identity alone belongs to (its default). */
   personal: WorkspaceHandle;
   /**
    * EventSink that captured every engine event emitted during the
@@ -168,11 +164,10 @@ export interface TwoWorkspaceFixture {
     clear: () => void;
   };
   /**
-   * Build a `ChatRequest` with the fixture's identity pre-populated.
-   *
-   * T006: the chat surface is identity-bound, so no `workspaceId` is
-   * passed — the runtime aggregates tools across every workspace the
-   * identity can see and routes each call via the orchestrator.
+   * Build a `ChatRequest` with the fixture's identity and its personal
+   * workspace pre-populated. The runtime never picks a workspace for a
+   * request, so the fixture names the identity's default one; a test
+   * overrides `workspaceId` to run elsewhere.
    */
   buildChatRequest: (overrides: Partial<ChatRequest> & { message: string }) => ChatRequest;
   /** Tear down: stop runtime, remove workDir. Always call in `afterAll`/`afterEach`. */
@@ -183,7 +178,7 @@ export interface TwoWorkspaceFixture {
 
 /**
  * Neutral placeholder identity. No tenant- or person-specific information;
- * the fixture is reused in OSS-public tests and in T011's smoke variant.
+ * the fixture is reused in OSS-public tests.
  */
 const DEFAULT_IDENTITY: UserIdentity = {
   id: "user_a",
@@ -193,7 +188,7 @@ const DEFAULT_IDENTITY: UserIdentity = {
   preferences: {},
 };
 
-const DEFAULT_SHARED_WS_ID = "ws_helix";
+const DEFAULT_SHARED_WS_ID = "ws_003eba8844413cd9";
 const DEFAULT_SHARED_WS_NAME = "Helix";
 
 const SHARED_SOURCE_NAME = "crm";
@@ -206,8 +201,8 @@ const PERSONAL_SOURCE_NAME = "gmail";
  * echo tool. The handler closes over a local `count` variable so the
  * caller can read dispatch topology from the returned `callCount()` getter,
  * and an `audit` array so callers can read the per-call
- * `RequestContext.workspaceId` (Stage 1 lesson 2 — attribution proof
- * independent of the dispatch-topology counter).
+ * `RequestContext.workspaceId` (attribution proof independent of the
+ * dispatch-topology counter).
  */
 function buildCounterSource(
   sourceName: string,
@@ -276,8 +271,9 @@ function buildCounterSource(
 
 /**
  * Provision the shared workspace and add `identity` as an admin member.
- * The shared workspace is created via the public `WorkspaceStore` API so
- * the fixture matches the production code path (membership + invariants).
+ * The workspace is seeded with its fixed id as an existing workspace
+ * (`seedWorkspace`), since `WorkspaceStore.create` only mints generated
+ * ids; membership goes through the public `addMember`.
  */
 async function provisionSharedWorkspace(
   store: WorkspaceStore,
@@ -290,10 +286,9 @@ async function provisionSharedWorkspace(
       `[two-workspace-fixture] shared workspace id must start with "ws_"; got "${wsId}"`,
     );
   }
-  const slug = wsId.slice(3);
   const existing = await store.get(wsId);
   if (!existing) {
-    await store.create(name, slug);
+    await seedWorkspace(store, wsId, { name });
   }
   await store.addMember(wsId, userId, "admin");
 }
@@ -338,20 +333,23 @@ export async function createTwoWorkspaceFixture(
   );
 
   const runtime = await Runtime.start({
-    model: { provider: "custom", adapter: model },
+    identityProvider: devProvider,
+    languageModel: model,
     logging: { disabled: true },
     workDir,
     events: [sink],
   });
 
-  // Provision both workspaces. The personal workspace goes through the
-  // same `ensureUserWorkspace` helper production uses on first login —
-  // exercises the real `personalWorkspaceIdFor(...)` + invariant path.
+  // Provision both workspaces. The identity's own workspace is created
+  // first, so it is the earliest membership.
   const wsStore = runtime.getWorkspaceStore();
+  const personalWorkspaceName = `${identity.displayName}'s workspace`;
+  const personalWorkspace = await wsStore.create(personalWorkspaceName, {
+    members: [{ userId: identity.id, role: "admin" }],
+  });
   await provisionSharedWorkspace(wsStore, sharedWorkspaceId, sharedWorkspaceName, identity.id);
-  await ensureUserWorkspace(wsStore, { id: identity.id, displayName: identity.displayName });
 
-  const personalWorkspaceId = personalWorkspaceIdFor(identity.id);
+  const personalWorkspaceId = personalWorkspace.id;
 
   // Ensure per-workspace tool registries exist BEFORE adding sources.
   // `ensureWorkspaceRegistry` is the same JIT path runtime.chat takes
@@ -360,8 +358,8 @@ export async function createTwoWorkspaceFixture(
   const personalRegistry = await runtime.ensureWorkspaceRegistry(personalWorkspaceId);
 
   // Build per-workspace sources. Each closes over its own counter — the
-  // topology assertion in the test reads these to verify a `ws_helix/...`
-  // call did NOT land in the personal workspace's source.
+  // topology assertion in the test reads these to verify a `ws_003eba8844413cd9/...`
+  // call did NOT land in the identity's own workspace's source.
   const sharedSource = buildCounterSource(SHARED_SOURCE_NAME, sharedToolBareName, sink);
   const personalSource = buildCounterSource(PERSONAL_SOURCE_NAME, personalToolBareName, sink);
   await sharedSource.source.start();
@@ -370,8 +368,7 @@ export async function createTwoWorkspaceFixture(
   sharedRegistry.addSource(sharedSource.source);
   personalRegistry.addSource(personalSource.source);
 
-  // T006 fixture reconciliation: post-orchestrator, the fixture's qualified
-  // names route through `routeToolCall` and must match the orchestrator's
+  // The fixture's qualified names route through `routeToolCall` and must match the orchestrator's
   // parse contract exactly. Build them via the single legal construction
   // site (`namespacedToolName`) so any future tweak to the primitive
   // surfaces here as a build error instead of as a silent dispatch miss.
@@ -395,7 +392,7 @@ export async function createTwoWorkspaceFixture(
   };
   const personalHandle: WorkspaceHandle = {
     id: personalWorkspaceId,
-    name: `${identity.displayName}'s Workspace`,
+    name: personalWorkspaceName,
     sourceName: PERSONAL_SOURCE_NAME,
     toolName: personalToolBareName,
     qualifiedToolName: namespacedToolName(
@@ -409,12 +406,9 @@ export async function createTwoWorkspaceFixture(
     source: personalSource.source,
   };
 
-  // T006: `ChatRequest.workspaceId` is removed. The chat surface is
-  // identity-bound — tools come from every workspace the identity can
-  // see and each call routes by namespace prefix. The fixture's
-  // `buildChatRequest` reflects that by only stamping `identity`.
   const buildChatRequest: TwoWorkspaceFixture["buildChatRequest"] = (overrides) => ({
     identity,
+    workspaceId: personalWorkspaceId,
     ...overrides,
   });
 

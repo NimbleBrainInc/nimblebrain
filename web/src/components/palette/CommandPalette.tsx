@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// CommandPalette — the ⌘P overlay.
+// CommandPalette — the ⌘K overlay.
 //
 // Mounts once at shell level (sibling of ChatChrome) so it's reachable from any
 // route. Runs the enabled CommandSources against the query, renders grouped
@@ -8,7 +8,7 @@
 //
 // Constraints honored:
 //   - Shell component: consumes ChatPanelContext (stable), NEVER ChatContext
-//     (streaming) — see AGENTS.md. The palette only ever toggles the panel.
+//     (streaming) — see web/AGENTS.md. The palette only ever toggles the panel.
 //   - REST/in-memory data only (WorkspaceContext, ShellContext) — no bridge.
 //   - Escape is handled capture-phase so it beats other Escape handlers (chat).
 //
@@ -88,6 +88,7 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
       toggleSidebar: sidebar.toggle,
       toggleTheme: theme.toggle,
       openKeyboardShortcuts: () => setShowShortcuts(true),
+      openExternal: (url) => window.open(url, "_blank", "noopener,noreferrer"),
       logout: onLogout,
       closePalette,
     }),
@@ -212,8 +213,6 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
             />
             <input
               ref={inputRef}
-              // biome-ignore lint/a11y/noAutofocus: palette is a modal opened on demand
-              autoFocus
               type="text"
               role="combobox"
               aria-expanded="true"

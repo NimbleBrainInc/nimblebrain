@@ -1,14 +1,16 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { ToolSource } from "../../src/tools/types.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 /**
  * Integration: `getIdentityConnectorSource` lazy-starts a user's personal
@@ -24,12 +26,16 @@ function createMcpServer(): Server {
     { name: "fake-granola", version: "0.1.0" },
     { capabilities: { tools: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
-      { name: "read_notes", description: "read notes", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "read_notes",
+        description: "read notes",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "ok" }],
   }));
   return server;
@@ -77,6 +83,8 @@ describe("getIdentityConnectorSource — lazy-start", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-idc-lazy-"));
+    // OAuth tokens are read through the credential store the runtime installs at its root.
+    installTestCredentialStore(workDir);
     server = startFakeServer();
     // allowInsecureRemotes: true so the localhost fake server passes SSRF checks.
     lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), true);
@@ -87,6 +95,7 @@ describe("getIdentityConnectorSource — lazy-start", () => {
     for (const s of started) await s.stop().catch(() => {});
     started.length = 0;
     server.close();
+    resetTestCredentialStore();
     rmSync(workDir, { recursive: true, force: true });
   });
 

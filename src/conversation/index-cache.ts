@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { log } from "../observability/log.ts";
 import { estimateCost } from "../usage/cost.ts";
 import type { TokenUsage } from "../usage/types.ts";
+import { previewTextOf } from "./preview.ts";
 import type {
   ConversationAccessContext,
   ConversationListResult,
   ConversationSummary,
   ListOptions,
-  StoredMessage,
 } from "./types.ts";
 
 interface ConversationMetadata {
@@ -28,8 +28,8 @@ interface ConversationMetadata {
  */
 /**
  * Access-control metadata stored alongside each summary in the index.
- * Stage 1: single-owner only — `ownerId` is the entire authorization
- * surface. Stage 4 reintroduces sharing via explicit policy.
+ * Conversations are single-owner: `ownerId` is the entire authorization
+ * surface.
  */
 interface IndexedAccessMeta {
   ownerId?: string;
@@ -134,14 +134,13 @@ export class ConversationIndex {
 
     // Cursor pagination: skip entries up to and including the cursor ID.
     //
-    // Edge case (future hardening, not Stage 1): if the cursor names a
-    // conversation that no longer satisfies the current `access`
-    // filter — owner changed (Stage 4 sharing), or the conversation
-    // was deleted between calls — `findIndex` returns -1 and the
-    // slice is a no-op, so the caller re-sees page 1 instead of
-    // getting an empty / shifted page. Stage 1 single-owner doesn't
-    // hit this (ownership can't change), but the cursor model should
-    // be revisited when sharing returns. Options: opaque
+    // Edge case: if the cursor names a conversation that no longer
+    // satisfies the current `access` filter — the conversation was
+    // deleted between calls — `findIndex` returns -1 and the slice is a
+    // no-op, so the caller re-sees page 1 instead of getting an empty /
+    // shifted page. Ownership cannot change, so the filter itself never
+    // drops the cursor's entry; a model where access can change needs a
+    // cursor that does not depend on the filtered result. Options: opaque
     // ({createdAt}, last-id) cursors that don't depend on the filtered
     // result, or return an explicit `cursor_invalid` signal.
     if (options?.cursor) {
@@ -161,14 +160,13 @@ export class ConversationIndex {
 /**
  * Check if a user can access a conversation.
  *
- * Stage 1: single-owner. A conversation is accessible iff the caller
- * is its owner. Workspace-admin overrides and shared-with-participants
- * semantics are gone — Stage 4 reintroduces them with explicit policy
- * gates and audit trails.
+ * Conversations are single-owner. A conversation is accessible iff the
+ * caller is its owner; there is no workspace-admin override and no
+ * sharing with participants.
  *
  * A `meta` of `undefined` or one without `ownerId` is treated as
- * inaccessible — Stage 1 enforces "every conversation has an owner"
- * at write time, so unset means the index hasn't caught up.
+ * inaccessible — every conversation is given an owner at write time,
+ * so unset means the index hasn't caught up.
  */
 export function canAccess(
   meta: IndexedAccessMeta | undefined,
@@ -176,40 +174,6 @@ export function canAccess(
 ): boolean {
   if (!meta?.ownerId) return false;
   return meta.ownerId === access.userId;
-}
-
-/**
- * Detect whether a JSONL file uses the event-sourced format.
- * Checks line 1 metadata for `format: "events"`, or line 2 for a `type` field (events)
- * vs a `role` field (legacy messages).
- */
-function isEventFormat(meta: Record<string, unknown>, secondLine?: string): boolean {
-  if (meta.format === "events") return true;
-  if (!secondLine) return false;
-  try {
-    const parsed = JSON.parse(secondLine) as Record<string, unknown>;
-    return "type" in parsed && !("role" in parsed);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Extract preview text from a user.message event's content array.
- */
-function extractEventPreview(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  for (const part of content) {
-    if (
-      part &&
-      typeof part === "object" &&
-      "type" in part &&
-      (part as { type: string }).type === "text"
-    ) {
-      return (part as { text?: string }).text ?? "";
-    }
-  }
-  return "";
 }
 
 /**
@@ -253,9 +217,13 @@ interface EventLine {
   type?: string;
   ts?: string;
   content?: unknown;
-  usage?: TokenUsage;
-  model?: string;
   title?: string | null;
+}
+
+/** The fields an `llm.response` line always carries (see `LlmResponseEvent`). */
+interface LlmResponseLine {
+  usage: TokenUsage;
+  model: string;
 }
 
 /** Zero-valued metrics accumulator. */
@@ -272,17 +240,14 @@ function emptyMetrics(): DerivedMetrics {
 }
 
 /**
- * Fold each line after line 1 into a metrics accumulator, skipping any
+ * Fold each event line after line 1 into a metrics accumulator, skipping any
  * line that fails to parse or apply (malformed).
  */
-function scanLines(
-  lines: string[],
-  apply: (metrics: DerivedMetrics, line: string) => void,
-): DerivedMetrics {
+function scanLines(lines: string[]): DerivedMetrics {
   const metrics = emptyMetrics();
   for (let i = 1; i < lines.length; i++) {
     try {
-      apply(metrics, lines[i]!);
+      applyEventLine(metrics, lines[i]!);
     } catch {
       // Skip malformed lines
     }
@@ -297,42 +262,23 @@ function applyEventLine(metrics: DerivedMetrics, line: string): void {
   if (event.type === "user.message") {
     metrics.messageCount++;
     if (!metrics.preview) {
-      metrics.preview = extractEventPreview(event.content);
+      metrics.preview = previewTextOf(event.content);
     }
   } else if (event.type === "run.done") {
     metrics.messageCount++;
-  } else if (event.type === "llm.response" && event.usage && event.model) {
-    metrics.inputTokens += event.usage.inputTokens;
-    metrics.outputTokens += event.usage.outputTokens;
-    metrics.costUsd += estimateCost(event.model, event.usage);
+  } else if (event.type === "llm.response") {
+    const { usage, model } = event as EventLine & LlmResponseLine;
+    metrics.inputTokens += usage.inputTokens;
+    metrics.outputTokens += usage.outputTokens;
+    metrics.costUsd += estimateCost(model, usage);
   } else if (event.type === "metadata.title") {
     metrics.title = event.title;
   }
 }
 
 /**
- * Fold one legacy (message-format) line into the running metrics. Every
- * parseable line counts; assistant messages with usage add to totals so the
- * summary is consistent with the event-format path. Messages without usage
- * contribute zero.
- */
-function applyMessageLine(metrics: DerivedMetrics, line: string): void {
-  const msg = JSON.parse(line) as StoredMessage;
-  metrics.messageCount++;
-  if (!metrics.preview && msg.role === "user") {
-    metrics.preview = typeof msg.content === "string" ? msg.content : "";
-  }
-  if (msg.role === "assistant" && msg.metadata?.usage && msg.metadata.model) {
-    metrics.inputTokens += msg.metadata.usage.inputTokens;
-    metrics.outputTokens += msg.metadata.usage.outputTokens;
-    metrics.costUsd += estimateCost(msg.metadata.model, msg.metadata.usage);
-  }
-}
-
-/**
  * Parse a JSONL file's content to extract a ConversationSummary and access metadata.
- * Reads line 1 for metadata and scans for the first user message as preview.
- * Supports both legacy (StoredMessage) and event-sourced formats.
+ * Reads line 1 for metadata and folds the events after it.
  */
 export function parseFileHeader(
   content: string,
@@ -343,19 +289,10 @@ export function parseFileHeader(
   const meta = JSON.parse(lines[0]!) as ConversationMetadata;
   if (!meta.id) return null;
 
-  const eventFormat = isEventFormat(
-    meta as unknown as Record<string, unknown>,
-    lines[1] as string | undefined,
-  );
+  // Totals are always derived from events; line-1 totals are never read.
+  const metrics = scanLines(lines);
 
-  // Totals are always derived — from events for event-sourced files, from
-  // each assistant message's metadata.usage for legacy files. Legacy line-1
-  // metadata totals are intentionally ignored, so old conversations show
-  // zero totals if their events don't carry usage. (See PR removing stored
-  // totals.)
-  const metrics = scanLines(lines, eventFormat ? applyEventLine : applyMessageLine);
-
-  // Stage 1 invariant: every conversation has an ownerId. A file
+  // Invariant: every conversation has an ownerId. A file
   // without one is pre-migration data — load() already throws when
   // it encounters such a file directly, and the index honors the same
   // invariant by EXCLUDING ownerless entries entirely. Including them

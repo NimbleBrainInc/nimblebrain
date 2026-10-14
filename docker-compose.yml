@@ -6,6 +6,14 @@ services:
     volumes:
       - workspace:/data
       - ./skills:/app/skills:ro
+      # The identity provider. The runtime does not start without it; the
+      # README quickstart shows the dev adapter and the real ones.
+      - type: bind
+        source: ./instance.json
+        target: /data/instance.json
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
-import type { SseEventType } from "../src/types";
+import type * as ApiClient from "../src/api/client";
+import type { InstalledConnector } from "../src/api/client";
+import type { WorkspaceStreamEvents } from "../src/types";
 import { realClient } from "./setup";
 
 // ---------------------------------------------------------------------------
@@ -14,11 +16,18 @@ import { realClient } from "./setup";
 //      can fire SSE events synchronously and assert which ones refetch.
 // ---------------------------------------------------------------------------
 
-const mockGetInstalled = mock(() => Promise.resolve({ installed: [], errors: [] }));
+type GetInstalledOpts = Parameters<typeof ApiClient.getInstalledConnectors>[0];
+
+const mockGetInstalled = mock(
+  (_opts?: GetInstalledOpts): Promise<{ installed: InstalledConnector[]; errors: unknown[] }> =>
+    Promise.resolve({ installed: [], errors: [] }),
+);
 
 // Capture the latest onEvent handler registered via connectEvents so tests can
 // drive SSE events directly.
-let capturedOnEvent: (<K extends SseEventType>(type: K, data: unknown) => void) | null = null;
+let capturedOnEvent:
+  | (<K extends keyof WorkspaceStreamEvents>(type: K, data: unknown) => void)
+  | null = null;
 const mockConnectEvents = mock((opts: { onEvent: typeof capturedOnEvent }) => {
   capturedOnEvent = opts.onEvent;
   return { close: () => {} };
@@ -26,10 +35,8 @@ const mockConnectEvents = mock((opts: { onEvent: typeof capturedOnEvent }) => {
 
 mock.module("../src/api/client", () => ({
   ...realClient,
-  // Provider calls getInstalledConnectors({ scope: "workspace" }); the mock
-  // ignores args (we only count invocations), so call it bare rather than
-  // spreading an unused arg list.
-  getInstalledConnectors: () => mockGetInstalled(),
+  // Forward the args so a test can assert which workspace a read names.
+  getInstalledConnectors: (opts?: GetInstalledOpts) => mockGetInstalled(opts),
 }));
 
 mock.module("../src/api/sse", () => ({
@@ -43,8 +50,11 @@ mock.module("../src/api/sse", () => ({
 // connection + subscriber set the provider shares.
 const { WorkspaceAppIconsProvider } = await import("../src/context/WorkspaceAppIconsProvider");
 const { __internal__: eventsClient } = await import("../src/api/events-client");
+const { useWorkspaceAppIcons } = await import("../src/context/WorkspaceAppIconsContext");
+type WorkspaceAppIconsValue =
+  import("../src/context/WorkspaceAppIconsContext").WorkspaceAppIconsValue;
 
-function fire(type: SseEventType, data: Record<string, unknown> = {}) {
+function fire(type: keyof WorkspaceStreamEvents, data: Record<string, unknown> = {}) {
   if (!capturedOnEvent) throw new Error("connectEvents.onEvent was never registered");
   act(() => {
     capturedOnEvent?.(type, data);
@@ -74,9 +84,9 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
     cleanup();
   });
 
-  it("does NOT refetch installed connectors on connection.state_changed", async () => {
+  it("collapses a burst of connection.state_changed into one refetch", async () => {
     render(
-      <WorkspaceAppIconsProvider token="tok" workspaceId="ws-1">
+      <WorkspaceAppIconsProvider workspaceId="ws-1">
         <div />
       </WorkspaceAppIconsProvider>,
     );
@@ -85,21 +95,52 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
     await waitFor(() => expect(mockGetInstalled).toHaveBeenCalledTimes(1));
 
     // A connector install drives the connection through starting → pending_auth →
-    // running. Icons resolve from catalog metadata available at
-    // connector.installed time and do NOT depend on connection state, so none of
-    // these transitions should re-hit manage_connectors. Pre-fix the provider
-    // wired onConnectionStateChanged → refresh(), turning one click into a
-    // 3-call burst here.
+    // running. Refetching per transition turned one click into a 3-call burst;
+    // the status those transitions change is read once, after they settle.
     fire("connection.state_changed", { state: "starting" });
     fire("connection.state_changed", { state: "pending_auth" });
     fire("connection.state_changed", { state: "running" });
-
     expect(mockGetInstalled).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => expect(mockGetInstalled).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 700));
+    expect(mockGetInstalled).toHaveBeenCalledTimes(2);
+  });
+
+  it("exposes the installed list tagged with the workspace it was read for", async () => {
+    const gmail: InstalledConnector = {
+      serverName: "gmail",
+      connectorName: "gmail",
+      displayName: "gmail",
+      disconnectable: true,
+      version: "1.0.0",
+      state: "pending_auth",
+      scope: "workspace",
+      interactive: false,
+      toolCount: 0,
+      status: "needs_auth",
+    };
+    mockGetInstalled.mockImplementationOnce(() =>
+      Promise.resolve({ installed: [gmail], errors: [] }),
+    );
+    let seen: WorkspaceAppIconsValue["connectors"];
+    function Probe() {
+      seen = useWorkspaceAppIcons().connectors;
+      return null;
+    }
+    render(
+      <WorkspaceAppIconsProvider workspaceId="ws-1">
+        <Probe />
+      </WorkspaceAppIconsProvider>,
+    );
+    await waitFor(() => expect(seen).toEqual({ workspaceId: "ws-1", installed: [gmail] }));
+    // The read names the workspace it is tagged with, not the client's active one.
+    expect(mockGetInstalled.mock.calls).toEqual([[{ scope: "workspace", workspaceId: "ws-1" }]]);
   });
 
   it("still refetches on connector.installed / connector.uninstalled", async () => {
     render(
-      <WorkspaceAppIconsProvider token="tok" workspaceId="ws-1">
+      <WorkspaceAppIconsProvider workspaceId="ws-1">
         <div />
       </WorkspaceAppIconsProvider>,
     );

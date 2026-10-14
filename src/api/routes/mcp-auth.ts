@@ -10,14 +10,22 @@ import {
   signEnvelope,
   verifyEnvelopeAsTenant,
 } from "../../oauth/envelope.ts";
+import { readFleetAuthorizer } from "../../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { log } from "../../observability/log.ts";
-import { type FlowOwner, peekFlowOwner, resolveWithCode } from "../../tools/oauth-flow-registry.ts";
+import {
+  type FlowOwner,
+  peekFlowOwner,
+  refuseFlow,
+  resolveWithCode,
+  takeScopeFallback,
+} from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
-import { requireWorkspace } from "../middleware/workspace.ts";
-import { type AppContext, type AppEnv, apiError } from "../types.ts";
+import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
+import type { OAuthInitiateResponse } from "../schemas/responses.ts";
+import { type AppContext, type AppEnv, apiError, json } from "../types.ts";
 import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
-import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
+import { reinitiateParagraph, successPage } from "./oauth-success-page.ts";
 
 /**
  * OAuth integration routes for outbound flows where NimbleBrain is the
@@ -25,15 +33,13 @@ import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
  *
  * Two endpoints:
  *
- * - `POST /v1/mcp-auth/initiate` (workspace-authed): launches an
- *   interactive flow. Looks up the captured authorization URL on the
- *   connector's pending Connection, sets a session-bound `nb_oauth_state`
+ * - `POST /v1/workspaces/:wsId/mcp-auth/initiate` (workspace-authed):
+ *   launches an interactive flow. Looks up the captured authorization URL on
+ *   the connector's pending Connection, sets a session-bound `nb_oauth_state`
  *   cookie scoped to the callback path, and returns the URL the client
  *   should navigate the user's browser to. **POST-only** so a malicious
- *   `<img>` or prefetch can't trigger a flow without same-origin
- *   privileges. The `X-Workspace-Id` header that
- *   `requireWorkspace` enforces forces a CORS preflight, which kills
- *   simple-form CSRF.
+ *   `<img>` or prefetch can't trigger a flow, and a browser's write from
+ *   another origin is refused (`rejectCrossSiteWrites`, on every route).
  *
  * - `GET /v1/mcp-auth/callback?code&state` (unauthenticated): the return
  *   leg of the OAuth dance. Verifies the `nb_oauth_state` cookie hashes
@@ -58,15 +64,18 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // hitting a generic 500. Idempotent: returns the cached value on
   // subsequent calls in the route handlers below.
   getBouncerMode();
+  // Same for the fleet authorizer: with its issuer set, a missing or malformed
+  // tenant key refuses startup, since the authorizer refuses every unasserted
+  // token request.
+  readFleetAuthorizer();
 
   const app = new Hono<AppEnv>();
 
-  // ── POST /v1/mcp-auth/initiate ────────────────────────────────────
+  // ── POST /v1/workspaces/:wsId/mcp-auth/initiate ───────────────────
   //
-  // Workspace-authed. Body: { serverName }. Stage 2: every URL connector
+  // Workspace-authed. Body: { serverName }. Every URL connector
   // is workspace-scoped, so the principal is always `WORKSPACE_PRINCIPAL_ID`.
-  // Personal connectors bind to the user's personal workspace, which is
-  // itself a workspace from the lifecycle's vantage. Calls
+  // Personal connectors live on the identity plane, not here. Calls
   // `lifecycle.startAuth`, which is idempotent on double-click and tears
   // down stale sources (so disconnect → reconnect works without a
   // process restart).
@@ -74,12 +83,12 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // Auth + workspace middleware applied per-handler (not via .use("*"))
   // so the unauthenticated /callback below is unaffected. Hono's
   // sub-app `.use("*")` middleware applies to ALL routes under the
-  // mount, which would otherwise gate /callback on workspace headers
-  // the user's browser can't set on a return-from-AS navigation.
+  // mount, which would otherwise gate /callback on authentication the
+  // user's browser may not carry on a return-from-AS navigation.
   app.post(
-    "/v1/mcp-auth/initiate",
+    `${WORKSPACE_ROUTE_PREFIX}/mcp-auth/initiate`,
     requireAuth(ctx.authOptions),
-    requireWorkspace(ctx.workspaceStore),
+    requireWorkspace(ctx),
     async (c) => {
       const serverName = await parseServerName(c);
       if (serverName instanceof Response) return serverName;
@@ -92,11 +101,9 @@ export function mcpAuthRoutes(ctx: AppContext) {
         return apiError(404, "connector_not_found", `Connector "${serverName}" not installed.`);
       }
 
-      // Stage 2: every URL connector is workspace-scoped (legacy `"user"`
-      // literal was deleted). Personal connectors bind to the user's
-      // personal workspace, so the workspace principal is the only
-      // legal value here. `instance.oauthScope` is always `"workspace"`
-      // or undefined post-Stage-2.
+      // Every URL connector is workspace-scoped, so the workspace principal
+      // is the only legal value here. `instance.oauthScope` is always
+      // `"workspace"` or undefined.
       const principalId = WORKSPACE_PRINCIPAL_ID;
 
       const started = await startAuthorization(ctx, serverName, wsId, principalId);
@@ -105,7 +112,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       // flow (provider-minted / already-authenticated) and is now running. Report it
       // so the UI refreshes state instead of redirecting to a nonexistent auth page,
       // rather than the old spurious 500 (#679).
-      if (started === null) return c.json({ authorizationUrl: null });
+      if (started === null) return json<OAuthInitiateResponse>({ authorizationUrl: null });
 
       // Bind the user's browser session to the SDK-built `state` via a
       // hashed cookie so a leaked `state` value alone can't let a
@@ -120,9 +127,9 @@ export function mcpAuthRoutes(ctx: AppContext) {
       // Cookie scoped to /v1/mcp-auth/callback so it's only sent on the
       // return leg. HttpOnly + SameSite=Lax matches the existing session
       // cookie posture; Secure when not on localhost.
-      c.header("Set-Cookie", buildOAuthStateCookie(stateHash, 900, ctx.secureCookies));
-
-      return c.json({ authorizationUrl });
+      return json<OAuthInitiateResponse>({ authorizationUrl }, 200, {
+        "Set-Cookie": buildOAuthStateCookie(stateHash, 900, ctx.secureCookies),
+      });
     },
   );
 
@@ -158,14 +165,15 @@ export function mcpAuthRoutes(ctx: AppContext) {
     // A null URL is the success signal: connected without an interactive flow
     // (already authenticated). Report it so the UI refreshes state instead of
     // redirecting to nothing (#679).
-    if (started === null) return c.json({ authorizationUrl: null });
+    if (started === null) return json<OAuthInitiateResponse>({ authorizationUrl: null });
 
     const prepared = prepareAuthorization(started, serverName, `user:${userId}`);
     if (prepared instanceof Response) return prepared;
     const { authorizationUrl, state } = prepared;
 
-    c.header("Set-Cookie", buildOAuthStateCookie(sha256Hex(state), 900, ctx.secureCookies));
-    return c.json({ authorizationUrl });
+    return json<OAuthInitiateResponse>({ authorizationUrl }, 200, {
+      "Set-Cookie": buildOAuthStateCookie(sha256Hex(state), 900, ctx.secureCookies),
+    });
   });
 
   // ── GET /v1/mcp-auth/callback ─────────────────────────────────────
@@ -174,9 +182,10 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // flow. Returns minimal HTML in either branch so the user sees a clean
   // confirmation / error page.
   //
-  // Every terminal outcome is logged exactly once, here — see
-  // {@link logCallbackOutcome} for why the handler owns that rather than
-  // the helpers it calls.
+  // Every terminal outcome is logged exactly once, here or in
+  // {@link answerProviderRefusal}, which settles a refused flow — see
+  // {@link logCallbackOutcome} for why they own that rather than the
+  // helpers they call.
   app.get("/v1/mcp-auth/callback", (c) => {
     // Belt-and-suspenders: an intermediate proxy caching the success page
     // (with `?code=...` in the URL) in a shared cache space is a classic
@@ -187,14 +196,14 @@ export function mcpAuthRoutes(ctx: AppContext) {
     c.header("Pragma", "no-cache");
 
     const params = readCallbackParams(c);
-    if (isCallbackFailure(params)) return refuse(params);
+    if (isCallbackFailure(params)) {
+      if (params.outcome !== "provider_error") return refuse(params);
+      return answerProviderRefusal(c, params);
+    }
     const { code, wireState } = params;
 
-    const state = recoverInnerState(c, wireState);
+    const state = sessionFlow(c, wireState);
     if (isCallbackFailure(state)) return refuse(state);
-
-    const mismatch = verifyStateCookie(c, state);
-    if (mismatch) return refuse(mismatch, { flow: flowId(state) });
 
     // Recover the flow's owner *before* resolving (which deletes the registry
     // entry), so we can land the user back on the right page — a workspace
@@ -205,7 +214,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       logCallbackOutcome("unknown_flow", { flow: flowId(state) });
       return c.html(
         "<html><body><h3>Unknown or expired OAuth flow.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         404,
       );
     }
@@ -390,6 +399,7 @@ function buildOAuthStateCookie(value: string, maxAge: number, secure: boolean): 
  */
 type CallbackOutcome =
   | "resolved"
+  | "scope_fallback"
   | "unknown_flow"
   | "cookie_mismatch"
   | "envelope_missing"
@@ -435,7 +445,7 @@ function flowId(state: string): string {
 function logCallbackOutcome(outcome: CallbackOutcome, fields: Record<string, unknown> = {}): void {
   const message = `[mcp-auth] callback ${outcome}`;
   const structured = { event: "mcp_auth.callback", outcome, ...fields };
-  if (outcome === "resolved") log.info(message, structured);
+  if (outcome === "resolved" || outcome === "scope_fallback") log.info(message, structured);
   else log.warn(message, structured);
 }
 
@@ -472,6 +482,74 @@ function readCallbackParams(
   return { code, wireState };
 }
 
+/**
+ * Answer a callback the authorization server refused (`?error=`).
+ *
+ * The session that began the flow settles it: an `invalid_scope` refusal is
+ * retried once on the flow's fallback, and any other refusal, or a refusal of
+ * the fallback, ends the flow. Ending it is what frees the connector: its
+ * start waits on the flow, so a flow left pending holds the connection in
+ * "connecting", and a personal connector's Connect at 409, until the TTL.
+ *
+ * The state is checked like a code's before anything is taken or ended, so a
+ * callback without the session's state cookie settles nothing.
+ */
+function answerProviderRefusal(c: Context<AppEnv>, refusal: CallbackFailure): Response {
+  const error = c.req.query("error") ?? "";
+  const wireState = c.req.query("state");
+  const flow = wireState ? sessionFlow(c, wireState) : null;
+  if (flow === null || isCallbackFailure(flow)) {
+    // Which check failed is the diagnosis only where the callback asked for
+    // something (the fallback); otherwise the provider's refusal is.
+    return refuse(flow !== null && error === "invalid_scope" ? flow : refusal);
+  }
+
+  const retry = error === "invalid_scope" ? retryWithoutIdentityScopes(flow) : null;
+  if (retry && !isCallbackFailure(retry)) {
+    logCallbackOutcome("scope_fallback", { flow: flowId(flow) });
+    return c.redirect(retry.authorizationUrl, 302);
+  }
+  const flowEnded = refuseFlow(flow, error);
+  return refuse(retry ?? refusal, { flow: flowId(flow), flowEnded });
+}
+
+/**
+ * The flow a callback's state names, once the state cookie binds it to this
+ * session; otherwise the check that refused it.
+ */
+function sessionFlow(c: Context<AppEnv>, wireState: string): string | CallbackFailure {
+  const state = recoverInnerState(c, wireState);
+  if (isCallbackFailure(state)) return state;
+  const mismatch = verifyStateCookie(c, state);
+  if (mismatch) return { ...mismatch, fields: { ...mismatch.fields, flow: flowId(state) } };
+  return state;
+}
+
+/**
+ * The retry for an `invalid_scope` refusal: the flow's fallback, the same
+ * authorize request without the identity scopes the provider added (`openid`,
+ * `email`), which a server may advertise and still refuse to this client. Same
+ * state and PKCE challenge, so the same cookie and pending flow carry on, and
+ * the fallback is taken once, so a second refusal ends the flow. Returns null
+ * when there is no fallback to take, and the failure when the one taken could
+ * not be sent.
+ */
+function retryWithoutIdentityScopes(
+  state: string,
+): { authorizationUrl: string; state: string } | CallbackFailure | null {
+  const url = takeScopeFallback(state);
+  if (!url) return null;
+  const prepared = prepareAuthorization(url, "callback", flowId(state));
+  if (prepared instanceof Response) {
+    return {
+      outcome: "provider_error",
+      fields: { providerError: "invalid_scope" },
+      response: prepared,
+    };
+  }
+  return prepared;
+}
+
 /** Recover the inner OAuth state: unwrap the signed envelope in bouncer mode (rejecting an unwrapped or invalid envelope), else the wire state verbatim. Returns the inner state or a refusal. */
 function recoverInnerState(c: Context<AppEnv>, wireState: string): string | CallbackFailure {
   // In bouncer mode the URL state arrives wrapped — unwrap it to
@@ -491,7 +569,7 @@ function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Call
       outcome: "envelope_missing",
       response: c.html(
         "<html><body><h3>Authorization state envelope missing.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         400,
       ),
     };
@@ -516,7 +594,7 @@ function recoverInnerState(c: Context<AppEnv>, wireState: string): string | Call
       fields: { reason: code },
       response: c.html(
         "<html><body><h3>Authorization session invalid.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         400,
       ),
     };
@@ -547,7 +625,7 @@ function verifyStateCookie(c: Context<AppEnv>, state: string): CallbackFailure |
       fields: { binding: cookieValue ? "mismatched" : "absent" },
       response: c.html(
         "<html><body><h3>Authorization session mismatch.</h3>" +
-          "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+          `${reinitiateParagraph()}</body></html>`,
         400,
       ),
     };
@@ -581,8 +659,9 @@ function renderSuccessPage(
   // it renders unstyled in any deployment that doesn't override
   // NB_CSP — i.e. all of them. The hash pins us to exactly the bytes
   // we serve.
-  c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
-  return c.html(successPageHtml("Authorization complete", returnUrl));
+  const page = successPage("Authorization complete", returnUrl);
+  c.header("Content-Security-Policy", page.csp);
+  return c.html(page.html);
 }
 
 function sha256Hex(input: string): string {

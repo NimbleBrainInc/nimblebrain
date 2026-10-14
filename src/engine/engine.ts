@@ -8,7 +8,7 @@ import type {
   LanguageModelV4ToolResultPart,
   SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
-import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS, MAX_LENGTH_CONTINUATIONS } from "../limits.ts";
+import { DEFAULT_MAX_DIRECT_TOOLS, MAX_ITERATIONS } from "../limits.ts";
 import { applyCachePolicy } from "../model/cache-policy.ts";
 import {
   GOOGLE_THINKING_LEVELS,
@@ -44,19 +44,22 @@ import {
 } from "./content-helpers.ts";
 import { isContextOverflowError } from "./context-overflow.ts";
 import { withRetry } from "./retry.ts";
-import type { ConnectorSkillInjectedPayload } from "./schemas/events.ts";
+import type {
+  ConnectorSkillInjectedPayload,
+  RunErrorPayload,
+  ToolDonePayload,
+} from "./schemas/events.ts";
 import { createRunSupervisor, type RunSupervisor, type SupervisorVerdict } from "./supervisor.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "./token-estimate.ts";
 import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
   CONNECTOR_SKILL_SYNTHETIC,
   type ConnectorSkillCandidate,
-  type EffortSource,
   type EngineConfig,
   type EngineResult,
   type EventSink,
   type FinishReason,
-  isInternalTool,
+  isModelVisible,
   type ResolvedThinking,
   SKILL_ACTIVATED_META_KEY,
   SKILL_ACTIVATED_SYNTHETIC,
@@ -69,6 +72,7 @@ import {
   type ToolRouter,
   type ToolSchema,
 } from "./types.ts";
+import { formatUnknownArgumentsError, unknownArgumentNames } from "./unknown-tool-args.ts";
 
 /** Default when the env knob is unset or unusable. */
 const DEFAULT_MAX_PARALLEL_TOOL_CALLS = 6;
@@ -180,7 +184,7 @@ function toXaiEffort(effort: ThinkingEffort): XAIEffort {
  * The deepest level at or below the one requested that this model accepts.
  *
  * Support is per-model, not per-generation, so an operator's tier may simply
- * not exist here — `gemini-3-pro-preview` has no `medium`. Only steps down:
+ * not exist here — `gemini-3.1-flash-lite-image` has no `medium`. Only steps down:
  * stepping up would think harder than the operator asked for, which is a worse
  * surprise than not honoring the tier, and no current row would ever reach it
  * anyway (every level set contains `minimal` or `low`).
@@ -200,9 +204,12 @@ function nearestSupported<T extends string>(
   return undefined;
 }
 
+/** Process-wide deduplication for explicit tier mismatches. */
+const warnedTierDivergence = new Set<string>();
+
 /**
  * Which tier to actually send, for any dialect carrying a per-model tier set.
- * Both Google's levels and OpenAI's efforts obey the same three-part rule:
+ * Google, OpenAI, and xAI tiers obey the same three-part rule:
  *
  *   - the model offers what was asked for → send it
  *   - it doesn't, and the tier is the platform's own fallback rather than
@@ -214,18 +221,31 @@ function nearestSupported<T extends string>(
  *     or below. Never up: reasoning harder than asked is a worse surprise than
  *     not honoring the tier.
  *
- * `undefined` means send no tier at all. Note the operator's choice can end up
- * silently unapplied where nothing at or below it exists — see #809.
+ * `undefined` means send no tier at all. A measured empty ladder (xAI models
+ * with no effort knob) is expected and stays silent; an unknown ladder is a
+ * coverage gap and warns when an operator's requested tier is dropped.
  */
 function pickTier<T extends string>(
+  model: string,
   wanted: T,
-  supported: ReadonlySet<string>,
+  supported: ReadonlySet<string> | undefined,
   ladder: readonly T[],
-  source: EffortSource,
+  thinking: Extract<ResolvedThinking, { mode: "effort" | "enabled" }>,
 ): T | undefined {
-  if (supported.has(wanted)) return wanted;
-  if (source !== "operator") return undefined;
-  return nearestSupported(wanted, supported, ladder);
+  if (supported?.has(wanted)) return wanted;
+  if (thinking.source !== "operator" || supported?.size === 0) return undefined;
+
+  const tier = supported ? nearestSupported(wanted, supported, ladder) : undefined;
+  const key = JSON.stringify([model, thinking.effort]);
+  if (!warnedTierDivergence.has(key)) {
+    warnedTierDivergence.add(key);
+    const reason = supported ? `does not support "${wanted}"` : "has no measured effort ladder";
+    log.warn(
+      `[thinking] Requested thinkingEffort="${thinking.effort}" for "${model}", but it ${reason}; ` +
+        `sending ${tier ? `"${tier}"` : "no tier (provider default)"}. Logged once per model and requested tier.`,
+    );
+  }
+  return tier;
 }
 
 /**
@@ -235,6 +255,13 @@ function pickTier<T extends string>(
  * 5-series reject `thinking.type=enabled` and take `thinking.type=adaptive`
  * plus `output_config.effort`; everything earlier takes `thinking.type=enabled`
  * with a token budget.
+ *
+ * `display: "summarized"` asks for the thinking text itself. The adaptive
+ * dialect omits it by default, so without this the response carries thinking
+ * blocks whose text is empty: the reasoning tokens are spent and billed, the
+ * turn stalls for as long as they take, and the client has nothing to show for
+ * the wait. It applies only to the adaptive dialect; the budget dialect returns
+ * thinking text unasked.
  */
 function buildAnthropicThinkingOptions(
   model: string,
@@ -252,13 +279,18 @@ function buildAnthropicThinkingOptions(
       // `off` work on the models where it works.
       return {};
     case "adaptive":
-      return { anthropic: { thinking: { type: "adaptive" } } };
+      return { anthropic: { thinking: { type: "adaptive", display: "summarized" } } };
     case "effort":
     case "enabled": {
       // Effort-shaped models take the tier either way: a token budget can't be
       // metered there, but the depth chosen alongside it can.
       if (effortShaped) {
-        return { anthropic: { thinking: { type: "adaptive" }, effort: thinking.effort } };
+        return {
+          anthropic: {
+            thinking: { type: "adaptive", display: "summarized" },
+            effort: thinking.effort,
+          },
+        };
       }
       const budgetTokens =
         thinking.mode === "enabled"
@@ -297,10 +329,11 @@ function buildOpenAIThinkingOptions(
       // `gpt-5-pro` rejects `medium` — the platform fallback — so without
       // this a stock install 400s on every call to it.
       const tier = pickTier(
+        model,
         toOpenAIEffort(thinking.effort),
         openaiSupportedEfforts(model),
         OPENAI_EFFORTS,
-        thinking.source,
+        thinking,
       );
       return tier ? { openai: { reasoningEffort: tier } } : {};
     }
@@ -361,19 +394,18 @@ function buildXaiThinkingOptions(
   thinking: ResolvedThinking,
 ): SharedV4ProviderOptions {
   const supported = xaiSupportedEfforts(model);
-  if (!supported || supported.size === 0) return {};
 
   switch (thinking.mode) {
     case "off":
       // Only where measured — `grok-4.5` rejects `none` while taking the rest,
       // so this cannot be assumed from the provider.
-      return supported.has("none") ? { xai: { reasoningEffort: "none" } } : {};
+      return supported?.has("none") ? { xai: { reasoningEffort: "none" } } : {};
     case "adaptive":
       // No adaptive equivalent; the model applies its own per-call default.
       return {};
     case "effort":
     case "enabled": {
-      const tier = pickTier(toXaiEffort(thinking.effort), supported, XAI_EFFORTS, thinking.source);
+      const tier = pickTier(model, toXaiEffort(thinking.effort), supported, XAI_EFFORTS, thinking);
       return tier ? { xai: { reasoningEffort: tier } } : {};
     }
   }
@@ -384,6 +416,7 @@ const warnedUnmappedGoogle = new Set<string>();
 
 /** Gemini 3's dialect: a named level, from the set this specific model accepts. */
 function googleLevelOptions(
+  model: string,
   thinking: ResolvedThinking,
   levels: ReadonlySet<GoogleThinkingLevel>,
 ): SharedV4ProviderOptions {
@@ -398,10 +431,11 @@ function googleLevelOptions(
       : {};
   }
   const level = pickTier(
+    model,
     toGoogleLevel(thinking.effort),
     levels,
     GOOGLE_THINKING_LEVELS,
-    thinking.source,
+    thinking,
   );
   return level ? { google: { thinkingConfig: { thinkingLevel: level } } } : {};
 }
@@ -479,7 +513,7 @@ function buildGoogleThinkingOptions(
     return {};
   }
   return support.dialect === "level"
-    ? googleLevelOptions(thinking, support.levels)
+    ? googleLevelOptions(model, thinking, support.levels)
     : googleBudgetOptions(thinking, support, maxOutputTokens);
 }
 
@@ -515,47 +549,6 @@ function buildThinkingProviderOptions(
 }
 
 /**
- * True if any reasoning (extended-thinking) block in the content lacks its
- * provider signature. A signed thinking block round-trips on replay; an
- * unsigned one — produced when `finishReason: "length"` cuts the model off
- * mid-thinking, before the signature arrives (src/model/stream.ts) — cannot
- * be replayed as the trailing assistant message: Anthropic rejects it
- * ("thinking blocks in the latest assistant message cannot be modified",
- * src/model/inbound-fit.ts). The signature lives at
- * `providerMetadata.anthropic.signature`. Conservative for other providers:
- * any reasoning block we can't confirm is signed counts as unsigned, so the
- * caller surfaces the truncation instead of risking a 400.
- */
-function hasUnsignedReasoning(content: LanguageModelV4Content[]): boolean {
-  for (const block of content) {
-    if (block.type !== "reasoning") continue;
-    const meta = (block as { providerMetadata?: Record<string, unknown> }).providerMetadata;
-    const anthropic = meta?.anthropic as { signature?: unknown } | undefined;
-    const signed = typeof anthropic?.signature === "string" && anthropic.signature.length > 0;
-    if (!signed) return true;
-  }
-  return false;
-}
-
-/**
- * Whether a no-tool-call turn that hit the output ceiling can be auto-resumed
- * from its partial text. False once MAX_LENGTH_CONTINUATIONS is reached, or when
- * the turn's reasoning was cut off unsigned — replaying that as the trailing
- * assistant message is exactly what Anthropic rejects.
- */
-function canResumeFromLength(
-  finishReason: FinishReason | undefined,
-  lengthContinuations: number,
-  content: LanguageModelV4Content[],
-): boolean {
-  return (
-    finishReason === "length" &&
-    lengthContinuations < MAX_LENGTH_CONTINUATIONS &&
-    !hasUnsignedReasoning(content)
-  );
-}
-
-/**
  * Map a per-call finish reason to a run-level stop reason. Called once
  * the agent loop has exited (no pending tool calls). The iteration cap
  * is checked first by the caller — this only handles model-driven exits.
@@ -579,6 +572,15 @@ function deriveStopReason(finish: FinishReason | undefined): StopReason {
     default:
       return "other";
   }
+}
+
+/**
+ * The provider-native finish reason as an optional `finishReasonRaw` field.
+ * Several distinct provider stops share the unified "other", so the raw value
+ * is what names the cause. Empty when the provider reported none.
+ */
+function rawFinishReasonField(raw: string | undefined): { finishReasonRaw?: string } {
+  return raw ? { finishReasonRaw: raw } : {};
 }
 
 /**
@@ -665,6 +667,25 @@ function buildToolLookups(allRouterTools: ToolSchema[]): {
   return { toolMeta, allToolSchemaMap };
 }
 
+/**
+ * Fold a fresh router listing into the run's lookups in place (the tool
+ * controls and per-call contexts hold these same Map objects). Adds and
+ * overwrites, never removes: a connector that is down at refresh time is
+ * absent from the listing, and dropping its `toolMeta` entries would read its
+ * app-only tools as model-visible (absent meta defaults to visible).
+ */
+function mergeToolLookups(
+  fresh: ToolSchema[],
+  toolMeta: Map<string, Record<string, unknown>>,
+  allToolSchemaMap: Map<string, ToolSchema>,
+): void {
+  for (const t of fresh) {
+    allToolSchemaMap.set(t.name, t);
+    if (t.meta) toolMeta.set(t.name, t.meta);
+    else toolMeta.delete(t.name);
+  }
+}
+
 /** Throw the abort reason if the run's signal is already aborted. */
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
@@ -672,6 +693,17 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
       ? signal.reason
       : new DOMException("The operation was aborted.", "AbortError");
   }
+}
+
+/** Estimated input tokens of one model call: every prompt message (system included) and tool definition. */
+function estimatePromptTokens(
+  prompt: LanguageModelV4Message[],
+  tools: LanguageModelV4FunctionTool[],
+): number {
+  return (
+    prompt.reduce((sum, m) => sum + estimateMessageTokens(m), 0) +
+    tools.reduce((sum, t) => sum + estimateToolDescriptionTokens(t), 0)
+  );
 }
 
 /** Apply the transformPrompt hook when present; otherwise the system prompt verbatim. */
@@ -710,6 +742,68 @@ function appendFinalStepReminder(
 }
 
 /**
+ * The fewest output tokens a call is sent with when the run's spend accounts
+ * clamp it. A call allowed less could not write a useful step (a tool call
+ * with its arguments, or a short answer), so the run stops with `spend_limit`
+ * instead of sending it.
+ */
+const MIN_SPEND_CALL_OUTPUT_TOKENS = 256;
+
+/**
+ * The output tokens a call may write beyond its `maxOutputTokens`: the
+ * Anthropic adapter adds an `enabled` thinking budget on top of `max_tokens`
+ * (see `clampThinkingBudget`). Every other dialect fits thinking inside it.
+ */
+function thinkingBeyondMaxOutput(options: SharedV4ProviderOptions): number {
+  const thinking = (
+    options.anthropic as { thinking?: { type?: string; budgetTokens?: number } } | undefined
+  )?.thinking;
+  return thinking?.type === "enabled" ? (thinking.budgetTokens ?? 0) : 0;
+}
+
+/**
+ * Whether the next model call may be sent, and with how many output tokens,
+ * judged before it is: the run-wide input cap (`EngineConfig.maxRunInputTokens`)
+ * first, then the spend accounts (`EngineConfig.spend`). The call's input is
+ * projected as the larger of the estimate of the prompt about to be sent and
+ * the previous call's reported input.
+ *
+ * The accounts are asked for the call's whole output ceiling, thinking budget
+ * included, and answer with the largest they can pay for (reserved until the
+ * call is debited). The call's `maxOutputTokens` is clamped so that it plus
+ * its thinking budget fits that answer: the thinking budget never grows with a
+ * smaller ceiling, so `granted − budget(min(ceiling, granted))` fits, and the
+ * minimum asked for (`MIN_SPEND_CALL_OUTPUT_TOKENS` plus its own budget) keeps
+ * that at or above `MIN_SPEND_CALL_OUTPUT_TOKENS`.
+ */
+function checkBeforeCall(
+  config: EngineConfig,
+  call: { spentInput: number; lastCallInputTokens: number; estimate: () => number },
+): "max_input_tokens" | { spendAccountId: string } | { maxOutputTokens: number } {
+  const ceiling = config.maxOutputTokens;
+  if (config.maxRunInputTokens === undefined && !config.spend) return { maxOutputTokens: ceiling };
+  const projected = Math.max(call.lastCallInputTokens, call.estimate());
+  if (
+    config.maxRunInputTokens !== undefined &&
+    call.spentInput + projected > config.maxRunInputTokens
+  ) {
+    return "max_input_tokens";
+  }
+  if (!config.spend) return { maxOutputTokens: ceiling };
+  const beyond = (max: number) =>
+    thinkingBeyondMaxOutput(buildThinkingProviderOptions(config.model, config.thinking, max));
+  const floor = Math.min(ceiling, MIN_SPEND_CALL_OUTPUT_TOKENS);
+  const grant = config.spend.check({
+    inputTokens: projected,
+    maxOutputTokens: ceiling + beyond(ceiling),
+    minOutputTokens: floor + beyond(floor),
+  });
+  if ("accountId" in grant) return { spendAccountId: grant.accountId };
+  const fitted = Math.min(ceiling, grant.maxOutputTokens);
+  return { maxOutputTokens: Math.min(fitted, grant.maxOutputTokens - beyond(fitted)) };
+}
+
+/**
  * Map the AI SDK V4 usage shape into our canonical TokenUsage, plus the
  * engine-only 1h/5m cache-write split the base V4 struct doesn't carry.
  * V4's `inputTokens.total` is the grand total (noCache+cacheRead+cacheWrite);
@@ -738,12 +832,15 @@ function parseToolCallInput(input: LanguageModelV4ToolCall["input"]): Record<str
 }
 
 /**
- * Coerce a tool call's input against its declared schema, then validate it.
+ * Coerce a model tool call's input against its declared schema, then validate it.
  * Coerce first: models occasionally emit nested object/array values as
  * JSON-encoded strings (`{ manifest: "{...}" }`); the coerce pass uses the
  * schema as a parsing oracle to recover those one-level misencodings before
- * validation. Returns the (possibly coerced) input plus an isError result when
- * validation fails. With no schema the input passes through unchanged.
+ * validation. An argument name the schema does not declare is rejected with
+ * the declared arguments listed (see unknown-tool-args.ts); the check runs
+ * against the tool's own schema, not the LLM-flattened one. Returns the
+ * (possibly coerced) input plus an isError result when validation fails. With
+ * no schema the input passes through unchanged.
  */
 function coerceAndValidateToolInput(
   input: Record<string, unknown>,
@@ -752,6 +849,17 @@ function coerceAndValidateToolInput(
   if (!toolSchema?.inputSchema) return { input };
   const schema = toolSchema.inputSchema as Record<string, unknown>;
   const coerced = coerceInputForSchema(input, schema);
+  const unknown = unknownArgumentNames(coerced, schema);
+  if (unknown.length > 0) {
+    log.info("[engine] invalid_input.unknown_keys", { tool: toolSchema.name, keys: unknown });
+    return {
+      input: coerced,
+      errorResult: {
+        content: textContent(formatUnknownArgumentsError(toolSchema.name, unknown, schema)),
+        isError: true,
+      },
+    };
+  }
   const validation = validateToolInput(coerced, schema);
   if (!validation.valid) {
     return {
@@ -763,6 +871,47 @@ function coerceAndValidateToolInput(
     };
   }
   return { input: coerced };
+}
+
+/**
+ * The schema a model call is checked against. The iteration map lacks a tool
+ * promoted by `nb__manage_tools` in this same assistant message, so fall back
+ * to the router-wide map for it.
+ */
+function toolSchemaFor(ctx: ToolExecContext, name: string): ToolSchema | undefined {
+  return ctx.toolSchemaMap.get(name) ?? ctx.allToolSchemaMap.get(name);
+}
+
+/**
+ * Refusal for a call naming a tool without "model" in its `ui.visibility`.
+ * Such a tool is withheld from every list the model sees, and that alone does
+ * not stop a model that names it: an injected instruction can carry the name.
+ * The engine is the host on this door, so the refusal is enforced at the call.
+ */
+function notAvailableToAgent(toolCall: LanguageModelV4ToolCall, call: ToolCall): ToolExecResult {
+  return {
+    toolCall,
+    gatedCall: call,
+    result: {
+      content: textContent(`${call.name} is not available to the agent.`),
+      isError: true,
+    } as ToolResult,
+    ms: 0,
+  };
+}
+
+/**
+ * The refusal for a checked call that repeats the exact call its tool was
+ * tripped on, or null. Compared on the coerced input, which is what the
+ * supervisor observed when it tripped.
+ */
+function repeatOfTrip(
+  toolCall: LanguageModelV4ToolCall,
+  call: ToolCall,
+  ctx: ToolExecContext,
+): ToolExecResult | null {
+  const result = ctx.supervisor.repeatRefusal(call);
+  return result ? { toolCall, gatedCall: call, result, ms: 0 } : null;
 }
 
 /**
@@ -806,7 +955,7 @@ function buildToolDoneData(params: {
   modelOutput: string;
   resourceLinks: ResourceLinkInfo[];
   verdict: SupervisorVerdict;
-}): Record<string, unknown> {
+}): ToolDonePayload {
   const {
     runId,
     name,
@@ -901,13 +1050,27 @@ function buildToolResults(toolResults: ToolExecResult[]): {
   return { toolResultParts, toolCallRecords };
 }
 
+/**
+ * The iteration count a run reports: the zero-based loop counter plus the
+ * in-progress iteration when the loop exited before the cap.
+ */
+function reportedIterationCount(iteration: number, maxIter: number): number {
+  return iteration + (iteration < maxIter ? 1 : 0);
+}
+
 /** Shape the `run.error` event payload from a thrown value. */
-function buildRunErrorData(runId: string, err: unknown): Record<string, unknown> {
+function buildRunErrorData(runId: string, err: unknown): RunErrorPayload {
   return {
     runId,
     error: err instanceof Error ? err.message : String(err),
     type: err instanceof Error ? err.constructor.name : "Error",
   };
+}
+
+/** A surfaced overlay whose body is still being fetched. */
+interface PendingOverlayFetch {
+  data: Omit<ConnectorSkillInjectedPayload, "skillBody">;
+  body: Promise<string | null>;
 }
 
 /** Per-tool-call context shared across an iteration's concurrent executions. */
@@ -919,7 +1082,11 @@ interface ToolExecContext {
   injectedConnectorSkills: Set<string>;
   /** Drained into history after this iteration's tool results. */
   pendingOverlayDeliveries: ConnectorSkillInjectedPayload[];
+  /** Surfaced overlays whose bodies are still being fetched; settled before the drain. */
+  pendingOverlayFetches: PendingOverlayFetch[];
   toolSchemaMap: Map<string, ToolSchema>;
+  /** Every router tool's schema: validates a call to a tool promoted in the same message. */
+  allToolSchemaMap: Map<string, ToolSchema>;
   promotedLastUsed: Map<string, number>;
   bumpUseCounter: () => number;
   supervisor: RunSupervisor;
@@ -975,6 +1142,7 @@ export class AgentEngine {
     // results lets the guidance land in THIS run, before the model's next
     // action — which is the point of surfacing it on first use at all.
     const pendingOverlayDeliveries: ConnectorSkillInjectedPayload[] = [];
+    const pendingOverlayFetches: PendingOverlayFetch[] = [];
 
     let iteration = 0;
     const cumulativeUsage: TokenUsage = emptyUsage();
@@ -985,6 +1153,30 @@ export class AgentEngine {
 
     const allRouterTools = await this.tools.availableTools();
     const { toolMeta, allToolSchemaMap } = buildToolLookups(allRouterTools);
+    // The listing above omits any connector that was not started when the run
+    // began; one that reconnects mid-run is listed by `nb__search`, which
+    // reads live. A promotion that misses re-reads the router, at most once
+    // per iteration, so a hallucinated name cannot turn every add into a full
+    // listing (which may attempt connector starts). The iteration's re-read is
+    // held as one promise, so concurrent misses (tool calls in one message run
+    // in parallel) all wait on the same listing. A failed re-read keeps the
+    // lookups the run already has.
+    let lookupsRefresh: { iteration: number; done: Promise<void> } | undefined;
+    const refreshToolLookups = (): Promise<void> => {
+      if (lookupsRefresh?.iteration !== iteration) {
+        lookupsRefresh = {
+          iteration,
+          done: this.tools.availableTools().then(
+            (fresh) => mergeToolLookups(fresh, toolMeta, allToolSchemaMap),
+            (err) =>
+              log.warn(
+                `[engine] tool lookup refresh failed; keeping the run's lookups — ${err instanceof Error ? err.message : String(err)}`,
+              ),
+          ),
+        };
+      }
+      return lookupsRefresh.done;
+    };
 
     const directTools = [...tools];
     const directToolNames = new Set(directTools.map((t) => t.name));
@@ -1002,7 +1194,12 @@ export class AgentEngine {
     // initial set just makes eviction soft (see evictPromotedToolsToCap).
 
     const toolControls = {
-      addTool: (toolName: string) => {
+      addTool: async (toolName: string) => {
+        // Refresh before the active-list check, so an add that interleaves
+        // with another add of the same name across the await still lands there.
+        if (!directToolNames.has(toolName) && !allToolSchemaMap.has(toolName)) {
+          await refreshToolLookups();
+        }
         if (directToolNames.has(toolName)) {
           // Already-active tool counts as a "use" — refresh LRU stamp so
           // re-promoting a recently-used tool doesn't make it look stale.
@@ -1023,16 +1220,16 @@ export class AgentEngine {
             toolName,
             changed: false,
             reason: "not_found",
-            message: `${toolName} was not found in the current tool registry.`,
+            message: `${toolName} was not found in the current tool registry. If its connector is starting, try again on a later step.`,
           };
         }
-        if (isInternalTool(schema)) {
+        if (!isModelVisible(schema)) {
           return {
             ok: false,
             toolName,
             changed: false,
-            reason: "internal_tool",
-            message: `${toolName} is an internal tool and cannot be added to the active tool list.`,
+            reason: "not_model_visible",
+            message: `${toolName} is not visible to the model and cannot be added to the active tool list.`,
           };
         }
         if (config.toolPromotion && !config.toolPromotion.isToolEligible(schema)) {
@@ -1061,6 +1258,7 @@ export class AgentEngine {
           connectorSkillCandidates,
           injectedConnectorSkills,
           pendingOverlayDeliveries,
+          pendingOverlayFetches,
         );
 
         // Backstop: cap active tools by evicting LRU agent-promoted entries.
@@ -1149,17 +1347,14 @@ export class AgentEngine {
     // stop reason can reflect why the model actually exited (length cap,
     // content filter, etc.) rather than always reporting "complete".
     let lastFinishReason: FinishReason | undefined;
-
-    // Auto-resume bookkeeping for output-ceiling truncations. When a turn
-    // is cut off at the model's max output tokens (`finishReason: "length"`)
-    // with no pending tool call, the engine re-prompts the model to continue
-    // from its partial text instead of ending the run with a half-written
-    // answer (see the `toolCalls.length === 0` branch). `lengthContinuations`
-    // bounds that to `MAX_LENGTH_CONTINUATIONS`; `resumingFromLength`
-    // suppresses the inter-turn blank line so the resumed text stitches
-    // seamlessly onto the partial.
-    let lengthContinuations = 0;
-    let resumingFromLength = false;
+    // The same call's provider-native stop reason (see `EngineResult.finishReasonRaw`).
+    let lastFinishReasonRaw: string | undefined;
+    // Input tokens the most recent model call reported. One half of the next
+    // call's projected size for the run cap (see `EngineConfig.maxRunInputTokens`).
+    let lastCallInputTokens = 0;
+    let runInputCapReached = false;
+    // The spend account that would have been overrun by the next call, if any.
+    let spendAccountId: string | undefined;
 
     const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
@@ -1181,9 +1376,8 @@ export class AgentEngine {
         //      until the model finishes.
         //
         // Cooperative throughout: we never preempt running work, just
-        // stop starting new work. The runtime catch translates the
-        // thrown AbortError into the appropriate `run.error` event for
-        // SSE consumers.
+        // stop starting new work. The run's catch below ends an aborted
+        // run with `run.done` stopReason "cancelled" and rethrows.
         throwIfAborted(config.signal);
 
         // Offer the history this loop has grown back to the caller, which may
@@ -1210,10 +1404,32 @@ export class AgentEngine {
 
         callMessages = appendFinalStepReminder(callMessages, iteration, maxIter);
 
+        // The run-wide input cap and the spend accounts, checked against the
+        // prompt about to be sent, before it is sent.
+        const preCallStop = checkBeforeCall(config, {
+          spentInput: cumulativeUsage.inputTokens,
+          lastCallInputTokens,
+          estimate: () =>
+            estimatePromptTokens(
+              [{ role: "system", content: callPrompt }, ...callMessages],
+              modelTools,
+            ),
+        });
+        if (preCallStop === "max_input_tokens") {
+          runInputCapReached = true;
+          break;
+        }
+        if ("spendAccountId" in preCallStop) {
+          spendAccountId = preCallStop.spendAccountId;
+          break;
+        }
+        // The model's ceiling, or less when the spend accounts allow less.
+        const callMaxOutputTokens = preCallStop.maxOutputTokens;
+
         const callProviderOptions = buildThinkingProviderOptions(
           config.model,
           config.thinking,
-          config.maxOutputTokens,
+          callMaxOutputTokens,
         );
 
         const callProvider = getProviderFromModel(config.model);
@@ -1244,9 +1460,7 @@ export class AgentEngine {
           // `cachedPrompt` is the full prompt array (system message +
           // messages), so this covers everything billed as input except the
           // provider's own per-request overhead.
-          estimatedInputTokens =
-            cachedPrompt.reduce((sum, m) => sum + estimateMessageTokens(m), 0) +
-            cachedTools.reduce((sum, t) => sum + estimateToolDescriptionTokens(t), 0);
+          estimatedInputTokens = estimatePromptTokens(cachedPrompt, cachedTools);
           return withRetry(
             () =>
               callModel(
@@ -1254,7 +1468,7 @@ export class AgentEngine {
                 {
                   prompt: cachedPrompt,
                   tools: cachedTools,
-                  maxOutputTokens: config.maxOutputTokens,
+                  maxOutputTokens: callMaxOutputTokens,
                   // Forward the run-scoped signal into the model call. AI
                   // SDK V4 providers honor `abortSignal` by aborting the
                   // underlying fetch, so an in-flight stream cancels at
@@ -1294,18 +1508,12 @@ export class AgentEngine {
         const llmMs = Math.round(performance.now() - llmStart);
 
         // Accumulate text output (add newline between turns if needed).
-        // When this turn is the resumption of a length-truncated one, stitch
-        // directly onto the partial with no separator — the model is
-        // continuing mid-thought, so a blank line would inject a false break.
-        output = this.accumulateAssistantText(output, response.content, resumingFromLength, runId);
-        // Consume the resume flag unconditionally: it must not leak into a
-        // later iteration if this resumed turn produced no text block (e.g.
-        // tool-call- or reasoning-only), which would wrongly glue a genuinely
-        // new turn onto the previous one.
-        resumingFromLength = false;
+        output = this.accumulateAssistantText(output, response.content, runId);
 
         const turnUsage = computeTurnUsage(response.usage);
         addUsage(cumulativeUsage, turnUsage);
+        config.spend?.debit(turnUsage);
+        lastCallInputTokens = turnUsage.inputTokens;
         cumulativeLlmMs += llmMs;
 
         // Track the model's per-call finish reason for downstream
@@ -1313,6 +1521,8 @@ export class AgentEngine {
         // `unified` is non-optional in the V4 spec and stream.ts defaults
         // to "other" if no finish part arrives, so no fallback needed.
         lastFinishReason = response.finishReason.unified;
+        const rawFinish = rawFinishReasonField(response.finishReason.raw);
+        lastFinishReasonRaw = rawFinish.finishReasonRaw;
 
         // Record the atomic LLM call fact
         this.events.emit({
@@ -1334,6 +1544,7 @@ export class AgentEngine {
             // windowing that returned over budget.
             estimatedInputTokens,
             finishReason: lastFinishReason,
+            ...rawFinish,
           },
         });
 
@@ -1343,54 +1554,12 @@ export class AgentEngine {
         );
 
         if (toolCalls.length === 0) {
-          // A turn with no tool call usually means the model is done — but
-          // `finishReason: "length"` means it was cut off at the output
-          // ceiling mid-answer, not finished. Re-prompt it to continue from
-          // its partial text instead of ending the run with a truncated
-          // response. Bounded by MAX_LENGTH_CONTINUATIONS so a pathologically
-          // long answer can't spin forever (it then ends as stopReason
-          // "length", same as before this fix). Only fires for text
-          // truncation: a length cut with tool calls present takes the normal
-          // tool path below.
-          //
-          // Guard: never resume a turn whose reasoning was cut off mid-stream.
-          // A thinking block only carries its provider signature once the
-          // block completes; a length cut during thinking drains an UNSIGNED
-          // reasoning block (see src/model/stream.ts). Replaying an unsigned
-          // thinking block as the trailing assistant message is exactly what
-          // Anthropic rejects ("thinking blocks in the latest assistant
-          // message cannot be modified" — src/model/inbound-fit.ts). In that
-          // case fall through to `break` and surface stopReason "length"; the
-          // user re-prompts and the model starts a fresh, fully-signed turn.
-          if (canResumeFromLength(lastFinishReason, lengthContinuations, response.content)) {
-            lengthContinuations += 1;
-            // Seed history with the partial assistant text so the next call
-            // continues from where it stopped. `normalizeForReplay` fixes the
-            // stream→prompt shape, same as the tool path below.
-            //
-            // Provider note: this relies on assistant-message *prefill
-            // continuation* — a trailing assistant message is the turn to
-            // continue. That's Anthropic semantics (the configured default
-            // and the model this fix was written against). OpenAI/Google
-            // instead treat a trailing assistant message as context and start
-            // a fresh turn, which `resumingFromLength` would then glue on with
-            // no separator — a mildly disjoint resume, still bounded by
-            // MAX_LENGTH_CONTINUATIONS and no worse than a crash. We don't gate
-            // by provider here on purpose: this engine is provider-agnostic
-            // (provider-specific replay lives in the runtime hook, e.g.
-            // applyReasoningReplayPolicy). If a non-Anthropic model ever
-            // becomes a default, thread a `supportsAssistantPrefillContinuation`
-            // capability through EngineConfig and gate on it rather than
-            // string-matching the provider in here.
-            history.push({ role: "assistant", content: normalizeForReplay(response.content) });
-            resumingFromLength = true;
-            this.events.emit({
-              type: "context.length_continuation",
-              data: { runId, continuation: lengthContinuations },
-            });
-            iteration++;
-            continue;
-          }
+          // A turn with no tool call ends the run. A `finishReason: "length"`
+          // turn (cut off at the output ceiling) ends it too, surfacing as
+          // stopReason "length": resuming it would send a history that ends
+          // on the partial assistant message, which is an assistant prefill
+          // that current Anthropic models reject with a 400. The user sends
+          // another message to continue.
           break; // Model is done
         }
 
@@ -1409,7 +1578,9 @@ export class AgentEngine {
           connectorSkillCandidates,
           injectedConnectorSkills,
           pendingOverlayDeliveries,
+          pendingOverlayFetches,
           toolSchemaMap,
+          allToolSchemaMap,
           promotedLastUsed,
           bumpUseCounter,
           supervisor,
@@ -1429,10 +1600,10 @@ export class AgentEngine {
         // 7. Deliver any overlay surfaced while those tools ran, in the same
         // position the reconstructor will replay it into — after this
         // iteration's tool results. The model reads the guidance before its
-        // next action, which is what "surface on first use" was supposed to
-        // mean; previously the event was recorded here and the body only
-        // appeared on a later rehydration, so the calls it governs had already
-        // happened and a single-run conversation never saw it at all.
+        // next action, which is what "surface on first use" means. Recording
+        // the event here and leaving the body to a later rehydration would
+        // deliver it after the calls it governs had already happened, and a
+        // single-run conversation would never see it at all.
         //
         // The role is `user`, not `assistant`, and that is load-bearing: this
         // message ENDS the history for the next model call of this same run,
@@ -1441,6 +1612,16 @@ export class AgentEngine {
         // that continuation is its real, user-visible output. `user` is the
         // role the codebase already injects synthetic non-user guidance under
         // (see `appendFinalStepReminder`), and it is trailing-safe.
+        // An overlay whose body is fetched on demand (a server-published
+        // skill) is recorded once its body is in hand. It is recorded before
+        // the next `llm.response`, the same iteration the injector fired in,
+        // so replay places it where the live run does. A body that cannot be
+        // fetched is not delivered, and the skill stays eligible.
+        await this.settleOverlayFetches(
+          pendingOverlayFetches,
+          injectedConnectorSkills,
+          pendingOverlayDeliveries,
+        );
         for (const overlay of pendingOverlayDeliveries) {
           history.push({
             role: "user",
@@ -1461,7 +1642,7 @@ export class AgentEngine {
         iteration++;
       }
     } catch (err) {
-      this.events.emit({ type: "run.error", data: buildRunErrorData(runId, err) });
+      this.emitThrownRunEnd({ runId, err, signal: config.signal, iteration, maxIter, runStart });
       throw err;
     } finally {
       unregisterToolControls?.();
@@ -1472,7 +1653,10 @@ export class AgentEngine {
       runId,
       iteration,
       maxIter,
+      runInputCapReached,
+      spendAccountId,
       lastFinishReason,
+      lastFinishReasonRaw,
       totalMs,
       output,
       allToolCalls,
@@ -1482,8 +1666,38 @@ export class AgentEngine {
   }
 
   /**
+   * Emit the terminal event for a run whose loop threw. When the run's abort
+   * signal fired, whatever the cause, the run was stopped rather than failed,
+   * so it ends with `run.done` stopReason "cancelled" rather than `run.error`. The caller still rethrows: callers
+   * classify the abort themselves.
+   */
+  private emitThrownRunEnd(params: {
+    runId: string;
+    err: unknown;
+    signal: AbortSignal | undefined;
+    iteration: number;
+    maxIter: number;
+    runStart: number;
+  }): void {
+    const { runId, err, signal, iteration, maxIter, runStart } = params;
+    if (signal?.aborted) {
+      this.events.emit({
+        type: "run.done",
+        data: {
+          runId,
+          stopReason: "cancelled" satisfies StopReason,
+          iterations: reportedIterationCount(iteration, maxIter),
+          totalMs: Math.round(performance.now() - runStart),
+        },
+      });
+      return;
+    }
+    this.events.emit({ type: "run.error", data: buildRunErrorData(runId, err) });
+  }
+
+  /**
    * Emit `run.done` and assemble the EngineResult: the run-level stop reason
-   * (iteration cap first, then the model-driven exit) and the reported
+   * (run input cap, then spend account, then iteration cap, then the model-driven exit) and the reported
    * iteration count (which includes the in-progress iteration when the loop
    * exited before the cap).
    */
@@ -1491,7 +1705,10 @@ export class AgentEngine {
     runId: string;
     iteration: number;
     maxIter: number;
+    runInputCapReached: boolean;
+    spendAccountId: string | undefined;
     lastFinishReason: FinishReason | undefined;
+    lastFinishReasonRaw: string | undefined;
     totalMs: number;
     output: string;
     allToolCalls: ToolCallRecord[];
@@ -1502,16 +1719,29 @@ export class AgentEngine {
       runId,
       iteration,
       maxIter,
+      runInputCapReached,
+      spendAccountId,
       lastFinishReason,
+      lastFinishReasonRaw,
       totalMs,
       output,
       allToolCalls,
       cumulativeUsage,
       cumulativeLlmMs,
     } = params;
-    const stopReason: StopReason =
-      iteration >= maxIter ? "max_iterations" : deriveStopReason(lastFinishReason);
-    const reportedIterations = iteration + (iteration < maxIter ? 1 : 0);
+    const stopReason: StopReason = runInputCapReached
+      ? "max_input_tokens"
+      : spendAccountId !== undefined
+        ? "spend_limit"
+        : iteration >= maxIter
+          ? "max_iterations"
+          : deriveStopReason(lastFinishReason);
+    // A cap or spend stop breaks before its iteration's model call, so every
+    // counted iteration is complete.
+    const reportedIterations =
+      runInputCapReached || spendAccountId !== undefined
+        ? iteration
+        : reportedIterationCount(iteration, maxIter);
     this.events.emit({
       type: "run.done",
       data: {
@@ -1530,12 +1760,14 @@ export class AgentEngine {
       llmMs: cumulativeLlmMs,
       stopReason,
       ...(lastFinishReason !== undefined ? { finishReason: lastFinishReason } : {}),
+      ...(lastFinishReasonRaw !== undefined ? { finishReasonRaw: lastFinishReasonRaw } : {}),
+      ...(spendAccountId !== undefined ? { spendAccountId } : {}),
     };
   }
 
   /**
-   * Emit the run-scope telemetry the runtime pre-computed (Phase 2:
-   * skills.loaded and context.assembled). Tied to the same `runId` as
+   * Emit the run-scope telemetry the runtime pre-computed
+   * (skills.loaded and context.assembled). Tied to the same `runId` as
    * `run.start` so the conversation log records what the prompt looked like for
    * this turn.
    */
@@ -1729,27 +1961,17 @@ export class AgentEngine {
 
   /**
    * Append this turn's assistant text to the running output, emitting the
-   * inter-turn separator (`\n\n`) when needed. When this turn is the resumption
-   * of a length-truncated one (`resumingFromLength`), stitch directly onto the
-   * partial with no separator — the model is continuing mid-thought, so a blank
-   * line would inject a false break. Returns the new output; does not consume
-   * the resume flag.
+   * inter-turn separator (`\n\n`) when needed. Returns the new output.
    */
   private accumulateAssistantText(
     currentOutput: string,
     content: LanguageModelV4Content[],
-    resumingFromLength: boolean,
     runId: string,
   ): string {
     let output = currentOutput;
     for (const block of content) {
       if (block.type === "text") {
-        if (
-          !resumingFromLength &&
-          output.length > 0 &&
-          !output.endsWith("\n") &&
-          block.text.length > 0
-        ) {
+        if (output.length > 0 && !output.endsWith("\n") && block.text.length > 0) {
           output += "\n\n";
           this.events.emit({ type: "text.delta", data: { runId, text: "\n\n" } });
         }
@@ -1775,11 +1997,20 @@ export class AgentEngine {
     candidates: ConnectorSkillCandidate[],
     injected: Set<string>,
     pending: ConnectorSkillInjectedPayload[],
+    fetches: PendingOverlayFetch[],
   ): void {
     for (const candidate of candidates) {
       if (injected.has(candidate.name)) continue;
       if (!candidate.toolAffinity.some((p) => toolMatches(toolName, p))) continue;
       injected.add(candidate.name);
+      if (candidate.loadBody) {
+        // Fetched now, alongside the tool call, and settled before the drain.
+        fetches.push({
+          data: { runId, toolName, skillName: candidate.name, scope: candidate.scope },
+          body: candidate.loadBody().catch(() => null),
+        });
+        continue;
+      }
       const data = {
         runId,
         toolName,
@@ -1793,6 +2024,30 @@ export class AgentEngine {
       // message from the same fields, so live and replay agree.
       pending.push(data);
     }
+  }
+
+  /**
+   * Settle the overlays surfaced this iteration whose bodies were fetched on
+   * demand: record each one that arrived (`connector.skill.injected`) and queue
+   * it for delivery, and make a skill whose fetch failed eligible again. Drains
+   * `fetches`.
+   */
+  private async settleOverlayFetches(
+    fetches: PendingOverlayFetch[],
+    injected: Set<string>,
+    pending: ConnectorSkillInjectedPayload[],
+  ): Promise<void> {
+    for (const fetch of fetches) {
+      const skillBody = await fetch.body;
+      if (skillBody === null) {
+        injected.delete(fetch.data.skillName);
+        continue;
+      }
+      const data = { ...fetch.data, skillBody };
+      this.events.emit({ type: "connector.skill.injected", data });
+      pending.push(data);
+    }
+    fetches.length = 0;
   }
 
   /**
@@ -1938,9 +2193,67 @@ export class AgentEngine {
   }
 
   /**
-   * Run one tool call end-to-end: gate (beforeToolCall) → coerce/validate →
-   * execute → bound → afterToolCall → supervisor → emit. Returns the record the
-   * loop needs to build history and telemetry. Called concurrently (up to the
+   * Check a model call, then put it through the beforeToolCall gate. The call
+   * is checked first (visibility, coerce, validate) so a person is asked to
+   * approve only a call the engine would dispatch, and approves the coerced
+   * input that is sent. An invalid call skips the gate and carries its error
+   * result. Whatever the hook returns is checked the same way again: a hook
+   * may rewrite the call, and the engine dispatches only what it checked.
+   * A valid call that repeats the exact call a tool was tripped on is refused
+   * here too, before the gate (see `RunSupervisor.repeatRefusal`); every other
+   * call to a tripped tool proceeds. `refused` is a call that ends here,
+   * before tool.start.
+   */
+  private async checkAndGate(
+    toolCall: LanguageModelV4ToolCall,
+    parsedInput: Record<string, unknown>,
+    ctx: ToolExecContext,
+  ): Promise<{ refused: ToolExecResult } | { gatedCall: ToolCall; result?: ToolResult }> {
+    const offered: ToolCall = {
+      id: toolCall.toolCallId,
+      name: toolCall.toolName,
+      input: parsedInput,
+    };
+    if (!isModelVisible({ meta: ctx.toolMeta.get(offered.name) })) {
+      return { refused: notAvailableToAgent(toolCall, offered) };
+    }
+    const checked = coerceAndValidateToolInput(parsedInput, toolSchemaFor(ctx, offered.name));
+    const validated: ToolCall = { ...offered, input: checked.input };
+    if (checked.errorResult) return { gatedCall: validated, result: checked.errorResult };
+    const repeat = repeatOfTrip(toolCall, validated, ctx);
+    if (repeat) return { refused: repeat };
+    const beforeToolCall = ctx.config.hooks?.beforeToolCall;
+    if (!beforeToolCall) return { gatedCall: validated };
+
+    const hooked = await beforeToolCall(validated);
+    if (hooked === null) {
+      return {
+        refused: {
+          toolCall,
+          gatedCall: validated,
+          result: {
+            content: textContent("Tool call was denied by policy."),
+            isError: true,
+          } as ToolResult,
+          ms: 0,
+        },
+      };
+    }
+    if (!isModelVisible({ meta: ctx.toolMeta.get(hooked.name) })) {
+      return { refused: notAvailableToAgent(toolCall, hooked) };
+    }
+    const rechecked = coerceAndValidateToolInput(hooked.input, toolSchemaFor(ctx, hooked.name));
+    const gatedCall: ToolCall = { ...hooked, input: rechecked.input };
+    if (rechecked.errorResult) return { gatedCall, result: rechecked.errorResult };
+    const hookedRepeat = repeatOfTrip(toolCall, gatedCall, ctx);
+    if (hookedRepeat) return { refused: hookedRepeat };
+    return { gatedCall };
+  }
+
+  /**
+   * Run one tool call end-to-end: check and gate (checkAndGate) → execute →
+   * bound → afterToolCall → supervisor → emit. Returns the record the loop
+   * needs to build history and telemetry. Called concurrently (up to the
    * per-source cap) from the iteration's bounded dispatch above.
    */
   private async executeToolCall(
@@ -1966,40 +2279,20 @@ export class AgentEngine {
       };
     }
 
-    const gatedCall = ctx.config.hooks?.beforeToolCall
-      ? await ctx.config.hooks.beforeToolCall({
-          id: toolCall.toolCallId,
-          name: toolCall.toolName,
-          input: parsedInput,
-        })
-      : { id: toolCall.toolCallId, name: toolCall.toolName, input: parsedInput };
-
-    if (gatedCall === null) {
-      return {
-        toolCall,
-        gatedCall: {
-          id: toolCall.toolCallId,
-          name: toolCall.toolName,
-          input: parsedInput,
-        },
-        result: {
-          content: textContent("Tool call was denied by policy."),
-          isError: true,
-        } as ToolResult,
-        ms: 0,
-      };
-    }
+    const checked = await this.checkAndGate(toolCall, parsedInput, ctx);
+    if ("refused" in checked) return checked.refused;
+    const { gatedCall } = checked;
+    let result = checked.result;
 
     // Extract UI resourceUri from the tool's `_meta` if present
     const meta = ctx.toolMeta.get(gatedCall.name);
     const uiMeta = meta?.ui as Record<string, unknown> | undefined;
     const resourceUri = typeof uiMeta?.resourceUri === "string" ? uiMeta.resourceUri : undefined;
 
-    // tool.start fires with the *pre-coercion* input on purpose:
-    // audit/telemetry should see the raw model emission so we can
-    // observe when models string-encode nested objects (the very
-    // misbehavior coerceInputForSchema below recovers from). Do
-    // not move this emit after the coerce step.
+    // tool.start fires with the model's raw input on purpose: audit and
+    // telemetry should see what the model emitted, so we can observe when
+    // models string-encode nested objects (the misbehavior
+    // coerceInputForSchema recovers from). Do not emit the coerced input here.
     this.events.emit({
       type: "tool.start",
       data: {
@@ -2007,7 +2300,7 @@ export class AgentEngine {
         name: gatedCall.name,
         id: gatedCall.id,
         resourceUri,
-        input: gatedCall.input,
+        input: parsedInput,
       },
     });
 
@@ -2017,15 +2310,10 @@ export class AgentEngine {
       ctx.connectorSkillCandidates,
       ctx.injectedConnectorSkills,
       ctx.pendingOverlayDeliveries,
+      ctx.pendingOverlayFetches,
     );
 
     const start = performance.now();
-
-    // Validate + coerce tool input against the declared schema before execution.
-    const toolSchema = ctx.toolSchemaMap.get(gatedCall.name);
-    const coercion = coerceAndValidateToolInput(gatedCall.input, toolSchema);
-    gatedCall.input = coercion.input;
-    let result: ToolResult | undefined = coercion.errorResult;
 
     if (!result) {
       try {
@@ -2063,7 +2351,10 @@ export class AgentEngine {
     // On a trip, the replacement directive flows downstream in place
     // of the original tool result. While it stays tripped the tool is
     // withheld from `modelTools` on subsequent iterations (see
-    // buildIterationTools), so the model is not offered it again.
+    // buildIterationTools), so the model is not offered it again. Withheld is
+    // not refused: a call naming the tool still runs, and that call is how a
+    // trip clears (see the supervisor's file header). checkAndGate refuses
+    // only the exact call a success trip was made of.
     const verdict = ctx.supervisor.observe(gatedCall, hookedResult);
     const finalResult = verdict.type === "synth" ? verdict.replacement : hookedResult;
 

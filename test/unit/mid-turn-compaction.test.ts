@@ -1,5 +1,5 @@
-import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { describe, expect, it } from "bun:test";
+import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { COMPACTION_DEFAULTS } from "../../src/conversation/compaction.ts";
@@ -8,10 +8,7 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import { estimateMessageTokens } from "../../src/engine/token-estimate.ts";
 import type { EngineConfig, EngineHooks, ToolSchema } from "../../src/engine/types.ts";
-import {
-  buildMidTurnCompaction,
-  planMidTurnFold,
-} from "../../src/runtime/mid-turn-compaction.ts";
+import { buildMidTurnCompaction, planMidTurnFold } from "../../src/runtime/mid-turn-compaction.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
 
 /**
@@ -68,13 +65,19 @@ function recordingEcho(responses: EchoModelResponse[]) {
 const TOOL: ToolSchema = {
   name: "search",
   description: "search",
-  inputSchema: { type: "object", properties: {} },
+  inputSchema: { type: "object", properties: { page: { type: "number" } } },
 };
 
-/** `n` tool-calling responses, then a plain answer. */
+/**
+ * `n` tool-calling responses, then a plain answer. Each call asks for a
+ * different page, so the identical results read as progress and the loop
+ * supervisor stays out of a test about history growth.
+ */
 function toolThenAnswer(n: number): EchoModelResponse[] {
   const responses: EchoModelResponse[] = Array.from({ length: n }, (_, i) => ({
-    toolCalls: [{ toolCallId: `call-${i}`, toolName: "search", input: "{}" }],
+    toolCalls: [
+      { toolCallId: `call-${i}`, toolName: "search", input: JSON.stringify({ page: i }) },
+    ],
   }));
   return [...responses, { text: "done" }];
 }
@@ -131,12 +134,9 @@ async function runTurn(
     },
     ...extraHooks,
   };
-  const result = await engineWith(model, resultChars).run(
-    { ...config, hooks },
-    "sys",
-    history,
-    [TOOL],
-  );
+  const result = await engineWith(model, resultChars).run({ ...config, hooks }, "sys", history, [
+    TOOL,
+  ]);
   return { result, prompts, windowDrops: () => windowDrops };
 }
 
@@ -203,12 +203,9 @@ describe("mid-turn compaction", () => {
     // Folding here would buy a smaller prompt for a summarizer call and a full
     // cache re-anchor, on a turn with too few iterations left to repay it.
     const { summarize, folded } = countingSummarizer();
-    const { prompts, windowDrops } = await runTurn(
-      openingHistory(6, 600),
-      toolThenAnswer(5),
-      400,
-      { rewriteHistory: buildMidTurnCompaction({ budget: BUDGET, summarize }) },
-    );
+    const { prompts, windowDrops } = await runTurn(openingHistory(6, 600), toolThenAnswer(5), 500, {
+      rewriteHistory: buildMidTurnCompaction({ budget: BUDGET, summarize }),
+    });
 
     const peak = Math.max(...prompts.map(sizeOf));
     expect(peak).toBeLessThan(BUDGET);
@@ -345,6 +342,7 @@ describe("planMidTurnFold", () => {
     // call was folded away, which the provider rejects.
     const bare: LanguageModelV4Message = {
       role: "tool",
+      // biome-ignore lint/plugin/never-cast: a text part where a tool message holds tool results, which is the malformed message under test
       content: [{ type: "text", text: "x".repeat(2_000) }] as never,
     };
     const history: LanguageModelV4Message[] = [

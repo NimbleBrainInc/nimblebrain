@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { loadBrand } from "../brand/index.ts";
 import { getValidator } from "../config/index.ts";
 import { deriveOverridePath, mergeConfigs, OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
 import { log } from "../observability/log.ts";
@@ -14,7 +15,6 @@ const DEFAULT_CONFIG_CONTENT = {
 
 export interface CliFlags {
   config?: string;
-  model?: string;
   /** Default workDir when neither config file nor NB_WORK_DIR specifies one. */
   defaultWorkDir?: string;
 }
@@ -57,7 +57,7 @@ function validateConfig(
 
     if (warnUnknownKeys) {
       for (const key of warnings) {
-        log.error(`[config] Warning: unknown key "${key}" in ${path} (ignored)`);
+        log.warn(`[config] Unknown key "${key}" in ${path} (ignored)`);
       }
     }
 
@@ -136,12 +136,12 @@ function applyOverride(
     const applied = Object.keys(override).filter((k) => writable.has(k));
     const ignored = Object.keys(override).filter((k) => !writable.has(k));
     if (applied.length > 0) {
-      log.error(
+      log.info(
         `[config] Applied ${applied.length} runtime override${applied.length === 1 ? "" : "s"} from ${configOverridePath}: ${applied.join(", ")}`,
       );
     }
     if (ignored.length > 0) {
-      log.error(
+      log.warn(
         `[config] Ignored ${ignored.length} override key${ignored.length === 1 ? "" : "s"} with no writer in ${configOverridePath}: ${ignored.join(", ")}. Set these in the seed config instead.`,
       );
     }
@@ -169,21 +169,6 @@ function stripWorkspaceFields(fileConfig: FileConfig): void {
   delete fileConfig.skillDirs;
   delete fileConfig.preferences;
   delete fileConfig.home;
-  delete fileConfig.skills; // legacy field
-}
-
-/** Emit deprecation warnings for removed fields still present in the file. */
-function warnDeprecatedFields(fileConfig: FileConfig, configPath: string): void {
-  if ("identity" in fileConfig) {
-    log.error(
-      `[config] Warning: "identity" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
-    );
-  }
-  if ("contextFile" in fileConfig) {
-    log.error(
-      `[config] Warning: "contextFile" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
-    );
-  }
 }
 
 /** Resolve workDir (NB_WORK_DIR > file > flag default), absolutized at load. */
@@ -210,19 +195,16 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
   const fileConfig = applyOverride(seedConfig, configOverridePath);
 
   stripWorkspaceFields(fileConfig);
-  warnDeprecatedFields(fileConfig, configPath);
 
   // CLI flags override file config — workspace-owned fields (skillDirs,
   // preferences, home) are intentionally omitted; they were deleted above and
   // now live in workspace.json. `connectors` below is the instance-level
   // provider/gateway block, not a workspace's connector array.
   const config: RuntimeConfig = {
-    model: fileConfig.model ?? { provider: "anthropic" },
     providers: fileConfig.providers as RuntimeConfig["providers"],
     allowInsecureRemotes: fileConfig.allowInsecureRemotes as boolean | undefined,
     models: fileConfig.models as RuntimeConfig["models"],
     modelPolicy: fileConfig.modelPolicy as RuntimeConfig["modelPolicy"],
-    defaultModel: flags.model ?? fileConfig.defaultModel,
     maxIterations: fileConfig.maxIterations,
     maxInputTokens: fileConfig.maxInputTokens,
     maxOutputTokens: fileConfig.maxOutputTokens,
@@ -236,13 +218,22 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     features: fileConfig.features as RuntimeConfig["features"],
     connectors: fileConfig.connectors as RuntimeConfig["connectors"],
     files: fileConfig.files as RuntimeConfig["files"],
+    tasks: fileConfig.tasks as RuntimeConfig["tasks"],
+    usage: fileConfig.usage as RuntimeConfig["usage"],
+    notifications: fileConfig.notifications as RuntimeConfig["notifications"],
     // Pass config path for connector install/uninstall persistence
     configPath,
     configOverridePath,
     workDir: absoluteWorkDir(fileConfig, flags),
     telemetry: fileConfig.telemetry as RuntimeConfig["telemetry"],
     secrets: fileConfig.secrets as RuntimeConfig["secrets"],
+    brand: fileConfig.brand as RuntimeConfig["brand"],
   };
+
+  // Contrast is checked here, at load, so a brand that would paint an
+  // unreadable interface stops the boot with the failing pair named rather
+  // than shipping.
+  loadBrand(config);
 
   return config;
 }

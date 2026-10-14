@@ -50,7 +50,9 @@ describe("api metrics", () => {
 
     await app.request("/v1/any", { method: "PROPFIND" });
     const body = await (await app.request("/metrics")).text();
-    expect(body).toMatch(/http_requests_total\{[^}]*method="OTHER"[^}]*route="\/v1\/any"[^}]*\} [1-9]/);
+    expect(body).toMatch(
+      /http_requests_total\{[^}]*method="OTHER"[^}]*route="\/v1\/any"[^}]*\} [1-9]/,
+    );
   });
 
   // Load-bearing: the whole point of this endpoint is to feed error-rate

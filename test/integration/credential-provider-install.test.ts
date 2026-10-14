@@ -22,15 +22,17 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
+import type { UserStore } from "../../src/identity/user.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import { _resetCredentialProvidersForTest } from "../../src/tools/credential-provider.ts";
@@ -47,6 +49,9 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { resolveTransportCredential } from "../../src/tools/remote-transport.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
+import { stub } from "../helpers/stub.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const CATALOG_DIR = join(import.meta.dir, "..", "fixtures", "connectors-credential");
 const ENTRY_ID = "com.acme/db";
@@ -84,7 +89,7 @@ function entry(): CatalogListing {
 function toolFor(sessionWsId: string) {
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getCredentialStore: () => store,
     getEventSink: () => new NoopEventSink(),
@@ -93,11 +98,11 @@ function toolFor(sessionWsId: string) {
     getConnectorCatalog: () => new ConnectorCatalog(CATALOG_DIR),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
-    getPermissionStore: () => ({ deleteConnector: async () => {} }),
-    getUserStore: () => ({ get: async () => null }),
+    getPermissionStore: () => stub<PermissionStore>({ deleteConnector: async () => {} }),
+    getUserStore: () => stub<UserStore>({ get: async () => null }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
-  } as unknown as Runtime;
+  });
   return createManageConnectorsTool({
     runtime,
     getIdentity: () => ADMIN,
@@ -123,12 +128,14 @@ beforeEach(async () => {
   registerCredentialTransportCredentialProvider();
 
   workspaceStore = new WorkspaceStore(workDir);
-  for (const [name, slug] of [
-    ["Tenant A", "tenanta"],
-    ["Tenant B", "tenantb"],
+  for (const [name, id] of [
+    ["Tenant A", "ws_00741647fd740fac"],
+    ["Tenant B", "ws_0075ad1326581881"],
   ] as const) {
-    await workspaceStore.create(name, slug);
-    await workspaceStore.addMember(`ws_${slug}`, ADMIN.id, "admin");
+    await seedWorkspace(workspaceStore, id, {
+      name,
+      members: [{ userId: ADMIN.id, role: "admin" }],
+    });
   }
 
   originalFetch = globalThis.fetch;
@@ -143,10 +150,13 @@ afterEach(() => {
 
 describe("installing a `credential` provider entry", () => {
   test("the persisted ref names the key and holds no value", async () => {
-    const result = await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
+    const result = await toolFor("ws_00741647fd740fac").handler({
+      action: "install",
+      entry: entry(),
+    });
     expect(result.isError).toBe(false);
 
-    const ref = persistedRef("ws_tenanta");
+    const ref = persistedRef("ws_00741647fd740fac");
     expect(ref.transport?.auth).toEqual({
       type: "provider",
       provider: CREDENTIAL_PROVIDER,
@@ -164,23 +174,23 @@ describe("installing a `credential` provider entry", () => {
       providerAuth: { provider: CREDENTIAL_PROVIDER, config: { key: "someone.elses_key" } },
     } as CatalogListing["install"];
 
-    await toolFor("ws_tenanta").handler({ action: "install", entry: forged });
-    const ref = persistedRef("ws_tenanta");
+    await toolFor("ws_00741647fd740fac").handler({ action: "install", entry: forged });
+    const ref = persistedRef("ws_00741647fd740fac");
     expect(ref.url).toBe("https://mcp.acme.test/mcp");
     expect(ref.transport?.auth).toMatchObject({ config: { key: KEY } });
   });
 
   test("the same entry installs into a second workspace and each sends its own secret", async () => {
-    await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
-    await toolFor("ws_tenantb").handler({ action: "install", entry: entry() });
+    await toolFor("ws_00741647fd740fac").handler({ action: "install", entry: entry() });
+    await toolFor("ws_0075ad1326581881").handler({ action: "install", entry: entry() });
 
     // Each admin seeds their own value under the SAME key.
-    await toolFor("ws_tenanta").handler({
+    await toolFor("ws_00741647fd740fac").handler({
       action: "set_secret",
       key: KEY,
       value: "postgres://a.acme.test/db",
     });
-    await toolFor("ws_tenantb").handler({
+    await toolFor("ws_0075ad1326581881").handler({
       action: "set_secret",
       key: KEY,
       value: "postgres://b.acme.test/db",
@@ -188,15 +198,17 @@ describe("installing a `credential` provider entry", () => {
 
     // The two persisted refs are byte-identical — the difference is entirely in
     // the store, which is the property that makes one catalog entry enough.
-    expect(persistedRef("ws_tenanta").transport).toEqual(persistedRef("ws_tenantb").transport);
+    expect(persistedRef("ws_00741647fd740fac").transport).toEqual(
+      persistedRef("ws_0075ad1326581881").transport,
+    );
 
     const sent: string[] = [];
-    globalThis.fetch = (async (_input: string, init?: RequestInit) => {
+    globalThis.fetch = fakeFetch(async (_input, init) => {
       sent.push(new Headers(init?.headers).get("Authorization") ?? "");
       return new Response("{}", { status: 200 });
-    }) as unknown as typeof fetch;
+    });
 
-    for (const wsId of ["ws_tenanta", "ws_tenantb"]) {
+    for (const wsId of ["ws_00741647fd740fac", "ws_0075ad1326581881"]) {
       const { fetch: authed } = await resolveTransportCredential(
         persistedRef(wsId).transport,
         wsId,
@@ -204,20 +216,17 @@ describe("installing a `credential` provider entry", () => {
       await authed?.("https://mcp.acme.test/mcp", { method: "POST" });
     }
 
-    expect(sent).toEqual([
-      "Bearer postgres://a.acme.test/db",
-      "Bearer postgres://b.acme.test/db",
-    ]);
+    expect(sent).toEqual(["Bearer postgres://a.acme.test/db", "Bearer postgres://b.acme.test/db"]);
   });
 
   test("a workspace that never set the key fails its connection, naming the key", async () => {
-    await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
+    await toolFor("ws_00741647fd740fac").handler({ action: "install", entry: entry() });
     const { fetch: authed } = await resolveTransportCredential(
-      persistedRef("ws_tenanta").transport,
-      "ws_tenanta",
+      persistedRef("ws_00741647fd740fac").transport,
+      "ws_00741647fd740fac",
     );
     await expect(authed?.("https://mcp.acme.test/mcp", {})).rejects.toThrow(
-      /acme\.db_url.*workspace:ws_tenanta/s,
+      /acme\.db_url.*workspace:ws_00741647fd740fac/s,
     );
   });
 });

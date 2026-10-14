@@ -32,6 +32,7 @@ import {
   RELAYED_TO_VIEWS,
   serverCapabilities,
 } from "../../../web/src/bridge/relayed-notifications.ts";
+import { payloadsOf } from "../../helpers/engine-events.ts";
 
 const WS = "ws_0123456789abcdef";
 const OTHER_WS = "ws_fedcba9876543210";
@@ -76,7 +77,7 @@ async function source(name: string): Promise<McpSource> {
 
 describe("the allowlist has one home", () => {
   test("the web shell relays exactly the methods the runtime relays", () => {
-    expect([...RELAYED_TO_VIEWS].sort()).toEqual(Object.keys(RELAYED_SERVER_NOTIFICATIONS).sort());
+    expect([...RELAYED_TO_VIEWS].sort()).toEqual([...RELAYED_SERVER_NOTIFICATIONS].sort());
   });
 
   test("the bridge advertises listChanged for each relayed method, and no other", () => {
@@ -271,7 +272,10 @@ describe("createWorkspaceRegistry — the relay", () => {
 });
 
 describe("createServerNotificationRelay — the host sets the rate", () => {
-  function relayInto(): { relay: ReturnType<typeof createServerNotificationRelay>; events: EngineEvent[] } {
+  function relayInto(): {
+    relay: ReturnType<typeof createServerNotificationRelay>;
+    events: EngineEvent[];
+  } {
     const { sink, events } = recordingSink();
     return { relay: createServerNotificationRelay(WS, sink), events };
   }
@@ -334,7 +338,10 @@ describe("createServerNotificationRelay — the host sets the rate", () => {
     relay("notes", LIST_CHANGED);
     relay("tasks", LIST_CHANGED);
 
-    expect(events.map((e) => e.data.server)).toEqual(["notes", "tasks"]);
+    expect(payloadsOf(events, "server.notification").map((d) => d.server)).toEqual([
+      "notes",
+      "tasks",
+    ]);
   });
 
   test("nothing is relayed for a server that can have no views", () => {
@@ -356,6 +363,6 @@ describe("createServerNotificationRelay — the host sets the rate", () => {
     relay("notes", { method: RESOURCES_LIST_CHANGED, params: { _meta: { n: 2 } } });
     jest.advanceTimersByTime(RELAY_COALESCE_WINDOW_MS);
 
-    expect(events[1]?.data.params).toEqual({ _meta: { n: 2 } });
+    expect(payloadsOf(events, "server.notification")[1]?.params).toEqual({ _meta: { n: 2 } });
   });
 });

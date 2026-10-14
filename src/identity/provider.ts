@@ -1,5 +1,5 @@
-import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { InstanceConfig } from "./instance.ts";
+import { DevIdentityProvider } from "./providers/dev.ts";
 import { OidcIdentityProvider } from "./providers/oidc.ts";
 import { WorkosIdentityProvider } from "./providers/workos.ts";
 import type { OrgRole } from "./types.ts";
@@ -17,6 +17,30 @@ export interface UserIdentity {
   preferences: UserPreferences;
 }
 
+// ── Token grant ────────────────────────────────────────────────────
+
+/**
+ * What a verified credential was issued for — a fact the provider establishes
+ * while verifying the signature, reported so a provider-independent layer can
+ * decide where the credential is valid (`authenticateRequest`).
+ *
+ * - `first_party` — issued to one of the operator's own clients: the web app's
+ *   login session, or an app the provider's configuration names as first-party.
+ *   Not bound to any one resource; membership gates what it reaches.
+ * - `resource` — minted by the authorization server external MCP clients use,
+ *   for the resources in `audience` (the token's `aud`, normalized to a list).
+ *   Valid only at a resource whose canonical URL is exactly one of them.
+ */
+export type TokenGrant =
+  | { kind: "first_party" }
+  | { kind: "resource"; audience: readonly string[] };
+
+/** The grant every first-party credential carries. */
+export const FIRST_PARTY_GRANT: TokenGrant = { kind: "first_party" };
+
+/** A verified caller: who they are, and what their credential was issued for. */
+export type VerifiedIdentity = UserIdentity & { grant: TokenGrant };
+
 // ── Provider capabilities ──────────────────────────────────────────
 
 /** Declares what this provider supports — checked by handlers, not instanceof. */
@@ -29,7 +53,15 @@ export interface ProviderCapabilities {
   managedUsers: boolean;
   /** Provider is also an OAuth authorization server external clients can discover. */
   authorizationServer: boolean;
+  /**
+   * User fields the provider owns and `manage_users` must not change, because
+   * the provider signs the user in by them. Absent means none.
+   */
+  providerOwnedUserFields?: readonly UserEditField[];
 }
+
+/** The fields of an existing user that `manage_users` can change. */
+export type UserEditField = "email" | "displayName" | "orgRole";
 
 // ── Authorization server ───────────────────────────────────────────
 
@@ -64,8 +96,8 @@ export interface TokenResult {
  *
  * Collapsing the two makes a backend hiccup indistinguishable from a revoked
  * session, and the web client logs the user out on the second one. This is the
- * same distinction {@link RefreshTokenError}'s `unavailable` kind already draws
- * on the refresh hop; verification is the hop that was missing it.
+ * same distinction {@link RefreshTokenError}'s `unavailable` kind draws on the
+ * refresh hop.
  *
  * Providers own the classification — only they understand their SDK's failure
  * shapes. `authenticateRequest` maps this to 503 + `Retry-After` and does not
@@ -158,8 +190,12 @@ export interface IdentityProvider {
    */
   authorizationServer?(): AuthorizationServer | null;
 
-  /** Verify an incoming request and return the authenticated identity, or null. */
-  verifyRequest(req: Request): Promise<UserIdentity | null>;
+  /**
+   * Verify an incoming request and return the authenticated identity with the
+   * grant its credential carries, or null. The provider reports the grant; it
+   * never decides where the credential is valid.
+   */
+  verifyRequest(req: Request): Promise<VerifiedIdentity | null>;
 
   // ── Auth code flow (optional — guarded by capabilities.authCodeFlow) ──
 
@@ -173,6 +209,16 @@ export interface IdentityProvider {
    */
   refreshToken?(refreshToken: string): Promise<TokenResult>;
 
+  /**
+   * End the provider's own session behind the request's credential, so the
+   * next sign-in asks for credentials instead of resuming it. Clearing this
+   * instance's cookies ends only the local session. Called on sign-out, often
+   * with an access token that has expired. A provider that keeps no session of
+   * its own omits it. Throws on failure; the caller signs the browser out
+   * either way.
+   */
+  endSession?(req: Request): Promise<void>;
+
   // ── User management ──────────────────────────────────────────────
 
   /** List all users known to this provider. */
@@ -181,7 +227,12 @@ export interface IdentityProvider {
   /** Create a new user. */
   createUser(data: CreateUserInput): Promise<CreateUserResult>;
 
-  /** Update a user by ID. Returns the updated user, or null if not found. */
+  /**
+   * Update a user by ID, writing the provider's own directory as well as the
+   * local profile. Returns the updated user, or null if not found. A provider
+   * whose directory is the local `UserStore` omits it, and the caller writes
+   * the store directly.
+   */
   updateUser?(userId: string, data: UpdateUserInput): Promise<User | null>;
 
   /** Delete a user by ID. Returns true if deleted, false if not found. */
@@ -194,23 +245,23 @@ export interface IdentityProvider {
 // ── Factory ────────────────────────────────────────────────────────
 
 /**
- * Create the appropriate identity provider based on instance config.
- * Returns null when config is null (dev mode — no auth).
+ * Create the identity provider `instance.json` names. Every adapter, `dev`
+ * included, is chosen by name; there is no provider for an absent config.
  */
 export function createIdentityProvider(
-  config: InstanceConfig | null,
+  config: InstanceConfig,
   userStore: UserStore,
-  workspaceStore: WorkspaceStore,
-): IdentityProvider | null {
-  if (config === null) return null;
-
+  workDir: string,
+): IdentityProvider {
   const adapter = config.auth.adapter;
 
   switch (adapter) {
+    case "dev":
+      return new DevIdentityProvider(workDir, userStore);
     case "oidc":
-      return new OidcIdentityProvider(config.auth, userStore, workspaceStore);
+      return new OidcIdentityProvider(config.auth, userStore);
     case "workos":
-      return new WorkosIdentityProvider(config.auth, userStore, workspaceStore);
+      return new WorkosIdentityProvider(config.auth, userStore);
     default:
       throw new Error(`Unknown identity provider: "${adapter as string}"`);
   }

@@ -3,24 +3,22 @@
  * line and the "In context" popover so both label reasons, provenance, and
  * scope colors identically.
  *
- * The runtime records each skill's own name on the `skills.loaded` event and
- * both read paths resolve it, so a display surface renders `skill.name`
- * directly rather than picking a name out of the id — doing that is what
- * rendered every connector skill as `SKILL` (a connector skill's id is its
- * `skill://…/SKILL.md` entrypoint). `nameFromSkillId` below is the normalizer's
- * last-resort guard for a frame that arrives without one, NOT a display path.
+ * The runtime records each skill's own name on the `skills.loaded` event, so a
+ * display surface renders `skill.name` directly rather than picking a name out
+ * of the id — doing that is what rendered every connector skill as `SKILL` (a
+ * connector skill's id is its `skill://…/SKILL.md` entrypoint).
+ * `nameFromSkillId` below is for what carries no name: a stream frame that
+ * arrives without one, and a traced prompt layer, which records only its path.
  */
 
 import type { SkillScope } from "../_generated/platform-schemas/skills";
 
 /**
- * A name from a skill id, for a stream frame that arrived without one.
+ * A name from a skill id, for something that carries only the id.
  *
- * The normalizer in `chat-store` needs *some* string, and the id is a path
- * ending in `/SKILL.md` for every connector skill — printing it raw would put
- * the exact output this surface exists to eliminate back on screen. Mirrors
- * `src/skills/display-name.ts`; the copy exists because the browser can't
- * import from `src/`.
+ * The id is a path ending in `/SKILL.md` for every connector skill — printing
+ * it raw would put the exact output this surface exists to eliminate back on
+ * screen — so the entrypoint marker names its directory instead.
  */
 export function nameFromSkillId(id: string): string {
   const segments = id.split("/").filter(Boolean);
@@ -43,7 +41,7 @@ export function conciseReason(reason: string): string {
 
 /**
  * The resting-state description of how a skill reaches the prompt — the
- * discriminator the flat catalog used to hide until a row was expanded.
+ * discriminator shown without expanding a row.
  * `text` is the plain lead; `mono` is an optional monospace tail (the tool
  * globs a `tool_affinity` skill matches), kept separate so the caller renders
  * it in mono without re-parsing the string.
@@ -128,13 +126,20 @@ export function skillLoadingSentence(
   }
 }
 
+/**
+ * A map with an entry for every tier this build knows, read by the recorded
+ * tier string. A recorded row can name a tier outside the union (see
+ * `skillProvenanceLabel`), so a lookup may miss and callers fall back.
+ */
+type ScopeMap = Readonly<Record<string, string | undefined>>;
+
 /** Token-driven scope color class (defined in index.css; no raw palette values). */
-export const SCOPE_CLASS: Record<SkillScope, string> = {
+export const SCOPE_CLASS: ScopeMap = {
   org: "ledger-scope--org",
   workspace: "ledger-scope--workspace",
   user: "ledger-scope--user",
   provided: "ledger-scope--connector",
-};
+} satisfies Record<SkillScope, string>;
 
 /**
  * What a reader is shown for a skill's tier.
@@ -147,16 +152,17 @@ export const SCOPE_CLASS: Record<SkillScope, string> = {
  * built-in authoring guide, and labels it "System". The map is per-surface for
  * that reason, not because either label is the wire value's real name.
  */
-export const SCOPE_LABEL: Record<SkillScope, string> = {
+export const SCOPE_LABEL: ScopeMap = {
   org: "org",
   workspace: "workspace",
   user: "user",
   provided: "connector",
-};
+} satisfies Record<SkillScope, string>;
 
 /** The subset of a ledger skill that identifies where it came from. */
 export interface SkillProvenanceInput {
-  scope: SkillScope;
+  /** The recorded tier: a `SkillScope`, or a tier name an older run recorded. */
+  scope: string;
   connector?: string;
 }
 

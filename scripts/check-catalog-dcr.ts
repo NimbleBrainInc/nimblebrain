@@ -19,7 +19,8 @@
  *      `registration_endpoint` (RFC 7591) for the catalog claim of
  *      `auth: "dcr"` to be truthful.
  *   4. **DCR registration probe** — POST a synthetic client to the
- *      `registration_endpoint` with a representative redirect URI.
+ *      `registration_endpoint` with the redirect URI given as the second
+ *      argument.
  *      Catches vendors that advertise DCR but reject our redirect-URI
  *      host (Intercom, Vercel pattern: "redirect URI ... not in the
  *      allowlist").
@@ -61,15 +62,28 @@ import {
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
+const USAGE =
+  "Usage: bun run scripts/check-catalog-dcr.ts <catalog-file-or-dir> <redirect-uri>\n" +
+  "Probe DCR connector entries in the given catalog for install-time rot.\n\n" +
+  "  <redirect-uri>  the https callback the deployment registers with vendors,\n" +
+  "                  e.g. https://nb.example.com/v1/mcp-auth/callback";
+
 /**
- * Synthetic redirect URI for the probe. Real prod tenants live at
- * `https://<tenant>.platform.nimblebrain.ai/v1/mcp-auth/callback`;
- * this representative form catches host-allowlist policies that
- * accept the wildcard but not arbitrary hosts. Vendors that allowlist
- * the wildcard pattern pass; vendors with per-tenant pinning still
- * need outreach (the prod wildcard captures the common case).
+ * Parse the probe's redirect URI. It is a REQUIRED argument, not a default:
+ * vendors judge the registration and authorize steps against their own
+ * redirect-host allowlists, so the probe is only truthful when it presents
+ * the callback a real deployment registers (`mcpAuthCallbackUrl()` on that
+ * deployment). A made-up host would fail every vendor that allowlists.
  */
-const PROBE_REDIRECT_URI = "https://hq.platform.nimblebrain.ai/v1/mcp-auth/callback";
+function parseRedirectUri(raw: string | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
 
 interface CheckResult {
   name: string;
@@ -96,18 +110,16 @@ export function selectDcrEntries(servers: ServerDetail[]): ServerDetail[] {
 }
 
 async function main(): Promise<void> {
-  // Catalog path is a REQUIRED argument — a file or a directory of
-  // `ServerDetail` files. The real curated catalog now lives in the
+  // Both arguments are REQUIRED. The catalog path is a file or a directory
+  // of `ServerDetail` files. The real curated catalog now lives in the
   // deploy repo (the in-image `BUNDLED_STATIC_CATALOG_PATH` is only the
   // minimal example), so defaulting to it would silently green-check two
   // illustrative entries instead of the production set. Point this at
   // the mounted/checked-out catalog you actually want to probe.
   const catalogPath = process.argv[2];
-  if (!catalogPath) {
-    console.error(
-      "Usage: bun run scripts/check-catalog-dcr.ts <catalog-file-or-dir>\n" +
-        "Probe DCR connector entries in the given catalog for install-time rot.",
-    );
+  const redirectUri = parseRedirectUri(process.argv[3]);
+  if (!catalogPath || !redirectUri) {
+    console.error(USAGE);
     process.exit(2);
   }
   const dcrEntries = selectDcrEntries(readCatalogServers(catalogPath));
@@ -121,7 +133,7 @@ async function main(): Promise<void> {
     `Probing ${dcrEntries.length} DCR catalog entries (reachability + DCR registration + authorize)…\n`,
   );
 
-  const results = await Promise.all(dcrEntries.map(checkEntry));
+  const results = await Promise.all(dcrEntries.map((s) => checkEntry(s, redirectUri)));
 
   // Tabular report. Sort fails first so the eye lands on them.
   results.sort((a, b) => Number(a.pass) - Number(b.pass));
@@ -151,7 +163,7 @@ async function main(): Promise<void> {
   console.log(`✓ All ${results.length} DCR entries pass.`);
 }
 
-async function checkEntry(s: ServerDetail): Promise<CheckResult> {
+async function checkEntry(s: ServerDetail, redirectUri: string): Promise<CheckResult> {
   const url = s.remotes![0]!.url;
   const result: CheckResult = {
     name: s.name,
@@ -191,7 +203,7 @@ async function checkEntry(s: ServerDetail): Promise<CheckResult> {
 
   // 4. DCR registration probe — catches vendors that reject the
   // redirect URI at the registration step (Intercom, Vercel pattern).
-  const regResult = await probeDcrRegistration(asMetadata.registration_endpoint);
+  const regResult = await probeDcrRegistration(asMetadata.registration_endpoint, redirectUri);
   if (!regResult.ok) {
     result.failureReason = `DCR /register rejected our redirect URI: ${regResult.message}`;
     return result;
@@ -205,7 +217,11 @@ async function checkEntry(s: ServerDetail): Promise<CheckResult> {
     result.pass = true;
     return result;
   }
-  const authResult = await probeAuthorize(asMetadata.authorization_endpoint, regResult.clientId);
+  const authResult = await probeAuthorize(
+    asMetadata.authorization_endpoint,
+    regResult.clientId,
+    redirectUri,
+  );
   if (!authResult.ok) {
     result.failureReason = `/authorize rejected our redirect URI: ${authResult.message}`;
     return result;
@@ -300,6 +316,7 @@ async function fetchAsMetadata(
  */
 async function probeDcrRegistration(
   registrationEndpoint: string,
+  redirectUri: string,
 ): Promise<{ ok: true; clientId: string } | { ok: false; message: string }> {
   try {
     const res = await fetch(registrationEndpoint, {
@@ -307,7 +324,7 @@ async function probeDcrRegistration(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         client_name: "NimbleBrain catalog probe",
-        redirect_uris: [PROBE_REDIRECT_URI],
+        redirect_uris: [redirectUri],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
         token_endpoint_auth_method: "none",
@@ -348,13 +365,14 @@ async function probeDcrRegistration(
 async function probeAuthorize(
   authorizationEndpoint: string,
   clientId: string,
+  redirectUri: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   // PKCE challenge — `code_challenge_method=S256` of an arbitrary
   // verifier. Some vendors require it; supplying it never hurts.
   const url = new URL(authorizationEndpoint);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", clientId);
-  url.searchParams.set("redirect_uri", PROBE_REDIRECT_URI);
+  url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("scope", "");
   url.searchParams.set("state", "probe");
   url.searchParams.set("code_challenge", "Wph4LpxPDcXGKQQjkmFwIyMu5ZKLXEUW2Bn7sV3vqYU");

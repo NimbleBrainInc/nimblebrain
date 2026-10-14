@@ -42,8 +42,9 @@ export function useServerNotificationRelay(): (event: ServerNotificationEvent) =
     // Drop only on a positive mismatch: while the active workspace lags the
     // route by a render at bootstrap, there is nothing to compare, and the
     // notification is delivered rather than lost.
+    // A person's own app names its user, not a workspace, and is never dropped.
     const activeWsId = getActiveWorkspaceId();
-    if (event.workspaceId !== undefined && activeWsId && event.workspaceId !== activeWsId) {
+    if ("workspaceId" in event && activeWsId && event.workspaceId !== activeWsId) {
       debug("sync", `drop: ws=${event.workspaceId} is not the active ${activeWsId}`);
       return;
     }

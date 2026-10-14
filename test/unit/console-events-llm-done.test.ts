@@ -1,5 +1,7 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { ConsoleEventSink } from "../../src/adapters/console-events.ts";
+import type { LlmDonePayload } from "../../src/engine/schemas/events.ts";
+import { engineEvent, llmDonePayload } from "../helpers/engine-events.ts";
 
 /** Capture the console channel the sink writes to. */
 function captureLines(): { lines: string[]; restore: () => void } {
@@ -10,10 +12,10 @@ function captureLines(): { lines: string[]; restore: () => void } {
   return { lines, restore: () => spy.mockRestore() };
 }
 
-function emitLlmDone(data: Record<string, unknown>): string {
+function emitLlmDone(overrides: Partial<LlmDonePayload>): string {
   const { lines, restore } = captureLines();
   try {
-    new ConsoleEventSink().emit({ type: "llm.done", data });
+    new ConsoleEventSink().emit(engineEvent("llm.done", llmDonePayload(overrides)));
   } finally {
     restore();
   }
@@ -38,17 +40,5 @@ describe("llm.done console line", () => {
     // Estimate trails the existing fields so anything parsing the earlier
     // positions is unaffected.
     expect(line.indexOf("est")).toBeGreaterThan(line.indexOf("ttft"));
-  });
-
-  it("omits the estimate when the engine did not record one", () => {
-    const line = emitLlmDone({
-      model: "anthropic:claude-sonnet-5",
-      usage: { inputTokens: 800_000, outputTokens: 1_071 },
-      llmMs: 13_270,
-    });
-
-    expect(line).toContain("800000 in");
-    expect(line).not.toContain("est");
-    expect(line).not.toContain("NaN");
   });
 });

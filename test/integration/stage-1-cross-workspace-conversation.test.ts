@@ -1,3 +1,6 @@
+import type { ApiErrorBody, ChatResponse } from "../../src/api/schemas/responses.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * E2E — conversation access after the owner is removed from its workspace.
  *
@@ -11,7 +14,7 @@
  *     conversation (`findConversation`, the SSE event stream).
  *   - RESUME is denied — continuing the chat would grant the workspace's tools to
  *     someone offboarded from it, so the membership gate refuses it (`403`),
- *     regardless of which workspace the request is focused on.
+ *     regardless of which workspace the request is addressed to.
  *
  * This replaces the earlier "conversations outlive their workspace context"
  * stance, which dated from when conversations lived at flat top-level storage
@@ -25,8 +28,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
@@ -38,22 +41,25 @@ import type {
   IdentityProvider,
   ProviderCapabilities,
   UserIdentity,
+  VerifiedIdentity,
 } from "../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeIdentity } from "../helpers/identity.ts";
 
 // ---------------------------------------------------------------------------
 // Minimal multi-user auth adapter — same shape as conversation-access.test.ts,
 // inlined to keep this E2E self-contained.
 // ---------------------------------------------------------------------------
 
-const ALICE: UserIdentity = {
+const ALICE: UserIdentity = makeIdentity({
   id: "usr_alice",
   email: "alice@example.com",
   displayName: "Alice",
   orgRole: "member",
-};
+});
 
 class TokenAuthAdapter implements IdentityProvider {
   readonly capabilities: ProviderCapabilities = {
@@ -65,10 +71,11 @@ class TokenAuthAdapter implements IdentityProvider {
 
   constructor(private readonly tokens: Record<string, UserIdentity>) {}
 
-  async verifyRequest(req: Request): Promise<UserIdentity | null> {
+  async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const authHeader = req.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) return null;
-    return this.tokens[authHeader.slice(7)] ?? null;
+    const who = this.tokens[authHeader.slice(7)];
+    return who ? { ...who, grant: FIRST_PARTY_GRANT } : null;
   }
 
   async listUsers(): Promise<User[]> {
@@ -100,7 +107,8 @@ describe("conversation access after the owner is removed from its workspace", ()
   beforeAll(async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: () => new TokenAuthAdapter({ [ALICE_TOKEN]: ALICE }),
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -118,8 +126,8 @@ describe("conversation access after the owner is removed from its workspace", ()
 
     // Two shared workspaces; Alice is admin of both.
     const wsStore = runtime.getWorkspaceStore();
-    const a = await wsStore.create("Shared A", "shared_a");
-    const b = await wsStore.create("Shared B", "shared_b");
+    const a = await wsStore.create("Shared A");
+    const b = await wsStore.create("Shared B");
     sharedA = a.id;
     sharedB = b.id;
     await wsStore.addMember(sharedA, ALICE.id, "admin");
@@ -130,7 +138,6 @@ describe("conversation access after the owner is removed from its workspace", ()
     handle = startServer({
       runtime,
       port: 0,
-      provider: new TokenAuthAdapter({ [ALICE_TOKEN]: ALICE }),
     });
     baseUrl = `http://localhost:${handle.port}`;
   });
@@ -143,19 +150,17 @@ describe("conversation access after the owner is removed from its workspace", ()
 
   test("an owned conversation in A stays readable but cannot be resumed after Alice leaves A", async () => {
     // 1. Alice POSTs a chat in shared_a — produces a conversation born in the
-    //    focused workspace (the `X-Workspace-Id`, sharedA), stored under
-    //    `workspaces/<sharedA>/conversations/<ownerId>/` and sealed to it (#584).
-    const createRes = await fetch(`${baseUrl}/v1/chat`, {
-      method: "POST",
+    //    workspace the request is addressed to (sharedA, from the path), stored
+    //    under `workspaces/<sharedA>/conversations/<ownerId>/` and sealed to it.
+    const createRes = await postChatTurn(baseUrl, sharedA, {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ALICE_TOKEN}`,
-        "X-Workspace-Id": sharedA,
       },
       body: JSON.stringify({ message: "hello from workspace A" }),
     });
     expect(createRes.status).toBe(200);
-    const createBody = (await createRes.json()) as { conversationId: string };
+    const createBody = await readJson<ChatResponse>(createRes);
     const convId = createBody.conversationId;
     expect(convId).toMatch(/^conv_[a-f0-9]{16}$/);
 
@@ -164,7 +169,10 @@ describe("conversation access after the owner is removed from its workspace", ()
     // the directory — and NOT in a flat top-level `conversations/` dir. The
     // owner partition is what makes it survive removal: dropping Alice from
     // sharedA's member list doesn't touch her conversation file.
-    const workspacePath = join(workspaceConversationsDir(workDir, sharedA, ALICE.id), `${convId}.jsonl`);
+    const workspacePath = join(
+      workspaceConversationsDir(workDir, sharedA, ALICE.id),
+      `${convId}.jsonl`,
+    );
     const flatPath = join(workDir, "conversations", `${convId}.jsonl`);
     expect((await stat(workspacePath)).isFile()).toBe(true);
     let flatExists = true;
@@ -201,44 +209,42 @@ describe("conversation access after the owner is removed from its workspace", ()
     expect(sseRes.headers.get("Content-Type")).toMatch(/text\/event-stream/);
     await sseRes.body?.cancel();
 
-    // 5. But chatting IN shared_a is refused with the standard
-    //    non-member 403 — workspace resolution happens at the HTTP
+    // 5. But chatting IN shared_a is refused with the workspace gate's single
+    //    answer for a workspace the caller cannot reach (404, indistinguishable
+    //    from an unknown workspace) — the `:wsId` gate runs at the HTTP
     //    boundary before the runtime even sees the request.
-    const refusedRes = await fetch(`${baseUrl}/v1/chat`, {
+    const refusedRes = await fetch(`${baseUrl}/v1/workspaces/${sharedA}/chat/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ALICE_TOKEN}`,
-        "X-Workspace-Id": sharedA,
       },
       body: JSON.stringify({ message: "still in A?", conversationId: convId }),
     });
-    expect(refusedRes.status).toBe(403);
-    const refusedBody = await refusedRes.json();
-    expect(refusedBody.error).toBe("workspace_error");
-    expect(refusedBody.message).toMatch(/not a member/i);
+    expect(refusedRes.status).toBe(404);
+    expect(await refusedRes.json()).toEqual({
+      error: "workspace_error",
+      message: "Workspace not found",
+    });
 
-    // 6. RESUME is denied — even focused on a DIFFERENT workspace Alice IS a
-    //    member of (sharedB passes the door's membership check). The conversation
-    //    is sealed to sharedA, so resolution would bind tools to sharedA, which
-    //    Alice was removed from. The membership gate refuses with a 403, NOT a
-    //    silent continuation. (This is the resume analog of step 5's HTTP-boundary
-    //    refusal, but on the conversation's OWN workspace rather than the header's.)
-    const continueRes = await fetch(`${baseUrl}/v1/chat`, {
+    // 6. RESUME is denied at a DIFFERENT workspace Alice IS a member of, too
+    //    (sharedB passes the door's membership check). A chat runs in the
+    //    workspace its path names, and the conversation is not stored in
+    //    sharedB, so the answer is the one an unknown conversation gets.
+    const continueRes = await fetch(`${baseUrl}/v1/workspaces/${sharedB}/chat/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ALICE_TOKEN}`,
-        "X-Workspace-Id": sharedB,
       },
       body: JSON.stringify({
         message: "continuing in workspace B",
         conversationId: convId,
       }),
     });
-    expect(continueRes.status).toBe(403);
-    const continueBody = (await continueRes.json()) as { error: string };
-    expect(continueBody.error).toBe("conversation_access_denied");
+    expect(continueRes.status).toBe(404);
+    const continueBody = await readJson<ApiErrorBody>(continueRes);
+    expect(continueBody.error).toBe("conversation_not_found");
 
     // 7. The denied resume left the conversation untouched: still one turn,
     //    still in sharedA, and the refused message was never appended.

@@ -8,16 +8,18 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
-import { installTestCredentialStore } from "../helpers/credential-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
-import { FileCredentialStore } from "../../src/tools/credential-store.ts";
+import type { CredentialStore } from "../../src/tools/credential-store.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { installTestCredentialStore } from "../helpers/credential-store.ts";
+import { stub } from "../helpers/stub.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /**
  * End-to-end coverage for the boundary the unit tests don't quite
@@ -88,7 +90,7 @@ interface Harness {
 
 async function buildHarness(): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-policy-e2e-"));
-  const wsId = "ws_acme";
+  const wsId = "ws_000f7ed6658f9d30";
   const workspaceStore = new WorkspaceStore(workDir);
   const credStore = installTestCredentialStore(workDir);
   const permissionStore = new PermissionStore(workDir);
@@ -100,7 +102,7 @@ async function buildHarness(): Promise<Harness> {
 
   // Provision workspace with an admin member so `set_permissions`'
   // workspace-admin gate passes.
-  await workspaceStore.create("Acme", wsId.slice(3));
+  await seedWorkspace(workspaceStore, wsId, { name: "Acme" });
   await workspaceStore.addMember(wsId, ADMIN.id, "admin");
 
   // Seed an instance for "mock" so `set_permissions`' installed-
@@ -117,14 +119,14 @@ async function buildHarness(): Promise<Harness> {
   );
 
   const ctx: ManageConnectorsContext = {
-    runtime: {
+    runtime: stub<Runtime>({
       getWorkDir: () => workDir,
       getCredentialStore: () => credStore,
       getWorkspaceStore: () => workspaceStore,
       getPermissionStore: () => permissionStore,
       getLifecycle: () => lifecycle,
       getRegistryForWorkspace: () => registry,
-    } as unknown as Runtime,
+    }),
     getIdentity: () => ADMIN,
     getWorkspaceId: () => wsId,
   };
@@ -164,6 +166,7 @@ describe("policy enforcement: set_permissions → registry.execute", () => {
     expect(setResult.isError).toBe(false);
 
     const callResult = await h.registry.execute({
+      id: "call-166",
       name: "mock__destructive_write",
       input: {},
     });
@@ -186,7 +189,7 @@ describe("policy enforcement: set_permissions → registry.execute", () => {
       tools: { safe_read: "allow" },
     });
 
-    const result = await h.registry.execute({ name: "mock__safe_read", input: {} });
+    const result = await h.registry.execute({ id: "call-189", name: "mock__safe_read", input: {} });
     expect(result.isError).toBe(false);
     expect(h.source.callLog).toEqual(["safe_read"]);
   });
@@ -201,11 +204,16 @@ describe("policy enforcement: set_permissions → registry.execute", () => {
     });
 
     // safe_read is now blocked.
-    const blocked = await h.registry.execute({ name: "mock__safe_read", input: {} });
+    const blocked = await h.registry.execute({
+      id: "call-204",
+      name: "mock__safe_read",
+      input: {},
+    });
     expect(blocked.isError).toBe(true);
 
     // destructive_write was never written; default-allow lets it through.
     const allowed = await h.registry.execute({
+      id: "call-208",
       name: "mock__destructive_write",
       input: {},
     });
@@ -219,7 +227,9 @@ describe("policy enforcement: set_permissions → registry.execute", () => {
       scope: "workspace",
       tools: { safe_read: "disallow" },
     });
-    expect((await h.registry.execute({ name: "mock__safe_read", input: {} })).isError).toBe(true);
+    expect(
+      (await h.registry.execute({ id: "call-222", name: "mock__safe_read", input: {} })).isError,
+    ).toBe(true);
 
     await h.tool.handler({
       action: "set_permissions",
@@ -227,7 +237,7 @@ describe("policy enforcement: set_permissions → registry.execute", () => {
       scope: "workspace",
       tools: { safe_read: "allow" },
     });
-    const result = await h.registry.execute({ name: "mock__safe_read", input: {} });
+    const result = await h.registry.execute({ id: "call-230", name: "mock__safe_read", input: {} });
     expect(result.isError).toBe(false);
   });
 
@@ -270,6 +280,7 @@ describe("policy enforcement: set_permissions → registry.execute", () => {
     freshRegistry.setPermissionContext(h.wsId, freshStore);
 
     const result = await freshRegistry.execute({
+      id: "call-272",
       name: "mock__destructive_write",
       input: {},
     });

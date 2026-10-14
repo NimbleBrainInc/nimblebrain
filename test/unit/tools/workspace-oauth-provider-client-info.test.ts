@@ -1,7 +1,7 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { CredentialStore } from "../../../src/tools/credential-store.ts";
 import { mcpOAuthKey } from "../../../src/tools/mcp-oauth-records.ts";
 import {
@@ -27,7 +27,7 @@ import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
  *     reauth_required and fails fast instead of blocking on a browser flow.
  */
 
-const WS_ID = "ws_abc123";
+const WS_ID = "ws_000d299235755008";
 const SERVER = "com-test-mcp";
 const CURRENT_CALLBACK = "https://new.example.com/v1/mcp-auth/callback";
 const DRIFTED_REDIRECT = "https://old.example.com/v1/mcp-auth/callback";
@@ -40,7 +40,7 @@ const CLIENT_KEY = mcpOAuthKey(SERVER, "client");
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-oauth-provider-"));
-  seedWorkspaceRoot(workDir, "ws_abc123");
+  seedWorkspaceRoot(workDir, "ws_000d299235755008");
   store = installTestCredentialStore(workDir);
 });
 
@@ -51,16 +51,13 @@ afterEach(async () => {
 
 /** Whether the DCR registration is still stored — i.e. was not discarded. */
 async function clientRecordStored(): Promise<boolean> {
-  return (
-    (await store.get(SCOPE, CLIENT_KEY, { caller: "test", purpose: "assert" })) !== null
-  );
+  return (await store.get(SCOPE, CLIENT_KEY, { caller: "test", purpose: "assert" })) !== null;
 }
 
 function makeProvider(): WorkspaceOAuthProvider {
   return new WorkspaceOAuthProvider({
     owner: { type: "workspace", wsId: WS_ID },
     serverName: SERVER,
-    workDir,
     callbackUrl: CURRENT_CALLBACK,
   });
 }
@@ -166,7 +163,6 @@ describe("WorkspaceOAuthProvider.redirectToAuthorization — background gate", (
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: WS_ID },
       serverName: SERVER,
-      workDir,
       callbackUrl: CURRENT_CALLBACK,
       onAuthLost: () => {
         authLostFired = true;

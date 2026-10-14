@@ -1,26 +1,25 @@
 // ---------------------------------------------------------------------------
 // PaletteContext — single source of truth for the command palette's open state.
 //
-// Owns { open, query } so the sidebar search trigger, the global ⌘P keyboard
+// Owns { open, query } so the sidebar search button, the global ⌘K keyboard
 // shortcut, and any ">open palette" action all drive the same state. The
-// keyboard listener lives here (not in SidebarSearch) so the shortcut works
+// keyboard listener lives here (not in the sidebar) so the shortcut works
 // even when the sidebar is collapsed or hidden — the palette is global.
 //
-// Trigger is ⌘P (Ctrl+P elsewhere). ⌘K is taken by the chat panel toggle
-// (ChatChrome) and ⌘⇧K by fullscreen chat, so the palette uses ⌘P and
-// preventDefaults to suppress the browser's print dialog.
+// Trigger is ⌘K (Ctrl+K elsewhere), the command-palette convention; every
+// shell chord is defined once in `lib/shortcuts`.
 //
-// The listener runs in the CAPTURE phase. Cmd+P is a browser accelerator; a
-// bubble-phase listener calls preventDefault late enough that the print dialog
-// can still slip through (notably while focus is inside the palette's own
-// input). Capturing at the window means we cancel the default at the very
-// start of event dispatch, before the browser commits the print action — the
-// standard way command palettes suppress a native shortcut.
+// The listener runs in the CAPTURE phase. Ctrl+K is a browser accelerator
+// (it focuses the search bar in Firefox and Chrome on Windows/Linux); a
+// bubble-phase listener calls preventDefault late enough that the browser can
+// still act (notably while focus is inside the palette's own input).
+// Capturing at the window cancels the default at the very start of event
+// dispatch — the standard way command palettes suppress a native shortcut.
 // ---------------------------------------------------------------------------
 
 import type { ReactNode } from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { isPaletteToggleChord } from "../lib/palette-shortcut";
+import { matchesShortcut, SHORTCUTS } from "../lib/shortcuts";
 
 export interface PaletteContextValue {
   open: boolean;
@@ -48,9 +47,9 @@ export function PaletteProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      // ⌘P / Ctrl+P toggles the palette. preventDefault (in capture phase, see
-      // file header) so the browser's Print dialog never steals the shortcut.
-      if (isPaletteToggleChord(e)) {
+      // ⌘K / Ctrl+K toggles the palette. preventDefault (in capture phase, see
+      // file header) so the browser's own binding never steals the shortcut.
+      if (matchesShortcut(e, SHORTCUTS.search)) {
         e.preventDefault();
         e.stopPropagation();
         setOpen((prev) => {

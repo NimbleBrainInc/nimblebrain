@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   type ConnectorTool,
   listConnectorToolsWithPermissions,
+  type PermissionScope,
   setConnectorPermissions,
   type ToolPolicy,
 } from "../../api/client";
@@ -18,6 +19,13 @@ function errorMessage(err: unknown): string {
  * all" sit in the section header for the I-just-want-everything-on /
  * everything-off cases.
  *
+ * **`collapsible` starts it as one summary line** ("27 tools · all allowed").
+ * A connector can expose dozens of tools, and listed in full they bury
+ * everything after them on a page of sections; the summary says what matters
+ * at a glance, and the list opens on demand. The bulk controls appear with it.
+ * A host that is already a disclosure (a panel opened to show the tools)
+ * leaves it off, so opening the panel shows the list.
+ *
  * Defaults: tools without a recorded policy are treated as Allow.
  * The runtime gate at `ToolRegistry.execute` honors the same default,
  * so an empty permissions.json means "everything works." Trust-by-
@@ -30,20 +38,31 @@ function errorMessage(err: unknown): string {
  */
 export function ToolPermissionsTable({
   serverName,
+  scope,
   canManage,
+  collapsible = false,
 }: {
   serverName: string;
-  /** Whether the viewer may change policy. Tool policy is workspace-owned —
-   *  it decides what the agent may call for every member — so the server
-   *  admin-gates the write. Read stays open: a member should be able to see
-   *  what their agent is allowed to do. */
+  /** Which connector's policy this table shows: the active workspace's install,
+   *  or the viewer's personal connector (policy owned by their identity). */
+  scope: PermissionScope;
+  /** Whether the viewer may change policy. A workspace install's policy
+   *  decides what the agent may call for every member, so the server
+   *  admin-gates the write; read stays open, so a member can see what their
+   *  agent is allowed to do. A personal connector's policy is the viewer's own. */
   canManage: boolean;
+  /** Start as a summary line with a Show tools toggle, for a page where the
+   *  list sits among other sections. */
+  collapsible?: boolean;
 }) {
   const [tools, setTools] = useState<ConnectorTool[]>([]);
   const [policies, setPolicies] = useState<Record<string, ToolPolicy>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingTool, setSavingTool] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const listId = useId();
+  const open = !collapsible || expanded;
 
   useEffect(() => {
     let cancelled = false;
@@ -54,7 +73,7 @@ export function ToolPermissionsTable({
         // One combined call fetches tools and permissions together; the
         // server runs the two reads in parallel, halving the table's
         // page-load REST traffic.
-        const res = await listConnectorToolsWithPermissions(serverName, "workspace");
+        const res = await listConnectorToolsWithPermissions(serverName, scope);
         if (cancelled) return;
         setTools(res.tools);
         setPolicies(res.permissions);
@@ -68,7 +87,7 @@ export function ToolPermissionsTable({
     return () => {
       cancelled = true;
     };
-  }, [serverName]);
+  }, [serverName, scope]);
 
   const policyFor = (toolName: string): ToolPolicy =>
     policies[toolName] === "disallow" ? "disallow" : "allow";
@@ -79,7 +98,7 @@ export function ToolPermissionsTable({
     const prev = policyFor(toolName);
     setPolicies((p) => ({ ...p, [toolName]: next }));
     try {
-      await setConnectorPermissions(serverName, "workspace", { [toolName]: next });
+      await setConnectorPermissions(serverName, scope, { [toolName]: next });
     } catch (err) {
       setPolicies((p) => ({ ...p, [toolName]: prev }));
       setError(errorMessage(err));
@@ -95,7 +114,7 @@ export function ToolPermissionsTable({
     const prev = { ...policies };
     setPolicies(all);
     try {
-      await setConnectorPermissions(serverName, "workspace", all);
+      await setConnectorPermissions(serverName, scope, all);
     } catch (err) {
       setPolicies(prev);
       setError(errorMessage(err));
@@ -116,7 +135,7 @@ export function ToolPermissionsTable({
             : "Which tools the agent can call. Workspace admins choose."}
         </p>
       </div>
-      {tools.length > 0 && canManage && (
+      {tools.length > 0 && canManage && open && (
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <button
             type="button"
@@ -141,10 +160,23 @@ export function ToolPermissionsTable({
   // Don't render the section when there are no tools to show. A
   // connector in `not_authenticated` (or any state without an
   // active source) returns empty tools — the hero already conveys
-  // the "Sign-in required / Configure" prompt; an empty Tool
+  // the "Not connected / Configure" prompt; an empty Tool
   // permissions section adds noise. Same for genuine zero-tool
-  // connectors (rare). After load, only render with content.
-  if (!loading && !error && tools.length === 0) return null;
+  // connectors (rare). After load, only render with content. A personal
+  // connector has no hero, and its table opens on request, so it says why
+  // the section is empty instead of vanishing.
+  if (!loading && !error && tools.length === 0) {
+    if (scope !== "identity") return null;
+    return (
+      <section className="space-y-3">
+        {header}
+        <p className="text-sm text-muted-foreground">
+          No tools to show right now. If this connector should have tools, disconnect and connect it
+          again.
+        </p>
+      </section>
+    );
+  }
 
   if (loading) {
     return (
@@ -164,23 +196,48 @@ export function ToolPermissionsTable({
     );
   }
 
+  const blocked = tools.filter((t) => policyFor(t.name) === "disallow").length;
   return (
     <section className="space-y-3">
       {header}
-      <ul className="border-t border-border/60">
-        {tools.map((tool) => (
-          <ToolPermissionRow
-            key={tool.name}
-            tool={tool}
-            policy={policyFor(tool.name)}
-            saving={savingTool === tool.name}
-            canManage={canManage}
-            onSetPolicy={updatePolicy}
-          />
-        ))}
-      </ul>
+      {collapsible && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm">{permissionSummary(tools.length, blocked)}</p>
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={listId}
+            onClick={() => setExpanded((v) => !v)}
+            className="text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-4"
+          >
+            {expanded ? "Hide tools" : "Show tools"}
+          </button>
+        </div>
+      )}
+      {open && (
+        <ul id={listId} className="border-t border-border/60">
+          {tools.map((tool) => (
+            <ToolPermissionRow
+              key={tool.name}
+              tool={tool}
+              policy={policyFor(tool.name)}
+              saving={savingTool === tool.name}
+              canManage={canManage}
+              onSetPolicy={updatePolicy}
+            />
+          ))}
+        </ul>
+      )}
     </section>
   );
+}
+
+/** "27 tools · all allowed", "27 tools · 3 disallowed", "1 tool · none allowed". */
+export function permissionSummary(total: number, blocked: number): string {
+  const count = `${total} ${total === 1 ? "tool" : "tools"}`;
+  if (blocked === 0) return `${count} · all allowed`;
+  if (blocked === total) return `${count} · none allowed`;
+  return `${count} · ${blocked} disallowed`;
 }
 
 /**

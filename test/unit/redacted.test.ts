@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { inspect } from "node:util";
-import { Redacted, isRedacted } from "../../src/tools/redacted.ts";
+import { isRedacted, Redacted } from "../../src/tools/redacted.ts";
 
 describe("Redacted", () => {
   test("reveal returns the underlying value", () => {

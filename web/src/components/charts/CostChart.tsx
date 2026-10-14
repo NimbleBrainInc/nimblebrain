@@ -9,32 +9,63 @@ interface CostBreakdown {
   total: number;
 }
 
-interface DayData {
+export interface DayData {
   key: string;
   cost: CostBreakdown;
   llmCalls: number;
+  /** Cost per key of some dimension, when the report was asked to split days. */
+  stack?: Record<string, number>;
+}
+
+/** One stacked series: a label and how much of a day's cost is its. */
+export interface ChartSeries {
+  key: string;
+  label: string;
+  value: (d: DayData) => number;
+  /** Overrides the colour its position would assign, e.g. a muted "Other". */
+  color?: string;
 }
 
 interface CostChartProps {
   data: DayData[];
+  /**
+   * The series to stack, bottom first. Omitted, each day stacks by cost
+   * bucket (input, output, cache read, cache write).
+   */
+  series?: ChartSeries[];
 }
 
-// Colors — muted palette that works on light backgrounds
-const COLORS = {
-  input: "#6366f1", // indigo
-  output: "#f59e0b", // amber
-  cacheRead: "#10b981", // emerald
-  cacheWrite: "#8b5cf6", // violet
-};
+/** Categorical palette tokens (`palette.ts`), in assignment order. */
+const SERIES_COLORS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+];
+/** The muted tone for a remainder series ("Other"), and for any series past the palette. */
+export const OVERFLOW_COLOR = "var(--muted-foreground)";
 
-const LABELS: Record<string, string> = {
-  input: "Input",
-  output: "Output",
-  cacheRead: "Cache read",
-  cacheWrite: "Cache write",
-};
+const COST_BUCKET_SERIES: ChartSeries[] = [
+  { key: "input", label: "Input", value: (d) => d.cost.input },
+  { key: "output", label: "Output", value: (d) => d.cost.output },
+  { key: "cacheRead", label: "Cache read", value: (d) => d.cost.cacheRead },
+  { key: "cacheWrite", label: "Cache write", value: (d) => d.cost.cacheWrite },
+];
 
-export function CostChart({ data }: CostChartProps) {
+/** A bar's figures as one sentence, the same ones its tooltip shows. */
+function barLabel(d: DayData, segments: ChartSeries[]): string {
+  const parts = segments
+    .filter(({ value }) => value(d) > 0)
+    .map(({ label, value }) => `${label} ${formatUsd(value(d))}`);
+  const breakdown = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+  return `${formatShortDate(d.key)}: ${formatUsd(d.cost.total)}${breakdown}, ${d.llmCalls} calls`;
+}
+
+/** Most x-axis labels drawn; past it every k-th day is labelled so they never overlap. */
+const MAX_X_LABELS = 12;
+
+export function CostChart({ data, series = COST_BUCKET_SERIES }: CostChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   if (data.length === 0) {
@@ -69,12 +100,11 @@ export function CostChart({ data }: CostChartProps) {
   const formatTick = (value: number) =>
     axisInCents ? `${(value * 100).toFixed(2)}¢` : `$${value.toFixed(2)}`;
 
-  const segments: Array<{ key: keyof typeof COLORS; field: keyof CostBreakdown }> = [
-    { key: "cacheWrite", field: "cacheWrite" },
-    { key: "cacheRead", field: "cacheRead" },
-    { key: "output", field: "output" },
-    { key: "input", field: "input" },
-  ];
+  const segments = series.map((s, i) => ({
+    ...s,
+    color: s.color ?? SERIES_COLORS[i] ?? OVERFLOW_COLOR,
+  }));
+  const labelEvery = Math.ceil(data.length / MAX_X_LABELS);
 
   // Tooltip anchor: center normally, but snap to the closer edge near the
   // chart boundaries so the popover never spills past the card (the parent
@@ -87,12 +117,8 @@ export function CostChart({ data }: CostChartProps) {
 
   return (
     <div className="relative">
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="w-full"
-        style={{ maxHeight: 220 }}
-        aria-hidden="true"
-      >
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ maxHeight: 220 }}>
+        <title>Daily cost</title>
         {/* Y-axis gridlines + labels */}
         {Array.from({ length: yTicks + 1 }, (_, i) => {
           const value = yStep * i;
@@ -126,11 +152,19 @@ export function CostChart({ data }: CostChartProps) {
           let yOffset = 0;
 
           return (
-            // biome-ignore lint/a11y/noStaticElementInteractions: SVG hover for tooltip, no keyboard equivalent needed
+            // Focusable so the keyboard reaches the tooltip; the label carries
+            // the same figures for a screen reader.
+            // biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: SVG has no interactive element to use for a bar, and `img` with its label is what a screen reader should announce
             <g
               key={d.key}
+              role="img"
+              aria-label={barLabel(d, segments)}
+              tabIndex={0}
               onMouseEnter={() => setHoveredIndex(i)}
               onMouseLeave={() => setHoveredIndex(null)}
+              onFocus={() => setHoveredIndex(i)}
+              onBlur={() => setHoveredIndex(null)}
+              className="outline-none focus-visible:[&>rect:first-child]:stroke-ring"
               style={{ cursor: "default" }}
             >
               {/* Invisible hit area for hover */}
@@ -142,9 +176,9 @@ export function CostChart({ data }: CostChartProps) {
                 fill="transparent"
               />
 
-              {/* Stacked segments (bottom to top: input, output, cacheRead, cacheWrite) */}
-              {segments.map(({ key, field }) => {
-                const value = d.cost[field] as number;
+              {/* Stacked segments, bottom to top in series order */}
+              {segments.map(({ key, value: seriesValue, color }) => {
+                const value = seriesValue(d);
                 if (value <= 0) return null;
                 const segHeight = (value / maxCost) * chartHeight;
                 const segY = paddingTop + chartHeight - yOffset - segHeight;
@@ -156,23 +190,25 @@ export function CostChart({ data }: CostChartProps) {
                     y={segY}
                     width={barWidth}
                     height={Math.max(segHeight, 0.5)}
-                    fill={COLORS[key]}
+                    fill={color}
                     rx={segHeight === yOffset ? 2 : 0}
                     opacity={hoveredIndex === null || hoveredIndex === i ? 1 : 0.3}
                   />
                 );
               })}
 
-              {/* X-axis label */}
-              <text
-                x={x + barWidth / 2}
-                y={height - 6}
-                textAnchor="middle"
-                className="fill-muted-foreground"
-                style={{ fontSize: 10 }}
-              >
-                {formatShortDate(d.key)}
-              </text>
+              {/* X-axis label, thinned so a month of days stays legible */}
+              {i % labelEvery === 0 ? (
+                <text
+                  x={x + barWidth / 2}
+                  y={height - 6}
+                  textAnchor="middle"
+                  className="fill-muted-foreground"
+                  style={{ fontSize: 10 }}
+                >
+                  {formatShortDate(d.key)}
+                </text>
+              ) : null}
             </g>
           );
         })}
@@ -190,20 +226,19 @@ export function CostChart({ data }: CostChartProps) {
           }}
         >
           <div className="font-medium mb-1">{formatShortDate(data[hoveredIndex].key)}</div>
-          {segments
-            .filter(({ field }) => (data[hoveredIndex]!.cost[field] as number) > 0)
-            .map(({ key, field }) => (
+          {[...segments]
+            .reverse()
+            .filter(({ value }) => value(data[hoveredIndex]!) > 0)
+            .map(({ key, label, value, color }) => (
               <div key={key} className="flex items-center justify-between gap-3">
                 <span className="flex items-center gap-1.5">
                   <span
                     className="inline-block w-2 h-2 rounded-full"
-                    style={{ backgroundColor: COLORS[key] }}
+                    style={{ backgroundColor: color }}
                   />
-                  {LABELS[key]}
+                  {label}
                 </span>
-                <span className="font-mono">
-                  {formatUsd(data[hoveredIndex]!.cost[field] as number)}
-                </span>
+                <span className="font-mono">{formatUsd(value(data[hoveredIndex]!))}</span>
               </div>
             ))}
           <div className="flex justify-between border-t border-border mt-1 pt-1 font-medium">
@@ -215,14 +250,14 @@ export function CostChart({ data }: CostChartProps) {
       )}
 
       {/* Legend */}
-      <div className="flex items-center justify-center gap-4 mt-2 text-xs text-muted-foreground">
-        {Object.entries(COLORS).map(([key, color]) => (
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
+        {segments.map(({ key, label, color }) => (
           <span key={key} className="flex items-center gap-1">
             <span
               className="inline-block w-2.5 h-2.5 rounded-xs"
               style={{ backgroundColor: color }}
             />
-            {LABELS[key]}
+            {label}
           </span>
         ))}
       </div>

@@ -84,3 +84,13 @@ to `dynamic`, priority 50, active. Nothing needs a `nimblebrain` block to work.
   nothing enforcing that they do, and a skill stops being one portable document.
 - **A hand-written parser per call site** — rejected: this is the drift the
   single schema exists to remove.
+- **Flat string values under `metadata`** (`nimblebrain.loading-strategy:
+  "always"`, lists joined into one string) — rejected. The standard's prose
+  describes `metadata` as a map from string keys to string values, and the
+  nested block departs from that wording. But the standard's reference validator
+  (`skills-ref validate`) accepts the nested block, including numbers and lists,
+  because it constrains only which top-level fields exist; and the MCP Skills
+  extension passes frontmatter through unchanged. Flattening would change every
+  published skill and encode `triggers` and `tool-affinity` as strings to parse,
+  for conformance to a sentence no tool enforces. Revisit when a validator or a
+  host rejects the nested block.

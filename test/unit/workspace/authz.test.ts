@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";
-import { canWriteWorkspaceScoped } from "../../../src/workspace/authz.ts";
+import {
+  canManageWorkspaceMembers,
+  canReadWorkspaceMembers,
+  canRenameWorkspace,
+  canWriteWorkspaceScoped,
+} from "../../../src/workspace/authz.ts";
 import type { Workspace, WorkspaceRole } from "../../../src/workspace/types.ts";
 
 function identity(id: string, orgRole: OrgRole = "member"): UserIdentity {
@@ -14,9 +19,7 @@ function identity(id: string, orgRole: OrgRole = "member"): UserIdentity {
   };
 }
 
-function workspace(
-  members: Array<{ userId: string; role: WorkspaceRole }>,
-): Workspace {
+function workspace(members: Array<{ userId: string; role: WorkspaceRole }>): Workspace {
   return {
     id: "ws-acme",
     name: "Acme",
@@ -40,17 +43,17 @@ describe("canWriteWorkspaceScoped", () => {
     const decision = canWriteWorkspaceScoped(identity("u1"), ws);
 
     expect(decision.allowed).toBe(false);
-    if (decision.allowed) throw new Error("expected denial");
+    if (decision.allowed !== false) throw new Error("expected denial");
     expect(decision.reason).toContain("admin");
     expect(decision.reason).toContain("ws-acme");
   });
 
-  test("denies a non-member even when their org role is owner", () => {
-    const ws = workspace([{ userId: "owner-member", role: "admin" }]);
-    const decision = canWriteWorkspaceScoped(identity("outsider", "owner"), ws);
+  test("denies a non-member even when their org role is admin", () => {
+    const ws = workspace([{ userId: "ws-admin", role: "admin" }]);
+    const decision = canWriteWorkspaceScoped(identity("outsider", "admin"), ws);
 
     expect(decision.allowed).toBe(false);
-    if (decision.allowed) throw new Error("expected denial");
+    if (decision.allowed !== false) throw new Error("expected denial");
     expect(decision.reason).toContain("Not a member");
     expect(decision.reason).toContain("ws-acme");
   });
@@ -60,7 +63,7 @@ describe("canWriteWorkspaceScoped", () => {
     const decision = canWriteWorkspaceScoped(identity("outsider", "admin"), ws);
 
     expect(decision.allowed).toBe(false);
-    if (decision.allowed) throw new Error("expected denial");
+    if (decision.allowed !== false) throw new Error("expected denial");
     expect(decision.reason).toContain("Not a member");
   });
 
@@ -75,25 +78,84 @@ describe("canWriteWorkspaceScoped", () => {
   });
 
   test("denies when the workspace is null", () => {
-    expect(canWriteWorkspaceScoped(identity("u1", "owner"), null).allowed).toBe(
-      false,
-    );
+    expect(canWriteWorkspaceScoped(identity("u1", "admin"), null).allowed).toBe(false);
   });
 
   test("denies when the workspace is undefined", () => {
-    expect(
-      canWriteWorkspaceScoped(identity("u1", "owner"), undefined).allowed,
-    ).toBe(false);
+    expect(canWriteWorkspaceScoped(identity("u1", "admin"), undefined).allowed).toBe(false);
   });
 
   test("fails closed when members is not an array (undefined)", () => {
     // Malformed workspace record: `members` missing. Must deny rather
     // than throw — fail-closed posture for an authorization helper.
+    // biome-ignore lint/plugin/double-cast: a stored workspace record with no members, claimed as a Workspace, which requires them
     const ws = { id: "ws-acme", name: "Acme" } as unknown as Workspace;
-    const decision = canWriteWorkspaceScoped(identity("u1", "owner"), ws);
+    const decision = canWriteWorkspaceScoped(identity("u1", "admin"), ws);
 
     expect(decision.allowed).toBe(false);
-    if (decision.allowed) throw new Error("expected denial");
+    if (decision.allowed !== false) throw new Error("expected denial");
     expect(decision.reason).toContain("Not a member");
+  });
+});
+
+describe("canManageWorkspaceMembers", () => {
+  test("allows an org admin who is not a member", () => {
+    const ws = workspace([{ userId: "u1", role: "admin" }]);
+    expect(canManageWorkspaceMembers(identity("org", "admin"), ws)).toEqual({ allowed: true });
+  });
+
+  test("allows a workspace admin member with no org role", () => {
+    const ws = workspace([{ userId: "u1", role: "admin" }]);
+    expect(canManageWorkspaceMembers(identity("u1"), ws)).toEqual({ allowed: true });
+  });
+
+  test("denies a plain member and a non-member without an org admin role", () => {
+    const ws = workspace([{ userId: "u1", role: "member" }]);
+    expect(canManageWorkspaceMembers(identity("u1"), ws).allowed).toBe(false);
+    expect(canManageWorkspaceMembers(identity("u2"), ws).allowed).toBe(false);
+  });
+
+  test("denies an org admin when the workspace does not exist, and a missing identity", () => {
+    expect(canManageWorkspaceMembers(identity("org", "admin"), null).allowed).toBe(false);
+    expect(canManageWorkspaceMembers(null, workspace([])).allowed).toBe(false);
+  });
+
+  test("leaves content writes strict: the same org admin is refused by canWriteWorkspaceScoped", () => {
+    const ws = workspace([{ userId: "u1", role: "admin" }]);
+    expect(canWriteWorkspaceScoped(identity("org", "admin"), ws).allowed).toBe(false);
+  });
+});
+
+describe("canReadWorkspaceMembers", () => {
+  test("allows every member, whatever their role, and an org admin outside it", () => {
+    const ws = workspace([
+      { userId: "u1", role: "admin" },
+      { userId: "u2", role: "member" },
+    ]);
+    expect(canReadWorkspaceMembers(identity("u1"), ws)).toEqual({ allowed: true });
+    expect(canReadWorkspaceMembers(identity("u2"), ws)).toEqual({ allowed: true });
+    expect(canReadWorkspaceMembers(identity("org", "admin"), ws)).toEqual({ allowed: true });
+  });
+
+  test("denies a non-member, a missing identity, and a missing or malformed workspace", () => {
+    const ws = workspace([{ userId: "u1", role: "member" }]);
+    expect(canReadWorkspaceMembers(identity("u3"), ws).allowed).toBe(false);
+    expect(canReadWorkspaceMembers(null, ws).allowed).toBe(false);
+    expect(canReadWorkspaceMembers(identity("u1"), null).allowed).toBe(false);
+    // biome-ignore lint/plugin/double-cast: a stored workspace record with no members, claimed as a Workspace, which requires them
+    const malformed = { ...ws, members: undefined } as unknown as Workspace;
+    expect(canReadWorkspaceMembers(identity("u1"), malformed).allowed).toBe(false);
+  });
+});
+
+describe("canRenameWorkspace", () => {
+  test("allows a workspace admin member and an org admin; denies a plain member", () => {
+    const ws = workspace([
+      { userId: "u1", role: "admin" },
+      { userId: "u2", role: "member" },
+    ]);
+    expect(canRenameWorkspace(identity("u1"), ws)).toEqual({ allowed: true });
+    expect(canRenameWorkspace(identity("org", "admin"), ws)).toEqual({ allowed: true });
+    expect(canRenameWorkspace(identity("u2"), ws).allowed).toBe(false);
   });
 });

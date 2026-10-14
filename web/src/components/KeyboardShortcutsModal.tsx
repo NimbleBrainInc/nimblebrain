@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { SHORTCUTS, shortcutKeys } from "../lib/shortcuts";
 
 interface ShortcutItem {
   keys: string[];
@@ -15,19 +16,19 @@ interface ShortcutGroup {
 const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Navigation",
-    shortcuts: [{ keys: ["⌘", "P"], description: "Open command palette" }],
+    shortcuts: [{ keys: shortcutKeys(SHORTCUTS.search), description: "Search and run commands" }],
   },
   {
     title: "Chat",
     shortcuts: [
-      { keys: ["⌘", "K"], description: "Open / close chat" },
-      { keys: ["⌘", "⇧", "K"], description: "Expand / collapse" },
+      { keys: shortcutKeys(SHORTCUTS.chat), description: "Open / close chat" },
+      { keys: shortcutKeys(SHORTCUTS.chatFullscreen), description: "Expand / collapse" },
       { keys: ["Esc"], description: "Close chat" },
     ],
   },
   {
     title: "Sidebar",
-    shortcuts: [{ keys: ["⌘", "B"], description: "Toggle sidebar" }],
+    shortcuts: [{ keys: shortcutKeys(SHORTCUTS.sidebar), description: "Toggle sidebar" }],
   },
   {
     title: "Input",
@@ -112,13 +113,15 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
                 {group.title}
               </h3>
               <div className="space-y-2">
-                {group.shortcuts.map((shortcut, index) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: static shortcut list
-                  <div key={index} className="flex items-center justify-between py-1.5">
+                {group.shortcuts.map((shortcut) => (
+                  <div
+                    key={shortcut.description}
+                    className="flex items-center justify-between py-1.5"
+                  >
                     <span className="text-sm text-muted-foreground">{shortcut.description}</span>
                     <div className="flex items-center gap-1">
                       {shortcut.keys.map((key, keyIndex) => (
-                        // biome-ignore lint/suspicious/noArrayIndexKey: static shortcut list
+                        // biome-ignore lint/suspicious/noArrayIndexKey: a shortcut's keys are a constant sequence, and one key can repeat in it
                         <span key={keyIndex}>
                           <kbd className="inline-flex items-center justify-center min-w-[24px] px-1.5 py-1 text-xs font-mono font-medium bg-muted text-foreground rounded border border-border">
                             {key}

@@ -76,6 +76,8 @@ function parseHeaderRenames(raw: unknown): Record<string, string> | undefined {
   const out: Record<string, string> = {};
   for (const [from, to] of Object.entries(raw as Record<string, unknown>)) {
     if (!HEADER_NAME_RE.test(from)) continue;
+    // The browser's session credential is never forwarded, renamed or not.
+    if (isBrowserCredentialHeader(from.toLowerCase())) continue;
     if (typeof to !== "string" || !HEADER_NAME_RE.test(to)) continue;
     // A rename INTO the stripped class would re-open the hole the strip exists
     // to close, letting a caller land a value on an identity header name.
@@ -94,11 +96,18 @@ function parseHeaderRenames(raw: unknown): Record<string, string> | undefined {
  * is an anonymous request and must not be able to assert who it is, on this hop
  * any more than on the edge's.
  *
+ * `cookie` is not in the edge's set and is not an identity a caller asserts:
+ * it is the browser's session. It is listed here so no rename can target it.
+ * On the forward it never gets this far, because
+ * {@link isBrowserCredentialHeader} drops it before any rename is read; the
+ * two checks cover different cases, so keep both.
+ *
  * The identity NAMESPACE rule lives in {@link isStrippedRequestHeader}, not
  * here — see there for why a name list is the wrong shape for that half.
  */
 export const STRIPPED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
   "authorization",
+  "cookie",
   "x-api-key",
   "x-tenant-id",
   "x-workspace-id",
@@ -114,6 +123,20 @@ export const STRIPPED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
   "content-length",
   "expect",
 ]);
+
+/**
+ * Whether an inbound header is a credential a browser attaches on its own.
+ *
+ * `Cookie` carries the user's session to this origin. `SameSite=Lax` and
+ * `rejectCrossSiteWrites` keep it off a post from another site or from an
+ * origin CORS does not allow, but a post from this origin or an allowed one
+ * still carries it, and the forward would hand it to the connector. No vendor authenticates a
+ * delivery with it, so, unlike `Authorization`, it cannot be renamed through:
+ * the connector declares its renames and must not be able to ask for it.
+ */
+export function isBrowserCredentialHeader(lowerName: string): boolean {
+  return lowerName === "cookie";
+}
 
 /**
  * Whether an inbound header is dropped before the forward.
@@ -184,6 +207,56 @@ export function isForwardablePath(route: string): boolean {
   return true;
 }
 
+/**
+ * Whether a route names the connector's own MCP endpoint: the endpoint path
+ * itself, or a path under it.
+ *
+ * The forward carries the connection's credential, so a route that lands on the
+ * MCP endpoint would let anyone holding the delivery URL post JSON-RPC to the
+ * server as the workspace, past every gate the runtime puts in front of a tool
+ * call. A hook route is never that endpoint.
+ *
+ * Compared on what the server will route on, not on the declared string: the
+ * route is resolved against the endpoint (which folds `.`, `..`, and their
+ * percent-encoded forms), the query is dropped, each path is percent-decoded and
+ * case-folded, and a trailing slash is ignored. Case-folded because a common
+ * server router (Express's default) matches paths case-insensitively. A path
+ * that cannot be decoded, or that has a `.` or `..` segment only once decoded,
+ * counts as naming the endpoint, so an undecidable route is refused rather than
+ * forwarded. An endpoint at the root is refused only exactly, since every path
+ * lies under `/` and a server mounted there serves its other routes beside it.
+ */
+export function routeNamesMcpEndpoint(route: string, mcpUrl: string): boolean {
+  let target: string | null;
+  let endpoint: string | null;
+  try {
+    const base = new URL(mcpUrl);
+    endpoint = canonicalPath(base.pathname);
+    target = canonicalPath(new URL(route, base).pathname);
+  } catch {
+    return true;
+  }
+  if (target === null || endpoint === null) return true;
+  if (endpoint === "/") return target === "/";
+  return target === endpoint || target.startsWith(`${endpoint}/`);
+}
+
+/** A URL path as a server routes on it: decoded, lowercased, with no trailing
+ *  slash. `null` when that is undecidable. */
+function canonicalPath(pathname: string): string | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(pathname).toLowerCase();
+  } catch {
+    return null;
+  }
+  // A dot segment left after decoding (`%2e%2e%2f`) resolves differently on a
+  // server that decodes before it normalizes.
+  if (decoded.split("/").some((seg) => seg === "." || seg === "..")) return null;
+  const trimmed = decoded.replace(/\/+$/, "");
+  return trimmed === "" ? "/" : trimmed;
+}
+
 /** Throwing form of {@link isForwardablePath}, for the install path where the
  *  operator should see which route was refused. */
 export function assertForwardablePath(route: string, context: string): void {
@@ -196,7 +269,7 @@ export function assertForwardablePath(route: string, context: string): void {
 
 /**
  * Resolve a declared route against a connector's base URL, refusing anything
- * that leaves that origin.
+ * that leaves that origin or names the connector's MCP endpoint.
  *
  * Belt and braces on top of `isForwardablePath`, and deliberately so: by
  * delivery time the route has been through the workspace record on disk, which
@@ -215,5 +288,21 @@ export function resolveForwardUrl(baseUrl: string, route: string): URL {
       `[hooks] route "${route}" resolves off the connector's origin (${target.origin} != ${base.origin})`,
     );
   }
+  if (routeNamesMcpEndpoint(route, baseUrl)) throw new HookRouteRefusedError(route);
   return target;
+}
+
+/**
+ * A stored route that names the connector's MCP endpoint, refused at delivery.
+ *
+ * Its own class because the door answers it differently from the other forward
+ * failures: those are the runtime failing to deliver a hook it owes, and answer
+ * 502 so the vendor retries; this one is a hook that must never have been
+ * minted, and answers the door's bare 404 like every other refusal.
+ */
+export class HookRouteRefusedError extends Error {
+  constructor(route: string) {
+    super(`[hooks] route "${route}" names the connector's MCP endpoint`);
+    this.name = "HookRouteRefusedError";
+  }
 }

@@ -1,3 +1,12 @@
+import { dispatchEngineEvent, type EngineEventHandlers } from "../engine/event-dispatch.ts";
+import type {
+  ConnectorInstalledPayload,
+  LlmDonePayload,
+  RunDonePayload,
+  RunErrorPayload,
+  RunStartPayload,
+  ToolDonePayload,
+} from "../engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import type { TelemetryManager } from "./manager.ts";
 
@@ -26,9 +35,6 @@ function createRunMetrics(): RunMetrics {
   };
 }
 
-/** Handles one engine event: accumulates per-run metrics or captures a telemetry event. */
-type EventHandler = (data: Record<string, unknown>, runId: string | undefined) => void;
-
 /**
  * EventSink that forwards anonymized, aggregate telemetry to PostHog
  * via TelemetryManager. Accumulates per-run metrics keyed by runId,
@@ -47,14 +53,14 @@ export class PostHogEventSink implements EventSink {
    * (deltas, tool.start/progress, config.changed, and anything unknown)
    * are intentionally ignored.
    */
-  private readonly handlers: Record<string, EventHandler> = {
-    "llm.done": (data, runId) => this.accumulateLlm(data, runId),
-    "tool.done": (data, runId) => this.accumulateTool(data, runId),
-    "run.start": (data, runId) => this.captureRunStart(data, runId),
-    "run.done": (data, runId) => this.captureRunDone(data, runId),
-    "run.error": (data, runId) => this.captureRunError(data, runId),
+  private readonly handlers: EngineEventHandlers = {
+    "llm.done": (data) => this.accumulateLlm(data),
+    "tool.done": (data) => this.accumulateTool(data),
+    "run.start": (data) => this.captureRunStart(data),
+    "run.done": (data) => this.captureRunDone(data),
+    "run.error": (data) => this.captureRunError(data),
     "connector.installed": (data) => this.captureConnectorInstalled(data),
-    "connector.uninstalled": (data) => this.captureConnectorUninstalled(data),
+    "connector.uninstalled": () => this.captureConnectorUninstalled(),
   };
 
   constructor(telemetry: TelemetryManager) {
@@ -64,58 +70,39 @@ export class PostHogEventSink implements EventSink {
   emit(event: EngineEvent): void {
     if (!this.telemetry.isEnabled()) return;
 
-    const { type, data } = event;
-    const runId = data.runId as string | undefined;
-    this.handlers[type]?.(data, runId);
+    dispatchEngineEvent(this.handlers, event);
   }
 
   /** Fold an llm.done event's iteration count, latency, and token usage into the run's metrics. */
-  private accumulateLlm(data: Record<string, unknown>, runId: string | undefined): void {
-    if (!runId) return;
-    const metrics = this.runs.get(runId);
+  private accumulateLlm(data: LlmDonePayload): void {
+    const metrics = this.runs.get(data.runId);
     if (!metrics) return;
 
     metrics.iterations++;
-    metrics.llmMs += (data.llmMs as number) ?? 0;
-    // Token counts live under `data.usage` (canonical TokenUsage),
-    // not as flat siblings — mirrored from the engine's llm.done
-    // emission in src/engine/engine.ts.
-    const usage = (data.usage ?? {}) as {
-      inputTokens?: number;
-      outputTokens?: number;
-      cacheReadTokens?: number;
-    };
-    metrics.cacheTokens += usage.cacheReadTokens ?? 0;
-    metrics.inputTokens += usage.inputTokens ?? 0;
-    metrics.outputTokens += usage.outputTokens ?? 0;
+    metrics.llmMs += data.llmMs;
+    metrics.cacheTokens += data.usage.cacheReadTokens ?? 0;
+    metrics.inputTokens += data.usage.inputTokens;
+    metrics.outputTokens += data.usage.outputTokens;
   }
 
   /** Fold a tool.done event's call count and latency into the run's metrics. */
-  private accumulateTool(data: Record<string, unknown>, runId: string | undefined): void {
-    if (!runId) return;
-    const metrics = this.runs.get(runId);
+  private accumulateTool(data: ToolDonePayload): void {
+    const metrics = this.runs.get(data.runId);
     if (!metrics) return;
 
     metrics.toolCalls++;
-    metrics.toolMs += (data.ms as number) ?? 0;
+    metrics.toolMs += data.ms;
   }
 
   /** Start a per-run metrics accumulator and capture the chat-started event. */
-  private captureRunStart(data: Record<string, unknown>, runId: string | undefined): void {
-    const metrics = createRunMetrics();
-    if (runId) this.runs.set(runId, metrics);
-
-    const tools = data.toolNames as string[] | undefined;
-    this.telemetry.capture("agent.chat_started", {
-      has_skill: Boolean(data.skill),
-      tool_count: tools ? tools.length : 0,
-      is_resume: Boolean(data.isResume),
-    });
+  private captureRunStart(data: RunStartPayload): void {
+    this.runs.set(data.runId, createRunMetrics());
+    this.telemetry.capture("agent.chat_started", { tool_count: data.toolNames.length });
   }
 
   /** Capture the chat-completed event from the accumulated run metrics, then drop the accumulator. */
-  private captureRunDone(data: Record<string, unknown>, runId: string | undefined): void {
-    const metrics = runId ? this.runs.get(runId) : undefined;
+  private captureRunDone(data: RunDonePayload): void {
+    const metrics = this.runs.get(data.runId);
     const totalMs = metrics ? Date.now() - metrics.startedAt : 0;
 
     // run.done event carries no token counts (it never has) — read the
@@ -123,7 +110,7 @@ export class PostHogEventSink implements EventSink {
     this.telemetry.capture("agent.chat_completed", {
       iterations: metrics?.iterations ?? 0,
       tool_calls: metrics?.toolCalls ?? 0,
-      stop_reason: data.stopReason as string,
+      stop_reason: data.stopReason,
       llm_latency_ms: metrics?.llmMs ?? 0,
       tool_latency_ms: metrics?.toolMs ?? 0,
       total_ms: totalMs,
@@ -132,25 +119,20 @@ export class PostHogEventSink implements EventSink {
       cache_tokens: metrics?.cacheTokens ?? 0,
     });
 
-    if (runId) this.runs.delete(runId);
+    this.runs.delete(data.runId);
   }
 
-  /** Capture an agent.error with the error's type and optional code, then drop the accumulator. */
-  private captureRunError(data: Record<string, unknown>, runId: string | undefined): void {
-    const error = data.error as { constructor?: { name?: string }; code?: string } | undefined;
-    const errorType = error?.constructor?.name ?? "Unknown";
-    const props: Record<string, unknown> = { error_type: errorType };
-    if (error && typeof (error as Record<string, unknown>).code === "string") {
-      props.error_code = (error as Record<string, unknown>).code;
-    }
-
-    this.telemetry.capture("agent.error", props);
-
-    if (runId) this.runs.delete(runId);
+  /**
+   * Capture an agent.error with the error's class name, then drop the
+   * accumulator. Never the message: it can carry user content.
+   */
+  private captureRunError(data: RunErrorPayload): void {
+    this.telemetry.capture("agent.error", { error_type: data.type });
+    this.runs.delete(data.runId);
   }
 
   /** Capture connector.installed with UI presence. Every connector is remote. */
-  private captureConnectorInstalled(data: Record<string, unknown>): void {
+  private captureConnectorInstalled(data: ConnectorInstalledPayload): void {
     this.telemetry.capture("connector.installed", {
       source: "remote",
       has_ui: Boolean(data.ui),
@@ -158,7 +140,7 @@ export class PostHogEventSink implements EventSink {
   }
 
   /** Capture connector.uninstalled. */
-  private captureConnectorUninstalled(_data: Record<string, unknown>): void {
+  private captureConnectorUninstalled(): void {
     this.telemetry.capture("connector.uninstalled", { source: "remote" });
   }
 }

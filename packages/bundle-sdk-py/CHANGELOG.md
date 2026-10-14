@@ -1,14 +1,24 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0]
+
+### Added
+
+- **Skills extension (SEP-2640).** `SkillsExtension` (FastMCP, `mcp.add_extension`) and
+  `MCPServerSkillsExtension` (`mcp` SDK `MCPServer(extensions=[...])`) declare
+  `io.modelcontextprotocol/skills`, answer `skills/list` and `skills/get`, and serve every
+  skill file through `resources/read`. Skills come from directories or from in-memory
+  `SkillDefinition`s; digests, sizes, and the name-equals-last-URI-segment rule are
+  checked at construction. See the README's Skills section.
 
 ### Changed
 
-- **Requires `mcp>=2.1.1,<2.2.0` and `fastmcp>=4.0.0,<5`** (was
+- **Requires `mcp>=2.0.0,<2.3.0` and `fastmcp>=4.0.0,<5`** (was
   `mcp>=1.27.0,<2.0.0` / `fastmcp>=3.0.0`). The two majors are coupled:
   `fastmcp-slim` 4 requires `mcp>=2` and `fastmcp-slim` 3 requires
   `mcp<2`, so there is no build of this SDK that spans both. Bundles
   still on FastMCP 3 must upgrade before taking this version.
+- Requires `pyyaml>=6.0`, for `SKILL.md` frontmatter.
 - Capability detection reads `ClientCapabilities.extensions` as the
   declared field it became in `mcp` 2. It was previously read out of
   `model_extra`, which `mcp` 2 no longer populates — left unchanged,

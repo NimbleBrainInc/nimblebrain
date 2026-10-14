@@ -1,18 +1,18 @@
-import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import {
   ensureHooks,
   ensureHooksOnRunning,
   type HookReconcileDeps,
 } from "../../src/hooks/reconcile.ts";
+import { listRegistrations } from "../../src/hooks/registrations.ts";
+import type { HookIdentity } from "../../src/hooks/token.ts";
+import type { HookDeclaration } from "../../src/hooks/types.ts";
 import {
   connectorPortForSource,
   stopAllToolSurfaceWatches,
   stopWatchingToolSurface,
 } from "../../src/tools/connector-surface.ts";
-import { listRegistrations } from "../../src/hooks/registrations.ts";
-import type { HookIdentity } from "../../src/hooks/token.ts";
-import type { HookDeclaration } from "../../src/hooks/types.ts";
 import type { Tool, ToolResult } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
@@ -22,7 +22,7 @@ import { makeTestWorkDir } from "../helpers/test-workdir.ts";
  * whose tools are not enumerable yet, and one that comes back after the single
  * transition to `running` has already been spent.
  *
- * Both are ordinary states of a source, and both used to end with a permanent,
+ * Both are ordinary states of a source, and neither may end with a permanent,
  * false report that the connector declared a registration tool it does not
  * serve. What the connector's server actually advertises is a REGISTRY tool
  * list — every name qualified `<source>__<tool>` — while a declaration names
@@ -153,6 +153,13 @@ beforeEach(async () => {
   ({ workDir, cleanup } = makeTestWorkDir("hooks-cold-start"));
   store = new WorkspaceStore(workDir);
   wsId = (await store.create("Cold Start")).id;
+  // Installed, because the reconcile reads the connector's MCP endpoint from its ref.
+  await store.update(wsId, {
+    connectors: [CONNECTOR, OTHER_CONNECTOR].map((serverName) => ({
+      url: `https://${serverName}.internal/mcp`,
+      serverName,
+    })),
+  });
 });
 
 afterEach(() => {
@@ -269,10 +276,11 @@ describe("a source that is running but has advertised nothing yet", () => {
           connector: CONNECTOR,
           vendor: DECL.vendor,
           kid: "hk_before_delivery_ids",
+          createdAt: "2026-01-01T00:00:00.000Z",
           route: DECL.route,
         },
       },
-    } as never);
+    });
 
     const fake = makeSource([advertised("set_webhook_url")]);
     const provisioned = await ensureHooks(makeDeps(fake.source), wsId, CONNECTOR, {

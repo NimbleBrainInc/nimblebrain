@@ -6,16 +6,9 @@
  *  - A task leaves a RUN, not a conversation: each call returns a fresh
  *    `runId` and writes NO conversation (no resume path).
  *  - The deliverable rides back on `TaskResult.output`; the caller (the
- *    automations app) persists the run result sidecar.
- *  - `workspaceId` set    → focused workspace tool scope.
- *  - `workspaceId` absent → the orchestrator still routes a namespaced
- *                            cross-workspace tool call (dispatch
- *                            contract). The ACTIVE tool list shown to
- *                            the model is the personal workspace's
- *                            tools + identity tools; cross-workspace
- *                            tools are reachable via `nb__search` as
- *                            the discoverable corpus, NOT preloaded
- *                            into the active set.
+ *    tasks app) persists the run result sidecar.
+ *  - `workspaceId` is required: the workspace's tool scope, and the one
+ *    workspace the run is walled to. A task naming none is refused.
  *
  * Carrying duplication with `_chatInner` is the deferred follow-up
  * captured in runtime.ts; the safety net is THIS test catching any
@@ -27,7 +20,7 @@
  * echo model, no HTTP server, in-process probe source.
  */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,12 +29,15 @@ import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { firstPayloadOf } from "../helpers/engine-events.ts";
+import { makeIdentity } from "../helpers/identity.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const TEST_USER_ID = "usr_exec_task_test";
 const TEST_USER_DISPLAY = "Task Test User";
-const SHARED_WS_ID = "ws_shared_tasks";
+const SHARED_WS_ID = "ws_006d97122edd5258";
 
 function buildProbeSource() {
   const calls: Array<{ workspaceId?: string }> = [];
@@ -79,7 +75,8 @@ describe("runtime.executeTask", () => {
     workDir = mkdtempSync(join(tmpdir(), "nb-exec-task-"));
     mkdirSync(workDir, { recursive: true });
     const r = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel(echoResponses) },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(echoResponses),
       logging: { disabled: true },
       workDir,
     });
@@ -88,14 +85,14 @@ describe("runtime.executeTask", () => {
 
   async function provisionWorkspaces(r: Runtime) {
     const wsStore = r.getWorkspaceStore();
-    const personalWsId = personalWorkspaceIdFor(TEST_USER_ID);
-    await wsStore.create("Personal", personalWsId.slice(3), {
-      isPersonal: true,
-      ownerUserId: TEST_USER_ID,
+    // The owner's own workspace, created first so it is their default.
+    const ownWs = await wsStore.create("Own", {
+      members: [{ userId: TEST_USER_ID, role: "admin" }],
     });
-    await wsStore.create("Shared", SHARED_WS_ID.slice(3));
+    const defaultWsId = ownWs.id;
+    await seedWorkspace(wsStore, SHARED_WS_ID, { name: "Shared" });
     await wsStore.addMember(SHARED_WS_ID, TEST_USER_ID, "admin");
-    return { personalWsId, sharedWsId: SHARED_WS_ID };
+    return { defaultWsId, sharedWsId: SHARED_WS_ID };
   }
 
   it("stamps the run id as runId, and leaves conversationId unset", async () => {
@@ -142,7 +139,7 @@ describe("runtime.executeTask", () => {
 
     const result = await runtime.executeTask({
       prompt: "peek at the context",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       workspaceId: SHARED_WS_ID,
     });
 
@@ -151,16 +148,136 @@ describe("runtime.executeTask", () => {
     expect(seen[0]?.conversationId).toBeUndefined();
   });
 
+  it("carries maxRunInputTokens to the engine, which stops the run at the cap", async () => {
+    // A 1-token cap is below any prompt, so the engine stops before the first
+    // model call. Dropping the field anywhere between the task request and the
+    // engine config lets the run complete instead.
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+
+    const result = await runtime.executeTask({
+      workspaceId: defaultWsId,
+      prompt: "score the items",
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+      maxRunInputTokens: 1,
+    });
+
+    expect(result.stopReason).toBe("max_input_tokens");
+    expect(result.usage.inputTokens).toBe(0);
+  });
+
+  it("ends the run with spend_limit, naming the account, before a call that would overrun it", async () => {
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+
+    const result = await runtime.executeTask({
+      workspaceId: defaultWsId,
+      prompt: "score the items",
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+      spendAccounts: [
+        { id: "acct-roomy", unit: "output_tokens", remaining: 100_000_000 },
+        { id: "acct-tight", unit: "input_tokens", remaining: 1 },
+      ],
+    });
+
+    expect(result.stopReason).toBe("spend_limit");
+    expect(result.spendAccountId).toBe("acct-tight");
+    expect(result.usage.inputTokens).toBe(0);
+    // The run ended, so nothing holds the accounts any more.
+    expect(runtime.getSpendBalances().balance("acct-tight")).toBeUndefined();
+  });
+
+  it("debits every account after each model call, from the balance shared with runs in flight", async () => {
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+    // Another run in flight keeps the balance alive past this run's end, so
+    // what this run took from it stays observable.
+    const inFlight = runtime
+      .getSpendBalances()
+      .open([{ id: "acct-in", unit: "input_tokens", remaining: 100_000_000 }], {
+        model: "test",
+        rates: null,
+      });
+    try {
+      const result = await runtime.executeTask({
+        workspaceId: defaultWsId,
+        prompt: "summarize today's activity",
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+        spendAccounts: [{ id: "acct-in", unit: "input_tokens", remaining: 100_000_000 }],
+      });
+
+      expect(result.stopReason).toBe("complete");
+      expect(result.spendAccountId).toBeUndefined();
+      expect(result.usage.inputTokens).toBeGreaterThan(0);
+      expect(runtime.getSpendBalances().balance("acct-in")).toBe(
+        100_000_000 - result.usage.inputTokens,
+      );
+      // The run's reservation went with it: the in-flight run can reserve
+      // everything that is left.
+      expect(
+        inFlight.check({
+          inputTokens: 100_000_000 - result.usage.inputTokens,
+          maxOutputTokens: 1,
+          minOutputTokens: 1,
+        }),
+      ).toEqual({ maxOutputTokens: 1 });
+    } finally {
+      inFlight.release();
+    }
+  });
+
+  it("checks the live balance another run in flight already set for the same account", async () => {
+    // The first run to name an id sets its balance; a later run naming it draws
+    // on that balance, not on the amount it was given.
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+    const inFlight = runtime
+      .getSpendBalances()
+      .open([{ id: "acct-shared", unit: "input_tokens", remaining: 1 }], {
+        model: "test",
+        rates: null,
+      });
+    try {
+      const result = await runtime.executeTask({
+        workspaceId: defaultWsId,
+        prompt: "score the items",
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+        spendAccounts: [{ id: "acct-shared", unit: "input_tokens", remaining: 100_000_000 }],
+      });
+      expect(result.stopReason).toBe("spend_limit");
+      expect(result.spendAccountId).toBe("acct-shared");
+      expect(runtime.getSpendBalances().balance("acct-shared")).toBe(1);
+    } finally {
+      inFlight.release();
+    }
+  });
+
+  it("a chat names no spend account, so it never touches the balances", async () => {
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+    const balances = spyOn(runtime, "getSpendBalances");
+
+    const chat = await runtime.chat({
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+      workspaceId: defaultWsId,
+      message: "hello",
+    });
+
+    expect(chat.stopReason).toBe("complete");
+    expect(balances).not.toHaveBeenCalled();
+  });
+
   it("returns a deliverable and a runId on the happy path", async () => {
     // Echo model: no scripted responses → falls back to echoing the
     // last user message. The task prompt is the user message, so the
     // returned output should contain the prompt back.
     runtime = await bootRuntime(undefined);
-    await provisionWorkspaces(runtime);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
 
     const result = await runtime.executeTask({
+      workspaceId: defaultWsId,
       prompt: "summarize today's activity",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
 
     expect(result.output).toContain("summarize today's activity");
@@ -170,17 +287,51 @@ describe("runtime.executeTask", () => {
     expect(result.usage.iterations).toBeGreaterThan(0);
   });
 
-  it("each call gets a distinct runId (no resume path)", async () => {
+  it("returns the last call's unified and raw finish reasons", async () => {
+    // The tasks executor reads these to explain a run that ended
+    // "other"; its unit tests inject a TaskFnResult, so only this test covers
+    // the engine → run handle → TaskResult passthrough.
+    runtime = await bootRuntime({
+      responses: [{ text: "", finishReason: "other", finishReasonRaw: "compaction" }],
+    });
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+
+    const result = await runtime.executeTask({
+      workspaceId: defaultWsId,
+      prompt: "do the thing",
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+    });
+
+    expect(result.stopReason).toBe("other");
+    expect(result.finishReason).toBe("other");
+    expect(result.finishReasonRaw).toBe("compaction");
+  });
+
+  it("refuses a task that names no workspace", async () => {
     runtime = await bootRuntime(undefined);
     await provisionWorkspaces(runtime);
 
+    await expect(
+      runtime.executeTask({
+        prompt: "run somewhere",
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+      }),
+    ).rejects.toThrow("request names no workspace");
+  });
+
+  it("each call gets a distinct runId (no resume path)", async () => {
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+
     const first = await runtime.executeTask({
+      workspaceId: defaultWsId,
       prompt: "first run",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
     const second = await runtime.executeTask({
+      workspaceId: defaultWsId,
       prompt: "second run",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
 
     expect(first.runId).not.toBe(second.runId);
@@ -188,11 +339,12 @@ describe("runtime.executeTask", () => {
 
   it("does NOT write a conversation — a task leaves a run, not a chat", async () => {
     runtime = await bootRuntime(undefined);
-    await provisionWorkspaces(runtime);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
 
     const result = await runtime.executeTask({
+      workspaceId: defaultWsId,
       prompt: "what's the date today?",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
 
     // The deliverable rides back on the result, not a persisted conversation.
@@ -230,7 +382,7 @@ describe("runtime.executeTask", () => {
 
     const result = await runtime.executeTask({
       prompt: "ping the shared workspace probe",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       workspaceId: SHARED_WS_ID,
     });
 
@@ -240,15 +392,15 @@ describe("runtime.executeTask", () => {
     expect(result.toolCalls[0]?.ok).toBe(true);
   });
 
-  it("with workspaceId omitted, a cross-workspace tool call is walled (bounded to the session workspace)", async () => {
+  it("a cross-workspace tool call is walled: the task reaches its own workspace only", async () => {
     const probe = buildProbeSource();
     await probe.source.start();
 
-    // The wall for the task path: an unscoped task is bounded to the session
-    // (personal) workspace, and a name addressing ANOTHER workspace does not
+    // The wall for the task path: a task is bounded to the workspace it names,
+    // and a name addressing ANOTHER workspace does not
     // resolve — not because reach is denied, but because the `ws_<id>-` form is
     // retired and rejected at parse. A task reaches exactly one workspace plus
-    // identity tools, and there is no longer a name that can say otherwise. The
+    // identity tools, and there is no name that can say otherwise. The
     // echo model is scripted to emit the retired cross-workspace form directly.
     const namespacedPing = `${SHARED_WS_ID}-probe__ping`;
     runtime = await bootRuntime({
@@ -265,14 +417,14 @@ describe("runtime.executeTask", () => {
         { text: "done" },
       ],
     });
-    await provisionWorkspaces(runtime);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
     const reg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
     reg.addSource(probe.source);
 
     const result = await runtime.executeTask({
       prompt: "ping anywhere you can reach",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
-      // No workspaceId — unscoped task bounded to the session (personal) ws.
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+      workspaceId: defaultWsId,
     });
 
     expect(result.toolCalls.length).toBeGreaterThan(0);
@@ -286,7 +438,7 @@ describe("runtime.executeTask", () => {
     // Pins the event-shape contract the per-run usage accumulator in
     // runtime.executeTask depends on. The accumulator reads `data.usage`
     // off `llm.done` and counts `tool.done`; if either shape drifts it
-    // silently captures zeros — reverting automations to the exact 0/0/0/0
+    // silently captures zeros — reverting tasks to the exact 0/0/0/0
     // regression this whole change exists to kill, with the suite still
     // green. This test boots a REAL engine + echo model, aborts after the
     // first tool turn completes, and asserts the abort-return path carries
@@ -328,7 +480,7 @@ describe("runtime.executeTask", () => {
     const result = await runtime.executeTask(
       {
         prompt: "ping the probe, then keep going",
-        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
         workspaceId: SHARED_WS_ID,
         signal: controller.signal,
       },
@@ -347,43 +499,46 @@ describe("runtime.executeTask", () => {
     expect(result.runId).toMatch(/^run_[a-z0-9_-]+$/i);
   });
 
-  it("refuses the automation-authoring surface from inside a run, even when named directly", async () => {
-    // The self-modification boundary. An automation runs unattended and can
+  it("refuses the task-authoring surface from inside a run, even when named directly", async () => {
+    // The self-modification boundary. A task runs unattended and can
     // ingest untrusted content, so it must not be able to rewrite/spawn/fire
-    // automations from within its own run. Surfacing subtraction keeps the model
+    // tasks from within its own run. Surfacing subtraction keeps the model
     // from seeing these tools; this test pins the HARD half — the source refuses
     // the call even when the model emits the name directly (the injection /
     // hallucination path), with VALID input so the refusal is the run-wall, not
     // schema validation.
     const validSchedule = { type: "interval", intervalMs: 60_000 };
     const forbiddenCalls: Array<{ tool: string; input: unknown }> = [
-      { tool: "automations__update", input: { name: "target" } },
+      { tool: "tasks__update", input: { taskId: "target" } },
       {
-        tool: "automations__create",
+        tool: "tasks__create",
         input: { manifest: { name: "evil", schedule: validSchedule }, body: "x" },
       },
-      { tool: "automations__delete", input: { name: "target" } },
-      { tool: "automations__run", input: { name: "target" } },
+      { tool: "tasks__delete", input: { taskId: "target" } },
+      { tool: "tasks__run", input: { taskId: "target" } },
     ];
     for (const { tool, input } of forbiddenCalls) {
       runtime = await bootRuntime({
         responses: [
           {
-            toolCalls: [{ toolCallId: `call_${tool}`, toolName: tool, input: JSON.stringify(input) }],
+            toolCalls: [
+              { toolCallId: `call_${tool}`, toolName: tool, input: JSON.stringify(input) },
+            ],
           },
           { text: "done" },
         ],
       });
-      await provisionWorkspaces(runtime);
+      const { defaultWsId } = await provisionWorkspaces(runtime);
 
       const result = await runtime.executeTask({
+        workspaceId: defaultWsId,
         prompt: "rebuild yourself on real tools",
-        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       });
 
       expect(result.toolCalls[0]?.name).toBe(tool);
       expect(result.toolCalls[0]?.ok).toBe(false);
-      expect(result.toolCalls[0]?.output).toMatch(/unattended automation run/i);
+      expect(result.toolCalls[0]?.output).toMatch(/unattended task run/i);
 
       await runtime.shutdown();
       runtime = null;
@@ -391,40 +546,42 @@ describe("runtime.executeTask", () => {
     }
   });
 
-  it("still permits a read-only automations tool from inside a run", async () => {
+  it("still permits a read-only tasks tool from inside a run", async () => {
     // The boundary is scoped to the authoring surface: introspection tools stay
-    // reachable so an automation can report on automation health. `list` routes
-    // to the automations identity source and returns its normal result (an empty
+    // reachable so a task can report on task health. `list` routes
+    // to the tasks identity source and returns its normal result (an empty
     // list in this fresh workspace) — NOT the run-wall denial.
     runtime = await bootRuntime({
       responses: [
         {
           toolCalls: [
-            { toolCallId: "call_list", toolName: "automations__list", input: JSON.stringify({}) },
+            { toolCallId: "call_list", toolName: "tasks__list", input: JSON.stringify({}) },
           ],
         },
         { text: "done" },
       ],
     });
-    await provisionWorkspaces(runtime);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
 
     const result = await runtime.executeTask({
-      prompt: "check automation health",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      workspaceId: defaultWsId,
+      prompt: "check task health",
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
 
-    expect(result.toolCalls[0]?.name).toBe("automations__list");
-    expect(result.toolCalls[0]?.output).not.toMatch(/unattended automation run/i);
+    expect(result.toolCalls[0]?.name).toBe("tasks__list");
+    expect(result.toolCalls[0]?.output).not.toMatch(/unattended task run/i);
   });
 
   it("creates no conversation even when caller passes metadata", async () => {
     runtime = await bootRuntime(undefined);
-    await provisionWorkspaces(runtime);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
 
     const result = await runtime.executeTask({
+      workspaceId: defaultWsId,
       prompt: "tag check",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
-      metadata: { automationId: "auto_test_123" },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+      metadata: { taskId: "auto_test_123" },
     });
 
     // A task is not a conversation: the caller's metadata has nowhere to be
@@ -439,18 +596,18 @@ describe("runtime.executeTask", () => {
     // Regression guard for the executeTask analog of the chat-path bug
     // PR #315 fixed in `_chatInner`. Before this fix,
     // `loadConversationSkills(sessionWsId, ...)` at runtime.ts:1703
-    // pulled workspace-tier skills from the user's personal workspace,
+    // pulled workspace-tier skills from the user's default workspace,
     // so any scheduled task focused on a shared workspace silently
     // dropped that workspace's `loading_strategy: always` skills.
     //
     // Fix: `loadConversationSkills(focusedWsId ?? sessionWsId, ...)`.
     // This test plants a workspace-tier skill in the SHARED workspace
-    // (different dir than the personal workspace), runs an
+    // (different dir than the default workspace), runs an
     // executeTask focused on the shared workspace, and asserts the
     // skill lands in the recorded `skills.loaded` event.
     runtime = await bootRuntime(undefined);
-    const { personalWsId } = await provisionWorkspaces(runtime);
-    expect(personalWsId).not.toBe(SHARED_WS_ID);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+    expect(defaultWsId).not.toBe(SHARED_WS_ID);
 
     const SKILL_NAME = "shared-task-voice";
     const sharedSkillsDir = join(workDir, "workspaces", SHARED_WS_ID, "skills");
@@ -475,18 +632,15 @@ describe("runtime.executeTask", () => {
     await runtime.executeTask(
       {
         prompt: "do a thing",
-        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
         workspaceId: SHARED_WS_ID,
       },
       captureSink,
     );
 
-    const skillsLoaded = captured.find((e) => e.type === "skills.loaded");
-    expect(skillsLoaded).toBeDefined();
+    const payload = firstPayloadOf(captured, "skills.loaded");
+    expect(payload).toBeDefined();
 
-    const payload = skillsLoaded!.data as unknown as {
-      skills: Array<{ id: string; scope: string; loadedBy: string }>;
-    };
     const expectedPath = join(sharedSkillsDir, `${SKILL_NAME}.md`);
     const entry = payload.skills.find((s) => s.id === expectedPath);
     expect(entry).toBeDefined();

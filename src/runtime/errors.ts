@@ -9,9 +9,8 @@ export class RunInProgressError extends Error {
 
 /**
  * Thrown when a caller attempts to read or write a conversation they
- * don't own. Stage 1 is single-owner: the conversation's `ownerId`
- * must match the requesting identity. Stage 4 will widen this with
- * policy-gated sharing.
+ * don't own. Conversations are single-owner: the conversation's
+ * `ownerId` must match the requesting identity.
  *
  * The HTTP handler maps this to `403 conversation_access_denied`.
  * Returning a `404` would be a defensible alternative (don't leak
@@ -31,6 +30,27 @@ export class ConversationAccessDeniedError extends Error {
 }
 
 /**
+ * Thrown when a chat or upload names a conversation that is not one of the
+ * caller's conversations in the workspace the request addresses. A request
+ * under `/v1/workspaces/<wsId>/` reaches only conversations stored under that
+ * workspace (ADR-0037), so a conversation stored in another workspace, one
+ * owned by someone else, and one that does not exist are one answer: the
+ * caller learns nothing about where, or whether, the id exists.
+ *
+ * The HTTP handler maps this to `404 conversation_not_found`.
+ */
+export class ConversationNotFoundError extends Error {
+  readonly code = "conversation_not_found";
+  constructor(
+    public readonly conversationId: string,
+    public readonly workspaceId: string,
+  ) {
+    super(`Conversation ${conversationId} not found in workspace ${workspaceId}`);
+    this.name = "ConversationNotFoundError";
+  }
+}
+
+/**
  * Thrown when the owner of a conversation tries to RESUME it but is no longer a
  * member of the workspace the conversation lives in. A conversation is sealed to
  * its workspace (its tools/skills/apps resolve there), so resuming it as a
@@ -43,8 +63,7 @@ export class ConversationAccessDeniedError extends Error {
  * `ConversationAccessDeniedError` so it inherits the same
  * `403 conversation_access_denied` HTTP mapping (the caller learns only "no
  * access"), while staying a distinct type so logs/telemetry/tests can tell an
- * offboarding denial from an ownership denial. Personal workspaces are
- * sole-member by construction, so this only ever fires for shared workspaces.
+ * offboarding denial from an ownership denial.
  */
 export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDeniedError {
   constructor(
@@ -58,14 +77,13 @@ export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDe
 }
 
 /**
- * Thrown by `executeTask` when an automation fires but its owner is no longer a
- * member of the automation's provenance workspace. An automation runs *as its
+ * Thrown by `executeTask` when a task fires but its owner is no longer a
+ * member of the task's provenance workspace. A task runs *as its
  * owner*, walled to the workspace it was created in — so a removed owner must
- * not keep acting in that workspace (the automations analog of the conversation
- * resume gate). The stable `code` lets the automations scheduler recognize this
+ * not keep acting in that workspace (the tasks analog of the conversation
+ * resume gate). The stable `code` lets the tasks scheduler recognize this
  * outcome and record the run as **skipped** (not a failure — no consecutive-error
- * count, no auto-disable) so the automation self-heals if the owner is re-added.
- * Personal workspaces are sole-member by construction, so this never fires there.
+ * count, no auto-disable) so the task self-heals if the owner is re-added.
  */
 export class WorkspaceMembershipRevokedError extends Error {
   readonly code = "workspace_membership_revoked";
@@ -79,7 +97,29 @@ export class WorkspaceMembershipRevokedError extends Error {
 }
 
 /**
- * Thrown when a conversation file on disk fails the Stage 1 invariant
+ * Thrown when an unattended run's `allowedTools` names tools that nothing the
+ * run can reach matches: their connector is missing, disconnected, or not
+ * running. The owner declared those tools as the run's job, so the run cannot
+ * do it, and it is refused before its first model call. The stable `code` lets
+ * the tasks scheduler record the run as a **failure**, which a run that never
+ * attempted the tool would otherwise not be (it ends normally and reads
+ * Succeeded).
+ */
+export class DeclaredToolsUnavailableError extends Error {
+  readonly code = "declared_tools_unavailable";
+  constructor(public readonly tools: readonly string[]) {
+    super(
+      `Declared tool${tools.length === 1 ? "" : "s"} unavailable: ${tools.join(", ")}. ` +
+        `Nothing this run can reach matches ${tools.length === 1 ? "it" : "them"}: the ` +
+        `connector is missing, disconnected, or not running in this workspace, so the run ` +
+        `did not start.`,
+    );
+    this.name = "DeclaredToolsUnavailableError";
+  }
+}
+
+/**
+ * Thrown when a conversation file on disk fails the ownership invariant
  * check at load time — specifically, a pre-migration file that lacks
  * `ownerId`. The store can't synthesize an owner safely and the chat
  * runtime can't authorize access on it.
@@ -90,19 +130,23 @@ export class WorkspaceMembershipRevokedError extends Error {
  * Recovery is to stamp an `ownerId` on the file's
  * line-1 metadata (when the owner is known) or remove the file. Without this
  * typed error, the unwrapped `Error("missing ownerId in ...")` from
- * `event-sourced-store` bubbles to `handleChat` as a 500; with it, the HTTP
+ * `event-sourced-store` bubbles to `handleChatStart` as a 500; with it, the HTTP
  * layer returns a clean `422 conversation_corrupted` that explains the triage.
  */
 export class ConversationCorruptedError extends Error {
   readonly code = "conversation_corrupted";
   constructor(
     public readonly conversationId: string,
-    public readonly reason: "missing_owner",
+    public readonly reason: "missing_owner" | "missing_model",
   ) {
     super(
-      `Conversation ${conversationId} is corrupted (${reason}): the file predates the ` +
-        `ownership invariant and has no ownerId. No migration stamps these — add an ownerId ` +
-        `to its line-1 metadata or remove the file.`,
+      reason === "missing_owner"
+        ? `Conversation ${conversationId} is corrupted (${reason}): the file predates the ` +
+            `ownership invariant and has no ownerId. No migration stamps these — add an ownerId ` +
+            `to its line-1 metadata or remove the file.`
+        : `Conversation ${conversationId} is corrupted (${reason}): the file predates the ` +
+            `model binding and has no model. Add a provider-qualified model to its line-1 ` +
+            `metadata or remove the file.`,
     );
     this.name = "ConversationCorruptedError";
   }

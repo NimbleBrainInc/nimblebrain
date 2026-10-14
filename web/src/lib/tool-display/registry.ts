@@ -10,7 +10,7 @@
  * themselves, not in the registry.
  */
 
-import type { ToolCallDisplay } from "../../hooks/useChat.ts";
+import type { ToolCallDisplay } from "../../hooks/chat-store.ts";
 import type { ToolDescription } from "./types.ts";
 
 export interface ToolRenderer {

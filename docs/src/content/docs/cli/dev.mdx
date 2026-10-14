@@ -39,6 +39,8 @@ bun run dev
 [web]   ➜  Local:   http://localhost:27246/
 ```
 
+If the workdir has no `instance.json`, the launcher first writes the `dev` adapter there (`{"auth":{"adapter":"dev"}}`), because `serve` does not start without one. An existing `instance.json` is left alone, so a workdir can run a real provider under `bun run dev`.
+
 Both processes share the terminal. Output is prefixed with `[api]` or `[web]` so you can tell which process logged each line. Press Ctrl+C to stop both.
 
 ## Dual-process architecture

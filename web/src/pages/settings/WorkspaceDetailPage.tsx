@@ -1,10 +1,13 @@
 import { Package, Plus, Trash2, Users } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { callTool } from "../../api/client";
+import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
+import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
+import { useNotice } from "../../components/notices";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
+import { ConfirmDialog } from "../../components/ui/confirm-dialog";
 import { Label } from "../../components/ui/label";
 import { RoleBadge } from "../../components/ui/role-badge";
 import { Select } from "../../components/ui/select";
@@ -16,8 +19,9 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
+import { Tooltip } from "../../components/ui/tooltip";
 import { useSession } from "../../context/SessionContext";
-import { canWriteWorkspace } from "../../hooks/useScopedRole";
+import { canManageWorkspaceMembers } from "../../hooks/useScopedRole";
 import {
   CopyableWorkspaceId,
   EmptyState,
@@ -26,11 +30,18 @@ import {
   SettingsPageHeader,
 } from "./components";
 
+/** One installed connector as `manage_workspaces list` names it. */
+interface WorkspaceConnector {
+  serverName: string;
+  name: string;
+  iconUrl?: string;
+}
+
 interface Workspace {
   id: string;
   name: string;
   memberCount: number;
-  connectors?: Array<{ name?: string; path?: string }>;
+  connectors?: WorkspaceConnector[];
   createdAt?: string;
 }
 
@@ -45,7 +56,7 @@ interface Member {
  * or `undefined` when they aren't a member of it.
  *
  * Exported so the gate's *argument* is testable, not just the rule it feeds.
- * The rule (`canWriteWorkspace`) is pinned in `useScopedRole.test.ts`; pinning
+ * The rule (`canManageWorkspaceMembers`) is pinned in `useScopedRole.test.ts`; pinning
  * it doesn't pin this lookup, which is where this page could go wrong.
  *
  * The `userId` guard is load-bearing: `currentUserId` is `session?.user?.id`
@@ -93,6 +104,7 @@ export function WorkspaceDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const id = resolveWorkspaceId(slug);
   const session = useSession();
+  const notify = useNotice();
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -108,7 +120,7 @@ export function WorkspaceDetailPage() {
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
-  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<Member | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!id) return;
@@ -116,9 +128,12 @@ export function WorkspaceDetailPage() {
       setError(null);
 
       const [wsRes, membersRes, usersRes] = await Promise.all([
-        callTool("nb", "manage_workspaces", { action: "list" }),
-        callTool("nb", "manage_workspaces", { action: "list_members", workspaceId: id }),
-        callTool("nb", "manage_users", { action: "list" }),
+        callToolWithoutWorkspace("nb", "manage_workspaces", { action: "list" }),
+        callToolWithoutWorkspace("nb", "manage_workspaces", {
+          action: "list_members",
+          workspaceId: id,
+        }),
+        callToolWithoutWorkspace("nb", "manage_users", { action: "list" }),
       ]);
 
       const wsData = parseToolResult<{ workspaces: Workspace[] }>(wsRes);
@@ -150,16 +165,28 @@ export function WorkspaceDetailPage() {
     fetchData();
   }, [fetchData]);
 
+  const memberName = useCallback(
+    (userId: string) => userMap.get(userId)?.displayName ?? userId,
+    [userMap],
+  );
+
   const handleAdd = useCallback(async () => {
     if (!addUserId || !id) return;
     setAdding(true);
     setAddError(null);
     try {
-      await callTool("nb", "manage_workspaces", {
+      // A refusal comes back as a result, not a throw; parseToolResult throws on
+      // it, so the form keeps its values and shows the reason.
+      const res = await callToolWithoutWorkspace("nb", "manage_workspaces", {
         action: "add_member",
         workspaceId: id,
         userId: addUserId,
         role: addRole,
+      });
+      parseToolResult(res);
+      notify({
+        level: "success",
+        title: `${memberName(addUserId)} was added to ${workspace?.name ?? "the workspace"}`,
       });
       setAddUserId("");
       setAddRole("member");
@@ -170,30 +197,29 @@ export function WorkspaceDetailPage() {
     } finally {
       setAdding(false);
     }
-  }, [addUserId, addRole, id, fetchData]);
+  }, [addUserId, addRole, id, fetchData, notify, memberName, workspace?.name]);
 
-  const handleRemove = useCallback(
-    async (userId: string) => {
+  // Throwing keeps the dialog open with the refusal shown (ConfirmDialog), and
+  // parseToolResult throws on a refusal, which the tool returns as a result.
+  // On success the dialog is ours to close, before the re-read, so a failed
+  // refresh never reports inside a dialog whose removal already landed.
+  const removeMember = useCallback(
+    async (member: Member) => {
       if (!id) return;
-      const user = userMap.get(userId);
-      const label = user?.displayName ?? userId;
-      const confirmed = window.confirm(`Remove "${label}" from this workspace?`);
-      if (!confirmed) return;
-      setRemovingId(userId);
-      try {
-        await callTool("nb", "manage_workspaces", {
-          action: "remove_member",
-          workspaceId: id,
-          userId,
-        });
-        await fetchData();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to remove member");
-      } finally {
-        setRemovingId(null);
-      }
+      const res = await callToolWithoutWorkspace("nb", "manage_workspaces", {
+        action: "remove_member",
+        workspaceId: id,
+        userId: member.userId,
+      });
+      parseToolResult(res);
+      notify({
+        level: "success",
+        title: `${memberName(member.userId)} was removed from ${workspace?.name ?? "the workspace"}`,
+      });
+      setRemoving(null);
+      await fetchData();
     },
-    [id, userMap, fetchData],
+    [id, notify, memberName, workspace?.name, fetchData],
   );
 
   const currentUserId = session?.user?.id;
@@ -201,18 +227,17 @@ export function WorkspaceDetailPage() {
   const memberUserIds = new Set(members.map((m) => m.userId));
   const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id));
 
-  // Member management is a workspace-scoped write: `canManageMembers` routes
-  // through `canWriteWorkspaceScoped`, which grants an org admin no bypass —
-  // "an org admin/owner who is not a workspace admin member cannot manage
-  // members". Membership is therefore the only thing this may read; an org-role
-  // check here would render controls the server refuses, and `handleAdd`
-  // doesn't inspect the result, so the refusal would be silent (#749).
-  // Same rule as every other workspace write, reached differently: this page
-  // addresses a workspace by id, so it passes that workspace's membership role
-  // rather than using the active-workspace hook (which would answer for the
-  // viewer's focused workspace — usually their personal one, where they are
-  // always admin).
-  const canManageMembers = canWriteWorkspace(memberRoleFor(members, currentUserId));
+  // Same rule as the server's `canManageWorkspaceMembers`: an org admin,
+  // or an admin member of this workspace. A gate that disagrees with the server
+  // renders controls it refuses, and `handleAdd` doesn't inspect the result,
+  // so the refusal would be silent (#749). This page addresses a workspace by
+  // id, so it passes that workspace's membership role rather than using the
+  // active-workspace hook (which would answer for the viewer's focused
+  // workspace, not this one).
+  const canManageMembers = canManageWorkspaceMembers(
+    session?.user?.orgRole,
+    memberRoleFor(members, currentUserId),
+  );
 
   // The org-scoped Workspaces list lives at /org/workspaces.
   const backTo = "/org/workspaces";
@@ -227,7 +252,7 @@ export function WorkspaceDetailPage() {
 
   if (loading) {
     return (
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className="space-y-6">
         <SettingsPageHeader title="Workspace" back={back} />
         <p className="text-sm text-muted-foreground">Loading workspace...</p>
       </div>
@@ -236,7 +261,7 @@ export function WorkspaceDetailPage() {
 
   if (notFound) {
     return (
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className="space-y-6">
         <SettingsPageHeader title="Workspace not found" back={back} />
         <p className="text-sm text-destructive">
           This workspace doesn't exist or has been deleted.
@@ -247,7 +272,7 @@ export function WorkspaceDetailPage() {
 
   if (error && !workspace) {
     return (
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className="space-y-6">
         <SettingsPageHeader title="Workspace" back={back} />
         <InlineError message={error} />
         <div className="flex justify-center pt-2">
@@ -267,7 +292,7 @@ export function WorkspaceDetailPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SettingsPageHeader
         title={workspace?.name ?? "Workspace"}
         description={`Created ${formatDate(workspace?.createdAt)}`}
@@ -276,7 +301,7 @@ export function WorkspaceDetailPage() {
 
       {error ? <InlineError message={error} /> : null}
 
-      <Section title="MCP Connection" flush>
+      <Section title="Workspace ID" flush>
         {id ? <CopyableWorkspaceId workspaceId={id} /> : null}
       </Section>
 
@@ -318,33 +343,28 @@ export function WorkspaceDetailPage() {
               canManageMembers={canManageMembers}
               adminCount={adminCount}
               currentUserId={currentUserId}
-              removingId={removingId}
-              onRemove={handleRemove}
+              onRemove={setRemoving}
             />
           )}
         </div>
+
+        <ConfirmDialog
+          open={removing !== null}
+          onOpenChange={(open) => {
+            if (!open) setRemoving(null);
+          }}
+          title={`Remove ${removing ? memberName(removing.userId) : ""}?`}
+          description="They'll lose access to this workspace's conversations, files, and apps. You can add them back later."
+          confirmLabel="Remove"
+          pendingLabel="Removing…"
+          destructive
+          onConfirm={async () => {
+            if (removing) await removeMember(removing);
+          }}
+        />
       </Section>
 
-      {/*
-        Workspace Instructions are intentionally NOT shown here. The
-        instructions resource and write tool resolve the target workspace
-        from the request context (active workspace), so editing here
-        would silently affect the *active* workspace, not the slug-targeted
-        one. To edit a workspace's instructions, switch into it via the
-        header switcher and use Settings → This Workspace → General.
-      */}
-      <Section>
-        <div className="rounded-sm border border-dashed p-4">
-          <p className="text-sm text-muted-foreground">
-            To view or edit this workspace's custom instructions, switch into{" "}
-            <span className="font-medium">{workspace?.name}</span> via the header workspace
-            switcher, then go to{" "}
-            <span className="font-medium">Settings → This Workspace → General</span>.
-          </p>
-        </div>
-      </Section>
-
-      <Section title="Installed Connectors" icon={<Package className="h-4 w-4" />}>
+      <Section title="Installed connectors" icon={<Package className="h-4 w-4" />}>
         <ConnectorsList connectors={workspace?.connectors} />
       </Section>
     </div>
@@ -360,7 +380,7 @@ function AddMemberButton({ showAdd, onToggle }: { showAdd: boolean; onToggle: ()
       ) : (
         <>
           <Plus className="mr-1 h-4 w-4" />
-          Add Member
+          Add member
         </>
       )}
     </Button>
@@ -426,7 +446,7 @@ function AddMemberForm({
         </div>
         {addError ? <InlineError message={addError} /> : null}
         <Button size="sm" onClick={onAdd} disabled={adding || !addUserId}>
-          {adding ? "Adding..." : "Add Member"}
+          {adding ? "Adding..." : "Add member"}
         </Button>
       </CardContent>
     </Card>
@@ -440,7 +460,6 @@ function MembersTable({
   canManageMembers,
   adminCount,
   currentUserId,
-  removingId,
   onRemove,
 }: {
   members: Member[];
@@ -448,14 +467,13 @@ function MembersTable({
   canManageMembers: boolean;
   adminCount: number;
   currentUserId: string | undefined;
-  removingId: string | null;
-  onRemove: (userId: string) => void;
+  onRemove: (member: Member) => void;
 }) {
   return (
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Display Name</TableHead>
+          <TableHead>Name</TableHead>
           <TableHead>Email</TableHead>
           <TableHead>Role</TableHead>
           {canManageMembers && <TableHead className="w-[60px]" />}
@@ -466,7 +484,7 @@ function MembersTable({
           const user = userMap.get(m.userId);
           const isLastAdmin = m.role === "admin" && adminCount <= 1;
           const isSelfLastAdmin = m.userId === currentUserId && isLastAdmin;
-          const isRemoving = removingId === m.userId;
+          const name = user?.displayName ?? m.userId;
 
           return (
             <TableRow key={m.userId}>
@@ -477,20 +495,22 @@ function MembersTable({
               </TableCell>
               {canManageMembers && (
                 <TableCell>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={isSelfLastAdmin || isRemoving}
-                    title={
-                      isSelfLastAdmin
-                        ? "Cannot remove the last admin"
-                        : `Remove ${user?.displayName ?? m.userId}`
-                    }
-                    onClick={() => onRemove(m.userId)}
-                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <Tooltip label={isSelfLastAdmin ? "The last admin can't be removed" : "Remove"}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      // aria-disabled, not disabled: a disabled button takes no
+                      // pointer events, so its tooltip could not explain why.
+                      aria-disabled={isSelfLastAdmin}
+                      aria-label={`Remove ${name}`}
+                      onClick={() => {
+                        if (!isSelfLastAdmin) onRemove(m);
+                      }}
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive aria-disabled:opacity-40 aria-disabled:hover:text-muted-foreground"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </Tooltip>
                 </TableCell>
               )}
             </TableRow>
@@ -501,20 +521,22 @@ function MembersTable({
   );
 }
 
-/** Renders the installed-connector cards, or an empty state when none are present. */
-function ConnectorsList({ connectors }: { connectors?: Array<{ name?: string; path?: string }> }) {
+/**
+ * Renders the installed connectors as one compact list, icon and name per row,
+ * with the same icon and density as the Connectors page. Empty state when none.
+ */
+function ConnectorsList({ connectors }: { connectors?: WorkspaceConnector[] }) {
   if (!connectors || connectors.length === 0) {
     return <EmptyState message="No connectors installed." />;
   }
   return (
-    <div className="space-y-2">
-      {connectors.map((b, i) => (
-        <Card key={b.name ?? b.path ?? i}>
-          <CardContent className="py-3 px-4">
-            <span className="text-sm font-medium">{b.name ?? b.path ?? "Unknown connector"}</span>
-          </CardContent>
-        </Card>
+    <ul className="rounded-md border border-border divide-y divide-border">
+      {connectors.map((c) => (
+        <li key={c.serverName} className="flex items-center gap-3 px-3 py-2">
+          <ConnectorIcon name={c.name} iconUrl={c.iconUrl} className="h-7 w-7 rounded text-xs" />
+          <span className="text-sm font-medium truncate">{c.name}</span>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }

@@ -2,17 +2,20 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
-import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { type FakeConnectorServer, startFakeConnectorServer } from "../helpers/fake-connector-server.ts";
+import {
+  type FakeConnectorServer,
+  startFakeConnectorServer,
+} from "../helpers/fake-connector-server.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /**
  * Integration: a personal connector is an IDENTITY-owned source, resolved by
@@ -29,7 +32,7 @@ import { type FakeConnectorServer, startFakeConnectorServer } from "../helpers/f
  */
 
 const testDir = join(tmpdir(), `nb-pc-policy-${Date.now()}`);
-const SHARED_WS = "ws_helix";
+const SHARED_WS = "ws_003eba8844413cd9";
 
 let runtime: Runtime;
 let personalWs: string;
@@ -48,10 +51,8 @@ async function installConnector(serverName: string, toolNames: string[]): Promis
 }
 
 async function mcpClient(workspace: string): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-    requestInit: { headers: { "x-workspace-id": workspace } },
-  });
-  const client = new Client({ name: "pc-policy-test", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${workspace}`));
+  const client = newMcpClient({ name: "pc-policy-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }
@@ -59,7 +60,8 @@ async function mcpClient(workspace: string): Promise<Client> {
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
     // The fake connector servers bind on localhost.
@@ -67,13 +69,13 @@ beforeAll(async () => {
   });
 
   const wsStore = runtime.getWorkspaceStore();
-  await wsStore.create("Helix", SHARED_WS.slice(3));
+  await seedWorkspace(wsStore, SHARED_WS, { name: "Helix" });
   await wsStore.addMember(SHARED_WS, DEV_IDENTITY.id, "admin");
-  await ensureUserWorkspace(wsStore, {
-    id: DEV_IDENTITY.id,
-    displayName: DEV_IDENTITY.displayName,
-  });
-  personalWs = personalWorkspaceIdFor(DEV_IDENTITY.id);
+  personalWs = (
+    await wsStore.create("Own", {
+      members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
+    })
+  ).id;
 
   await installConnector("granola", ["read_notes", "delete_notes"]);
   await installConnector("notion", ["read"]); // installed but NOT granted
@@ -99,6 +101,7 @@ afterAll(async () => {
 describe("personal-connector per-tool policy — engine door", () => {
   it("allows a granted, non-disallowed tool", async () => {
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: DEV_IDENTITY.id,
       workspaceId: SHARED_WS,
       runtime,
@@ -109,6 +112,7 @@ describe("personal-connector per-tool policy — engine door", () => {
 
   it("denies a tool the owner disallowed, before it runs", async () => {
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: DEV_IDENTITY.id,
       workspaceId: SHARED_WS,
       runtime,
@@ -128,11 +132,16 @@ describe("personal-connector reachability — a personal workspace is just a wor
     // granola is NOT granted to the personal workspace — only to Helix. The
     // personal workspace gets no special treatment, so it's grant-gated too.
     const homeRouter = new IdentityToolRouter({
+      caller: "chat",
       identityId: DEV_IDENTITY.id,
       workspaceId: personalWs,
       runtime,
     });
-    const result = await homeRouter.execute({ id: "h1", name: "my_granola__read_notes", input: {} });
+    const result = await homeRouter.execute({
+      id: "h1",
+      name: "my_granola__read_notes",
+      input: {},
+    });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({ reason: "connector_grant_denied" });
   });
@@ -142,6 +151,7 @@ describe("personal-connector reachability — a personal workspace is just a wor
     await store.grantConnector(DEV_IDENTITY.id, "notion", personalWs);
     try {
       const homeRouter = new IdentityToolRouter({
+        caller: "chat",
         identityId: DEV_IDENTITY.id,
         workspaceId: personalWs,
         runtime,

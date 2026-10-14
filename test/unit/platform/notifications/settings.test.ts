@@ -10,26 +10,44 @@
  *      identity a route dispatches under, so a body that names one is refused
  *      before the handler runs, and the writer's own identity is what lands.
  *   3. **A route may only name what the workspace has.** A tool outside the
- *      installed set, an automation that does not exist, or a placeholder the
+ *      installed set, a task that does not exist, or a placeholder the
  *      runtime does not resolve is refused at write time — each of those fails
  *      silently at delivery, which is the failure this surface exists to
  *      prevent.
  */
 
-import { beforeEach, describe, expect, test } from "bun:test";
-import { isInternalTool } from "../../../../src/engine/types.ts";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ConnectorLifecycleManager } from "../../../../src/connectors/runtime/lifecycle.ts";
+import type { EventSink } from "../../../../src/engine/types.ts";
+import { isModelVisible } from "../../../../src/engine/types.ts";
+import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
+import { NotificationStore } from "../../../../src/notifications/store.ts";
+import { createNotificationsSource } from "../../../../src/platform/notifications/source.ts";
 import {
   NOTIFICATION_SOURCES_MAX,
   type NotificationRouteInput,
+  type NotificationsListOutput,
+  type NotificationsSendTestOutput,
   type NotificationsSettingsOutput,
 } from "../../../../src/platform/schemas/notifications.ts";
-import type { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createNotificationsSource } from "../../../../src/platform/notifications/source.ts";
-import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
+import type { TaskDomainContext } from "../../../../src/platform/tasks/domain.ts";
+import type { Task } from "../../../../src/platform/tasks/types.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
+import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { ToolRegistry } from "../../../../src/tools/registry.ts";
+import { WorkspaceContext } from "../../../../src/workspace/context.ts";
 import type { Workspace } from "../../../../src/workspace/types.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
+import { resultText, structuredOutput } from "../../../helpers/tool-result.ts";
 
-const WS = "ws_outbound";
+const WS = "ws_005b519ef7efc353";
 const USER = "usr_admin";
 const OTHER = "usr_other";
 const TOOL = "slack__send_message";
@@ -37,25 +55,29 @@ const TOOL = "slack__send_message";
 class FakeRuntime {
   identity: { id: string } | null = { id: USER };
   workspaces = new Map<string, Workspace>();
-  automations = [
-    {
+  tasks: Task[] = [
+    stub<Task>({
       id: "auto_triage",
       name: "Triage replies",
-      schedule: { type: "event", match: { source: "precision-outbound" } },
-    },
-    // A clock automation is a legal thing for a route to name and a useless
+      schedule: { type: "event", match: { source: "acme-outbound" } },
+    }),
+    // A clock task is a legal thing for a route to name and a useless
     // one, so the picker has to be able to say so.
-    { id: "auto_digest", name: "Weekly digest", schedule: { type: "cron", expression: "0 9 * * 1" } },
+    stub<Task>({
+      id: "auto_digest",
+      name: "Weekly digest",
+      schedule: { type: "cron", expression: "0 9 * * 1" },
+    }),
   ];
 
   getCurrentIdentity() {
-    return this.identity;
+    return this.identity && makeIdentity(this.identity);
   }
   resolveRequestUserId(identity?: { id: string }) {
     return identity?.id ?? "usr_dev";
   }
   getWorkspaceStore() {
-    return {
+    return stub<WorkspaceStore>({
       list: async () => [...this.workspaces.values()],
       get: async (id: string) => this.workspaces.get(id) ?? null,
       update: async (id: string, patch: Partial<Workspace>) => {
@@ -65,25 +87,34 @@ class FakeRuntime {
         this.workspaces.set(id, next);
         return next;
       },
-    };
+    });
   }
   async listNotificationSources() {
     return [
-      { source: "precision-outbound", label: "Precision Outbound", description: "Domain lifecycle." },
+      {
+        source: "acme-outbound",
+        label: "Acme Outbound",
+        description: "Domain lifecycle.",
+      },
     ];
   }
   async ensureWorkspaceRegistry() {
-    return { availableTools: async () => [{ name: TOOL }, { name: "slack__list_channels" }] };
+    return stub<ToolRegistry>({
+      availableTools: async () =>
+        [TOOL, "slack__list_channels"].map((name) => ({ name, description: "", inputSchema: {} })),
+    });
   }
-  getAutomationsContext() {
-    return { definitions: () => new Map(this.automations.map((a) => [a.id, a])) };
+  getTasksContext() {
+    return stub<TaskDomainContext>({
+      definitions: () => new Map(this.tasks.map((a) => [a.id, a])),
+    });
   }
 
   // The source also builds the outbox poller at construction. With no lifecycle
   // instances there is nothing for it to read, which is what these tests want:
   // they are about the settings door, and the loop has its own suite.
   getLifecycle() {
-    return { getInstances: () => [] };
+    return stub<ConnectorLifecycleManager>({ getInstances: () => [] });
   }
   async getNotificationsDeclaration() {
     return undefined;
@@ -91,8 +122,11 @@ class FakeRuntime {
   getNotificationsPollConfig() {
     return resolvePollConfig();
   }
-  getNotificationStore() {
-    throw new Error("these tests write no notifications");
+  /** Set by the tests that send through a route; the rest write no notifications. */
+  store: NotificationStore | null = null;
+  getNotificationStore(): NotificationStore {
+    if (!this.store) throw new Error("these tests write no notifications");
+    return this.store;
   }
 
   seed(role: "admin" | "member"): void {
@@ -103,24 +137,27 @@ class FakeRuntime {
       connectors: [],
       createdAt: "",
       updatedAt: "",
-    } as unknown as Workspace);
+    });
   }
 }
 
 let runtime: FakeRuntime;
 let source: McpSource;
-const noopSink = { emit: () => {} } as unknown as never;
+const noopSink: EventSink = { emit: () => {} };
 
 beforeEach(async () => {
   runtime = new FakeRuntime();
   runtime.seed("admin");
-  source = createNotificationsSource(runtime as unknown as never, noopSink);
+  source = createNotificationsSource(stub<Runtime>(runtime), noopSink);
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 /** Run a tool with `WS` as the request's bound workspace. */
 function exec(tool: string, args: Record<string, unknown> = {}) {
-  return runWithRequestContext({ identity: { id: runtime.identity?.id } as never, workspaceId: WS }, () =>
+  return runWithRequestContext({ identity: runtime.getCurrentIdentity(), workspaceId: WS }, () =>
     source.execute(tool, args),
   );
 }
@@ -128,21 +165,17 @@ function exec(tool: string, args: Record<string, unknown> = {}) {
 async function settings(): Promise<NotificationsSettingsOutput> {
   const res = await exec("settings");
   expect(res.isError).toBe(false);
-  return res.structuredContent as unknown as NotificationsSettingsOutput;
-}
-
-function textOf(res: { content?: Array<{ text?: string }> }): string {
-  return res.content?.[0]?.text ?? "";
+  return structuredOutput<NotificationsSettingsOutput>(res);
 }
 
 const route = (over: Partial<NotificationRouteInput> = {}): NotificationRouteInput => ({
-  match: { source: "precision-outbound", name: "domain.*", level: "attention" },
+  match: { source: "acme-outbound", name: "domain.*", level: "attention" },
   deliver: [{ kind: "tool", tool: TOOL, input: { channel: "#outbound", text: "{{title}}" } }],
   ...over,
 });
 
 describe("the settings tools are operator surface, not agent capability", () => {
-  test("all three are internal, so no LLM listing carries them", async () => {
+  test("all three are app-only, so no LLM listing carries them", async () => {
     const tools = await source.tools();
     const byName = new Map(tools.map((t) => [t.name, t]));
     for (const name of [
@@ -152,11 +185,11 @@ describe("the settings tools are operator surface, not agent capability", () => 
     ]) {
       const tool = byName.get(name);
       expect(tool).toBeDefined();
-      expect(isInternalTool(tool!)).toBe(true);
+      expect(isModelVisible(tool!)).toBe(false);
     }
     // The inbox itself stays reachable: reading notifications is what the
     // agent is for. Only authoring the operator plane is walled off.
-    expect(isInternalTool(byName.get("notifications__list")!)).toBe(false);
+    expect(isModelVisible(byName.get("notifications__list")!)).toBe(true);
   });
 });
 
@@ -166,11 +199,14 @@ describe("a member cannot configure the workspace", () => {
   test("cannot read the settings", async () => {
     const res = await exec("settings");
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("admin");
+    expect(resultText(res)).toContain("admin");
   });
 
   test("cannot raise a ceiling", async () => {
-    const res = await exec("set_source_level", { source: "precision-outbound", maxLevel: "urgent" });
+    const res = await exec("set_source_level", {
+      source: "acme-outbound",
+      maxLevel: "urgent",
+    });
     expect(res.isError).toBe(true);
     // And nothing was written.
     expect(runtime.workspaces.get(WS)?.notifications).toBeUndefined();
@@ -187,8 +223,8 @@ describe("the ceiling", () => {
   test("a declared source starts at info, and says nobody set it", async () => {
     const [source_] = (await settings()).sources;
     expect(source_).toEqual({
-      source: "precision-outbound",
-      label: "Precision Outbound",
+      source: "acme-outbound",
+      label: "Acme Outbound",
       description: "Domain lifecycle.",
       maxLevel: "info",
       configured: false,
@@ -196,12 +232,15 @@ describe("the ceiling", () => {
   });
 
   test("raising it persists and reads back as configured", async () => {
-    const res = await exec("set_source_level", { source: "precision-outbound", maxLevel: "urgent" });
+    const res = await exec("set_source_level", {
+      source: "acme-outbound",
+      maxLevel: "urgent",
+    });
     expect(res.isError).toBe(false);
-    const out = res.structuredContent as unknown as NotificationsSettingsOutput;
+    const out = structuredOutput<NotificationsSettingsOutput>(res);
     expect(out.sources[0]).toMatchObject({ maxLevel: "urgent", configured: true });
     expect(runtime.workspaces.get(WS)?.notifications?.sources).toEqual({
-      "precision-outbound": { maxLevel: "urgent" },
+      "acme-outbound": { maxLevel: "urgent" },
     });
   });
 
@@ -215,7 +254,7 @@ describe("the ceiling", () => {
     }
     const overflow = await exec("set_source_level", { source: "one-too-many", maxLevel: "info" });
     expect(overflow.isError).toBe(true);
-    expect(textOf(overflow)).toContain(String(NOTIFICATION_SOURCES_MAX));
+    expect(resultText(overflow)).toContain(String(NOTIFICATION_SOURCES_MAX));
 
     // The cap bounds how many sources are held, not whether a held one moves.
     const existing = await exec("set_source_level", { source: "src-0", maxLevel: "urgent" });
@@ -246,7 +285,7 @@ describe("the principal a route dispatches under", () => {
       routes: [{ ...route(), createdBy: OTHER }],
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("must NOT have additional properties");
+    expect(resultText(res)).toContain("must NOT have additional properties");
     expect(runtime.workspaces.get(WS)?.notifications?.routes).toBeUndefined();
   });
 
@@ -301,10 +340,14 @@ describe("the runtime's dormancy note on a route", () => {
   test("a half-written note is dropped rather than rendered as a reasonless refusal", async () => {
     await exec("set_routes", { routes: [route()] });
     const stored = runtime.workspaces.get(WS)?.notifications?.routes ?? [];
-    runtime.workspaces.set(WS, {
-      ...(runtime.workspaces.get(WS) as Workspace),
-      notifications: { routes: [{ ...stored[0], disabled: { reason: 42 } }] },
-    } as unknown as Workspace);
+    runtime.workspaces.set(
+      WS,
+      // biome-ignore lint/plugin/double-cast: a stored route whose `disabled.reason` is a number, where the type promises a string
+      {
+        ...(runtime.workspaces.get(WS) as Workspace),
+        notifications: { routes: [{ ...stored[0], disabled: { reason: 42 } }] },
+      } as unknown as Workspace,
+    );
 
     expect((await settings()).routes[0]?.disabled).toBeUndefined();
   });
@@ -316,21 +359,21 @@ describe("a route may only name what the workspace has", () => {
       routes: [route({ deliver: [{ kind: "tool", tool: "pagerduty__page" }] })],
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("pagerduty__page");
+    expect(resultText(res)).toContain("pagerduty__page");
     expect(runtime.workspaces.get(WS)?.notifications?.routes).toBeUndefined();
   });
 
-  test("an automation that does not exist is rejected", async () => {
+  test("a task that does not exist is rejected", async () => {
     const res = await exec("set_routes", {
-      routes: [route({ deliver: [{ kind: "agent", automation: "auto_nope" }] })],
+      routes: [route({ deliver: [{ kind: "agent", task: "auto_nope" }] })],
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("auto_nope");
+    expect(resultText(res)).toContain("auto_nope");
   });
 
-  test("an automation the caller owns is accepted", async () => {
+  test("a task the caller owns is accepted", async () => {
     const res = await exec("set_routes", {
-      routes: [route({ deliver: [{ kind: "agent", automation: "auto_triage" }] })],
+      routes: [route({ deliver: [{ kind: "agent", task: "auto_triage" }] })],
     });
     expect(res.isError).toBe(false);
   });
@@ -339,12 +382,10 @@ describe("a route may only name what the workspace has", () => {
     // It would be delivered as the literal characters `{{campaign}}`, which
     // reads as an almost-right message nobody investigates.
     const res = await exec("set_routes", {
-      routes: [
-        route({ deliver: [{ kind: "tool", tool: TOOL, input: { text: "{{campaign}}" } }] }),
-      ],
+      routes: [route({ deliver: [{ kind: "tool", tool: TOOL, input: { text: "{{campaign}}" } }] })],
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("{{campaign}}");
+    expect(resultText(res)).toContain("{{campaign}}");
   });
 
   test("the four documented placeholders are accepted, nested and all", async () => {
@@ -372,7 +413,7 @@ describe("a route may only name what the workspace has", () => {
       routes: [route({ id: "rt_same" }), route({ id: "rt_same" })],
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("rt_same");
+    expect(resultText(res)).toContain("rt_same");
   });
 });
 
@@ -388,20 +429,14 @@ describe("what the editor is told", () => {
     expect(out.deliverableTools).toEqual(["slack__list_channels", TOOL]);
     // Four the connector supplies, and `inbox.url`, which only the runtime can
     // build — the editor offers all five because the write accepts all five.
-    expect(out.placeholders).toEqual([
-      "title",
-      "body",
-      "subject",
-      "link.resource",
-      "inbox.url",
-    ]);
+    expect(out.placeholders).toEqual(["title", "body", "subject", "link.resource", "inbox.url"]);
   });
 
-  test("the automation picker says which of them can actually be woken", async () => {
-    // A route may name an automation that runs on a clock — the write accepts
+  test("the task picker says which of them can actually be woken", async () => {
+    // A route may name a task that runs on a clock — the write accepts
     // it and every notification sent to it is then refused. Saying so at write
     // time is cheaper than an operator finding it in the delivery ledger.
-    expect((await settings()).automations).toEqual([
+    expect((await settings()).tasks).toEqual([
       { id: "auto_triage", name: "Triage replies", eventScheduled: true },
       { id: "auto_digest", name: "Weekly digest", eventScheduled: false },
     ]);
@@ -410,10 +445,45 @@ describe("what the editor is told", () => {
 
 describe("without a bound workspace", () => {
   test("the settings read denies rather than guessing one", async () => {
-    const res = await runWithRequestContext({ identity: { id: USER } as never }, () =>
+    const res = await runWithRequestContext({ identity: makeIdentity({ id: USER }) }, () =>
       source.execute("settings", {}),
     );
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("No workspace in scope");
+    expect(resultText(res)).toContain("No workspace in scope");
+  });
+});
+
+describe("a test send", () => {
+  let workDir: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-notify-settings-"));
+    seedWorkspaceRoot(workDir, WS);
+    runtime.store = new NotificationStore(new WorkspaceContext({ wsId: WS, workDir }), {
+      eventSink: noopSink,
+    });
+  });
+
+  afterEach(() => {
+    runtime.store = null;
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  test("through a route above its source's ceiling writes the item and says why nothing fired", async () => {
+    const saved = await exec("set_routes", {
+      routes: [route({ match: { level: "urgent" } })],
+    });
+    expect(saved.isError).toBe(false);
+    const [stored] = structuredOutput<NotificationsSettingsOutput>(saved).routes;
+
+    const res = await exec("send_test", { routeId: stored!.id });
+    expect(res.isError).toBe(false);
+    const out = structuredOutput<NotificationsSendTestOutput>(res);
+    expect(out.effectiveLevel).toBe("info");
+    expect(out.matched).toBe(false);
+    expect(out.reason).toBeString();
+    expect(out.deliveries).toEqual([]);
+    const listed = await exec("list", { ids: [out.notificationId] });
+    expect(structuredOutput<NotificationsListOutput>(listed).notifications).toHaveLength(1);
   });
 });

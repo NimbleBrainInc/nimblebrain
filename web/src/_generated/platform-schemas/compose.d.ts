@@ -36,13 +36,13 @@ export type ComposeAssembledContextInput = Static<typeof ComposeAssembledContext
  * so nothing is billed twice); only the row it is attributed to is coarser
  * than the wire.
  */
-export interface AssembledContextSource {
-    kind: string;
-    tokens: number;
-    count?: number;
+export declare const AssembledContextSource: import("@sinclair/typebox").TObject<{
+    kind: import("@sinclair/typebox").TString;
+    tokens: import("@sinclair/typebox").TNumber;
+    count: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     /** `history`: how many messages the windowed history holds. */
-    messages?: number;
-    compacted?: boolean;
+    messages: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    compacted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     /**
      * True when this row measures part of another row rather than adding a
      * region of its own — `skills` inside `system_prompt` today.
@@ -52,24 +52,32 @@ export interface AssembledContextSource {
      * only would draw a region row whose tokens are absent from the
      * `windowTokens` printed beneath it.
      */
-    annotation?: boolean;
-}
+    annotation: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+}>;
+export type AssembledContextSource = Static<typeof AssembledContextSource>;
 /**
- * One layer-3 skill that loaded for the run, projected from the
- * `skills.loaded` event with provenance for why it loaded.
+ * One skill that loaded for the run, projected from the `skills.loaded` event
+ * with provenance for why it loaded.
+ *
+ * `scope` is the storage tier as recorded, and a recorded event keeps the
+ * vocabulary it was written in: today's runs record `org`, `workspace`, `user`,
+ * or `provided`, and an older run can hold a tier name this build no longer
+ * uses. So it is an open string, and a renderer falls back to the stored value
+ * for a tier it does not know.
  */
-export interface AssembledContextSkill {
-    id: string;
+export declare const AssembledContextSkill: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
     /** The skill's own name — resolved server-side, safe to render directly. */
-    name: string;
+    name: import("@sinclair/typebox").TString;
     /** The MCP server that published it; absent for filesystem skills. */
-    connector?: string;
-    scope: "org" | "workspace" | "user" | "provided";
-    tokens: number;
+    connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    scope: import("@sinclair/typebox").TString;
+    tokens: import("@sinclair/typebox").TNumber;
     /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
-    loadedBy: "always" | "tool_affinity" | "trigger";
-    reason: string;
-}
+    loadedBy: import("@sinclair/typebox").TUnsafe<"always" | "tool_affinity" | "trigger">;
+    reason: import("@sinclair/typebox").TString;
+}>;
+export type AssembledContextSkill = Static<typeof AssembledContextSkill>;
 /**
  * `compose__assembled_context` response — the recorded context digest for
  * a conversation's run (the most recent by default). A pure read of the
@@ -77,60 +85,154 @@ export interface AssembledContextSkill {
  * recomposition. `runId` / `ts` are `null` when the conversation exists but
  * no run has recorded assembled-context telemetry yet.
  */
-export interface ComposeAssembledContextOutput {
-    conversationId: string;
-    runId: string | null;
-    ts: string | null;
-    sources: AssembledContextSource[];
-    excluded: AssembledContextSource[];
+export declare const ComposeAssembledContextOutput: import("@sinclair/typebox").TObject<{
+    conversationId: import("@sinclair/typebox").TString;
+    runId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    ts: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    sources: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        kind: import("@sinclair/typebox").TString;
+        tokens: import("@sinclair/typebox").TNumber;
+        count: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        /** `history`: how many messages the windowed history holds. */
+        messages: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        compacted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+        /**
+         * True when this row measures part of another row rather than adding a
+         * region of its own — `skills` inside `system_prompt` today.
+         *
+         * Stamped here so a renderer can lay the rows out without carrying its own
+         * copy of which kinds are annotations. Without it, a kind added on one tier
+         * only would draw a region row whose tokens are absent from the
+         * `windowTokens` printed beneath it.
+         */
+        annotation: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+    }>>;
+    excluded: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        kind: import("@sinclair/typebox").TString;
+        tokens: import("@sinclair/typebox").TNumber;
+        count: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        /** `history`: how many messages the windowed history holds. */
+        messages: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        compacted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+        /**
+         * True when this row measures part of another row rather than adding a
+         * region of its own — `skills` inside `system_prompt` today.
+         *
+         * Stamped here so a renderer can lay the rows out without carrying its own
+         * copy of which kinds are annotations. Without it, a kind added on one tier
+         * only would draw a region row whose tokens are absent from the
+         * `windowTokens` printed beneath it.
+         */
+        annotation: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+    }>>;
     /**
      * The recorded sum of every row in `sources`, preserved as recorded. It
      * counts the composed skill bodies twice — once inside `system_prompt`, once
      * in the `skills` annotation — so it is NOT the size of the context window.
      * Read `windowTokens` for that.
      */
-    totalTokens: number;
+    totalTokens: import("@sinclair/typebox").TNumber;
     /**
      * How much of the context window the turn occupied: the sum of the rows that
      * name a region, with the annotation rows left out. The number a reader means
      * by "how big was this turn". Computed here rather than by each caller, so
      * one answer reaches every consumer of this tool.
      */
-    windowTokens: number;
-    skills: AssembledContextSkill[];
+    windowTokens: import("@sinclair/typebox").TNumber;
+    skills: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        /** The skill's own name — resolved server-side, safe to render directly. */
+        name: import("@sinclair/typebox").TString;
+        /** The MCP server that published it; absent for filesystem skills. */
+        connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        scope: import("@sinclair/typebox").TString;
+        tokens: import("@sinclair/typebox").TNumber;
+        /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
+        loadedBy: import("@sinclair/typebox").TUnsafe<"always" | "tool_affinity" | "trigger">;
+        reason: import("@sinclair/typebox").TString;
+    }>>;
     /** Present only when the run recorded them (not emitted on current runs). */
-    modelMaxContext?: number;
-    headroomTokens?: number;
-}
+    modelMaxContext: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    headroomTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+}>;
+export type ComposeAssembledContextOutput = Static<typeof ComposeAssembledContextOutput>;
+/**
+ * One entry of a section that aggregates several items (`apps`, the skills
+ * layer): the runtime `TracedSubItem`. `metadata` is free-form per kind (a
+ * skill's scope and hash status, an app's UI descriptor). The `connector`
+ * filter matches on `connector`.
+ */
+export declare const TracedSubItemView: import("@sinclair/typebox").TObject<{
+    kind: import("@sinclair/typebox").TString;
+    id: import("@sinclair/typebox").TString;
+    source: import("@sinclair/typebox").TString;
+    connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    metadata: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+}>;
+export type TracedSubItemView = Static<typeof TracedSubItemView>;
 /**
  * One section of the composed system prompt with provenance and body — the
- * web-facing projection of the runtime `TracedLayer`. Carries `text` (the
- * exact composed body of the layer) so the context inspector can show what
- * actually entered the window. Lighter consumers may ignore `text`; it is the
- * largest field and only the inspector renders it. The runtime `subItems`
- * (per-app / per-skill breakdown) are omitted: they exist for the server-side
- * `connector` filter, which runs on the runtime `TracedLayer`, and the inspector
- * renders each layer's composed `text`, not its sub-items.
+ * projection of the runtime `TracedLayer`. Carries `text` (the exact composed
+ * body of the layer) so the context inspector can show what actually entered
+ * the window. Lighter consumers may ignore `text`; it is the largest field and
+ * only the inspector renders it. `subItems` is the per-app / per-skill
+ * breakdown the server-side `connector` filter runs on; the inspector renders
+ * each layer's composed `text` instead.
  */
-export interface TracedLayerView {
-    kind: string;
-    segment: "stable" | "volatile";
-    id: string;
-    source: string;
-    tokens: number;
-    text: string;
-    connector?: string;
-}
+export declare const TracedLayerView: import("@sinclair/typebox").TObject<{
+    kind: import("@sinclair/typebox").TString;
+    segment: import("@sinclair/typebox").TUnsafe<"stable" | "volatile">;
+    id: import("@sinclair/typebox").TString;
+    source: import("@sinclair/typebox").TString;
+    tokens: import("@sinclair/typebox").TNumber;
+    text: import("@sinclair/typebox").TString;
+    connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    subItems: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        kind: import("@sinclair/typebox").TString;
+        id: import("@sinclair/typebox").TString;
+        source: import("@sinclair/typebox").TString;
+        connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        metadata: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+    }>>>;
+}>;
+export type TracedLayerView = Static<typeof TracedLayerView>;
 /**
- * `compose__effective_context` response as consumed by the context inspector.
- * The runtime tool also returns the full composed `text` at the top level;
- * that field is intentionally absent here — the inspector reads each layer's
- * `text` and never the whole-prompt blob.
+ * `compose__effective_context` response. `text` is the whole composed prompt
+ * in live mode, and in historical mode the reconstructed skills layer under a
+ * banner saying it is a partial; the inspector reads each layer's `text`
+ * instead. `runId` is present in historical mode.
+ *
+ * `totalTokens` is not the size of the context window, which also holds tool
+ * descriptions and history: `compose__assembled_context` answers that, as
+ * `windowTokens`.
  */
-export interface ComposeEffectiveContextOutput {
-    mode: "live" | "historical";
-    conversationId: string;
-    totalTokens: number;
-    layers: TracedLayerView[];
-    warnings: string[];
-}
+export declare const ComposeEffectiveContextOutput: import("@sinclair/typebox").TObject<{
+    mode: import("@sinclair/typebox").TUnsafe<"historical" | "live">;
+    conversationId: import("@sinclair/typebox").TString;
+    runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    /**
+     * Size of the composed system prompt, the same quantity in both modes so the
+     * two are comparable: live sums the composed layers, historical reads the
+     * run's recorded `system_prompt` row.
+     */
+    totalTokens: import("@sinclair/typebox").TNumber;
+    text: import("@sinclair/typebox").TString;
+    layers: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        kind: import("@sinclair/typebox").TString;
+        segment: import("@sinclair/typebox").TUnsafe<"stable" | "volatile">;
+        id: import("@sinclair/typebox").TString;
+        source: import("@sinclair/typebox").TString;
+        tokens: import("@sinclair/typebox").TNumber;
+        text: import("@sinclair/typebox").TString;
+        connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        subItems: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            kind: import("@sinclair/typebox").TString;
+            id: import("@sinclair/typebox").TString;
+            source: import("@sinclair/typebox").TString;
+            connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            metadata: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+        }>>>;
+    }>>;
+    warnings: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
+}>;
+export type ComposeEffectiveContextOutput = Static<typeof ComposeEffectiveContextOutput>;

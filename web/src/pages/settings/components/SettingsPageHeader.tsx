@@ -21,9 +21,8 @@ export interface SettingsPageHeaderProps {
   description?: ReactNode;
   /**
    * Optional glyph rendered inline to the left of the title — used for
-   * pages whose identity is reinforced by an icon (currently
-   * `SettingsAppPanelPage`, which carries the connector's icon). Render the
-   * icon node yourself; the header doesn't size or color it.
+   * pages whose identity is reinforced by an icon. Render the icon node
+   * yourself; the header doesn't size or color it.
    */
   icon?: ReactNode;
   /** Right-aligned action — typically a primary button (Create, Save, etc). */

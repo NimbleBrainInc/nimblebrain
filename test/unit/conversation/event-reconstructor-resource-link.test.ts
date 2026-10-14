@@ -3,12 +3,12 @@ import { reconstructMessages } from "../../../src/conversation/event-reconstruct
 import type { ConversationEvent } from "../../../src/conversation/types.ts";
 
 /**
- * Regression: the reconstructor used to map user-message content through
- * the assistant-side `LanguageModelV4Content` projection, which dropped
- * everything that wasn't text. Image attachments were silently lost on
- * every reload — vision worked on turn 1 (in-memory message hadn't been
- * round-tripped) and broke on turn 2+. The fix: a user-content-aware
- * mapper that preserves MCP `resource_link` blocks alongside text.
+ * The reconstructor maps user-message content through a user-content-aware
+ * mapper that preserves MCP `resource_link` blocks alongside text. The
+ * assistant-side `LanguageModelV4Content` projection drops everything that
+ * isn't text, so through it image attachments would be silently lost on
+ * every reload — vision would work on turn 1 (the in-memory message is not
+ * round-tripped) and break on turn 2+.
  */
 describe("event-reconstructor: user-message resource_link round-trip", () => {
   test("preserves resource_link blocks alongside text", () => {

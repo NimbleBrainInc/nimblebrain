@@ -9,15 +9,9 @@
  * A hand-built `join(..., "users", X, "credentials", ...)` is a regression: a
  * shared-connector credential would land off the workspace.
  *
- * The one exception is the identity plane's PRE-STORE personal-connector OAuth
- * home, `users/<userId>/credentials/mcp-oauth/<serverName>/`. Nothing writes
- * there: an OAuth connection's records are keys in the credential store at the
- * owner's scope, and `legacyMcpOAuthDir` (`src/tools/mcp-oauth-records.ts`) is
- * the only site that still names the directory, so it can import an
- * installation that predates the store and delete what it imported. That exact
- * shape is allowed; every other `users/<id>/credentials/...` stays banned. When
- * no deployment can still be carrying those files, the helper goes and this
- * carve-out goes with it.
+ * An OAuth connection's records are keys in the credential store at the owner's
+ * scope (`src/tools/mcp-oauth-records.ts`), so nothing names a
+ * `users/<id>/credentials/...` path by hand.
  *
  * A BROKERED provider's home — `users/<userId>/credentials/<provider>/<connector>/`
  * — needs no carve-out and must not get one. `brokeredConnectorDir`
@@ -26,21 +20,13 @@
  * anything that spells such a path literally is bypassing that site and IS the
  * regression.
  *
- * What this script flags (all EXCEPT the carve-outs above):
+ * What this script flags:
  *   - `join(...)` with the adjacency `"users", <id>, "credentials"`.
  *   - Template / string literals containing `users/<...>/credentials/`.
  *
  * What it allows:
- *   - `users/<id>/credentials/mcp-oauth/...` — the legacy import root.
  *   - A `// lint-ok:credential-path` marker on the line immediately above the
  *     construction, for the rare case the typed helper genuinely doesn't apply.
- *
- * Blind spot, by design: `legacyMcpOAuthDir` builds BOTH owners' paths through
- * one `join(workDir, ownerSegment, ownerId, "credentials", ...)` where
- * `ownerSegment` is a *variable* (`"workspaces"` | `"users"`). The AST matchers
- * can't flag the "users" case there without false-positiving the workspace
- * case, so that single audited constructor is intentionally invisible to this
- * lint; the lint guards against NEW literal reintroductions elsewhere.
  *
  * Scope: `src/**\/*.ts`. Scripts and tests are out of scope.
  */
@@ -55,16 +41,12 @@ const SRC_ROOT = join(ROOT, "src");
 const ALLOW_MARKER = "lint-ok:credential-path";
 
 /**
- * Matches a banned `users/<id>/credentials/…` path, EXCEPT the one sanctioned
- * shape — the pre-store personal-connector OAuth home that
- * `legacyMcpOAuthDir` reads to import and then deletes:
- *   - `users/<id>/credentials/mcp-oauth/…`
- * The negative lookahead is the whole carve-out: a bare `credentials` dir or any
- * child outside it is still a regression — including a brokered provider's own
- * home, which is reachable only through `brokeredConnectorDir` and therefore
- * never appears here as a literal.
+ * Matches a banned `users/<id>/credentials/…` path: the bare `credentials` dir
+ * or any child — including a brokered provider's own home, which is reachable
+ * only through `brokeredConnectorDir` and therefore never appears here as a
+ * literal.
  */
-const USER_CREDENTIAL_PATH_RE = /users\/[^/]+\/credentials(?:$|\/(?!mcp-oauth(?:\/|$)))/;
+const USER_CREDENTIAL_PATH_RE = /users\/[^/]+\/credentials(?:$|\/)/;
 
 // Files within `src/` that legitimately reference the legacy
 // `users/<userId>/credentials/...` shape. Stage-2 deletion of
@@ -119,13 +101,6 @@ export function isUserCredentialJoin(node: ts.CallExpression): boolean {
   // Need the adjacency `"users", <userId>, "credentials"`.
   for (let i = 0; i < args.length - 2; i++) {
     if (!isLiteralSegment(args[i], "users") || !isLiteralSegment(args[i + 2], "credentials")) {
-      continue;
-    }
-    // Carve-out: the pre-store personal-connector OAuth home (`mcp-oauth`),
-    // which only the legacy import reads. Everything else under
-    // `users/<id>/credentials/` stays banned. Keep this in sync with
-    // `USER_CREDENTIAL_PATH_RE`.
-    if (isLiteralSegment(args[i + 3], "mcp-oauth")) {
       continue;
     }
     return true;
@@ -244,10 +219,7 @@ async function main(): Promise<void> {
     );
     console.error("through `WorkspaceContext` (`runtime.getWorkspaceContext(wsId)`) or");
     console.error("`FileCredentialStore`.");
-    console.error("The ONLY user-scoped exception is the pre-store OAuth home at");
-    console.error(
-      "`users/<userId>/credentials/mcp-oauth/<serverName>/`, read by the legacy import.",
-    );
+    console.error("A user's OAuth records are credential-store keys at `user` scope.");
     console.error(
       `Other legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above.`,
     );

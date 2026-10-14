@@ -81,6 +81,37 @@ two-pane master/detail collapses into nested unreadable scroll regions the momen
 the chat is docked. Reference: `pages/ContextInspectorPage.tsx`, one scrolling
 column with each layer's body expanding in place.
 
+## Settings pages
+
+Every settings page renders in `SettingsShell`, which sets the one content width
+(`max-w-4xl`, left-aligned beside the nav). A page or template sets no width of
+its own, so moving between tabs never moves the content. A page's header title is
+its tab's label in the settings nav.
+
+## Tooltips
+
+Every icon-only control gets a `Tooltip` (`components/ui/tooltip.tsx`); a
+control with a visible text label gets none. The trigger keeps its own
+`aria-label`, because the tooltip is not its accessible name. Never use a
+native `title` on an icon button: it shows late, unstyled, and never with a
+shortcut.
+
+- **Status, not a name:** a control with a visible label may take a tooltip
+  for status that label cannot show, shown only while that status holds
+  (`disabled` otherwise): the workspace switcher names which other workspaces
+  have unread items.
+- **Label:** what the control does, in a few words, sentence case: "Search",
+  "Close sidebar", "New chat". Not its icon's name, not a sentence.
+- **Shortcut:** pass the chord from `lib/shortcuts` (`shortcut={SHORTCUTS.chat}`),
+  never a typed string, and set the trigger's `aria-keyshortcuts` from the same
+  entry (`ariaKeyShortcuts`). The registry is the one definition the key
+  handler, the tooltip, and the shortcuts sheet all read, so they cannot
+  disagree, and it shows ⌘ on Apple and Ctrl elsewhere.
+- **Side:** away from the nearest screen edge: `right` on the sidebar rail,
+  `bottom` in a top toolbar (the default), `left` on the right edge.
+- **Groups:** wrap a toolbar or rail in `TooltipProvider` so the first tooltip
+  waits and its neighbors then show at once.
+
 ## Motion
 
 Reveal motion is gated on `prefers-reduced-motion`. Anything new that animates

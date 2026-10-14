@@ -65,22 +65,27 @@ mock.module("@composio/core", () => ({
     create() {
       return { mcp: { type: "http", url: "https://composio.test/mcp/x", headers: {} } };
     }
-    constructor(_opts: unknown) {}
   },
 }));
 
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
+import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   readComposioConnection,
   saveComposioConnection,
 } from "../../src/connectors/providers/composio/connection.ts";
+import { connectComposioApiKey } from "../../src/connectors/providers/composio/sdk.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
+import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
-import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
-import { connectComposioApiKey } from "../../src/connectors/providers/composio/sdk.ts";
-import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -88,11 +93,8 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import {
-  _resetConnectorsConfigForTest,
-  setConnectorsConfig,
-} from "../../src/connectors/providers/config.ts";
-import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
+import { stub } from "../helpers/stub.ts";
+import { makeWorkspace, seedWorkspace, seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const POSTHOG_ID = "com.posthog/analytics";
 const GMAIL_ID = "com.google/gmail";
@@ -161,15 +163,15 @@ interface Harness {
 
 function buildHarness(): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-composio-apikey-"));
-  seedWorkspaceRoot(workDir, "ws_test");
-  const wsId = "ws_test";
+  seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
+  const wsId = "ws_0076759dbbe19fcc";
   const workspaceStore = new WorkspaceStore(workDir);
   const catalogPath = join(workDir, "catalog.yaml");
   writeFileSync(catalogPath, CATALOG_YAML);
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
     getConnectorCatalog: () => new ConnectorCatalog(catalogPath),
@@ -179,14 +181,14 @@ function buildHarness(): Harness {
     getEventSink: () => new NoopEventSink(),
     getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
-  } as unknown as Runtime;
+  });
 
   return { workDir, wsId, runtime };
 }
 
 async function provision(h: Harness): Promise<void> {
   const store = h.runtime.getWorkspaceStore();
-  await store.create("Test", h.wsId.slice(3));
+  await seedWorkspace(store, h.wsId, { name: "Test" });
   await store.addMember(h.wsId, ADMIN.id, "admin");
 }
 
@@ -199,10 +201,7 @@ function buildTool(h: Harness) {
   return createManageConnectorsTool(ctx);
 }
 
-const TRACKED_ENV = [
-  "COMPOSIO_API_KEY",
-  "NB_TENANT_ID",
-];
+const TRACKED_ENV = ["COMPOSIO_API_KEY", "NB_TENANT_ID"];
 const SAVED_ENV: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -374,16 +373,16 @@ const POSTHOG_ENTRY = {
 function stubCtx(opts: {
   workDir: string;
   wsId: string;
-  entry: unknown | null;
+  entry: ConnectorCatalogEntry | null;
   ensureSourceRegisteredError?: Error;
   identity?: UserIdentity;
   role?: "admin" | "member";
-  connectors?: Array<{ serverName: string }>;
+  connectors?: ConnectorRef[];
 }): ManageConnectorsContext & { __calls: StubCalls } {
   const identity = opts.identity ?? ADMIN;
   const role = opts.role ?? "admin";
   const calls: StubCalls = { recordConnectionStateChange: { lastCall: null, callCount: 0 } };
-  const lifecycle = {
+  const lifecycle = stub<ConnectorLifecycleManager>({
     async ensureSourceRegistered(): Promise<void> {
       if (opts.ensureSourceRegisteredError) throw opts.ensureSourceRegisteredError;
     },
@@ -396,39 +395,41 @@ function stubCtx(opts: {
       calls.recordConnectionStateChange.lastCall = { serverName, wsId, principalId, state };
       calls.recordConnectionStateChange.callCount++;
     },
-  };
-  const runtime = {
+  });
+  const runtime = stub<Runtime>({
     getWorkDir: () => opts.workDir,
-    getWorkspaceStore: () => ({
-      get: async () => ({
-        id: opts.wsId,
-        name: "Test",
-        members: [{ userId: identity.id, role }],
-        connectors: opts.connectors ?? [],
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({
+        get: async () =>
+          makeWorkspace({
+            id: opts.wsId,
+            name: "Test",
+            members: [{ userId: identity.id, role }],
+            connectors: opts.connectors ?? [],
+          }),
       }),
-    }),
-    getConnectorCatalog: () => ({
-      catalogById: async (id: string) =>
-        opts.entry && (opts.entry as { id: string }).id === id ? opts.entry : null,
-    }),
+    getConnectorCatalog: () =>
+      stub<ConnectorCatalog>({
+        catalogById: async (id: string) => (opts.entry?.id === id ? opts.entry : null),
+      }),
     getLifecycle: () => lifecycle,
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
-  } as unknown as Runtime;
+  });
   return {
     runtime,
     getIdentity: () => identity,
     getWorkspaceId: () => opts.wsId,
     __calls: calls,
-  } as unknown as ManageConnectorsContext & { __calls: StubCalls };
+  };
 }
 
 describe("manage_connectors.connect_api_key — lifecycle tail", () => {
-  const WS = "ws_test";
+  const WS = "ws_0076759dbbe19fcc";
   let workDir: string;
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-ph-connect-"));
-    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
   });
   afterEach(() => {
     rmSync(workDir, { recursive: true, force: true });
@@ -559,7 +560,9 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     // ensureSourceRegistered runs before the Composio connect, so nothing was
     // created and nothing persisted.
     expect(apiKeyCalls.initiateArgs.length).toBe(0);
-    expect(await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID)).toBeFalsy();
+    expect(
+      await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID),
+    ).toBeFalsy();
     expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
   });
 
@@ -573,7 +576,7 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
       workDir,
       wsId: WS,
       entry: POSTHOG_ENTRY,
-      connectors: [{ serverName: slugifyServerName(POSTHOG_ID) }],
+      connectors: [{ url: POSTHOG_ENTRY.url, serverName: slugifyServerName(POSTHOG_ID) }],
       ensureSourceRegisteredError: new Error("transport handshake failed"),
     });
     const r = await createManageConnectorsTool(ctx).handler({
@@ -625,7 +628,9 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
     expect(r.isError).toBe(true);
     expect(JSON.stringify(r)).toContain("Could not connect");
-    expect(await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID)).toBeFalsy();
+    expect(
+      await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID),
+    ).toBeFalsy();
     expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
     // The SDK helper cleaned up the dangling connected account.
     expect(apiKeyCalls.deletedIds).toContain("ca_bad");
@@ -683,7 +688,13 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     });
 
     // ...and a non-admin member tries to rotate it.
-    const ctx = stubCtx({ workDir, wsId: WS, entry: POSTHOG_ENTRY, identity: MEMBER, role: "member" });
+    const ctx = stubCtx({
+      workDir,
+      wsId: WS,
+      entry: POSTHOG_ENTRY,
+      identity: MEMBER,
+      role: "member",
+    });
     const r = await createManageConnectorsTool(ctx).handler({
       action: "connect_api_key",
       catalogId: POSTHOG_ID,

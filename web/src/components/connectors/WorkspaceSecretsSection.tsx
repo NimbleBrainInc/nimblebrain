@@ -125,7 +125,7 @@ export function WorkspaceSecretsSection({
       </div>
       {editing && (
         <SecretHeadersModal
-          connectorName={cat?.name ?? installed.serverName}
+          connectorName={installed.displayName}
           fields={fields}
           open={editing}
           mode={anyMissing ? "collect" : "rotate"}

@@ -1,5 +1,5 @@
 /**
- * Identity-scoped `ToolRouter` — the bridge between Stage 2's identity-bound
+ * Identity-scoped `ToolRouter` — the bridge between identity-bound
  * sessions and the engine's per-call ToolRouter contract.
  *
  * A session is bounded to one workspace (the wall). This router is the single
@@ -28,6 +28,7 @@
  * identity at execute time — that would defeat the membership gate.
  */
 
+import { textContent } from "../engine/content-helpers.ts";
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
 // Imported from the two modules rather than from `../orchestrator/index.ts`:
 // the barrel also exports `dispatchUnattended`, which composes THIS router, and
@@ -38,6 +39,7 @@ import {
   type RoutedToolCall,
   routeToolCall,
 } from "../orchestrator/route.ts";
+import type { AdminToolCaller } from "../permissions/admin-tools.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
@@ -85,6 +87,18 @@ export interface IdentityToolRouterOptions {
   runtime: OrchestratorRuntime;
   /** Optional audit-attribution hook. See `WorkspaceDispatchHook`. */
   onWorkspaceDispatch?: WorkspaceDispatchHook;
+  /**
+   * Which kind of run this router dispatches for, as the admin-tool audit line
+   * records it: a chat, an unattended run, or an unattended dispatch. The
+   * constructor's caller knows; nothing downstream can tell.
+   */
+  caller: Extract<AdminToolCaller, "chat" | "task" | "dispatch">;
+  /**
+   * Narrows what the run may reach: a tool name it rejects is neither listed
+   * (so `nb__manage_tools` cannot activate it) nor dispatched. The run's
+   * `allowedTools`, built by the runtime. Absent means no narrowing.
+   */
+  isToolAllowed?: (name: string) => boolean;
 }
 
 /**
@@ -94,7 +108,7 @@ export interface IdentityToolRouterOptions {
  * than ambient state; the wall guarantees that is the same workspace the
  * session is bound to, so this is a re-assertion, not a widening. An
  * identity-routed call keeps the ambient workspace — every kernel identity
- * source (`files__*`, `automations__*`, `conversations__*`) owns
+ * source (`files__*`, `tasks__*`, `conversations__*`) owns
  * workspace-partitioned data and would otherwise have no workspace in scope
  * even when the chat set one. Workspace model overrides ride along unchanged
  * so session-scoped reads keep working.
@@ -122,13 +136,9 @@ function buildPerCallContext(
     ...(outer?.model !== undefined ? { model: outer.model } : {}),
     ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
     // `unattended` rides the restamp so a tool dispatched from an unattended
-    // run stays walled from the automation-authoring surface. Dropping it here
+    // run stays walled from the task-authoring surface. Dropping it here
     // would reopen the wall for anything below the top level.
     ...(outer?.unattended !== undefined ? { unattended: outer.unattended } : {}),
-    // Rides the restamp for the same reason `unattended` does: the outbound
-    // `_meta` stamp is read at dispatch depth, below this rebuild, so dropping
-    // it here would erase the provenance from every call the door makes.
-    ...(outer?.unattendedReason !== undefined ? { unattendedReason: outer.unattendedReason } : {}),
   };
 }
 
@@ -137,6 +147,8 @@ export class IdentityToolRouter implements ToolRouter {
   private readonly workspaceId: string;
   private readonly runtime: OrchestratorRuntime;
   private readonly onWorkspaceDispatch?: WorkspaceDispatchHook;
+  private readonly isToolAllowed?: (name: string) => boolean;
+  private readonly caller: IdentityToolRouterOptions["caller"];
 
   constructor(opts: IdentityToolRouterOptions) {
     // The type system already pins the shape; we only need to catch the
@@ -148,8 +160,10 @@ export class IdentityToolRouter implements ToolRouter {
     }
     this.identityId = opts.identityId;
     this.workspaceId = opts.workspaceId;
+    this.caller = opts.caller;
     this.runtime = opts.runtime;
     if (opts.onWorkspaceDispatch) this.onWorkspaceDispatch = opts.onWorkspaceDispatch;
+    if (opts.isToolAllowed) this.isToolAllowed = opts.isToolAllowed;
   }
 
   /**
@@ -158,7 +172,9 @@ export class IdentityToolRouter implements ToolRouter {
    * the engine's reachable universe — a session reaches exactly one workspace.
    */
   async availableTools(): Promise<ToolSchema[]> {
-    return this.runtime.listToolsForWorkspace(this.workspaceId, this.identityId);
+    const tools = await this.runtime.listToolsForWorkspace(this.workspaceId, this.identityId);
+    const allowed = this.isToolAllowed;
+    return allowed ? tools.filter((t) => allowed(t.name)) : tools;
   }
 
   /**
@@ -178,6 +194,13 @@ export class IdentityToolRouter implements ToolRouter {
    * errors propagate to the engine's `run.error` path.
    */
   async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
+    if (this.isToolAllowed && !this.isToolAllowed(call.name)) {
+      return {
+        content: textContent(`${call.name} is not in this run's allowed tools.`),
+        isError: true,
+      };
+    }
+
     let routed: RoutedToolCall;
     try {
       routed = await routeToolCall({
@@ -200,7 +223,9 @@ export class IdentityToolRouter implements ToolRouter {
     // grammar every door shares (`src/util/tool-name.ts`).
     const { sourcePrefix, bareToolName } = splitInnerToolName(routed.toolName);
 
-    const denied = await this.connectorPermissionDenial(routed, sourcePrefix, bareToolName);
+    const denied =
+      (await this.connectorPermissionDenial(routed, sourcePrefix, bareToolName)) ??
+      (await this.connectorAdminDenial(routed, sourcePrefix, bareToolName, call.input));
     if (denied) return denied;
 
     // Restamp the per-call workspace from the ROUTED namespace, not ambient
@@ -239,5 +264,30 @@ export class IdentityToolRouter implements ToolRouter {
         : routed.policyOwner;
     if (!owner) return null;
     return assertToolAllowed(permissionStore, owner, sourcePrefix, bareToolName);
+  }
+
+  /**
+   * Connector gate (`lifecycle` handlers, `admin_tools`), beside the
+   * `disallow` gate. Only a workspace route is checked: a personal connector acts on its owner's own
+   * account, and a kernel identity source keeps its own gates.
+   *
+   * The principal is the router's own `identityId` — the chat user, a
+   * task's owner, or an unattended dispatch's principal — the identity
+   * the wall already commits this router to, not whatever is ambient.
+   */
+  private async connectorAdminDenial(
+    routed: RoutedToolCall,
+    sourcePrefix: string,
+    bareToolName: string,
+    input: Record<string, unknown>,
+  ): Promise<ToolResult | null> {
+    if (routed.kind !== "workspace" || !this.runtime.connectorAdminDenial) return null;
+    return this.runtime.connectorAdminDenial(
+      routed.context.workspaceId,
+      { id: this.identityId },
+      sourcePrefix,
+      bareToolName,
+      { input, caller: this.caller },
+    );
   }
 }

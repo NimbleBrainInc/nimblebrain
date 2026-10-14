@@ -42,3 +42,33 @@ export function formatDuration(ms: number): string {
   if (rounded < 1000) return `${rounded}ms`;
   return `${(rounded / 1000).toFixed(1)}s`;
 }
+
+/**
+ * Format an instant for a list row: the time of day, with the date only as far
+ * back as it needs to go. "Today 7:53 AM", "Yesterday 10:46 PM",
+ * "Sep 30, 10:46 PM", and the year only outside the current one. Absolute, not
+ * relative: "2 hours ago" hides the one thing an operator is checking. Seconds
+ * are left to `formatInstantFull`.
+ */
+export function formatInstant(iso: string, now: Date = new Date()): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  const time = at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfAt = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+  const daysAgo = Math.round((startOfToday.getTime() - startOfAt.getTime()) / 86_400_000);
+  if (daysAgo === 0) return `Today ${time}`;
+  if (daysAgo === 1) return `Yesterday ${time}`;
+  const date = at.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(at.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+  return `${date}, ${time}`;
+}
+
+/** The whole instant, to the second, for a hover or a detail view. */
+export function formatInstantFull(iso: string): string {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? iso : at.toLocaleString();
+}

@@ -7,8 +7,8 @@
  * until an unrelated later write re-dirties the index.
  *
  * This is reachable on its own, but the platform source's refresh coalescing
- * is what makes it bite every concurrent reader: a second caller that used to
- * enter `refresh()`, see `dirty === true` and rebuild now piggybacks on the
+ * is what makes it bite every concurrent reader: a second caller does not
+ * enter `refresh()`, see `dirty === true` and rebuild — it piggybacks on the
  * in-flight rebuild and inherits its stale result.
  */
 
@@ -17,11 +17,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConversationIndex } from "../../../../src/platform/conversations/index-cache.ts";
+import { conversationEventLines, type FixtureTurn } from "../../../helpers/conversation-events.ts";
 
 let dir: string;
 
 function writeConv(id: string): void {
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -32,9 +34,12 @@ function writeConv(id: string): void {
     lastModel: null,
     ownerId: "usr_test",
   };
+  // `dir` is the workspaces root the index walks.
+  const ownerDir = join(dir, "ws_00859aff6f095b0e", "conversations", "usr_test");
+  mkdirSync(ownerDir, { recursive: true });
   writeFileSync(
-    join(dir, `${id}.jsonl`),
-    `${JSON.stringify(meta)}\n${JSON.stringify({ role: "user", content: "hi" })}\n`,
+    join(ownerDir, `${id}.jsonl`),
+    `${[JSON.stringify(meta), ...conversationEventLines([{ role: "user", content: "hi", timestamp: "2026-01-01T00:01:00.000Z" } as FixtureTurn])].join("\n")}\n`,
   );
 }
 

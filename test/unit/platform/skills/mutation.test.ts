@@ -1,5 +1,5 @@
 /**
- * Phase 4 — mutation-tool behavior tests for `nb__skills`.
+ * Mutation-tool behavior tests for `nb__skills`.
  *
  * Per-tool: happy path + at least one error/permission edge. Versioning
  * (`_versions/{name}.{iso}.md` snapshots) is verified as a side-effect of
@@ -7,6 +7,7 @@
  * the read-tool tests' fixture so behavioral parity stays obvious.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -19,54 +20,52 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isInternalTool } from "../../../../src/engine/types.ts";
-import { surfaceTools } from "../../../../src/tools/surfacing.ts";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
-import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
 import type { EngineEvent, EventSink } from "../../../../src/engine/types.ts";
+import { isModelVisible } from "../../../../src/engine/types.ts";
+import type { UserIdentity } from "../../../../src/identity/provider.ts";
+import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
+import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import { parseSkillContent } from "../../../../src/skills/loader.ts";
 import { selectLayer3Skills } from "../../../../src/skills/select.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
-import { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
+import { listSkillVersions } from "../../../../src/skills/versions.ts";
+import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { surfaceTools } from "../../../../src/tools/surfacing.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
-import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
+import type { Workspace } from "../../../../src/workspace/types.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { skillEditPatch } from "../../../../web/src/pages/settings/skill-edit-patch.ts";
+import { stub } from "../../../helpers/stub.ts";
+import { makeWorkspace, seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
-interface FakeIdentity {
-  id: string;
-  email: string;
-  displayName: string;
-  orgRole: "owner" | "admin" | "member";
-  preferences: { timezone: string; locale: string; theme: string };
-}
+/** The dev user, as the `dev` provider verifies every request: org admin. */
+const DEV_USER: UserIdentity = {
+  id: "usr_default",
+  email: "dev@localhost",
+  displayName: "Developer",
+  orgRole: "admin",
+  preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
+};
 
 class FakeRuntime {
-  identity: FakeIdentity | null = null;
-  hasIdentityProvider = false;
+  identity: UserIdentity | null = DEV_USER;
   wsId: string | null = null;
-  workspaces = new Map<
-    string,
-    { id: string; name: string; members: Array<{ userId: string; role: "admin" | "member" }> }
-  >();
-
-  private readonly _store: EventSourcedConversationStore;
+  workspaces = new Map<string, Workspace>();
 
   constructor(private workDir: string) {
     const convDir = join(workDir, "conversations");
     mkdirSync(convDir, { recursive: true });
-    this._store = new EventSourcedConversationStore({ dir: convDir });
+    // The dev user administers the workspace these tests write to.
+    this.setMember("ws_002afe1142297ff4", DEV_USER.id, "admin");
   }
 
   getWorkDir(): string {
     return this.workDir;
   }
-  getCurrentIdentity(): FakeIdentity | null {
+  getCurrentIdentity(): UserIdentity | null {
     return this.identity;
-  }
-  getIdentityProvider(): object | null {
-    return this.hasIdentityProvider ? ({} as object) : null;
   }
   requireWorkspaceId(): string {
     if (!this.wsId) throw new Error("no workspace");
@@ -79,9 +78,9 @@ class FakeRuntime {
     return new WorkspaceContext({ wsId, workDir: this.workDir });
   }
   getWorkspaceStore() {
-    return {
+    return stub<WorkspaceStore>({
       get: async (id: string) => this.workspaces.get(id) ?? null,
-    };
+    });
   }
   getContextSkills() {
     return [];
@@ -103,7 +102,7 @@ class FakeRuntime {
   setMember(wsId: string, userId: string, role: "admin" | "member"): void {
     const ws = this.workspaces.get(wsId);
     if (!ws) {
-      this.workspaces.set(wsId, { id: wsId, name: wsId, members: [{ userId, role }] });
+      this.workspaces.set(wsId, makeWorkspace({ id: wsId, members: [{ userId, role }] }));
     } else {
       ws.members = [{ userId, role }];
     }
@@ -135,8 +134,11 @@ afterEach(async () => {
 });
 
 async function buildSource(): Promise<McpSource> {
-  source = createSkillsSource(runtime as unknown as never, sink ?? new NoopEventSink());
+  source = createSkillsSource(stub<Runtime>(runtime), sink ?? new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 
@@ -149,7 +151,7 @@ function readManifestField(path: string, key: string): string | undefined {
 // ── create ───────────────────────────────────────────────────────────────
 
 describe("skills__create", () => {
-  test("writes a platform-scope skill in dev mode and emits skill.created", async () => {
+  test("the dev user, an org admin, writes an org-scope skill and emits skill.created", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -172,26 +174,27 @@ describe("skills__create", () => {
     expect(sink.events.some((e) => e.type === "skill.created")).toBe(true);
   });
 
-  test("a skill cannot be created inside an automation run at all", async () => {
-    // This began as a provenance test. While a run's correlation id lived in
-    // `conversationId`, an automation-created skill was persisted as
-    // `origin: "chat"` with a run id recorded as its conversation — wrong data
-    // on disk. #1033 corrected the stamp; the unattended wall then removed the
-    // path, which is the stronger guarantee: a skill is durable guidance that
-    // loads itself into later conversations, and a run ingesting untrusted
-    // content must not be able to author one. So the assertion is no longer
-    // "the provenance is right" but "nothing was written".
+  test("a skill cannot be created inside a task run at all", async () => {
+    // The unattended wall removes the path, which is a stronger guarantee
+    // than correct provenance: a skill is durable guidance that loads itself
+    // into later conversations, and a run ingesting untrusted content must
+    // not be able to author one. So the assertion is "nothing was written".
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
-      { identity: null, workspaceId: "ws_any", runId: "run_a8f15601-0dd", unattended: true },
+      {
+        identity: null,
+        workspaceId: "ws_001823913791bb9c",
+        runId: "run_a8f15601-0dd",
+        unattended: true,
+      },
       () =>
         client.callTool({
           name: "create",
           arguments: {
             scope: "org",
             manifest: { name: "run-authored", description: "made by a run", type: "skill" },
-            body: "From an automation.",
+            body: "From a task.",
           },
         }),
     );
@@ -201,7 +204,7 @@ describe("skills__create", () => {
       .filter((c) => c.type === "text")
       .map((c) => c.text)
       .join("");
-    expect(text).toContain("not available inside an unattended automation run");
+    expect(text).toContain("not available inside an unattended task run");
 
     // Refused before the writer, not after it.
     expect(existsSync(join(workDir, "skills", "run-authored.md"))).toBe(false);
@@ -214,7 +217,11 @@ describe("skills__create", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
-      { identity: null, workspaceId: "ws_any", conversationId: "conv_aaaaaaaaaaaaaaaa" },
+      {
+        identity: null,
+        workspaceId: "ws_001823913791bb9c",
+        conversationId: "conv_aaaaaaaaaaaaaaaa",
+      },
       () =>
         client.callTool({
           name: "create",
@@ -269,7 +276,6 @@ describe("skills__create", () => {
   });
 
   test("non-admin denied for platform scope when identity provider is configured", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u1",
       email: "u@ex.com",
@@ -293,9 +299,28 @@ describe("skills__create", () => {
     );
   });
 
+  test("a create with no identity is refused, and nothing is written", async () => {
+    runtime.identity = null;
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "no-identity", description: "test", type: "skill" },
+        body: "x",
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+    expect(existsSync(join(workDir, "skills", "no-identity.md"))).toBe(false);
+  });
+
   test("workspace scope writes under {workDir}/workspaces/{wsId}/skills/", async () => {
-    runtime.wsId = "ws_demo";
-    seedWorkspaceRoot(workDir, "ws_demo");
+    runtime.wsId = "ws_002afe1142297ff4";
+    seedWorkspaceRoot(workDir, "ws_002afe1142297ff4");
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -307,7 +332,9 @@ describe("skills__create", () => {
       },
     });
     expect(result.isError).toBeFalsy();
-    expect(existsSync(join(workDir, "workspaces", "ws_demo", "skills", "ws-only.md"))).toBe(true);
+    expect(
+      existsSync(join(workDir, "workspaces", "ws_002afe1142297ff4", "skills", "ws-only.md")),
+    ).toBe(true);
   });
 });
 
@@ -320,10 +347,9 @@ describe("skills__create", () => {
 // READ rule as "any member". Behavior here must be identical to the prior
 // hand-rolled branch for every (member, role, mode) combination.
 describe("skills — workspace-scope write gate", () => {
-  const WS = "ws_gate";
+  const WS = "ws_0039fad880e2fea0";
 
-  function setIdentity(id: string, orgRole: "owner" | "admin" | "member"): void {
-    runtime.hasIdentityProvider = true;
+  function setIdentity(id: string, orgRole: "admin" | "member"): void {
     runtime.wsId = WS;
     seedWorkspaceRoot(workDir, WS);
     runtime.identity = {
@@ -374,11 +400,7 @@ describe("skills — workspace-scope write gate", () => {
     runtime.setMember(WS, "u_member", "member");
     const skillPath = join(workDir, "workspaces", WS, "skills", "readable.md");
     mkdirSync(join(workDir, "workspaces", WS, "skills"), { recursive: true });
-    writeFileSync(
-      skillPath,
-      "---\nname: readable\ndescription: test\n---\nbody\n",
-      "utf-8",
-    );
+    writeFileSync(skillPath, "---\nname: readable\ndescription: test\n---\nbody\n", "utf-8");
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({ name: "read", arguments: { id: skillPath } });
@@ -394,17 +416,6 @@ describe("skills — workspace-scope write gate", () => {
       "permission_denied",
     );
     expect(existsSync(join(workDir, "workspaces", WS, "skills", "orgadmin-cannot.md"))).toBe(false);
-  });
-
-  test("org OWNER who is NOT a workspace member CANNOT write (no org-owner override)", async () => {
-    setIdentity("u_owner", "owner");
-    runtime.setMember(WS, "someone_else", "admin");
-    const result = await createWsSkill("owner-cannot");
-    expect(result.isError).toBe(true);
-    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
-      "permission_denied",
-    );
-    expect(existsSync(join(workDir, "workspaces", WS, "skills", "owner-cannot.md"))).toBe(false);
   });
 });
 
@@ -442,7 +453,11 @@ describe("skills__create — loading-strategy", () => {
       name: "create",
       arguments: {
         scope: "org",
-        manifest: { name: "trigger-skill", description: "matches on triggers", triggers: ["deploy", "ship"] },
+        manifest: {
+          name: "trigger-skill",
+          description: "matches on triggers",
+          triggers: ["deploy", "ship"],
+        },
         body: "Deploy guidance.",
       },
     });
@@ -592,7 +607,7 @@ describe("a pasted SKILL.md in the body", () => {
     expect(existsSync(join(workDir, "skills", "broken.md"))).toBe(false);
   });
 
-  test("`frontmatter: \"ignore\"` keeps the block as body text", async () => {
+  test('`frontmatter: "ignore"` keeps the block as body text', async () => {
     // The escape hatch: a skill whose body is genuinely ABOUT frontmatter.
     const src = await buildSource();
     const client = src.getClient()!;
@@ -695,9 +710,9 @@ describe("a pasted SKILL.md in the body", () => {
       },
     });
     expect(ok.isError).toBeFalsy();
-    expect(parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false })?.manifest.priority).toBe(
-      25,
-    );
+    expect(
+      parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false })?.manifest.priority,
+    ).toBe(25);
   });
 
   test("a body-replacing update absorbs it; an append leaves it as prose", async () => {
@@ -821,14 +836,12 @@ describe("skills__update", () => {
     expect(result.isError).toBe(true);
   });
 
-  // Regression: production bug where the agent passed a stale `id` (a path
-  // the skill used to live at, before being moved to a workspace dir). The
-  // old ordering ran the permission check first and returned "Org-scope
-  // writes require org admin or owner" — sending the agent down a
-  // hallucination loop trying to fix its role instead of refreshing its
-  // path. Existence-first surfaces the actual cause.
+  // The agent can pass a stale `id` (a path the skill no longer lives at,
+  // after a move to a workspace dir). Running the permission check first
+  // would return "Org-scope writes require org admin" — sending the agent
+  // down a hallucination loop trying to fix its role instead of refreshing
+  // its path. Existence-first surfaces the actual cause.
   test("stale org-scope id (file moved away) returns 'not found', not 'permission denied'", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_member",
       email: "m@ex.com",
@@ -852,7 +865,6 @@ describe("skills__update", () => {
   });
 
   test("permission-denied error carries scope + role causation", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_member",
       email: "m@ex.com",
@@ -887,9 +899,8 @@ describe("skills__update", () => {
       arguments: { id, body: "tampered" },
     });
     expect(result.isError).toBe(true);
-    const sc = (
-      result as { structuredContent?: { code?: string; scope?: string; role?: string } }
-    ).structuredContent;
+    const sc = (result as { structuredContent?: { code?: string; scope?: string; role?: string } })
+      .structuredContent;
     expect(sc?.code).toBe("permission_denied");
     expect(sc?.scope).toBe("org");
     expect(sc?.role).toBe("member");
@@ -897,6 +908,219 @@ describe("skills__update", () => {
     expect(text).toMatch(/org-scope/);
     expect(text).toMatch(/workspace-scoped/); // alternate-scope hint
     expect(text).toMatch(/member/);
+  });
+});
+
+// ── null clears (platform/AGENTS.md §1.3) ────────────────────────────────
+
+describe("skills__update — null clears a field, omission keeps it", () => {
+  async function seedFull(): Promise<{
+    id: string;
+    client: NonNullable<ReturnType<McpSource["getClient"]>>;
+  }> {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const created = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: {
+          name: "full",
+          description: "Every field set",
+          loadingStrategy: "always",
+          priority: 40,
+          toolAffinity: ["gmail__*"],
+          triggers: ["ship it"],
+          allowedTools: ["files__read"],
+        },
+        body: "Body.",
+      },
+    });
+    expect(created.isError).toBeFalsy();
+    return { id: join(workDir, "skills", "full.md"), client };
+  }
+
+  const read = (id: string) => parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false });
+
+  test("null on a list removes the key from the file", async () => {
+    const { id, client } = await seedFull();
+    for (const [field, key] of [
+      ["toolAffinity", "tool-affinity"],
+      ["triggers", "triggers"],
+      ["allowedTools", "allowed-tools"],
+    ] as const) {
+      const result = await client.callTool({
+        name: "update",
+        arguments: { id, manifest: { [field]: null } },
+      });
+      expect(result.isError).toBeFalsy();
+      expect(readFileSync(id, "utf-8")).not.toContain(`${key}:`);
+      expect(read(id)?.manifest[field]).toBeUndefined();
+    }
+  });
+
+  test("null on priority or loadingStrategy restores the default the loader applies", async () => {
+    const { id, client } = await seedFull();
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, manifest: { priority: null, loadingStrategy: null } },
+    });
+    expect(result.isError).toBeFalsy();
+    const written = read(id);
+    expect(written?.manifest.priority).toBe(50);
+    expect(written?.manifest.loadingStrategy).toBe("dynamic");
+  });
+
+  test("an omitted field keeps its value", async () => {
+    const { id, client } = await seedFull();
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, manifest: { triggers: null } },
+    });
+    expect(result.isError).toBeFalsy();
+    const m = read(id)?.manifest;
+    expect(m?.triggers).toBeUndefined();
+    expect(m?.description).toBe("Every field set");
+    expect(m?.loadingStrategy).toBe("always");
+    expect(m?.priority).toBe(40);
+    expect(m?.toolAffinity).toEqual(["gmail__*"]);
+    expect(m?.allowedTools).toEqual(["files__read"]);
+  });
+
+  test("a required field takes no null, and nothing is written", async () => {
+    const { id, client } = await seedFull();
+    const before = readFileSync(id, "utf-8");
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, manifest: { description: null } },
+    });
+    expect(result.isError).toBe(true);
+    expect(readFileSync(id, "utf-8")).toBe(before);
+  });
+
+  test("the schema declares each clear as anyOf [T, null], and description has none", async () => {
+    const src = await buildSource();
+    const { tools } = await src.getClient()!.listTools();
+    const update = tools.find((t) => t.name === "update");
+    if (!update) throw new Error("no update tool");
+    const manifest = (
+      update.inputSchema.properties as Record<string, { properties: Record<string, unknown> }>
+    ).manifest;
+    for (const field of [
+      "loadingStrategy",
+      "priority",
+      "toolAffinity",
+      "triggers",
+      "allowedTools",
+    ]) {
+      const prop = manifest?.properties[field] as { anyOf?: Array<{ type?: string }> };
+      expect(prop.anyOf?.some((branch) => branch.type === "null")).toBe(true);
+    }
+    expect(JSON.stringify(manifest?.properties.description)).not.toContain('"null"');
+  });
+});
+
+// ── the Skills editor's per-field saves ──────────────────────────────────
+
+// The editor saves one field at a time through `skillEditPatch`; these send
+// exactly what it sends, so a body save and a field save are checked against
+// the real handler, not a hand-written input.
+describe("skills__update — the Skills editor's per-field saves", () => {
+  async function seed(): Promise<{
+    id: string;
+    client: NonNullable<ReturnType<McpSource["getClient"]>>;
+  }> {
+    const src = await buildSource();
+    const client = src.getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: {
+          name: "edited",
+          description: "Edited",
+          loadingStrategy: "always",
+          priority: 40,
+        },
+        body: "Original.",
+      },
+    });
+    return { id: join(workDir, "skills", "edited.md"), client };
+  }
+
+  const read = (id: string) => parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false });
+
+  test("a field save leaves the body alone, and a body save leaves the fields alone", async () => {
+    const { id, client } = await seed();
+
+    const field = await client.callTool({
+      name: "update",
+      arguments: { ...skillEditPatch(id, "triggers", "ship it") },
+    });
+    expect(field.isError).toBeFalsy();
+    expect(read(id)?.body).toBe("Original.");
+    expect(read(id)?.manifest.triggers).toEqual(["ship it"]);
+
+    const body = await client.callTool({
+      name: "update",
+      arguments: { ...skillEditPatch(id, "body", "Rewritten.") },
+    });
+    expect(body.isError).toBeFalsy();
+    const written = read(id);
+    expect(written?.body).toBe("Rewritten.");
+    expect(written?.manifest.triggers).toEqual(["ship it"]);
+    expect(written?.manifest.priority).toBe(40);
+    expect(written?.manifest.loadingStrategy).toBe("always");
+  });
+
+  test("a list emptied in the editor is cleared from the file", async () => {
+    const { id, client } = await seed();
+    await client.callTool({
+      name: "update",
+      arguments: { ...skillEditPatch(id, "triggers", "ship it") },
+    });
+    await client.callTool({
+      name: "update",
+      arguments: { ...skillEditPatch(id, "toolAffinity", "gmail__*") },
+    });
+    for (const field of ["triggers", "toolAffinity"] as const) {
+      const result = await client.callTool({
+        name: "update",
+        arguments: { ...skillEditPatch(id, field, "  \n ") },
+      });
+      expect(result.isError).toBeFalsy();
+      expect(read(id)?.manifest[field]).toBeUndefined();
+    }
+    expect(read(id)?.manifest.priority).toBe(40);
+  });
+
+  test("a header kept as text in the body sets no field", async () => {
+    const { id, client } = await seed();
+    const header = [
+      "---",
+      "name: edited",
+      "description: Hijacked.",
+      "metadata:",
+      "  nimblebrain:",
+      "    loading-strategy: dynamic",
+      "    priority: 70",
+      "---",
+      "",
+      "Prose about headers.",
+    ].join("\n");
+    const result = await client.callTool({
+      name: "update",
+      arguments: { ...skillEditPatch(id, "body", header, { keepHeaderAsText: true }) },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(
+      (result.structuredContent as { frontmatterApplied?: string[] }).frontmatterApplied,
+    ).toBeUndefined();
+    const written = read(id);
+    expect(written?.manifest.description).toBe("Edited");
+    expect(written?.manifest.loadingStrategy).toBe("always");
+    expect(written?.manifest.priority).toBe(40);
+    expect(written?.body).toContain("Hijacked.");
   });
 });
 
@@ -908,7 +1132,6 @@ describe("skills__update", () => {
 // permission denial on extant files but not the stale-id case).
 describe("skills__read — stale-id regression", () => {
   test("stale org-scope id (file moved away) returns 'not found', not 'permission denied'", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_member",
       email: "m@ex.com",
@@ -936,14 +1159,14 @@ describe("skills__read — full body (no prompt-cap leak)", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const body = `${"x".repeat(MAX_SKILL_BODY_CHARS * 2)}\nEND_MARKER_KEEP_ME`;
-    await client.callTool({
-      name: "create",
-      arguments: {
-        scope: "org",
-        manifest: { name: "oversized", description: "test", type: "skill" },
-        body,
-      },
-    });
+    // Seeded on disk: an authored write refuses a body this long, but files
+    // over the cap still exist (written before the rule, or by other means).
+    mkdirSync(join(workDir, "skills"), { recursive: true });
+    writeFileSync(
+      join(workDir, "skills", "oversized.md"),
+      `---\nname: oversized\ndescription: test\n---\n${body}\n`,
+      "utf-8",
+    );
     const result = await client.callTool({
       name: "read",
       arguments: { id: join(workDir, "skills", "oversized.md") },
@@ -955,6 +1178,150 @@ describe("skills__read — full body (no prompt-cap leak)", () => {
     // skills__update would silently lose user-authored content.
     expect(text).toContain("END_MARKER_KEEP_ME");
     expect(text.length).toBeGreaterThan(MAX_SKILL_BODY_CHARS);
+    // The reader is told how much of it never reaches the model.
+    expect(text).toContain(`over-limit-by: ${body.length - MAX_SKILL_BODY_CHARS} characters`);
+    expect((result.structuredContent as { overLimitBy?: number }).overLimitBy).toBe(
+      body.length - MAX_SKILL_BODY_CHARS,
+    );
+  });
+});
+
+describe("skill body size — a skill the platform cannot deliver whole is not saved", () => {
+  const text = (r: unknown) =>
+    ((r as { content: Array<{ text?: string }> }).content ?? []).map((c) => c.text ?? "").join("");
+
+  function seedOversized(name: string, chars: number): string {
+    const path = join(workDir, "skills", `${name}.md`);
+    mkdirSync(join(workDir, "skills"), { recursive: true });
+    writeFileSync(
+      path,
+      `---\nname: ${name}\ndescription: test\n---\n${"y".repeat(chars)}\n`,
+      "utf-8",
+    );
+    return path;
+  }
+
+  test("create refuses a body over the limit and writes nothing", async () => {
+    const client = (await buildSource()).getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "too-long", description: "test" },
+        body: "z".repeat(MAX_SKILL_BODY_CHARS + 1),
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("Not saved");
+    expect(text(result)).toContain("split the skill into two");
+    expect(existsSync(join(workDir, "skills", "too-long.md"))).toBe(false);
+  });
+
+  test("a body of exactly the limit is saved", async () => {
+    const client = (await buildSource()).getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "at-limit", description: "test" },
+        body: "z".repeat(MAX_SKILL_BODY_CHARS),
+      },
+    });
+    expect(result.isError).toBeFalsy();
+  });
+
+  test("a pasted SKILL.md is measured without its frontmatter", async () => {
+    const client = (await buildSource()).getClient()!;
+    const frontmatter = `---\nname: pasted-at-limit\ndescription: ${"d".repeat(200)}\n---\n`;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "pasted-at-limit", description: "test" },
+        body: `${frontmatter}${"z".repeat(MAX_SKILL_BODY_CHARS)}`,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+  });
+
+  test("append past the limit is refused, leaving no file change and no snapshot", async () => {
+    const client = (await buildSource()).getClient()!;
+    await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "growing", description: "test" },
+        body: "z".repeat(MAX_SKILL_BODY_CHARS - 10),
+      },
+    });
+    const id = join(workDir, "skills", "growing.md");
+    const before = readFileSync(id, "utf-8");
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, body: "One more rule, dated today.", body_mode: "append" },
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("rather than appending");
+    expect(readFileSync(id, "utf-8")).toBe(before);
+    const versions = join(workDir, "skills", "_versions");
+    const snapshots = existsSync(versions)
+      ? readdirSync(versions).filter((f) => f.startsWith("growing."))
+      : [];
+    expect(snapshots).toEqual([]);
+  });
+
+  test("an over-limit skill can be edited when the edit does not grow it, and is told it is still over", async () => {
+    const id = seedOversized("legacy-long", MAX_SKILL_BODY_CHARS + 500);
+    const client = (await buildSource()).getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, body: "y".repeat(MAX_SKILL_BODY_CHARS + 400), body_mode: "replace" },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(text(result)).toContain("still 400 characters over");
+  });
+
+  test("an over-limit skill cannot grow, by replace or by append", async () => {
+    const id = seedOversized("legacy-grow", MAX_SKILL_BODY_CHARS + 500);
+    const client = (await buildSource()).getClient()!;
+    const replaced = await client.callTool({
+      name: "update",
+      arguments: { id, body: "y".repeat(MAX_SKILL_BODY_CHARS + 501), body_mode: "replace" },
+    });
+    expect(replaced.isError).toBe(true);
+    const appended = await client.callTool({
+      name: "update",
+      arguments: { id, body: "x", body_mode: "append" },
+    });
+    expect(appended.isError).toBe(true);
+  });
+
+  test("restoring an over-limit snapshot succeeds and says it is over", async () => {
+    const id = seedOversized("legacy-restore", MAX_SKILL_BODY_CHARS + 300);
+    const client = (await buildSource()).getClient()!;
+    const shrunk = await client.callTool({
+      name: "update",
+      arguments: { id, body: "short now", body_mode: "replace" },
+    });
+    expect(shrunk.isError).toBeFalsy();
+    const [snapshot] = listSkillVersions(id);
+    expect(snapshot).toBeDefined();
+    const restored = await client.callTool({
+      name: "restore",
+      arguments: { id, version: snapshot!.version },
+    });
+    expect(restored.isError).toBeFalsy();
+    expect(text(restored)).toContain("still 300 characters over");
+  });
+
+  test("a manifest-only patch on an over-limit skill is not refused on size", async () => {
+    const id = seedOversized("legacy-manifest", MAX_SKILL_BODY_CHARS + 500);
+    const client = (await buildSource()).getClient()!;
+    const result = await client.callTool({
+      name: "update",
+      arguments: { id, manifest: { description: "new description" } },
+    });
+    expect(result.isError).toBeFalsy();
   });
 });
 
@@ -1009,7 +1376,10 @@ describe("durable status is set_status only", () => {
     });
     const id = join(workDir, "skills", "togglable.md");
 
-    const off = await client.callTool({ name: "set_status", arguments: { id, status: "disabled" } });
+    const off = await client.callTool({
+      name: "set_status",
+      arguments: { id, status: "disabled" },
+    });
     expect(off.isError).toBeFalsy();
     expect(readManifestField(id, "status")).toBe("disabled");
 
@@ -1040,7 +1410,7 @@ describe("durable status is set_status only", () => {
   });
 
   test("update refuses manifest.status — set_status is the only durable door", async () => {
-    // The schema no longer declares the field, but the validator lets unknown
+    // The schema does not declare the field, but the validator lets unknown
     // keys through, so a silent drop would report a disable that never
     // happened. Refuse instead, and say where the capability lives.
     const src = await buildSource();
@@ -1099,7 +1469,10 @@ describe("durable status is set_status only", () => {
     });
     const id = join(workDir, "skills", "no-snapshot-on-refusal.md");
     for (let i = 0; i < 3; i++) {
-      await client.callTool({ name: "update", arguments: { id, manifest: { status: "disabled" } } });
+      await client.callTool({
+        name: "update",
+        arguments: { id, manifest: { status: "disabled" } },
+      });
     }
     expect(existsSync(join(workDir, "skills", "_versions"))).toBe(false);
   });
@@ -1211,7 +1584,7 @@ describe("durable status is set_status only", () => {
     const tools = await src.tools();
     const setStatus = tools.find((t) => t.name.endsWith("set_status"));
     expect(setStatus).toBeDefined();
-    expect(isInternalTool(setStatus as { meta?: Record<string, unknown> })).toBe(true);
+    expect(isModelVisible(setStatus as { meta?: Record<string, unknown> })).toBe(false);
 
     const { direct, proxied } = surfaceTools(tools, null, { maxDirectTools: 1000 });
     expect([...direct, ...proxied].some((t) => t.name.endsWith("set_status"))).toBe(false);
@@ -1228,7 +1601,6 @@ describe("durable status is set_status only", () => {
 
 describe("cross-workspace access — regression", () => {
   function configureCrossWorkspaceFixture() {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_alice",
       email: "alice@ex.com",
@@ -1236,16 +1608,19 @@ describe("cross-workspace access — regression", () => {
       orgRole: "member",
       preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
     };
-    runtime.wsId = "ws_alice";
-    // Alice is admin in ws_alice. ws_other has no Alice membership.
-    runtime.setMember("ws_alice", "u_alice", "admin");
-    runtime.workspaces.set("ws_other", {
-      id: "ws_other",
-      name: "Other",
-      members: [{ userId: "u_carol", role: "admin" }],
-    });
-    // Pre-stage a skill under ws_other, on disk.
-    const otherDir = join(workDir, "workspaces", "ws_other", "skills");
+    runtime.wsId = "ws_00148bca567ef156";
+    // Alice is admin in ws_00148bca567ef156. ws_005820c54ca342ad has no Alice membership.
+    runtime.setMember("ws_00148bca567ef156", "u_alice", "admin");
+    runtime.workspaces.set(
+      "ws_005820c54ca342ad",
+      makeWorkspace({
+        id: "ws_005820c54ca342ad",
+        name: "Other",
+        members: [{ userId: "u_carol", role: "admin" }],
+      }),
+    );
+    // Pre-stage a skill under ws_005820c54ca342ad, on disk.
+    const otherDir = join(workDir, "workspaces", "ws_005820c54ca342ad", "skills");
     mkdirSync(otherDir, { recursive: true });
     const otherPath = join(otherDir, "secret.md");
     writeFileSync(
@@ -1253,7 +1628,7 @@ describe("cross-workspace access — regression", () => {
       [
         "---",
         "name: secret",
-        'description: "ws_other secret"',
+        'description: "ws_005820c54ca342ad secret"',
         'version: "1.0.0"',
         "type: skill",
         "priority: 50",
@@ -1318,7 +1693,6 @@ describe("cross-workspace access — regression", () => {
   });
 
   test("workspace member but not admin: read allowed, write denied", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_bob",
       email: "bob@ex.com",
@@ -1326,9 +1700,9 @@ describe("cross-workspace access — regression", () => {
       orgRole: "member",
       preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
     };
-    runtime.wsId = "ws_team";
-    runtime.setMember("ws_team", "u_bob", "member");
-    const wsDir = join(workDir, "workspaces", "ws_team", "skills");
+    runtime.wsId = "ws_0071a5bbf40116e6";
+    runtime.setMember("ws_0071a5bbf40116e6", "u_bob", "member");
+    const wsDir = join(workDir, "workspaces", "ws_0071a5bbf40116e6", "skills");
     mkdirSync(wsDir, { recursive: true });
     const path = join(wsDir, "team-skill.md");
     writeFileSync(
@@ -1363,12 +1737,11 @@ describe("cross-workspace access — regression", () => {
   });
 
   test("user-scope skills: another user's path is permission_denied", async () => {
-    runtime.hasIdentityProvider = true;
     runtime.identity = {
       id: "u_alice",
       email: "alice@ex.com",
       displayName: "Alice",
-      orgRole: "owner", // even owner — strict policy denies cross-user
+      orgRole: "admin", // even an org admin — strict policy denies cross-user
       preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
     };
     const otherUserDir = join(workDir, "users", "u_carol", "skills");
@@ -1409,7 +1782,7 @@ describe("symlink escape — mutation defense", () => {
   test("update refuses a symlink whose target is outside allowed roots", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     // Create a real file outside the work tree.
     const outsideDir = mkdtempSync(join(tmpdir(), "skills-mut-outside-"));
     const outsidePath = join(outsideDir, "secret.md");
@@ -1418,7 +1791,7 @@ describe("symlink escape — mutation defense", () => {
       ["---", "name: secret", "type: skill", "priority: 50", "---", "outside body", ""].join("\n"),
     );
     // Symlink under a writable scope dir.
-    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_002afe1142297ff4", "skills");
     mkdirSync(wsDir, { recursive: true });
     const linkPath = join(wsDir, "evil.md");
     symlinkSync(outsidePath, linkPath);
@@ -1437,14 +1810,14 @@ describe("symlink escape — mutation defense", () => {
   test("delete refuses a symlink whose target is outside allowed roots", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     const outsideDir = mkdtempSync(join(tmpdir(), "skills-mut-outside-"));
     const outsidePath = join(outsideDir, "secret.md");
     writeFileSync(
       outsidePath,
       ["---", "name: secret", "type: skill", "priority: 50", "---", "outside body", ""].join("\n"),
     );
-    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_002afe1142297ff4", "skills");
     mkdirSync(wsDir, { recursive: true });
     const linkPath = join(wsDir, "evil.md");
     symlinkSync(outsidePath, linkPath);
@@ -1479,7 +1852,7 @@ describe("symlink boundary — outside workdir entirely", () => {
   test("update refuses a symlink whose realpath sits outside the workDir tree", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
 
     // Sibling of workDir. NOT under `tmpdir()` parent or any other
     // writable root — fully outside the platform's reach.
@@ -1492,7 +1865,7 @@ describe("symlink boundary — outside workdir entirely", () => {
       ),
     );
 
-    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_002afe1142297ff4", "skills");
     mkdirSync(wsDir, { recursive: true });
     const linkPath = join(wsDir, "evil.md");
     symlinkSync(targetPath, linkPath);
@@ -1516,12 +1889,12 @@ describe("symlink boundary — outside workdir entirely", () => {
 
 describe("symlink boundary — cross-workspace", () => {
   test("update via cross-workspace symlink: refused, no content leak into _versions/", async () => {
-    runtime.wsId = "ws_alice";
+    runtime.wsId = "ws_00148bca567ef156";
     const src = await buildSource();
     const client = src.getClient()!;
 
     // Pre-stage wsB's secret on disk.
-    const otherDir = join(workDir, "workspaces", "ws_bob", "skills");
+    const otherDir = join(workDir, "workspaces", "ws_0021762e0e7b3844", "skills");
     mkdirSync(otherDir, { recursive: true });
     const otherPath = join(otherDir, "secret.md");
     writeFileSync(
@@ -1530,8 +1903,8 @@ describe("symlink boundary — cross-workspace", () => {
     );
 
     // Symlink under wsA pointing at wsB's file. The lexical scope is
-    // workspace, lexical wsId is "ws_alice" — caller's own.
-    const wsADir = join(workDir, "workspaces", "ws_alice", "skills");
+    // workspace, lexical wsId is "ws_00148bca567ef156" — caller's own.
+    const wsADir = join(workDir, "workspaces", "ws_00148bca567ef156", "skills");
     mkdirSync(wsADir, { recursive: true });
     const linkPath = join(wsADir, "evil.md");
     symlinkSync(otherPath, linkPath);
@@ -1554,11 +1927,11 @@ describe("symlink boundary — cross-workspace", () => {
   });
 
   test("delete via cross-workspace symlink: refused", async () => {
-    runtime.wsId = "ws_alice";
+    runtime.wsId = "ws_00148bca567ef156";
     const src = await buildSource();
     const client = src.getClient()!;
 
-    const otherDir = join(workDir, "workspaces", "ws_bob", "skills");
+    const otherDir = join(workDir, "workspaces", "ws_0021762e0e7b3844", "skills");
     mkdirSync(otherDir, { recursive: true });
     const otherPath = join(otherDir, "secret.md");
     writeFileSync(
@@ -1566,7 +1939,7 @@ describe("symlink boundary — cross-workspace", () => {
       ["---", "name: secret", "type: skill", "priority: 50", "---", "BOB_SECRET", ""].join("\n"),
     );
 
-    const wsADir = join(workDir, "workspaces", "ws_alice", "skills");
+    const wsADir = join(workDir, "workspaces", "ws_00148bca567ef156", "skills");
     mkdirSync(wsADir, { recursive: true });
     const linkPath = join(wsADir, "evil.md");
     symlinkSync(otherPath, linkPath);
@@ -1577,11 +1950,11 @@ describe("symlink boundary — cross-workspace", () => {
   });
 
   test("read via cross-workspace symlink: refused", async () => {
-    runtime.wsId = "ws_alice";
+    runtime.wsId = "ws_00148bca567ef156";
     const src = await buildSource();
     const client = src.getClient()!;
 
-    const otherDir = join(workDir, "workspaces", "ws_bob", "skills");
+    const otherDir = join(workDir, "workspaces", "ws_0021762e0e7b3844", "skills");
     mkdirSync(otherDir, { recursive: true });
     const otherPath = join(otherDir, "secret.md");
     writeFileSync(
@@ -1589,7 +1962,7 @@ describe("symlink boundary — cross-workspace", () => {
       ["---", "name: secret", "type: skill", "priority: 50", "---", "BOB_SECRET", ""].join("\n"),
     );
 
-    const wsADir = join(workDir, "workspaces", "ws_alice", "skills");
+    const wsADir = join(workDir, "workspaces", "ws_00148bca567ef156", "skills");
     mkdirSync(wsADir, { recursive: true });
     const linkPath = join(wsADir, "evil.md");
     symlinkSync(otherPath, linkPath);
@@ -1603,7 +1976,7 @@ describe("symlink boundary — cross-workspace", () => {
 
 describe("symlink boundary — cross-scope tier", () => {
   test("workspace skill symlinked to a user dir is refused", async () => {
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     const src = await buildSource();
     const client = src.getClient()!;
 
@@ -1618,7 +1991,7 @@ describe("symlink boundary — cross-scope tier", () => {
 
     // Symlink under a workspace pointing at the user file. Lexical
     // scope is workspace, real scope is user → boundary check trips.
-    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_002afe1142297ff4", "skills");
     mkdirSync(wsDir, { recursive: true });
     const linkPath = join(wsDir, "evil.md");
     symlinkSync(userPath, linkPath);

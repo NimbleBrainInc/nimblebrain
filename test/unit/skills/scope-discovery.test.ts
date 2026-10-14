@@ -1,5 +1,5 @@
 /**
- * Phase 2 — multi-scope skill discovery.
+ * Multi-scope skill discovery.
  *
  * Verifies:
  *   - `loadScopedSkills(dir, scope)` stamps `manifest.scope` on every
@@ -19,10 +19,10 @@
  * the engine.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { loadScopedSkills, loadSkillDir, mergeScopedSkills } from "../../../src/skills/loader.ts";
 import type { Skill } from "../../../src/skills/types.ts";
 
@@ -67,10 +67,9 @@ describe("loadScopedSkills — stamping", () => {
   });
 
   test("a legacy frontmatter with stray top-level keys is rejected (fail-soft skip)", () => {
-    // `scope`/`type`/`version` are no longer top-level fields (scope is
-    // dir-stamped; the rest moved under metadata.nimblebrain). The strict schema
-    // rejects them, so an unmigrated file is skipped — not crashed — until
-    // `migrate:skill-frontmatter` rewrites it.
+    // `scope`/`type`/`version` are not top-level fields (scope is
+    // dir-stamped; the rest live under metadata.nimblebrain). The strict schema
+    // rejects them, so such a file is skipped, not crashed.
     const dir = join(root, "stamp-precedence");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -110,7 +109,7 @@ describe("loadScopedSkills — error tolerance", () => {
   });
 
   test("returns [] for a non-existent workspace id path", () => {
-    const wsRoot = join(root, "workspaces", "ws_does_not_exist", "skills");
+    const wsRoot = join(root, "workspaces", "ws_002cbcedbb32d4b3", "skills");
     expect(loadScopedSkills(wsRoot, "workspace")).toEqual([]);
   });
 });
@@ -134,11 +133,7 @@ function makeSkill(name: string, scope: "org" | "workspace" | "user", body = "")
 
 describe("mergeScopedSkills — precedence", () => {
   test("org-only skills appear with scope=org", () => {
-    const merged = mergeScopedSkills(
-      [makeSkill("only-org", "org")],
-      [],
-      [],
-    );
+    const merged = mergeScopedSkills([makeSkill("only-org", "org")], [], []);
     expect(merged).toHaveLength(1);
     expect(merged[0]!.manifest.name).toBe("only-org");
     expect(merged[0]!.manifest.scope).toBe("org");
@@ -201,7 +196,7 @@ describe("loadScopedSkills + mergeScopedSkills — end-to-end on tmpdir", () => 
     writeSkillFile(join(orgDir, "voice.md"), "voice");
     writeSkillFile(join(orgDir, "identity.md"), "identity");
 
-    const wsDir = join(root, "workspaces", "ws_test", "skills");
+    const wsDir = join(root, "workspaces", "ws_0076759dbbe19fcc", "skills");
     mkdirSync(wsDir, { recursive: true });
     writeSkillFile(join(wsDir, "voice.md"), "voice"); // overrides org.voice
     writeSkillFile(join(wsDir, "kanban.md"), "kanban"); // workspace-only
@@ -229,7 +224,7 @@ describe("loadScopedSkills + mergeScopedSkills — end-to-end on tmpdir", () => 
     mkdirSync(orgDir, { recursive: true });
     writeSkillFile(join(orgDir, "voice.md"), "voice");
 
-    const wsDir = join(root, "workspaces", "ws_test", "skills"); // not created
+    const wsDir = join(root, "workspaces", "ws_0076759dbbe19fcc", "skills"); // not created
     const userDir = join(root, "users", "user_test", "skills"); // not created
 
     const org = loadScopedSkills(orgDir, "org");

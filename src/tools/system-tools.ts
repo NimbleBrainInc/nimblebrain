@@ -1,20 +1,19 @@
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
-import type { ConfirmationGate } from "../config/privilege.ts";
 import type { CatalogListing } from "../connectors/catalog/types.ts";
-import type { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
-import { isInternalTool, NON_ADVANCING_META_KEY } from "../engine/types.ts";
+import { isModelVisible, NON_ADVANCING_META_KEY } from "../engine/types.ts";
+import { MAX_TOOL_RESULT_CHARS } from "../limits.ts";
 import { log } from "../observability/log.ts";
 import { createUseSkillToolDef } from "../platform/skills/source.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { hydrateSkill } from "../skills/connector-skills.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
-import { buildCoreResourceMap } from "./core-resources/index.ts";
 import { createCoreToolDefs } from "./core-source.ts";
 import { defineInProcessApp, type InProcessTool } from "./in-process-app.ts";
 import { createManageToolsToolDefs } from "./manage-tools.ts";
@@ -25,7 +24,6 @@ import { rankToolSearchResults } from "./search-ranking.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
 import {
   createManageWorkspacesTool,
-  type ManageMembersContext,
   type ManageWorkspacesContext,
 } from "./workspace-mgmt-tools.ts";
 
@@ -38,9 +36,21 @@ export interface ToolEligibilityContext {
 /** Callback that returns the current loaded skills from the runtime. */
 export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
 
+/** What `createSystemTools` builds the `nb` source from. Each absent field drops the tools that need it. */
+export interface SystemToolsOptions {
+  getSkills?: GetSkillsFn;
+  eventSink?: EventSink;
+  features?: ResolvedFeatures;
+  runtime?: Runtime;
+  manageUsersCtx?: ManageUsersContext;
+  manageWorkspacesCtx?: ManageWorkspacesContext;
+  toolPromotionCtx?: ToolPromotionContext;
+  toolEligibilityCtx?: ToolEligibilityContext;
+}
+
 /**
  * Factory that creates the `nb` system source as an in-process MCP server.
- * Merges core platform tools (list_apps, get_config, etc.) with system tools
+ * Merges core platform tools (get_config, briefing, etc.) with system tools
  * (search, status, etc.) into a single "nb" source.
  *
  * Returns a started, ready-to-use source. Async because the underlying
@@ -49,44 +59,18 @@ export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
  */
 export async function createSystemTools(
   getRegistry: () => ToolRegistry,
-  _configPath?: string,
-  // Reserved slot — was the connector-management ConfirmationGate consumed by
-  // `nb__manage_app`. The tool was removed; keep the positional slot stable
-  // (the file's reserved-slot convention) so every call site's arity holds.
-  _gate?: ConfirmationGate,
-  // Reserved slot — unused. Keep the positional slot stable so call-site
-  // arity holds.
-  _lifecycle?: ConnectorLifecycleManager,
-  // Reserved slot — was the sub-agent spawn context for `nb__delegate`
-  // (removed: the kernel starts a run through one door). Keep the positional
-  // slot stable so every call site's arity holds.
-  _delegateCtx?: unknown,
-  // skillDir + reloadSkills were here for the legacy `nb__manage_skill`
-  // tool. Mutation now lives in the dedicated `nb__skills` source — keep
-  // these slots reserved (typed `unknown`) so call-site arity stays stable
-  // and runtime.ts doesn't need a coordinated edit. Prune both when the
-  // next signature shake-up lands.
-  _legacySkillDir?: string,
-  _legacyReloadSkills?: () => Promise<void>,
-  getSkills?: GetSkillsFn,
-  eventSink?: EventSink,
-  features?: ResolvedFeatures,
-  runtime?: Runtime,
-  // Reserved slot — was a home for a legacy connector-discovery
-  // path. Registry search now goes through ConnectorCatalog.servers()
-  // (Browse's own cached, scoped fetch). Keep the positional slot stable so
-  // every call site's arity holds.
-  _reservedRegistryHome?: string,
-  manageUsersCtx?: ManageUsersContext,
-  manageWorkspacesCtx?: ManageWorkspacesContext,
-  manageMembersCtx?: ManageMembersContext,
-  // Reserved slot — was the workspace-scoped connector-management context for
-  // `nb__manage_app` (removed). Kept (typed `unknown`) to hold the positional
-  // slot stable for every call site. Prune on the next signature shake-up.
-  _manageConnectorCtx?: unknown,
-  toolPromotionCtx?: ToolPromotionContext,
-  toolEligibilityCtx?: ToolEligibilityContext,
+  opts: SystemToolsOptions = {},
 ): Promise<McpSource> {
+  const {
+    getSkills,
+    eventSink,
+    features,
+    runtime,
+    manageUsersCtx,
+    manageWorkspacesCtx,
+    toolPromotionCtx,
+    toolEligibilityCtx,
+  } = opts;
   // Core tools (always available, not feature-gated)
   const coreToolDefs: InProcessTool[] = runtime ? createCoreToolDefs(runtime) : [];
   const manageToolsToolDefs: InProcessTool[] = createManageToolsToolDefs(toolPromotionCtx);
@@ -144,15 +128,7 @@ export async function createSystemTools(
   }
 
   if (manageWorkspacesCtx) {
-    // Merge member context into the workspace tool. The conversation
-    // context was removed in Stage 1's schema purge (share/unshare/
-    // participant actions are gone — `manage_workspaces` no longer
-    // needs a conversation store).
-    const mergedCtx = {
-      ...manageWorkspacesCtx,
-      ...(manageMembersCtx ? { userStore: manageMembersCtx.userStore } : {}),
-    };
-    systemToolDefs.push(createManageWorkspacesTool(mergedCtx));
+    systemToolDefs.push(createManageWorkspacesTool(manageWorkspacesCtx));
   }
 
   // Connectors tool. Single surface for all connectors — the install
@@ -182,7 +158,6 @@ export async function createSystemTools(
       name: "nb",
       version: "1.0.0",
       tools: [...coreToolDefs, ...manageToolsToolDefs, ...filteredSystemDefs],
-      resources: buildCoreResourceMap(),
     },
     eventSink ?? new NoopEventSink(),
   );
@@ -197,10 +172,30 @@ export async function createSystemTools(
 /** Core skills ship with the package under src/skills/core/. */
 const CORE_SKILL_MARKER = "/skills/core/";
 
-/** Maximum characters returned from a single read_resource call.
- *  Matches the focused-app skill budget so a connector-advertised `skill://` resource
- *  fits into the LLM's context without blowing past it. */
-const READ_RESOURCE_MAX_CHARS = 12_000;
+/**
+ * Most characters a `skill://` read returns. Matches the focused-app skill
+ * budget: a skill is guidance loaded alongside other context, and one larger
+ * than this is a skill to split, not one to load whole.
+ */
+const SKILL_READ_MAX_CHARS = 12_000;
+
+/**
+ * Room left under {@link MAX_TOOL_RESULT_CHARS} for the truncation note, so a
+ * cut read stays under the engine's own bound and is never cut a second time
+ * under a note that says the rest is on the user's screen.
+ */
+const TRUNCATION_NOTE_RESERVE = 400;
+
+/**
+ * Most characters any other read returns: a connector's record (a contact with
+ * a long dossier, say) is read whole up to the limit every tool result has.
+ */
+const RECORD_READ_MAX_CHARS = MAX_TOOL_RESULT_CHARS - TRUNCATION_NOTE_RESERVE;
+
+/** The read limit for `uri`: the skill budget for `skill://`, the tool-result limit otherwise. */
+function readLimitFor(uri: string): number {
+  return uri.toLowerCase().startsWith("skill:") ? SKILL_READ_MAX_CHARS : RECORD_READ_MAX_CHARS;
+}
 
 /**
  * Creates the nb__read_resource system tool.
@@ -216,7 +211,7 @@ function createReadResourceTool(getRegistry: () => ToolRegistry): InProcessTool 
   return {
     name: "read_resource",
     description:
-      "Read a resource published by an installed app or by the platform. Use this when an app's instructions tell you to load a specific resource, or when you need to inspect platform-published context (e.g. saved overlay instructions). Supported URI schemes include " +
+      "Read a resource published by an installed app or by the platform. Use this when an app's instructions tell you to load a specific resource, when you need to inspect platform-published context, or to read one of an app's records whole: the URI shapes an app serves are listed under it in an `app-resource-templates` block, and its tool results often carry a record's `uri`. Supported URI schemes include " +
       `${READ_RESOURCE_SCHEMES_PROSE}, and any connector-published scheme matching the connector's source name. ` +
       "Pass the full URI; the content comes back as text in the tool result.",
     inputSchema: {
@@ -267,7 +262,7 @@ async function readResourceFromSource(
     const data = await source.readResource(uri);
     if (data == null) return null;
     if (typeof data.text === "string") {
-      return formatResourceText(data.text);
+      return formatResourceText(data.text, readLimitFor(uri));
     }
     if (data.blob) {
       return {
@@ -284,12 +279,17 @@ async function readResourceFromSource(
   }
 }
 
-/** Format a text resource body, truncating past READ_RESOURCE_MAX_CHARS. */
-function formatResourceText(full: string): ToolResult {
-  const truncated = full.length > READ_RESOURCE_MAX_CHARS;
-  const body = truncated
-    ? `${full.slice(0, READ_RESOURCE_MAX_CHARS)}\n\n[truncated — resource exceeds ${READ_RESOURCE_MAX_CHARS} chars]`
-    : full;
+/**
+ * Format a text resource body, cutting it at `limit`. The note says what the
+ * model holds and where the rest is: this tool returns no more of the
+ * resource, and nothing else put the remainder in front of the user.
+ */
+function formatResourceText(full: string, limit: number): ToolResult {
+  if (full.length <= limit) return { content: textContent(full), isError: false };
+  const body =
+    `${full.slice(0, limit)}\n\n[truncated: showing the first ${limit} of ${full.length} chars. ` +
+    "read_resource returns no more of this resource; the rest is held only by the app that " +
+    "published it. For a field past this point, use that app's own tools.]";
   return { content: textContent(body), isError: false };
 }
 
@@ -448,8 +448,8 @@ async function handleSkillStatus(
 ): Promise<ToolResult> {
   // Report through the SAME per-request path `chat` composes with
   // (`describeRequestSkills` → `selectRequestLayer3`), so workspace- and
-  // user-tier skills that actually load into the prompt appear here — the old
-  // path read a boot-time cache and reported only platform/core skills.
+  // user-tier skills that actually load into the prompt appear here — a
+  // boot-time cache would report only platform/core skills.
   const { context, layer3 } = await runtime.describeRequestSkills(wsId);
   // Legacy trigger-matched skills still come from the boot matcher cache.
   const matchable = getSkills?.().matchable ?? [];
@@ -457,7 +457,7 @@ async function handleSkillStatus(
 
   // Single skill detail view
   if (nameQuery) {
-    return skillDetailResult(context, layer3, matchable, nameQuery);
+    return await skillDetailResult(context, layer3, matchable, nameQuery);
   }
 
   // Overview: categorize all skills
@@ -538,19 +538,31 @@ function formatAlwaysOnCost(context: readonly Skill[]): string | null {
   ].join("\n");
 }
 
-/** Single-skill detail view for status(scope="skills", name=...). */
-function skillDetailResult(
+/**
+ * Single-skill detail view for status(scope="skills", name=...). A server
+ * skill's body is fetched here, the one place status prints it.
+ */
+async function skillDetailResult(
   context: readonly Skill[],
   layer3: readonly SelectedSkill[],
   matchable: readonly Skill[],
   nameQuery: string,
-): ToolResult {
+): Promise<ToolResult> {
   const all = [...context, ...layer3.map((s) => s.skill), ...matchable];
-  const skill = all.find((s) => s.manifest.name.toLowerCase() === nameQuery.toLowerCase());
-  if (!skill) {
+  const found = all.find((s) => s.manifest.name.toLowerCase() === nameQuery.toLowerCase());
+  if (!found) {
     return {
       content: textContent(
         `No skill found with name "${nameQuery}". Use status with scope "skills" to list all.`,
+      ),
+      isError: true,
+    };
+  }
+  const skill = await hydrateSkill(found);
+  if (!skill) {
+    return {
+      content: textContent(
+        `Skill "${found.manifest.name}" is listed, but its body could not be fetched.`,
       ),
       isError: true,
     };
@@ -595,8 +607,8 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
           "## This turn",
           `Running on: ${running}`,
           // True of every run, not just a chat: a conversation's model is
-          // pinned at create, a sub-agent's comes from its profile, and an
-          // automation's is resolved at start. In all three the model is
+          // pinned at create, a sub-agent's comes from its profile, and a
+          // task's is resolved at start. In all three the model is
           // settled before the turn begins and the config below cannot move it.
           "Fixed for this turn — changing the configuration below does not affect it.",
           "",
@@ -613,7 +625,7 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
     "Configured values. A run can be given different limits than these, and the input",
     "figure is a cap — the budget is bounded further by the model's context window.",
     `Default model (what a new conversation starts on): ${defaultModel}`,
-    `Fast model (titles, compaction, briefings): ${models.fast}`,
+    `Fast model (titles, compaction): ${models.fast}`,
     `Providers: ${configuredProviders.join(", ")}`,
     `Max iterations: ${maxIterations}`,
     `Max input tokens: ${maxInputTokens.toLocaleString()}`,
@@ -836,14 +848,14 @@ async function searchTools(
   // calling workspace. The aggregator namespaces nb__search per
   // workspace, so the model may invoke any workspace's copy — all
   // must see everything the identity can reach, else a tool
-  // installed in another workspace (e.g. a CRM in ws_mat) is
+  // installed in another workspace (e.g. a CRM in a team workspace) is
   // invisible to this copy. Falls back to the current workspace
   // when there's no identity in scope (non-identity-bound paths).
   const discoverable = runtime
     ? await runtime.listDiscoverableTools()
     : await getRegistry().availableTools();
   const all = discoverable.filter(
-    (t) => toolEligibilityCtx?.isToolEligible(t) ?? !isInternalTool(t),
+    (t) => toolEligibilityCtx?.isToolEligible(t) ?? isModelVisible(t),
   );
   if (!q) return groupToolsBySource(all);
   const matches = rankToolSearchResults(all, q);
@@ -881,7 +893,7 @@ async function searchTools(
     lines.push(`- **${t.name}**: ${desc.length > 100 ? `${desc.slice(0, 100)}…` : desc}`);
   }
   lines.push(
-    "\nTo call one, activate it with nb__manage_tools first (that surfaces its full schema).",
+    "\nTo call one, activate it with nb__manage_tools first. Its schema reaches you on your next message, so promote and call in separate messages, never in the same one.",
   );
   return {
     content: textContent(lines.join("\n")),

@@ -1,6 +1,8 @@
+import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
+import { serverNameFromRef } from "../connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
+import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
@@ -8,15 +10,19 @@ import { log } from "../observability/log.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { isArchiveName, listArchives, purgeArchive } from "../workspace/archives.ts";
-import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
-import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
-import type { WorkspaceMember } from "../workspace/types.ts";
+import {
+  canManageWorkspaceMembers,
+  canReadWorkspaceMembers,
+  canRenameWorkspace,
+} from "../workspace/authz.ts";
+import { MAX_WORKSPACE_NAME_CHARS, type WorkspaceMember } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
+import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
 /**
  * Project one tool-supplied connector row onto a `ConnectorRef`. Only the URL and
- * an optional explicit `serverName` are accepted from tool input: every other
+ * the `serverName` it registers under are accepted from tool input: every other
  * field on a ref (transport, OAuth client, broker coordinates) is
  * operator-catalog territory, set by the install path, never by a caller.
  */
@@ -32,10 +38,11 @@ function toConnectorRef(b: Record<string, unknown>): ConnectorRef {
       `Connector url must be an http(s) URL (got ${url === "" ? "an empty value" : `"${url}"`}).`,
     );
   }
-  return {
-    url,
-    ...(typeof b.serverName === "string" && b.serverName ? { serverName: b.serverName } : {}),
-  };
+  const serverName = typeof b.serverName === "string" ? b.serverName.trim() : "";
+  if (serverName === "") {
+    throw new Error(`Connector "${url}" needs a serverName to register it under.`);
+  }
+  return { url, serverName };
 }
 
 /**
@@ -74,8 +81,8 @@ export interface ManageWorkspacesContext {
   userStore?: UserStore;
 }
 
-/** @deprecated Use ManageWorkspacesContext instead — members are now managed via manage_workspaces. */
-export type ManageMembersContext = ManageWorkspacesContext & { userStore: UserStore };
+/** The context a member action runs with: the store it validates users against is present. */
+type MemberActionContext = ManageWorkspacesContext & { userStore: UserStore };
 
 // ── Permission check ──────────────────────────────────────────────
 
@@ -96,8 +103,8 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
   return {
     name: "manage_workspaces",
     description:
-      "Manage workspaces and their members. Workspace CRUD and claim_admin require org admin. Member management requires workspace admin membership. claim_admin lets an org admin seat themselves as admin of a shared workspace that has no admin member, to recover one that would otherwise be unmanageable. list_archives and purge_archive (org admin) list the archives deleted workspaces leave under archived/ and permanently remove one, named by its directory. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
-    meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      "Manage workspaces and their members. Workspace CRUD requires org admin, except a rename (update with only name), which a workspace admin member may also make. Listing members is open to any member of the workspace. Changing members requires org admin or workspace admin membership, so an org admin can seat themselves as admin of any workspace, including one left with no admin member. add_member takes the person's userId or the email of someone in the organization. list_archives and purge_archive (org admin) list the archives deleted workspaces leave under archived/ and permanently remove one, named by its directory.",
+    meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
     inputSchema: {
       type: "object",
       properties: {
@@ -108,7 +115,6 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
             "update",
             "delete",
             "list",
-            "claim_admin",
             "list_archives",
             "purge_archive",
             "add_member",
@@ -120,12 +126,8 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
         },
         name: {
           type: "string",
-          description: "Workspace name (required for create, optional for update).",
-        },
-        slug: {
-          type: "string",
           description:
-            "Optional explicit id slug (for create), producing id 'ws_<slug>'. Omit to get an opaque, name-independent id (the default and recommended path — the workspace name stays freely editable without changing the id or URL).",
+            "Workspace name (required for create, optional for update). The id of a created workspace is generated and never derived from the name.",
         },
         workspaceId: {
           type: "string",
@@ -139,14 +141,18 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
               url: { type: "string" },
               serverName: { type: "string" },
             },
-            required: ["url"],
+            required: ["url", "serverName"],
           },
           description:
-            "Connector references — the remote MCP endpoint URL, optionally with the server name to register it under (optional for create and update).",
+            "Connector references — the remote MCP endpoint URL and the server name to register it under (optional for create and update).",
         },
         userId: {
           type: "string",
           description: "User ID (for member actions).",
+        },
+        email: {
+          type: "string",
+          description: "Email of someone in the organization, in place of userId (for add_member).",
         },
         role: {
           type: "string",
@@ -160,21 +166,24 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
         },
       },
       required: ["action"],
+      // Closed so an argument the tool does not take is refused at the
+      // schema boundary rather than silently dropped. The id of a created
+      // workspace is always generated; a caller passing `slug` or `id`
+      // learns that from the error instead of from the id it gets back.
+      additionalProperties: false,
     },
     handler: async (input): Promise<ToolResult> => {
       const action = String(input.action);
 
-      // Workspace CRUD, admin recovery, archives — requires org admin
+      // A rename is governance, not CRUD: a workspace admin member may make it
+      // too. An update that touches connectors stays with org admins below.
+      if (action === "update" && input.connectors === undefined) {
+        return dispatchRename(ctx, input);
+      }
+
+      // Workspace CRUD and archives — requires org admin
       if (
-        [
-          "create",
-          "update",
-          "delete",
-          "list",
-          "claim_admin",
-          "list_archives",
-          "purge_archive",
-        ].includes(action)
+        ["create", "update", "delete", "list", "list_archives", "purge_archive"].includes(action)
       ) {
         return dispatchWorkspaceAction(ctx, action, input);
       }
@@ -189,7 +198,31 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
   };
 }
 
-/** Gate workspace CRUD, claim_admin, and the archive actions on org admin, then route to its handler. */
+/** Gate a name-only update on `canRenameWorkspace`, then rename. */
+async function dispatchRename(
+  ctx: ManageWorkspacesContext,
+  input: Record<string, unknown>,
+): Promise<ToolResult> {
+  const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
+  if (!workspaceId) {
+    return { content: textContent("workspaceId is required for update."), isError: true };
+  }
+  const ws = await ctx.workspaceStore.get(workspaceId);
+  if (!ws) {
+    return { content: textContent(`Workspace not found: ${workspaceId}`), isError: true };
+  }
+  if (!canRenameWorkspace(ctx.getIdentity(), ws).allowed) {
+    return {
+      content: textContent(
+        "You don't have permission to rename this workspace. Requires org admin or workspace admin membership.",
+      ),
+      isError: true,
+    };
+  }
+  return handleUpdate(ctx, input);
+}
+
+/** Gate workspace CRUD and the archive actions on org admin, then route to its handler. */
 async function dispatchWorkspaceAction(
   ctx: ManageWorkspacesContext,
   action: string,
@@ -207,8 +240,6 @@ async function dispatchWorkspaceAction(
       return handleDelete(ctx, input);
     case "list":
       return handleList(ctx);
-    case "claim_admin":
-      return handleClaimAdmin(ctx, identity, input);
     case "list_archives":
       return handleListArchives(ctx);
     case "purge_archive":
@@ -218,7 +249,7 @@ async function dispatchWorkspaceAction(
   }
 }
 
-/** Validate the store + workspaceId, gate on workspace-admin membership, then route to its handler. */
+/** Validate the store + workspaceId, gate on org admin or workspace-admin membership, then route to its handler. */
 async function dispatchMemberAction(
   ctx: ManageWorkspacesContext,
   action: string,
@@ -227,23 +258,24 @@ async function dispatchMemberAction(
   if (!ctx.userStore) {
     return { content: textContent("Member management not available."), isError: true };
   }
+  const memberCtx: MemberActionContext = { ...ctx, userStore: ctx.userStore };
   const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
   if (!workspaceId) {
     return { content: textContent("workspaceId is required."), isError: true };
   }
-  if (!(await canManageMembers(ctx as ManageMembersContext, workspaceId))) {
+  if (!(await memberActionAllowed(memberCtx, workspaceId, action))) {
     return memberPermissionDenied();
   }
 
   switch (action) {
     case "add_member":
-      return handleAddMember(ctx as ManageMembersContext, workspaceId, input);
+      return handleAddMember(memberCtx, workspaceId, input);
     case "remove_member":
-      return handleRemoveMember(ctx as ManageMembersContext, workspaceId, input);
+      return handleRemoveMember(memberCtx, workspaceId, input);
     case "update_member":
-      return handleUpdateMember(ctx as ManageMembersContext, workspaceId, input);
+      return handleUpdateMember(memberCtx, workspaceId, input);
     case "list_members":
-      return handleListMembers(ctx as ManageMembersContext, workspaceId);
+      return handleListMembers(memberCtx, workspaceId);
     default:
       return { content: textContent(`Unknown action: ${action}`), isError: true };
   }
@@ -251,31 +283,44 @@ async function dispatchMemberAction(
 
 // ── Action handlers ───────────────────────────────────────────────
 
+/** The refusal for a name over `MAX_WORKSPACE_NAME_CHARS` code points, or null. */
+function nameTooLong(name: string): ToolResult | null {
+  let chars = 0;
+  for (const _ of name) chars++;
+  if (chars <= MAX_WORKSPACE_NAME_CHARS) return null;
+  return {
+    content: textContent(
+      `A workspace name can be at most ${MAX_WORKSPACE_NAME_CHARS} characters (got ${chars}).`,
+    ),
+    isError: true,
+  };
+}
+
 async function handleCreate(
   ctx: ManageWorkspacesContext,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const name = input.name ? String(input.name) : undefined;
+  const name = input.name ? String(input.name).trim() : undefined;
   if (!name) {
     return {
       content: textContent("name is required to create a workspace."),
       isError: true,
     };
   }
+  const tooLong = nameTooLong(name);
+  if (tooLong) return tooLong;
 
-  const slug = input.slug ? String(input.slug) : undefined;
   const connectors = input.connectors as Array<Record<string, unknown>> | undefined;
 
   try {
-    let workspace = await ctx.workspaceStore.create(name, slug);
+    let workspace = await ctx.workspaceStore.create(name);
 
     // Seat the creator as an `admin` member. `WorkspaceStore.create`
     // intentionally leaves `members: []`, so a freshly created shared
-    // workspace has no one able to manage it. Under the strict
-    // workspace-write policy (org-admin override removed), that would
-    // strand the workspace permanently — `add_member` is itself gated by
-    // `canManageMembers`. Seating the creator here is the bootstrap that
-    // keeps the workspace manageable from creation onward.
+    // workspace has no member able to write its content: workspace-scoped
+    // writes require an admin member (`canWriteWorkspaceScoped`), and org
+    // role grants none. Seating the creator here gives the workspace that
+    // admin from creation onward.
     //
     // `getIdentity()` is guaranteed non-null by the org-admin gate in the
     // `create` handler above; we still guard defensively rather than
@@ -283,8 +328,8 @@ async function handleCreate(
     //
     // Partial-failure window: if `addMember` throws after `create` has
     // persisted, the workspace exists with no admin member. That is the
-    // stranded state, and it is recoverable via the `claim_admin` action
-    // below — so we don't attempt a compensating delete here.
+    // stranded state, and an org admin recovers it by seating an admin with
+    // `add_member` — so we don't attempt a compensating delete here.
     const identity = ctx.getIdentity();
     if (identity) {
       workspace = await ctx.workspaceStore.addMember(workspace.id, identity.id, "admin");
@@ -302,7 +347,7 @@ async function handleCreate(
       workspace: {
         id: workspace.id,
         name: workspace.name,
-        connectors: workspace.connectors,
+        connectors: workspace.connectors.map(await connectorDescriber(ctx)),
         memberCount: workspace.members.length,
         createdAt: workspace.createdAt,
       },
@@ -313,99 +358,9 @@ async function handleCreate(
       isError: false,
     };
   } catch (err) {
-    // PersonalWorkspaceInvariantError propagates to the HTTP layer
-    // (mapped to 422). Swallowing it here would degrade a sharp
-    // identity-boundary violation into a soft 200 + isError:true.
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantToolResult(err);
-    }
     return {
       content: textContent(
         `Failed to create workspace: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      isError: true,
-    };
-  }
-}
-
-/**
- * Org-admin recovery for a shared workspace that has no admin member.
- *
- * Under the strict workspace-write policy, member management requires a
- * workspace admin member and org role grants no bypass. A shared workspace
- * with no admin (e.g. created before the bootstrap fix seated the creator,
- * or one an org admin populated with default-role members under the old
- * org-admin override) would be unmanageable: nobody could add or promote a
- * member, write instructions/identity/skills, or install connectors, and the
- * only blunt recovery — delete + recreate — discards the workspace's content.
- *
- * This action lets an org admin/owner deliberately seat *themselves* as an
- * admin member of such a workspace, restoring a valid actor. It is a narrow,
- * auditable recovery lever, NOT a per-write override: it refuses unless the
- * workspace genuinely has no admin member, so it cannot be used to reach into
- * a healthy workspace the operator simply hasn't joined.
- */
-async function handleClaimAdmin(
-  ctx: ManageWorkspacesContext,
-  identity: UserIdentity,
-  input: Record<string, unknown>,
-): Promise<ToolResult> {
-  const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
-  if (!workspaceId) {
-    return { content: textContent("workspaceId is required for claim_admin."), isError: true };
-  }
-
-  const ws = await ctx.workspaceStore.get(workspaceId);
-  if (!ws) {
-    return { content: textContent(`Workspace "${workspaceId}" not found.`), isError: true };
-  }
-
-  // Personal workspaces are sole-owner and always have the owner seated as
-  // admin at creation, so they can never be stranded — and mutating their
-  // membership violates the personal-workspace invariant.
-  if (ws.isPersonal === true) {
-    return {
-      content: textContent(
-        "Personal workspaces always have an admin owner; claim_admin does not apply.",
-      ),
-      isError: true,
-    };
-  }
-
-  // Narrow the lever: only a workspace with NO admin member is recoverable.
-  // Refusing otherwise keeps this from becoming a backdoor org-admin override
-  // into a healthy workspace.
-  if (ws.members.some((m) => m.role === "admin")) {
-    return {
-      content: textContent(
-        "Workspace already has an admin member. Use add_member / update_member to manage it (requires workspace admin membership).",
-      ),
-      isError: true,
-    };
-  }
-
-  try {
-    const existing = ws.members.find((m) => m.userId === identity.id);
-    const updated = existing
-      ? await ctx.workspaceStore.updateMemberRole(workspaceId, identity.id, "admin")
-      : await ctx.workspaceStore.addMember(workspaceId, identity.id, "admin");
-
-    const data = {
-      workspace: { id: updated.id, name: updated.name, memberCount: updated.members.length },
-      claimedAdmin: { userId: identity.id },
-    };
-    return {
-      content: textContent(`Seated ${identity.id} as admin of workspace '${updated.name}'.`),
-      structuredContent: data,
-      isError: false,
-    };
-  } catch (err) {
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantToolResult(err);
-    }
-    return {
-      content: textContent(
-        `Failed to claim admin: ${err instanceof Error ? err.message : String(err)}`,
       ),
       isError: true,
     };
@@ -425,7 +380,15 @@ async function handleUpdate(
   }
 
   const patch: Record<string, unknown> = {};
-  if (input.name !== undefined) patch.name = String(input.name);
+  if (input.name !== undefined) {
+    const name = String(input.name).trim();
+    if (!name) {
+      return { content: textContent("A workspace name cannot be empty."), isError: true };
+    }
+    const tooLong = nameTooLong(name);
+    if (tooLong) return tooLong;
+    patch.name = name;
+  }
   if (input.connectors !== undefined) {
     const refs = toConnectorRefs(input.connectors as Array<Record<string, unknown>>);
     if (!Array.isArray(refs)) return { content: textContent(refs.error), isError: true };
@@ -452,7 +415,7 @@ async function handleUpdate(
       workspace: {
         id: updated.id,
         name: updated.name,
-        connectors: updated.connectors,
+        connectors: updated.connectors.map(await connectorDescriber(ctx)),
         memberCount: updated.members.length,
         updatedAt: updated.updatedAt,
       },
@@ -463,9 +426,6 @@ async function handleUpdate(
       isError: false,
     };
   } catch (err) {
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantToolResult(err);
-    }
     return {
       content: textContent(
         `Failed to update workspace: ${err instanceof Error ? err.message : String(err)}`,
@@ -531,7 +491,7 @@ async function handleDelete(
     const data = { deleted: true, workspaceId, connectors };
     return {
       content: textContent(
-        `Deleted workspace ${workspaceId}.` + describeConnectorTeardown(connectors.length, failed),
+        `Deleted workspace ${workspaceId}.${describeConnectorTeardown(connectors.length, failed)}`,
       ),
       structuredContent: data,
       isError: false,
@@ -566,10 +526,38 @@ function describeConnectorTeardown(total: number, failed: Array<{ serverName: st
   return `${torn} ${names} did not tear down cleanly — check the workspace's grants at the vendor.`;
 }
 
+/** One installed connector as this tool reports it. */
+interface ConnectorSummary {
+  serverName: string;
+  name: string;
+  /** The catalog entry's icon, when it ships one; the UI falls back to a letter avatar. */
+  iconUrl?: string;
+}
+
+/**
+ * How every action of this tool reports a workspace's connectors: by name, never
+ * by ref. A ref carries transport auth, headers and OAuth client config, any of
+ * which may hold an inline secret. The name and icon come from the catalog, as
+ * on the Connectors page. Resolves the catalog once, so a caller maps many refs cheaply.
+ */
+async function connectorDescriber(
+  ctx: ManageWorkspacesContext,
+): Promise<(ref: ConnectorRef) => ConnectorSummary> {
+  const catalog = ctx.runtime.getConnectorCatalog();
+  const [byUrl, byId] = await Promise.all([catalog.catalogByUrl(), catalog.catalogByIdMap()]);
+  return (ref) => {
+    const serverName = serverNameFromRef(ref) ?? ref.url;
+    const entry = catalogEntryForRef(ref, byUrl, byId);
+    const name = entry?.name ?? serverName;
+    return { serverName, name, ...(entry?.iconUrl ? { iconUrl: entry.iconUrl } : {}) };
+  };
+}
+
 async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
   try {
     const workspaces = await ctx.workspaceStore.list();
     const identity = ctx.getIdentity();
+    const describe = await connectorDescriber(ctx);
     const result = workspaces.map((ws) => {
       const userRole = identity
         ? ws.members.find((m) => m.userId === identity.id)?.role
@@ -578,16 +566,12 @@ async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
         id: ws.id,
         name: ws.name,
         memberCount: ws.members.length,
-        connectors: ws.connectors,
+        connectors: ws.connectors.map(describe),
         createdAt: ws.createdAt,
         // The requester's role within this workspace, when applicable. Lets the
         // web client gate workspace-admin UI without an extra `list_members`
         // round-trip per workspace.
         ...(userRole ? { userRole } : {}),
-        // `isPersonal` lets the web client badge the personal workspace
-        // and enforce the personal-workspace invariants in settings.
-        // Pre-Stage-1 workspaces return `false`.
-        isPersonal: ws.isPersonal === true,
       };
     });
     const data = { workspaces: result };
@@ -670,59 +654,57 @@ async function handlePurgeArchive(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// nb__manage_members tool
+// Member actions
 // ══════════════════════════════════════════════════════════════════
 
 /**
- * Check whether the requesting user can manage members in the given workspace.
- *
- * STRICT policy (see `canWriteWorkspaceScoped`): allowed only when the user is
- * a member of this specific workspace with the `admin` member role. Org role
- * grants no bypass — an org admin/owner who is not a workspace admin member
- * cannot manage members.
+ * Check whether the requesting user may take a member action in the given
+ * workspace. Listing is open to any member (`canReadWorkspaceMembers`);
+ * changing the roster needs an org admin or an `admin` member of this
+ * workspace (`canManageWorkspaceMembers`).
  */
-async function canManageMembers(ctx: ManageMembersContext, workspaceId: string): Promise<boolean> {
+async function memberActionAllowed(
+  ctx: MemberActionContext,
+  workspaceId: string,
+  action: string,
+): Promise<boolean> {
   const identity = ctx.getIdentity();
   const ws = await ctx.workspaceStore.get(workspaceId);
-  return canWriteWorkspaceScoped(identity, ws).allowed;
+  const decide = action === "list_members" ? canReadWorkspaceMembers : canManageWorkspaceMembers;
+  return decide(identity, ws).allowed;
+}
+
+/**
+ * Record a roster change with its actor. An org admin may change any
+ * workspace's roster, including seating and unseating themselves, so the log
+ * is what shows who reached into a workspace after they leave its roster.
+ */
+function logMemberChange(
+  ctx: MemberActionContext,
+  change: string,
+  workspaceId: string,
+  userId: string,
+  role?: string,
+): void {
+  log.info(`[manage_members] member ${change}`, {
+    actorId: ctx.getIdentity()?.id,
+    workspaceId,
+    userId,
+    ...(role ? { role } : {}),
+  });
 }
 
 function memberPermissionDenied(): ToolResult {
   return {
     content: textContent(
-      "You don't have permission to manage members. Requires workspace admin membership.",
+      "You don't have permission to manage members. Requires org admin or workspace admin membership.",
     ),
     isError: false,
   };
 }
 
-/**
- * Encode `PersonalWorkspaceInvariantError` into the ToolResult so the
- * HTTP layer (`handleToolCall`) can recognize it and map to a 422 with
- * a structured body — the typed error class itself is lost across the
- * in-process MCP serialization boundary. The marker is the `error`
- * field on `structuredContent`; consumers outside the HTTP layer (the
- * agent loop, external MCP clients) see a regular `isError: true`
- * result and can read the same `structuredContent` if they care.
- */
-function personalWorkspaceInvariantToolResult(err: PersonalWorkspaceInvariantError): ToolResult {
-  return {
-    content: textContent(err.message),
-    structuredContent: {
-      error: "personal_workspace_invariant",
-      workspaceId: err.workspaceId,
-      reason: err.reason,
-      message: err.message,
-    },
-    isError: true,
-  };
-}
-
-/** Map a thrown mutation error to a ToolResult, preserving the personal-workspace invariant marker. */
+/** Map a thrown mutation error to a ToolResult. */
 function mutationErrorResult(err: unknown, action: string): ToolResult {
-  if (err instanceof PersonalWorkspaceInvariantError) {
-    return personalWorkspaceInvariantToolResult(err);
-  }
   return {
     content: textContent(
       `Failed to ${action}: ${err instanceof Error ? err.message : String(err)}`,
@@ -731,94 +713,40 @@ function mutationErrorResult(err: unknown, action: string): ToolResult {
   };
 }
 
-/** @deprecated Member management is now handled by manage_workspaces. Kept for test coverage of handler logic. */
-export function createManageMembersTool(ctx: ManageMembersContext): InProcessTool {
-  return {
-    name: "manage_members",
-    description:
-      "Add, remove, update, or list members in a workspace. Requires workspace admin membership.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["add", "remove", "update", "list"],
-          description: "Action to perform.",
-        },
-        workspaceId: {
-          type: "string",
-          description: "Workspace ID (required for all actions).",
-        },
-        userId: {
-          type: "string",
-          description: "User ID (required for add, remove, update).",
-        },
-        role: {
-          type: "string",
-          enum: ["admin", "member"],
-          description:
-            "Workspace role (optional for add — defaults to member; required for update).",
-        },
-      },
-      required: ["action", "workspaceId"],
-    },
-    handler: async (input): Promise<ToolResult> => {
-      const action = String(input.action);
-      const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
-
-      if (!workspaceId) {
-        return {
-          content: textContent("workspaceId is required."),
-          isError: true,
-        };
-      }
-
-      if (!(await canManageMembers(ctx, workspaceId))) {
-        return memberPermissionDenied();
-      }
-
-      switch (action) {
-        case "add":
-          return handleAddMember(ctx, workspaceId, input);
-        case "remove":
-          return handleRemoveMember(ctx, workspaceId, input);
-        case "update":
-          return handleUpdateMember(ctx, workspaceId, input);
-        case "list":
-          return handleListMembers(ctx, workspaceId);
-        default:
-          return {
-            content: textContent(`Unknown action: ${action}`),
-            isError: true,
-          };
-      }
-    },
-  };
-}
-
 // ── Member action handlers ────────────────────────────────────────
 
+/**
+ * The person `add_member` names: by `userId`, or by `email` for a caller who
+ * cannot list the organization's users (a workspace admin who is not an org
+ * admin). An email matches case-insensitively, and a deactivated account is not
+ * offered, so the caller learns only whether an active person in the org has it.
+ */
+async function resolveNewMember(
+  ctx: MemberActionContext,
+  input: Record<string, unknown>,
+): Promise<{ id: string } | { error: string }> {
+  if (input.userId) {
+    const user = await ctx.userStore.get(String(input.userId));
+    return user ? { id: user.id } : { error: "User not found" };
+  }
+  const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+  if (!email) return { error: "userId or email is required to add a member." };
+  const user = (await ctx.userStore.list()).find(
+    (u) => !u.deletedAt && u.email.toLowerCase() === email,
+  );
+  return user ? { id: user.id } : { error: `No one in this organization has the email ${email}.` };
+}
+
 async function handleAddMember(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   workspaceId: string,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const userId = input.userId ? String(input.userId) : undefined;
-  if (!userId) {
-    return {
-      content: textContent("userId is required to add a member."),
-      isError: true,
-    };
+  const user = await resolveNewMember(ctx, input);
+  if ("error" in user) {
+    return { content: textContent(user.error), isError: true };
   }
-
-  // Validate user exists
-  const user = await ctx.userStore.get(userId);
-  if (!user) {
-    return {
-      content: textContent("User not found"),
-      isError: true,
-    };
-  }
+  const userId = user.id;
 
   const role = input.role ? String(input.role) : "member";
   if (role !== "admin" && role !== "member") {
@@ -830,6 +758,7 @@ async function handleAddMember(
 
   try {
     const ws = await ctx.workspaceStore.addMember(workspaceId, userId, role);
+    logMemberChange(ctx, "added", workspaceId, userId, role);
     const data = {
       added: { userId, role },
       workspace: { id: ws.id, memberCount: ws.members.length },
@@ -840,9 +769,6 @@ async function handleAddMember(
       isError: false,
     };
   } catch (err) {
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantToolResult(err);
-    }
     return {
       content: textContent(
         `Failed to add member: ${err instanceof Error ? err.message : String(err)}`,
@@ -856,7 +782,7 @@ async function handleAddMember(
  * Count workspace admins whose underlying user is still active (not
  * soft-deleted). The last-admin guards use this so a deactivated admin — who
  * can't actually act, since the auth layer denies them — never counts toward
- * the minimum. Mirrors `activeOwnerCount` in user-tools.ts at the workspace level.
+ * the minimum. Mirrors `activeAdminCount` in user-tools.ts at the workspace level.
  */
 async function activeAdminCount(members: WorkspaceMember[], userStore: UserStore): Promise<number> {
   const admins = members.filter((m) => m.role === "admin");
@@ -866,7 +792,7 @@ async function activeAdminCount(members: WorkspaceMember[], userStore: UserStore
 
 /** Block acting on the workspace's last active admin; returns the error ToolResult, or null to proceed. */
 async function lastActiveAdminGuard(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   members: WorkspaceMember[],
   userId: string,
   message: string,
@@ -881,7 +807,7 @@ async function lastActiveAdminGuard(
 }
 
 async function handleRemoveMember(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   workspaceId: string,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
@@ -924,6 +850,7 @@ async function handleRemoveMember(
 
   try {
     const updated = await ctx.workspaceStore.removeMember(workspaceId, userId);
+    logMemberChange(ctx, "removed", workspaceId, userId);
     const data = {
       removed: { userId },
       workspace: { id: updated.id, memberCount: updated.members.length },
@@ -934,9 +861,6 @@ async function handleRemoveMember(
       isError: false,
     };
   } catch (err) {
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantToolResult(err);
-    }
     return {
       content: textContent(
         `Failed to remove member: ${err instanceof Error ? err.message : String(err)}`,
@@ -947,7 +871,7 @@ async function handleRemoveMember(
 }
 
 async function handleUpdateMember(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   workspaceId: string,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
@@ -1003,6 +927,7 @@ async function handleUpdateMember(
 
   try {
     const updated = await ctx.workspaceStore.updateMemberRole(workspaceId, userId, role);
+    logMemberChange(ctx, "role updated", workspaceId, userId, role);
     const member = updated.members.find((m) => m.userId === userId);
     const data = {
       updated: { userId, role: member?.role },
@@ -1019,7 +944,7 @@ async function handleUpdateMember(
 }
 
 async function handleListMembers(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   workspaceId: string,
 ): Promise<ToolResult> {
   const ws = await ctx.workspaceStore.get(workspaceId);

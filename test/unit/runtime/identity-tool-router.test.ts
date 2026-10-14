@@ -14,10 +14,10 @@
  * no FS watcher, no real `WorkspaceStore`.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { ToolCall, ToolResult, ToolSchema } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
@@ -29,9 +29,10 @@ import {
   type RequestContext,
   runWithRequestContext,
 } from "../../../src/runtime/request-context.ts";
+import { isToolAllowedForRun } from "../../../src/tools/tool-pattern.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
-import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
 // ── Stubs ─────────────────────────────────────────────────────────
 
@@ -78,8 +79,6 @@ function makeSpySource(
 
 interface StubRuntimeOpts {
   registries: Map<string, ToolSource[]>;
-  memberships: Map<string, string[]>;
-  existingWorkspaces: Set<string>;
   workDir: string;
   identitySources?: Map<string, ToolSource>;
   /** Reachable tool surface per workspace (the wall: one workspace + identity). */
@@ -90,17 +89,6 @@ interface StubRuntimeOpts {
 
 function makeStubRuntime(opts: StubRuntimeOpts): OrchestratorRuntime {
   return {
-    getWorkspaceStore() {
-      return {
-        async get(wsId: string) {
-          return opts.existingWorkspaces.has(wsId) ? { id: wsId } : null;
-        },
-        async getWorkspacesForUser(userId: string) {
-          const ids = opts.memberships.get(userId) ?? [];
-          return ids.map((id) => ({ id }));
-        },
-      };
-    },
     getWorkspaceContext(wsId: string) {
       return new WorkspaceContext({ wsId, workDir: opts.workDir });
     },
@@ -127,11 +115,12 @@ function makeStubRuntime(opts: StubRuntimeOpts): OrchestratorRuntime {
 
 // ── Scaffolding ───────────────────────────────────────────────────
 
-const SHARED_WS = "ws_helix";
-const OTHER_WS = "ws_acme";
+const SHARED_WS = "ws_003eba8844413cd9";
+const OTHER_WS = "ws_000f7ed6658f9d30";
 const USER_ID = "u1";
 const OTHER_USER = "u2";
-const PERSONAL_WS = personalWorkspaceIdFor(USER_ID);
+/** A workspace only the caller belongs to. */
+const PERSONAL_WS = "ws_0000000000000001";
 
 let workDir = "";
 beforeEach(() => {
@@ -151,12 +140,11 @@ describe("IdentityToolRouter — construction", () => {
   test("rejects an empty identityId", () => {
     const runtime = makeStubRuntime({
       registries: new Map(),
-      memberships: new Map(),
-      existingWorkspaces: new Set(),
       workDir,
     });
     expect(
-      () => new IdentityToolRouter({ identityId: "", workspaceId: SHARED_WS, runtime }),
+      () =>
+        new IdentityToolRouter({ caller: "chat", identityId: "", workspaceId: SHARED_WS, runtime }),
     ).toThrow();
   });
 });
@@ -180,12 +168,11 @@ describe("IdentityToolRouter — availableTools", () => {
       },
     ];
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: USER_ID,
       workspaceId: SHARED_WS,
       runtime: makeStubRuntime({
         registries: new Map(),
-        memberships: new Map(),
-        existingWorkspaces: new Set(),
         workDir,
         toolsByWorkspace: new Map([[SHARED_WS, surface]]),
       }),
@@ -202,12 +189,11 @@ describe("IdentityToolRouter — availableTools", () => {
   test("queries listToolsForWorkspace with the constructor-captured workspaceId, not an ambient one", async () => {
     const listCalls: string[] = [];
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: USER_ID,
       workspaceId: SHARED_WS,
       runtime: makeStubRuntime({
         registries: new Map(),
-        memberships: new Map(),
-        existingWorkspaces: new Set(),
         workDir,
         listCalls,
       }),
@@ -217,7 +203,7 @@ describe("IdentityToolRouter — availableTools", () => {
       {
         // A different workspace sits in AsyncLocalStorage. The router must
         // ignore it and query SHARED_WS, the bound workspace.
-        identity: { id: OTHER_USER, email: "other@x", emailVerified: true, orgRole: null },
+        identity: makeIdentity({ id: OTHER_USER, email: "other@x" }),
         workspaceId: OTHER_WS,
       },
       async () => {
@@ -239,11 +225,14 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, [crm]]]),
-      memberships: new Map([[USER_ID, [SHARED_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS]),
       workDir,
     });
-    const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
+    const router = new IdentityToolRouter({
+      caller: "chat",
+      identityId: USER_ID,
+      workspaceId: SHARED_WS,
+      runtime,
+    });
 
     const call: ToolCall = { id: "c1", name: "crm__search", input: { q: "acme" } };
     const result = await router.execute(call);
@@ -255,22 +244,25 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
   });
 
   // Pins: the per-call RequestContext carries the ROUTED workspace id. The
-  // chat session's ambient scope is the personal workspace (the session
+  // chat session's ambient scope is another workspace (the session
   // bridge); a call to the bound focused workspace must restamp to it so
   // `nb__*` handlers reading `requireWorkspaceId()` see the right workspace.
   test("restamps RequestContext.workspaceId to the routed workspace, even with a different ambient workspace", async () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, [crm]]]),
-      memberships: new Map([[USER_ID, [SHARED_WS, PERSONAL_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS, PERSONAL_WS]),
       workDir,
     });
-    const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
+    const router = new IdentityToolRouter({
+      caller: "chat",
+      identityId: USER_ID,
+      workspaceId: SHARED_WS,
+      runtime,
+    });
 
     await runWithRequestContext(
       {
-        identity: { id: USER_ID, email: "u1@x", emailVerified: true, orgRole: null },
+        identity: makeIdentity({ id: USER_ID, email: "u1@x" }),
         workspaceId: PERSONAL_WS,
       },
       async () => {
@@ -289,14 +281,13 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, [crm]]]),
-      memberships: new Map([[USER_ID, [SHARED_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS]),
       workDir,
     });
     const hook: WorkspaceDispatchHook = (callId, wsId) => {
       hookEvents.push({ callId, wsId, sourceCallCount: crm.calls.length });
     };
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: USER_ID,
       workspaceId: SHARED_WS,
       runtime,
@@ -319,17 +310,20 @@ describe("IdentityToolRouter — the wall (cross-workspace reach is unexpressibl
   test("denies a call to a workspace other than the bound one", async () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
-      // The other workspace's source exists and the user is a member — only
-      // the wall stops the reach.
+      // The other workspace's source exists. Membership is checked when the
+      // session is established, not here, so only the wall stops the reach.
       registries: new Map([[OTHER_WS, [crm]]]),
-      memberships: new Map([[USER_ID, [SHARED_WS, OTHER_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS, OTHER_WS]),
       workDir,
     });
-    const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
+    const router = new IdentityToolRouter({
+      caller: "chat",
+      identityId: USER_ID,
+      workspaceId: SHARED_WS,
+      runtime,
+    });
 
-    // Naming another workspace is no longer DENIED — it is unexpressible. The
-    // `ws_<id>-` form is retired, so this is rejected as a stale wire name
+    // Naming another workspace is not DENIED — it is unexpressible. The
+    // `ws_<id>-` form is not routed, so this is rejected as a stale wire name
     // before any workspace resolution happens, and there is no name left that
     // can address a workspace other than the session's own. That is a stronger
     // guarantee than catching the attempt after the fact: there is no attempt to
@@ -345,16 +339,19 @@ describe("IdentityToolRouter — the wall (cross-workspace reach is unexpressibl
   test("invalid namespaced input → isError:true with reason invalid_tool_name", async () => {
     const runtime = makeStubRuntime({
       registries: new Map(),
-      memberships: new Map([[USER_ID, [SHARED_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS]),
       workDir,
     });
-    const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
+    const router = new IdentityToolRouter({
+      caller: "chat",
+      identityId: USER_ID,
+      workspaceId: SHARED_WS,
+      runtime,
+    });
 
     const result = await router.execute({
       id: "c1",
       // No `__` — fails the bare-name source split before reaching workspace logic.
-      name: "ws_helix-noprefixhere",
+      name: "ws_003eba8844413cd9-noprefixhere",
       input: {},
     });
 
@@ -368,12 +365,15 @@ describe("IdentityToolRouter — execute (identity door)", () => {
     const conversations = makeSpySource("conversations");
     const runtime = makeStubRuntime({
       registries: new Map(),
-      memberships: new Map([[USER_ID, []]]),
-      existingWorkspaces: new Set(),
       workDir,
       identitySources: new Map([["conversations", conversations]]),
     });
-    const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
+    const router = new IdentityToolRouter({
+      caller: "chat",
+      identityId: USER_ID,
+      workspaceId: SHARED_WS,
+      runtime,
+    });
 
     // Run inside an ambient context, the way a chat turn does.
     await runWithRequestContext({ identity: null, workspaceId: SHARED_WS }, async () => {
@@ -394,12 +394,11 @@ describe("IdentityToolRouter — execute (identity door)", () => {
     const conversations = makeSpySource("conversations");
     const runtime = makeStubRuntime({
       registries: new Map(),
-      memberships: new Map([[USER_ID, []]]),
-      existingWorkspaces: new Set(),
       workDir,
       identitySources: new Map([["conversations", conversations]]),
     });
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: USER_ID,
       workspaceId: SHARED_WS,
       runtime,
@@ -409,5 +408,72 @@ describe("IdentityToolRouter — execute (identity door)", () => {
     await router.execute({ id: "c1", name: "conversations__list", input: {} });
 
     expect(hookEvents).toEqual([]);
+  });
+});
+
+describe("IdentityToolRouter — a run's allowedTools", () => {
+  // Pins: the allowlist bounds what the run can reach, not only what it is
+  // shown. A tool outside it is absent from `availableTools` (the set
+  // `nb__manage_tools` promotes from) and refused at dispatch. Naive failure:
+  // filter only the surfaced list, leaving activation and direct calls open.
+  const isToolAllowed = (name: string) => isToolAllowedForRun(name, ["crm__*"]);
+  const schema = (name: string): ToolSchema => ({
+    name,
+    description: name,
+    inputSchema: { type: "object", properties: {} },
+  });
+
+  test("lists only allowed tools, keeping only the nb__ discovery tools", async () => {
+    const router = new IdentityToolRouter({
+      caller: "chat",
+      identityId: USER_ID,
+      workspaceId: SHARED_WS,
+      isToolAllowed,
+      runtime: makeStubRuntime({
+        registries: new Map(),
+        workDir,
+        toolsByWorkspace: new Map([
+          [
+            SHARED_WS,
+            [
+              schema("crm__search"),
+              schema("mail__send"),
+              schema("files__read"),
+              schema("nb__search"),
+              schema("nb__manage_tools"),
+              schema("nb__read_resource"),
+              schema("nb__status"),
+            ],
+          ],
+        ]),
+      }),
+    });
+
+    const names = (await router.availableTools()).map((t) => t.name);
+
+    expect(names).toEqual(["crm__search", "nb__search", "nb__manage_tools"]);
+  });
+
+  test("refuses a call to a tool outside the list without dispatching it", async () => {
+    const crm = makeSpySource("crm");
+    const mail = makeSpySource("mail");
+    const router = new IdentityToolRouter({
+      caller: "chat",
+      identityId: USER_ID,
+      workspaceId: SHARED_WS,
+      isToolAllowed,
+      runtime: makeStubRuntime({
+        registries: new Map([[SHARED_WS, [crm, mail]]]),
+        workDir,
+      }),
+    });
+
+    const denied = await router.execute({ id: "c1", name: "mail__send", input: {} });
+    const allowed = await router.execute({ id: "c2", name: "crm__search", input: {} });
+
+    expect(denied.isError).toBe(true);
+    expect(mail.calls).toHaveLength(0);
+    expect(allowed.isError).toBe(false);
+    expect(crm.calls).toHaveLength(1);
   });
 });

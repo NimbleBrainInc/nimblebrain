@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
-// PaletteProvider ⌘P toggle — repeated-press behavior + default suppression.
+// PaletteProvider ⌘K toggle — repeated-press behavior + default suppression.
 //
-// Reproduces the "press ⌘P twice" path: the capture-phase window listener must
+// Reproduces the "press ⌘K twice" path: the capture-phase window listener must
 // fire AND call preventDefault on BOTH presses (open and close), toggling the
-// open state each time. If defaultPrevented is ever false, the browser's print
-// dialog leaks through — which is the reported bug.
+// open state each time. If defaultPrevented is ever false, the browser's own
+// Ctrl+K binding (focus the search bar) leaks through.
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
@@ -21,11 +21,11 @@ function Probe() {
   return null;
 }
 
-function pressCmdP(): KeyboardEvent {
+function pressCmdK(): KeyboardEvent {
   let ev!: KeyboardEvent;
   act(() => {
     ev = new KeyboardEvent("keydown", {
-      key: "p",
+      key: "k",
       metaKey: true,
       bubbles: true,
       cancelable: true,
@@ -35,7 +35,7 @@ function pressCmdP(): KeyboardEvent {
   return ev;
 }
 
-describe("PaletteProvider ⌘P toggle", () => {
+describe("PaletteProvider ⌘K toggle", () => {
   test("toggles open/closed and preventDefaults on each successive press", () => {
     render(
       <PaletteProvider>
@@ -45,15 +45,15 @@ describe("PaletteProvider ⌘P toggle", () => {
 
     expect(latestOpen).toBe(false);
 
-    const first = pressCmdP();
+    const first = pressCmdK();
     expect(first.defaultPrevented).toBe(true);
     expect(latestOpen).toBe(true);
 
-    const second = pressCmdP();
+    const second = pressCmdK();
     expect(second.defaultPrevented).toBe(true);
     expect(latestOpen).toBe(false);
 
-    const third = pressCmdP();
+    const third = pressCmdK();
     expect(third.defaultPrevented).toBe(true);
     expect(latestOpen).toBe(true);
   });

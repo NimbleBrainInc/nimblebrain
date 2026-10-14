@@ -1,7 +1,7 @@
-import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { log } from "../../src/observability/log.ts";
+import { randomBytes } from "node:crypto";
 import { _resetBouncerModeForTest, getBouncerMode } from "../../src/oauth/bouncer-config.ts";
+import { log } from "../../src/observability/log.ts";
 
 const ENV_VARS = [
   "NB_OAUTH_BOUNCER_CALLBACK_URL",

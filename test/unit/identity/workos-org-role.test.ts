@@ -1,11 +1,10 @@
 /**
- * WorkOS org-role mapping + owner preservation.
+ * WorkOS org-role mapping and sync.
  *
  * Covers `resolveOrgRole`'s configurable, case-insensitive admin-slug mapping
- * (the fix for a custom WorkOS admin role slug silently mapping to `member`)
- * and the rule that a login-time `syncLocalProfile` never downgrades a local
- * `owner` (so `owner` is a stable app-internal elevation, not clobbered by a
- * WorkOS membership change).
+ * (the fix for a custom WorkOS admin role slug silently mapping to `member`),
+ * including WorkOS's own `owner` slug mapping to app `admin`, and the rule
+ * that a login-time `syncLocalProfile` writes the WorkOS-derived role.
  */
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
@@ -14,21 +13,26 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
-import { log } from "../../../src/observability/log.ts";
-import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";
 import { UserStore } from "../../../src/identity/user.ts";
-import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { log } from "../../../src/observability/log.ts";
+import {
+  stubWorkosUserManagement,
+  workosAuthentication,
+  workosMembership,
+  workosMembershipList,
+  workosUser,
+  workosUserManagement,
+} from "../../helpers/workos-sdk.ts";
 
 let workDir: string;
 let userStore: UserStore;
-let workspaceStore: WorkspaceStore;
 
 const BASE_CONFIG: WorkosAuth = {
   adapter: "workos",
   clientId: "client_test",
-  redirectUri: "http://localhost/callback",
   organizationId: "org_test123",
   apiKey: "sk_test_fake",
 };
@@ -36,7 +40,6 @@ const BASE_CONFIG: WorkosAuth = {
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-workos-role-"));
   userStore = new UserStore(workDir);
-  workspaceStore = new WorkspaceStore(workDir);
 });
 
 afterEach(() => {
@@ -48,45 +51,25 @@ afterEach(() => {
  * `memberships` maps userId → role slug; absence means "no membership".
  */
 function makeProvider(memberships: Map<string, string>, configOverride?: Partial<WorkosAuth>) {
-  const provider = new WorkosIdentityProvider(
-    { ...BASE_CONFIG, ...configOverride },
-    userStore,
-    workspaceStore,
-  );
-  const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-  workos.userManagement = {
-    getUser: async (userId: string) => ({
-      id: userId,
-      email: `${userId}@test.com`,
-      firstName: "Test",
-      lastName: "User",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }),
-    listOrganizationMemberships: async (opts: { userId: string; organizationId: string }) => {
-      const slug = memberships.get(opts.userId);
-      if (!slug) return { data: [] };
-      return {
-        data: [
-          {
-            id: "om_test",
-            userId: opts.userId,
-            organizationId: opts.organizationId,
-            role: { slug },
-            status: "active",
-          },
-        ],
-      };
+  const provider = new WorkosIdentityProvider({ ...BASE_CONFIG, ...configOverride }, userStore);
+  stubWorkosUserManagement(provider, {
+    getUser: async (userId) =>
+      workosUser({ id: userId, email: `${userId}@test.com`, firstName: "Test", lastName: "User" }),
+    listOrganizationMemberships: async (opts) => {
+      const slug = opts.userId ? memberships.get(opts.userId) : undefined;
+      if (!slug) return workosMembershipList([]);
+      return workosMembershipList([
+        workosMembership({ userId: opts.userId, organizationId: opts.organizationId, slug }),
+      ]);
     },
-  };
+  });
   return provider;
 }
 
-/** Invoke the private `resolveOrgRole` (mirrors the cast in workos-provisioning.test.ts). */
+/** Invoke the private `resolveOrgRole`. */
 function resolveOrgRole(provider: WorkosIdentityProvider, userId: string): Promise<OrgRole | null> {
-  return (
-    provider as unknown as { resolveOrgRole: (id: string) => Promise<OrgRole | null> }
-  ).resolveOrgRole.call(provider, userId);
+  // biome-ignore lint/complexity/useLiteralKeys: resolveOrgRole is private; bracket access is TypeScript's typed path to it
+  return provider["resolveOrgRole"](userId);
 }
 
 /** Invoke the private `resolveUser` to inspect the live session identity it builds. */
@@ -94,9 +77,8 @@ function resolveUser(
   provider: WorkosIdentityProvider,
   userId: string,
 ): Promise<UserIdentity | null> {
-  return (
-    provider as unknown as { resolveUser: (id: string) => Promise<UserIdentity | null> }
-  ).resolveUser.call(provider, userId);
+  // biome-ignore lint/complexity/useLiteralKeys: resolveUser is private; bracket access is TypeScript's typed path to it
+  return provider["resolveUser"](userId);
 }
 
 describe("WorkOS resolveOrgRole slug mapping", () => {
@@ -105,7 +87,7 @@ describe("WorkOS resolveOrgRole slug mapping", () => {
     expect(await resolveOrgRole(p, "u")).toBe("admin");
   });
 
-  it("maps the default 'owner' slug to admin (owner is app-internal, never WorkOS-derived)", async () => {
+  it("maps WorkOS's default 'owner' slug to admin, the top app role", async () => {
     const p = makeProvider(new Map([["u", "owner"]]));
     expect(await resolveOrgRole(p, "u")).toBe("admin");
   });
@@ -128,11 +110,18 @@ describe("WorkOS resolveOrgRole slug mapping", () => {
     }
     // The silent-downgrade trap must be observable: log names the actual slug
     // and points at the config knob.
-    expect(warnings.some((w) => w.includes("org-admin") && w.includes("adminRoleSlugs"))).toBe(true);
+    expect(warnings.some((w) => w.includes("org-admin") && w.includes("adminRoleSlugs"))).toBe(
+      true,
+    );
   });
 
   it("warns at most once per unmatched slug per process", async () => {
-    const p = makeProvider(new Map([["a", "viewer"], ["b", "viewer"]]));
+    const p = makeProvider(
+      new Map([
+        ["a", "viewer"],
+        ["b", "viewer"],
+      ]),
+    );
     let warnCount = 0;
     const warnSpy = spyOn(log, "warn").mockImplementation(() => {
       warnCount++;
@@ -160,7 +149,7 @@ describe("WorkOS resolveOrgRole slug mapping", () => {
   });
 
   it("treats an explicit adminRoleSlugs list as the full set (replaces defaults)", async () => {
-    // With a custom list, the built-in 'admin' slug is no longer special — and
+    // With a custom list, the built-in 'admin' slug is not special — and
     // the unmatched-slug warning makes that visible in logs.
     const p = makeProvider(new Map([["u", "admin"]]), { adminRoleSlugs: ["org-admin"] });
     expect(await resolveOrgRole(p, "u")).toBe("member");
@@ -171,53 +160,45 @@ describe("WorkOS resolveOrgRole slug mapping", () => {
     expect(await resolveOrgRole(p, "u")).toBe("member");
   });
 
+  it("refuses to construct with an empty or whitespace organizationId", () => {
+    for (const organizationId of ["", "   "]) {
+      expect(() => makeProvider(new Map(), { organizationId })).toThrow(
+        "'organizationId' must not be empty",
+      );
+    }
+  });
+
   it("returns null (deny) when the user has no org membership", async () => {
     const p = makeProvider(new Map());
     expect(await resolveOrgRole(p, "u")).toBeNull();
   });
 });
 
-describe("WorkOS syncLocalProfile owner preservation", () => {
-  it("does not downgrade a local owner when WorkOS resolves a lesser role", async () => {
+describe("WorkOS syncLocalProfile role sync", () => {
+  it("downgrades a local admin to the role WorkOS resolves, in the store and the session", async () => {
     await userStore.create({
-      id: "user_owner",
-      email: "owner@test.com",
-      displayName: "Owner",
-      orgRole: "owner",
+      id: "user_admin",
+      email: "user_admin@test.com",
+      displayName: "Admin",
+      orgRole: "admin",
     });
 
-    const provider = makeProvider(new Map([["user_owner", "member"]]));
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).authenticateWithCode = async () => ({
-      accessToken: "tok",
-      refreshToken: "ref",
-      user: { id: "user_owner", email: "owner@test.com", firstName: "Owner", lastName: "" },
-    });
+    const provider = makeProvider(new Map([["user_admin", "member"]]));
+    const identity = await resolveUser(provider, "user_admin");
 
-    await provider.exchangeCode("code");
-
-    const profile = await userStore.get("user_owner");
-    expect(profile?.orgRole).toBe("owner");
+    expect(identity?.orgRole).toBe("member");
+    expect((await userStore.get("user_admin"))?.orgRole).toBe("member");
   });
 
-  it("surfaces a preserved owner into the live session identity, not just the store", async () => {
-    // The store record is necessary but not sufficient: authz gates read the
-    // live session `identity.orgRole`. If resolveUser built it from the raw
-    // resolveOrgRole value (member), the preserved owner would be inert.
-    await userStore.create({
-      id: "user_owner",
-      email: "user_owner@test.com",
-      displayName: "Owner",
-      orgRole: "owner",
-    });
+  it("stores a WorkOS owner-slug user as admin, never as owner", async () => {
+    const provider = makeProvider(new Map([["user_wo", "owner"]]));
+    const identity = await resolveUser(provider, "user_wo");
 
-    const provider = makeProvider(new Map([["user_owner", "member"]]));
-    const identity = await resolveUser(provider, "user_owner");
-
-    expect(identity?.orgRole).toBe("owner");
+    expect(identity?.orgRole).toBe("admin");
+    expect((await userStore.get("user_wo"))?.orgRole).toBe("admin");
   });
 
-  it("still syncs the WorkOS-derived role for a non-owner on login", async () => {
+  it("syncs the WorkOS-derived role on login", async () => {
     await userStore.create({
       id: "user_member",
       email: "member@test.com",
@@ -226,12 +207,15 @@ describe("WorkOS syncLocalProfile owner preservation", () => {
     });
 
     const provider = makeProvider(new Map([["user_member", "admin"]]));
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).authenticateWithCode = async () => ({
-      accessToken: "tok",
-      refreshToken: "ref",
-      user: { id: "user_member", email: "member@test.com", firstName: "Member", lastName: "" },
-    });
+    workosUserManagement(provider).authenticateWithCode = async () =>
+      workosAuthentication({
+        user: workosUser({
+          id: "user_member",
+          email: "member@test.com",
+          firstName: "Member",
+          lastName: "",
+        }),
+      });
 
     await provider.exchangeCode("code");
 

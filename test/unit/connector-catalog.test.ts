@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import { log } from "../../src/observability/log.ts";
 
 /**
  * `ConnectorCatalog` is the only thing tool handlers should call.
@@ -50,7 +51,7 @@ afterEach(() => {
 describe("ConnectorCatalog.list", () => {
   test("aggregates entries from every catalog file, projecting to CatalogListing", async () => {
     const catalogDir = freshCatalog();
-    const granola = writeStaticCatalog(
+    writeStaticCatalog(
       [
         {
           name: "ai.granola/mcp",
@@ -63,7 +64,7 @@ describe("ConnectorCatalog.list", () => {
       ],
       "granola.yaml",
     );
-    const echo = writeStaticCatalog(
+    writeStaticCatalog(
       [
         {
           name: "ai.nimblebrain/echo",
@@ -122,7 +123,7 @@ describe("ConnectorCatalog.list", () => {
 
   test("dedups entries by id across the catalog", async () => {
     const catalogDir = freshCatalog();
-    const path = writeStaticCatalog([
+    writeStaticCatalog([
       {
         name: "ai.granola/mcp",
         description: "first",
@@ -146,7 +147,7 @@ describe("ConnectorCatalog.list", () => {
 
   test("operatorConfigured probe runs only for static-auth entries with operatorSetup", async () => {
     const catalogDir = freshCatalog();
-    const path = writeStaticCatalog([
+    writeStaticCatalog([
       {
         name: "io.asana/mcp",
         description: "Asana",
@@ -185,7 +186,7 @@ describe("ConnectorCatalog.list", () => {
 
   test("a packages-only entry is dropped — this runtime installs no downloaded code", async () => {
     const catalogDir = freshCatalog();
-    const path = writeStaticCatalog([
+    writeStaticCatalog([
       {
         name: "ai.nimblebrain/echo",
         description: "Echo",
@@ -230,13 +231,12 @@ describe("ConnectorCatalog lookup tables", () => {
   });
 
   test("catalogById finds an icon-less provider entry — the path that refused the install", async () => {
-    // Regression for the catalog projection foot-gun: an icon-less
-    // `provider`-auth connector used to be dropped at projection time, so
-    // catalogById returned null and the provider-auth install failed with
-    // "not a recognized platform connector". Icons are cosmetic — a missing
+    // An icon-less `provider`-auth connector must survive catalog
+    // projection; dropped there, catalogById returns null and the
+    // provider-auth install fails with "not a recognized platform connector". Icons are cosmetic — a missing
     // icon must never make a connector non-functional.
     const catalogDir = freshCatalog();
-    const path = writeStaticCatalog([
+    writeStaticCatalog([
       {
         name: "ai.nimblebrain/web",
         description: "Web tools",
@@ -272,7 +272,7 @@ describe("ConnectorCatalog safety scrub (XSS via _meta extension URLs)", () => {
 
   async function listWith(server: Record<string, unknown>) {
     const catalogDir = freshCatalog();
-    const path = writeStaticCatalog([server]);
+    writeStaticCatalog([server]);
     return new ConnectorCatalog(catalogDir).list();
   }
 
@@ -337,5 +337,31 @@ describe("ConnectorCatalog safety scrub (XSS via _meta extension URLs)", () => {
       }),
     );
     expect(result.entries.map((e) => e.id)).toEqual(["io.safe/mcp"]);
+  });
+});
+
+describe("ConnectorCatalog server-name collisions", () => {
+  test("loads neither of two ids that share a server name, and every other entry", async () => {
+    const dir = freshCatalog();
+    // `a.b/c` and `a/b.c` both slugify to `a-b-c`.
+    writeStaticCatalog([
+      remoteServer({ name: "a.b/c" }),
+      remoteServer({ name: "io.safe/mcp" }),
+      remoteServer({ name: "a/b.c" }),
+    ]);
+    const error = spyOn(log, "error").mockImplementation(() => {});
+    try {
+      const entries = await new ConnectorCatalog(dir).catalogEntries();
+      expect(entries.map((e) => e.id)).toEqual(["io.safe/mcp"]);
+      const said = error.mock.calls.map((c) => String(c[0]));
+      expect(said).toHaveLength(2);
+      for (const line of said) {
+        expect(line).toContain('"a-b-c"');
+        expect(line).toContain("a.b/c");
+        expect(line).toContain("a/b.c");
+      }
+    } finally {
+      error.mockRestore();
+    }
   });
 });

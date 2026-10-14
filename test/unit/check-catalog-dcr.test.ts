@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readCatalogServers } from "../../src/connectors/catalog/read.ts";
 import { selectDcrEntries } from "../../scripts/check-catalog-dcr.ts";
+import { readCatalogServers } from "../../src/connectors/catalog/read.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
 /**

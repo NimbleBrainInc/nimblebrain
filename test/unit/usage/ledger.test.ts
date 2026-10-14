@@ -165,7 +165,11 @@ describe("oldestRetainedMonth", () => {
 describe("usageMonthsInRange", () => {
   test("covers both endpoints", () => {
     expect(usageMonthsInRange("2026-04-10", "2026-04-20")).toEqual(["2026-04"]);
-    expect(usageMonthsInRange("2026-04-10", "2026-06-02")).toEqual(["2026-04", "2026-05", "2026-06"]);
+    expect(usageMonthsInRange("2026-04-10", "2026-06-02")).toEqual([
+      "2026-04",
+      "2026-05",
+      "2026-06",
+    ]);
   });
 
   test("crosses a year boundary", () => {

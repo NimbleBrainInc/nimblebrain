@@ -1,6 +1,9 @@
 import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useComposerDraft } from "../hooks/useChat";
+import { attachmentLimitHint, attachmentLimitProblem } from "../lib/attachment-limits";
+import { SHORTCUTS, shortcutLabel } from "../lib/shortcuts";
+import type { FileLimits } from "../types";
 import { FileAttachmentChips } from "./FileAttachmentChips";
 import { ModelPicker, type PickerModel } from "./ModelPicker";
 
@@ -99,6 +102,8 @@ interface MessageInputProps {
   /** Stop the in-flight turn. When provided, the send button becomes a Stop
    *  button while a turn is streaming. */
   onStop?: () => void;
+  /** Attachment limits. The composer states them and refuses a set past them. */
+  fileLimits?: FileLimits;
 }
 
 export function MessageInput({
@@ -114,6 +119,7 @@ export function MessageInput({
   onNewConversation,
   onShowShortcuts,
   onStop,
+  fileLimits,
 }: MessageInputProps) {
   const [draft, setDraft] = useComposerDraft(conversationKey);
   const { text, files: attachedFiles } = draft;
@@ -126,7 +132,7 @@ export function MessageInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: auto-resize only depends on text content changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the textarea's `scrollHeight` follows `text` once it renders, so `text` is when to re-measure the DOM
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -163,9 +169,12 @@ export function MessageInput({
     [attachedFiles, setDraft],
   );
 
+  const limitProblem = attachmentLimitProblem(attachedFiles, fileLimits);
+
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed && attachedFiles.length === 0) return;
+    if (limitProblem) return;
     if (busy) {
       setSendWaiting(true);
       return;
@@ -179,7 +188,7 @@ export function MessageInput({
     }
 
     onSend(trimmed, attachedFiles.length > 0 ? attachedFiles : undefined, pendingModel);
-  }, [text, attachedFiles, pendingModel, busy, onSend, onNewConversation, setDraft]);
+  }, [text, attachedFiles, limitProblem, pendingModel, busy, onSend, onNewConversation, setDraft]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -247,11 +256,12 @@ export function MessageInput({
     [addFiles],
   );
 
-  const canSend = (text.trim().length > 0 || attachedFiles.length > 0) && !busy;
+  const canSend =
+    (text.trim().length > 0 || attachedFiles.length > 0) && !busy && limitProblem === null;
 
   return (
     <div ref={composerRef} className="py-3 shrink-0">
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop container for file uploads */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: a drop target, not a control: the attach button is the keyboard way to add the same files */}
       <div
         // The raised card + blue ring follows focus alone. A running turn does
         // not dim the composer: writing the next message while the agent works
@@ -293,6 +303,11 @@ export function MessageInput({
         </div>
         {/* File chips */}
         <FileAttachmentChips files={attachedFiles} onRemove={removeFile} />
+        {limitProblem && (
+          <p role="alert" className="px-3 pb-1 text-xs text-destructive">
+            {limitProblem}
+          </p>
+        )}
         {/* Action buttons — attach left, send right */}
         <div className="flex items-center justify-between px-3 pb-3 pt-1">
           <div>
@@ -306,7 +321,8 @@ export function MessageInput({
             <button
               onClick={() => fileInputRef.current?.click()}
               type="button"
-              aria-label="Attach files"
+              aria-label={attachmentLimitHint(fileLimits)}
+              title={attachmentLimitHint(fileLimits)}
               className="shrink-0 flex items-center justify-center w-8 h-8 rounded-sm transition-all duration-200 text-muted-foreground cursor-pointer hover:text-foreground hover:bg-muted"
             >
               <Paperclip style={{ width: 16, height: 16 }} />
@@ -347,7 +363,7 @@ export function MessageInput({
             )}
             <span>
               <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
-                ⌘K
+                {shortcutLabel(SHORTCUTS.chat)}
               </kbd>{" "}
               close
             </span>

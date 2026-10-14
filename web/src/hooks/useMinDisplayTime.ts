@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ToolCallDisplay } from "./useChat";
+import type { ToolCallDisplay } from "./chat-store";
 
 const MIN_DISPLAY_MS = 600;
 

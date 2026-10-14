@@ -1,15 +1,13 @@
 import type { EventSink } from "../engine/types.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ToolSource } from "../tools/types.ts";
-import { createAutomationsSource } from "./automations/source.ts";
 import { createComposeSource } from "./compose/source.ts";
 import { createConversationsSource } from "./conversations/source.ts";
 import { createFilesSource } from "./files/source.ts";
-import { createHomeSource } from "./home/source.ts";
 import { createHooksSource } from "./hooks/source.ts";
-import { createInstructionsSource } from "./instructions/source.ts";
 import { createNotificationsSource } from "./notifications/source.ts";
 import { createSkillsSource } from "./skills/source.ts";
+import { createTasksSource } from "./tasks/source.ts";
 import { createUsageSource } from "./usage/source.ts";
 
 /**
@@ -37,12 +35,10 @@ export async function createPlatformSources(
 ): Promise<ToolSource[]> {
   // Order doesn't matter — placements control UI ordering.
   const sources: ToolSource[] = [
-    createHomeSource(runtime, eventSink),
     await createConversationsSource(runtime, eventSink),
     createFilesSource(runtime, eventSink),
-    await createAutomationsSource(runtime, eventSink),
+    await createTasksSource(runtime, eventSink),
     createUsageSource(runtime, eventSink),
-    createInstructionsSource(runtime, eventSink),
     createHooksSource(runtime, eventSink),
     createNotificationsSource(runtime, eventSink),
     createSkillsSource(runtime, eventSink, runtime.getFeatures()),

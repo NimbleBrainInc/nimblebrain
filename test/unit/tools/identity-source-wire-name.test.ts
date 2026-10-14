@@ -26,17 +26,12 @@ import { McpSource } from "../../../src/tools/mcp-source.ts";
 const remote = { type: "remote" as const, url: new URL("https://example.test/mcp") };
 const sink = { emit: () => {} };
 const emitted = (s: McpSource): string =>
-  (s as unknown as { eventSourceName: string }).eventSourceName;
+  // biome-ignore lint/complexity/useLiteralKeys: `eventSourceName` is private; bracket access is TypeScript's typed path to it
+  s["eventSourceName"];
 
 /** How every identity-owned construction site must build its source. */
 const identityOwned = (serverName: string) =>
-  new McpSource(
-    serverName,
-    remote as never,
-    sink as never,
-    undefined,
-    personalConnectorWireName(serverName),
-  );
+  new McpSource(serverName, remote, sink, undefined, personalConnectorWireName(serverName));
 
 describe("identity-owned sources", () => {
   test("emit a marked name while keeping a bare registry key", () => {

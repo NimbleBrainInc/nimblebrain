@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import { roleAtLeast } from "../../hooks/useScopedRole";
+import { DOCS_URL } from "../../lib/docs";
 import type { CommandRunContext, CommandSourceContext } from "./types";
 
 export interface ActionDef {
@@ -30,7 +31,7 @@ const hasWorkspace = (ctx: CommandSourceContext): boolean => Boolean(ctx.activeW
 // Reach, not writes — this hides a link to a surface `RouteGuard` admits at the
 // same minimum, so the two must resolve the role the same way or the palette
 // offers a destination the guard bounces. `useScopedRole` owns the mapping from
-// the raw `OrgRole` (`owner` / `admin` / `member`); those are a separate
+// the raw `OrgRole` (`admin` / `member`); those are a separate
 // vocabulary and never belong in a gate.
 const isOrgAdmin = (ctx: CommandSourceContext): boolean =>
   roleAtLeast(ctx.scopedRole ?? "none", "org_admin");
@@ -85,6 +86,16 @@ export const ACTIONS: ActionDef[] = [
     icon: "Keyboard",
     run: (run) => {
       run.openKeyboardShortcuts();
+      run.closePalette();
+    },
+  },
+  {
+    id: "documentation",
+    title: "Open documentation",
+    keywords: ["docs", "documentation", "help", "guide", "manual"],
+    icon: "BookOpen",
+    run: (run) => {
+      run.openExternal(DOCS_URL);
       run.closePalette();
     },
   },

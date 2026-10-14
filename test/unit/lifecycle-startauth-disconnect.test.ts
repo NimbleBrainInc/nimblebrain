@@ -1,16 +1,24 @@
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
+import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { log } from "../../src/observability/log.ts";
+import { hasMcpOAuthAuthLost, McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
+import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { stub } from "../helpers/stub.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 /**
  * Coverage for the unified `lifecycle.startAuth` and `lifecycle.disconnect`
@@ -39,7 +47,7 @@ function seedInstance(
   lifecycle: ConnectorLifecycleManager,
   serverName: string,
   wsId: string,
-  // Stage 2: only "workspace" is legal post-schema-cut.
+  // Only "workspace" is a legal scope.
   oauthScope: "workspace" = "workspace",
   ref?: ConnectorRef,
 ): ConnectorInstance {
@@ -49,8 +57,6 @@ function seedInstance(
     version: "remote",
     state: "starting",
     ui: null,
-    briefing: null,
-    type: "plain",
     wsId,
     oauthScope,
     ...(ref ? { ref } : {}),
@@ -87,48 +93,68 @@ describe("ConnectorLifecycleManager.startAuth — validation & idempotence", () 
 
   test("rejects when connector is not installed", async () => {
     await expect(
-      lifecycle.startAuth("ghost", "ws_test", "_workspace", OPTS),
+      lifecycle.startAuth("ghost", "ws_0076759dbbe19fcc", "_workspace", OPTS),
     ).rejects.toThrow(/not installed/);
   });
 
   test("rejects when connector ref has no URL (named or local connector)", async () => {
-    seedInstance(lifecycle, "stdio", "ws_test", "workspace", { name: "@scope/stdio" });
+    seedInstance(
+      lifecycle,
+      "stdio",
+      "ws_0076759dbbe19fcc",
+      "workspace",
+      legacyConnectorRef({ name: "@scope/stdio" }),
+    );
     await expect(
-      lifecycle.startAuth("stdio", "ws_test", "_workspace", OPTS),
+      lifecycle.startAuth("stdio", "ws_0076759dbbe19fcc", "_workspace", OPTS),
     ).rejects.toThrow(/missing URL ref/);
   });
 
-  test("rejects when principal is not the workspace principal (Stage 2: user-scope removed)", async () => {
-    seedInstance(lifecycle, "granola", "ws_test", "workspace", {
+  test("rejects a principal other than the workspace principal", async () => {
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
+      serverName: "granola",
     });
     await expect(
-      lifecycle.startAuth("granola", "ws_test", "user_alice", OPTS),
+      lifecycle.startAuth("granola", "ws_0076759dbbe19fcc", "user_alice", OPTS),
     ).rejects.toThrow(/not a workspace principal/);
   });
 
   test("returns existing pending_auth URL without restarting (debounces double-click)", async () => {
-    const instance = seedInstance(lifecycle, "granola", "ws_test", "workspace", {
+    const instance = seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
+      serverName: "granola",
     });
     const cachedUrl = "https://example.test/oauth/authorize?state=cached";
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "pending_auth", {
-      authorizationUrl: cachedUrl,
-    });
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "pending_auth",
+      {
+        authorizationUrl: cachedUrl,
+      },
+    );
     expect(instance.connections!.get("_workspace")!.authorizationUrl).toBe(cachedUrl);
 
-    const result = await lifecycle.startAuth("granola", "ws_test", "_workspace", OPTS);
+    const result = await lifecycle.startAuth("granola", "ws_0076759dbbe19fcc", "_workspace", OPTS);
     expect(result.authorizationUrl).toBe(cachedUrl);
   });
 
   test("rejects re-auth when connection is already running (caller must disconnect first)", async () => {
-    seedInstance(lifecycle, "granola", "ws_test", "workspace", {
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
+      serverName: "granola",
     });
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
 
     await expect(
-      lifecycle.startAuth("granola", "ws_test", "_workspace", OPTS),
+      lifecycle.startAuth("granola", "ws_0076759dbbe19fcc", "_workspace", OPTS),
     ).rejects.toThrow(/already connected/);
   });
 });
@@ -144,32 +170,40 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
 
   test("rejects when connector is not installed", async () => {
     await expect(
-      lifecycle.disconnect("ghost", "ws_test", "_workspace", { workDir: "/tmp" }),
+      lifecycle.disconnect("ghost", "ws_0076759dbbe19fcc", "_workspace", { workDir: "/tmp" }),
     ).rejects.toThrow(/not installed/);
   });
 
   test("rejects when connector has no URL ref (revocation requires the AS URL)", async () => {
-    seedInstance(lifecycle, "stdio", "ws_test", "workspace", { name: "@scope/stdio" });
+    seedInstance(
+      lifecycle,
+      "stdio",
+      "ws_0076759dbbe19fcc",
+      "workspace",
+      legacyConnectorRef({ name: "@scope/stdio" }),
+    );
     await expect(
-      lifecycle.disconnect("stdio", "ws_test", "_workspace", { workDir: "/tmp" }),
+      lifecycle.disconnect("stdio", "ws_0076759dbbe19fcc", "_workspace", { workDir: "/tmp" }),
     ).rejects.toThrow(/missing URL ref/);
   });
 
   test("transitions Connection to not_authenticated, drops the source, emits state_changed", async () => {
-    const instance = seedInstance(lifecycle, "granola", "ws_test", "workspace", {
+    const instance = seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
+      serverName: "granola",
     });
     const registry = new ToolRegistry();
     registry.addSource(
-      new McpSource(
-        "granola",
-        { type: "remote", url: new URL("https://example.test/mcp") },
-        sink,
-      ),
+      new McpSource("granola", { type: "remote", url: new URL("https://example.test/mcp") }, sink),
     );
-    const registries = new Map([["ws_test", registry]]);
+    const registries = new Map([["ws_0076759dbbe19fcc", registry]]);
     lifecycle.bindWorkspaceRegistries(() => registries);
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
     sink.events = [];
 
     // disconnect calls revokeAndDeleteTokens — with no persisted tokens
@@ -179,17 +213,126 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
     // lifecycle's own contract: state transition + source teardown. The
     // registry is where the source lives, so its emptiness IS the teardown —
     // there is no second reference on the connection to check.
-    await lifecycle.disconnect("granola", "ws_test", "_workspace", {
+    await lifecycle.disconnect("granola", "ws_0076759dbbe19fcc", "_workspace", {
       workDir: "/tmp/nb-test-disconnect",
     });
 
     expect(instance.connections!.get("_workspace")!.state).toBe("not_authenticated");
-    expect(lifecycle.connectionSource("granola", "ws_test")).toBeNull();
+    expect(lifecycle.connectionSource("granola", "ws_0076759dbbe19fcc")).toBeNull();
 
     const stateEvents = sink.byType("connection.state_changed");
     expect(stateEvents.length).toBeGreaterThanOrEqual(1);
     const lastEvent = stateEvents[stateEvents.length - 1]!.data as Record<string, unknown>;
     expect(lastEvent.state).toBe("not_authenticated");
+  });
+
+  test("test_disconnect_afterAuthLost_clearsFlag_soRestartReadsNotConnected", async () => {
+    // Disconnecting a connection whose credential broke is still a deliberate
+    // disconnect. The flag must go with it, or the next boot would seed it
+    // `reauth_required` again and show an amber Reconnect for a connector the
+    // user chose to leave unconnected.
+    const owner = { type: "workspace", wsId: "ws_0076759dbbe19fcc" } as const;
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
+      url: "https://example.test/mcp",
+      serverName: "granola",
+    });
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "reauth_required",
+    );
+    await new McpOAuthRecords({ owner, serverName: "granola" }).write("auth_lost", {
+      at: "2026-01-01T00:00:00.000Z",
+    });
+
+    await lifecycle.disconnect("granola", "ws_0076759dbbe19fcc", "_workspace", { workDir });
+
+    expect(await hasMcpOAuthAuthLost(owner, "granola")).toBe(false);
+  });
+
+  test("test_disconnect_urlConnector_logsOutcomeAndTransition", async () => {
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
+      url: "https://example.test/mcp",
+      serverName: "granola",
+    });
+    lifecycle.bindWorkspaceRegistries(() => new Map([["ws_0076759dbbe19fcc", new ToolRegistry()]]));
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
+
+    const info = spyOn(log, "info").mockImplementation(() => {});
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await lifecycle.disconnect("granola", "ws_0076759dbbe19fcc", "_workspace", {
+        workDir: "/tmp/nb-test-disconnect",
+      });
+      const lines = [...info.mock.calls, ...warn.mock.calls].map((c) => [String(c[0]), c[1]]);
+      const outcome = lines.find(([m]) => m === "[lifecycle] disconnect granola");
+      expect(outcome?.[1]).toMatchObject({
+        wsId: "ws_0076759dbbe19fcc",
+        serverName: "granola",
+        brokered: false,
+      });
+      expect(
+        lines.some(([m]) => m === "[lifecycle] connection granola running → not_authenticated"),
+      ).toBe(true);
+    } finally {
+      info.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  test("test_disconnect_brokeredRevokeFails_logsOutcomeAtWarn", async () => {
+    const broker: ManagedConnectorProvider = {
+      id: "example-broker",
+      userId: (owner) => (owner.type === "workspace" ? owner.wsId : owner.userId),
+      createSession: async () => ({ type: "http", url: "https://broker.test/session/abc/mcp" }),
+      initiate: async () => ({
+        redirectUrl: "https://broker.test/connect",
+        connectedAccountId: "ca_1",
+      }),
+      cleanup: async () => ({
+        upstreamDeleted: false,
+        localDeleted: true,
+        lastError: "vendor 503",
+      }),
+    };
+    lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([broker]));
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
+      url: "https://broker.test/session/abc/mcp",
+      serverName: "granola",
+      brokered: { provider: "example-broker", connectorId: "granola" },
+    });
+    lifecycle.bindWorkspaceRegistries(() => new Map([["ws_0076759dbbe19fcc", new ToolRegistry()]]));
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
+
+    const info = spyOn(log, "info").mockImplementation(() => {});
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      await lifecycle.disconnect("granola", "ws_0076759dbbe19fcc", "_workspace", { workDir });
+      const outcome = warn.mock.calls.find((c) => c[0] === "[lifecycle] disconnect granola");
+      expect(outcome?.[1]).toMatchObject({
+        wsId: "ws_0076759dbbe19fcc",
+        serverName: "granola",
+        brokered: true,
+        revoked: { access: false },
+        deletedLocal: true,
+        revokeError: "vendor 503",
+      });
+    } finally {
+      info.mockRestore();
+      warn.mockRestore();
+    }
   });
 });
 
@@ -197,36 +340,24 @@ describe("ConnectorLifecycleManager.startAuthBackground — headless / already-a
   test("resolves the auth-URL promise with null (not reject) and transitions to running", async () => {
     const sink = new CapturingSink();
     const lifecycle = new ConnectorLifecycleManager(sink);
-    seedInstance(lifecycle, "minted", "ws_test"); // so the running transition can emit
+    seedInstance(lifecycle, "minted", "ws_0076759dbbe19fcc"); // so the running transition can emit
     const resolveAuthUrl = mock((_url: string | null) => {});
     const rejectAuthUrl = mock((_err: Error) => {});
     let disarmed = false;
-    const provider = {
+    const provider = stub<WorkspaceOAuthProvider>({
       setInteractiveAuthAllowed: (v: boolean) => {
         if (!v) disarmed = true;
       },
-    };
+    });
     // A source that connects cleanly without ever driving an interactive flow.
-    const source = { start: async () => {} };
+    const source = stub<McpSource>({ start: async () => {} });
 
-    (
-      lifecycle as unknown as {
-        startAuthBackground: (a: {
-          source: unknown;
-          provider: unknown;
-          serverName: string;
-          wsId: string;
-          principalId: string;
-          getCapturedAuthUrl: () => string | undefined;
-          resolveAuthUrl: (u: string | null) => void;
-          rejectAuthUrl: (e: Error) => void;
-        }) => void;
-      }
-    ).startAuthBackground({
+    // biome-ignore lint/complexity/useLiteralKeys: `startAuthBackground` is private; bracket access is TypeScript's typed path to it
+    lifecycle["startAuthBackground"]({
       source,
       provider,
       serverName: "minted",
-      wsId: "ws_test",
+      wsId: "ws_0076759dbbe19fcc",
       principalId: "_workspace",
       getCapturedAuthUrl: () => undefined, // headless — no interactive auth URL captured
       resolveAuthUrl,

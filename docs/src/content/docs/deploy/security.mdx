@@ -15,14 +15,14 @@ NimbleBrain uses pluggable authentication adapters configured via `instance.json
 
 | Adapter | Use case | Configuration |
 |---------|----------|--------------|
-| **dev** | Local development | No `instance.json` (default) |
+| **dev** | Local development | `adapter: "dev"`: every request is one built-in admin, no login |
 | **oidc** | Enterprise / SSO | Authorization-code flow against any OIDC provider |
 | **workos** | Enterprise / SSO via WorkOS | AuthKit-hosted login (`adapter: "workos"`) |
 
-The adapter is selected by the `auth.adapter` field in `instance.json`. With no `instance.json` present, the platform runs in dev mode.
+The adapter is selected by the `auth.adapter` field in `instance.json`. The server does not start without the file: a missing identity config never selects an adapter.
 
 <Aside type="danger">
-Running without an `instance.json` (dev mode) disables all authentication. The CORS policy falls back to `Access-Control-Allow-Origin: *`. Anyone who can reach the server has full access to the agent, including shell execution via the bash connector.
+The `dev` adapter checks no credential. Anyone who can reach the server is its org admin, with full access to the agent and every connector installed in its workspaces.
 </Aside>
 
 ### How authentication works
@@ -69,29 +69,22 @@ The `Secure` flag is automatically omitted for localhost connections (where `htt
 
 ### Logout
 
-`POST /v1/auth/logout` clears `nb_session` and `nb_refresh` by setting `Max-Age=0`. It needs no valid session, so sign-out still works after the access token has expired. It does require `Content-Type: application/json`: that header forces a CORS preflight, which a foreign origin fails, so another site cannot sign a user out with a plain form post. The client should discard any cached auth state.
+`POST /v1/auth/logout` clears `nb_session` and `nb_refresh` by setting `Max-Age=0`. It needs no valid session, so sign-out still works after the access token has expired. Under the WorkOS adapter it also revokes the WorkOS session behind the request, found from the access token or, once that cookie has expired, from `nb_refresh`, so the next sign-in asks for credentials instead of resuming that session; the cookies are cleared even if the revocation fails. It does require `Content-Type: application/json`: that header forces a CORS preflight, which a foreign origin fails, so another site cannot sign a user out with a plain form post. The client should discard any cached auth state.
 
 ## CORS
 
-Cross-Origin Resource Sharing controls which domains can make API requests from a browser. NimbleBrain has three CORS modes depending on your configuration. The deciding factor is whether **auth is configured** (an `instance.json` adapter is present), not any single environment variable:
+Cross-Origin Resource Sharing controls which domains can make API requests from a browser. The policy is the same for every auth adapter, `dev` included; `ALLOWED_ORIGINS` decides it:
 
-### Mode 1: No auth configured (development)
+### `ALLOWED_ORIGINS` unset
 
-When no `instance.json` adapter is configured (dev mode):
-- `Access-Control-Allow-Origin: *`
-- No credentials support
-- Any origin can make requests
-
-### Mode 2: Auth configured, no `ALLOWED_ORIGINS`
-
-When an auth adapter is configured but `ALLOWED_ORIGINS` is not:
+When `ALLOWED_ORIGINS` is not set:
 - No `Access-Control-Allow-Origin` header is sent
 - Only same-origin requests work (browser enforces this)
 - Cross-origin requests from any domain are blocked
 
-### Mode 3: Auth configured + `ALLOWED_ORIGINS` (production)
+### `ALLOWED_ORIGINS` set (production)
 
-When both are set:
+When it is set:
 - `Access-Control-Allow-Origin` is set to the requesting origin only if it appears in the allow list
 - `Access-Control-Allow-Credentials: true` enables cookie-based auth
 - `Vary: Origin` ensures caches differentiate by origin
@@ -109,14 +102,27 @@ If you use a custom domain with the web UI, that domain must be in `ALLOWED_ORIG
 These headers are always permitted in CORS requests:
 
 ```
-Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version, X-Workspace-Id
+Content-Type, Authorization, Last-Event-ID, Mcp-Protocol-Version, Mcp-Method, Mcp-Name
 ```
 
 These headers are exposed to client JavaScript:
 
 ```
-Mcp-Session-Id, Mcp-Protocol-Version
+Mcp-Protocol-Version
 ```
+
+### Cross-origin writes
+
+CORS stops a script on another origin from reading a response, but a plain form or `text/plain` POST needs no preflight, and `SameSite=Lax` sends the session cookie on it when the other origin is on the same site. So any write (a method other than `GET`, `HEAD` or `OPTIONS`, on any route: `/v1/*`, `/mcp/<wsId>`, webhook deliveries) that the browser marks `Sec-Fetch-Site: same-site` or `cross-site` is refused with `403 cross_site_request`, unless its `Origin` is in `ALLOWED_ORIGINS`. Same-origin requests, and clients that are not browsers (MCP clients, webhook senders, services calling the API), send no such header and are unaffected. A browser request that CORS admits after a preflight comes from an allowed origin, so it is unaffected too.
+
+### Browser origins at `/mcp/<wsId>`
+
+A request to `/mcp/<workspaceId>` that carries an `Origin` header is refused with `403 untrusted_origin` unless that origin is one of:
+
+- the instance's public origin, platform host or custom domain, or an origin in `ALLOWED_ORIGINS`;
+- the address the request was sent to, when that address is `localhost` or an IP address (a self-hosted instance opened at its own address).
+
+This is the MCP transport's DNS-rebinding protection: a page on another hostname whose DNS was pointed at your instance sends requests the browser treats as same-origin, and its `Origin` names that hostname. If you reach the web UI by a hostname that is not your public origin (for example, a LAN name for a self-hosted instance), add it to `ALLOWED_ORIGINS`, or apps in the UI cannot call their tools. MCP clients send no `Origin` and are unaffected.
 
 ## Network architecture
 
@@ -200,75 +206,21 @@ Caddy handles TLS automatically via Let's Encrypt.
 The `Secure` flag on the `nb_session` cookie is only set when the server detects a non-localhost hostname. Behind a reverse proxy that terminates TLS, this works correctly because the platform binds to `0.0.0.0`. If you test over plain HTTP on a non-localhost address, the cookie will be set with `Secure` but your browser will reject it.
 </Aside>
 
-## MCP OAuth behind a reverse proxy
+## MCP OAuth: the resource URL
 
-The `/mcp` endpoint and `/.well-known/oauth-*` endpoints advertise a `resource` URL in their OAuth metadata. Clients validate this value against the URL they connected to and **reject** responses whose scheme doesn't match (e.g. client connected via `https://…/mcp` but the server returned `resource: http://…`).
+Each workspace's MCP endpoint, `/mcp/<workspaceId>`, is its own OAuth protected resource. The `resource` its discovery document advertises, and the audience a token must carry to be accepted there, is built from the instance's configured **public origin** (`NB_PUBLIC_ORIGIN`, or the custom domain / platform host the deployment forwards) — never from the request's `Host` or `X-Forwarded-*` headers. A proxy in front of the instance therefore cannot change it, and a caller cannot choose the audience a token is checked against. See [The MCP Endpoint](/connect/mcp-endpoint#the-audience-rule) for the rule.
 
-NimbleBrain derives the scheme from the `X-Forwarded-Proto` header, falling back to the raw request scheme. When you terminate TLS at an upstream proxy, that proxy must set and preserve `X-Forwarded-Proto: https` end-to-end — otherwise OAuth discovery silently advertises `http://` and modern MCP clients fail with:
+Two things must be true for external MCP clients to connect:
 
-```
-Protected resource http://your-host does not match expected https://your-host/mcp
-```
-
-<Tabs>
-<TabItem label="AWS ALB → web container">
-
-Works out of the box. The ALB sets `X-Forwarded-Proto` based on the actual client→ALB connection scheme, and the bundled `nimblebrain-web` Caddy container trusts forwarded headers from RFC 1918 sources:
-
-```txt title="web/Caddyfile (shipped)"
-{
-    servers {
-        trusted_proxies static private_ranges
-    }
-}
-```
-
-No additional config needed. Ensure the ALB targets `nimblebrain-web`, not the platform service directly.
-
-</TabItem>
-<TabItem label="nginx → platform (direct)">
-
-If you skip the bundled `web` container and front the platform yourself, propagate the header explicitly:
-
-```nginx
-location / {
-    proxy_pass http://nimblebrain-platform:27247;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-}
-```
-
-</TabItem>
-<TabItem label="Caddy → platform (direct)">
-
-```txt title="Caddyfile"
-{
-    servers {
-        trusted_proxies static private_ranges
-    }
-}
-
-your-host.example.com {
-    reverse_proxy nimblebrain-platform:27247
-}
-```
-
-`trusted_proxies` is only required if *another* proxy sits upstream of Caddy — otherwise Caddy sets `X-Forwarded-Proto` itself based on its listener scheme.
-
-</TabItem>
-</Tabs>
+- **The public origin is the host clients use.** A client asks for a token for the URL it was given; if that URL's host differs from the configured public origin, the token's audience will not match and every request is refused. Give users the URL from **Workspace settings → MCP**, which is always canonical.
+- **The authorization server has a resource indicator for each public host.** Register one covering `<origin>/mcp/*` for the platform host and for every custom domain. Without it, the authorization server ignores the client's `resource`, mints a token whose audience is the client id, and every MCP request is refused with `401`.
 
 ### Verify
 
-After deploying, confirm the advertised scheme matches the client-facing URL:
-
 ```bash
-curl -s https://your-host.example.com/.well-known/oauth-protected-resource | jq .resource
-# must be "https://your-host.example.com"
+curl -s https://nb.example.com/.well-known/oauth-protected-resource/mcp/<workspaceId> | jq .resource
+# must be "https://nb.example.com/mcp/<workspaceId>"
 ```
-
-If it still returns `http://`, walk the proxy chain to find where `X-Forwarded-Proto` is being stripped or overwritten.
 
 ## Connector trust
 
@@ -293,8 +245,8 @@ same gates. What differs is only where the caller's identity comes from.
 
 | Door | Who is calling | Where the workspace comes from |
 |---|---|---|
-| Chat and automation runs | The authenticated user, captured when the session opened | The conversation's own workspace, or the run's provenance workspace |
-| `/mcp` | The authenticated client's user | The `X-Workspace-Id` header, validated against that user's membership |
+| Chat and task runs | The authenticated user, captured when the session opened | The conversation's own workspace, or the run's provenance workspace |
+| `/mcp/<workspaceId>` | The authenticated client's user | The URL, validated against that user's membership on every request |
 | Unattended dispatch | A user id stored in workspace configuration by an admin | The workspace that configuration belongs to |
 
 The third is the one worth understanding, because it is the only one where
@@ -309,16 +261,16 @@ Before that call runs:
 - **The principal must be a current member of the workspace.** A user who has
   since been removed does not get a denial — the call is *skipped* and recorded
   as `owner_not_member`, and it starts working again by itself if they are added
-  back. This is the same rule that governs a scheduled automation whose owner
+  back. This is the same rule that governs a scheduled task whose owner
   leaves.
 - **The tool must not widen the caller's own reach.** Creating or modifying
-  automations, authoring skills, and installing or disconnecting connectors are
-  all refused. A new automation fires again later as the same principal, a new
+  tasks, authoring skills, and installing or disconnecting connectors are
+  all refused. A new task fires again later as the same principal, a new
   skill loads itself into their later sessions, and a new connector adds tools
   and credentials that were not reachable before — so each is a way an
   unattended call could come back with more than it started with. Writing a
   workspace's custom instructions is refused for the same reason, by the same
-  rule that already refuses it inside a scheduled automation run. Ordinary
+  rule that already refuses it inside a scheduled task run. Ordinary
   writes — sending a message, updating a record — are not refused; that is what
   the door is for.
 - **The per-connector permission table applies**, exactly as it does in chat: a
@@ -339,6 +291,25 @@ when you set one) gets one
 the tool, the caller's own reason string, and the outcome. Since a dispatch
 leaves no transcript behind, this line is the record.
 
+## Data at rest
+
+Everything a deployment keeps lives in its work directory (`NB_WORK_DIR`, `/data` in the container): conversations, files, workspace records, logs, and the credential store, which holds API keys, OAuth tokens and client secrets. Anyone who can read that directory, or any copy of it, can read all of it. Two layers protect it, and they cover different things.
+
+**Encrypt the volume.** Put the work directory on storage that is encrypted at rest. That protects the disk, its snapshots, and the backups taken from them.
+
+- **Docker:** encrypt the host's disk, or the device backing the volume.
+- **Kubernetes:** use a StorageClass that encrypts. On AWS EBS that is the class parameter `encrypted: "true"`; turning on EBS encryption by default for the account, in each region you use, also covers volumes created any other way.
+
+A snapshot or backup has the encryption of the volume it was taken from. Backups of an unencrypted volume stay unencrypted for as long as they are retained, and encrypting the volume later does not change them.
+
+A volume cannot be encrypted in place. To move an existing one: stop the workload, snapshot the volume, create an encrypted volume from the snapshot, create a PersistentVolume for it, re-create the claim bound to that PersistentVolume (a claim's `volumeName` cannot be changed), and then delete the snapshot, which is an unencrypted copy of the data. Set the PersistentVolume's `reclaimPolicy` to what the old one had. If a CSI driver manages the claim, give the new volume the tags the driver uses to recognize its own volumes, or it cannot delete the volume later.
+
+**Seal the credential store.** Sealing encrypts each stored secret under a key held in the environment, so secrets stay protected where the disk is not, and in every copy of the work directory: a `tar` backup, a copied volume, the archive of a workspace deleted after sealing was on. See [Sealing the files](/config/secrets/#sealing-the-files).
+
+The boot sweep that seals existing secrets does not walk `archived/`, so a workspace deleted before sealing was on keeps its secrets in plaintext. Rotate those credentials at the vendor, then remove the archive with `manage_workspaces purge_archive`.
+
+Neither layer protects against someone who can read the running process's environment or open a shell in its container. That is an access-control boundary, not an encryption one.
+
 ## Production checklist
 
 Use this checklist before exposing NimbleBrain to any network:
@@ -353,3 +324,5 @@ Use this checklist before exposing NimbleBrain to any network:
 | Connector list reviewed | `cat workspaces/<wsId>/workspace.json` — only connectors you trust are installed |
 | Firewall restricts inbound ports | Only 443 (HTTPS) and 22 (SSH) reachable from the internet |
 | Backups configured | Test your volume backup and restore procedure |
+| Work directory on an encrypted volume | Your platform reports the volume encrypted (on AWS: `aws ec2 describe-volumes --volume-ids <id> --query 'Volumes[].Encrypted'`) |
+| Credential store sealed | `secrets.config.seal` is set, and this prints nothing: `find /data -path '*/credentials/secrets/*' -type f ! -name '.*' \| while read -r f; do head -c5 "$f" \| grep -q '^NBS1\.' \|\| echo "$f"; done` |

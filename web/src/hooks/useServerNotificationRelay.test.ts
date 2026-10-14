@@ -20,6 +20,9 @@ let fakeIframes: HTMLIFrameElement[] = [];
 /** An iframe of `appName` whose bridge delivers into the returned inbox. */
 function mountIframe(appName: string): unknown[] {
   const inbox: unknown[] = [];
+  // A fake iframe with no element behind it: the relay reads only `dataset.app`, and the
+  // bridge registry keys on the object.
+  // biome-ignore lint/plugin/double-cast: a fake iframe with only `dataset.app`
   const iframe = { dataset: { app: appName } } as unknown as HTMLIFrameElement;
   openAppChannel(iframe, (data) => inbox.push(data));
   fakeIframes.push(iframe);
@@ -28,7 +31,8 @@ function mountIframe(appName: string): unknown[] {
     const fallback = originalQSA;
     document.querySelectorAll = ((selector: string) =>
       selector === "iframe[data-app]"
-        ? (fakeIframes as unknown as NodeListOf<Element>)
+        ? // biome-ignore lint/plugin/double-cast: an array stands in for the NodeList; the hook only iterates it
+          (fakeIframes as unknown as NodeListOf<Element>)
         : fallback(selector)) as typeof document.querySelectorAll;
   }
   return inbox;
@@ -41,7 +45,7 @@ function relay() {
 let previousWorkspace: string | null;
 beforeEach(() => {
   previousWorkspace = getActiveWorkspaceId();
-  setActiveWorkspaceId("ws_a");
+  setActiveWorkspaceId("ws_00079598e311c160");
 });
 
 afterEach(() => {
@@ -59,7 +63,7 @@ describe("useServerNotificationRelay", () => {
 
     relay()({
       server: "notes",
-      workspaceId: "ws_a",
+      workspaceId: "ws_00079598e311c160",
       method: LIST_CHANGED,
       params: { _meta: { n: 1 } },
     });
@@ -72,30 +76,35 @@ describe("useServerNotificationRelay", () => {
 
   test("a notification with no params is posted with none", () => {
     const inbox = mountIframe("notes");
-    relay()({ server: "notes", workspaceId: "ws_a", method: LIST_CHANGED });
+    relay()({ server: "notes", workspaceId: "ws_00079598e311c160", method: LIST_CHANGED });
     expect(inbox).toEqual([{ jsonrpc: "2.0", method: LIST_CHANGED }]);
   });
 
   test("an iframe with no bridge is sent nothing", () => {
+    // biome-ignore lint/plugin/double-cast: A fake iframe: only `dataset.app` and `contentWindow.postMessage` exist on it.
     const iframe = {
       dataset: { app: "notes" },
       contentWindow: { postMessage: () => expect.unreachable("posted around the bridge") },
     } as unknown as HTMLIFrameElement;
     const inbox = mountIframe("notes");
     fakeIframes.push(iframe);
-    relay()({ server: "notes", workspaceId: "ws_a", method: LIST_CHANGED });
+    relay()({ server: "notes", workspaceId: "ws_00079598e311c160", method: LIST_CHANGED });
     expect(inbox).toHaveLength(1);
   });
 
   test("a method the host does not relay to views is dropped", () => {
     const inbox = mountIframe("notes");
-    relay()({ server: "notes", workspaceId: "ws_a", method: "notifications/message" });
+    relay()({
+      server: "notes",
+      workspaceId: "ws_00079598e311c160",
+      method: "notifications/message",
+    });
     expect(inbox).toEqual([]);
   });
 
   test("a notification for a workspace that is not on screen is dropped", () => {
     const inbox = mountIframe("notes");
-    relay()({ server: "notes", workspaceId: "ws_b", method: LIST_CHANGED });
+    relay()({ server: "notes", workspaceId: "ws_001c32f121060ff3", method: LIST_CHANGED });
     expect(inbox).toEqual([]);
   });
 
@@ -104,14 +113,14 @@ describe("useServerNotificationRelay", () => {
     // workspace with the one on screen is how every such notification was lost.
     const inbox = mountIframe("files");
     relay()({ server: "files", userId: "usr_a", method: LIST_CHANGED });
-    expect(getActiveWorkspaceId()).toBe("ws_a");
+    expect(getActiveWorkspaceId()).toBe("ws_00079598e311c160");
     expect(inbox).toEqual([{ jsonrpc: "2.0", method: LIST_CHANGED }]);
   });
 
   test("before the active workspace is known, it is delivered rather than lost", () => {
     setActiveWorkspaceId(null);
     const inbox = mountIframe("notes");
-    relay()({ server: "notes", workspaceId: "ws_b", method: LIST_CHANGED });
+    relay()({ server: "notes", workspaceId: "ws_001c32f121060ff3", method: LIST_CHANGED });
     expect(inbox).toHaveLength(1);
   });
 });

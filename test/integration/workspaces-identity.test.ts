@@ -8,29 +8,22 @@
  * plus auth flow and dev mode backward compatibility.
  */
 
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
-
-import { UserStore } from "../../src/identity/user.ts";
-import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
-import { saveInstanceConfig } from "../../src/identity/instance.ts";
-import type { IdentityProvider, CreateUserResult } from "../../src/identity/provider.ts";
-import type { User } from "../../src/identity/user.ts";
-import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
-import {
-  resolveWorkspace,
-  WorkspaceResolutionError,
-  authenticateRequest,
-  resolveAuthMode,
-} from "../../src/api/auth-middleware.ts";
-import {
-  buildProcessInventory,
-} from "../../src/runtime/workspace-runtime.ts";
-import type { Workspace } from "../../src/workspace/types.ts";
+import { authenticateRequest } from "../../src/api/auth-middleware.ts";
+import { isAddressedWorkspaceMember } from "../../src/api/workspace-address.ts";
+import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { ConversationAccessContext } from "../../src/conversation/types.ts";
+import { saveInstanceConfig } from "../../src/identity/instance.ts";
+import type { CreateUserResult, IdentityProvider } from "../../src/identity/provider.ts";
+import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
+import type { User } from "../../src/identity/user.ts";
+import { UserStore } from "../../src/identity/user.ts";
+import { buildProcessInventory } from "../../src/runtime/workspace-runtime.ts";
+import type { Workspace } from "../../src/workspace/types.ts";
+import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,21 +55,22 @@ describe("UC-W1: Private work with shared tools", () => {
     const kai = await userStore.create({ email: "kai@test.io", displayName: "Kai" });
 
     // Create workspace and add both
-    const eng = await wsStore.create("Engineering", "engineering");
+    const eng = await wsStore.create("Engineering");
     await wsStore.addMember(eng.id, mat.id, "admin");
     await wsStore.addMember(eng.id, kai.id, "member");
 
     // Mat creates a private conversation in Engineering
     const convDir = join(workDir, "workspaces", eng.id, "conversations");
-    const store = new JsonlConversationStore(convDir);
+    const store = new EventSourcedConversationStore({ dir: convDir });
 
     const matConv = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
       workspaceId: eng.id,
       ownerId: mat.id,
     });
 
     // Kai lists conversations -> Mat's conversation NOT visible.
-    // Stage 1: workspace role doesn't grant access; only ownership does.
+    // Workspace role doesn't grant access; only ownership does.
     const kaiAccess: ConversationAccessContext = { userId: kai.id };
     const kaiList = await store.list(undefined, kaiAccess);
     const kaiIds = kaiList.conversations.map((c) => c.id);
@@ -94,18 +88,15 @@ describe("UC-W1: Private work with shared tools", () => {
 // UC-W2: Collaborative conversation
 // ---------------------------------------------------------------------------
 
-describe("UC-W2: Single-owner conversation (Stage 1)", () => {
+describe("UC-W2: Single-owner conversation", () => {
   let workDir: string;
 
   afterEach(() => {
     if (workDir) rmSync(workDir, { recursive: true, force: true });
   });
 
-  // Stage 1 removed share/participant primitives. The collaborative-
-  // conversation use case (multi-user access to one conversation) is
-  // deferred to Stage 4 where it returns with policy gating. The
-  // surviving invariant in Stage 1: a conversation is owned by exactly
-  // one user; non-owners cannot read it.
+  // There are no share/participant primitives. The invariant: a
+  // conversation is owned by exactly one user; non-owners cannot read it.
   test("only the owner can load a conversation; other workspace members cannot", async () => {
     workDir = makeTmpDir();
 
@@ -115,21 +106,25 @@ describe("UC-W2: Single-owner conversation (Stage 1)", () => {
     const mat = await userStore.create({ email: "mat@test.io", displayName: "Mat" });
     const kai = await userStore.create({ email: "kai@test.io", displayName: "Kai" });
 
-    const eng = await wsStore.create("Engineering", "engineering");
+    const eng = await wsStore.create("Engineering");
     await wsStore.addMember(eng.id, mat.id, "admin");
     await wsStore.addMember(eng.id, kai.id, "member");
 
     const convDir = join(workDir, "workspaces", eng.id, "conversations");
-    const store = new JsonlConversationStore(convDir);
+    const store = new EventSourcedConversationStore({ dir: convDir });
 
-    const conv = await store.create({ workspaceId: eng.id, ownerId: mat.id });
+    const conv = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
+      workspaceId: eng.id,
+      ownerId: mat.id,
+    });
 
     // Mat (owner) can load it.
     const matLoaded = await store.load(conv.id, { userId: mat.id });
     expect(matLoaded).not.toBeNull();
 
-    // Kai (workspace member, not owner) cannot. No workspace-admin
-    // override in Stage 1 — sharing returns in Stage 4 with policy.
+    // Kai (workspace member, not owner) cannot. There is no
+    // workspace-admin override.
     const kaiLoaded = await store.load(conv.id, { userId: kai.id });
     expect(kaiLoaded).toBeNull();
   });
@@ -152,7 +147,7 @@ describe("UC-W4: Same app, different workspaces", () => {
     const crmConnector = { url: "https://crm.example.com/mcp", serverName: "crm" };
 
     const engineering: Workspace = {
-      id: "ws_engineering",
+      id: "ws_0030a37f450693bf",
       name: "Engineering",
       members: [],
       connectors: [crmConnector],
@@ -161,7 +156,7 @@ describe("UC-W4: Same app, different workspaces", () => {
     };
 
     const marketing: Workspace = {
-      id: "ws_marketing",
+      id: "ws_0045fe6fd50c202a",
       name: "Marketing",
       members: [],
       connectors: [crmConnector],
@@ -180,12 +175,12 @@ describe("UC-W4: Same app, different workspaces", () => {
 
     // Correct server names and workspace IDs
     const entries = inventory.map((e) => ({ serverName: e.serverName, wsId: e.wsId }));
-    expect(entries).toContainEqual({ serverName: "crm", wsId: "ws_engineering" });
-    expect(entries).toContainEqual({ serverName: "crm", wsId: "ws_marketing" });
+    expect(entries).toContainEqual({ serverName: "crm", wsId: "ws_0030a37f450693bf" });
+    expect(entries).toContainEqual({ serverName: "crm", wsId: "ws_0045fe6fd50c202a" });
 
     // Data dirs are workspace-scoped
-    expect(dataDirs[0]).toContain("ws_engineering");
-    expect(dataDirs[1]).toContain("ws_marketing");
+    expect(dataDirs[0]).toContain("ws_0030a37f450693bf");
+    expect(dataDirs[1]).toContain("ws_0045fe6fd50c202a");
   });
 });
 
@@ -207,13 +202,17 @@ describe("UC-W5: New user onboarding", () => {
     const wsStore = new WorkspaceStore(workDir);
 
     // Create user Sara directly via UserStore
-    const sara = await userStore.create({ email: "sara@test.io", displayName: "Sara", orgRole: "member" });
+    const sara = await userStore.create({
+      email: "sara@test.io",
+      displayName: "Sara",
+      orgRole: "member",
+    });
     expect(sara.email).toBe("sara@test.io");
     expect(sara.orgRole).toBe("member");
 
     // Create two workspaces
-    const eng = await wsStore.create("Engineering", "engineering");
-    const mkt = await wsStore.create("Marketing", "marketing");
+    const eng = await wsStore.create("Engineering");
+    const mkt = await wsStore.create("Marketing");
 
     // Add Sara to both
     await wsStore.addMember(eng.id, sara.id, "member");
@@ -245,7 +244,7 @@ describe("UC-W6: Workspace admin manages connectors", () => {
     const wsStore = new WorkspaceStore(workDir);
 
     // Admin creates workspace with no connectors
-    const eng = await wsStore.create("Engineering", "engineering");
+    const eng = await wsStore.create("Engineering");
     expect(eng.connectors).toHaveLength(0);
 
     // Initial inventory is empty
@@ -266,8 +265,9 @@ describe("UC-W6: Workspace admin manages connectors", () => {
     expect(inventory[0]!.wsId).toBe(eng.id);
 
     // Other workspace is unaffected
-    const mkt = await wsStore.create("Marketing", "marketing");
+    await wsStore.create("Marketing");
     const allWorkspaces = await wsStore.list();
+    expect(allWorkspaces).toHaveLength(2);
     inventory = buildProcessInventory(allWorkspaces, workDir);
     // Only 1 entry (eng has crm, mkt has none)
     expect(inventory).toHaveLength(1);
@@ -299,39 +299,50 @@ describe("Auth flow", () => {
         managedUsers: false,
         authorizationServer: false,
       },
-      async verifyRequest(): Promise<null> { return null; },
-      async listUsers(): Promise<User[]> { return []; },
+      async verifyRequest(): Promise<null> {
+        return null;
+      },
+      async listUsers(): Promise<User[]> {
+        return [];
+      },
       async createUser(data): Promise<CreateUserResult> {
-        const user = await userStore.create({ email: data.email, displayName: data.displayName, orgRole: data.orgRole });
+        const user = await userStore.create({
+          email: data.email,
+          displayName: data.displayName,
+          orgRole: data.orgRole,
+        });
         return { user };
       },
-      async deleteUser(userId: string): Promise<boolean> { return userStore.delete(userId); },
+      async deleteUser(userId: string): Promise<boolean> {
+        return userStore.delete(userId);
+      },
     };
 
     // Save instance config so this is not dev mode
     await saveInstanceConfig(workDir, {
-      auth: { adapter: "oidc", issuer: "https://auth.example.com", clientId: "test", allowedDomains: ["example.com"] },
+      auth: {
+        adapter: "oidc",
+        issuer: "https://auth.example.com",
+        clientId: "test",
+        allowedDomains: ["example.com"],
+      },
     });
 
-    const mode = resolveAuthMode(mockProvider);
-    expect(mode.type).toBe("adapter");
-
     // Request with no auth header
-    const req = new Request("http://localhost/v1/chat");
+    const req = new Request("http://localhost/v1/bootstrap");
     const { NoopEventSink } = await import("../../src/adapters/noop-events.ts");
     const result = await authenticateRequest(req, {
-      mode,
-      internalToken: "internal-test-token-12345",
+      provider: mockProvider,
       eventSink: new NoopEventSink(),
     });
 
-    expect(result).not.toBeNull();
-    expect(result!.status).toBe(401);
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Dev mode: no instance.json -> everything works as single user
+// Dev adapter: every request is the single built-in user
 // ---------------------------------------------------------------------------
 
 describe("Dev mode", () => {
@@ -351,10 +362,10 @@ describe("Dev mode", () => {
     const originalWarn = console.warn;
     console.warn = () => {};
 
-    const adapter = new DevIdentityProvider(workDir, userStore, wsStore);
+    const adapter = new DevIdentityProvider(workDir, userStore);
 
     // verifyRequest returns default identity
-    const req = new Request("http://localhost/v1/chat");
+    const req = new Request("http://localhost/v1/bootstrap");
     const identity = await adapter.verifyRequest(req);
 
     console.warn = originalWarn;
@@ -362,112 +373,96 @@ describe("Dev mode", () => {
     expect(identity).not.toBeNull();
     expect(identity!.id).toBe("usr_default");
     expect(identity!.email).toBe("dev@localhost");
-    expect(identity!.orgRole).toBe("owner");
+    expect(identity!.orgRole).toBe("admin");
 
     // Default user profile was auto-created
     const user = await userStore.get("usr_default");
     expect(user).not.toBeNull();
     expect(user!.displayName).toBe("Developer");
 
-    // DevIdentityProvider no longer creates workspaces — the runtime does.
+    // DevIdentityProvider does not create workspaces — the runtime does.
     // Verify we can create a workspace and add the dev user to it.
-    const ws = await wsStore.create("Test Workspace", "test");
-    await wsStore.addMember(ws.id, "usr_default", "owner");
+    const ws = await wsStore.create("Test Workspace");
+    await wsStore.addMember(ws.id, "usr_default", "admin");
 
     const workspaces = await wsStore.list();
     expect(workspaces.length).toBeGreaterThanOrEqual(1);
     const defaultWs = workspaces[0]!;
     expect(defaultWs.members.some((m) => m.userId === "usr_default")).toBe(true);
   });
-
-  test("dev mode auth mode resolves to dev when no adapter and no api key", () => {
-    const mode = resolveAuthMode(null);
-    expect(mode.type).toBe("dev");
-  });
 });
 
 // ---------------------------------------------------------------------------
-// Workspace resolution
+// Workspace addressing: the workspace in a /v1/workspaces/<wsId>/ path
 // ---------------------------------------------------------------------------
 
-describe("Workspace resolution", () => {
+describe("Workspace addressing", () => {
   let workDir: string;
 
   afterEach(() => {
     if (workDir) rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("rejects single-workspace user without X-Workspace-Id header", async () => {
-    // Strict resolver: addressing must be explicit on data-path requests.
+  test("admits a member to each workspace they belong to — the path chooses", async () => {
     workDir = makeTmpDir();
 
     const userStore = new UserStore(workDir);
     const wsStore = new WorkspaceStore(workDir);
 
     const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
-    const ws = await wsStore.create("Default", "default");
-    await wsStore.addMember(ws.id, user.id, "member");
-
-    const req = new Request("http://localhost/v1/chat");
-    const identity = { id: user.id, email: user.email, displayName: user.displayName, orgRole: user.orgRole };
-
-    expect(resolveWorkspace(req, identity, wsStore)).rejects.toThrow(WorkspaceResolutionError);
-  });
-
-  test("throws when user belongs to multiple workspaces without header", async () => {
-    workDir = makeTmpDir();
-
-    const userStore = new UserStore(workDir);
-    const wsStore = new WorkspaceStore(workDir);
-
-    const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
-    const eng = await wsStore.create("Engineering", "engineering");
-    const mkt = await wsStore.create("Marketing", "marketing");
+    const eng = await wsStore.create("Engineering");
+    const mkt = await wsStore.create("Marketing");
     await wsStore.addMember(eng.id, user.id, "member");
     await wsStore.addMember(mkt.id, user.id, "member");
 
-    const req = new Request("http://localhost/v1/chat");
-    const identity = { id: user.id, email: user.email, displayName: user.displayName, orgRole: user.orgRole };
-
-    expect(resolveWorkspace(req, identity, wsStore)).rejects.toThrow(WorkspaceResolutionError);
+    expect(await isAddressedWorkspaceMember(wsStore, mkt.id, user.id)).toBe(true);
+    expect(await isAddressedWorkspaceMember(wsStore, eng.id, user.id)).toBe(true);
   });
 
-  test("X-Workspace-Id header selects workspace explicitly", async () => {
+  test("refuses a non-member of the addressed workspace", async () => {
     workDir = makeTmpDir();
 
     const userStore = new UserStore(workDir);
     const wsStore = new WorkspaceStore(workDir);
 
     const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
-    const eng = await wsStore.create("Engineering", "engineering");
-    const mkt = await wsStore.create("Marketing", "marketing");
-    await wsStore.addMember(eng.id, user.id, "member");
-    await wsStore.addMember(mkt.id, user.id, "member");
-
-    const req = new Request("http://localhost/v1/chat", {
-      headers: { "X-Workspace-Id": mkt.id },
-    });
-    const identity = { id: user.id, email: user.email, displayName: user.displayName, orgRole: user.orgRole };
-
-    const wsId = await resolveWorkspace(req, identity, wsStore);
-    expect(wsId).toBe(mkt.id);
-  });
-
-  test("rejects non-member accessing workspace", async () => {
-    workDir = makeTmpDir();
-
-    const userStore = new UserStore(workDir);
-    const wsStore = new WorkspaceStore(workDir);
-
-    const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
-    const ws = await wsStore.create("Secret", "secret");
+    const ws = await wsStore.create("Secret");
     // Do NOT add user as member
 
-    const req = new Request("http://localhost/v1/chat", {
-      headers: { "X-Workspace-Id": ws.id },
-    });
-    const identity = { id: user.id, email: user.email, displayName: user.displayName, orgRole: user.orgRole };
+    expect(await isAddressedWorkspaceMember(wsStore, ws.id, user.id)).toBe(false);
+  });
 
-    expect(resolveWorkspace(req, identity, wsStore)).rejects.toThrow(WorkspaceResolutionError);
+  test("refuses an unknown, well-formed workspace id", async () => {
+    workDir = makeTmpDir();
+
+    const userStore = new UserStore(workDir);
+    const wsStore = new WorkspaceStore(workDir);
+
+    const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
+
+    expect(await isAddressedWorkspaceMember(wsStore, "ws_002cbcedbb32d4b3", user.id)).toBe(false);
+  });
+
+  test("refuses a malformed workspace id without looking it up", async () => {
+    workDir = makeTmpDir();
+
+    const userStore = new UserStore(workDir);
+    const wsStore = new WorkspaceStore(workDir);
+
+    const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
+    const ws = await wsStore.create("Default");
+    await wsStore.addMember(ws.id, user.id, "member");
+
+    let lookups = 0;
+    const get = wsStore.get.bind(wsStore);
+    wsStore.get = (id: string) => {
+      lookups++;
+      return get(id);
+    };
+
+    for (const bad of ["../../etc", `${ws.id}/../x`, "ws_..", "", `ws_${"a".repeat(65)}`]) {
+      expect(await isAddressedWorkspaceMember(wsStore, bad, user.id)).toBe(false);
+    }
+    expect(lookups).toBe(0);
   });
 });

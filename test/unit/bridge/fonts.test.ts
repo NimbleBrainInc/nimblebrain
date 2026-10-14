@@ -16,11 +16,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { buildCSP } from "../../../web/src/bridge/iframe.ts";
 import {
   FONT_SPECS,
   fontOrigin,
   getHostFontFaceCss,
+  registerBrandFonts,
   registerHostFontUrls,
 } from "../../../web/src/bridge/fonts.ts";
 import {
@@ -28,6 +28,7 @@ import {
   buildHostExtensions,
   buildHostStyles,
 } from "../../../web/src/bridge/host-extensions.ts";
+import { buildCSP } from "../../../web/src/bridge/iframe.ts";
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
 
 /** A real host serves the shell over http(s), so the default fixture supplies a
@@ -41,7 +42,9 @@ let priorWindow: unknown;
 /** The browser entry supplies these at runtime; fixtures stand in here so the
  *  mapping is exercised without `web/` dependencies. */
 function registerFixtures(): void {
-  registerHostFontUrls(Object.fromEntries(FONT_SPECS.map((s) => [s.family, `/assets/${s.family}.woff2`])));
+  registerHostFontUrls(
+    Object.fromEntries(FONT_SPECS.map((s) => [s.family, `/assets/${s.family}.woff2`])),
+  );
   priorWindow = (globalThis as { window?: unknown }).window;
   (globalThis as { window?: unknown }).window = { location: { origin: HOST_ORIGIN } };
 }
@@ -78,8 +81,7 @@ function familiesNamedByTokens(): string[] {
   const named = new Set<string>();
   for (const value of Object.values(paletteToExtAppsTokens("light"))) {
     const parts = value.split(",").map((p) => p.trim());
-    const looksLikeFontStack =
-      parts.some((p) => GENERIC.test(p)) || /^['"]/.test(parts[0] ?? "");
+    const looksLikeFontStack = parts.some((p) => GENERIC.test(p)) || /^['"]/.test(parts[0] ?? "");
     if (!looksLikeFontStack) continue;
     // First entry is the intended face; the rest is the web-safe tail.
     const first = (parts[0] ?? "").replace(/^['"]|['"]$/g, "");
@@ -94,7 +96,7 @@ describe("host font faces cover what the tokens name", () => {
     // The silent-failure guard. Rename a family in `palette.ts` without
     // updating `fonts.ts` and nothing throws — the iframe just renders in
     // `system-ui` and looks plausible. This is what catches that.
-    const shipped = new Set(FONT_SPECS.map((f) => f.family));
+    const shipped = new Set<string>(FONT_SPECS.map((f) => f.family));
     for (const family of familiesNamedByTokens()) {
       expect(shipped.has(family), `no font spec for token family "${family}"`).toBe(true);
     }
@@ -276,5 +278,50 @@ describe("unregistered URLs mean no fonts, not a broken host", () => {
     const rules = getHostFontFaceCss().split("\n");
     expect(rules).toHaveLength(1);
     expect(rules[0]).toContain(`font-family: '${FONT_SPECS[0].family}';`);
+  });
+});
+
+describe("a brand's faces ride the same channel", () => {
+  const BRAND_FACE = {
+    family: "Instrument Sans",
+    url: "https://static.example.com/brands/acme/fonts/instrument-sans.woff2",
+    weight: "400 700",
+  };
+
+  afterEach(() => registerBrandFonts([]));
+
+  test("font-src carries each brand font's origin", () => {
+    registerBrandFonts([BRAND_FACE]);
+    const fontSrc = buildCSP()
+      .split("; ")
+      .find((d) => d.startsWith("font-src"));
+    expect(fontSrc).toBe(`font-src 'self' data: ${HOST_ORIGIN} https://static.example.com`);
+  });
+
+  test("the host font CSS declares the brand face after the host's own", () => {
+    registerBrandFonts([BRAND_FACE]);
+    const rules = getHostFontFaceCss().split("\n");
+    expect(rules).toHaveLength(FONT_SPECS.length + 1);
+    expect(rules.at(-1)).toBe(
+      `@font-face { font-family: 'Instrument Sans'; src: url('${BRAND_FACE.url}') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; }`,
+    );
+  });
+
+  test("a face with no weight omits the descriptor", () => {
+    registerBrandFonts([{ family: "Plain", url: "https://fonts.example.com/plain.woff2" }]);
+    expect(getHostFontFaceCss().split("\n").at(-1)).not.toContain("font-weight");
+  });
+
+  test("a face whose URL is not absolute http(s) is dropped", () => {
+    registerBrandFonts([{ family: "Bad", url: "/relative.woff2" }]);
+    expect(getHostFontFaceCss()).not.toContain("Bad");
+    expect(buildCSP()).not.toContain("relative");
+  });
+
+  test("clearing the brand removes its faces and origins", () => {
+    registerBrandFonts([BRAND_FACE]);
+    registerBrandFonts([]);
+    expect(getHostFontFaceCss()).not.toContain("Instrument Sans");
+    expect(buildCSP()).not.toContain("static.example.com");
   });
 });

@@ -19,19 +19,24 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import type { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
 import type { ConversationEvent } from "../../../../src/conversation/types.ts";
 import { SKILL_ACTIVATED_META_KEY } from "../../../../src/engine/types.ts";
+import type { UserIdentity } from "../../../../src/identity/provider.ts";
+import { createUseSkillToolDef } from "../../../../src/platform/skills/source.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { ActivatableSkill } from "../../../../src/skills/catalog.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
 import { defineInProcessApp } from "../../../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createUseSkillToolDef } from "../../../../src/platform/skills/source.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 // ── Fake Runtime ─────────────────────────────────────────────────────────
 
 class FakeRuntime {
-  wsId: string | null = "ws_test";
+  wsId: string | null = "ws_0076759dbbe19fcc";
   identity: { id: string } | null = { id: "user_test" };
   activatable: ActivatableSkill[] = [];
   conversationEvents: ConversationEvent[] | null = null;
@@ -42,17 +47,17 @@ class FakeRuntime {
     if (!this.wsId) throw new Error("no workspace");
     return this.wsId;
   }
-  getCurrentIdentity(): { id: string } | null {
-    return this.identity;
+  getCurrentIdentity(): UserIdentity | null {
+    return this.identity && makeIdentity(this.identity);
   }
   async listActivatableSkills(wsId: string, userId: string | null): Promise<ActivatableSkill[]> {
     this.listCalls.push({ wsId, userId });
     return this.activatable;
   }
-  async resolveConversationStore(_convId: string): Promise<unknown> {
+  async resolveConversationStore(_convId: string): Promise<EventSourcedConversationStore | null> {
     if (this.conversationEvents === null) return null;
     const events = this.conversationEvents;
-    return { readEvents: async () => events };
+    return stub<EventSourcedConversationStore>({ readEvents: async () => events });
   }
 }
 
@@ -79,11 +84,14 @@ async function buildSource(): Promise<McpSource> {
     {
       name: "nb",
       version: "1.0.0",
-      tools: [createUseSkillToolDef(runtime as unknown as never)],
+      tools: [createUseSkillToolDef(stub<Runtime>(runtime))],
     },
     new NoopEventSink(),
   );
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 
@@ -156,12 +164,12 @@ describe("nb__use_skill — delivery", () => {
   });
 
   test("resolves the activatable set for the request's own workspace", async () => {
-    runtime.wsId = "ws_bound";
+    runtime.wsId = "ws_0022cd3c854f9812";
     runtime.activatable = [RUNBOOK];
     const src = await buildSource();
 
     await src.execute("use_skill", { name: "invoice-runbook" });
-    expect(runtime.listCalls).toEqual([{ wsId: "ws_bound", userId: "user_test" }]);
+    expect(runtime.listCalls).toEqual([{ wsId: "ws_0022cd3c854f9812", userId: "user_test" }]);
   });
 
   test("errors when no workspace is in scope", async () => {
@@ -274,5 +282,44 @@ describe("nb__use_skill — already-delivered dedupe", () => {
     // No request context → no conversationId → no event scan.
     const result = await src.execute("use_skill", { name: "invoice-runbook" });
     expect(resultText(result)).toContain("<activated-skill>");
+  });
+});
+
+describe("nb__use_skill — on-demand bodies", () => {
+  const ON_DEMAND: ActivatableSkill = {
+    name: "connector:srv:guide",
+    description: "Server guidance",
+    body: "",
+    scope: "provided",
+  };
+
+  test("fetches a server-published body on activation", async () => {
+    runtime.activatable = [
+      { ...ON_DEMAND, loadBody: async () => ({ ok: true, body: "Fetched guidance." }) },
+    ];
+    const src = await buildSource();
+    const result = await src.execute("use_skill", { name: ON_DEMAND.name });
+    expect(result.isError).toBe(false);
+    expect(resultText(result)).toContain("Fetched guidance.");
+  });
+
+  test("tells an unreachable server apart from content that failed verification", async () => {
+    runtime.activatable = [
+      { ...ON_DEMAND, loadBody: async () => ({ ok: false, reason: "unreachable" }) },
+    ];
+    const src = await buildSource();
+    const unreachable = await src.execute("use_skill", { name: ON_DEMAND.name });
+    expect(unreachable.isError).toBe(true);
+    expect(resultText(unreachable)).toContain("did not answer. Try again");
+
+    runtime.activatable = [
+      { ...ON_DEMAND, loadBody: async () => ({ ok: false, reason: "unverified" }) },
+    ];
+    const unverified = await src.execute("use_skill", { name: ON_DEMAND.name });
+    expect(unverified.isError).toBe(true);
+    const text = resultText(unverified);
+    expect(text).toContain("does not match the skill it listed");
+    expect(text).toContain("Retrying will not help");
+    expect(unverified._meta?.[SKILL_ACTIVATED_META_KEY]).toBeUndefined();
   });
 });

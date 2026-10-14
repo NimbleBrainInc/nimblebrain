@@ -19,7 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { ACTION_METHOD, CHAT_CONTEXT_META_KEY } from "../../web/src/bridge/extensions.ts";
+import { ACTION_METHOD } from "../../web/src/bridge/extensions.ts";
 import { buildHostCapabilities } from "../../web/src/bridge/host-capabilities.ts";
 import { validateAppToHostMessage } from "../../web/src/bridge/validate.ts";
 
@@ -44,10 +44,16 @@ beforeEach(() => {
         captured.push(msg);
       },
     },
-    addEventListener: (type: string, fn: (e: { data: unknown; source: unknown; origin: string }) => void) => {
+    addEventListener: (
+      type: string,
+      fn: (e: { data: unknown; source: unknown; origin: string }) => void,
+    ) => {
       if (type === "message") messageListeners.add(fn);
     },
-    removeEventListener: (type: string, fn: (e: { data: unknown; source: unknown; origin: string }) => void) => {
+    removeEventListener: (
+      type: string,
+      fn: (e: { data: unknown; source: unknown; origin: string }) => void,
+    ) => {
       if (type === "message") messageListeners.delete(fn);
     },
     location: { origin: "http://localhost", href: "http://localhost/" },
@@ -131,9 +137,7 @@ function lastEnvelopeWithMethod(method: string): Record<string, unknown> | undef
 
 /** Answer `ui/initialize` so the `connect()` promise can resolve. */
 function completeHandshake(): void {
-  const init = lastEnvelopeWithMethod("ui/initialize") as
-    | { id: string | number }
-    | undefined;
+  const init = lastEnvelopeWithMethod("ui/initialize") as { id: string | number } | undefined;
   if (!init) {
     throw new Error("SDK did not emit ui/initialize on instantiation");
   }
@@ -146,8 +150,9 @@ function completeHandshake(): void {
       // The real declaration, not a copy of it. The SDK sends a method only
       // where the host declared it, so a hand-written capability set here would
       // let a test pass against a promise the bridge never makes — which is the
-      // shape of every failure this suite exists to catch.
-      hostCapabilities: buildHostCapabilities(),
+      // shape of every failure this suite exists to catch. The Files app is
+      // offered every extension, so its declaration is the whole one.
+      hostCapabilities: buildHostCapabilities("files"),
       hostContext: {
         theme: "light",
         styles: { variables: {} },
@@ -160,8 +165,8 @@ function completeHandshake(): void {
  * Let the SDK's outbound envelope reach the capture.
  *
  * `connect()` runs on the spec's own client, which posts through its transport
- * over several async hops rather than the single microtask the SDK used to
- * take. A macrotask turn covers both, so every site waits the same way instead
+ * over several async hops rather than a single microtask. A macrotask turn
+ * covers any number of them, so every site waits the same way instead
  * of each one guessing how many `Promise.resolve()`s its call needs.
  */
 async function flush(): Promise<void> {
@@ -228,10 +233,9 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
   });
 
   it("app.updateModelContext emits a schema-valid request (carries an id)", async () => {
-    // Regression: the host previously required `id` on
-    // `ui/update-model-context`, dropping every model-context push from every
-    // synapse-app. The spec defines it as a **request**, so the SDK sends it
-    // with an `id` and the host answers it. Schema must admit that shape.
+    // The spec defines `ui/update-model-context` as a **request**, so the SDK
+    // sends it with an `id` and the host answers it. Schema must admit that
+    // shape, or every model-context push from every synapse-app is dropped.
     const app = await connectAndHandshake();
 
     // Sends immediately; the 250ms debounce moved into `useModelContext`.
@@ -271,24 +275,18 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
     expect(reqResult.ok, `request: ${reqResult.reason}`).toBe(true);
   });
 
-  it("sendMessage puts the chat context under the key the host reads", async () => {
-    // The host and the SDK each spell this `_meta` key from their own
-    // constant, and the envelope validates either way — `_meta` is a loose
-    // record, and the text still arrives. So a typo on either side drops every
-    // app's context with nothing failing anywhere, which is what this compares
-    // the two spellings to catch. The send itself is gated on the `message`
-    // capability, so it also fails if the declaration loses it.
+  it("sendMessage emits a schema-valid ui/message carrying the text", async () => {
+    // The send is gated on the `message` capability, so this also fails if the
+    // declaration loses it.
     const app = await connectAndHandshake();
 
-    app.sendMessage("with context", { action: "test" });
+    app.sendMessage("hello");
     await flush();
 
     const env = lastEnvelopeWithMethod("ui/message");
-    expect(env, "SDK must emit ui/message after sendMessage").toBeDefined();
-    const content = (env?.params as { content: Array<Record<string, unknown>> }).content;
-    const textBlock = content.find((b) => b.type === "text");
-    const meta = textBlock?._meta as Record<string, unknown> | undefined;
-    expect(meta?.[CHAT_CONTEXT_META_KEY]).toEqual({ action: "test" });
+    if (!env) throw new Error("SDK must emit ui/message after sendMessage");
+    const content = (env.params as { content: Array<Record<string, unknown>> }).content;
+    expect(content.find((b) => b.type === "text")?.text).toBe("hello");
     const v = validateAppToHostMessage(env);
     expect(v.ok, `ui/message: ${v.reason}`).toBe(true);
   });

@@ -10,23 +10,6 @@ import type {
 } from "./chat-store";
 import { chatStore, freshDraftKey, isDraftKey } from "./chat-store";
 
-// Re-export the display types so existing `from "../hooks/useChat"` imports
-// keep working — the slice store now owns the definitions.
-export type {
-  ChatMessage,
-  ComposerDraft,
-  ContentBlock,
-  IterationProgress,
-  LedgerSkill,
-  LoadedConversationMeta,
-  MessageFileAttachment,
-  PreparingTool,
-  SkillsLoadedContext,
-  StreamingState,
-  ToolCallDisplay,
-  ToolResultForUI,
-} from "./chat-store";
-
 export interface UseChatReturn {
   messages: ChatMessage[];
   isStreaming: boolean;

@@ -9,21 +9,22 @@
  * `skills-tools.test.ts`.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { type ResolvedFeatures, resolveFeatures } from "../../../../src/config/features.ts";
 import {
   createSkillsSource,
   isTaskForbiddenSkillTool,
 } from "../../../../src/platform/skills/source.ts";
-import {
-  resolveFeatures,
-  type ResolvedFeatures,
-} from "../../../../src/config/features.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
+import { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { textOf } from "../../../helpers/resource-contents.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 // ── Fake Runtime ────────────────────────────────────────────────────────
 //
@@ -70,8 +71,11 @@ afterEach(async () => {
 
 async function buildSource(): Promise<McpSource> {
   const runtime = new FakeRuntime(workDir);
-  source = createSkillsSource(runtime as unknown as never, new NoopEventSink());
+  source = createSkillsSource(stub<Runtime>(runtime), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 
@@ -90,11 +94,14 @@ async function buildSourceWithFeatures(
 ): Promise<McpSource> {
   const runtime = new FakeRuntime(workDir);
   source = createSkillsSource(
-    runtime as unknown as never,
+    stub<Runtime>(runtime),
     new NoopEventSink(),
     resolveFeatures({ skillManagement: true, ...overrides }),
   );
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 
@@ -139,7 +146,7 @@ describe("skills source — tools list", () => {
     const client = src.getClient()!;
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name);
-    // Phase 4+ tools — author/commit_draft/lint/attribution land later.
+    // author/commit_draft/lint/attribution are not tools of this source.
     expect(names).not.toContain("author");
     expect(names).not.toContain("commit_draft");
     expect(names).not.toContain("lint");
@@ -183,7 +190,7 @@ describe("skills source — resources", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const data = await client.readResource({ uri: "skill://skills/authoring-guide" });
-    const text = (data.contents?.[0]?.text as string | undefined) ?? "";
+    const text = textOf(data.contents?.[0]) ?? "";
     expect(typeof text).toBe("string");
     expect(text.length).toBeGreaterThan(0);
     // Real Task 005 content begins with frontmatter (`---`); the placeholder
@@ -208,8 +215,8 @@ describe("skills source — resources", () => {
 describe("skills source — unattended-run wall", () => {
   // `set_status` is the durable write and is barred, obviously.
   //
-  // `activate`/`deactivate` are barred too, and stay barred now that they only
-  // mute for one conversation. They no longer touch a file, but "turn the
+  // `activate`/`deactivate` are barred too, though they only mute for one
+  // conversation. They do not touch a file, but "turn the
   // guidance off" is exactly the lever untrusted content would reach for, and
   // an unattended run is where nobody is watching it happen. Not writing to
   // disk makes them safer for a human's chat; it does not make them safe here.
@@ -273,7 +280,7 @@ describe("skills source — unattended-run wall", () => {
   // invalid args would pass while proving nothing about the wall.
   const VALID_CREATE = {
     scope: "workspace",
-    manifest: { name: "injected", description: "written by an automation" },
+    manifest: { name: "injected", description: "written by a task" },
     body: "# do the attacker's bidding",
   };
 
@@ -283,7 +290,7 @@ describe("skills source — unattended-run wall", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
-      { identity: { id: "user_test" }, unattended: true } as never,
+      { identity: makeIdentity({ id: "user_test" }), unattended: true },
       () => client.callTool({ name: "create", arguments: VALID_CREATE }),
     );
     expect(result.isError).toBe(true);
@@ -291,22 +298,22 @@ describe("skills source — unattended-run wall", () => {
       .filter((c) => c.type === "text")
       .map((c) => c.text)
       .join("");
-    expect(text).toContain("not available inside an unattended automation run");
+    expect(text).toContain("not available inside an unattended task run");
   });
 
   test("a read called inside an unattended run is NOT refused by the wall", async () => {
-    // The automation's whole permitted job — audit and report — must survive.
+    // The task's whole permitted job — audit and report — must survive.
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
-      { identity: { id: "user_test" }, unattended: true } as never,
+      { identity: makeIdentity({ id: "user_test" }), unattended: true },
       () => client.callTool({ name: "list", arguments: {} }),
     );
     const text = (result.content as Array<{ type: string; text: string }>)
       .filter((c) => c.type === "text")
       .map((c) => c.text)
       .join("");
-    expect(text).not.toContain("not available inside an unattended automation run");
+    expect(text).not.toContain("not available inside an unattended task run");
   });
 
   test("the wall survives the feature-gated build path", async () => {
@@ -318,7 +325,7 @@ describe("skills source — unattended-run wall", () => {
     const src = await buildSourceWithFeatures();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
-      { identity: { id: "user_test" }, unattended: true } as never,
+      { identity: makeIdentity({ id: "user_test" }), unattended: true },
       () => client.callTool({ name: "create", arguments: VALID_CREATE }),
     );
     expect(result.isError).toBe(true);
@@ -326,7 +333,7 @@ describe("skills source — unattended-run wall", () => {
       .filter((c) => c.type === "text")
       .map((c) => c.text)
       .join("");
-    expect(text).toContain("not available inside an unattended automation run");
+    expect(text).toContain("not available inside an unattended task run");
   });
 
   test("the feature gate survives alongside the wall", async () => {
@@ -352,6 +359,6 @@ describe("skills source — unattended-run wall", () => {
       .filter((c) => c.type === "text")
       .map((c) => c.text)
       .join("");
-    expect(text).not.toContain("not available inside an unattended automation run");
+    expect(text).not.toContain("not available inside an unattended task run");
   });
 });

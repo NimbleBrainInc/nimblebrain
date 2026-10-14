@@ -1,9 +1,9 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
+import type { OAuthClientInformationFull } from "@modelcontextprotocol/server";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import {
   installTestCredentialStore,
@@ -38,14 +38,10 @@ import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const CALLBACK = "http://localhost:27247/v1/mcp-auth/callback";
 
-function makeProvider(
-  workDir: string,
-  onInteractiveAuthRequired?: (url: string) => void,
-): WorkspaceOAuthProvider {
+function makeProvider(onInteractiveAuthRequired?: (url: string) => void): WorkspaceOAuthProvider {
   const provider = new WorkspaceOAuthProvider({
-    owner: { type: "workspace", wsId: "ws_test" },
+    owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
     serverName: "test-srv",
-    workDir,
     callbackUrl: CALLBACK,
     ...(onInteractiveAuthRequired ? { onInteractiveAuthRequired } : {}),
   });
@@ -80,7 +76,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-concurrency-test-"));
-    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
     installTestCredentialStore(workDir);
   });
 
@@ -89,7 +85,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
   });
 
   it("state() returns the same value across concurrent callers", () => {
-    const p = makeProvider(workDir);
+    const p = makeProvider();
     // `state()` is synchronous; concurrent invocations within one tick all
     // observe the FIRST call's pendingFlow and return its currentState.
     const states = [p.state(), p.state(), p.state(), p.state()];
@@ -97,7 +93,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
   });
 
   it("saveCodeVerifier — first writer wins; subsequent concurrent writes no-op", async () => {
-    const p = makeProvider(workDir);
+    const p = makeProvider();
     p.state(); // create pendingFlow
     // Three concurrent saves with different verifiers — only the first
     // should land; the rest are no-ops so the verifier paired with the
@@ -111,7 +107,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
   });
 
   it("saveClientInformation — first writer wins; subsequent DCRs do not overwrite", async () => {
-    const p = makeProvider(workDir);
+    const p = makeProvider();
     const a: OAuthClientInformationFull = { client_id: "client-A", redirect_uris: [CALLBACK] };
     const b: OAuthClientInformationFull = { client_id: "client-B", redirect_uris: [CALLBACK] };
     const c: OAuthClientInformationFull = { client_id: "client-C", redirect_uris: [CALLBACK] };
@@ -120,7 +116,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
       p.saveClientInformation(b),
       p.saveClientInformation(c),
     ]);
-    const fresh = makeProvider(workDir);
+    const fresh = makeProvider();
     expect((await fresh.clientInformation())?.client_id).toBe("client-A");
   });
 
@@ -132,9 +128,8 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     // through the SDK's natural failure path.
     const controller = new AbortController();
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "test-srv",
-      workDir,
       callbackUrl: CALLBACK,
       abortSignal: controller.signal,
     });
@@ -152,9 +147,8 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     const controller = new AbortController();
     controller.abort();
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "test-srv",
-      workDir,
       callbackUrl: CALLBACK,
       abortSignal: controller.signal,
     });
@@ -167,7 +161,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
   });
 
   it("clientInformation() — concurrent callers awaiting a fresh DCR all get the first save's value", async () => {
-    const p = makeProvider(workDir);
+    const p = makeProvider();
     // First caller sees the DCR slot empty, returns undefined (SDK would
     // do DCR), and claims the in-flight slot. Subsequent callers find the
     // slot held and await its result.
@@ -181,46 +175,43 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     expect(b?.client_id).toBe("first-dcr");
   });
 
-  it(
-    "redirectToAuthorization — only the chain whose PKCE matches the disk verifier captures the URL",
-    async () => {
-      const captured: string[] = [];
-      const p = makeProvider(workDir, (url) => captured.push(url));
-      const state = p.state();
-      // Simulate two SDK auth() chains: each generates its own verifier
-      // and an authorize URL whose code_challenge is SHA256(its verifier).
-      const vA = "verifier-A-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-      const vB = "verifier-B-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-      const urlA = buildAuthUrl({ clientId: "client-X", state, verifier: vA });
-      const urlB = buildAuthUrl({ clientId: "client-X", state, verifier: vB });
+  it("redirectToAuthorization — only the chain whose PKCE matches the disk verifier captures the URL", async () => {
+    const captured: string[] = [];
+    const p = makeProvider((url) => captured.push(url));
+    const state = p.state();
+    // Simulate two SDK auth() chains: each generates its own verifier
+    // and an authorize URL whose code_challenge is SHA256(its verifier).
+    const vA = "verifier-A-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const vB = "verifier-B-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const urlA = buildAuthUrl({ clientId: "client-X", state, verifier: vA });
+    const urlB = buildAuthUrl({ clientId: "client-X", state, verifier: vB });
 
-      // Chain A saves its verifier first → claims the verifier slot.
-      await p.saveCodeVerifier(vA);
-      await p.saveCodeVerifier(vB); // coalesced no-op; disk stays vA
+    // Chain A saves its verifier first → claims the verifier slot.
+    await p.saveCodeVerifier(vA);
+    await p.saveCodeVerifier(vB); // coalesced no-op; disk stays vA
 
-      // Both chains call redirectToAuthorization. Each throws (the headless
-      // probe is off + we use the interactive branch's UnauthorizedError
-      // exit). Only the chain whose URL's challenge matches the saved
-      // verifier should reach the onInteractiveAuthRequired callback.
-      await expect(p.redirectToAuthorization(urlB)).rejects.toThrow();
-      await expect(p.redirectToAuthorization(urlA)).rejects.toThrow();
+    // Both chains call redirectToAuthorization. Each throws (the headless
+    // probe is off + we use the interactive branch's UnauthorizedError
+    // exit). Only the chain whose URL's challenge matches the saved
+    // verifier should reach the onInteractiveAuthRequired callback.
+    await expect(p.redirectToAuthorization(urlB)).rejects.toThrow();
+    await expect(p.redirectToAuthorization(urlA)).rejects.toThrow();
 
-      // Exactly one URL captured — the one whose challenge == SHA256(disk verifier).
-      expect(captured.length).toBe(1);
-      const capturedUrl = new URL(captured[0]!);
-      expect(capturedUrl.searchParams.get("code_challenge")).toBe(pkceChallenge(vA));
+    // Exactly one URL captured — the one whose challenge == SHA256(disk verifier).
+    expect(captured.length).toBe(1);
+    const capturedUrl = new URL(captured[0]!);
+    expect(capturedUrl.searchParams.get("code_challenge")).toBe(pkceChallenge(vA));
 
-      // And the disk verifier produces that exact challenge — the tuple is
-      // coherent end-to-end (this is what makes the exchange succeed).
-      expect(pkceChallenge(await p.codeVerifier())).toBe(
-        capturedUrl.searchParams.get("code_challenge"),
-      );
-    },
-  );
+    // And the disk verifier produces that exact challenge — the tuple is
+    // coherent end-to-end (this is what makes the exchange succeed).
+    expect(pkceChallenge(await p.codeVerifier())).toBe(
+      capturedUrl.searchParams.get("code_challenge"),
+    );
+  });
 
   it("end-to-end: N concurrent chains converge to one coherent (state, verifier, client_id, URL) tuple", async () => {
     const captured: string[] = [];
-    const p = makeProvider(workDir, (url) => captured.push(url));
+    const p = makeProvider((url) => captured.push(url));
 
     // Simulate 3 concurrent SDK auth() chains, each doing the full sequence
     // (DCR + state + saveCodeVerifier + redirectToAuthorization). All in
@@ -239,7 +230,9 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
       const verifier = `verifier-${label}-padding-padding-padding-padding`;
       await p.saveCodeVerifier(verifier);
       try {
-        await p.redirectToAuthorization(buildAuthUrl({ clientId: `client-${label}`, state: s, verifier }));
+        await p.redirectToAuthorization(
+          buildAuthUrl({ clientId: `client-${label}`, state: s, verifier }),
+        );
       } catch {
         // Expected — all chains throw UnauthorizedError; the matching one
         // throws after capture, the others throw before.
@@ -262,7 +255,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     // makes the vendor accept the exchange (code was issued for THIS client).
     // Read through a fresh provider so the assertion goes through persistence,
     // not this one's in-memory cache.
-    const stored = await makeProvider(workDir).clientInformation();
+    const stored = await makeProvider().clientInformation();
     expect(capturedUrl.searchParams.get("client_id")).toBe(stored?.client_id);
   });
 });

@@ -1,33 +1,26 @@
 /**
  * The ledger, end to end: a real turn spends, and `usage__report` reads it back.
  *
- * This is the regression test for the defect the ledger exists to fix. Usage
- * used to be derived from a storage side effect — a conversation JSONL
- * happening to exist — so a task run, which persists no conversation, spent
- * money the report could not see. The first test below runs `executeTask` and
- * asserts the spend appears. Before the ledger it did not, and no unit test
- * could have caught that, because the gap was between the writer and the
- * reader rather than inside either.
+ * This guards the defect the ledger exists to prevent. Usage derived from a
+ * storage side effect — a conversation JSONL happening to exist — would miss a
+ * task run, which persists no conversation. The first test below runs
+ * `executeTask` and asserts the spend appears. No unit test can catch that,
+ * because the gap is between the writer and the reader rather than inside
+ * either.
  */
 
 import { afterEach, expect, test } from "bun:test";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { aggregateUsage } from "../../src/usage/aggregate.ts";
 import { usageMonthDir, usageMonthOf } from "../../src/usage/paths.ts";
 import type { UsageLedgerEntry } from "../../src/usage/types.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_IDENTITY } from "../helpers/test-auth-adapter.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime | undefined;
 let workDir = "";
@@ -43,9 +36,10 @@ async function start(): Promise<Runtime> {
   workDir = mkdtempSync(join(tmpdir(), "nb-ledger-"));
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createMockModel(() => ({
+    identityProvider: devProvider,
+    languageModel: createMockModel(() => ({
       content: [{ type: "text", text: "ok" }],
-    })) },
+    })),
     logging: { disabled: true },
     workDir,
   });
@@ -86,7 +80,7 @@ test("a task run's spend reaches the report — the defect the ledger exists to 
   const report = await aggregateUsage(workDir, "month", "origin");
   expect(report.totals.llmCalls).toBe(lines.length);
   // Counted as a run, not a conversation — `sessionId` holds a run id here, so
-  // conflating the two would report an automation as someone chatting.
+  // conflating the two would report a task as someone chatting.
   expect(report.totals.runs).toBe(1);
   expect(report.totals.conversations).toBe(0);
   expect(report.breakdown.find((b) => b.key === "task")).toBeDefined();
@@ -135,7 +129,7 @@ test("an unpriced line reports its tokens and is counted, not billed as zero", a
 
   // Unpriced lines arise from backfill, not from live writes: the writer
   // resolves rates whenever the catalog knows the model, and a backfilled
-  // automation run has no model recorded at all. So this writes the shape
+  // task run has no model recorded at all. So this writes the shape
   // backfill produces and reads it back, which is where the distinction has to
   // hold — the reader is what decides whether "no price" reads as "free".
   const month = usageMonthOf(new Date());

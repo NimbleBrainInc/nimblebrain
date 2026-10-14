@@ -1,19 +1,22 @@
 import { WorkOS } from "@workos-inc/node";
-import { isAllowedOriginScheme, publicOrigin } from "../../oauth/public-origin.ts";
+import { publicOrigin } from "../../oauth/public-origin.ts";
 import { log } from "../../observability/log.ts";
-import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
-import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { WorkosAuth } from "../instance.ts";
-import type {
-  AuthorizationServer,
-  CreateUserInput,
-  CreateUserResult,
-  IdentityProvider,
-  ProviderCapabilities,
-  TokenResult,
-  UserIdentity,
+import {
+  type AuthorizationServer,
+  type CreateUserInput,
+  type CreateUserResult,
+  FIRST_PARTY_GRANT,
+  type IdentityProvider,
+  type ProviderCapabilities,
+  RefreshTokenError,
+  type TokenGrant,
+  type TokenResult,
+  TransientAuthError,
+  type UpdateUserInput,
+  type UserIdentity,
+  type VerifiedIdentity,
 } from "../provider.ts";
-import { RefreshTokenError, TransientAuthError } from "../provider.ts";
 import type { OrgRole } from "../types.ts";
 import type { User, UserPreferences, UserStore } from "../user.ts";
 
@@ -28,6 +31,7 @@ interface WorkosJwtPayload {
   sub?: string;
   sid?: string;
   org_id?: string;
+  aud?: string | string[];
   exp?: number;
   iat?: number;
   [key: string]: unknown;
@@ -51,11 +55,11 @@ const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Why a `verifyRequest` call rejected a token. Each value names one of the
- * provider's silent `return null` exits so an operator triaging an
- * involuntary logout sees the specific gate instead of a bare 401.
- * `org_mismatch` is the one behind the `retry_401` incident: a refreshed
- * token whose `org_id` no longer matches the configured org. See
- * {@link WorkosIdentityProvider.reject}.
+ * token-level `return null` exits, so a 401 in the logs carries the gate that
+ * produced it; an access denial from `resolveUser` logs its own `DENIED` line
+ * instead. `org_mismatch` is a token, from either issuer, whose `org_id`
+ * is not the configured org or is absent, such as one minted for another org
+ * of a multi-org user. See {@link WorkosIdentityProvider.reject}.
  */
 type WorkosRejectReason =
   | "no_token"
@@ -125,20 +129,24 @@ function extractToken(req: Request): string | null {
   if (authHeader?.startsWith("Bearer ")) return authHeader.slice(7);
 
   // Fall back to nb_session cookie (set during auth code flow callback)
+  return cookieValue(req, "nb_session");
+}
+
+function cookieValue(req: Request, name: string): string | null {
   const cookieHeader = req.headers.get("cookie");
   if (!cookieHeader) return null;
   for (const part of cookieHeader.split(";")) {
     const trimmed = part.trim();
-    if (trimmed.startsWith("nb_session=")) return trimmed.slice(11);
+    if (trimmed.startsWith(`${name}=`)) return trimmed.slice(name.length + 1);
   }
   return null;
 }
 
 /**
  * WorkOS role slugs that map to the app `admin` role when the operator hasn't
- * configured `adminRoleSlugs`. Includes `owner` so a WorkOS org-owner role
- * lands as app `admin` (the app's `owner` tier is internal — see
- * `syncLocalProfile`), and so the common case works without configuration.
+ * configured `adminRoleSlugs`. Includes `owner`, WorkOS's name for an org
+ * owner, so that role lands as app `admin`, the top app role, without
+ * configuration.
  */
 const DEFAULT_ADMIN_ROLE_SLUGS = ["admin", "owner"];
 
@@ -154,36 +162,6 @@ function normalizeAdminRoleSlugs(slugs: string[] | undefined): Set<string> {
   const source = slugs && slugs.length > 0 ? slugs : DEFAULT_ADMIN_ROLE_SLUGS;
   const normalized = source.map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0);
   return new Set(normalized.length > 0 ? normalized : DEFAULT_ADMIN_ROLE_SLUGS);
-}
-
-/**
- * Resolve the WorkOS OAuth `redirect_uri`. An explicit value (legacy
- * `WORKOS_REDIRECT_URI`) overrides; **empty or blank-only counts as absent** and
- * derives `${publicOrigin()}/v1/auth/callback`. The empty case is load-bearing:
- * the Helm init container emits `"redirectUri":""` whenever the secret is unset
- * (and `instance.ts` keeps `""` as a present field, since `"" !== undefined`), so
- * a plain `??` would hand WorkOS an empty `redirect_uri` and break login at first
- * click. A non-empty override is validated here so a malformed value fails closed
- * at construction (startup), not at the user's first login.
- */
-function resolveWorkosRedirectUri(explicit: string | undefined): string {
-  const trimmed = explicit?.trim();
-  if (!trimmed) return `${publicOrigin()}/v1/auth/callback`;
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    throw new Error(`[workos] redirectUri override is not a valid URL: "${trimmed}"`);
-  }
-  // Shared scheme/loopback rule (owned by public-origin.ts) so this can't drift
-  // from assertOrigin. Unlike a bare origin, a redirect URI legitimately carries
-  // a path (/v1/auth/callback), so only the scheme is checked here.
-  if (!isAllowedOriginScheme(url)) {
-    throw new Error(
-      `[workos] redirectUri override must be https (or http on a loopback host in dev): "${trimmed}"`,
-    );
-  }
-  return trimmed;
 }
 
 // ── WorkosIdentityProvider ────────────────────────────────────────
@@ -207,13 +185,24 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private organizationId: string | undefined;
   private authkitDomain: string | undefined;
   private adminRoleSlugs: Set<string>;
+  private adminRoleSlugForWrite: string;
+  /** Client IDs whose AuthKit tokens are first-party; empty means none are. */
+  private firstPartyClientIds: ReadonlySet<string>;
   private userStore: UserStore | null;
-  private workspaceStore: WorkspaceStore;
 
   private jwksCache: CachedJwks | null = null;
   private authkitJwksCache: CachedJwks | null = null;
   private userCache = new Map<string, { identity: UserIdentity; fetchedAt: number }>();
   private static USER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  /**
+   * How long after its last successful check a cached identity may still be
+   * served while WorkOS is failing. The membership check is what notices an
+   * org removal made in WorkOS, and during an outage that check is the call
+   * that fails, so this is the longest such a removal can go unnoticed. It is
+   * long enough to ride out a rate-limit window or a short outage without
+   * failing requests. Past it, the request gets a 503, not the old answer.
+   */
+  private static MAX_STALE_IDENTITY_MS = 30 * 60 * 1000; // 30 minutes
   /**
    * Normalized slugs already warned about in `resolveOrgRole`, so an
    * unrecognized-but-legitimate non-admin slug (e.g. `viewer`) logs once per
@@ -229,34 +218,38 @@ export class WorkosIdentityProvider implements IdentityProvider {
   /**
    * userStore is optional because WorkOS itself is the source of truth for
    * users (managedUsers: true); the local profile is a cache for preferences.
-   * workspaceStore is required: Phase 1 establishes the "authenticated user
-   * has ≥1 workspace" invariant at the identity boundary, and that requires
-   * a place to create workspaces.
    */
-  constructor(
-    config: WorkosAuth,
-    userStore: UserStore | undefined,
-    workspaceStore: WorkspaceStore,
-  ) {
+  constructor(config: WorkosAuth, userStore: UserStore | undefined) {
     const apiKey = process.env.WORKOS_API_KEY ?? config.apiKey ?? "";
     this.workos = new WorkOS(apiKey, { clientId: config.clientId });
     this.clientId = config.clientId;
-    // Explicit override (legacy WORKOS_REDIRECT_URI) wins; absent OR empty
-    // derives from publicOrigin(). See resolveWorkosRedirectUri — the empty case
-    // matters because the chart emits redirectUri:"" when the secret is unset.
-    // A derived value must match a redirect URI registered in the WorkOS dashboard.
-    this.redirectUri = resolveWorkosRedirectUri(config.redirectUri);
+    // The OAuth callback is always on the canonical public origin; it must
+    // match a redirect URI registered in the WorkOS dashboard.
+    this.redirectUri = `${publicOrigin()}/v1/auth/callback`;
+    // Every org gate below reads a falsy organizationId as "no organization
+    // scope", so a blank one must never get this far. instance.json loading
+    // rejects it; this covers a provider built from config that skipped it.
+    if (config.organizationId !== undefined && config.organizationId.trim() === "")
+      throw new Error("workos auth 'organizationId' must not be empty");
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
     this.adminRoleSlugs = normalizeAdminRoleSlugs(config.adminRoleSlugs);
+    // The slug written when `manage_users` makes someone an admin: the first
+    // one the operator names, so it is a role their WorkOS environment has.
+    this.adminRoleSlugForWrite = [...this.adminRoleSlugs][0] ?? "admin";
+    this.firstPartyClientIds = new Set(
+      (config.firstPartyClientIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0),
+    );
     this.userStore = userStore ?? null;
-    this.workspaceStore = workspaceStore;
     this.capabilities = {
       authCodeFlow: true,
       tokenRefresh: true,
       managedUsers: true,
       // AuthKit is the authorization server; without a domain there is none.
       authorizationServer: this.authkitOrigin() !== null,
+      // AuthKit signs a user in by their email, so changing it is an identity
+      // change WorkOS owns, not a profile edit.
+      providerOwnedUserFields: ["email"],
     };
   }
 
@@ -266,7 +259,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
     return this.buildAuthorizationUrl();
   }
 
-  async verifyRequest(req: Request): Promise<UserIdentity | null> {
+  async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const token = extractToken(req);
     if (!token) return this.reject("no_token");
 
@@ -285,27 +278,53 @@ export class WorkosIdentityProvider implements IdentityProvider {
     // Must have sub (WorkOS user ID)
     if (typeof payload.sub !== "string") return this.reject("missing_sub");
 
-    // Route verification based on issuer: AuthKit MCP OAuth vs WorkOS User Management.
-    // Both branches route their rejections through reject() so failures carry the
-    // same reason field and severity — one reason-keyed view covers both issuers.
-    const authkitIssuer = this.authkitOrigin();
-    const identity =
-      authkitIssuer && payload.iss === authkitIssuer
-        ? await this.verifyAuthkitToken(parsed, payload.sub)
-        : await this.verifyUserManagementToken(parsed, payload.sub);
-
-    // Enforce the invariant "authenticated user has ≥1 workspace" on every
-    // successful auth — covers the AuthKit/MCP-OAuth path (which never hits
-    // exchangeCode) and self-heals any user whose workspace was lost to
-    // admin deletion, partial failure, or migration. Idempotent; the happy
-    // path is one filesystem read.
-    if (identity) {
-      await ensureUserWorkspace(this.workspaceStore, {
-        id: identity.id,
-        displayName: identity.displayName,
+    // Every token, whichever issuer minted it, must be for the configured org.
+    // Membership alone does not settle it: a user who belongs to several orgs
+    // holds tokens minted for each, and only this org's may act here. `iss`
+    // says which issuer minted the refused token. This gate runs before the
+    // signature check, so `claimed_org` and `iss` are unverified input: safe
+    // to log, since a forged value only ever lands here or fails the signature
+    // check next, but not authoritative.
+    if (this.organizationId && payload.org_id !== this.organizationId) {
+      return this.reject("org_mismatch", {
+        sub: payload.sub,
+        iss: payload.iss ?? null,
+        claimed_org: payload.org_id ?? null,
+        expected_org: this.organizationId,
       });
     }
-    return identity;
+
+    // Route verification based on issuer: AuthKit MCP OAuth vs WorkOS User Management.
+    // Both branches route their token rejections through reject() so failures
+    // carry the same reason field and severity — one reason-keyed view covers
+    // both issuers. resolveUser's access denials log their own DENIED line.
+    //
+    // The issuer and the client decide the grant. A User Management token was
+    // issued to this instance's own login client, so it is first-party. An
+    // AuthKit token is first-party only when the client it was issued to (its
+    // signed `client_id`) is one the operator lists as its own; any other was
+    // minted for the resource its client named, so it carries its
+    // (signature-covered) audience. The audience never decides first-party
+    // standing: it says where a token may be used, not whose app holds it, and
+    // an MCP client that refreshes without a `resource` gets the same `aud`
+    // as a first-party app.
+    const authkitIssuer = this.authkitOrigin();
+    const fromAuthkit = authkitIssuer !== null && payload.iss === authkitIssuer;
+    const identity = fromAuthkit
+      ? await this.verifyAuthkitToken(parsed, payload.sub)
+      : await this.verifyUserManagementToken(parsed, payload.sub);
+
+    if (!identity) return null;
+    const grant: TokenGrant =
+      !fromAuthkit || this.isFirstPartyClient(payload.client_id)
+        ? FIRST_PARTY_GRANT
+        : { kind: "resource", audience: audienceList(payload.aud) };
+    return { ...identity, grant };
+  }
+
+  /** Whether a verified AuthKit token's `client_id` claim names a configured first-party client. */
+  private isFirstPartyClient(clientId: unknown): boolean {
+    return typeof clientId === "string" && this.firstPartyClientIds.has(clientId);
   }
 
   /**
@@ -324,29 +343,13 @@ export class WorkosIdentityProvider implements IdentityProvider {
   }
 
   /**
-   * Verify a WorkOS User Management JWT (org gate then WorkOS JWKS signature), then resolve the user.
+   * Verify a WorkOS User Management JWT against the WorkOS JWKS, then resolve the user.
    */
   private async verifyUserManagementToken(
     parsed: ParsedJwt,
     sub: string,
   ): Promise<UserIdentity | null> {
-    const { header, payload, signatureInput, signature } = parsed;
-
-    // Validate org_id matches configured organization. This is the silent gate
-    // behind the involuntary-logout incident: a refreshed token whose org_id
-    // drifted from the configured org (see refreshToken) lands here and was,
-    // until instrumented, indistinguishable from any other 401.
-    if (this.organizationId && payload.org_id !== this.organizationId) {
-      // `claimed_org` is the org_id from the JWT payload — this gate runs BEFORE
-      // signature verification, so it is unverified input. It's safe to log (a
-      // forged value only ever lands here or fails the sig check next) but an
-      // operator must not treat it as authoritative.
-      return this.reject("org_mismatch", {
-        sub,
-        claimed_org: payload.org_id ?? null,
-        expected_org: this.organizationId,
-      });
-    }
+    const { header, signatureInput, signature } = parsed;
 
     // Verify signature against WorkOS JWKS
     const keys = await this.getJwks();
@@ -379,7 +382,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
       }
     }
 
-    // Provision user on first login — sync profile + create private workspace
+    // Provision user on first login — sync the local profile
     await this.provisionUser(result.user);
 
     return {
@@ -388,22 +391,80 @@ export class WorkosIdentityProvider implements IdentityProvider {
     };
   }
 
+  /**
+   * Revoke the WorkOS session behind the request. Without this, AuthKit keeps
+   * its own session, and the next sign-in resumes it without asking for
+   * credentials. The session id (`sid`) comes from the access token when the
+   * request carries one, and otherwise from a token minted with `nb_refresh`:
+   * the access-token cookie outlives no more than an hour, and a tab left idle
+   * longer signs out with the refresh token alone.
+   */
+  async endSession(req: Request): Promise<void> {
+    const sessionId =
+      (await this.sessionIdFromAccessToken(req)) ?? (await this.sessionIdFromRefreshToken(req));
+    if (sessionId === null) {
+      log.info("[workos] sign-out found no WorkOS session to end");
+      return;
+    }
+    await this.workos.userManagement.revokeSession({ sessionId });
+  }
+
+  /**
+   * The `sid` of the request's access token. Expiry is not checked: sign-out
+   * often follows a lapsed access token whose session is still live. The
+   * signature is, so a forged token never names the session to revoke.
+   */
+  private async sessionIdFromAccessToken(req: Request): Promise<string | null> {
+    const token = extractToken(req);
+    const parsed = token ? parseJwt(token) : null;
+    const sessionId = parsed?.payload.sid;
+    if (!parsed || typeof sessionId !== "string") return null;
+
+    const keys = await this.getJwks();
+    const verified =
+      keys !== null &&
+      (await this.verifySignature(parsed.header, parsed.signatureInput, parsed.signature, keys));
+    if (!verified) {
+      log.warn("[workos] sign-out ignored an access token that did not verify", {
+        sub: parsed.payload.sub,
+      });
+      return null;
+    }
+    return sessionId;
+  }
+
+  /**
+   * The `sid` of an access token WorkOS mints from the request's `nb_refresh`.
+   * WorkOS returns the token directly, so it needs no signature check. A
+   * refresh token WorkOS rejects belongs to a session already over.
+   */
+  private async sessionIdFromRefreshToken(req: Request): Promise<string | null> {
+    const refreshToken = cookieValue(req, "nb_refresh");
+    if (!refreshToken) return null;
+    try {
+      const { accessToken } = await this.refreshToken(refreshToken);
+      const sessionId = parseJwt(accessToken)?.payload.sid;
+      return typeof sessionId === "string" ? sessionId : null;
+    } catch (err) {
+      if (err instanceof RefreshTokenError && err.kind === "rejected") return null;
+      throw err;
+    }
+  }
+
   async refreshToken(refreshToken: string): Promise<TokenResult> {
     try {
       const result = await this.workos.userManagement.authenticateWithRefreshToken({
         clientId: this.clientId,
         refreshToken,
-        // Pin the refresh to the configured organization. Without it, WorkOS
-        // mints the new access token against the user's *default* org, which
-        // for a multi-org user can differ from the org this session was
-        // established under (buildAuthorizationUrl pins organizationId on the
-        // authorization request, so the original token is org-scoped;
-        // exchangeCode then enforces membership in it). The drifted token then
-        // fails verifyRequest's org_id gate on the very next request — a refresh
-        // that "succeeds" yet yields a token the session rejects, which the
-        // client surfaces to the user as an involuntary logout (Sentry
-        // `retry_401`). Pinning keeps token mint and token verify in agreement.
-        // Omitted when no org is configured.
+        // Pin the refresh to the configured organization, so token mint and
+        // token verify agree. Without it, WorkOS mints the new access token
+        // against the user's *default* org, which for a multi-org user can
+        // differ from the org this session was established under
+        // (buildAuthorizationUrl pins organizationId on the authorization
+        // request, and exchangeCode enforces membership in it). That token
+        // fails verifyRequest's org_id gate on the next request, so a refresh
+        // that succeeds would still log the user out. Omitted when no org is
+        // configured.
         ...(this.organizationId ? { organizationId: this.organizationId } : {}),
       });
       return {
@@ -464,6 +525,44 @@ export class WorkosIdentityProvider implements IdentityProvider {
     return { user: toUser(result) };
   }
 
+  /**
+   * Write an edit to WorkOS, then to the local profile. WorkOS is the source of
+   * the name and of the admin/member role, and `syncLocalProfile` copies both
+   * back over the local profile on the next uncached sign-in, so an edit made
+   * only locally would revert. Email is refused: AuthKit signs the user in by it
+   * (`providerOwnedUserFields`), so `manage_users` never sends it here.
+   */
+  async updateUser(userId: string, data: UpdateUserInput): Promise<User | null> {
+    if (!this.userStore) return null;
+    const existing = await this.userStore.get(userId);
+    if (!existing) return null;
+    if (data.email !== undefined && data.email !== existing.email) {
+      throw new Error("Email is managed in WorkOS. Change it there.");
+    }
+
+    const local: UpdateUserInput = { ...data };
+    delete local.email;
+    if (data.displayName !== undefined && data.displayName !== existing.displayName) {
+      const [firstName = "", ...rest] = data.displayName.trim().split(/\s+/);
+      const lastName = rest.join(" ");
+      await this.workos.userManagement.updateUser({
+        userId,
+        firstName,
+        // Empty, not omitted, so a one-word name clears the old last name
+        // rather than keeping it beside the new first name.
+        lastName,
+      });
+      // Stored as the login sync will rebuild it from WorkOS, so it never differs.
+      local.displayName = [firstName, lastName].filter(Boolean).join(" ");
+    }
+
+    if (data.orgRole !== undefined && data.orgRole !== existing.orgRole) {
+      await this.writeMembershipRole(userId, data.orgRole);
+    }
+
+    return this.userStore.update(userId, local);
+  }
+
   async deleteUser(userId: string): Promise<boolean> {
     try {
       await this.workos.userManagement.deleteUser(userId);
@@ -482,13 +581,12 @@ export class WorkosIdentityProvider implements IdentityProvider {
   /**
    * Log a structured reason for a verify rejection, then return null.
    *
-   * `verifyRequest` has several `return null` exits that were, until now,
-   * indistinguishable downstream — each surfaced only as the auth
-   * middleware's generic "[auth] authentication failed". An operator
-   * triaging an involuntary logout (a freshly *refreshed* token that the
-   * very next request rejected — the client emits Sentry `retry_401`)
-   * could not tell a routine expiry from an `org_id` mismatch without
-   * reading source. Naming the gate makes the cause greppable.
+   * Every token-level `return null` exit in `verifyRequest` goes through here,
+   * because the auth middleware logs only a generic "[auth] authentication
+   * failed". Access denials from `resolveUser` (no org membership, deactivated
+   * user) log their own `DENIED` line and do not come through here. The
+   * reason tells a routine expiry from an `org_id` mismatch or a bad
+   * signature without reading source, and makes each cause greppable.
    *
    * Routine, self-healing reasons (`no_token`, `token_expired` — a refresh
    * fixes both) log at debug to avoid flooding the warn stream on every
@@ -566,12 +664,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
       const displayName =
         [workosUser.firstName, workosUser.lastName].filter(Boolean).join(" ") || workosUser.email;
 
-      // The effective role (not the raw `orgRole`) is what gates the live
-      // session: `syncLocalProfile` may preserve a local `owner` that
-      // `resolveOrgRole` can't produce. Building the identity from the raw
-      // value would leave a preserved owner inert (store says owner, session
-      // says member) — see syncLocalProfile's contract.
-      const { preferences, orgRole: effectiveRole } = await this.syncLocalProfile(workosUserId, {
+      const preferences = await this.syncLocalProfile(workosUserId, {
         email: workosUser.email,
         displayName,
         orgRole,
@@ -581,7 +674,7 @@ export class WorkosIdentityProvider implements IdentityProvider {
         id: workosUser.id,
         email: workosUser.email,
         displayName,
-        orgRole: effectiveRole,
+        orgRole,
         preferences,
       };
       this.userCache.set(workosUserId, { identity, fetchedAt: nowMs });
@@ -594,23 +687,24 @@ export class WorkosIdentityProvider implements IdentityProvider {
       // validated (signature + expiration), so the user is who they claim to be.
       // Denying access because of a transient WorkOS API hiccup causes spurious 401s.
       //
-      // This fallback is NOT bounded by `USER_CACHE_TTL_MS`. That TTL decides
-      // only whether a refresh is *attempted*; reaching here means the attempt
-      // was made and failed, and nothing below re-checks the age or restamps
-      // `fetchedAt`. So a cached identity — including the org role it was built
-      // from — is served for as long as the upstream outage lasts, not for five
-      // minutes. The `age` on the line below is the one signal that says how
-      // far out of date the answer is; read it before assuming a bound.
-      if (cached) {
+      // `USER_CACHE_TTL_MS` decides only whether a refresh is attempted. How
+      // long a failed refresh may keep serving the cached identity, and the org
+      // role in it, is `MAX_STALE_IDENTITY_MS`, measured from the last
+      // successful check; `fetchedAt` is not restamped here.
+      if (cached && nowMs - cached.fetchedAt < WorkosIdentityProvider.MAX_STALE_IDENTITY_MS) {
         log.warn(
           `[workos] Using stale cached identity for ${workosUserId} (age: ${Math.round((nowMs - cached.fetchedAt) / 1000)}s)`,
         );
         return cached.identity;
       }
-      // No cache to fall back on, so we never reached a verdict about this
-      // user. Returning null here is what produced the spurious 401 the stale
-      // fallback above exists to avoid — the caller gets 503 and retries.
-      this.transient("user_unresolvable", { userId: workosUserId });
+      // No cache young enough to fall back on, so we never reached a verdict
+      // about this user. Returning null would 401 a valid session, the outcome
+      // the stale fallback above exists to avoid; throw so the caller gets 503
+      // and retries.
+      this.transient("user_unresolvable", {
+        userId: workosUserId,
+        stale_age_s: cached ? Math.round((nowMs - cached.fetchedAt) / 1000) : null,
+      });
     }
   }
 
@@ -618,48 +712,33 @@ export class WorkosIdentityProvider implements IdentityProvider {
    * Sync WorkOS identity data to a local user profile.
    * Creates the profile if it doesn't exist; updates identity fields
    * (email, displayName, orgRole) on each login while preserving
-   * user-owned data (preferences).
-   *
-   * Returns both the user's preferences AND the **effective** org role — the
-   * post-preservation value, which may be `owner` even though `resolveOrgRole`
-   * never yields `owner`. The caller MUST build the live session identity from
-   * this returned role, not from the raw `data.orgRole`; otherwise a preserved
-   * owner exists only in the store and the live session is gated as a lesser
-   * role (store and session disagree).
+   * user-owned data (preferences), which it returns. WorkOS is the source of
+   * the org role, so the local profile always takes the WorkOS-derived one.
    */
   private async syncLocalProfile(
     workosUserId: string,
     data: { email: string; displayName: string; orgRole: OrgRole },
-  ): Promise<{ preferences: UserPreferences; orgRole: OrgRole }> {
-    if (!this.userStore) return { preferences: {}, orgRole: data.orgRole };
+  ): Promise<UserPreferences> {
+    if (!this.userStore) return {};
 
     const existing = await this.userStore.get(workosUserId);
     if (existing) {
-      // `owner` is an app-internal elevation, not a WorkOS-derived role:
-      // `resolveOrgRole` only ever yields "admin"/"member", and only the
-      // guarded `manage_users` path may create or remove an owner. So a
-      // login-time sync must never DOWNGRADE a local owner to a lesser
-      // WorkOS-derived role — otherwise a WorkOS membership change would
-      // silently strip owners and defeat the last-owner invariant (the
-      // sync path bypasses that guard). admin/member still track WorkOS.
-      const effectiveRole: OrgRole = existing.orgRole === "owner" ? "owner" : data.orgRole;
       // Update identity fields from WorkOS, preserve preferences
       if (
         existing.email !== data.email ||
         existing.displayName !== data.displayName ||
-        existing.orgRole !== effectiveRole
+        existing.orgRole !== data.orgRole
       ) {
         await this.userStore.update(workosUserId, {
           email: data.email,
           displayName: data.displayName,
-          orgRole: effectiveRole,
+          orgRole: data.orgRole,
         });
       }
-      return { preferences: existing.preferences, orgRole: effectiveRole };
+      return existing.preferences;
     }
 
-    // First login — create local profile. No existing record means no owner to
-    // preserve, so the effective role is the WorkOS-derived one.
+    // First login — create local profile.
     try {
       const user = await this.userStore.create({
         id: workosUserId,
@@ -667,14 +746,12 @@ export class WorkosIdentityProvider implements IdentityProvider {
         displayName: data.displayName,
         orgRole: data.orgRole,
       });
-      return { preferences: user.preferences, orgRole: user.orgRole };
+      return user.preferences;
     } catch {
       // UserConflictError — race condition, profile was created between get and
-      // create. Preserve the raced record's owner the same way the existing
-      // branch does, so a concurrent login can't strip it either.
+      // create.
       const raced = await this.userStore.get(workosUserId);
-      const racedRole: OrgRole = raced?.orgRole === "owner" ? "owner" : data.orgRole;
-      return { preferences: raced?.preferences ?? {}, orgRole: racedRole };
+      return raced?.preferences ?? {};
     }
   }
 
@@ -688,9 +765,8 @@ export class WorkosIdentityProvider implements IdentityProvider {
    *   - any other slug → "member" (logged, so a custom admin slug that should
    *     have matched is diagnosable instead of silently downgraded)
    *
-   * This NEVER returns "owner": `owner` is an app-internal elevation managed
-   * via `manage_users` and preserved across login by `syncLocalProfile`, not a
-   * WorkOS-derived role. A WorkOS owner-slug role therefore grants app `admin`.
+   * A WorkOS `owner` slug is in the default admin set, so it grants app
+   * `admin`, the top app role.
    *
    * Returns null if the user has no org membership — a security signal that the
    * user should be denied access, and the only meaning null carries here.
@@ -742,11 +818,10 @@ export class WorkosIdentityProvider implements IdentityProvider {
       log.error(`[workos] resolveOrgRole failed for user=${workosUserId}`, {
         error: err instanceof Error ? err.message : String(err),
       });
-      // An API error is not a verdict about membership. `null` here is read by
-      // resolveUser as *definitively* lost access: it denies AND deletes the
-      // cached identity, so a memberships-endpoint hiccup becomes the
-      // involuntary logout — with the stale-identity fallback destroyed on the
-      // way out, taking the next request with it. Throw instead, so it
+      // An API error is not a verdict about membership. resolveUser reads
+      // `null` as *definitively* lost access: it denies AND deletes the cached
+      // identity, so returning it here would log a valid user out and destroy
+      // the stale-identity fallback for the next request. Throw instead, so it
       // classifies as unavailability like every other dependency failure and
       // resolveUser's catch decides between stale cache and 503.
       this.transient("org_role_unresolvable", { userId: workosUserId });
@@ -754,12 +829,41 @@ export class WorkosIdentityProvider implements IdentityProvider {
   }
 
   /**
+   * Set the user's role in the configured WorkOS organization to the slug that
+   * `resolveOrgRole` maps back to `role`. A membership whose slug already maps
+   * to `role` is left alone, so a WorkOS `owner` slug (app `admin`) is not
+   * rewritten to `admin`.
+   */
+  private async writeMembershipRole(userId: string, role: "admin" | "member"): Promise<void> {
+    if (!this.organizationId) {
+      // With no organization every user resolves to member.
+      if (role === "admin") {
+        throw new Error("No WorkOS organization is configured, so no one can be an admin.");
+      }
+      return;
+    }
+    const memberships = await this.workos.userManagement.listOrganizationMemberships({
+      userId,
+      organizationId: this.organizationId,
+    });
+    const membership = memberships.data[0];
+    if (!membership) {
+      throw new Error("This user has no membership in the WorkOS organization.");
+    }
+    const slug = (membership.role as { slug?: string })?.slug?.trim().toLowerCase();
+    const current = slug && this.adminRoleSlugs.has(slug) ? "admin" : "member";
+    if (current === role) return;
+    await this.workos.userManagement.updateOrganizationMembership(membership.id, {
+      roleSlug: role === "admin" ? this.adminRoleSlugForWrite : "member",
+    });
+  }
+
+  /**
    * Provision a user on first login via auth code flow.
    *
-   * Syncs the local profile from WorkOS. Workspace provisioning happens on
-   * every verifyRequest (see verifyRequest above) so the invariant is
-   * self-healing for any path — this includes AuthKit/MCP-OAuth which does
-   * not route through exchangeCode.
+   * Syncs the local profile from WorkOS. It creates no workspace: a user who
+   * belongs to none gets one from `ensureUserWorkspace` when the web shell
+   * bootstraps (`GET /v1/bootstrap`).
    */
   private async provisionUser(workosUser: {
     id: string;
@@ -910,6 +1014,13 @@ export class WorkosIdentityProvider implements IdentityProvider {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
+
+/** A JWT `aud` claim as a list: a string is one audience, anything malformed none. */
+function audienceList(aud: unknown): string[] {
+  if (typeof aud === "string") return [aud];
+  if (Array.isArray(aud)) return aud.filter((a): a is string => typeof a === "string");
+  return [];
+}
 
 /** Map a WorkOS User object to the NimbleBrain User type. */
 function toUser(

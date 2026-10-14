@@ -13,18 +13,20 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
+import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import type { ComposeAssembledContextOutput } from "../../src/platform/schemas/compose.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { hashSkillBody } from "../../src/runtime/skills-loaded-payload.ts";
-import { extractText } from "../../src/engine/content-helpers.ts";
-import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-compose-${Date.now()}`);
 
@@ -69,17 +71,14 @@ interface ComposeResponse {
  * `runtime.chat()` doesn't return the runId on `ChatResult`, so the test
  * reads it from the conv jsonl after the chat completes.
  */
-async function getLatestRunId(
-  runtime: Runtime,
-  convId: string,
-): Promise<string | null> {
+async function getLatestRunId(runtime: Runtime, convId: string): Promise<string | null> {
   return runWithRequestContext(
     {
       // Match the dev-fallback ownerId minted by `runtime.chat` when
       // no `request.identity` is passed and no identity provider is
       // configured. Without this, the in-context store reads in
       // `compose__effective_context` refuse the read as a foreign-
-      // owner access (Stage 1 single-owner gate).
+      // owner access (single-owner gate).
       identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
     },
@@ -133,13 +132,7 @@ async function callAssembled(
   runtime: Runtime,
   args: Record<string, unknown>,
   ctxConvId?: string,
-): Promise<{
-  structured: {
-    sources: Array<{ kind: string; tokens: number }>;
-    totalTokens: number;
-    windowTokens: number;
-  } | null;
-}> {
+): Promise<{ structured: ComposeAssembledContextOutput | null }> {
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   const result = await runWithRequestContext(
     {
@@ -155,14 +148,15 @@ async function callAssembled(
       }),
   );
   const sc = (result as { structuredContent?: unknown }).structuredContent;
-  return { structured: sc ? (sc as never) : null };
+  return { structured: sc ? (sc as ComposeAssembledContextOutput) : null };
 }
 
 describe("compose_effective_context — live mode", () => {
   it("returns traced layers with paths for every operator-authored skill", async () => {
     const workDir = join(testDir, "live-basic");
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: makeModel() },
+      identityProvider: devProvider,
+      languageModel: makeModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -216,50 +210,11 @@ describe("compose_effective_context — live mode", () => {
     await runtime.shutdown();
   });
 
-  it("includes the workspace identity override as a core_skill row", async () => {
-    // Regression: composeLive used to pass `runtime.getContextSkills()`
-    // directly, which is the global static set. `runtime.chat()` augments
-    // it per-request with `makeIdentitySkill(workspace.identity)` at
-    // priority 1 (core context). Without the override, the trace would
-    // report DEFAULT_IDENTITY for any workspace operating under a custom
-    // identity — the exact case the tool exists to expose.
-    const workDir = join(testDir, "live-workspace-identity");
-    const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: makeModel() },
-      workDir,
-      logging: { disabled: true },
-      telemetry: { enabled: false },
-    });
-    await provisionTestWorkspace(runtime);
-
-    // Set the workspace identity directly on the workspace store. The
-    // test helper doesn't expose this — `update` is the public API.
-    const wsStore = runtime.getWorkspaceStore();
-    const overrideText =
-      "You are LegalBot. Be precise. Cite sources. Defer to qualified counsel.";
-    await wsStore.update(TEST_WORKSPACE_ID, { identity: overrideText });
-
-    const res = await callCompose(runtime, {}, "conv_aaaaaaaaaaaaaaaa");
-    expect(res.isError).toBe(false);
-
-    // The override has priority 1, so it lands in the `core_skill` band.
-    // It's appended to the contextSkills list, so it becomes ONE OF the
-    // core_skill rows (not necessarily the only one).
-    const coreSkills = res.structured!.layers.filter((l) => l.kind === "core_skill");
-    const overrideRow = coreSkills.find((l) => l.text === overrideText);
-    expect(overrideRow).toBeDefined();
-
-    // And DEFAULT_IDENTITY must NOT appear when an override is present —
-    // the fallback only fires if there's nothing else in the core band.
-    expect(res.structured!.layers.find((l) => l.kind === "default_identity")).toBeUndefined();
-
-    await runtime.shutdown();
-  });
-
   it("returns the workspace_context layer with the workspace id", async () => {
     const workDir = join(testDir, "live-ws");
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: makeModel() },
+      identityProvider: devProvider,
+      languageModel: makeModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -278,7 +233,8 @@ describe("compose_effective_context — live mode", () => {
   it("errors when called without a conversation_id and no current conversation in scope", async () => {
     const workDir = join(testDir, "no-conv");
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: makeModel() },
+      identityProvider: devProvider,
+      languageModel: makeModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -298,7 +254,8 @@ describe("compose_effective_context — historical mode", () => {
   it("returns layer3 skills for a recorded run with hash status 'match' when the body is unchanged", async () => {
     const workDir = join(testDir, "historical-match");
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: makeModel() },
+      identityProvider: devProvider,
+      languageModel: makeModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -320,6 +277,7 @@ describe("compose_effective_context — historical mode", () => {
 
     // Run a chat to record skills.loaded with the contentHash.
     const result = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "test message",
     });
@@ -338,9 +296,7 @@ describe("compose_effective_context — historical mode", () => {
     const sub = l3!.subItems!.find((s) => s.id === skillPath);
     expect(sub).toBeDefined();
     expect((sub!.metadata as { hashStatus: string }).hashStatus).toBe("match");
-    expect((sub!.metadata as { recordedHash: string }).recordedHash).toBe(
-      hashSkillBody(skillBody),
-    );
+    expect((sub!.metadata as { recordedHash: string }).recordedHash).toBe(hashSkillBody(skillBody));
 
     // `totalTokens` answers the same question in both modes — the size of the
     // composed system prompt — so the two are comparable for one conversation.
@@ -363,7 +319,8 @@ describe("compose_effective_context — historical mode", () => {
     // the surrounding (trusted) layer text. Mirrors the live-path guarantee.
     const workDir = join(testDir, "historical-escape");
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: makeModel() },
+      identityProvider: devProvider,
+      languageModel: makeModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -380,6 +337,7 @@ describe("compose_effective_context — historical mode", () => {
     await runtime.reloadSkills();
 
     const result = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "test message",
     });
@@ -402,7 +360,8 @@ describe("compose_effective_context — historical mode", () => {
   it("flags 'drift' when the skill body has been edited since the run", async () => {
     const workDir = join(testDir, "historical-drift");
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: makeModel() },
+      identityProvider: devProvider,
+      languageModel: makeModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -419,6 +378,7 @@ describe("compose_effective_context — historical mode", () => {
     await runtime.reloadSkills();
 
     const result = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "test message",
     });
@@ -435,11 +395,7 @@ describe("compose_effective_context — historical mode", () => {
     );
     await runtime.reloadSkills();
 
-    const res = await callCompose(
-      runtime,
-      { run_id: runId },
-      result.conversationId,
-    );
+    const res = await callCompose(runtime, { run_id: runId }, result.conversationId);
     expect(res.isError).toBe(false);
     const sub = res
       .structured!.layers.find((l) => l.kind === "layer3_skills")!
@@ -458,7 +414,8 @@ describe("compose_effective_context — historical mode", () => {
     // body verbatim with hashStatus="recovered".
     const workDir = join(testDir, "historical-recovered");
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: makeModel() },
+      identityProvider: devProvider,
+      languageModel: makeModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -475,6 +432,7 @@ describe("compose_effective_context — historical mode", () => {
 
     // Run a chat — records `skills.loaded` with the original body's hash.
     const result = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "test",
     });
@@ -518,7 +476,8 @@ describe("compose_effective_context — conversation_id resolution", () => {
   it("falls back to RequestContext.conversationId when input omits the id", async () => {
     const workDir = join(testDir, "ctx-fallback");
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: makeModel() },
+      identityProvider: devProvider,
+      languageModel: makeModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -535,7 +494,8 @@ describe("compose_effective_context — conversation_id resolution", () => {
   it("explicit conversation_id wins over RequestContext", async () => {
     const workDir = join(testDir, "explicit-wins");
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: makeModel() },
+      identityProvider: devProvider,
+      languageModel: makeModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },

@@ -11,8 +11,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { synthesizeConnectorSkill } from "../../../src/skills/connector-skills.ts";
 import { buildSkillsLoadedPayload } from "../../../src/runtime/skills-loaded-payload.ts";
+import { synthesizeConnectorSkill } from "../../../src/skills/connector-skills.ts";
 import { selectLayer3Skills } from "../../../src/skills/select.ts";
 
 describe("skills.loaded payload — connector skill entry", () => {
@@ -42,7 +42,7 @@ describe("skills.loaded payload — connector skill entry", () => {
     // Layer 3 — selected via tool affinity, not vendored Layer 1.
     expect(entry.layer).toBe(3);
     // Provenance: `tool_affinity` is the observable label
-    // (manifest field is `tool_affined`; emitted as `tool_affinity` — Phase 2 contract).
+    // (manifest field is `tool_affined`; emitted as `tool_affinity`).
     expect(entry.loadedBy).toBe("tool_affinity");
     expect(entry.reason).toContain("synapse-collateral__*");
     // Tokens approximated for total-budget telemetry.

@@ -21,7 +21,9 @@ const FULL: NotificationPresentation = {
 const MINIMAL: NotificationPresentation = { level: "info", title: "domain.active" };
 
 /** What the runtime contributes. Supplied by the dispatcher, never by a server. */
-const HOST = { inboxUrl: "https://tenant.example/w/team/notifications?item=acme%3Aevt_1" };
+const HOST = {
+  inboxUrl: "https://tenant.example/w/0071a5bbf40116e6/notifications?item=acme%3Aevt_1",
+};
 
 /** Every case below renders against the same host block unless it says otherwise. */
 function render(
@@ -46,9 +48,7 @@ describe("the five placeholders", () => {
   });
 
   test("whitespace inside the braces is allowed, as the validator's is", () => {
-    expect(render({ text: "{{  title  }}" }, FULL).input.text).toBe(
-      "acme-outreach.com is active",
-    );
+    expect(render({ text: "{{  title  }}" }, FULL).input.text).toBe("acme-outreach.com is active");
   });
 
   test("a known name with no value renders empty and is NOT a miss", () => {
@@ -120,21 +120,27 @@ describe("what it does not do", () => {
   });
 
   test("no escaping — a value with markup or quotes survives intact", () => {
-    const { input } = render({ text: "{{title}}" }, {
-      level: "info",
-      title: `it's <b>"live"</b> & well`,
-    });
+    const { input } = render(
+      { text: "{{title}}" },
+      {
+        level: "info",
+        title: `it's <b>"live"</b> & well`,
+      },
+    );
     expect(input.text).toBe(`it's <b>"live"</b> & well`);
   });
 
   test("a rendered value is not itself re-rendered", () => {
     // A connector that writes `{{title}}` into its own body cannot make the
     // runtime expand it: substitution is one pass over the template.
-    const { input, misses } = render({ text: "{{body}}" }, {
-      level: "info",
-      title: "t",
-      body: "{{title}}",
-    });
+    const { input, misses } = render(
+      { text: "{{body}}" },
+      {
+        level: "info",
+        title: "t",
+        body: "{{title}}",
+      },
+    );
     expect(input.text).toBe("{{title}}");
     expect(misses).toBe(0);
   });
@@ -144,7 +150,7 @@ describe("inbox.url — the one placeholder the host supplies", () => {
   test("resolves to the address the dispatcher built", () => {
     const { input, misses } = render({ text: "Open: {{inbox.url}}" }, MINIMAL);
     expect(input.text).toBe(
-      "Open: https://tenant.example/w/team/notifications?item=acme%3Aevt_1",
+      "Open: https://tenant.example/w/0071a5bbf40116e6/notifications?item=acme%3Aevt_1",
     );
     expect(misses).toBe(0);
   });
@@ -162,7 +168,7 @@ describe("inbox.url — the one placeholder the host supplies", () => {
     const { input } = render({ text: "{{link.resource}} vs {{inbox.url}}" }, FULL);
     expect(input.text).toBe(
       "acme://domains/acme-outreach.com vs " +
-        "https://tenant.example/w/team/notifications?item=acme%3Aevt_1",
+        "https://tenant.example/w/0071a5bbf40116e6/notifications?item=acme%3Aevt_1",
     );
   });
 });

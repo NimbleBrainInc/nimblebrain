@@ -50,7 +50,7 @@ async function put(s: FileStore, data = "hello"): Promise<string> {
 }
 
 test("a file saved in workspace A is unreachable from workspace B's store", async () => {
-  const storeA = store("ws_helix", "usr_alice");
+  const storeA = store("ws_003eba8844413cd9", "usr_alice");
   const id = await put(storeA);
 
   // Same workspace + owner → resolves.
@@ -58,14 +58,14 @@ test("a file saved in workspace A is unreachable from workspace B's store", asyn
   expect((await storeA.readFile(id)).data.toString()).toBe("hello");
 
   // Different workspace (same owner) → the bytes aren't in that dir.
-  const storeB = store("ws_acme", "usr_alice");
+  const storeB = store("ws_000f7ed6658f9d30", "usr_alice");
   expect(await storeB.findEntry(id)).toBeNull();
   await expect(storeB.readFile(id)).rejects.toThrow();
 });
 
 test("two owners in the same workspace are partitioned — neither sees the other's file", async () => {
-  const alice = store("ws_helix", "usr_alice");
-  const bob = store("ws_helix", "usr_bob");
+  const alice = store("ws_003eba8844413cd9", "usr_alice");
+  const bob = store("ws_003eba8844413cd9", "usr_bob");
   const aliceId = await put(alice);
 
   expect(await bob.findEntry(aliceId)).toBeNull();
@@ -73,8 +73,8 @@ test("two owners in the same workspace are partitioned — neither sees the othe
 });
 
 test("each owner partition has its own registry (no cross-owner listing)", async () => {
-  const alice = store("ws_helix", "usr_alice");
-  const bob = store("ws_helix", "usr_bob");
+  const alice = store("ws_003eba8844413cd9", "usr_alice");
+  const bob = store("ws_003eba8844413cd9", "usr_bob");
   await put(alice, "alice-data");
   await put(bob, "bob-data");
 

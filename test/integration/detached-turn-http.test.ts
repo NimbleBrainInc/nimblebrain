@@ -2,11 +2,22 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type {
+  ApiErrorBody,
+  ChatCancelResponse,
+  ChatStartResponse,
+} from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { readJson } from "../helpers/http.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+
+/** What `POST /v1/conversations/:id/cancel` answers. */
+
+/** What `POST …/chat/start` answers: the turn runs on, the id comes back now. */
 
 // Dev-mode caller (no identity provider) — every request resolves to this
 // owner, and conversations are born in TEST_WORKSPACE_ID's owner partition.
@@ -20,7 +31,8 @@ const testDir = join(tmpdir(), `nimblebrain-detached-http-${Date.now()}`);
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -65,32 +77,30 @@ async function readSse(res: Response, ms: number): Promise<string[]> {
 }
 
 describe("detached turn HTTP surface", () => {
-  it("POST /v1/chat/start returns a conversation id immediately", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+  it("POST /v1/workspaces/:wsId/chat/start returns a conversation id immediately", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Hello over HTTP", workspaceId: TEST_WORKSPACE_ID }),
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ChatStartResponse>(res);
     expect(body.conversationId).toMatch(/^conv_/);
   });
 
   it("GET /v1/conversations/:id/events replays the turn (incl. the user message)", async () => {
-    const startRes = await fetch(`${baseUrl}/v1/chat/start`, {
+    const startRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Replay me", workspaceId: TEST_WORKSPACE_ID }),
     });
-    const { conversationId } = await startRes.json();
+    const { conversationId } = await readJson<ChatStartResponse>(startRes);
 
     // Let the echo turn run + buffer, then connect a fresh viewer — it should
     // replay the whole turn from the RunBus (within the grace window).
     await new Promise((r) => setTimeout(r, 100));
 
-    const evRes = await fetch(`${baseUrl}/v1/conversations/${conversationId}/events`, {
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
-    });
+    const evRes = await fetch(`${baseUrl}/v1/conversations/${conversationId}/events`);
     expect(evRes.status).toBe(200);
     const types = await readSse(evRes, 400);
     expect(types).toContain("subscribed");
@@ -99,25 +109,23 @@ describe("detached turn HTTP surface", () => {
   });
 
   it("POST /v1/conversations/:id/cancel returns ok for the owner", async () => {
-    const startRes = await fetch(`${baseUrl}/v1/chat/start`, {
+    const startRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "cancel target", workspaceId: TEST_WORKSPACE_ID }),
     });
-    const { conversationId } = await startRes.json();
+    const { conversationId } = await readJson<ChatStartResponse>(startRes);
     const res = await fetch(`${baseUrl}/v1/conversations/${conversationId}/cancel`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ChatCancelResponse>(res);
     expect(typeof body.cancelled).toBe("boolean");
   });
 
   it("cancel of a non-existent conversation is 404", async () => {
     const res = await fetch(`${baseUrl}/v1/conversations/conv_0000000000000000/cancel`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
     });
     expect(res.status).toBe(404);
   });
@@ -125,10 +133,8 @@ describe("detached turn HTTP surface", () => {
   it("start on a pre-migration (ownerless) conversation is 422, not 500", async () => {
     // Seed a corrupted conversation: line-1 metadata without ownerId makes the
     // store throw ConversationCorruptedError on load (the resume path). It must
-    // live at the exact workspace path the resume resolves (TEST_WORKSPACE_ID +
-    // the dev caller's owner partition) — the locator skips ownerless files, so
-    // the corrupted-load is reached via `resolveChatStore`'s deterministic
-    // workspace-store fallback, not the locator.
+    // live at the exact path the resume reads: the workspace in the URL
+    // (TEST_WORKSPACE_ID) and the dev caller's owner partition.
     const convId = "conv_dead00000000beef"; // conv_ + 16 hex
     const convDir = workspaceConversationsDir(testDir, TEST_WORKSPACE_ID, DEV_OWNER);
     mkdirSync(convDir, { recursive: true });
@@ -141,9 +147,9 @@ describe("detached turn HTTP surface", () => {
     });
     writeFileSync(join(convDir, `${convId}.jsonl`), `${meta}\n`);
 
-    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: "resume corrupt",
         conversationId: convId,
@@ -151,14 +157,14 @@ describe("detached turn HTTP surface", () => {
       }),
     });
     expect(res.status).toBe(422);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("conversation_corrupted");
   });
 
   it("start with a malformed conversationId is 400, not 500 (JSON)", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: "traversal attempt",
         conversationId: "../../foo",
@@ -166,7 +172,7 @@ describe("detached turn HTTP surface", () => {
       }),
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -174,13 +180,12 @@ describe("detached turn HTTP surface", () => {
     const form = new FormData();
     form.set("message", "traversal attempt");
     form.set("conversationId", "../../foo");
-    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -195,17 +200,15 @@ describe("detached turn HTTP surface", () => {
   async function seedOtherUserConversation(convId: string): Promise<void> {
     await runtime
       .workspaceConversationStore(TEST_WORKSPACE_ID, "usr_someone_else")
-      .create({ ownerId: "usr_someone_else", id: convId });
+      .create({ model: "anthropic:claude-sonnet-4-6", ownerId: "usr_someone_else", id: convId });
   }
 
   it("GET /v1/conversations/:id/events on another user's conversation is 403", async () => {
     const convId = "conv_0a0a0a0a0a0a0a0a";
     await seedOtherUserConversation(convId);
-    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
-    });
+    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`);
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe("conversation_access_denied");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_access_denied");
   });
 
   it("POST /v1/conversations/:id/cancel on another user's conversation is 403", async () => {
@@ -213,40 +216,37 @@ describe("detached turn HTTP surface", () => {
     await seedOtherUserConversation(convId);
     const res = await fetch(`${baseUrl}/v1/conversations/${convId}/cancel`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
     });
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe("conversation_access_denied");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_access_denied");
   });
 
   it("malformed conversationId on the events + cancel routes is 400, not 500", async () => {
-    const evRes = await fetch(`${baseUrl}/v1/conversations/bogus/events`, {
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
-    });
+    const evRes = await fetch(`${baseUrl}/v1/conversations/bogus/events`);
     expect(evRes.status).toBe(400);
-    expect((await evRes.json()).error).toBe("bad_request");
+    expect((await readJson<ApiErrorBody>(evRes)).error).toBe("bad_request");
 
     const cancelRes = await fetch(`${baseUrl}/v1/conversations/not-a-conv-id/cancel`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
     });
     expect(cancelRes.status).toBe(400);
-    expect((await cancelRes.json()).error).toBe("bad_request");
+    expect((await readJson<ApiErrorBody>(cancelRes)).error).toBe("bad_request");
   });
 
-  it("POST /v1/chat/start on another user's conversation is 403", async () => {
+  it("POST /v1/workspaces/:wsId/chat/start on another user's conversation is 404, as for an unknown one", async () => {
     const convId = "conv_0c0c0c0c0c0c0c0c";
     await seedOtherUserConversation(convId);
-    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: "hijack attempt",
         conversationId: convId,
         workspaceId: TEST_WORKSPACE_ID,
       }),
     });
-    expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe("conversation_access_denied");
+    expect(res.status).toBe(404);
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_not_found");
+    expect(runtime.isTurnActive(convId)).toBe(false);
   });
 });

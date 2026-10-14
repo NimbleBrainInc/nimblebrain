@@ -1,6 +1,7 @@
-import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
+import { RequestRateLimiter } from "../../src/api/rate-limiter.ts";
 import {
   HOOK_ANON_BUCKET_MAX,
   HOOK_BUCKET_WINDOW_MS,
@@ -8,14 +9,14 @@ import {
   hooksRoutes,
 } from "../../src/api/routes/hooks.ts";
 import type { AppContext } from "../../src/api/types.ts";
+import type { HookReconcileDeps } from "../../src/hooks/reconcile.ts";
 import { listRegistrations, registrationKey } from "../../src/hooks/registrations.ts";
-import {
-  type HookIdentity,
-  newDeliveryId,
-} from "../../src/hooks/token.ts";
+import { type HookIdentity, newDeliveryId } from "../../src/hooks/token.ts";
 import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "../../src/hooks/types.ts";
-import { RequestRateLimiter } from "../../src/api/rate-limiter.ts";
+import type { Runtime } from "../../src/runtime/runtime.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
+import { stub } from "../helpers/stub.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 
 /**
@@ -31,7 +32,6 @@ import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 
 const TID = "tenant-a";
 const KEY = randomBytes(32);
-const OTHER_TENANT_KEY = randomBytes(32);
 const IDENTITY: HookIdentity = { tid: TID, key: KEY };
 
 const CONNECTOR = "acme-billing-mcp";
@@ -54,6 +54,8 @@ let forwarded: { url: string; init: RequestInit }[] = [];
 let upstreamResponse: () => Response;
 /** Log lines the door emitted during a test. */
 let logLines: string[] = [];
+/** The vendors the connector's bound catalog entry declares, as the runtime would answer. */
+let declaredVendors: string[] = [VENDOR];
 
 /**
  * Run `fn` with every log line the runtime writes captured.
@@ -93,6 +95,19 @@ function registration(over: Partial<HookRegistration> = {}): HookRegistration {
   };
 }
 
+/** A registration as stored before delivery ids existed: it has no `deliveryId`. */
+function staleRegistration(): HookRegistration {
+  const stored = {
+    connector: CONNECTOR,
+    vendor: VENDOR,
+    kid: KID,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    route: "/ingest/stale",
+  };
+  // The record without its deliveryId, read back as the HookRegistration the store's type says every record is.
+  return stored as HookRegistration;
+}
+
 /** The URL a vendor was handed, for a given delivery id. */
 function hookUrl(id: string = DELIVERY_ID): string {
   return `/v1/hooks/${id}`;
@@ -120,17 +135,24 @@ async function seedWorkspace(opts: {
 }
 
 /** Records the forward instead of making it, and answers as the connector would. */
-const captureFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+const captureFetch = fakeFetch(async (url, init) => {
   forwarded.push({ url: String(url), init: init ?? {} });
   return upstreamResponse();
-}) as unknown as typeof fetch;
+});
 
 function makeCtx(over: Partial<AppContext> = {}): AppContext {
-  return {
-    isDevMode: false,
-    runtime: { getWorkspaceStore: () => store, getAllowInsecureRemotes: () => false },
+  return stub<AppContext>({
+    runtime: stub<Runtime>({
+      getWorkspaceStore: () => store,
+      getAllowInsecureRemotes: () => false,
+      getHookReconcileDeps: () =>
+        stub<HookReconcileDeps>({
+          declarationsFor: async () =>
+            declaredVendors.map((vendor) => ({ vendor, route: ROUTE, register_tool: "register" })),
+        }),
+    }),
     ...over,
-  } as unknown as AppContext;
+  });
 }
 
 function makeApp(identity: HookIdentity = IDENTITY): Hono {
@@ -147,18 +169,17 @@ function makeApp(identity: HookIdentity = IDENTITY): Hono {
   return new Hono().route("/", routes);
 }
 
-function deliver(
-  app: Hono,
-  path: string,
-  init: RequestInit = {},
-): Promise<Response> {
+async function deliver(app: Hono, path: string, init: RequestInit = {}): Promise<Response> {
   return app.fetch(
     new Request(`https://runtime.example${path}`, {
       method: "POST",
       body: "{}",
       // A fresh source per request so the pre-token bucket, which is per
       // source, never has one test's traffic count against another's.
-      headers: { "x-forwarded-for": `198.51.100.${Math.floor(Math.random() * 250) + 1}`, ...(init.headers as Record<string, string>) },
+      headers: {
+        "x-forwarded-for": `198.51.100.${Math.floor(Math.random() * 250) + 1}`,
+        ...(init.headers as Record<string, string>),
+      },
       ...init,
     }),
   );
@@ -178,6 +199,7 @@ beforeEach(async () => {
   wsId = ws.id;
   forwarded = [];
   logLines = [];
+  declaredVendors = [VENDOR];
   upstreamResponse = () => new Response("ok", { status: 202 });
   await seedWorkspace({});
 });
@@ -248,31 +270,70 @@ describe("a legitimate delivery", () => {
     // caller's.
     expect(headers.get("authorization")).toBe("Bearer operator");
   });
+
+  test("does not forward the browser's session cookie", async () => {
+    await deliver(makeApp(), hookUrl(), {
+      headers: { cookie: "nb_session=user-session; nb_oauth_state=abc" },
+    });
+    expect(forwarded).toHaveLength(1);
+    const [call] = forwarded;
+    if (!call) throw new Error("expected one forwarded request");
+    expect((call.init.headers as Headers).get("cookie")).toBeNull();
+  });
 });
 
-  test("another workspace's id does not reach this workspace's connector", async () => {
-    // The isolation the sealed `wid` used to carry. Resolution is now a lookup,
-    // so the property has to be asserted against the lookup: an id minted for
-    // one workspace forwards for THAT workspace, and nothing about the door's
-    // scan may let it land on a neighbour's registration.
-    const other = await store.create({ name: "other", ownerId: "usr_other" });
-    const otherId = newDeliveryId();
-    await seedWorkspace({
-      id: other.id,
-      hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: registration({
-          deliveryId: otherId,
-          route: "/ingest/other",
-        }),
-      },
-    });
+test("a registration its connector's catalog entry no longer declares forwards nothing", async () => {
+  // The connector stopped being its entry's server (or the entry dropped the
+  // vendor), so the runtime answers no declaration for it: the registration
+  // minted while it was bound must not keep forwarding.
+  declaredVendors = [];
+  const res = await deliver(makeApp(), hookUrl());
+  expect(res.status).toBe(404);
+  expect(forwarded).toHaveLength(0);
+});
 
-    const res = await deliver(makeApp(), hookUrl(otherId));
-    expect(res.status).toBe(202);
-    // Forwarded on the OTHER workspace's route, never this one's.
-    expect(forwarded).toHaveLength(1);
-    expect(forwarded[0]?.url).toContain("/ingest/other");
+test("another workspace's id does not reach this workspace's connector", async () => {
+  // Resolution is a lookup, so workspace isolation has to be asserted
+  // against the lookup: an id minted for
+  // one workspace forwards for THAT workspace, and nothing about the door's
+  // scan may let it land on a neighbour's registration.
+  const other = await store.create("other");
+  const otherId = newDeliveryId();
+  await seedWorkspace({
+    id: other.id,
+    hooks: {
+      [registrationKey(CONNECTOR, VENDOR)]: registration({
+        deliveryId: otherId,
+        route: "/ingest/other",
+      }),
+    },
   });
+
+  const res = await deliver(makeApp(), hookUrl(otherId));
+  expect(res.status).toBe(202);
+  // Forwarded on the OTHER workspace's route, never this one's.
+  expect(forwarded).toHaveLength(1);
+  expect(forwarded[0]?.url).toContain("/ingest/other");
+});
+
+describe("a registration whose route names the connector's MCP endpoint", () => {
+  test.each(["/mcp", "/mcp/messages", "/%6dcp"])(
+    "%s answers the bare 404 and forwards nothing",
+    async (route) => {
+      // The delivery id is real, so this reaches the forward; the forward would
+      // carry the connection's credential to the MCP endpoint. Provisioning
+      // refuses such a route, and this is what holds for one already on disk.
+      await seedWorkspace({
+        hooks: { [registrationKey(CONNECTOR, VENDOR)]: registration({ route }) },
+      });
+      await expectIndistinguishable404(
+        await deliver(makeApp(), hookUrl(), {
+          body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+        }),
+      );
+    },
+  );
+});
 
 describe("a registration written before delivery ids existed", () => {
   test("is inadmissible, and does not 500 a valid delivery to another workspace", async () => {
@@ -281,17 +342,11 @@ describe("a registration written before delivery ids existed", () => {
     // and with no `try` in the route that surfaced as a 500 — the one answer this
     // door's uniform 404 exists to never give, and it would have been given for a
     // perfectly current workspace.
-    const stale = await store.create({ name: "stale", ownerId: "usr_stale" });
+    const stale = await store.create("stale");
     await seedWorkspace({
       id: stale.id,
       hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: {
-          connector: CONNECTOR,
-          vendor: VENDOR,
-          kid: KID,
-          createdAt: "2026-01-01T00:00:00.000Z",
-          route: "/ingest/stale",
-        } as unknown as ReturnType<typeof registration>,
+        [registrationKey(CONNECTOR, VENDOR)]: staleRegistration(),
       },
     });
     await seedWorkspace({});
@@ -303,17 +358,11 @@ describe("a registration written before delivery ids existed", () => {
   });
 
   test("its own URL cannot be reconstructed, so it 404s like anything else", async () => {
-    const stale = await store.create({ name: "stale-only", ownerId: "usr_stale" });
+    const stale = await store.create("stale-only");
     await seedWorkspace({
       id: stale.id,
       hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: {
-          connector: CONNECTOR,
-          vendor: VENDOR,
-          kid: KID,
-          createdAt: "2026-01-01T00:00:00.000Z",
-          route: "/ingest/stale",
-        } as unknown as ReturnType<typeof registration>,
+        [registrationKey(CONNECTOR, VENDOR)]: staleRegistration(),
       },
     });
     await expectIndistinguishable404(await deliver(makeApp(), hookUrl(newDeliveryId())));
@@ -385,15 +434,13 @@ describe("every way a delivery is refused looks the same", () => {
     // the id, so this differs from it by one trailing character. A comparison
     // that stopped at the shorter length would admit it; the length check in
     // `equalsConstantTime` is what refuses it.
-    await expectIndistinguishable404(
-      await deliver(makeApp(), hookUrl(DELIVERY_ID.slice(0, -1))),
-    );
+    await expectIndistinguishable404(await deliver(makeApp(), hookUrl(DELIVERY_ID.slice(0, -1))));
   });
 
   test("an id whose workspace is gone", async () => {
     // Its registration went with the record, so the scan finds nothing — the
     // same answer as an id that never existed, which is the point.
-    const doomed = await store.create({ name: "doomed", ownerId: "usr_doomed" });
+    const doomed = await store.create("doomed");
     const doomedId = newDeliveryId();
     await seedWorkspace({
       id: doomed.id,
@@ -407,20 +454,17 @@ describe("every way a delivery is refused looks the same", () => {
 
   test("a registration that was never minted", async () => {
     await seedWorkspace({ hooks: {} });
-    await expectIndistinguishable404(
-      await deliver(makeApp(), hookUrl()),
-    );
+    await expectIndistinguishable404(await deliver(makeApp(), hookUrl()));
   });
 
   test("a registration whose id rotated away, past its grace window", async () => {
-    // Replaces a case that asked about the KEY id. The door no longer weighs
-    // that: the id and the key rotate together, so a second window would be a
+    // The door does not weigh the KEY id: the id and the key rotate together, so a second window would be a
     // second truth to keep in step. The id's window is the one gate.
     await seedWorkspace({
       hooks: {
         [registrationKey(CONNECTOR, VENDOR)]: registration({
           deliveryId: newDeliveryId(),
-          prevDeliveryId: (DELIVERY_ID),
+          prevDeliveryId: DELIVERY_ID,
           rotatedAt: new Date(Date.now() - HOOK_ROTATION_GRACE_MS - 1_000).toISOString(),
         }),
       },
@@ -432,25 +476,26 @@ describe("every way a delivery is refused looks the same", () => {
     // The registration is deliberately left in place here: this asserts the
     // door's own check, independent of uninstall's cleanup.
     await seedWorkspace({ installed: false });
-    await expectIndistinguishable404(
-      await deliver(makeApp(), hookUrl()),
-    );
+    await expectIndistinguishable404(await deliver(makeApp(), hookUrl()));
   });
 });
 
 describe("shape and size", () => {
-  test.each(["GET", "PUT", "DELETE", "PATCH"])("%s is refused with 405, not 404", async (method) => {
-    // 405 for a single-segment path under the prefix whatever the segment is,
-    // so the difference between "405 here" and "404 there" cannot map out which
-    // ids exist. A path of another shape 404s at the router, which reveals only
-    // the route table.
-    const res = await deliver(makeApp(), hookUrl("whatever"), {
-      method,
-      body: undefined,
-    });
-    expect(res.status).toBe(405);
-    expect(res.headers.get("Allow")).toBe("POST");
-  });
+  test.each(["GET", "PUT", "DELETE", "PATCH"])(
+    "%s is refused with 405, not 404",
+    async (method) => {
+      // 405 for a single-segment path under the prefix whatever the segment is,
+      // so the difference between "405 here" and "404 there" cannot map out which
+      // ids exist. A path of another shape 404s at the router, which reveals only
+      // the route table.
+      const res = await deliver(makeApp(), hookUrl("whatever"), {
+        method,
+        body: undefined,
+      });
+      expect(res.status).toBe(405);
+      expect(res.headers.get("Allow")).toBe("POST");
+    },
+  );
 
   test("a body over the cap is refused with 413 before the token is opened", async () => {
     const res = await deliver(makeApp(), hookUrl(), {
@@ -657,7 +702,10 @@ describe("the two rate-limit buckets", () => {
 
     const anon = appWithout({
       hookAnonLimiter: new RequestRateLimiter(1, HOOK_BUCKET_WINDOW_MS),
-      hookWorkspaceLimiter: new RequestRateLimiter(HOOK_WORKSPACE_BUCKET_MAX, HOOK_BUCKET_WINDOW_MS),
+      hookWorkspaceLimiter: new RequestRateLimiter(
+        HOOK_WORKSPACE_BUCKET_MAX,
+        HOOK_BUCKET_WINDOW_MS,
+      ),
     });
     expect((await deliverFrom(anon, SOURCE_A, goodPath())).status).toBe(202);
     await expectRateLimited(await deliverFrom(anon, SOURCE_A, goodPath()));
@@ -748,7 +796,7 @@ describe("the rotation overlap, at the door", () => {
     await seedWorkspace({
       hooks: {
         [registrationKey(CONNECTOR, VENDOR)]: registration({
-          prevDeliveryId: (OUTGOING_ID),
+          prevDeliveryId: OUTGOING_ID,
           rotatedAt,
         }),
       },
@@ -771,9 +819,7 @@ describe("the rotation overlap, at the door", () => {
     // that traffic still rides the outgoing URL. Retiring it blind is the
     // silent 404 the grace exists to prevent, so deleting this line must fail
     // a test rather than pass one.
-    const superseded = logLines.filter((l) =>
-      l.includes("delivery on a superseded delivery id"),
-    );
+    const superseded = logLines.filter((l) => l.includes("delivery on a superseded delivery id"));
     expect(superseded).toHaveLength(1);
   });
 
@@ -802,7 +848,7 @@ describe("the rotation overlap, at the door", () => {
     // A grace widens which id opens ONE registration, never which registrations
     // an id opens.
     await midRotation();
-    const other = await store.create({ name: "other", ownerId: "usr_other" });
+    const other = await store.create("other");
     await seedWorkspace({
       id: other.id,
       hooks: {

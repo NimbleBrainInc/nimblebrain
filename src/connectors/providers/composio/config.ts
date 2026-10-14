@@ -15,8 +15,7 @@
  * The credential is declarable because nothing persisted points at where it
  * lives: an installed connector's transport names the `composio` credential
  * provider (`transport-credential.ts`), so resolution is this module's private
- * business. Refs written before that seam carry a `${COMPOSIO_API_KEY}` env
- * reference and are mapped forward on read.
+ * business.
  *
  * Validation is applied to the *resolved* values regardless of source:
  *

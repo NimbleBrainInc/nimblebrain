@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import { log } from "../observability/log.ts";
-import { WorkspaceResolutionError } from "./auth-middleware.ts";
 import { enableDefaultMetrics } from "./metrics.ts";
 import { corsMiddleware } from "./middleware/cors.ts";
+import { rejectCrossSiteWrites } from "./middleware/fetch-site.ts";
 import { metricsMiddleware } from "./middleware/metrics.ts";
 import { securityHeaders } from "./middleware/security-headers.ts";
 import { tracingMiddleware } from "./middleware/tracing.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { bootstrapRoutes } from "./routes/bootstrap.ts";
+import { brandRoutes } from "./routes/brand.ts";
 import { chatRoutes } from "./routes/chat.ts";
 import { conversationEventRoutes } from "./routes/conversation-events.ts";
 import { eventRoutes } from "./routes/events.ts";
@@ -21,11 +22,7 @@ import { toolRoutes } from "./routes/tools.ts";
 import { wellKnownRoutes } from "./routes/well-known.ts";
 import { type AppContext, apiError } from "./types.ts";
 
-export function createApp(
-  ctx: AppContext,
-  authConfigured: boolean,
-  allowedOrigins: Set<string> | null,
-) {
+export function createApp(ctx: AppContext, allowedOrigins: Set<string> | null) {
   const app = new Hono();
 
   // Turn on process/runtime metrics for this server (idempotent).
@@ -39,25 +36,33 @@ export function createApp(
   app.use("*", metricsMiddleware());
 
   // Global CORS middleware
-  app.use("*", corsMiddleware(authConfigured, allowedOrigins));
+  app.use("*", corsMiddleware(allowedOrigins));
   app.use("*", securityHeaders());
+  // Every route, like CORS: a browser attaches the session cookie to a write
+  // on its own, so a write from another origin that no preflight stopped is
+  // refused unless CORS allows that origin.
+  app.use("*", rejectCrossSiteWrites(allowedOrigins));
 
-  // Route groups — well-known endpoints first (unauthenticated, no body limit needed)
+  // Route groups. Each router chains its own middleware on each of its routes
+  // (see src/api/AGENTS.md), so no router's middleware reaches another's
+  // routes, and mount order matters only if two routers registered the same
+  // method and path (the first handler to answer wins). The global middleware
+  // above is registered first because Hono runs a middleware only when it
+  // precedes the handler that answers.
   app.route("/", wellKnownRoutes(ctx));
   app.route("/", healthRoutes());
+  // The brand the login page paints before anyone signs in; public, like health.
+  app.route("/", brandRoutes());
   // Prometheus scrape endpoint. Bare /metrics (never /v1/metrics) so the web
   // Caddy proxy doesn't expose it publicly; scraped in-cluster only.
   app.route("/", metricsRoutes());
   app.route("/", authRoutes(ctx));
   // Outbound-OAuth callback for remote MCP servers. Unauthenticated by
-  // design — state param guards against unsolicited codes. Must be
-  // reachable before any authenticated middleware; ordering alongside
-  // authRoutes keeps that invariant obvious.
+  // design — state param guards against unsolicited codes.
   app.route("/", mcpAuthRoutes(ctx));
   // Managed-connector providers own their HTTP callback surface (Composio's
-  // `/v1/composio-auth/*`). Mounted here — parallel to mcpAuthRoutes, same
-  // unauthenticated-callback constraint — only for each REGISTERED provider, so
-  // a provider-less deploy mounts nothing and 404s at the router (honest "not
+  // `/v1/composio-auth/*`), mounted only for each REGISTERED provider, so a
+  // provider-less deploy mounts nothing and 404s at the router (honest "not
   // installed") instead of hitting an internal config gate.
   for (const provider of ctx.runtime.getManagedConnectorRegistry().list()) {
     const providerRoutes = provider.routes?.(ctx);
@@ -65,26 +70,15 @@ export function createApp(
   }
 
   // Inbound vendor webhooks. Unauthenticated by design for the same reason the
-  // callbacks above are — a vendor's POST cannot carry a platform token — and
-  // mounted in this same block so that constraint stays visible in one place.
-  // The credential is the sealed capability in the path; everything under
+  // callbacks above are — a vendor's POST cannot carry a platform token. The
+  // credential is the sealed capability in the path; everything under
   // `/v1/hooks/` that does not open one 404s. Returns null (mounts nothing)
   // when no hook key is provisioned, so a deployment without the capability
   // answers an honest router 404 rather than an internal config gate.
   const hooks = hooksRoutes(ctx);
   if (hooks) app.route("/", hooks);
 
-  // MCP routes BEFORE other authenticated routes — prevents other sub-app
-  // wildcard middleware from intercepting /mcp requests. Hono runs use("*")
-  // middleware from ALL sub-apps mounted at "/" that appear before the
-  // matching route, so MCP must be registered before chat/tools/events.
-  app.route("/", mcpRoutes(ctx));
-
-  // Conversation events SSE — Stage 1 Task 005 dropped the workspace
-  // requirement on this route (conversations live at the user level
-  // post-collapse). Must register BEFORE chat/tools/etc. so their
-  // `requireWorkspace` `use("*")` middleware doesn't 400 us on a
-  // path that intentionally has no X-Workspace-Id header.
+  app.route("/", mcpRoutes(ctx, allowedOrigins));
   app.route("/", conversationEventRoutes(ctx));
 
   app.route("/", bootstrapRoutes(ctx));
@@ -98,9 +92,6 @@ export function createApp(
 
   // Centralized error handler
   app.onError((err) => {
-    if (err instanceof WorkspaceResolutionError) {
-      return apiError(err.statusCode, "workspace_error", err.message);
-    }
     log.error("[nimblebrain] Unhandled error", {
       error: err instanceof Error ? err.message : String(err),
     });

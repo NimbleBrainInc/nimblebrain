@@ -1,0 +1,184 @@
+---
+title: Placements & Navigation
+description: Control where your app appears in the NimbleBrain sidebar and how users navigate to it.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Placements control where your app's UI appears in the NimbleBrain shell layout. Each placement maps a `ui://` resource to a **slot** in the shell and optionally registers a route for navigation.
+
+## Slots
+
+The shell layout has the following slots:
+
+| Slot | Where it renders | Description |
+|------|------------------|-------------|
+| `sidebar.<group>` | Left sidebar, under the focused workspace's **Apps** heading, and the workspace overview's app grid | Your app's entry in the workspace. Every `sidebar.<group>` placement renders in the one **Apps** group, whatever the group name. Give it a `route`. |
+| `sidebar` | No nav entry for a connector | Reserved for the host's own views (Conversations, Tasks, Files). A connector's `sidebar` placement with a `route` still registers that route. |
+| `sidebar.bottom` | The bottom of the mobile navigation drawer | A pinned item. It does not render in the desktop sidebar. |
+| `main` | A route, with no nav entry | A full-page view. Requires a `route`. Reachable by URL or when your app navigates to it. |
+| `settings` | The connector's settings page | Your connector's settings component, rendered under a Settings heading on **Settings → Connectors → your connector**, after its connection sections and before tool permissions. See [Settings sections](/extensions/settings-sections/). |
+
+An unknown slot is dropped, never fatal.
+
+## Declaring placements
+
+Add a `placements` array to your manifest's `_meta["ai.nimblebrain/host"]`:
+
+```json title="manifest.json"
+{
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.0",
+      "placements": [
+        {
+          "slot": "sidebar.apps",
+          "resourceUri": "ui://dashboard",
+          "priority": 30,
+          "label": "Tasks",
+          "route": "tasks"
+        },
+        {
+          "slot": "settings",
+          "resourceUri": "ui://settings"
+        }
+      ]
+    }
+  }
+}
+```
+
+## Priority sorting
+
+Within a slot, placements sort by `priority`, ascending, then by `label` (or `route`) alphabetically. The default priority is `100`.
+
+```
+priority: 10  → appears first
+priority: 50  → appears second
+priority: 100 → appears third (default)
+```
+
+The sidebar shows the first four apps under **Apps**, then a **View all** link to the workspace overview, which lists every app. There is no grouping by priority band.
+
+### An app with several views
+
+A server that declares more than one `sidebar.<group>` placement is still one app. The sidebar lists it once, under the connector's catalog `title`, and that entry opens its first placement by priority. While any of its placements is open, they list beneath the entry by `label`, so the views are the app's own navigation: give each a `label`, its own `route`, and its own `resourceUri`. The four-app cap and the **View all** count are in apps, not in views.
+
+```json
+"placements": [
+  { "slot": "sidebar.apps", "resourceUri": "ui://crm/contacts", "route": "crm", "label": "Contacts", "priority": 100 },
+  { "slot": "sidebar.apps", "resourceUri": "ui://crm/companies", "route": "crm/companies", "label": "Companies", "priority": 101 }
+]
+```
+
+Each placement is its own mounted view: moving between two of them loads the second resource and unmounts the first. A server with one placement renders as a single entry labelled by that placement, as before.
+
+## Route-based navigation
+
+A placement with a `route` registers a URL inside the workspace, under `/w/<slug>/app/`:
+
+| `route` value | URL |
+|---------------|-----|
+| `"tasks"` | `/w/<slug>/app/tasks` |
+| `"my-app/reports"` | `/w/<slug>/app/my-app/reports` |
+
+Clicking the app in the sidebar opens that URL and loads the placement's `resourceUri` in the main area, beside the docked chat.
+
+A route belongs to one server. The host compares routes ignoring case, percent-encoding, and repeated, leading or trailing slashes. A placement is dropped, and the runtime logs a warning naming the route and who holds it, when its route is:
+
+- one of the host's own views (for example `@nimblebraininc/conversations`), whatever the placement's `priority`;
+- already registered by another connector in the same workspace, in which case the connector registered first keeps it.
+
+The connector's other placements still register. Name routes after your own server, as in `crm` and `crm/companies` above, so they stay clear of the host and of other connectors.
+
+### The `primary` view
+
+The virtual `primary` resource path resolves to the **first declared placement's** `resourceUri`, so the shell can load your main view without knowing its URI ahead of time. See [UI Resources](/apps/ui-resources) for how `primary` resolves.
+
+## Sidebar rendering
+
+Under the focused workspace, the sidebar shows:
+
+1. **The host's views**: Conversations, Tasks, Files, and the Inbox.
+2. **Apps**: `sidebar.<group>` placements, one entry per server, sorted by the priority of its first placement and capped at four with a **View all** link. A server's other placements list beneath its entry while it is open.
+3. **Connectors without a sidebar placement**: one shared row after the apps, showing their icons and a count, that links to the workspace's installed connectors.
+
+The **Apps** heading carries a **+** that opens the connector catalog, shown to members who can change the workspace.
+
+The group name in `sidebar.<group>` is not shown as a heading; every group renders under **Apps**. A `main` placement never appears here. To give your app a nav entry, declare a `sidebar.apps` placement with a `route`.
+
+### Mobile drawer
+
+On narrow screens the sidebar becomes a drawer. `sidebar.bottom` placements render at its foot, linking to their route. A `sidebar.bottom` placement with `route: "settings"` is not rendered: declare connector settings with the `settings` slot.
+
+## Icons
+
+A `sidebar.apps` entry shows the connector's catalog `icons`, so it takes no `icon`. A `sidebar.bottom` placement names its own icon, using [Lucide](https://lucide.dev/icons) names in kebab-case:
+
+```json
+{ "icon": "check-square" }
+{ "icon": "message-square" }
+{ "icon": "database" }
+{ "icon": "settings" }
+```
+
+The resolver accepts kebab-case or PascalCase (`"message-square"` and `"MessageSquare"` both resolve to the `MessageSquare` component). If the name is not found, `CircleDot` is used as the fallback.
+
+## Size hints
+
+The `size` field (`"compact"`, `"full"`, `"auto"`) is accepted as a hint. The shell does not read it. A `main` or `sidebar.<group>` view fills the main area; a `settings` component is sized to its content.
+
+## Placement registry internals
+
+The `PlacementRegistry` is an in-memory store that tracks all active placements. It is updated when connectors are installed or uninstalled.
+
+Every entry is either **ambient** (no `wsId` — platform apps like Conversations, Files, Tasks; always present inside any workspace) or **workspace-scoped** (installed connectors, visible only to members of that workspace). The registry exposes a single read method, `forWorkspace(wsId)`, which returns ambient + scoped entries merged and sorted. There is deliberately no "return everything" accessor — in a multi-tenant host, no legitimate caller wants placements unrelated to a workspace.
+
+**Registration** — When a connector starts, its declared `placements` are registered via `register(serverName, placements, wsId)` against the installing workspace's `wsId`. Platform apps register ambient (no `wsId`). The virtual `primary` resource path then resolves to the first registered placement's `resourceUri`.
+
+**Querying** — `forWorkspace(wsId)` returns ambient entries plus entries scoped to `wsId`, sorted by slot then priority (lower first).
+
+**Unregistration** — When a connector is uninstalled, its placements for that workspace are removed. Other workspaces' entries for the same connector are untouched.
+
+```typescript
+// Register explicit placements, scoped to a workspace
+registry.register(
+  "my-app",
+  [
+    { slot: "sidebar", resourceUri: "ui://nav", priority: 50, label: "My App" },
+    { slot: "main", resourceUri: "ui://dashboard", route: "my-app" },
+  ],
+  "ws_0030a37f450693bf",
+);
+
+// Read the merged ambient + workspace-scoped list
+const items = registry.forWorkspace("ws_0030a37f450693bf");
+// → sorted by slot then priority
+```
+
+## Example: an app with a nav entry
+
+```json title="manifest.json"
+{
+  "_meta": {
+    "ai.nimblebrain/host": {
+      "host_version": "1.0",
+      "placements": [
+        {
+          "slot": "sidebar.apps",
+          "resourceUri": "ui://dashboard",
+          "route": "crm",
+          "label": "CRM",
+          "priority": 50
+        }
+      ]
+    }
+  }
+}
+```
+
+This adds **CRM** under the workspace's **Apps** heading and to the workspace overview, and loads `ui://dashboard` at `/w/<slug>/app/crm` when clicked.
+
+<Aside type="tip">
+One `sidebar.apps` placement with a `route` gives your app both a nav entry and a page. Add a `main` placement only for a second page you reach by navigation, not from the sidebar.
+</Aside>

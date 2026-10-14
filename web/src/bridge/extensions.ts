@@ -20,20 +20,69 @@
 // spec names a third party's extensions.
 // ---------------------------------------------------------------------------
 
-/** App → host notification: run a host action (navigate, open a panel). */
+/** App → host notification: run a host action (open an app or a conversation). */
 export const ACTION_METHOD = "ai.nimblebrain/action";
 /** App → host request: the host's file picker, answered `{ files }`. */
 export const REQUEST_FILE_METHOD = "ai.nimblebrain/request-file";
+/**
+ * App → host request: store files the app already holds (dropped on it, say),
+ * passed as `File` objects in `{ files }`, answered `{ files }` like the picker.
+ */
+export const UPLOAD_FILES_METHOD = "ai.nimblebrain/upload-files";
+/**
+ * The apps `UPLOAD_FILES_METHOD` is offered to, by server name. A pick has a
+ * step the user takes; this stores whatever the app hands over, so only the
+ * platform's own Files app holds it. `files` is a reserved source name, so no
+ * connector can claim it.
+ */
+export const UPLOAD_FILES_APPS: ReadonlySet<string> = new Set(["files"]);
 /** App → host notification: a keyboard shortcut pressed inside the frame. */
 export const KEYDOWN_METHOD = "ai.nimblebrain/keydown";
-
-/** Every extension this host serves, and therefore declares. */
-export const NIMBLEBRAIN_EXTENSIONS = [ACTION_METHOD, REQUEST_FILE_METHOD, KEYDOWN_METHOD] as const;
+/**
+ * App → host notification: where the app is, as its whole trail from its root
+ * to the current view, `{ trail: [{ id, label }, …] }`, sent on every in-app
+ * navigation. Each `id` is the view's stable address: the resource URI of what
+ * it shows when there is one, so the same value opens it from anywhere. Each
+ * one replaces the last, so the app stays the only owner of its location and a
+ * lost message corrects itself on the next. Declaring it also tells the app
+ * that the host shows its title and breadcrumb, so the app drops its own.
+ */
+export const LOCATION_METHOD = "ai.nimblebrain/location";
+/**
+ * Host → app notification: go to the trail entry whose `id` is in the params,
+ * sent when the user picks an entry above the current view in the top bar (a
+ * breadcrumb, or back to the entry before the last). The `id` is the
+ * app's own, passed back unread. Sent only to an app that sent a trail, so it
+ * needs no declaration of its own.
+ */
+export const NAVIGATE_METHOD = "ai.nimblebrain/navigate";
 
 /**
- * `_meta` key carrying an app's chat context on a `ui/message` text block.
- *
- * A `_meta` key is namespaced by whoever defines it, and this one is ours: the
- * spec says nothing about what a view attaches to the text it sends.
+ * App → host request: show the reader a notice, labelled with the app that
+ * sent it. Answered `{}`, or an error naming why it was refused. The MCP Apps
+ * spec has no notice, and `notifications/message` is a log line for debugging
+ * (and deprecated in core 2026-07-28), so this is an extension.
  */
-export const CHAT_CONTEXT_META_KEY = "ai.nimblebrain/context";
+export const NOTIFY_METHOD = "ai.nimblebrain/notify";
+
+/** Every extension this host serves, and therefore declares. */
+export const NIMBLEBRAIN_EXTENSIONS = [
+  ACTION_METHOD,
+  NOTIFY_METHOD,
+  REQUEST_FILE_METHOD,
+  UPLOAD_FILES_METHOD,
+  KEYDOWN_METHOD,
+  LOCATION_METHOD,
+] as const;
+
+/**
+ * Host-context key: the theme variables outside the spec's
+ * `styles.variables` enum that vary with the mode, as `{ variables }`
+ * (`getModeExtensionTokens`). Sent on `ui/initialize` and on every
+ * `host-context-changed`, so they follow a theme toggle the way the spec's
+ * variables do. A host-context field, not a method, so it is not declared in
+ * `hostCapabilities.experimental`: an app reads it where it is present. The
+ * spec's `McpUiHostContext` keeps unknown top-level keys, which is why it sits
+ * there and not inside `styles`, whose shape a spec client strips.
+ */
+export const HOST_STYLES_EXTENSION = "ai.nimblebrain/styles";

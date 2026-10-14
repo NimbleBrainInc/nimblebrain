@@ -12,6 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
 import {
   auditComposioAuthConfigs,
   type ComposioAuthConfigAudit,
@@ -20,15 +21,14 @@ import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
-import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
 
-/** Minimal catalog entry — only the fields the audit reads. */
+/** A catalog entry; the audit reads only `id`, `auth`, and `composio`. */
 function entry(
   id: string,
   auth: ConnectorCatalogEntry["auth"],
   composio?: { toolkit: string },
 ): ConnectorCatalogEntry {
-  return { id, name: id, auth, composio } as unknown as ConnectorCatalogEntry;
+  return { id, name: id, description: id, url: "https://mcp.example.test/mcp", auth, composio };
 }
 
 /**

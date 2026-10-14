@@ -1,7 +1,6 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { log } from "../../src/observability/log.ts";
-import { MAX_TRACKED_RUNS, MetricsEventSink } from "../../src/adapters/metrics-events.ts";
 import type { Counter } from "prom-client";
+import { MAX_TRACKED_RUNS, MetricsEventSink } from "../../src/adapters/metrics-events.ts";
 import {
   connectorCrashedTotal,
   connectorUnhealthy,
@@ -17,8 +16,25 @@ import {
   toolCallsTotal,
   toolPromotionsTotal,
 } from "../../src/api/metrics.ts";
-import type { ConnectorHealth } from "../../src/tools/health-monitor.ts";
+import { log } from "../../src/observability/log.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
+import type { ConnectorHealth } from "../../src/tools/health-monitor.ts";
+import {
+  engineEvent,
+  llmDonePayload,
+  runStartPayload,
+  toolDonePayload,
+} from "../helpers/engine-events.ts";
+
+/** A run's end, with neutral counters. */
+function runDone(runId: string) {
+  return engineEvent("run.done", { runId, stopReason: "complete", iterations: 1, totalMs: 0 });
+}
+
+/** A run's failure. */
+function runError(runId: string) {
+  return engineEvent("run.error", { runId, error: "boom", type: "Error" });
+}
 
 // Read one label-series value off a counter. Tests use deltas (read → act →
 // read) rather than reset(), so they're robust to the shared process-global
@@ -109,13 +125,13 @@ describe("MetricsEventSink", () => {
 
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         model: "tm-sink",
         usage: { inputTokens: 200, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
-      },
+      }),
     });
-    sink.emit({ type: "tool.done", data: { runId: "r-sink", name: "a", ok: true } });
-    sink.emit({ type: "tool.done", data: { runId: "r-sink", name: "b", ok: false } });
+    sink.emit(engineEvent("tool.done", toolDonePayload({ runId: "r-sink", name: "a", ok: true })));
+    sink.emit(engineEvent("tool.done", toolDonePayload({ runId: "r-sink", name: "b", ok: false })));
 
     expect((await read(llmTokensTotal, fresh)) - before.fresh).toBe(200);
     expect((await read(toolCallsTotal, { ok: "true" })) - before.okTrue).toBe(1);
@@ -130,10 +146,12 @@ describe("MetricsEventSink", () => {
     // Run 1: promote two tools, call only one, then finish.
     sink.emit({ type: "tool.promoted", data: { runId: "r1", toolName: "used-tool" } });
     sink.emit({ type: "tool.promoted", data: { runId: "r1", toolName: "unused-tool" } });
-    sink.emit({ type: "tool.done", data: { runId: "r1", name: "used-tool", ok: true } });
+    sink.emit(
+      engineEvent("tool.done", toolDonePayload({ runId: "r1", name: "used-tool", ok: true })),
+    );
     // Nothing should be counted until the run terminates.
     expect((await read(toolPromotionsTotal, { used: "true" })) - beforeTrue).toBe(0);
-    sink.emit({ type: "run.done", data: { runId: "r1" } });
+    sink.emit(runDone("r1"));
 
     expect((await read(toolPromotionsTotal, { used: "true" })) - beforeTrue).toBe(1);
     expect((await read(toolPromotionsTotal, { used: "false" })) - beforeFalse).toBe(1);
@@ -146,10 +164,10 @@ describe("MetricsEventSink", () => {
     // Interleaved runs, neither tool called; one ends via run.error.
     sink.emit({ type: "tool.promoted", data: { runId: "rA", toolName: "tA" } });
     sink.emit({ type: "tool.promoted", data: { runId: "rB", toolName: "tB" } });
-    sink.emit({ type: "run.done", data: { runId: "rA" } });
-    sink.emit({ type: "run.error", data: { runId: "rB" } });
+    sink.emit(runDone("rA"));
+    sink.emit(runError("rB"));
     // A second terminator for an already-finalized run is a no-op.
-    sink.emit({ type: "run.done", data: { runId: "rA" } });
+    sink.emit(runDone("rA"));
 
     expect((await read(toolPromotionsTotal, { used: "false" })) - beforeFalse).toBe(2);
   });
@@ -169,7 +187,7 @@ describe("MetricsEventSink", () => {
       }
       // Its terminator now finds no state → no sample recorded (the loss the
       // warn surfaces).
-      sink.emit({ type: "run.done", data: { runId: "evict-me" } });
+      sink.emit(runDone("evict-me"));
 
       expect((await read(toolPromotionsTotal, { used: "false" })) - before).toBe(0);
       expect(warnings.some((w) => w.includes("evict-me"))).toBe(true);
@@ -181,19 +199,21 @@ describe("MetricsEventSink", () => {
   it("ignores events it doesn't track", async () => {
     const sink = new MetricsEventSink();
     // Must not throw on an unrelated event.
-    expect(() => sink.emit({ type: "run.start", data: { runId: "r1" } })).not.toThrow();
+    expect(() =>
+      sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" }))),
+    ).not.toThrow();
   });
 });
 
 describe("connector crash metric", () => {
-  it("test_run_error_connector_crashed_increments_counter_with_source_and_remote", async () => {
+  it("test_connector_health_crashed_increments_counter_with_source_and_remote", async () => {
     const sink = new MetricsEventSink();
     const labels = { source: "com-dropbox-mcp", remote: "true" };
     const before = await read(connectorCrashedTotal, labels);
-    // Mirrors HealthMonitor's emission: run.error with a nested connector.crashed
-    // event, a `source` name, and `remote: true`. No runId.
+    // Mirrors HealthMonitor's emission: connector.health with the
+    // connector.crashed event, a `source` name, and `remote: true`.
     sink.emit({
-      type: "run.error",
+      type: "connector.health",
       data: { source: "com-dropbox-mcp", event: "connector.crashed", remote: true },
     });
     expect((await read(connectorCrashedTotal, labels)) - before).toBe(1);
@@ -205,21 +225,21 @@ describe("connector crash metric", () => {
     const before = await read(connectorCrashedTotal, labels);
     // An in-process source: HealthMonitor omits the `remote` field entirely.
     sink.emit({
-      type: "run.error",
+      type: "connector.health",
       data: { source: "synapse-crm", event: "connector.crashed" },
     });
     expect((await read(connectorCrashedTotal, labels)) - before).toBe(1);
   });
 
-  it("test_run_error_without_connector_crashed_does_not_increment", async () => {
+  it("test_events_other_than_connector_crashed_do_not_increment", async () => {
     const sink = new MetricsEventSink();
     const before = await readTotal(connectorCrashedTotal);
-    // An ordinary run error and a normal run completion must not touch the
-    // crash counter — only the nested connector.crashed discriminator counts.
-    sink.emit({ type: "run.error", data: { runId: "r1" } });
-    sink.emit({ type: "run.done", data: { runId: "r2" } });
+    // An ordinary run error, a normal run completion and a non-crash health
+    // event must not touch the crash counter — only connector.crashed counts.
+    sink.emit(runError("r1"));
+    sink.emit(runDone("r2"));
     sink.emit({
-      type: "run.error",
+      type: "connector.health",
       data: { source: "com-dropbox-mcp", event: "connector.restarting", remote: true },
     });
     expect((await readTotal(connectorCrashedTotal)) - before).toBe(0);
@@ -247,8 +267,9 @@ describe("connector unhealthy gauge", () => {
     return undefined;
   }
 
-  const status = (...records: Array<Partial<ConnectorHealth> & { name: string; state: ConnectorHealth["state"] }>): ConnectorHealth[] =>
-    records.map((r) => ({ uptime: null, restartCount: 0, ...r }));
+  const status = (
+    ...records: Array<Partial<ConnectorHealth> & { name: string; state: ConnectorHealth["state"] }>
+  ): ConnectorHealth[] => records.map((r) => ({ uptime: null, restartCount: 0, ...r }));
 
   // Leave the gauge inert for other test files sharing the process-global
   // registry (a full-registry scrape elsewhere would otherwise invoke our
@@ -279,7 +300,9 @@ describe("connector unhealthy gauge", () => {
   it("test_connector_unhealthy_gauge_reports_1_for_cooldown_source", async () => {
     // `cooldown` (crashed, spent its quick-retry budget, now on slow re-probe)
     // can stay down indefinitely — the other involuntary-down state.
-    registerConnectorHealthGauge(() => status({ name: "com-example-enrich-mcp", state: "cooldown" }));
+    registerConnectorHealthGauge(() =>
+      status({ name: "com-example-enrich-mcp", state: "cooldown" }),
+    );
     expect(await readGauge("com-example-enrich-mcp")).toBe(1);
   });
 
@@ -321,7 +344,8 @@ describe("LLM latency + error metrics", () => {
         // biome-ignore lint/suspicious/noExplicitAny: prom-client value shape.
         (s as any).metricName === "nb_llm_request_duration_seconds_bucket" &&
         s.labels.model === model &&
-        s.labels.le === le
+        // prom-client adds `le` to each bucket sample; the label type omits it.
+        (s.labels as { le?: string | number }).le === le
       ) {
         return s.value;
       }
@@ -369,18 +393,11 @@ describe("LLM latency + error metrics", () => {
     const beforeCount = await readHistogram("count", labels);
     const beforeSum = await readHistogram("sum", labels);
     // 2400ms call → 2.4s observed.
-    sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-latency", llmMs: 2400 } });
+    sink.emit(
+      engineEvent("llm.done", llmDonePayload({ runId: "r1", model: "tm-latency", llmMs: 2400 })),
+    );
     expect((await readHistogram("count", labels)) - beforeCount).toBe(1);
     expect((await readHistogram("sum", labels)) - beforeSum).toBeCloseTo(2.4, 5);
-  });
-
-  it("test_llm_done_without_llmMs_does_not_observe", async () => {
-    const sink = new MetricsEventSink();
-    const labels = { source: "main", model: "tm-no-ms" };
-    const before = await readHistogram("count", labels);
-    // A malformed llm.done missing llmMs must not record a 0s (or NaN) sample.
-    sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-no-ms" } });
-    expect((await readHistogram("count", labels)) - before).toBe(0);
   });
 
   // Same shape as readHistogram, against the TTFT histogram.
@@ -409,7 +426,10 @@ describe("LLM latency + error metrics", () => {
     const beforeSum = await readTtft("sum", labels);
     // 1800ms to first token → 1.8s observed; the long round-trip (60s) is the
     // decode this metric deliberately looks past.
-    sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-ttft", llmMs: 60000, ttftMs: 1800 } });
+    sink.emit({
+      type: "llm.done",
+      data: llmDonePayload({ runId: "r1", model: "tm-ttft", llmMs: 60000, ttftMs: 1800 }),
+    });
     expect((await readTtft("count", labels)) - beforeCount).toBe(1);
     expect((await readTtft("sum", labels)) - beforeSum).toBeCloseTo(1.8, 5);
   });
@@ -420,12 +440,14 @@ describe("LLM latency + error metrics", () => {
     const before = await readTtft("count", labels);
     // An empty completion (no output part) carries no ttftMs; it must not record
     // a 0s (or NaN) TTFT sample. The round-trip latency still observes.
-    sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-no-ttft", llmMs: 5000 } });
+    sink.emit(
+      engineEvent("llm.done", llmDonePayload({ runId: "r1", model: "tm-no-ttft", llmMs: 5000 })),
+    );
     expect((await readTtft("count", labels)) - before).toBe(0);
   });
 
   // The point of the `origin` label is that a p99 can separate a person waiting
-  // from an automation nobody is watching. A label that is present but always
+  // from a task nobody is watching. A label that is present but always
   // the same value would satisfy a shape assertion and still answer nothing, so
   // these drive the two origins through the real derivation (the request
   // context) rather than asserting the label exists.
@@ -437,7 +459,7 @@ describe("LLM latency + error metrics", () => {
     runWithRequestContext({ identity: null, unattended: true }, () => {
       sink.emit({
         type: "llm.done",
-        data: { runId: "r1", model: "tm-origin-task", llmMs: 90000, ttftMs: 1200 },
+        data: llmDonePayload({ runId: "r1", model: "tm-origin-task", llmMs: 90000, ttftMs: 1200 }),
       });
     });
     expect((await readHistogram("count", labels)) - beforeLatency).toBe(1);
@@ -452,7 +474,7 @@ describe("LLM latency + error metrics", () => {
     runWithRequestContext({ identity: null, conversationId: "conv-1" }, () => {
       sink.emit({
         type: "llm.done",
-        data: { runId: "r1", model: "tm-origin-chat", llmMs: 3000, ttftMs: 800 },
+        data: llmDonePayload({ runId: "r1", model: "tm-origin-chat", llmMs: 3000, ttftMs: 800 }),
       });
     });
     expect((await readHistogram("count", labels)) - beforeLatency).toBe(1);
@@ -475,7 +497,9 @@ describe("LLM latency + error metrics", () => {
   it("test_llm_done_does_not_increment_error_counter", async () => {
     const sink = new MetricsEventSink();
     const before = await readTotal(llmErrorsTotal);
-    sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-err", llmMs: 100 } });
+    sink.emit(
+      engineEvent("llm.done", llmDonePayload({ runId: "r1", model: "tm-err", llmMs: 100 })),
+    );
     expect((await readTotal(llmErrorsTotal)) - before).toBe(0);
   });
 });
@@ -488,14 +512,14 @@ describe("estimate-vs-actual instrumentation", () => {
 
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r-est",
         model: "tm-est",
         // A real llm.done always carries usage; the estimate is only recorded
         // when its counterpart on the actual side is too.
         usage: { inputTokens: 800_000, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
         estimatedInputTokens: 512_000,
-      },
+      }),
     });
 
     expect((await read(llmInputTokensEstimatedTotal, labels)) - before).toBe(512_000);
@@ -514,12 +538,12 @@ describe("estimate-vs-actual instrumentation", () => {
 
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r-ratio",
         model,
         usage: { inputTokens: 800_000, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
         estimatedInputTokens: 500_000,
-      },
+      }),
     });
 
     const actual = (await read(llmTokensTotal, actualLabels)) - beforeActual;
@@ -540,39 +564,27 @@ describe("estimate-vs-actual instrumentation", () => {
 
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r-zero-actual",
         model: "tm-zero-actual",
         // A stream that ends without a finish part leaves the usage totals at
         // their zero initializers.
         usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
         estimatedInputTokens: 400_000,
-      },
+      }),
     });
 
     expect(await readTotal(llmInputTokensEstimatedTotal)).toBe(before);
   });
 
-  it("test_llm_done_without_usage_records_no_estimate", async () => {
-    const sink = new MetricsEventSink();
-    const before = await readTotal(llmInputTokensEstimatedTotal);
-    // No usage at all: the actual counter is skipped wholesale upstream.
-    sink.emit({
-      type: "llm.done",
-      data: { runId: "r-no-usage", model: "tm-no-usage", estimatedInputTokens: 400_000 },
-    });
-    expect(await readTotal(llmInputTokensEstimatedTotal)).toBe(before);
-  });
-
-  it("test_llm_done_without_estimate_records_nothing", async () => {
+  it("test_llm_done_with_a_zero_estimate_records_nothing", async () => {
     const sink = new MetricsEventSink();
     const before = await readTotal(llmInputTokensEstimatedTotal);
     // A zero estimate is not a real measurement — recording it would drag the
     // ratio toward infinity rather than leaving the series untouched.
-    sink.emit({ type: "llm.done", data: { runId: "r-none", model: "tm-none" } });
     sink.emit({
       type: "llm.done",
-      data: { runId: "r-zero", model: "tm-zero", estimatedInputTokens: 0 },
+      data: llmDonePayload({ runId: "r-zero", model: "tm-zero", estimatedInputTokens: 0 }),
     });
     expect(await readTotal(llmInputTokensEstimatedTotal)).toBe(before);
   });

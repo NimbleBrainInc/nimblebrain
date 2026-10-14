@@ -1,10 +1,13 @@
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
+import type { McpUiToolVisibility } from "@modelcontextprotocol/ext-apps";
 import type {
   ContentBlock,
+  InputRequests,
   TextContent,
   ToolAnnotations,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/server";
 import type { TokenUsage } from "../usage/types.ts";
+import type { EngineEventPayloads } from "./schemas/events.ts";
 
 export type { ContentBlock, TextContent };
 
@@ -82,8 +85,8 @@ export interface ToolSchema {
   inputSchema: Record<string, unknown>;
   /**
    * The tool's `_meta` — MCP's free-form, reverse-DNS-keyed namespace. Carries
-   * host conventions like `ai.nimblebrain/internal` and the UI metadata
-   * (`resourceUri`) the engine reads to mount an inline panel.
+   * host conventions and the MCP Apps UI metadata (`ui.resourceUri`, which the
+   * engine reads to mount an inline panel, and `ui.visibility`).
    *
    * Distinct from {@link ToolSchema.annotations}, which is the spec's own
    * closed set of behavioural hints. Both travel; neither is the other.
@@ -132,6 +135,12 @@ export interface ToolResult {
    * connector, can opt into a `_meta` hint and have it reach the engine.
    */
   _meta?: Record<string, unknown>;
+  /**
+   * The connector needs input from the client before it can answer (an MCP
+   * `input_required` result). Only a call made with `ToolExecuteOptions.caller`
+   * can come back this way; `content` is then empty.
+   */
+  inputRequired?: { inputRequests?: InputRequests; requestState?: string };
 }
 
 /**
@@ -147,7 +156,13 @@ export interface ToolResult {
  *
  * It rides in `_meta` — the MCP-blessed channel for metadata-about-a-result —
  * rather than `structuredContent` (the tool's data) or a bespoke top-level
- * field (dropped at the boundary). Any tool, in-process or connector, can set it.
+ * field (dropped at the boundary): the platform's own tools are in-process MCP
+ * servers, so `_meta` is the only channel that reaches the engine.
+ *
+ * Host-owned: set by the platform's own in-process tools (`nb__search`) and
+ * stripped from anything a connector returns (`hostOwnedMetaStripped`). Only the
+ * tool knows what "no progress" means for its own result, which is why the flag
+ * lives on the result and not in a host heuristic.
  */
 export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
 
@@ -171,9 +186,7 @@ export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
  * trip after three.
  *
  * Host-owned, because the supervisor trusts it unconditionally: a connector able to
- * set it could exempt itself from the guard permanently. That is the asymmetry
- * with `NON_ADVANCING_META_KEY` above, which IS safe to accept from a connector —
- * setting that one makes the guard stricter; this one makes it weaker.
+ * set it could exempt itself from the guard permanently.
  *
  * `McpSource` owns it on two channels, and both need closing because a connector
  * controls both:
@@ -193,37 +206,48 @@ export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
 export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
 
 /**
- * Annotation marking a tool as a UI-driven affordance, not an agent capability.
- * An internal tool is stripped from every LLM tool listing — chat
- * (`surfaceTools`) and `/mcp` (`tools/list`) alike — and refused for promotion,
- * yet stays callable by name (so the web shell's REST calls still work). Single
- * source of the key: use {@link isInternalTool} to read it and this const as the
- * annotation key to set it, so a rename can never split the read/write sites.
- */
-/**
- * Reverse-DNS `_meta` key stamped on the OUTBOUND `tools/call` of an unattended
- * dispatch — a single tool call made with no session, from stored
- * configuration, on behalf of a named principal. Its value is the caller's own
- * short opaque `reason` string, so a server that cares can tell a
- * configuration-fired call from a chat turn and answer differently (skip a
- * confirmation prompt, tag what it writes). A server that does not care ignores
- * it, which is why nothing about the dispatch depends on it being read.
+ * Who may reach a tool, per the MCP Apps spec's `_meta.ui.visibility`. Absent,
+ * a tool is `["model", "app"]`. `"model"` makes it visible to and callable by
+ * the agent; `"app"` makes it callable by a view of the same server.
  *
- * Host-owned in the same sense as {@link INFRA_ERROR_META_KEY}: it asserts
- * something about the CALLER, and only the host is in a position to know it. So
- * it is stripped from every RESULT, in-process sources included — unlike the
- * skill markers, whose strip is conditioned on crossing a real transport.
- * Nothing downstream reads it off a result, so a copy coming back is at best
- * noise and at worst a provenance claim made by the party being asked about,
- * and the audit line, not the result, is where that provenance is recorded.
+ * The spec binds a host on two paths, and each is enforced where the caller is
+ * known:
+ *
+ *   - A tool without `"model"` is left out of every tool list that reaches a
+ *     model: the chat list (`surfaceTools`), `nb__search`, the `/mcp`
+ *     `tools/list`, the invalid-name recovery hint, and promotion. The engine,
+ *     the host on the chat door, also refuses a model's call that names one.
+ *     `/mcp` refuses an agent's call that names one: any call that is not an
+ *     app's, which takes a first-party credential naming a source
+ *     (`isAppCall` in `src/api/mcp-server.ts`). REST admits first-party
+ *     credentials only, and the web shell's settings reach the platform's own
+ *     UI-driven tools there.
+ *   - A `tools/call` from an app is refused for a tool without `"app"`
+ *     (`/mcp`, keyed on the source the iframe bridge names).
+ *
+ * It applies to every tool alike, a connector's over the wire or the
+ * platform's own in-process ones, which declare `{ ui: { visibility: ["app"] } }`.
+ * An entry that is not an array is read as absent, the spec's default.
  */
-export const UNATTENDED_META_KEY = "ai.nimblebrain/unattended";
+export function toolVisibility(tool: {
+  meta?: Record<string, unknown>;
+}): readonly McpUiToolVisibility[] {
+  const ui = tool.meta?.ui as { visibility?: unknown } | undefined;
+  const visibility = ui?.visibility;
+  if (!Array.isArray(visibility)) return DEFAULT_TOOL_VISIBILITY;
+  return visibility.filter((v): v is McpUiToolVisibility => v === "model" || v === "app");
+}
 
-export const INTERNAL_TOOL_ANNOTATION = "ai.nimblebrain/internal";
+const DEFAULT_TOOL_VISIBILITY: readonly McpUiToolVisibility[] = ["model", "app"];
 
-/** True when a tool carries {@link INTERNAL_TOOL_ANNOTATION} in its `_meta`. */
-export function isInternalTool(tool: { meta?: Record<string, unknown> }): boolean {
-  return Boolean(tool.meta?.[INTERNAL_TOOL_ANNOTATION]);
+/** True when the agent may see and call a tool (`"model"` in its visibility). */
+export function isModelVisible(tool: { meta?: Record<string, unknown> }): boolean {
+  return toolVisibility(tool).includes("model");
+}
+
+/** True when a view of the tool's own server may call it (`"app"` in its visibility). */
+export function isAppCallable(tool: { meta?: Record<string, unknown> }): boolean {
+  return toolVisibility(tool).includes("app");
 }
 
 export interface ToolPromotionResult {
@@ -235,7 +259,12 @@ export interface ToolPromotionResult {
 }
 
 export interface ToolPromotionControls {
-  addTool(toolName: string): ToolPromotionResult;
+  /**
+   * Async because a name missing from the run's tool lookups triggers one
+   * re-read of the router: a connector that was restarting when the run began
+   * comes back mid-run, and `nb__search` (which reads live) can list its tools.
+   */
+  addTool(toolName: string): Promise<ToolPromotionResult>;
   removeTool(toolName: string): ToolPromotionResult;
 }
 
@@ -244,169 +273,19 @@ export interface EventSink {
   emit(event: EngineEvent): void;
 }
 
-export type EngineEventType =
-  | "chat.start"
-  | "run.start"
-  | "text.delta"
-  | "reasoning.delta"
-  | "tool.preparing"
-  | "tool.preparing.done"
-  | "tool.start"
-  | "tool.done"
-  | "tool.progress"
-  | "tool.promoted"
-  | "tool.released"
-  | "llm.done"
-  /**
-   * A provider LLM call failed terminally — the call threw and the in-call
-   * retry was exhausted (or a context overflow could not be recovered).
-   * NOT emitted for user-initiated cancellations (abort). Payload: { runId,
-   * model }. Observe-only signal for the LLM error-rate metric; the error
-   * itself still propagates and ends the run as `run.error`.
-   */
-  | "llm.error"
-  | "run.done"
-  | "run.error"
-  | "skills.loaded"
-  /**
-   * A curated connector-skill overlay was surfaced into the conversation for
-   * the first time, triggered by a matching connector tool call. The
-   * reconstructor turns this into a synthetic message carrying the skill
-   * body, placed after the tool results of the iteration that triggered it, so
-   * the guidance rides the cached, append-only history and is in context for
-   * the model's next action instead of re-entering the system prefix. Emitted
-   * at most once per (conversation, skill). Payload: { runId, toolName,
-   * skillName, skillBody, scope }.
-   */
-  | "connector.skill.injected"
-  /**
-   * A catalog skill's full body was delivered to the model via the
-   * `nb__use_skill` activation tool. The body itself persists as the tool
-   * result (`tool.done`), so — unlike `connector.skill.injected` — the
-   * reconstructor synthesizes NO extra message for this event; it only stamps
-   * the dedup marker on the reconstructed tool result. Emitted at most once
-   * per (conversation, skill). Payload: { runId, toolCallId, skillName,
-   * scope, tokens }.
-   */
-  | "skill.activated"
-  | "skill.suppression"
-  | "context.assembled"
-  /**
-   * Emitted when a model call is rejected for exceeding the context window
-   * and the engine re-windows history with a tighter budget before retrying.
-   * Payload: { runId, attempt, previousMessageCount, errorMessage }.
-   */
-  | "context.overflow_recovery"
-  /**
-   * Emitted when a turn is cut off at the model's output ceiling
-   * (`finishReason: "length"`) with no pending tool call and the engine
-   * auto-resumes it from the partial text rather than ending the run.
-   * Payload: { runId, continuation } where `continuation` is the 1-based
-   * resume count (bounded by MAX_LENGTH_CONTINUATIONS).
-   */
-  | "context.length_continuation"
-  | "connector.installed"
-  | "connector.uninstalled"
-  /**
-   * Per-principal connection state change for a remote URL connector.
-   * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.
-   * Workspace-scoped connectors emit one event stream (principalId = "_workspace");
-   * member-scoped connectors emit one stream per active member.
-   */
-  | "connection.state_changed"
-  /**
-   * An app server sent a notification a host relays to the server's views
-   * (`RELAYED_SERVER_NOTIFICATIONS`), after coalescing. Forwarded to SSE as
-   * itself, scoped to the workspace; the web shell posts `{ method, params }`
-   * verbatim to that server's iframes. Payload: { server, workspaceId, method,
-   * params? }.
-   */
-  | "server.notification"
-  | "conversation.title"
-  | "config.changed"
-  | "skill.created"
-  | "skill.updated"
-  | "skill.deleted"
-  | "file.created"
-  | "file.deleted"
-  | "bridge.tool.call"
-  | "bridge.tool.done"
-  /**
-   * A notification a connector emitted reached a workspace's inbox. Emitted
-   * once per item, after the durable write — the inbox is the guarantee and
-   * everything downstream of it is best-effort. Payload:
-   * { workspaceId, id, seq, source, name, level, title, subject?, receivedAt }.
-   */
-  | "notification.created"
-  /**
-   * A route target delivered. The ledger row on the item changed after
-   * `notification.created` announced it, so without this a browser holding
-   * that item shows a delivery that never updates until an unrelated later
-   * frame happens to arrive. Payload:
-   * { workspaceId, id, seq, routeId, target, attempts }.
-   */
-  | "notification.delivered"
-  /**
-   * A route target reached a terminal outcome that is not delivery — refused,
-   * skipped for a departed author, or out of retries. Carries the same
-   * coordinates as the delivery-ledger row it accompanies, so a failed post is
-   * visible instead of silent. Payload:
-   * { workspaceId, id, seq, routeId, target, outcome, attempts, error }.
-   */
-  | "notification.delivery_failed"
-  | "http.error"
-  | "audit.auth_failure"
-  | "audit.permission_denied"
-  /**
-  /**
-   * A secret held in the credential store was revealed to a caller — presented
-   * as a header, exchanged at a token endpoint, handed to a provider SDK.
-   * Payload: { scope, key, caller, purpose } plus `workspaceId` / `userId` when
-   * the scope has one. NEVER the value.
-   *
-   * Emitted on the reveal rather than on the read that produced it, so the log
-   * records secrets that were used and not secrets that were probed for
-   * presence — and at most once per read, so a long-lived `fetch` wrapper
-   * presenting one secret does not write a line per request.
-   */
-  | "audit.credential_read"
-  /**
-   * A stored secret claimed to be sealed and could not be opened — no sealing
-   * key configured, no ring entry matching its `kid`, or a failed
-   * authentication tag. Payload: { scope, key, reason, wantedKid? } plus
-   * `workspaceId` / `userId` when the scope has one. NEVER the value: the bytes
-   * that failed to open are still the ciphertext of a live credential.
-   *
-   * A tag failure is either tampering or a misconfigured key, and both belong
-   * on the same stream the reads go to. `wantedKid` is a MAC over a constant,
-   * so naming it discloses nothing about the key behind it while letting an
-   * operator tell "the outgoing key was dropped too early" from "this file came
-   * from somewhere else".
-   */
-  | "audit.credential_seal_failure"
-  /**
-   * An unattended dispatch — one tool call made with no session, as a named
-   * principal, from stored configuration — reached the door. Emitted once per
-   * call, whatever the outcome, including the ones that never touch a registry:
-   * the point of the line is that the attempt is on the record, so a dispatch
-   * nobody watched is still something an operator can read back. Payload:
-   * { principalId, workspaceId, tool, reason, outcome, classification?, ms }.
-   */
-  | "audit.unattended_dispatch";
+/** Every engine event type: the keys of `EngineEventPayloads`. */
+export type EngineEventType = keyof EngineEventPayloads;
 
 /**
- * Generic event envelope. Per-event-type payload schemas are declared in
- * `./schemas/events.ts` (TypeBox + `Static<typeof X>` types). Code that
- * needs the precise payload shape can import the typed payload directly
- * (`SkillsLoadedPayload`, `ServerNotificationPayload`, etc.) and narrow on
- * `event.type` before access. Tightening `data` here to a discriminated
- * union over those payloads is a follow-up — it requires auditing every
- * consumer to add the corresponding `event.type === "..."` narrowing.
+ * An engine event: a `type` and the payload `EngineEventPayloads` declares for
+ * it. Narrowing on `event.type` narrows `event.data`.
  */
-export interface EngineEvent {
-  type: EngineEventType;
-  data: Record<string, unknown>;
-}
+export type EngineEvent = {
+  [K in EngineEventType]: { type: K; data: EngineEventPayloads[K] };
+}[EngineEventType];
+
+/** The event of one type. */
+export type EngineEventOf<K extends EngineEventType> = Extract<EngineEvent, { type: K }>;
 
 /** Hooks for intercepting the engine loop at 5 strategic points. */
 export interface EngineHooks {
@@ -450,7 +329,12 @@ export interface EngineHooks {
     opts?: { overflowAttempt?: number },
   ) => LanguageModelV4Message[];
 
-  /** Gate or modify tool calls before execution. Return null to skip the tool. */
+  /**
+   * Gate or modify a model tool call before execution. Return null to skip the
+   * tool. Called only with a call the engine has already coerced and validated
+   * against the tool's schema, so a call the engine would refuse never reaches
+   * it; whatever it returns is checked the same way again before dispatch.
+   */
   beforeToolCall?: (call: ToolCall) => ToolCall | null | Promise<ToolCall | null>;
 
   /** Modify or log tool results after execution. */
@@ -531,12 +415,51 @@ export type ResolvedThinking =
   | { mode: "effort"; effort: ThinkingEffort; source: EffortSource }
   | { mode: "enabled"; budgetTokens: number; effort: ThinkingEffort; source: EffortSource };
 
+/** How the engine reaches a run's spend accounts. See `EngineConfig.spend`. */
+export interface SpendGate {
+  /**
+   * Before a model call: the largest output, at most `maxOutputTokens`, the
+   * accounts can pay for alongside `inputTokens`, reserved against them until
+   * the call's `debit`. Refused, naming the account, when the input alone does
+   * not fit or the output allowed falls below `minOutputTokens`.
+   */
+  check(call: {
+    inputTokens: number;
+    maxOutputTokens: number;
+    minOutputTokens: number;
+  }): { maxOutputTokens: number } | { accountId: string };
+  /** After the call: release its reservation and debit its actual usage from every account. */
+  debit(actual: TokenUsage): void;
+}
+
 /** Engine configuration per run. */
 export interface EngineConfig {
   model: string;
   maxIterations: number;
   maxInputTokens: number;
   maxOutputTokens: number;
+  /**
+   * Cap on the input tokens the whole run may spend, summed over every model
+   * call, as the provider reports them (cache reads and writes included, so
+   * it is a token cap, not a cost cap). `maxInputTokens` bounds one call's
+   * context; this bounds the run. Before each call the engine projects that
+   * call's input as the larger of its estimate of the prompt about to be sent
+   * and the previous call's reported input, and ends the run with stopReason
+   * `max_input_tokens` when the tokens already spent plus the projection would
+   * pass the cap. The run ends within the cap unless the estimate undercounts
+   * the prompt. Absent means no cap.
+   */
+  maxRunInputTokens?: number;
+  /**
+   * The run's spend accounts, as the runtime holds them. Before each model call
+   * the engine asks `check` with the call's projected input (as for
+   * `maxRunInputTokens`) and its output ceiling, and sends the call with its
+   * `maxOutputTokens` clamped to what the accounts allow; a refusal ends the
+   * run with stopReason `spend_limit`, naming the account, before the call is
+   * sent. After each call the engine passes its actual usage to `debit`. The
+   * engine never reads what an account is. Absent means no account.
+   */
+  spend?: SpendGate;
   /**
    * Resolved thinking option for this call. Optional; absent means the
    * engine doesn't request thinking (provider default behavior).
@@ -550,7 +473,7 @@ export interface EngineConfig {
    * underlying tool source. For task-augmented MCP tools this becomes
    * `tasks/cancel` on the server; for inline tools the SDK aborts the
    * in-flight RPC. Long-running tools MUST honor this signal — see the
-   * "Long-Running Tools (MCP Tasks)" section in CLAUDE.md for the contract.
+   * "Long-Running Tools (MCP Tasks)" section in src/tools/AGENTS.md for the contract.
    */
   signal?: AbortSignal;
   /**
@@ -566,8 +489,8 @@ export interface EngineConfig {
    * fires these immediately after `run.start` and before the first LLM call,
    * so the conversation log records what the prompt looked like.
    *
-   * Phase 2: `skills.loaded` and `context.assembled` payloads. Future phases
-   * may add more entries here without touching the engine signature.
+   * `skills.loaded` and `context.assembled` payloads. More entries can be
+   * added here without touching the engine signature.
    */
   runMetadata?: RunMetadata;
   /**
@@ -621,6 +544,12 @@ export interface ConnectorSkillCandidate {
   description?: string;
   /** The overlay body (markdown) to surface into history, verbatim. */
   body: string;
+  /**
+   * Present when the body is fetched on demand (a server-published skill):
+   * the engine calls it when the candidate fires, and surfaces nothing when it
+   * resolves `null`. `body` is empty until then.
+   */
+  loadBody?: () => Promise<string | null>;
   /** Scope label for containment / telemetry. Always `"connector"` in v1. */
   scope: string;
   /** Tool-affinity globs (e.g. `["<server>__*"]`); the first match triggers surfacing. */
@@ -671,16 +600,13 @@ export interface ContextAssembledPayload {
 export interface SkillsLoadedEntry {
   id: string;
   /**
-   * The skill's own name, for display. Always set by
-   * `buildSkillsLoadedPayload`; optional because events recorded before the
-   * field existed are read back through this same type — read it through
-   * `skillDisplayName` (`src/skills/display-name.ts`), never bare.
+   * The skill's own name, for display. Set by `buildSkillsLoadedPayload`.
    *
    * Carried on the event so no consumer derives a name from `id`: a connector
    * skill's id is its `skill://…/SKILL.md` entrypoint, whose last path segment
    * is the literal `SKILL`.
    */
-  name?: string;
+  name: string;
   /**
    * The MCP server that published this skill, when it came from one. Absent for
    * filesystem skills (org / workspace / user tiers), which have no publisher.
@@ -717,12 +643,6 @@ export interface ContextAssembledSource {
   userId?: string;
   /** `history`: how many messages the windowed history holds. */
   messages?: number;
-  /**
-   * `history`, as recorded before `messages` existed. Carried the same message
-   * count under a name that read as conversational turns; kept so historical
-   * events still render. Emitters set `messages`.
-   */
-  turns?: number;
   compacted?: boolean;
 }
 
@@ -739,13 +659,24 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
  *
  *   - `complete`         — model said done (finish=stop) with no pending tools
  *   - `max_iterations`   — agent loop hit its iteration cap
+ *   - `max_input_tokens` — the next model call would take the run past
+ *                          `EngineConfig.maxRunInputTokens`
+ *   - `spend_limit`      — the run's spend accounts (`EngineConfig.spend`)
+ *                          cannot pay for the next model call's input and a
+ *                          minimal output; the account is
+ *                          `EngineResult.spendAccountId`
  *   - `length`           — last LLM call hit `maxOutputTokens` mid-turn
  *   - `content_filter`   — last LLM call was blocked by provider moderation
  *   - `error`            — last LLM call's finish reason was `error`
  *   - `other`            — anything else (provider returned `other` / `unknown`)
+ *   - `cancelled`        — the run's abort signal fired, whatever the cause
+ *                          (the Stop button, a task cancel or timeout,
+ *                          the per-run event cap, shutdown). It appears only
+ *                          on the `run.done` event: the engine rethrows the
+ *                          abort, so no EngineResult carries it.
  *
  * `error` here is the *finish-reason* error category, not a thrown engine
- * error — the latter still emits `run.error` instead.
+ * error — the latter emits `run.error` instead.
  *
  * Note the casing asymmetry vs `FinishReason`: the V4 spec uses
  * kebab-case (`content-filter`, `tool-calls`); our run-level union uses
@@ -756,10 +687,13 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
 export type StopReason =
   | "complete"
   | "max_iterations"
+  | "max_input_tokens"
+  | "spend_limit"
   | "length"
   | "content_filter"
   | "error"
-  | "other";
+  | "other"
+  | "cancelled";
 
 /** Result returned from a single engine run. */
 export interface EngineResult {
@@ -773,6 +707,16 @@ export interface EngineResult {
   stopReason: StopReason;
   /** Final LLM call's finish reason. Useful for diagnosing why the loop ended. */
   finishReason?: FinishReason;
+  /**
+   * Final LLM call's provider-native stop reason (`LanguageModelV4FinishReason.raw`,
+   * e.g. Anthropic `end_turn` / `compaction`), or `NO_FINISH_PART_RAW` when the
+   * stream ended without a finish part. Several raw values collapse to the
+   * unified "other", so this is what names the actual cause. Absent when the
+   * provider reported none.
+   */
+  finishReasonRaw?: string;
+  /** The account that stopped the run, when `stopReason` is `spend_limit`. */
+  spendAccountId?: string;
 }
 
 export interface ToolCallRecord {
@@ -789,7 +733,7 @@ export interface ToolCallRecord {
    * from the workspace, disconnected, or in a workspace the caller can't
    * reach — `unknown_tool_source`, `workspace_access_denied`, …; see
    * `src/orchestrator/error-mapping.ts`) from a tool that ran and returned a
-   * logical error the agent handled. The automations executor reads this to
+   * logical error the agent handled. The tasks executor reads this to
    * de-mask runs that "completed" only by writing around an unreachable
    * connector. Absent when the call succeeded or carried no structured reason.
    */

@@ -1,20 +1,27 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import type { webcrypto } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { OidcIdentityProvider } from "../../../src/identity/providers/oidc.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 // ── RSA key pair (generated once per suite) ───────────────────────
 
 let privateKey: CryptoKey;
-let publicJwk: JsonWebKey;
+let publicJwk: webcrypto.JsonWebKey;
 const KID = "test-key-1";
 
 beforeAll(async () => {
   const keyPair = await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
     true,
     ["sign", "verify"],
   );
@@ -81,7 +88,6 @@ beforeEach(async () => {
   adapter = new OidcIdentityProvider(
     { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },
     userStore,
-    workspaceStore,
   );
 });
 
@@ -102,6 +108,8 @@ interface TokenOptions {
   exp?: number;
   sub?: string;
   email?: string;
+  /** Defaults to `true`; pass `undefined` explicitly to omit the claim. */
+  email_verified?: unknown;
   name?: string;
   given_name?: string;
   family_name?: string;
@@ -122,6 +130,7 @@ async function buildJwt(opts: TokenOptions = {}): Promise<string> {
     exp: opts.exp ?? nowSec + 3600,
     sub: opts.sub ?? "user-123",
     email: opts.email ?? "alice@example.com",
+    email_verified: "email_verified" in opts ? opts.email_verified : true,
     name: opts.name,
     given_name: opts.given_name,
     family_name: opts.family_name,
@@ -149,7 +158,11 @@ describe("OidcIdentityProvider", () => {
   describe("verifyRequest", () => {
     test("valid JWT with correct issuer/audience/domain returns UserIdentity", async () => {
       // Pre-create the user (task 001 does NOT auto-provision)
-      await userStore.create({ email: "alice@example.com", displayName: "Alice", orgRole: "member" });
+      await userStore.create({
+        email: "alice@example.com",
+        displayName: "Alice",
+        orgRole: "member",
+      });
 
       const token = await buildJwt({ email: "alice@example.com" });
       const identity = await adapter.verifyRequest(bearerRequest(token));
@@ -160,7 +173,11 @@ describe("OidcIdentityProvider", () => {
     });
 
     test("valid JWT for unknown user auto-provisions with member role", async () => {
-      const token = await buildJwt({ email: "nobody@example.com", sub: "oidc-sub-123", name: "Nobody Test" });
+      const token = await buildJwt({
+        email: "nobody@example.com",
+        sub: "oidc-sub-123",
+        name: "Nobody Test",
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity).not.toBeNull();
       expect(identity!.email).toBe("nobody@example.com");
@@ -169,60 +186,24 @@ describe("OidcIdentityProvider", () => {
       expect(identity!.id).toMatch(/^usr_oidc_[0-9a-f]{12}$/);
     });
 
-    test("first-login auto-provisions a workspace at the identity boundary", async () => {
-      // Invariant: every authenticated user has ≥1 workspace by the time
-      // verifyRequest resolves. No tool call required.
-      const token = await buildJwt({ email: "carol@example.com", sub: "oidc-sub-carol", name: "Carol" });
+    test("authentication creates no workspace (bootstrap provisions)", async () => {
+      const token = await buildJwt({
+        email: "carol@example.com",
+        sub: "oidc-sub-carol",
+        name: "Carol",
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity).not.toBeNull();
-
-      const workspaces = await workspaceStore.getWorkspacesForUser(identity!.id);
-      expect(workspaces).toHaveLength(1);
-      expect(workspaces[0]!.members).toEqual([{ userId: identity!.id, role: "admin" }]);
-    });
-
-    test("repeat logins do not create duplicate workspaces", async () => {
-      const token = await buildJwt({ email: "dave@example.com", sub: "oidc-sub-dave", name: "Dave" });
-
-      await adapter.verifyRequest(bearerRequest(token));
-      const firstList = await workspaceStore.list();
-
-      await adapter.verifyRequest(bearerRequest(token));
-      await adapter.verifyRequest(bearerRequest(token));
-      const finalList = await workspaceStore.list();
-
-      expect(finalList).toHaveLength(firstList.length);
-    });
-
-    test("self-heals a user whose workspace was deleted after first login", async () => {
-      // Reproduces the "existing-user-without-workspace" state a naive
-      // first-login-only provisioning hook would never recover from:
-      // the User profile exists (so !user is false, no "first login"),
-      // but their workspace is gone.
-      const token = await buildJwt({ email: "erin@example.com", sub: "oidc-sub-erin", name: "Erin" });
-
-      // First login provisions user + workspace.
-      const first = await adapter.verifyRequest(bearerRequest(token));
-      const wsBefore = await workspaceStore.getWorkspacesForUser(first!.id);
-      expect(wsBefore).toHaveLength(1);
-
-      // Simulate admin deletion (or disk cleanup / migration drop).
-      await workspaceStore.delete(wsBefore[0]!.id);
-      expect(await workspaceStore.getWorkspacesForUser(first!.id)).toHaveLength(0);
-
-      // Next auth must re-establish the invariant — not leave the user
-      // stuck at a 500 on bootstrap.
-      const second = await adapter.verifyRequest(bearerRequest(token));
-      expect(second).not.toBeNull();
-      const wsAfter = await workspaceStore.getWorkspacesForUser(second!.id);
-      expect(wsAfter).toHaveLength(1);
-      expect(wsAfter[0]!.members).toEqual([{ userId: second!.id, role: "admin" }]);
+      expect(await workspaceStore.getWorkspacesForUser(identity!.id)).toHaveLength(0);
     });
 
     test("expired JWT returns null", async () => {
       await userStore.create({ email: "alice@example.com", displayName: "Alice" });
 
-      const token = await buildJwt({ email: "alice@example.com", exp: Math.floor(Date.now() / 1000) - 60 });
+      const token = await buildJwt({
+        email: "alice@example.com",
+        exp: Math.floor(Date.now() / 1000) - 60,
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity).toBeNull();
     });
@@ -290,10 +271,10 @@ describe("OidcIdentityProvider", () => {
 
       let fetchCount = 0;
       const originalFetch = adapter.fetcher;
-      adapter.fetcher = async (...args: Parameters<typeof fetch>) => {
+      adapter.fetcher = fakeFetch(async (...args: Parameters<typeof fetch>) => {
         fetchCount++;
         return originalFetch(...args);
-      };
+      });
 
       const token1 = await buildJwt({ email: "alice@example.com" });
       await adapter.verifyRequest(bearerRequest(token1));
@@ -313,10 +294,10 @@ describe("OidcIdentityProvider", () => {
 
       let fetchCount = 0;
       const originalFetch = adapter.fetcher;
-      adapter.fetcher = async (...args: Parameters<typeof fetch>) => {
+      adapter.fetcher = fakeFetch(async (...args: Parameters<typeof fetch>) => {
         fetchCount++;
         return originalFetch(...args);
-      };
+      });
 
       // Freeze time
       let fakeNow = Date.now();
@@ -349,7 +330,11 @@ describe("OidcIdentityProvider", () => {
 
   describe("createUser", () => {
     test("delegates to UserStore.create()", async () => {
-      const { user } = await adapter.createUser({ email: "new@example.com", displayName: "New User", orgRole: "admin" });
+      const { user } = await adapter.createUser({
+        email: "new@example.com",
+        displayName: "New User",
+        orgRole: "admin",
+      });
       expect(user.email).toBe("new@example.com");
       expect(user.orgRole).toBe("admin");
 
@@ -374,6 +359,12 @@ describe("OidcIdentityProvider", () => {
     });
   });
 
+  describe("profile fields", () => {
+    test("email is provider-owned, since sign-in falls back to matching it", () => {
+      expect(adapter.capabilities.providerOwnedUserFields).toEqual(["email"]);
+    });
+  });
+
   describe("OIDC auto-provisioning", () => {
     test("second login with same sub returns same user (no duplicate)", async () => {
       const sub = "repeat-login-sub";
@@ -394,7 +385,11 @@ describe("OidcIdentityProvider", () => {
     });
 
     test("display name extracted from name claim", async () => {
-      const token = await buildJwt({ email: "named@example.com", sub: "named-sub", name: "Alice Smith" });
+      const token = await buildJwt({
+        email: "named@example.com",
+        sub: "named-sub",
+        name: "Alice Smith",
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity!.displayName).toBe("Alice Smith");
     });
@@ -423,7 +418,11 @@ describe("OidcIdentityProvider", () => {
         orgRole: "admin",
       });
 
-      const token = await buildJwt({ email: "admin-created@example.com", sub: "admin-sub", name: "Different Name" });
+      const token = await buildJwt({
+        email: "admin-created@example.com",
+        sub: "admin-sub",
+        name: "Different Name",
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity).not.toBeNull();
       expect(identity!.id).toBe(adminUser.id);
@@ -435,9 +434,13 @@ describe("OidcIdentityProvider", () => {
       const wsStore = new WorkspaceStore(workDir);
       const ws = await wsStore.create("Default Workspace");
 
-      // OidcIdentityProvider no longer auto-adds to workspaces — that is handled
+      // OidcIdentityProvider does not auto-add to workspaces — that is handled
       // by the runtime layer. Verify the user is provisioned and can be manually added.
-      const token = await buildJwt({ email: "ws-user@example.com", sub: "ws-sub", name: "WS User" });
+      const token = await buildJwt({
+        email: "ws-user@example.com",
+        sub: "ws-sub",
+        name: "WS User",
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity).not.toBeNull();
 
@@ -478,11 +481,9 @@ describe("OidcIdentityProvider", () => {
       // Create a fresh adapter + stores to prove determinism
       const workDir2 = await mkdtemp(join(tmpdir(), "nb-oidc-det-"));
       const userStore2 = new UserStore(workDir2);
-      const workspaceStore2 = new WorkspaceStore(workDir2);
       const adapter2 = new OidcIdentityProvider(
         { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },
         userStore2,
-        workspaceStore2,
       );
 
       const token2 = await buildJwt({ email: "det2@example.com", sub, name: "Det" });
@@ -491,6 +492,241 @@ describe("OidcIdentityProvider", () => {
       expect(id1!.id).toBe(id2!.id);
 
       await rm(workDir2, { recursive: true, force: true });
+    });
+  });
+
+  describe("subject binding", () => {
+    test("first sign-in by email binds the subject to the pre-created record", async () => {
+      const created = await userStore.create({
+        email: "pre@example.com",
+        displayName: "Pre",
+        orgRole: "admin",
+      });
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "pre@example.com", sub: "pre-sub" })),
+      );
+      expect(identity!.id).toBe(created.id);
+      expect((await userStore.get(created.id))!.identity).toBe(`${issuer}#pre-sub`);
+    });
+
+    test("a later sign-in with the same subject and a changed email finds the same record", async () => {
+      const created = await userStore.create({ email: "old@example.com", displayName: "Old" });
+      await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "old@example.com", sub: "moving-sub" })),
+      );
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "new@example.com", sub: "moving-sub" })),
+      );
+      expect(identity!.id).toBe(created.id);
+      expect(await userStore.list()).toHaveLength(1);
+    });
+
+    test("a new subject with a bound record's email is refused and creates no record", async () => {
+      const created = await userStore.create({
+        email: "taken@example.com",
+        displayName: "Taken",
+        orgRole: "admin",
+      });
+      await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "taken@example.com", sub: "first-sub" })),
+      );
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "taken@example.com", sub: "second-sub" })),
+      );
+      expect(identity).toBeNull();
+      const users = await userStore.list();
+      expect(users).toHaveLength(1);
+      expect(users[0]!.id).toBe(created.id);
+      expect(users[0]!.identity).toBe(`${issuer}#first-sub`);
+    });
+
+    test("an auto-provisioned user is bound at creation and found by subject", async () => {
+      const first = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "auto@example.com", sub: "auto-sub" })),
+      );
+      const stored = await userStore.get(first!.id);
+      expect(stored!.identity).toBe(`${issuer}#auto-sub`);
+
+      const again = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "auto-renamed@example.com", sub: "auto-sub" })),
+      );
+      expect(again!.id).toBe(first!.id);
+
+      const other = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "auto@example.com", sub: "someone-else" })),
+      );
+      expect(other).toBeNull();
+      expect(await userStore.list()).toHaveLength(1);
+    });
+
+    test("an auto-provisioned record from before binding binds on its next sign-in", async () => {
+      const first = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "legacy@example.com", sub: "legacy-sub" })),
+      );
+      await userStore.update(first!.id, { identity: undefined });
+
+      const again = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "legacy@example.com", sub: "legacy-sub" })),
+      );
+      expect(again!.id).toBe(first!.id);
+      expect((await userStore.get(first!.id))!.identity).toBe(`${issuer}#legacy-sub`);
+    });
+
+    test("an unbound auto-provisioned record is not claimed by email; its own subject still binds it", async () => {
+      const first = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "kept@example.com", sub: "owner-sub" })),
+      );
+      await userStore.update(first!.id, { identity: undefined });
+
+      const newcomer = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "kept@example.com", sub: "newcomer-sub" })),
+      );
+      expect(newcomer).toBeNull();
+      expect(await userStore.list()).toHaveLength(1);
+
+      const original = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "kept@example.com", sub: "owner-sub" })),
+      );
+      expect(original!.id).toBe(first!.id);
+      expect((await userStore.get(first!.id))!.identity).toBe(`${issuer}#owner-sub`);
+    });
+
+    test("the same subject from another issuer is refused and creates no record", async () => {
+      const first = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "iss@example.com", sub: "shared-sub" })),
+      );
+      expect(first).not.toBeNull();
+
+      const otherIssuer = `${issuer}/other`;
+      const otherAdapter = new OidcIdentityProvider(
+        {
+          adapter: "oidc",
+          issuer: otherIssuer,
+          clientId: CLIENT_ID,
+          allowedDomains: ALLOWED_DOMAINS,
+          jwksUri: `${issuer}/jwks`,
+        },
+        userStore,
+      );
+      const sameSub = await otherAdapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({ iss: otherIssuer, email: "iss2@example.com", sub: "shared-sub" }),
+        ),
+      );
+      expect(sameSub).toBeNull();
+
+      const sameEmail = await otherAdapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({ iss: otherIssuer, email: "iss@example.com", sub: "fresh-sub" }),
+        ),
+      );
+      expect(sameEmail).toBeNull();
+      expect(await userStore.list()).toHaveLength(1);
+    });
+  });
+
+  describe("email verification", () => {
+    async function preCreated() {
+      return userStore.create({
+        email: "owner@example.com",
+        displayName: "Owner",
+        orgRole: "admin",
+      });
+    }
+
+    test("an unverified email does not claim a pre-created record and creates none", async () => {
+      const created = await preCreated();
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({
+            email: "owner@example.com",
+            sub: "attacker-sub",
+            email_verified: false,
+          }),
+        ),
+      );
+      expect(identity).toBeNull();
+      const users = await userStore.list();
+      expect(users).toHaveLength(1);
+      expect(users[0]!.id).toBe(created.id);
+      expect(users[0]!.identity).toBeUndefined();
+    });
+
+    test("a missing email_verified claim is treated as unverified", async () => {
+      const created = await preCreated();
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({
+            email: "owner@example.com",
+            sub: "attacker-sub",
+            email_verified: undefined,
+          }),
+        ),
+      );
+      expect(identity).toBeNull();
+      const users = await userStore.list();
+      expect(users).toHaveLength(1);
+      expect(users[0]!.identity).toBeUndefined();
+      expect(users[0]!.id).toBe(created.id);
+    });
+
+    test("a truthy non-boolean email_verified is treated as unverified", async () => {
+      await preCreated();
+      const identity = await adapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({
+            email: "owner@example.com",
+            sub: "attacker-sub",
+            email_verified: "true",
+          }),
+        ),
+      );
+      expect(identity).toBeNull();
+      expect((await userStore.list())[0]!.identity).toBeUndefined();
+    });
+
+    test("a verified email claims the pre-created record and binds it", async () => {
+      const created = await preCreated();
+
+      const identity = await adapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({ email: "owner@example.com", sub: "owner-sub", email_verified: true }),
+        ),
+      );
+      expect(identity!.id).toBe(created.id);
+      expect(identity!.orgRole).toBe("admin");
+      expect((await userStore.get(created.id))!.identity).toBe(`${issuer}#owner-sub`);
+    });
+
+    test("an unverified email does not auto-provision a new record", async () => {
+      for (const email_verified of [false, undefined]) {
+        const identity = await adapter.verifyRequest(
+          bearerRequest(
+            await buildJwt({ email: "new@example.com", sub: "new-sub", email_verified }),
+          ),
+        );
+        expect(identity).toBeNull();
+      }
+      expect(await userStore.list()).toHaveLength(0);
+    });
+
+    test("a bound user whose token's email is unverified is refused", async () => {
+      const first = await adapter.verifyRequest(
+        bearerRequest(await buildJwt({ email: "bound@example.com", sub: "bound-sub" })),
+      );
+      expect(first).not.toBeNull();
+
+      const again = await adapter.verifyRequest(
+        bearerRequest(
+          await buildJwt({ email: "bound@example.com", sub: "bound-sub", email_verified: false }),
+        ),
+      );
+      expect(again).toBeNull();
     });
   });
 });

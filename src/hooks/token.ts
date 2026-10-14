@@ -196,10 +196,10 @@ const DELIVERY_ID_BYTES = 32;
  * some tenants and not others. An opaque id is short by construction and the
  * margin does not move.
  *
- * What it costs is a lookup where a MAC verification used to be: the door can no
- * longer route from the URL alone. That sits behind the same pre-token rate
- * limiter the verification did, so it is not new exposure — it is a read instead
- * of a verification, in the same place.
+ * What it costs is a lookup instead of a MAC verification: the door cannot route
+ * from the URL alone. The lookup sits behind the pre-token rate limiter, where a
+ * verification would sit, so it is not new exposure — it is a read instead of a
+ * verification, in the same place.
  */
 export function newDeliveryId(): string {
   return randomBytes(DELIVERY_ID_BYTES).toString("base64url");

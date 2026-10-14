@@ -15,37 +15,56 @@
 // non-spec keys.
 // ---------------------------------------------------------------------------
 
+import type { FileLimits } from "../types";
 import { getHostFontFaceCss } from "./fonts";
 import { getThemeTokens, type ThemeTokens } from "./theme";
 
 export type WorkspaceForHostContext = {
   id: string;
   name: string;
-  /**
-   * Whether the active room is the user's personal room. Apps that scope a
-   * view to the current room read this to fold legacy artifacts with no
-   * stamped room into Personal (absent room === personal, per the
-   * permission-boundaries spec). This is the app's OWN active room — not a
-   * roster of other rooms — so it crosses no wall.
-   */
-  isPersonal?: boolean;
 } | null;
+
+/**
+ * What the viewer may do with the connector whose settings component is
+ * mounted. Supplied only by the connector settings page, so every other mount
+ * point's payload carries no `connector` key.
+ *
+ * `canManage` is the same rule the page's host sections gate on: workspace
+ * membership role `admin`, with no org-admin bypass. It lets a component
+ * disable controls it knows the viewer cannot use. It is not the permission:
+ * the server decides every call on its own.
+ */
+export type ConnectorForHostContext = { canManage: boolean } | undefined;
+
+/**
+ * The limits a picker upload is held to: the instance's `files` config, which
+ * the host's picker enforces before it uploads anything. Published as the
+ * `uploads` extension so an app can state them before the user picks.
+ */
+export type UploadLimits = Pick<FileLimits, "maxFileSize" | "maxTotalSize">;
 
 /**
  * Non-spec extension keys to merge into the `ui/initialize` hostContext
  * response. Bridge merges these alongside theme/styles; spec fields win
  * on key collisions.
  */
-export function buildHostExtensions(workspace: WorkspaceForHostContext): Record<string, unknown> {
+export function buildHostExtensions(
+  workspace: WorkspaceForHostContext,
+  connector?: ConnectorForHostContext,
+  uploads?: UploadLimits,
+): Record<string, unknown> {
   const ext: Record<string, unknown> = workspace
     ? {
         workspace: {
           id: workspace.id,
           name: workspace.name,
-          isPersonal: workspace.isPersonal ?? false,
         },
       }
     : {};
+  if (connector) ext.connector = { canManage: connector.canManage };
+  if (uploads) {
+    ext.uploads = { maxFileSize: uploads.maxFileSize, maxTotalSize: uploads.maxTotalSize };
+  }
   return ext;
 }
 
@@ -75,10 +94,12 @@ export function buildHostStyles(variables: ThemeTokens): Record<string, unknown>
 export function buildHostContext(
   mode: "light" | "dark",
   workspace: WorkspaceForHostContext,
+  connector?: ConnectorForHostContext,
+  uploads?: UploadLimits,
 ): Record<string, unknown> {
   const tokens = getThemeTokens(mode);
   return {
-    ...buildHostExtensions(workspace),
+    ...buildHostExtensions(workspace, connector, uploads),
     theme: mode,
     styles: buildHostStyles(tokens),
   };

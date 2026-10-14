@@ -31,7 +31,7 @@ export const THEMING_DOC = join(REPO, "docs", "src", "content", "docs", "apps", 
 
 /**
  * Every `.ts`/`.tsx`/`.css` file under a tree. All three extensions matter:
- * `automations` keeps its whole stylesheet in a `styles.ts` template string and
+ * `tasks` keeps its whole stylesheet in a `styles.ts` template string and
  * its components carry inline `style` props, so a `*.css` glob reads none of it
  * — which is how a sweep missed that app entirely.
  */
@@ -46,26 +46,23 @@ export function sourceFiles(dir: string): string[] {
 
 /**
  * Every tree whose CSS is injected with `buildThemeStyleBlock`: the platform
- * app UIs, plus the `ui://nb/*` resources rendered from
- * `src/tools/core-resources`, which go through `iframe.ts::injectThemeStyles`
- * and read the same names.
+ * app UIs.
  *
- * The app half is derived rather than listed, so a new app is covered on
+ * The list is derived rather than written out, so a new app is covered on
  * creation. Add an entry here only for a tree outside `src/platform` that
  * renders host-themed markup — and only when it actually does: `scripts/` was
  * carried here on that rationale while containing no `var()` read, no `ui://`
  * resource, and no markup at all.
  */
-export const themedTrees = [
-  ...readdirSync(PLATFORM_APPS).map((name) => ({
+export const themedTrees = readdirSync(PLATFORM_APPS)
+  .map((name) => ({
     name,
     dir: join(PLATFORM_APPS, name, "ui", "src"),
-  })),
-  { name: "core-resources", dir: join(REPO, "src", "tools", "core-resources") },
-].filter(({ dir }) => {
-  try {
-    return statSync(dir).isDirectory();
-  } catch {
-    return false;
-  }
-});
+  }))
+  .filter(({ dir }) => {
+    try {
+      return statSync(dir).isDirectory();
+    } catch {
+      return false;
+    }
+  });

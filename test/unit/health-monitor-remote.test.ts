@@ -1,107 +1,101 @@
 import { describe, expect, it } from "bun:test";
+import type { ConnectorHealthPayload } from "../../src/engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
+import { payloadsOf } from "../helpers/engine-events.ts";
+import { stub } from "../helpers/stub.ts";
 
-/** Mock remote source — has isRemote() returning true. */
-function makeMockRemoteSource(
-  name: string,
-): McpSource & {
+interface RemoteControls {
   alive: boolean;
-  stopped: boolean;
+  userStopped: boolean;
   startResult: boolean;
   stopCalls: number;
   startCalls: number;
-} {
+}
+
+/** Mock remote source — has isRemote() returning true. */
+function makeMockRemoteSource(name: string): McpSource & RemoteControls {
   let startedAt: number | null = Date.now();
-  const mock = {
-    name,
-    alive: true,
-    stopped: false,
-    startResult: true,
-    stopCalls: 0,
-    startCalls: 0,
-    isRemote() {
-      return true;
-    },
-    isAlive() {
-      return mock.alive;
-    },
-    isStopped() {
-      return mock.stopped;
-    },
-    uptime() {
-      return startedAt !== null ? Date.now() - startedAt : null;
-    },
-    async restart() {
-      // HealthMonitor reconnects remote sources through restart() (→ tryRestart)
-      // so the tick shares the source's in-flight-restart guard with inline
-      // session recovery. restart() drives the same stop()+start() cycle and
-      // returns a boolean — it never throws.
-      await mock.stop();
-      try {
-        await mock.start();
+  const mock: McpSource & RemoteControls = Object.assign(
+    stub<McpSource>({
+      name,
+      isRemote() {
         return true;
-      } catch {
-        return false;
-      }
-    },
-    async stop() {
-      mock.stopCalls++;
-    },
-    async start() {
-      mock.startCalls++;
-      if (mock.startResult) {
-        mock.alive = true;
-        startedAt = Date.now();
-      } else {
-        throw new Error("Remote connection failed");
-      }
-    },
-  } as unknown as McpSource & {
-    alive: boolean;
-    stopped: boolean;
-    startResult: boolean;
-    stopCalls: number;
-    startCalls: number;
-  };
+      },
+      isAlive() {
+        return mock.alive;
+      },
+      isStopped() {
+        return mock.userStopped;
+      },
+      uptime() {
+        return startedAt !== null ? Date.now() - startedAt : null;
+      },
+      async restart() {
+        // HealthMonitor reconnects remote sources through restart() (→ tryRestart)
+        // so the tick shares the source's in-flight-restart guard with inline
+        // session recovery. restart() drives the same stop()+start() cycle and
+        // returns a boolean — it never throws.
+        await mock.stop();
+        try {
+          await mock.start();
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      async stop() {
+        mock.stopCalls++;
+      },
+      async start() {
+        mock.startCalls++;
+        if (mock.startResult) {
+          mock.alive = true;
+          startedAt = Date.now();
+        } else {
+          throw new Error("Remote connection failed");
+        }
+      },
+    }),
+    { alive: true, userStopped: false, startResult: true, stopCalls: 0, startCalls: 0 },
+  );
   return mock;
 }
 
+interface LocalControls {
+  alive: boolean;
+  userStopped: boolean;
+  restartResult: boolean;
+  restartCalls: number;
+}
+
 /** Mock in-process source — no isRemote() method (or returns false). */
-function makeMockLocalSource(
-  name: string,
-): McpSource & { alive: boolean; stopped: boolean; restartResult: boolean; restartCalls: number } {
+function makeMockLocalSource(name: string): McpSource & LocalControls {
   let startedAt: number | null = Date.now();
-  const mock = {
-    name,
-    alive: true,
-    stopped: false,
-    restartResult: true,
-    restartCalls: 0,
-    isAlive() {
-      return mock.alive;
-    },
-    isStopped() {
-      return mock.stopped;
-    },
-    uptime() {
-      return startedAt !== null ? Date.now() - startedAt : null;
-    },
-    async restart() {
-      mock.restartCalls++;
-      if (mock.restartResult) {
-        mock.alive = true;
-        startedAt = Date.now();
-      }
-      return mock.restartResult;
-    },
-  } as unknown as McpSource & {
-    alive: boolean;
-    stopped: boolean;
-    restartResult: boolean;
-    restartCalls: number;
-  };
+  const mock: McpSource & LocalControls = Object.assign(
+    stub<McpSource>({
+      name,
+      isAlive() {
+        return mock.alive;
+      },
+      isStopped() {
+        return mock.userStopped;
+      },
+      uptime() {
+        return startedAt !== null ? Date.now() - startedAt : null;
+      },
+      async restart() {
+        mock.restartCalls++;
+        if (mock.restartResult) {
+          mock.alive = true;
+          startedAt = Date.now();
+        }
+        return mock.restartResult;
+      },
+    }),
+    { alive: true, userStopped: false, restartResult: true, restartCalls: 0 },
+  );
   return mock;
 }
 
@@ -116,18 +110,21 @@ function makeEventCollector(): EventSink & { events: EngineEvent[] } {
 }
 
 function eventNames(collector: { events: EngineEvent[] }): string[] {
-  return collector.events.map((e) => (e.data as { event: string }).event);
+  return payloadsOf(collector.events, "connector.health").map((d) => d.event);
 }
 
-function eventData(collector: { events: EngineEvent[] }): Record<string, unknown>[] {
-  return collector.events.map((e) => e.data as Record<string, unknown>);
+function eventData(collector: { events: EngineEvent[] }): ConnectorHealthPayload[] {
+  return payloadsOf(collector.events, "connector.health");
 }
 
 describe("HealthMonitor — remote sources", () => {
   it("detects crashed remote source and reconnects via restart() (stop+start)", async () => {
     const source = makeMockRemoteSource("remote-connector");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // Simulate remote disconnect
     source.alive = false;
@@ -160,7 +157,7 @@ describe("HealthMonitor — remote sources", () => {
   it("remote source backs off to cooldown after MAX_RESTARTS failures", async () => {
     const source = makeMockRemoteSource("flaky-remote");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, {
+    const monitor = new HealthMonitor(() => [source], sink, {
       checkIntervalMs: 60_000,
       baseDelayMs: 1,
       cooldownMs: 60_000,
@@ -201,7 +198,10 @@ describe("HealthMonitor — remote sources", () => {
   it("remote source that recovers after reconnect transitions back to healthy", async () => {
     const source = makeMockRemoteSource("recoverable-remote");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // First disconnect
     source.alive = false;
@@ -218,9 +218,7 @@ describe("HealthMonitor — remote sources", () => {
     expect(monitor.getStatus()[0]!.restartCount).toBe(2);
 
     // recovered event has remote: true
-    const recoveredEvents = eventData(sink).filter(
-      (d) => d.event === "connector.recovered",
-    );
+    const recoveredEvents = eventData(sink).filter((d) => d.event === "connector.recovered");
     expect(recoveredEvents).toHaveLength(2);
     for (const ev of recoveredEvents) {
       expect(ev.remote).toBe(true);
@@ -232,7 +230,10 @@ describe("HealthMonitor — remote sources", () => {
   it("remote source reconnect failure leaves state as restarting", async () => {
     const source = makeMockRemoteSource("failing-remote");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // Disconnect and make reconnect fail
     source.alive = false;
@@ -257,7 +258,10 @@ describe("HealthMonitor — remote sources", () => {
   it("in-process sources still work identically (no regression)", async () => {
     const source = makeMockLocalSource("local-connector");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // Kill the source
     source.alive = false;
@@ -282,11 +286,10 @@ describe("HealthMonitor — remote sources", () => {
     const remote = makeMockRemoteSource("remote-one");
     const local = makeMockLocalSource("local-one");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor(
-      [remote as unknown as McpSource, local as unknown as McpSource],
-      sink,
-      { checkIntervalMs: 60_000, baseDelayMs: 1 },
-    );
+    const monitor = new HealthMonitor(() => [remote, local], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // Kill both
     remote.alive = false;
@@ -322,15 +325,18 @@ describe("HealthMonitor — remote sources", () => {
 
   it("test_deliberately_stopped_source_not_reconnected_marked_dead", async () => {
     // A source torn down via stop() (teardown / user-initiated startAuth rebuild)
-    // lingers in the boot snapshot. The monitor must NOT reconnect this orphan —
+    // can still be listed when a check reaches it. The monitor must NOT reconnect it —
     // doing so runs its stale provider's refresh, which can delete shared creds
     // and clobber a live pending_auth. It must go terminal (dead) silently.
     const source = makeMockRemoteSource("stopped-remote");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     source.alive = false;
-    source.stopped = true; // deliberate stop()
+    source.userStopped = true; // deliberate stop()
 
     await monitor.check();
 
@@ -355,10 +361,13 @@ describe("HealthMonitor — remote sources", () => {
     // isStopped() false — it must STILL reconnect, unchanged from before.
     const source = makeMockRemoteSource("self-dropped-remote");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     source.alive = false; // dropped, but NOT via stop()
-    expect(source.stopped).toBe(false);
+    expect(source.userStopped).toBe(false);
 
     await monitor.check();
 

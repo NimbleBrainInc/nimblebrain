@@ -8,8 +8,7 @@
  *
  * The cap has to sit at the wire. The index's stored preview backs
  * case-insensitive substring matching for `list?search=`, so truncating at
- * production would silently narrow recall — which is why `home__activity` caps
- * in its collector rather than in the index, and why this does the same.
+ * production would silently narrow recall.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -19,13 +18,17 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { PREVIEW_MAX_CHARS } from "../../../../src/conversation/preview.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
+import { createConversationsSource } from "../../../../src/platform/conversations/source.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createConversationsSource } from "../../../../src/platform/conversations/source.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { conversationEventLines } from "../../../helpers/conversation-events.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 const OWNER_ID = "usr_test";
-const WS_ID = "ws_preview000000";
+const WS_ID = "ws_005e2c642b8af5fe";
 
 /** A term buried far past any sane preview cap, used to prove search still reaches it. */
 const DEEP_TERM = "needle_past_the_cap";
@@ -38,6 +41,7 @@ function writeConv(id: string, firstMessage: string): void {
   const dir = join(workDir, "workspaces", WS_ID, "conversations", OWNER_ID);
   mkdirSync(dir, { recursive: true });
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -51,33 +55,36 @@ function writeConv(id: string, firstMessage: string): void {
   };
   const lines = [
     JSON.stringify(meta),
-    JSON.stringify({ role: "user", content: firstMessage, timestamp: "2026-01-01T00:01:00.000Z" }),
-    JSON.stringify({ role: "assistant", content: "ack", timestamp: "2026-01-01T00:02:00.000Z" }),
+    ...conversationEventLines([
+      { role: "user", content: firstMessage, timestamp: "2026-01-01T00:01:00.000Z" },
+      { role: "assistant", content: "ack", timestamp: "2026-01-01T00:02:00.000Z" },
+    ]),
   ];
   writeFileSync(join(dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 }
 
 function makeRuntime(): Runtime {
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: () => OWNER_ID,
-    getWorkspaceStore: () => ({ getWorkspacesDir: () => join(workDir, "workspaces") }),
-    onConversationsChanged: () => {},
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({ getWorkspacesDir: () => join(workDir, "workspaces") }),
+    onConversationsChanged: () => () => {},
     isTurnActive: () => false,
     announceIdentitySourceChange: () => {},
-  } as unknown as Runtime;
+  });
 }
 
 function exec(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(
-    { identity: { id: OWNER_ID } as never, workspaceId: WS_ID },
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID },
     () => source.execute(tool, args),
   );
 }
 
 function payload(result: ToolResult): Record<string, unknown> {
   const first = result.content[0];
-  if (!first || first.type !== "text") throw new Error("expected a text block");
+  if (first?.type !== "text") throw new Error("expected a text block");
   return JSON.parse(first.text) as Record<string, unknown>;
 }
 
@@ -86,6 +93,9 @@ beforeEach(async () => {
   writeConv("conv_long", LONG_MESSAGE);
   source = await createConversationsSource(makeRuntime(), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {

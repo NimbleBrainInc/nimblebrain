@@ -13,13 +13,12 @@
  * under test, so a stub that answers them would test itself.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { EngineEvent, EventSink, ToolResult } from "../../../src/engine/types.ts";
-import { INTERNAL_TOOL_ANNOTATION } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
 import type { UnattendedDispatchRuntime } from "../../../src/orchestrator/unattended-dispatch.ts";
 import { dispatchUnattended } from "../../../src/orchestrator/unattended-dispatch.ts";
@@ -27,6 +26,7 @@ import { PermissionStore } from "../../../src/permissions/permission-store.ts";
 import { getRequestContext, type RequestContext } from "../../../src/runtime/request-context.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
+import { firstPayloadOf } from "../../helpers/engine-events.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 // ── Stubs ─────────────────────────────────────────────────────────
@@ -109,7 +109,10 @@ function makeStubRuntime(opts: StubOpts): UnattendedDispatchRuntime {
     getIdentitySource(name: string): ToolSource | undefined {
       return opts.identitySources?.get(name);
     },
-    async getIdentityConnectorSource(_userId: string, name: string): Promise<ToolSource | undefined> {
+    async getIdentityConnectorSource(
+      _userId: string,
+      name: string,
+    ): Promise<ToolSource | undefined> {
       return opts.identityConnectors?.get(name);
     },
     getIdentityContext(identityId: string): IdentityContext {
@@ -124,7 +127,7 @@ function makeStubRuntime(opts: StubOpts): UnattendedDispatchRuntime {
 
 // ── Scaffolding ───────────────────────────────────────────────────
 
-const WS = "ws_helix";
+const WS = "ws_003eba8844413cd9";
 const PRINCIPAL = "usr_route_author";
 const REASON = "route:rt_outbound_slack";
 
@@ -132,7 +135,7 @@ let workDir = "";
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-unattended-dispatch-"));
   seedWorkspaceRoot(workDir, "ws_0123456789abcdef");
-  seedWorkspaceRoot(workDir, "ws_helix");
+  seedWorkspaceRoot(workDir, "ws_003eba8844413cd9");
 });
 afterEach(() => {
   try {
@@ -142,7 +145,11 @@ afterEach(() => {
   }
 });
 
-function call(runtime: UnattendedDispatchRuntime, tool: string, extra: Record<string, unknown> = {}) {
+function call(
+  runtime: UnattendedDispatchRuntime,
+  tool: string,
+  extra: Record<string, unknown> = {},
+) {
   return dispatchUnattended(runtime, {
     principalId: PRINCIPAL,
     workspaceId: WS,
@@ -184,35 +191,35 @@ describe("dispatchUnattended — the unattended subtraction", () => {
   // Pins that the authoring surfaces are refused BY NAME, before routing. A
   // scheduled run gets this from surfacing (the tool is never shown); a single
   // dispatch has no listing to inherit it from, so the door has to say it.
-  test("denies automations__create, and it never reaches the source", async () => {
-    const automations = makeSpySource("automations");
+  test("denies tasks__create, and it never reaches the source", async () => {
+    const tasks = makeSpySource("tasks");
     const runtime = makeStubRuntime({
       workDir,
       members: [PRINCIPAL],
-      identitySources: new Map([["automations", automations]]),
+      identitySources: new Map([["tasks", tasks]]),
     });
 
-    const res = await call(runtime, "automations__create");
+    const res = await call(runtime, "tasks__create");
 
     expect(res.outcome).toBe("denied");
     expect(res.classification).toBe("tool_not_allowed");
-    expect(automations.calls).toHaveLength(0);
+    expect(tasks.calls).toHaveLength(0);
   });
 
   // The read half of the same namespace stays reachable — the policy is an
   // allowlist over authoring, not a ban on the namespace.
-  test("allows automations__list, which is on the task-safe allowlist", async () => {
-    const automations = makeSpySource("automations");
+  test("allows tasks__list, which is on the task-safe allowlist", async () => {
+    const tasks = makeSpySource("tasks");
     const runtime = makeStubRuntime({
       workDir,
       members: [PRINCIPAL],
-      identitySources: new Map([["automations", automations]]),
+      identitySources: new Map([["tasks", tasks]]),
     });
 
-    const res = await call(runtime, "automations__list");
+    const res = await call(runtime, "tasks__list");
 
     expect(res.outcome).toBe("ok");
-    expect(automations.calls).toHaveLength(1);
+    expect(tasks.calls).toHaveLength(1);
   });
 
   // The skills half of the same allowlist. A skill is durable guidance that
@@ -479,10 +486,10 @@ describe("dispatchUnattended — a call that goes through", () => {
   });
 
   // `unattended` is what bars the authoring surface at the sources themselves,
-  // below anything this door checks by name; `unattendedReason` is what the
-  // outbound `_meta` stamp reads. Both must survive the router's per-call
-  // context rebuild, which is an allowlist — a field not named there vanishes.
-  test("the dispatched tool sees unattended and the reason in its request context", async () => {
+  // below anything this door checks by name. It must survive the router's
+  // per-call context rebuild, which is an allowlist — a field not named there
+  // vanishes.
+  test("the dispatched tool sees unattended in its request context", async () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
       workDir,
@@ -493,7 +500,6 @@ describe("dispatchUnattended — a call that goes through", () => {
     await call(runtime, "crm__search");
 
     expect(crm.calls[0]?.context?.unattended).toBe(true);
-    expect(crm.calls[0]?.context?.unattendedReason).toBe(REASON);
     expect(crm.calls[0]?.context?.workspaceId).toBe(WS);
     expect(crm.calls[0]?.context?.identity?.id).toBe(PRINCIPAL);
   });
@@ -501,7 +507,7 @@ describe("dispatchUnattended — a call that goes through", () => {
   // The annotation hides a tool from every listing; it has never made one
   // uncallable, and this door does not change that. Only the unattended policy
   // decides what may be named.
-  test("an internal-annotated tool is still callable by name", async () => {
+  test("an app-only tool is still callable by name", async () => {
     const hooks = makeSpySource("hooks", {
       tools: [
         {
@@ -509,7 +515,7 @@ describe("dispatchUnattended — a call that goes through", () => {
           description: "",
           inputSchema: { type: "object", properties: {} },
           source: "test",
-          meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+          meta: { ui: { visibility: ["app"] } },
         },
       ],
     });
@@ -575,7 +581,7 @@ describe("dispatchUnattended — audit", () => {
 
     await call(runtime, "crm__search", { reason: "r".repeat(1_000) });
 
-    expect(String(events[0]?.data.reason).length).toBe(200);
+    expect(firstPayloadOf(events, "audit.unattended_dispatch")?.reason.length).toBe(200);
   });
 
   // `MultiEventSink` fans out to its sinks without a per-sink guard, so a sink

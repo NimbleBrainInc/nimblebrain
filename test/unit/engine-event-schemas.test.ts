@@ -1,20 +1,17 @@
 /**
- * Tests for `src/engine/schemas/events.ts` — the typed payload schemas
- * for SSE events. These schemas are the declarative source of truth for
- * the wire shape of each named event; today they aren't enforced at the
- * EngineEvent level (consumer narrowing isn't yet wired), but they're
- * available for any code that wants the precise type or runtime check.
+ * Tests for `src/engine/schemas/events.ts` — the payload schemas of the
+ * engine event catalog. The compiler holds every emit site to its payload's
+ * static type; these runtime checks hold the JSON Schemas themselves.
  *
  * The tests below exercise representative payloads so future drift in
  * the schemas (or the producer interfaces they mirror) surfaces here.
  */
-import { Value } from "@sinclair/typebox/value";
+
 import { describe, expect, test } from "bun:test";
+import { Value } from "@sinclair/typebox/value";
 import {
   ConnectorSkillInjectedPayload,
   ContextAssembledPayload,
-  FileCreatedPayload,
-  FileDeletedPayload,
   SkillCreatedPayload,
   SkillDeletedPayload,
   SkillsLoadedPayload,
@@ -34,6 +31,7 @@ describe("event schemas — accept representative payloads", () => {
       skills: [
         {
           id: "/data/skills/foo.md",
+          name: "foo",
           layer: 3 as const,
           scope: "workspace" as const,
           version: "1.0.0",
@@ -65,7 +63,6 @@ describe("event schemas — accept representative payloads", () => {
         id: "/data/skills/foo.md",
         name: "foo",
         scope: "workspace",
-        type: "skill",
       }),
     ).toBe(true);
   });
@@ -88,18 +85,6 @@ describe("event schemas — accept representative payloads", () => {
         scope: "user",
       }),
     ).toBe(true);
-  });
-
-  test("file.created / file.deleted — basic shapes", () => {
-    expect(
-      Value.Check(FileCreatedPayload, {
-        id: "file-abc",
-        filename: "logo.png",
-        mimeType: "image/png",
-        size: 1024,
-      }),
-    ).toBe(true);
-    expect(Value.Check(FileDeletedPayload, { id: "file-abc" })).toBe(true);
   });
 
   test("tool.promoted / tool.released — basic shape", () => {
@@ -133,7 +118,7 @@ describe("event schemas — accept representative payloads", () => {
   test("audit.unattended_dispatch — full payload, and without the optional classification", () => {
     const denied = {
       principalId: "usr_route_author",
-      workspaceId: "ws_helix",
+      workspaceId: "ws_003eba8844413cd9",
       tool: "slack__send_message",
       reason: "route:rt_outbound_slack",
       outcome: "denied" as const,
@@ -154,7 +139,7 @@ describe("event schemas — reject malformed payloads", () => {
     expect(
       Value.Check(UnattendedDispatchPayload, {
         principalId: "usr_1",
-        workspaceId: "ws_helix",
+        workspaceId: "ws_003eba8844413cd9",
         tool: "crm__search",
         reason: "route:rt_1",
         outcome: "retried",
@@ -168,6 +153,7 @@ describe("event schemas — reject malformed payloads", () => {
       skills: [
         {
           id: "/data/skills/foo.md",
+          name: "foo",
           layer: 3 as const,
           scope: "workspace" as const,
           version: "1.0.0",
@@ -187,7 +173,6 @@ describe("event schemas — reject malformed payloads", () => {
         id: "/x.md",
         name: "x",
         scope: "provided",
-        type: "skill",
       }),
     ).toBe(false);
   });
@@ -235,7 +220,7 @@ describe("event schemas — accept what the emitters produce", () => {
     ]);
 
     // Guard the guard: these are the values that must reach the checker, and
-    // they are exactly what the schema used to be too narrow to admit.
+    // they are exactly what a too-narrow schema would fail to admit.
     expect(payload.skills.map((s) => s.layer).sort()).toEqual([0, 3, 4]);
     expect(payload.skills[1]!.connector).toBe("acme-mcp");
     expect(Value.Check(SkillsLoadedPayload, payload)).toBe(true);
@@ -245,9 +230,7 @@ describe("event schemas — accept what the emitters produce", () => {
   test("context.assembled — the recorded source rows", () => {
     const payload = buildContextAssembledPayload({
       systemPrompt: "You are helpful.",
-      activeTools: [
-        { name: "nb__search", description: "Search", inputSchema: { type: "object" } },
-      ],
+      activeTools: [{ name: "nb__search", description: "Search", inputSchema: { type: "object" } }],
       messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
       skillsLoaded: buildSkillsLoadedPayload([
         { skill: skill("always-on"), loadedBy: "always", reason: "always-on" },

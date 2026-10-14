@@ -1,7 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import type { CallToolResult, Task } from "@modelcontextprotocol/sdk/types.js";
+import type { Client } from "@modelcontextprotocol/client";
+import type { CallToolResult, Task } from "@modelcontextprotocol/server";
 import type { EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import {
+  TASKS_EXTENSION_ID,
+  type TaskClient,
+  type TaskStreamMessage,
+} from "../../src/tools/mcp-task-client.ts";
+import { mcpSourceInternals } from "../helpers/mcp-source-internals.ts";
+import { stub } from "../helpers/stub.ts";
 
 // Regression coverage for the dispatch-boundary argument normalization in
 // McpSource.execute (inline path).
@@ -49,16 +57,16 @@ function buildInlineSource(schema: Record<string, unknown>): DispatchCapture {
   );
 
   let captured: Record<string, unknown> | undefined;
-  const fakeClient = {
-    callTool: async (req: { name: string; arguments?: Record<string, unknown> }) => {
+  const fakeClient = stub<Client>({
+    callTool: async (req) => {
       captured = req.arguments;
       const result: CallToolResult = { content: [{ type: "text", text: "ok" }], isError: false };
       return result;
     },
     close: async () => {},
-  };
+  });
 
-  const internals = source as unknown as { client: unknown; cachedTools: unknown };
+  const internals = mcpSourceInternals(source);
   internals.client = fakeClient;
   internals.cachedTools = [
     {
@@ -147,8 +155,8 @@ describe("McpSource.execute — dispatch-boundary coercion", () => {
 });
 
 /**
- * Build an McpSource whose tool is task-augmented (execution.taskSupport:
- * "optional"), with a scripted task stream that records the dispatched
+ * Build an McpSource on a 2026-07-28 connection to a server advertising the
+ * tasks extension (so every call is task-augmented), with a scripted task stream that records the dispatched
  * `arguments`. Proves the task path THROUGH execute() — execute → callToolAsTask
  * → startToolAsTask → callToolStream — also coerces. (The external `/mcp`
  * surface that calls startToolAsTask directly is out of scope here.)
@@ -169,34 +177,33 @@ function buildTaskSource(schema: Record<string, unknown>): DispatchCapture {
     createdAt: now,
     lastUpdatedAt: now,
   };
-  async function* taskStream(): AsyncGenerator<unknown, void, void> {
+  async function* taskStream(): AsyncGenerator<TaskStreamMessage, void, void> {
     yield { type: "taskCreated", task };
     yield {
       type: "result",
-      result: { content: [{ type: "text", text: "ok" }], isError: false } as CallToolResult,
+      result: { content: [{ type: "text", text: "ok" }], isError: false },
     };
   }
-  const fakeClient = {
-    experimental: {
-      tasks: {
-        callToolStream: (req: { name: string; arguments?: Record<string, unknown> }) => {
-          captured = req.arguments;
-          return taskStream();
-        },
-      },
+  const fakeTaskClient = stub<TaskClient>({
+    callToolStream: (req) => {
+      captured = req.arguments;
+      return taskStream();
     },
-    close: async () => {},
-  };
+  });
 
-  const internals = source as unknown as { client: unknown; cachedTools: unknown };
-  internals.client = fakeClient;
+  const internals = mcpSourceInternals(source);
+  internals.client = stub<Client>({
+    close: async () => {},
+    getServerCapabilities: () => ({ extensions: { [TASKS_EXTENSION_ID]: {} } }),
+  });
+  internals.taskClient = fakeTaskClient;
+  internals.protocolEra = "modern";
   internals.cachedTools = [
     {
       name: "outlook__OUTLOOK_CREATE_DRAFT",
       description: "",
       inputSchema: schema,
       source: "mcp:outlook",
-      execution: { taskSupport: "optional" }, // → task-augmented dispatch path
     },
   ];
 

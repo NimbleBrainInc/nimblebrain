@@ -1,7 +1,10 @@
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, spyOn } from "bun:test";
+import type { Client } from "@modelcontextprotocol/client";
+import { ProtocolError } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { isMcpResourceMiss, McpSource } from "../../src/tools/mcp-source.ts";
+import { mcpSourceInternals, mockTryRestart } from "../helpers/mcp-source-internals.ts";
+import { stub } from "../helpers/stub.ts";
 
 /**
  * `readResource` must distinguish a genuine "resource not here" from a transport
@@ -14,9 +17,9 @@ import { isMcpResourceMiss, McpSource } from "../../src/tools/mcp-source.ts";
  */
 describe("isMcpResourceMiss — allowlist of genuine misses", () => {
   it("treats resource/method/params JSON-RPC errors as misses", () => {
-    expect(isMcpResourceMiss(new McpError(-32002, "Resource not found"))).toBe(true);
-    expect(isMcpResourceMiss(new McpError(-32601, "Method not found"))).toBe(true);
-    expect(isMcpResourceMiss(new McpError(-32602, "Invalid params"))).toBe(true);
+    expect(isMcpResourceMiss(new ProtocolError(-32002, "Resource not found"))).toBe(true);
+    expect(isMcpResourceMiss(new ProtocolError(-32601, "Method not found"))).toBe(true);
+    expect(isMcpResourceMiss(new ProtocolError(-32602, "Invalid params"))).toBe(true);
   });
 
   it("treats a not-found message (no code) as a miss", () => {
@@ -26,7 +29,7 @@ describe("isMcpResourceMiss — allowlist of genuine misses", () => {
 
   it("does NOT treat transport failures as misses", () => {
     expect(isMcpResourceMiss(new Error("Connection closed"))).toBe(false);
-    expect(isMcpResourceMiss(new McpError(-32000, "Connection closed"))).toBe(false);
+    expect(isMcpResourceMiss(new ProtocolError(-32000, "Connection closed"))).toBe(false);
     expect(isMcpResourceMiss(new Error("fetch failed"))).toBe(false);
     expect(isMcpResourceMiss(new Error("request timed out"))).toBe(false);
   });
@@ -45,15 +48,15 @@ describe("McpSource.readResource — log scoping (no probe spam)", () => {
       { type: "remote", url: new URL("http://localhost:0/mcp") },
       new NoopEventSink(),
     );
-    (source as unknown as { client: { readResource: () => Promise<unknown> } }).client = {
+    mcpSourceInternals(source).client = stub<Client>({
       readResource: async () => {
         throw err;
       },
-    };
+    });
     // A torn transport now routes through recovery; with no backoff slots it
     // exhausts immediately (no real stop()/start(), no sleeps) and surfaces —
     // exactly the terminal (logged null / silent null) these tests assert.
-    (source as unknown as { recoveryDelaysMs: readonly number[] }).recoveryDelaysMs = [];
+    mcpSourceInternals(source).recoveryDelaysMs = [];
     return source;
   }
 
@@ -85,7 +88,7 @@ describe("McpSource.readResource — log scoping (no probe spam)", () => {
   });
 
   it("does NOT log a genuine miss even on the app-surface path", async () => {
-    const source = makeSourceWithThrowingClient(new McpError(-32002, "Resource not found"));
+    const source = makeSourceWithThrowingClient(new ProtocolError(-32002, "Resource not found"));
     const spy = spyOn(console, "error").mockImplementation(() => {});
     try {
       expect(await source.readResource("ui://x", { logFailures: true })).toBeNull();
@@ -127,7 +130,7 @@ describe("McpSource.readResource — log scoping (no probe spam)", () => {
   });
 
   it("never throws — the 404 (null) contract holds for every caller", async () => {
-    const miss = makeSourceWithThrowingClient(new McpError(-32002, "Resource not found"));
+    const miss = makeSourceWithThrowingClient(new ProtocolError(-32002, "Resource not found"));
     const transport = makeSourceWithThrowingClient(new Error("Connection closed"));
     expect(await miss.readResource("ui://x")).toBeNull();
     expect(await transport.readResource("ui://x", { logFailures: true })).toBeNull();
@@ -147,15 +150,13 @@ describe("McpSource.readResource — remote session self-heal (issue #571)", () 
     message: 'Error POSTing to endpoint: {"code":-32001,"message":"Session not found"}',
   };
 
-  function makeSource(readResource: () => Promise<unknown>): McpSource {
+  function makeSource(readResource: Client["readResource"]): McpSource {
     const source = new McpSource(
       "stub",
       { type: "remote", url: new URL("http://localhost:0/mcp") },
       new NoopEventSink(),
     );
-    (source as unknown as { client: { readResource: () => Promise<unknown> } }).client = {
-      readResource,
-    };
+    mcpSourceInternals(source).client = stub<Client>({ readResource });
     return source;
   }
 
@@ -166,10 +167,7 @@ describe("McpSource.readResource — remote session self-heal (issue #571)", () 
       if (calls === 1) throw sessionLost;
       return { contents: [{ uri: "ui://stub/main", text: "<html>ok</html>" }] };
     });
-    const restart = spyOn(
-      source as unknown as { tryRestart: () => Promise<boolean> },
-      "tryRestart",
-    ).mockResolvedValue(true);
+    const restart = mockTryRestart(source).mockResolvedValue(true);
     try {
       const result = await source.readResource("ui://stub/main", { logFailures: true });
       expect(restart).toHaveBeenCalledTimes(1);
@@ -181,12 +179,9 @@ describe("McpSource.readResource — remote session self-heal (issue #571)", () 
 
   it("does NOT restart on a genuine resource miss", async () => {
     const source = makeSource(async () => {
-      throw new McpError(-32002, "Resource not found");
+      throw new ProtocolError(-32002, "Resource not found");
     });
-    const restart = spyOn(
-      source as unknown as { tryRestart: () => Promise<boolean> },
-      "tryRestart",
-    ).mockResolvedValue(true);
+    const restart = mockTryRestart(source).mockResolvedValue(true);
     try {
       expect(await source.readResource("ui://stub/main", { logFailures: true })).toBeNull();
       expect(restart).not.toHaveBeenCalled();
@@ -199,10 +194,7 @@ describe("McpSource.readResource — remote session self-heal (issue #571)", () 
     const source = makeSource(async () => {
       throw sessionLost;
     });
-    const restart = spyOn(
-      source as unknown as { tryRestart: () => Promise<boolean> },
-      "tryRestart",
-    ).mockResolvedValue(false);
+    const restart = mockTryRestart(source).mockResolvedValue(false);
     const spy = spyOn(console, "error").mockImplementation(() => {});
     try {
       expect(await source.readResource("ui://stub/main", { logFailures: true })).toBeNull();
@@ -210,9 +202,7 @@ describe("McpSource.readResource — remote session self-heal (issue #571)", () 
       expect(restart).toHaveBeenCalledTimes(3);
       // Escalated to HealthMonitor: emitSourceCrashed flipped `dead`, so a stale
       // session that never closed the transport is now sweepable.
-      expect(
-        (source as unknown as { _isDeadForTesting: () => boolean })._isDeadForTesting(),
-      ).toBe(true);
+      expect(source._isDeadForTesting()).toBe(true);
     } finally {
       spy.mockRestore();
       restart.mockRestore();

@@ -53,7 +53,8 @@ export interface HookDeclaration {
     /**
      * Absolute path ON THIS SERVER that the delivery is forwarded to, e.g.
      * `/ingest/emailbison`. Resolved against the connector's own base URL, and
-     * validated to stay there — see `assertForwardablePath`.
+     * validated to stay there — see `assertForwardablePath`. Never the MCP
+     * endpoint's path or a path under it — see `routeNamesMcpEndpoint`.
      */
     route: string;
     /**

@@ -17,6 +17,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { asDevUser, devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -35,12 +36,10 @@ const GATED = [
 /** Reads, which the flag deliberately leaves alone. */
 const UNGATED = ["skills__list", "skills__read", "skills__loading_log"];
 
-async function startRuntime(
-  workDir: string,
-  skillManagement: boolean,
-): Promise<Runtime> {
+async function startRuntime(workDir: string, skillManagement: boolean): Promise<Runtime> {
   const runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
     features: { skillManagement },
@@ -59,7 +58,7 @@ describe("skillManagement: false", () => {
   });
 
   afterAll(async () => {
-    await runtime?.stop?.();
+    await runtime?.shutdown();
     dir?.cleanup();
   });
 
@@ -83,6 +82,7 @@ describe("skillManagement: false", () => {
     // runs. Asserting the refusal alone would pass against a handler that
     // errored for an unrelated reason — so the skill list is checked after.
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: "dev",
       workspaceId: TEST_WORKSPACE_ID,
       runtime,
@@ -122,7 +122,7 @@ describe("skillManagement: true (the default)", () => {
   });
 
   afterAll(async () => {
-    await runtime?.stop?.();
+    await runtime?.shutdown();
     dir?.cleanup();
   });
 
@@ -137,20 +137,25 @@ describe("skillManagement: true (the default)", () => {
 
   test("the chat door creates a skill when the flag is on", async () => {
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: "dev",
       workspaceId: TEST_WORKSPACE_ID,
       runtime,
     });
 
-    const result = await router.execute({
-      id: "t1",
-      name: "skills__create",
-      input: {
-        scope: "workspace",
-        manifest: { name: "allowed-skill", description: "creatable with the flag on" },
-        body: "# allowed",
-      },
-    });
+    const result = await asDevUser(
+      () =>
+        router.execute({
+          id: "t1",
+          name: "skills__create",
+          input: {
+            scope: "workspace",
+            manifest: { name: "allowed-skill", description: "creatable with the flag on" },
+            body: "# allowed",
+          },
+        }),
+      TEST_WORKSPACE_ID,
+    );
 
     expect(result.isError).toBe(false);
   });

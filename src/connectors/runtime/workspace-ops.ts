@@ -48,12 +48,11 @@ export async function installConnectorInWorkspace(
     connectorMcp?: ConnectorMcpDeps;
   },
 ): Promise<ProcessInventoryEntry> {
-  // Default workDir to `~/.nimblebrain` — previously this function fell
-  // through to `""` and emitted relative paths from cwd (a latent bug),
-  // out of step with every other workspace-scoped entry point. A caller
-  // that explicitly passes `workDir: ""` now hits the `WorkspaceContext`
-  // constructor's empty-string rejection (deliberate — relative paths in
-  // this code path were never correct).
+  // Default workDir to `~/.nimblebrain`, in step with every other
+  // workspace-scoped entry point; `""` would emit relative paths from cwd.
+  // A caller that explicitly passes `workDir: ""` hits the
+  // `WorkspaceContext` constructor's empty-string rejection (deliberate —
+  // relative paths are never correct in this code path).
   const workDir = opts?.workDir ?? defaultWorkDir();
   const wsContext = new WorkspaceContext({ wsId, workDir });
   const serverName = serverNameFromRef(connectorRef);

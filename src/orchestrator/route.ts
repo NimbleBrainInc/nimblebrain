@@ -12,8 +12,7 @@
  *   3. A `ws_<id>-<tool>` is the RETIRED form. It is rejected, not routed — so a
  *      workspace other than the session's cannot be NAMED, and cross-workspace
  *      reach is unexpressible rather than denied after the fact. A session with
- *      no workspace (e.g. an external `/mcp` client with no `X-Workspace-Id`)
- *      refuses workspace sources with `WorkspaceToolUnavailable`. **There is no
+ *      no workspace refuses workspace sources with `WorkspaceToolUnavailable`. **There is no
  *      per-call membership scan** — the session's `workspaceId` was
  *      membership-validated when the session was established, so reaching only it
  *      is reaching only a member workspace.
@@ -23,7 +22,7 @@
  *      Throws `UnknownToolSource` if the source prefix isn't registered.
  *
  * Design rules:
- *   - **Strict invariants over defensive defaults.** No `wsId ?? "ws_default"`,
+ *   - **Strict invariants over defensive defaults.** No `wsId ?? DEFAULT_WS_ID`,
  *     no fallback to "current workspace." Every failure throws a structured
  *     error the caller can map.
  *   - **Derive don't cast.** Types flow from `WorkspaceContext` / `ToolSource`.
@@ -34,8 +33,9 @@
  * unit tests can stub without a full `Runtime`.
  */
 
-import type { ToolSchema } from "../engine/types.ts";
+import type { ToolResult, ToolSchema } from "../engine/types.ts";
 import type { IdentityContext } from "../identity/context.ts";
+import type { AdminToolCall } from "../permissions/admin-tools.ts";
 import type { PermissionOwner, PermissionStore } from "../permissions/permission-store.ts";
 import {
   isIdentitySource,
@@ -73,7 +73,7 @@ export class WorkspaceAccessDenied extends Error {
  * Thrown when an identity-scoped session with NO workspace (e.g. a `/mcp`
  * session, which is identity-bound and carries no workspace) attempts a
  * workspace-scoped tool call. Workspace tools are unreachable on such a session
- * — only the caller's identity tools (conversations / files / automations) are.
+ * — only the caller's identity tools (conversations / files / tasks) are.
  * Subclasses `WorkspaceAccessDenied` so the existing error mapping applies
  * unchanged.
  */
@@ -123,7 +123,7 @@ export class UnknownToolSource extends Error {
  * Thrown when a bare (identity-scoped) tool name's source isn't in the
  * kernel identity-source set — the identity-side parallel to
  * `UnknownToolSource`. A bare `<source>__<tool>` whose `<source>` is not a
- * recognized identity source (conversations / files / automations) is a
+ * recognized identity source (conversations / files / tasks) is a
  * mis-namespaced call, surfaced rather than silently treated as workspace.
  */
 export class UnknownIdentitySource extends Error {
@@ -212,7 +212,7 @@ export interface OrchestratorRuntime {
 
   /**
    * Resolve a kernel identity-scoped source by name (`conversations`, and
-   * later `files` / `automations`). Returns `undefined` for an unknown or
+   * later `files` / `tasks`). Returns `undefined` for an unknown or
    * non-identity source — the orchestrator turns that into
    * `UnknownIdentitySource`. No workspace: these dispatch with identity
    * authority and gate their own reads via `canAccess`.
@@ -241,6 +241,23 @@ export interface OrchestratorRuntime {
    * provides it via `getPermissionStore`.
    */
   getPermissionStore?(): PermissionStore;
+
+  /**
+   * The connector gate: the `host_only_tool` refusal when the connector's
+   * server binds `toolName` as a lifecycle handler, whoever calls; the
+   * `workspace_admin_required` refusal when `principal` is not a workspace
+   * admin of `wsId` and the connector declares `toolName` in its catalog
+   * `admin_tools`; else `null`. Callers run it beside
+   * `assertToolAllowed` for a workspace-routed tool. Optional on the same terms
+   * as {@link getPermissionStore}: the production `Runtime` always provides it.
+   */
+  connectorAdminDenial?(
+    wsId: string,
+    principal: { id: string } | null | undefined,
+    serverName: string,
+    toolName: string,
+    call: AdminToolCall,
+  ): Promise<ToolResult | null>;
 
   /**
    * The walled tool surface for a session bounded to `wsId`: that workspace's
@@ -337,7 +354,7 @@ export async function routeToolCall(opts: {
   // second set of semantics for the same string forever. A caller presenting one
   // is working from a stale `tools/list` and needs to re-list, which is what the
   // error says. Rejecting is also what makes cross-workspace reach
-  // *unexpressible* rather than merely denied — there is no longer any name that
+  // *unexpressible* rather than merely denied — there is no name that
   // can address a workspace other than the session's own.
   if (scope.kind === "workspace") {
     throw new UnknownNamespacedToolName(
@@ -350,28 +367,28 @@ export async function routeToolCall(opts: {
   // Bare `<source>__<tool>` — the current wire form for BOTH doors. The source
   // segment decides which, in priority order:
   //
-  //   1. a kernel identity source (`conversations` / `files` / `automations`),
+  //   1. a kernel identity source (`conversations` / `files` / `tasks`),
   //      which is excluded from every workspace registry by construction, so it
   //      can never be shadowed by a workspace source of the same name;
   //   2. the reserved personal-connector prefix, which a workspace source may
   //      not claim (`isReservedServerName` / `validateServerName` at install);
   //   3. otherwise the session's own workspace.
   //
-  // Note what is NOT here: a cross-workspace check. It is gone because the
-  // caller can no longer NAME another workspace, so there is nothing to compare
-  // and nothing to deny. The old `ws_<id>-` tripwire only ever fired on a
-  // fabricated name — the tool list and the session's `workspaceId` derive from
-  // the same value, so it could never detect a mis-bound session. Removing the
-  // field makes fabrication unexpressible, which is strictly stronger than
-  // catching it after the fact.
+  // Note what is NOT here: a cross-workspace check. The caller cannot NAME
+  // another workspace, so there is nothing to compare and nothing to deny. A
+  // `ws_<id>-` tripwire would only ever fire on a fabricated name — the tool
+  // list and the session's `workspaceId` derive from the same value, so it
+  // could never detect a mis-bound session. Having no such field makes
+  // fabrication unexpressible, which is strictly stronger than catching it
+  // after the fact.
   const { sourcePrefix: sourceName } = splitInnerToolName(toolName);
   if (isIdentitySource(sourceName) || isPersonalConnectorName(sourceName)) {
     return routeIdentityCall(identityId, toolName, workspaceId, runtime);
   }
 
   if (workspaceId === undefined) {
-    // Identity-only session (e.g. an external `/mcp` request with no
-    // `X-Workspace-Id`, or a non-member one). Workspace sources are unreachable.
+    // Identity-only session: no workspace is bound. Workspace sources are
+    // unreachable.
     // A bare workspace-source name has no workspace id to report, so this
     // carries the SOURCE name — see `WorkspaceToolUnavailable`, which keeps it
     // in a field of its own rather than overloading `wsId`.
@@ -417,16 +434,15 @@ export async function routeToolCall(opts: {
  * Route a bare `<source>__<tool>` against the caller's identity. Two source
  * classes, in priority order:
  *
- *   1. A **kernel identity source** (`conversations` / `files` / `automations`)
+ *   1. A **kernel identity source** (`conversations` / `files` / `tasks`)
  *      — the caller's own data, always reachable, gated per-entity by
  *      `canAccess`.
  *   2. A **personal connector** — an MCP connection the caller installed on their
  *      own identity, reached here as a bare identity tool and resolved by
  *      `userId` (never through a workspace registry). Reaching it inside a
  *      workspace requires an active `PersonalConnectorGrant` to THAT workspace
- *      (fail closed → `ConnectorGrantDenied`) — uniformly, with no special case
- *      for the caller's own personal workspace (a personal workspace is just a
- *      workspace). The connector runs as the caller with its own identity-scoped
+ *      (fail closed → `ConnectorGrantDenied`) — uniformly, in every workspace.
+ *      The connector runs as the caller with its own identity-scoped
  *      credentials (`users/<id>/…`), so the session's workspace never enters the
  *      dispatch — no crossing.
  *
@@ -482,9 +498,8 @@ async function routeIdentityCall(
   const connector = await runtime.getIdentityConnectorSource?.(identityId, sourceName);
   if (connector) {
     // A personal connector is the user's own; reaching it inside a workspace
-    // requires an active grant to THAT workspace — uniformly, with no special
-    // case for the user's personal workspace (a personal workspace is just a
-    // workspace and gets no "free at home" treatment). Fail closed. The
+    // requires an active grant to THAT workspace — uniformly, with no "free at
+    // home" workspace. Fail closed. The
     // connector runs as the caller with its own identity-scoped credentials.
     const granted =
       workspaceId !== undefined &&
@@ -532,10 +547,10 @@ async function resolveWorkspaceSource(
   let source = registry.getSource(sourceName);
   // Self-heal. An installed connector's source can be transiently absent from the
   // registry: a failed credential respawn or a remote-OAuth teardown removes it
-  // WITHOUT re-adding, and nothing on the chat / automation hot path
+  // WITHOUT re-adding, and nothing on the chat / task hot path
   // re-registers it — so the workspace stays toolless until a platform restart
   // (the failure that bricked a workspace's Dropbox tools mid-run for both chat
-  // and its scheduled automations). Give the runtime ONE best-effort,
+  // and its scheduled tasks). Give the runtime ONE best-effort,
   // cooldown-guarded chance to re-spawn the source from its persisted ref, then
   // re-resolve against the same registry. A still-missing source falls through
   // to the same `UnknownToolSource` — recovery only repairs a recoverable

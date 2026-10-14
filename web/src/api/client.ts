@@ -1,7 +1,6 @@
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps";
 import type {
   ComposioConnectField,
-  ComposioConnectorConfig,
   SecretHeaderRef,
 } from "../_generated/connector-catalog/connectors/catalog/server-detail";
 import type {
@@ -12,12 +11,16 @@ import type {
 import type { ToolInput } from "../_generated/platform-schemas/catalog";
 import { addAuthBreadcrumb, captureLogout, setSentryWorkspace } from "../sentry";
 import type {
-  ApiError,
+  ApiErrorBody,
   BootstrapResponse,
   ChatRequest,
-  ChatResult,
-  PlacementEntry,
-  ToolCallResult,
+  ChatStartResponse,
+  ComposioInitiateResponse,
+  OAuthInitiateResponse,
+  ReadResourceResponse,
+  ShellResponse,
+  ToolCallResponse,
+  UploadResourceResponse,
 } from "../types";
 import { createFetchWithRefresh } from "./fetch-with-refresh";
 
@@ -42,19 +45,34 @@ export function getAuthToken(): string | null {
  * Hooks fired on logout / auth-token change — used by stateful clients
  * that hold a session bound to the identity. Callers register via
  * `addAuthLifecycleHandler` and unsubscribe via the returned function;
- * `setAuthToken` iterates the set so multiple stateful clients (the MCP
- * bridge, the SSE event clients) each drop their identity-bound state
- * on logout independently. Stateless callers (REST helpers,
- * `fetchWithRefresh`) read the current token per-request and need no
- * hook.
+ * `setAuthToken` iterates the set so each stateful client (the SSE event
+ * clients) drops its identity-bound state on logout independently.
+ * Stateless callers (REST helpers, `fetchWithRefresh`, the bridge's `/mcp`
+ * sender) read the current token per-request and need no hook.
  *
- * Stage 2 / Q3 (locked 2026-05-22): the `/mcp` session is identity-bound,
- * not workspace-bound. Workspace switches do NOT drop these hooks —
- * `setActiveWorkspaceId` therefore does not fire them. Cross-call
- * workspace context is supplied per-request via the `X-Workspace-Id`
- * header read fresh by callers (the MCP bridge, REST helpers).
+ * A workspace switch does not fire these; clients holding workspace-bound
+ * state register with `addWorkspaceLifecycleHandler` instead.
  */
 const authLifecycleHandlers = new Set<() => void>();
+
+/**
+ * Hooks fired when the active workspace changes, for a client holding state
+ * bound to one workspace. REST helpers and the bridge's `/mcp` sender read the
+ * active workspace per request and need no hook.
+ */
+const workspaceLifecycleHandlers = new Set<() => void>();
+
+/**
+ * Register a hook to fire whenever the active workspace changes. Returns an
+ * unsubscribe function. Errors in a handler are caught so a buggy registration
+ * can't break others or block the switch.
+ */
+export function addWorkspaceLifecycleHandler(handler: () => void): () => void {
+  workspaceLifecycleHandlers.add(handler);
+  return () => {
+    workspaceLifecycleHandlers.delete(handler);
+  };
+}
 
 /**
  * Register a hook to fire whenever the auth token changes (login,
@@ -69,16 +87,6 @@ export function addAuthLifecycleHandler(handler: () => void): () => void {
   return () => {
     authLifecycleHandlers.delete(handler);
   };
-}
-
-/**
- * @deprecated Use `addAuthLifecycleHandler`. Single-slot semantics
- * (clear-all-and-set) are preserved for external callers that haven't
- * migrated, but the multi-listener API is the supported path.
- */
-export function setAuthLifecycleHandler(handler: (() => void) | null): void {
-  authLifecycleHandlers.clear();
-  if (handler) authLifecycleHandlers.add(handler);
 }
 
 function fireAuthLifecycle(): void {
@@ -99,9 +107,9 @@ export function setAuthToken(token: string | null): void {
 }
 
 /**
- * Set the active workspace ID included as `X-Workspace-Id` header on REST
- * + bridge fetches. Does NOT fire the auth lifecycle hook — per Q3 the
- * `/mcp` bridge session survives workspace switches.
+ * Set the active workspace: the one whose `/v1/workspaces/<wsId>/…` REST routes
+ * the helpers below call, and whose `/mcp/<wsId>` the bridge talks to. Fires
+ * the workspace lifecycle hooks on a real change, never the auth ones.
  */
 export function setActiveWorkspaceId(id: string | null): void {
   if (activeWorkspaceId === id) return;
@@ -110,19 +118,50 @@ export function setActiveWorkspaceId(id: string | null): void {
   // so crash reports are attributable to the right workspace (no-op if Sentry
   // is disabled).
   setSentryWorkspace(id);
+  for (const handler of workspaceLifecycleHandlers) {
+    try {
+      handler();
+    } catch (err) {
+      console.warn("[client] workspace lifecycle handler threw:", err);
+    }
+  }
 }
 
-/** Get the active workspace ID (for modules that build their own headers). */
+/** Get the active workspace ID (for modules that build their own URLs). */
 export function getActiveWorkspaceId(): string | null {
   return activeWorkspaceId;
 }
 
 /**
+ * The path of a workspace-scoped route: `/v1/workspaces/<wsId><suffix>`, in
+ * `workspaceId` when given, else the active workspace, read per request so a
+ * switch takes effect on the next call. Throws when neither names one: a
+ * workspace-scoped request never goes out without one, and never falls back
+ * to a route that names none.
+ *
+ * A caller that labels its result with a workspace passes that workspace here.
+ * The active workspace is a module variable with more than one writer, so a
+ * read addressed through it can answer for a different workspace than the one
+ * its caller files the answer under.
+ */
+export function workspacePath(suffix: string, workspaceId?: string): string {
+  const wsId = workspaceId ?? activeWorkspaceId;
+  if (!wsId) {
+    throw new ApiClientError(
+      "no_active_workspace",
+      `No active workspace; cannot call a workspace route (${suffix}).`,
+      0,
+    );
+  }
+  return `/v1/workspaces/${encodeURIComponent(wsId)}${suffix}`;
+}
+
+/**
  * Build the browser URL for a stored file. File ids are globally unique, so the
  * bare id addresses the file — the server resolves which workspace it lives in
- * from the id (within the caller's own files). No workspace in the URL: a
- * browser `<img src>` or download anchor can't send the `X-Workspace-Id` header,
- * and it doesn't need to.
+ * from the id (within the caller's own files). No workspace in the URL: the id
+ * already locates it, and a link to a file stays valid whichever workspace is
+ * active when it is opened.
  */
 export function fileUrl(fileId: string): string {
   return `${API_BASE}/v1/files/${encodeURIComponent(fileId)}`;
@@ -135,7 +174,7 @@ export function setOnAuthError(callback: (() => void) | null): void {
 
 /**
  * Hook fired when any data call fails with `workspace_error` — the active
- * `X-Workspace-Id` names a workspace the server rejects (deleted, lost
+ * workspace in the request's URL is one the server rejects (deleted, lost
  * membership, or malformed). The shell registers a handler that drops the
  * stale selection and bounces to `/`, where bootstrap re-resolves a valid
  * workspace. Symmetric to `onAuthError` for 401s: a bad workspace context is
@@ -168,9 +207,6 @@ function headers(extra?: Record<string, string>): Record<string, string> {
   };
   if (authToken && authToken !== "__cookie__") {
     h.Authorization = `Bearer ${authToken}`;
-  }
-  if (activeWorkspaceId) {
-    h["X-Workspace-Id"] = activeWorkspaceId;
   }
   return h;
 }
@@ -226,7 +262,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (res.status === 401) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unauthorized",
       message: "Unauthorized",
     }));
@@ -234,7 +270,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unknown",
       message: res.statusText,
     }));
@@ -274,7 +310,7 @@ export class ApiClientError extends Error {
  * `callTool` depending on evaluation order), so tests assert on this pure
  * function instead.
  */
-export function errorFromResponse(body: ApiError, status: number): ApiClientError {
+export function errorFromResponse(body: ApiErrorBody, status: number): ApiClientError {
   if (body.error === "workspace_error") onWorkspaceError?.();
   return new ApiClientError(body.error, body.message, status, body.details);
 }
@@ -285,7 +321,7 @@ export function errorFromResponse(body: ApiError, status: number): ApiClientErro
 
 /**
  * Strip the `ui://` scheme prefix from a resource URI, returning the path
- * that `/v1/apps/:name/resources/*` expects. Single source of truth for
+ * that `/v1/workspaces/:wsId/apps/:name/resources/*` expects. Single source of truth for
  * the transform — consumers rendering iframes from `resourceUri` call this
  * rather than redoing the regex locally.
  */
@@ -310,7 +346,7 @@ export async function getResources(
   path: string,
 ): Promise<{ html: string; metaUi?: McpUiResourceMeta }> {
   const res = await fetchWithRefresh(
-    `${API_BASE}/v1/apps/${encodeURIComponent(appName)}/resources/${path}`,
+    `${API_BASE}${workspacePath(`/apps/${encodeURIComponent(appName)}/resources/${path}`)}`,
     {
       credentials: "include",
       headers: headers(),
@@ -322,7 +358,7 @@ export async function getResources(
   }
 
   if (!res.ok) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unknown",
       message: res.statusText,
     }));
@@ -355,53 +391,37 @@ export async function callTool<S extends string, T extends string>(
   server: S,
   tool: T,
   args?: ToolInput<S, T>,
-): Promise<ToolCallResult> {
-  return request<ToolCallResult>("/v1/tools/call", {
+  opts?: { workspaceId?: string },
+): Promise<ToolCallResponse> {
+  return request<ToolCallResponse>(workspacePath("/tools/call", opts?.workspaceId), {
     method: "POST",
     body: JSON.stringify({ server, tool, arguments: args }),
   });
 }
 
 /**
- * MCP ReadResourceResult entry. Exactly one of `text` or `blob` is populated;
- * `blob` is a base64-encoded string per spec.
+ * Call a kernel tool that acts on the caller or the org, with no workspace:
+ * `POST /v1/tools/call`. For the org and profile settings and the shell's own
+ * startup reads, which are in no workspace. The server calls only tools that
+ * declare they need none and answers any other as not found (ADR-0043).
  */
-export interface ReadResourceContent {
-  uri: string;
-  mimeType?: string;
-  text?: string;
-  blob?: string;
-}
-
-export interface ReadResourceResult {
-  contents: ReadResourceContent[];
-}
-
-/** Read an MCP resource via POST /v1/resources/read. */
-export async function readResource(server: string, uri: string): Promise<ReadResourceResult> {
-  return request<ReadResourceResult>("/v1/resources/read", {
+export async function callToolWithoutWorkspace<S extends string, T extends string>(
+  server: S,
+  tool: T,
+  args?: ToolInput<S, T>,
+): Promise<ToolCallResponse> {
+  return request<ToolCallResponse>("/v1/tools/call", {
     method: "POST",
-    body: JSON.stringify({ server, uri }),
+    body: JSON.stringify({ server, tool, arguments: args }),
   });
 }
 
-/**
- * A workspace file as returned by the upload endpoint. Mirrors the
- * server-side `FileEntry` (src/files/types.ts), narrowed to the fields
- * the client cares about — no `tags`/`source`/`description` here yet
- * because the picker flow doesn't set them and consumers don't read them.
- * Add fields when a consumer needs them.
- */
-export interface WorkspaceFile {
-  id: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-}
-
-export interface UploadResourceResult {
-  files: WorkspaceFile[];
-  errors?: string[];
+/** Read an MCP resource via POST /v1/workspaces/<wsId>/resources/read. */
+export async function readResource(server: string, uri: string): Promise<ReadResourceResponse> {
+  return request<ReadResourceResponse>(workspacePath("/resources/read"), {
+    method: "POST",
+    body: JSON.stringify({ server, uri }),
+  });
 }
 
 /**
@@ -409,7 +429,7 @@ export interface UploadResourceResult {
  * POST. Bytes go over the right pipe (HTTP multipart, streamed) instead
  * of being base64-encoded into a tool-call argument.
  */
-export async function uploadResource(files: File[]): Promise<UploadResourceResult> {
+export async function uploadResource(files: File[]): Promise<UploadResourceResponse> {
   const formData = new FormData();
   // Use `files` (plural) — the server's multipart route accepts either
   // `files` or `file`, but one canonical spelling avoids surprises.
@@ -423,11 +443,8 @@ export async function uploadResource(files: File[]): Promise<UploadResourceResul
   if (authToken && authToken !== "__cookie__") {
     h.Authorization = `Bearer ${authToken}`;
   }
-  if (activeWorkspaceId) {
-    h["X-Workspace-Id"] = activeWorkspaceId;
-  }
 
-  const res = await fetchWithRefresh(`${API_BASE}/v1/resources`, {
+  const res = await fetchWithRefresh(`${API_BASE}${workspacePath("/resources")}`, {
     method: "POST",
     credentials: "include",
     headers: h,
@@ -438,34 +455,26 @@ export async function uploadResource(files: File[]): Promise<UploadResourceResul
     throw new ApiClientError("unauthorized", "Unauthorized", 401);
   }
   if (!res.ok) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unknown",
       message: res.statusText,
     }));
     throw errorFromResponse(body, res.status);
   }
-  return res.json() as Promise<UploadResourceResult>;
+  return res.json() as Promise<UploadResourceResponse>;
 }
 
 // ---------------------------------------------------------------------------
 // Chat
 // ---------------------------------------------------------------------------
 
-/** Synchronous chat — waits for full agent turn. */
-export async function chat(req: ChatRequest): Promise<ChatResult> {
-  return request<ChatResult>("/v1/chat", {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
-}
-
 /**
  * Start a server-authoritative turn. Returns the conversation id immediately;
  * the turn runs to completion on the server regardless of this client. Watch
  * it via `connectConversationStream`.
  */
-export async function startChatTurn(req: ChatRequest): Promise<{ conversationId: string }> {
-  const res = await fetchWithRefresh(`${API_BASE}/v1/chat/start`, {
+export async function startChatTurn(req: ChatRequest): Promise<ChatStartResponse> {
+  const res = await fetchWithRefresh(`${API_BASE}${workspacePath("/chat/start")}`, {
     method: "POST",
     credentials: "include",
     headers: headers(),
@@ -473,20 +482,20 @@ export async function startChatTurn(req: ChatRequest): Promise<{ conversationId:
   });
   if (res.status === 401) throw new ApiClientError("unauthorized", "Unauthorized", 401);
   if (!res.ok) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unknown",
       message: res.statusText,
     }));
     throw errorFromResponse(body, res.status);
   }
-  return res.json() as Promise<{ conversationId: string }>;
+  return res.json() as Promise<ChatStartResponse>;
 }
 
 /** Start a server-authoritative turn with file attachments (multipart). */
 export async function startChatTurnMultipart(
   req: ChatRequest,
   files: File[],
-): Promise<{ conversationId: string }> {
+): Promise<ChatStartResponse> {
   const formData = new FormData();
   formData.append("message", req.message);
   if (req.conversationId) formData.append("conversationId", req.conversationId);
@@ -496,9 +505,8 @@ export async function startChatTurnMultipart(
 
   const h: Record<string, string> = {};
   if (authToken && authToken !== "__cookie__") h.Authorization = `Bearer ${authToken}`;
-  if (activeWorkspaceId) h["X-Workspace-Id"] = activeWorkspaceId;
 
-  const res = await fetchWithRefresh(`${API_BASE}/v1/chat/start`, {
+  const res = await fetchWithRefresh(`${API_BASE}${workspacePath("/chat/start")}`, {
     method: "POST",
     credentials: "include",
     headers: h,
@@ -506,13 +514,13 @@ export async function startChatTurnMultipart(
   });
   if (res.status === 401) throw new ApiClientError("unauthorized", "Unauthorized", 401);
   if (!res.ok) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unknown",
       message: res.statusText,
     }));
     throw errorFromResponse(body, res.status);
   }
-  return res.json() as Promise<{ conversationId: string }>;
+  return res.json() as Promise<ChatStartResponse>;
 }
 
 /** Explicitly stop an in-flight turn (the Stop button). */
@@ -529,16 +537,9 @@ export async function cancelChatTurn(conversationId: string): Promise<void> {
 // Shell
 // ---------------------------------------------------------------------------
 
-/** Shell manifest returned by GET /v1/shell. */
-export interface ShellData {
-  placements: PlacementEntry[];
-  chatEndpoint: string;
-  eventsEndpoint: string;
-}
-
-/** Fetch the shell manifest (placement slots, endpoints). */
-export async function getShell(): Promise<ShellData> {
-  return request<ShellData>("/v1/shell");
+/** Fetch a workspace's shell manifest (placement slots, endpoints). */
+export async function getShell(workspaceId?: string): Promise<ShellResponse> {
+  return request<ShellResponse>(workspacePath("/shell", workspaceId));
 }
 
 /** Attempt to refresh the session using the refresh token cookie. Exposed for SSE modules. */
@@ -561,10 +562,10 @@ export const refreshSession = refreshInterceptor.tryRefresh;
 export async function initiateMcpOAuth(
   serverName: string,
   principalId?: string,
-): Promise<{ authorizationUrl: string | null }> {
+): Promise<OAuthInitiateResponse> {
   // `authorizationUrl` is null when the source connected without an interactive
   // flow (provider-minted / already-authenticated) — caller must not redirect.
-  return request<{ authorizationUrl: string | null }>("/v1/mcp-auth/initiate", {
+  return request<OAuthInitiateResponse>(workspacePath("/mcp-auth/initiate"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(principalId ? { serverName, principalId } : { serverName }),
@@ -577,12 +578,10 @@ export async function initiateMcpOAuth(
  * callback lands back on `/profile/connectors`. The identity-plane sibling of
  * `initiateMcpOAuth` (no workspace / principal).
  */
-export async function initiateIdentityConnect(
-  serverName: string,
-): Promise<{ authorizationUrl: string | null }> {
+export async function initiateIdentityConnect(serverName: string): Promise<OAuthInitiateResponse> {
   // `authorizationUrl` is null when the connector connected without an interactive
   // flow (already authenticated) — caller must not redirect.
-  return request<{ authorizationUrl: string | null }>("/v1/mcp-auth/initiate-identity", {
+  return request<OAuthInitiateResponse>("/v1/mcp-auth/initiate-identity", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverName }),
@@ -598,15 +597,12 @@ export async function initiateIdentityConnect(
  */
 export async function initiateComposioIdentityConnect(
   connectorId: string,
-): Promise<{ authorizationUrl: string; alreadyConnected?: boolean }> {
-  return request<{ authorizationUrl: string; alreadyConnected?: boolean }>(
-    "/v1/composio-auth/initiate-identity",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ connectorId }),
-    },
-  );
+): Promise<ComposioInitiateResponse> {
+  return request<ComposioInitiateResponse>("/v1/composio-auth/initiate-identity", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectorId }),
+  });
 }
 
 /**
@@ -622,27 +618,29 @@ export async function initiateComposioIdentityConnect(
  */
 export async function initiateComposioOAuth(
   connectorId: string,
-): Promise<{ authorizationUrl: string; alreadyConnected?: boolean }> {
-  return request<{ authorizationUrl: string; alreadyConnected?: boolean }>(
-    "/v1/composio-auth/initiate",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ connectorId }),
-    },
-  );
+): Promise<ComposioInitiateResponse> {
+  return request<ComposioInitiateResponse>(workspacePath("/composio-auth/initiate"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectorId }),
+  });
 }
 
 /**
  * Per-workspace installed view. Returns every connector visible in the
- * workspace. Personal connectors live in the caller's personal workspace.
+ * workspace. Personal connectors live on the caller's identity, not here.
  *
- * Stage 2: `scope` is always `"workspace"`. The legacy `"user"` arm was
- * removed in T008/T009.
+ * `scope` is always `"workspace"`.
  */
 export interface InstalledConnector {
   serverName: string;
   connectorName: string;
+  /** The name to show a person, resolved by the server (catalog name, the
+   *  connector's declared host name, else the server name). Never re-derive it. */
+  displayName: string;
+  /** Whether Disconnect means anything: the connection rests on a credential a
+   *  person authorized. False for a fleet connector or a static credential. */
+  disconnectable: boolean;
   /** Declared version — the catalog/manifest's stated version. */
   version: string;
   /**
@@ -668,7 +666,7 @@ export interface InstalledConnector {
   catalogId?: string | null;
   catalog?: ConnectorCatalogEntry;
   authorizationUrl?: string;
-  identity?: { sub?: string; email?: string; name?: string };
+  identity?: { email?: string; name?: string };
   missingOperatorSetup?: boolean;
   /** Last connection error for crashed / dead / reauth_required states. */
   lastError?: string;
@@ -692,12 +690,22 @@ export interface InstalledConnector {
    *
    *   ready          — works
    *   needs_setup    — admin must configure the operator OAuth client
-   *   needs_auth     — workspace member must (re)authenticate
+   *   not_connected  — installed, no connection (never connected, or
+   *                     disconnected): at rest, not an error
+   *   needs_auth     — a working connection broke (credential revoked or
+   *                     expired): someone must reconnect
    *   connecting     — OAuth flow in flight
    *   failed         — dead, no actionable next step
    *   starting       — connection being established
    */
-  status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
+  status:
+    | "ready"
+    | "needs_setup"
+    | "not_connected"
+    | "needs_auth"
+    | "connecting"
+    | "failed"
+    | "starting";
   /** Human-readable detail for `status` (tooltip / banner copy). */
   statusReason?: string;
 }
@@ -709,13 +717,13 @@ export interface InstalledConnector {
  * No dedicated REST routes — the platform's tool-call surface is the
  * canonical first-party API.
  *
- * The OAuth flow itself stays on routes (`/v1/mcp-auth/initiate` +
+ * The OAuth flow itself stays on routes (`/v1/workspaces/:wsId/mcp-auth/initiate` +
  * `/callback`) because it sets a session-bound state cookie and the
  * callback is a browser redirect target — neither composes cleanly
- * over `/v1/tools/call`.
+ * over `/v1/workspaces/<wsId>/tools/call`.
  */
 
-function unwrapStructured<T>(result: ToolCallResult, what: string): T {
+function unwrapStructured<T>(result: ToolCallResponse, what: string): T {
   if (result.isError) {
     const text = result.content?.[0]?.type === "text" ? result.content[0].text : "";
     throw new Error(text || `${what} failed.`);
@@ -725,11 +733,14 @@ function unwrapStructured<T>(result: ToolCallResult, what: string): T {
 
 export async function getInstalledConnectors(opts?: {
   scope?: "all" | "workspace";
+  workspaceId?: string;
 }): Promise<{ installed: InstalledConnector[] }> {
-  const result = await callTool("nb", "manage_connectors", {
-    action: "list_installed",
-    scope: opts?.scope ?? "all",
-  });
+  const result = await callTool(
+    "nb",
+    "manage_connectors",
+    { action: "list_installed", scope: opts?.scope ?? "all" },
+    { workspaceId: opts?.workspaceId },
+  );
   return unwrapStructured(result, "list_installed");
 }
 
@@ -747,6 +758,68 @@ export async function getInstalledConnector(
     serverName,
   });
   return unwrapStructured(result, "get_installed");
+}
+
+/** How a skill reaches the model, as the runtime's `resolveLoadingMechanism` decides it. */
+export type SkillLoadingMechanismName = "always" | "tool_affinity" | "trigger" | "none";
+
+/**
+ * A curated overlay materialized for a connector: surfaced into the
+ * conversation once, on the first call to a tool it is bound to.
+ */
+export interface ConnectorOverlaySkill {
+  server: string;
+  name: string;
+  description?: string;
+  /** Which curated overlay and pinned version the copy came from. */
+  source?: string;
+  toolAffinity: string[];
+}
+
+/** A skill a connected server publishes through the MCP Skills extension. */
+export interface PublishedConnectorSkill {
+  server: string;
+  name: string;
+  description: string;
+  /** The skill's `SKILL.md` URI on the server. */
+  uri: string;
+  loadingStrategy: "always" | "dynamic";
+  priority: number;
+  toolAffinity: string[];
+  triggers?: string[];
+  mechanism: SkillLoadingMechanismName;
+}
+
+/**
+ * Every skill the workspace's connectors contribute to the model's context,
+ * without bodies. A server with a curated overlay lists only the overlay: the
+ * runtime does not load that server's published skills.
+ */
+export async function listConnectorSkills(
+  workspaceId: string,
+): Promise<{ overlays: ConnectorOverlaySkill[]; published: PublishedConnectorSkill[] }> {
+  const result = await callTool(
+    "nb",
+    "manage_connectors",
+    { action: "list_bound_skills" },
+    { workspaceId },
+  );
+  return unwrapStructured(result, "list_bound_skills");
+}
+
+/** One connector skill's body, as the model receives it. */
+export async function readConnectorSkill(
+  workspaceId: string,
+  serverName: string,
+  skillName: string,
+): Promise<{ kind: "overlay" | "published"; body: string }> {
+  const result = await callTool(
+    "nb",
+    "manage_connectors",
+    { action: "read_bound_skill", serverName, skillName },
+    { workspaceId },
+  );
+  return unwrapStructured(result, "read_bound_skill");
 }
 
 /** A personal connector (a remote MCP connection owned by the caller's identity) + where it's granted. */
@@ -767,17 +840,18 @@ export interface PersonalConnector {
    * composio Connect route keys on. Absent for DCR connectors.
    */
   connectorId?: string;
+  /** The account the connection is signed in as, when one was recorded. */
+  identity?: { email?: string; name?: string };
   grantedWorkspaces: string[];
 }
 
 /**
- * The caller's personal connectors and, for each, the shared workspaces it's
- * granted to. The server derives the personal workspace from the caller's
- * identity, so this is workspace-independent — safe to call from `/profile`,
- * which has no active workspace (unlike the ambient-`X-Workspace-Id` helpers).
+ * The caller's personal connectors and, for each, the workspaces it's
+ * granted to. The server reads them from the caller's identity, so the answer is the same whichever workspace the call goes
+ * through — safe to call from `/profile`, which has no workspace of its own.
  */
 export async function listPersonalConnectors(): Promise<{ connectors: PersonalConnector[] }> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "list_personal_connectors",
   });
   return unwrapStructured(result, "list_personal_connectors");
@@ -786,11 +860,11 @@ export async function listPersonalConnectors(): Promise<{ connectors: PersonalCo
 /**
  * The curated set of connectors offered for personal (identity-plane) connection
  * — the profile "Add a connector" picker. Workspace-independent (safe from
- * `/profile`, which has no active workspace); the server filters to DCR
+ * `/profile`, which has no workspace of its own); the server filters to DCR
  * connectors the caller hasn't already installed on their identity.
  */
 export async function listPersonalCatalog(): Promise<{ catalog: CatalogListing[] }> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "list_personal_catalog",
   });
   return unwrapStructured(result, "list_personal_catalog");
@@ -799,11 +873,11 @@ export async function listPersonalCatalog(): Promise<{ catalog: CatalogListing[]
 /**
  * Grant the caller's personal connector `serverName` for use inside `wsId`. A
  * personal connector is identity-bound and must be granted into EVERY workspace
- * it's used in — the personal workspace included (no free-at-home). Its tools
+ * it's used in (no free-at-home). Its tools
  * then surface to the agent in that workspace.
  */
 export async function grantConnector(serverName: string, wsId: string): Promise<void> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "grant_connector",
     serverName,
     wsId,
@@ -813,7 +887,7 @@ export async function grantConnector(serverName: string, wsId: string): Promise<
 
 /** Revoke the caller's grant of `serverName` from `wsId`. */
 export async function revokeConnector(serverName: string, wsId: string): Promise<void> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "revoke_connector",
     serverName,
     wsId,
@@ -831,7 +905,7 @@ export async function revokeConnector(serverName: string, wsId: string): Promise
 export async function disconnectPersonalConnector(
   serverName: string,
 ): Promise<{ ok: boolean; scope: "identity"; serverName: string; revokedWorkspaces: number }> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "disconnect",
     scope: "identity",
     serverName,
@@ -896,8 +970,8 @@ export async function uninstallConnector(
 /**
  * Install a connector. Pass the full `CatalogListing` the user clicked.
  * The connector installs into the workspace the shell is currently in —
- * the `X-Workspace-Id` header `callTool` already sends (set from the
- * `/w/<slug>` route). That's the same workspace every follow-up call
+ * the one in the URL `callTool` already calls (set from the `/w/<slug>`
+ * route). That's the same workspace every follow-up call
  * (`initiateMcpOAuth`, list_tools, status) reads, so install and connect
  * can't drift apart. Pass an explicit `wsId` only to install into a
  * different workspace than the one in view (not used by the shell today).
@@ -914,13 +988,18 @@ export async function installConnector(
   serverName: string;
   scope: "workspace";
   wsId: string;
+  /**
+   * Set when the install landed but something about it is wrong — most often
+   * an eager start that threw, leaving the connector unconnected.
+   */
+  warning?: string;
 }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "install",
     entry,
-    // Omit `wsId` so the server defaults to the request's workspace
-    // (X-Workspace-Id). Only send it when the caller explicitly targets
-    // a different workspace.
+    // Omit `wsId` so the server defaults to the request's workspace (the one
+    // in its URL). Only send it when the caller explicitly targets a
+    // different workspace.
     ...(wsId ? { wsId } : {}),
   });
   return unwrapStructured(result, "install");
@@ -937,7 +1016,7 @@ export async function installConnector(
 export async function installPersonalConnector(
   entry: CatalogListing,
 ): Promise<{ ok: boolean; alreadyInstalled?: boolean; serverName: string; scope: "identity" }> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "install",
     scope: "identity",
     entry,
@@ -960,7 +1039,7 @@ export interface WorkspaceSecretKey {
  * path — the next request that carries a reference to this key sends the new
  * value, with no reconnect, no restart and no config edit.
  *
- * The shell calls the tool over `/v1/tools/call` like every other connector
+ * The shell calls the tool over `…/tools/call` like every other connector
  * action. That is not "setting it in the chat": the value goes from the input to
  * the credential store over one request. Typing it into a conversation is what
  * puts it in a transcript, a model's context, and whatever that conversation is
@@ -990,14 +1069,12 @@ export async function listWorkspaceSecretKeys(): Promise<{ keys: WorkspaceSecret
  * `src/connectors/catalog/types.ts` via `bun run codegen`, and `check:codegen` fails CI
  * when the server type moves without a regen.
  *
- * `ComposioConfig` / `ComposioField` keep their shell-side names because the
- * components read better for it; the shapes are the server's.
+ * `ComposioField` keeps its shell-side name because the components read
+ * better for it; the shape is the server's.
  */
 export type {
   CatalogListing,
   ComposioConnectField as ComposioField,
-  ComposioConnectorConfig as ComposioConfig,
-  ConnectorCatalogEntry,
   RemoteOAuthInstall,
   SecretHeaderRef,
 };
@@ -1073,6 +1150,14 @@ export async function getOAuthRedirectUri(): Promise<{ redirectUri: string }> {
 export type ToolPolicy = "allow" | "disallow";
 
 /**
+ * Which connector a permission call addresses: the active workspace's install,
+ * or the caller's personal connector of that name. The response names the
+ * policy owner the server resolved (`user` for a personal connector).
+ */
+export type PermissionScope = "workspace" | "identity";
+export type PermissionOwnerScope = "workspace" | "user";
+
+/**
  * Combined fetch — returns the connector's tool list AND the policy
  * map in one round-trip. Used by ToolPermissionsTable, which needs
  * both on mount; the previous two-call shape doubled the page-load
@@ -1080,14 +1165,16 @@ export type ToolPolicy = "allow" | "disallow";
  */
 export async function listConnectorToolsWithPermissions(
   serverName: string,
-  scope?: "workspace",
+  scope?: PermissionScope,
 ): Promise<{
-  scope: "workspace";
+  scope: PermissionOwnerScope;
   serverName: string;
   tools: ConnectorTool[];
   permissions: Record<string, ToolPolicy>;
 }> {
-  const result = await callTool("nb", "manage_connectors", {
+  // A personal connector is no workspace's, so its permissions are read with none.
+  const call = scope === "identity" ? callToolWithoutWorkspace : callTool;
+  const result = await call("nb", "manage_connectors", {
     action: "list_tools_with_permissions",
     serverName,
     ...(scope ? { scope } : {}),
@@ -1097,10 +1184,11 @@ export async function listConnectorToolsWithPermissions(
 
 export async function setConnectorPermissions(
   serverName: string,
-  scope: "workspace",
+  scope: PermissionScope,
   tools: Record<string, ToolPolicy>,
-): Promise<{ ok: boolean; scope: "workspace"; serverName: string }> {
-  const result = await callTool("nb", "manage_connectors", {
+): Promise<{ ok: boolean; scope: PermissionOwnerScope; serverName: string }> {
+  const call = scope === "identity" ? callToolWithoutWorkspace : callTool;
+  const result = await call("nb", "manage_connectors", {
     action: "set_permissions",
     serverName,
     scope,
@@ -1133,21 +1221,16 @@ export async function logout(): Promise<void> {
  * initFromBootstrap, after this call) so a failed refresh just leaves the
  * 401 in place and we return null — same behavior as before.
  *
- * Bootstrap carries NO `X-Workspace-Id`. Which workspace the user is in is
- * owned by the URL (`/w/:slug`), resolved AFTER bootstrap by the route
- * guard — not by a remembered selection. Sending a stale remembered id was
- * the cause of a hard lock-out: a workspace the user had lost access to made
- * the server reject bootstrap before its permissive default could run. The
- * server defaults the focus to the user's personal workspace on its own.
+ * Bootstrap names no workspace. Which workspace the user is in is owned by the
+ * URL (`/w/:slug`), resolved AFTER bootstrap by the route guard — not by a
+ * remembered selection. The server defaults the focus to the user's default
+ * workspace on its own.
  */
 export async function tryBootstrap(): Promise<BootstrapResponse | null> {
   try {
-    // Strip any workspace scope — bootstrap is identity-level discovery.
-    const h = headers();
-    delete h["X-Workspace-Id"];
     const res = await fetchWithRefresh(`${API_BASE}/v1/bootstrap`, {
       credentials: "include",
-      headers: h,
+      headers: headers(),
     });
     if (!res.ok) return null;
     return (await res.json()) as BootstrapResponse;

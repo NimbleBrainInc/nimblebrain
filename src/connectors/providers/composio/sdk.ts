@@ -30,6 +30,8 @@
 
 import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
 import { publicOrigin } from "../../../oauth/public-origin.ts";
+import { log } from "../../../observability/log.ts";
+import { parseIdTokenClaims } from "../../../tools/oauth-identity.ts";
 import { validateComposioConfig } from "./config.ts";
 
 /**
@@ -52,14 +54,24 @@ const COMPOSIO_TIMEOUT_MS = 10_000;
  */
 const COMPOSIO_APIKEY_VERIFY_MS = 8_000;
 
+/**
+ * Budget for reading a connected account's display name on the OAuth callback.
+ * The browser waits on that response for its redirect, and the name is
+ * cosmetic, so a slow read gives up well before `COMPOSIO_TIMEOUT_MS`.
+ */
+const COMPOSIO_DISPLAY_NAME_TIMEOUT_MS = 3_000;
+
+/** Longest display name kept; anything longer is not an account label. */
+const DISPLAY_NAME_MAX_LENGTH = 256;
+
 // ── User-ID formula ─────────────────────────────────────────────────
 
 /**
  * Compute the `user_id` value passed to Composio at every API call.
  *
  * Multi-tenant production runs one tenant per pod with `NB_TENANT_ID`
- * stamped at deploy time; workspace IDs aren't globally unique
- * (`ws_01abc` exists in every tenant) so the tenant prefix is the
+ * stamped at deploy time; a workspace ID is unique only within its
+ * tenant (nothing stops two tenants holding the same one) so the tenant prefix is the
  * thing that disambiguates Composio's namespace. Single-tenant / local
  * dev simply uses `wsId` — Composio doesn't care about format, only
  * that the string be stable per connection.
@@ -94,22 +106,52 @@ export function composioCallbackUrl(): string {
  * a regional outage. Surfacing a clear timeout beats blocking the
  * user's install click for 30+ seconds while the SDK retries.
  */
-async function withTimeout<T>(label: string, fn: () => Promise<T>): Promise<T> {
+async function withTimeout<T>(
+  label: string,
+  fn: () => Promise<T>,
+  timeoutMs: number = COMPOSIO_TIMEOUT_MS,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       fn(),
       new Promise<T>((_, reject) => {
         timer = setTimeout(
-          () =>
-            reject(new Error(`[composio] ${label} timed out after ${COMPOSIO_TIMEOUT_MS / 1000}s`)),
-          COMPOSIO_TIMEOUT_MS,
+          () => reject(new Error(`[composio] ${label} timed out after ${timeoutMs / 1000}s`)),
+          timeoutMs,
         );
       }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/**
+ * The provider-side identity (e.g. the Gmail address) of an ACTIVE connected
+ * account: `state.val.displayName`, which Composio records for some toolkits,
+ * or else the email in the `state.val.id_token` the vendor issued when the
+ * grant carried identity scopes (an OIDC vendor such as Google, where the
+ * auth config requests `openid` and `userinfo.email`). The token is read the
+ * way the runtime's own OAuth path reads one: unverified, and for display
+ * only. The same `state.val` carries the vendor's tokens, so this takes the
+ * one string and nothing else; the account object never leaves the call site
+ * that fetched it.
+ */
+function accountDisplayName(account: unknown): string | undefined {
+  const val = (
+    account as { state?: { val?: { displayName?: unknown; id_token?: unknown } } } | null
+  )?.state?.val;
+  const name =
+    typeof val?.displayName === "string" && val.displayName.trim().length > 0
+      ? val.displayName
+      : typeof val?.id_token === "string"
+        ? parseIdTokenClaims(val.id_token)?.email
+        : undefined;
+  if (typeof name !== "string") return undefined;
+  const trimmed = name.trim();
+  if (trimmed.length === 0 || trimmed.length > DISPLAY_NAME_MAX_LENGTH) return undefined;
+  return trimmed;
 }
 
 // ── Vendor SDK (lazy) ───────────────────────────────────────────────
@@ -127,6 +169,7 @@ interface ComposioClient {
     link(userId: string, authConfigId: string, opts: unknown): Promise<unknown>;
     initiate(userId: string, authConfigId: string, opts: unknown): Promise<unknown>;
     delete(connectedAccountId: string): Promise<unknown>;
+    get(connectedAccountId: string): Promise<unknown>;
   };
   create(userId: string, config: unknown): Promise<unknown>;
 }
@@ -160,8 +203,9 @@ let _vendorLoadCount = 0;
 async function loadComposioCore(): Promise<ComposioCoreModule> {
   _vendorLoadCount += 1;
   // The runtime dynamic import (a call expression, not a top-level `from`
-  // import) is the only reference to the vendor. Narrow it to the local slice.
-  return (await import("@composio/core")) as unknown as ComposioCoreModule;
+  // import) is the only reference to the vendor; the local `ComposioCoreModule`
+  // slice is the part of it this file uses.
+  return await import("@composio/core");
 }
 
 /**
@@ -320,20 +364,24 @@ export async function connectComposioApiKey(opts: {
   userId: string;
   authConfigId: string;
   fields: Record<string, string>;
-}): Promise<{ connectedAccountId: string; status: string }> {
+}): Promise<{ connectedAccountId: string; status: string; displayName?: string }> {
   const composio = await composioClient(opts.apiKey);
   const composioCore = await loadComposioCore();
   // SDK types the `config` as a broad ConnectionData union; `AuthScheme.APIKey`
   // builds the API_KEY-shaped member ({ authScheme, val: { status, ...fields } }).
+  // The local `ComposioClient` slice declares the request `unknown`; read it
+  // with every field `unknown` (each checked below) and the one method called.
   const connRequest = (await withTimeout("connectedAccounts.initiate(apikey)", () =>
     composio.connectedAccounts.initiate(opts.userId, opts.authConfigId, {
       config: composioCore.AuthScheme.APIKey(opts.fields),
       allowMultiple: true,
     }),
-  )) as unknown as {
+  )) as {
     id?: unknown;
     connectedAccountId?: unknown;
-    waitForConnection: (timeoutMs?: number) => Promise<{ id?: unknown; status?: unknown }>;
+    waitForConnection: (
+      timeoutMs?: number,
+    ) => Promise<{ id?: unknown; status?: unknown; state?: unknown }>;
   };
 
   // `initiate` populates `.id`, but mirror the OAuth sibling's
@@ -369,7 +417,8 @@ export async function connectComposioApiKey(opts: {
         `Composio API-key connect: account ${id} did not reach ACTIVE (status=${status || "unknown"})`,
       );
     }
-    return { connectedAccountId: id, status };
+    const displayName = accountDisplayName(account);
+    return { connectedAccountId: id, status, ...(displayName ? { displayName } : {}) };
   } catch (err) {
     // Verification failed (bad/insufficient key), timed out, or the account is
     // stuck non-ACTIVE — drop the dangling record so the next attempt is clean.
@@ -403,8 +452,10 @@ export async function findActiveComposioConnection(opts: {
   apiKey: string;
   userId: string;
   authConfigId: string;
-}): Promise<{ id: string; status: string } | null> {
+}): Promise<{ id: string; status: string; displayName?: string } | null> {
   const composio = await composioClient(opts.apiKey);
+  // The local `ComposioClient` slice declares the page `unknown`; read it with
+  // every item field `unknown`, each checked below before use.
   const list = (await withTimeout("connectedAccounts.list", () =>
     composio.connectedAccounts.list({
       userIds: [opts.userId],
@@ -412,12 +463,41 @@ export async function findActiveComposioConnection(opts: {
       statuses: ["ACTIVE"],
       limit: 1,
     }),
-  )) as unknown as { items?: Array<{ id?: unknown; status?: unknown }> };
+  )) as { items?: Array<{ id?: unknown; status?: unknown; state?: unknown }> };
   const first = list.items?.[0];
   if (!first) return null;
   if (typeof first.id !== "string" || first.id.length === 0) return null;
   const status = typeof first.status === "string" ? first.status : "ACTIVE";
-  return { id: first.id, status };
+  const displayName = accountDisplayName(first);
+  return { id: first.id, status, ...(displayName ? { displayName } : {}) };
+}
+
+/**
+ * The display name of one connected account, or undefined. Best-effort and
+ * never throws: a connection must land whether or not its label can be read.
+ * Used by the OAuth callback, whose redirect result carries only the account
+ * id; the API-key and adopt paths read the name from the account they already
+ * hold.
+ */
+export async function getComposioAccountDisplayName(opts: {
+  apiKey: string;
+  connectedAccountId: string;
+}): Promise<string | undefined> {
+  try {
+    const composio = await composioClient(opts.apiKey);
+    const account = await withTimeout(
+      "connectedAccounts.get",
+      () => composio.connectedAccounts.get(opts.connectedAccountId),
+      COMPOSIO_DISPLAY_NAME_TIMEOUT_MS,
+    );
+    return accountDisplayName(account);
+  } catch (err) {
+    log.debug(
+      "mcp",
+      `[composio] display name read failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return undefined;
+  }
 }
 
 /**
@@ -546,7 +626,7 @@ export async function cleanupComposioConnector(opts: {
  * to the agent — this is the correct preset. It also disables
  * Composio's in-MCP `manageConnections` auth prompt by default,
  * which was driving the chat-side "click this link" modal that
- * bypassed our `/v1/composio-auth/initiate` flow.
+ * bypassed our `/v1/workspaces/:wsId/composio-auth/initiate` flow.
  */
 export async function createComposioSession(opts: {
   apiKey: string;
@@ -575,9 +655,11 @@ export async function createComposioSession(opts: {
     // array form is the simplest match for "these tools, full stop."
     config.tools = { [opts.toolkit]: opts.tools };
   }
+  // The local `ComposioClient` slice declares the session `unknown`; read it
+  // with every field `unknown`, each checked below before use.
   const session = (await withTimeout("create-session", () =>
-    composio.create(opts.userId, config as unknown as Parameters<typeof composio.create>[1]),
-  )) as unknown as {
+    composio.create(opts.userId, config),
+  )) as {
     mcp?: { type?: unknown; url?: unknown; headers?: unknown };
   };
   const mcp = session.mcp;

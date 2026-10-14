@@ -6,7 +6,7 @@ import {
 } from "../tools/connector-surface.ts";
 import type { Tool } from "../tools/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
-import { assertForwardablePath } from "./declaration.ts";
+import { assertForwardablePath, routeNamesMcpEndpoint } from "./declaration.ts";
 import {
   type Addressable,
   registrationKey,
@@ -117,10 +117,28 @@ export function verifyRegisterTool(tools: Tool[], decl: HookDeclaration, connect
   }
 }
 
+/**
+ * Refuse a declaration whose route names the connector's MCP endpoint.
+ *
+ * A contract violation like a missing `register_tool`, and reported the same
+ * way: nothing is minted, so no URL exists that could reach the endpoint. The
+ * door refuses the same route again at delivery (`resolveForwardUrl`), which is
+ * what holds for a registration already on disk.
+ */
+function assertRouteOffMcpEndpoint(decl: HookDeclaration, mcpUrl: string, connector: string): void {
+  if (!routeNamesMcpEndpoint(decl.route, mcpUrl)) return;
+  throw new HookContractError(
+    `Connector "${connector}" declares hook "${decl.vendor}" with route "${decl.route}", ` +
+      `which names the server's MCP endpoint. A hook route must be a separate path.`,
+  );
+}
+
 export interface ProvisionHooksOptions {
   store: WorkspaceStore;
   wsId: string;
   connector: string;
+  /** The connector's MCP endpoint, from its installed ref: what a route may not name. */
+  mcpUrl: string;
   declarations: HookDeclaration[];
   port: ConnectorPort;
   /** Mint a fresh `kid` for every declaration even if one is already recorded.
@@ -233,6 +251,7 @@ export async function provisionHooks(opts: ProvisionHooksOptions): Promise<Provi
   }
   for (const decl of declarations) {
     assertForwardablePath(decl.route, `connector "${opts.connector}" hook "${decl.vendor}"`);
+    assertRouteOffMcpEndpoint(decl, opts.mcpUrl, opts.connector);
     verifyRegisterTool(tools, decl, opts.connector);
   }
 

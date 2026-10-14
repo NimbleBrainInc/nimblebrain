@@ -18,11 +18,9 @@
  *   2. handleOidcRefresh maps that verdict to an HTTP status (provider-agnostic).
  */
 
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { handleOidcRefresh } from "../../../src/api/handlers.ts";
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import {
   type IdentityProvider,
@@ -30,32 +28,26 @@ import {
   type TokenResult,
 } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
-import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { readJson } from "../../helpers/http.ts";
+import { stubWorkosUserManagement } from "../../helpers/workos-sdk.ts";
 
 // ── Layer 1: WorkOS provider classification ──────────────────────────
 
 const BASE_CONFIG: WorkosAuth = {
   adapter: "workos",
   clientId: "client_test_refresh",
-  redirectUri: "http://localhost/callback",
   organizationId: "org_test_refresh",
   apiKey: "sk_test_fake_refresh",
 };
 
 /** Build a provider whose underlying WorkOS refresh call throws `thrown`. */
 function providerThatThrows(thrown: unknown): WorkosIdentityProvider {
-  const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "oidc-refresh-")));
-  const provider = new WorkosIdentityProvider(BASE_CONFIG, undefined, workspaceStore);
-  // Cast escape hatch: `workos` is a private field typed as the full WorkOS SDK;
-  // we only need to swap the one method under test, so we widen it to a bag of
-  // unknowns rather than reconstruct the SDK's type.
-  const sdk = (provider as unknown as { workos: { userManagement: Record<string, unknown> } })
-    .workos;
-  sdk.userManagement = {
+  const provider = new WorkosIdentityProvider(BASE_CONFIG, undefined);
+  stubWorkosUserManagement(provider, {
     authenticateWithRefreshToken: async () => {
       throw thrown;
     },
-  };
+  });
   return provider;
 }
 
@@ -162,7 +154,7 @@ describe("handleOidcRefresh status mapping", () => {
     });
     const res = await handleOidcRefresh(withCookie(), provider, false);
     expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe("refresh_failed");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("refresh_failed");
   });
 
   test("unavailable → 503 refresh_unavailable + Retry-After (keep session)", async () => {
@@ -172,7 +164,7 @@ describe("handleOidcRefresh status mapping", () => {
     const res = await handleOidcRefresh(withCookie(), provider, false);
     expect(res.status).toBe(503);
     expect(res.headers.get("Retry-After")).toBe("1");
-    expect((await res.json()).error).toBe("refresh_unavailable");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("refresh_unavailable");
   });
 
   test("a non-RefreshTokenError throw still defaults to 503 (never logs out on a surprise)", async () => {
@@ -181,7 +173,7 @@ describe("handleOidcRefresh status mapping", () => {
     });
     const res = await handleOidcRefresh(withCookie(), provider, false);
     expect(res.status).toBe(503);
-    expect((await res.json()).error).toBe("refresh_unavailable");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("refresh_unavailable");
   });
 
   test("success → 200 with a fresh nb_session cookie", async () => {
@@ -205,7 +197,7 @@ describe("handleOidcRefresh status mapping", () => {
       false,
     );
     expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe("no_refresh_token");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("no_refresh_token");
   });
 
   test("provider can't refresh → 400 not_configured", async () => {
@@ -214,6 +206,6 @@ describe("handleOidcRefresh status mapping", () => {
     });
     const res = await handleOidcRefresh(withCookie(), provider, false);
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe("not_configured");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("not_configured");
   });
 });

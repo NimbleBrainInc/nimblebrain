@@ -6,6 +6,7 @@ import type {
   LanguageModelV4StreamPart,
   LanguageModelV4ToolCall,
   LanguageModelV4Usage,
+  SharedV4ProviderMetadata,
 } from "@ai-sdk/provider";
 
 /**
@@ -24,7 +25,7 @@ export interface EchoModelResponse {
    * Anthropic SDK forwards thinking-block signatures here; tests use
    * this to verify multi-iteration round-trips preserve the signature.
    */
-  reasoningProviderMetadata?: Record<string, Record<string, unknown>>;
+  reasoningProviderMetadata?: SharedV4ProviderMetadata;
   /**
    * Optional reasoning-token subtotal reported in usage.outputTokens.reasoning.
    * Tests use this to verify the engine forwards the breakdown on llm.done.
@@ -41,6 +42,8 @@ export interface EchoModelResponse {
    * this to simulate length truncation, content filtering, etc.
    */
   finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
+  /** Provider-native finish reason (`finishReason.raw`) for this response. */
+  finishReasonRaw?: string;
 }
 
 export interface EchoModelOptions {
@@ -57,9 +60,7 @@ export interface EchoModelOptions {
 export function createEchoModel(options?: EchoModelOptions): LanguageModelV4 {
   const queue = [...(options?.responses ?? [])];
 
-  function extractLastUserText(
-    callOptions: LanguageModelV4CallOptions,
-  ): string {
+  function extractLastUserText(callOptions: LanguageModelV4CallOptions): string {
     const messages = callOptions.prompt;
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
@@ -81,7 +82,12 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV4 {
   function buildUsage(textLen: number, reasoningTokens?: number): LanguageModelV4Usage {
     const total = textLen + (reasoningTokens ?? 0);
     return {
-      inputTokens: { total: textLen, noCache: textLen, cacheRead: undefined, cacheWrite: undefined },
+      inputTokens: {
+        total: textLen,
+        noCache: textLen,
+        cacheRead: undefined,
+        cacheWrite: undefined,
+      },
       outputTokens: {
         total,
         text: textLen,
@@ -136,8 +142,8 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV4 {
       const textLen = queued.text?.length ?? 0;
 
       const finishReason: LanguageModelV4FinishReason = queued.finishReason
-        ? { unified: queued.finishReason, raw: undefined }
-        : buildFinishReason(!!hasToolCalls);
+        ? { unified: queued.finishReason, raw: queued.finishReasonRaw }
+        : { ...buildFinishReason(!!hasToolCalls), raw: queued.finishReasonRaw };
 
       return {
         content,

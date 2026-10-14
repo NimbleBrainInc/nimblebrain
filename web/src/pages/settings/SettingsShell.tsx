@@ -6,11 +6,11 @@ import { cn } from "../../lib/utils";
 
 // ── Single-scope settings shell ──────────────────────────────────────
 //
-// Renders one scope's settings nav (a title + a flat list of sections,
-// optionally with nested sub-items) plus an `<Outlet/>` for the active
-// tab. Settings used to be one page grouped by scope (workspace vs org);
-// each scope now owns its own URL subtree (`/w/:slug/settings`, `/org`)
-// so the shell is single-scope and the cross-scope grouping is gone.
+// Renders one scope's settings nav (a flat list of sections, optionally
+// with nested sub-items) plus an `<Outlet/>` for the active tab. The scope's
+// name is the top bar's title, not repeated here. Each scope owns its own URL
+// subtree (`/w/:slug/settings`, `/org`), so the shell is single-scope and
+// never groups across scopes.
 //
 // Each item declares the minimum role to *see* it (defense in depth — the
 // backend tools enforce the real write boundary). A `footer` item pins to
@@ -36,6 +36,7 @@ export interface SettingsNavItem {
 }
 
 export interface SettingsShellProps {
+  /** The scope's name; it labels the section nav for assistive tech. */
   title: string;
   items: SettingsNavItem[];
   /** Optional bottom-pinned link, exempt from role filtering (e.g. About). */
@@ -60,9 +61,8 @@ export function SettingsShell({ title, items, footer }: SettingsShellProps) {
         className="shrink-0 md:w-56 md:border-r border-b md:border-b-0 border-border flex md:flex-col overflow-x-auto md:overflow-x-visible md:overflow-y-auto"
         aria-label={`${title} sections`}
       >
-        <div className="hidden md:block px-4 pt-6 pb-3">
-          <h1 className="text-lg font-semibold tracking-tight text-foreground">{title}</h1>
-        </div>
+        {/* The page's name is in the top bar; the column starts with its sections. */}
+        <div aria-hidden="true" className="hidden md:block h-4" />
 
         {/* Mobile: single horizontal scroll row (no nesting) */}
         <div className="flex md:hidden gap-0.5 px-2 py-1">
@@ -137,7 +137,14 @@ export function SettingsShell({ title, items, footer }: SettingsShellProps) {
       </nav>
 
       <div className="flex-1 overflow-y-auto p-4 md:p-6">
-        <Outlet />
+        {/* One width for every settings page, set here rather than per page so
+            tabs never change width as you move between them. Left-aligned, so
+            the content starts beside the nav on every tab instead of drifting
+            as the column widens; wide enough for a 5-column table, narrow
+            enough that a form's lines stay readable. */}
+        <div className="max-w-4xl">
+          <Outlet />
+        </div>
       </div>
     </div>
   );

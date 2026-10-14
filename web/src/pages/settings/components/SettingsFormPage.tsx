@@ -9,9 +9,6 @@ import { SettingsPageHeader, type SettingsPageHeaderProps } from "./SettingsPage
  * (Profile, Model, WorkspaceGeneral). Owns:
  *
  *   - page header (title, description, optional back-nav, optional icon)
- *   - column width (`max-w-2xl` — narrower than list pages because forms
- *     read better at this width and the inputs don't benefit from wider
- *     space)
  *   - body spacing between sections
  *   - the save bar (Save / Reset / inline feedback) — gated on `dirty`
  *     and `saving`, with success/error messaging baked in
@@ -20,10 +17,11 @@ import { SettingsPageHeader, type SettingsPageHeaderProps } from "./SettingsPage
  * was one of the inconsistencies we set out to fix; sections separate
  * themselves with spacing and a top border (see `Section`).
  *
- * Pages that don't have a save bar (e.g. read-only forms) can omit the
- * `save` prop entirely.
+ * Pages that don't have a save bar can omit the `save` prop entirely: a
+ * read-only form, or one whose fields save as they change (`useAutosaveForm`),
+ * where each field shows its own status and a save raises a notice.
  */
-export interface SettingsFormPageProps extends Omit<SettingsPageHeaderProps, "action"> {
+export interface SettingsFormPageProps extends SettingsPageHeaderProps {
   /**
    * Save bar config. Omit for read-only pages. The bar renders inline
    * below `children`, not sticky — most settings forms aren't long enough
@@ -63,6 +61,7 @@ export function SettingsFormPage({
   title,
   description,
   icon,
+  action,
   back,
   save,
   loadError,
@@ -72,8 +71,14 @@ export function SettingsFormPage({
   children,
 }: SettingsFormPageProps) {
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <SettingsPageHeader title={title} description={description} icon={icon} back={back} />
+    <div className="space-y-6">
+      <SettingsPageHeader
+        title={title}
+        description={description}
+        icon={icon}
+        action={action}
+        back={back}
+      />
 
       {loadError ? <InlineError message={loadError} /> : null}
 

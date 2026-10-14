@@ -31,41 +31,59 @@ import * as realConversationStreamMod from "../src/api/conversation-stream";
 
 export const realConversationStream = { ...realConversationStreamMod };
 
-const window = new Window({ url: "http://localhost" });
+// And for `sse` (the workspace stream): events-client.test and
+// WorkspaceAppIconsProvider.test `mock.module` it with a fake `connectEvents`.
+import * as realSseMod from "../src/api/sse";
+
+export const realSse = { ...realSseMod };
+
+// And for `mcp-bridge-client`: every bridge suite mocks its `sendMcpRequest`,
+// and its own suite needs the real one.
+import * as realMcpBridgeClientMod from "../src/mcp-bridge-client";
+
+export const realMcpBridgeClient = { ...realMcpBridgeClientMod };
+
+/**
+ * The happy-dom `Window` installed as `window` below. The DOM lib types the
+ * global as the browser's `Window`; this handle keeps happy-dom's own type,
+ * with its `happyDOM` control surface.
+ */
+export const happyDomWindow = new Window({ url: "http://localhost" });
+const window = happyDomWindow;
 
 // Register DOM globals that React and testing-library need
 for (const key of Object.getOwnPropertyNames(window)) {
-	if (key.startsWith("_")) continue;
-	if (key in globalThis) continue;
-	try {
-		Object.defineProperty(globalThis, key, {
-			value: (window as Record<string, unknown>)[key],
-			writable: true,
-			configurable: true,
-		});
-	} catch {
-		// Skip non-configurable properties
-	}
+  if (key.startsWith("_")) continue;
+  if (key in globalThis) continue;
+  try {
+    Object.defineProperty(globalThis, key, {
+      value: Reflect.get(window, key),
+      writable: true,
+      configurable: true,
+    });
+  } catch {
+    // Skip non-configurable properties
+  }
 }
 
 // Ensure document and window are set
 Object.defineProperty(globalThis, "document", {
-	value: window.document,
-	writable: true,
-	configurable: true,
+  value: window.document,
+  writable: true,
+  configurable: true,
 });
 Object.defineProperty(globalThis, "window", {
-	value: window,
-	writable: true,
-	configurable: true,
+  value: window,
+  writable: true,
+  configurable: true,
 });
 Object.defineProperty(globalThis, "navigator", {
-	value: window.navigator,
-	writable: true,
-	configurable: true,
+  value: window.navigator,
+  writable: true,
+  configurable: true,
 });
 Object.defineProperty(globalThis, "HTMLElement", {
-	value: window.HTMLElement,
-	writable: true,
-	configurable: true,
+  value: window.HTMLElement,
+  writable: true,
+  configurable: true,
 });

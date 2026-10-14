@@ -147,19 +147,23 @@ export function OperatorSetupModal({
   };
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop click-to-dismiss is a mouse convenience; keyboard users dismiss via ESC
-    <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-      role="presentation"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !busy) onClose();
-      }}
-    >
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+      {/* A click outside the dialog closes it. Out of the tab order: Escape is
+          the keyboard's way out. */}
+      <button
+        type="button"
+        aria-label="Close dialog"
+        tabIndex={-1}
+        onClick={() => {
+          if (!busy) onClose();
+        }}
+        className="absolute inset-0 cursor-default"
+      />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="operator-setup-title"
-        className="bg-background border border-border rounded-sm shadow-xl w-full max-w-md p-5"
+        className="relative bg-background border border-border rounded-sm shadow-xl w-full max-w-md p-5"
       >
         <h2 id="operator-setup-title" className="text-base font-semibold">
           {isEdit ? `Edit ${entry.name} OAuth app` : `Set up ${entry.name}`}

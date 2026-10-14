@@ -1,47 +1,23 @@
-import { ChevronLeft, ChevronRight, Menu } from "lucide-react";
+import { Menu } from "lucide-react";
 import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "../context/SidebarContext";
 
+/**
+ * Opens the mobile nav drawer from the phone header. On wider screens the
+ * sidebar carries its own toggle (`SidebarHeader`).
+ */
 export const SidebarToggle = memo(function SidebarToggle() {
-  const { state, toggle } = useSidebar();
-
-  const icon =
-    state === "hidden" ? (
-      <Menu style={{ width: 18, height: 18 }} />
-    ) : state === "expanded" ? (
-      <ChevronLeft style={{ width: 18, height: 18 }} />
-    ) : (
-      <ChevronRight style={{ width: 18, height: 18 }} />
-    );
-
-  const label =
-    state === "hidden" ? "Open menu" : state === "expanded" ? "Collapse sidebar" : "Expand sidebar";
-
-  if (state === "hidden") {
-    return (
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={toggle}
-        aria-label={label}
-        title={`${label} (⌘B)`}
-        className="shrink-0"
-      >
-        {icon}
-      </Button>
-    );
-  }
-
+  const { toggle } = useSidebar();
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="icon"
       onClick={toggle}
-      aria-label={label}
-      title={`${label} (⌘B)`}
-      className="p-2 rounded-sm text-muted-foreground hover:bg-muted transition-colors shrink-0"
+      aria-label="Open menu"
+      className="shrink-0"
     >
-      {icon}
-    </button>
+      <Menu style={{ width: 18, height: 18 }} />
+    </Button>
   );
 });

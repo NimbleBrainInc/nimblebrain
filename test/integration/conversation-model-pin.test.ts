@@ -28,23 +28,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
+import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { makeIdentity } from "../helpers/identity.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const MODEL_A = "anthropic:claude-sonnet-5";
 const MODEL_B = "nebius:moonshotai/Kimi-K2.6";
 const FAST_MODEL = "anthropic:claude-haiku-4-5-20251001";
 
-const USER: UserIdentity = {
+const USER: UserIdentity = makeIdentity({
   id: "usr_pin",
   email: "pin@example.com",
   displayName: "Pin",
   orgRole: "member",
-};
+});
 
 /** Someone who chose their own model. `MODEL_B` is never the org default here. */
 const PICKY: UserIdentity = {
@@ -61,8 +63,9 @@ const workDir = join(tmpdir(), `nimblebrain-model-pin-${Date.now()}`);
 beforeAll(async () => {
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
-    models: { default: MODEL_A, fast: FAST_MODEL, reasoning: MODEL_A },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
+    models: { default: MODEL_A, fast: FAST_MODEL },
     logging: { disabled: true },
     workDir,
   });
@@ -198,19 +201,20 @@ describe("what the pin stores", () => {
   // A slot can be named either way (`parseModelSlotRef`); both must collapse to
   // the concrete model before it is stored, or moving the slot would retarget
   // the conversation — the bug the binding prevents.
-  test.each(["alias:fast", "fast"])("a slot reference (%s) is resolved before it is stored", async (
-    slotRef,
-  ) => {
-    runtime.updateConfig({ models: { default: MODEL_A, fast: FAST_MODEL } });
-    const conv = await runtime.chat({
-      message: "via slot",
-      model: slotRef,
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: USER,
-    });
+  test.each(["alias:fast", "fast"])(
+    "a slot reference (%s) is resolved before it is stored",
+    async (slotRef) => {
+      runtime.updateConfig({ models: { default: MODEL_A, fast: FAST_MODEL } });
+      const conv = await runtime.chat({
+        message: "via slot",
+        model: slotRef,
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: USER,
+      });
 
-    expect(await pinOf(conv.conversationId)).toBe(FAST_MODEL);
-  });
+      expect(await pinOf(conv.conversationId)).toBe(FAST_MODEL);
+    },
+  );
 
   test("moving the aliased slot does not retarget an alias-created conversation", async () => {
     runtime.updateConfig({ models: { default: MODEL_A, fast: FAST_MODEL } });
@@ -232,19 +236,18 @@ describe("what the pin stores", () => {
     expect(await modelsUsed(conv.conversationId)).toEqual([FAST_MODEL]);
   });
 
-  test("the stored pin is provider-qualified", async () => {
-    // A bare id resolves to `anthropic:<id>`; an immutable bare pin is
-    // unrepairable, so qualification is asserted on what reached disk.
-    const conv = await runtime.chat({
-      message: "bare",
-      model: "claude-sonnet-5",
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: USER,
-    });
-
-    const pin = await pinOf(conv.conversationId);
-    expect(pin).toContain(":");
-    expect(pin).toBe("anthropic:claude-sonnet-5");
+  test("a bare request model is refused, so no pin is written without a provider", async () => {
+    // The pin is immutable, so a pin naming no provider could never be
+    // repaired. The request door refuses the bare id before a conversation
+    // exists, naming the qualified form.
+    await expect(
+      runtime.chat({
+        message: "bare",
+        model: "claude-sonnet-5",
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: USER,
+      }),
+    ).rejects.toThrow('"anthropic:claude-sonnet-5"');
   });
 });
 
@@ -274,11 +277,9 @@ describe("the binding survives operations on the conversation", () => {
       identity: USER,
     });
 
-    // On the event format a rename appends a `metadata.title` event and leaves
-    // line 1 alone, so this passes today by construction. It is a forward
-    // guard: the pin lives on line 1, and the legacy path (`appendLegacyFormat`)
-    // does rewrite that line, so a rename that ever moves to rewriting must not
-    // drop the field.
+    // A rename appends a `metadata.title` event and leaves line 1 alone, so this
+    // passes by construction. It is a forward guard: the pin lives on line 1,
+    // so a rename that ever moves to rewriting that line must not drop the field.
     const store = await runtime.resolveConversationStore(conv.conversationId);
     await store!.update(conv.conversationId, { title: "renamed" });
 
@@ -306,69 +307,9 @@ describe("the binding survives operations on the conversation", () => {
   });
 });
 
-describe("conversations that predate the binding", () => {
-  test("an unpinned conversation resolves from current config", async () => {
-    // A genuine pre-feature record: created through the store with no model,
-    // so line 1 on disk has no `model` field. Deleting the field off a loaded
-    // object would prove nothing — `load()` re-reads the file every call.
-    const seed = await runtime.chat({
-      message: "seed",
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: USER,
-    });
-    const store = await runtime.resolveConversationStore(seed.conversationId);
-    const legacy = await store!.create({
-      ownerId: USER.id,
-      workspaceId: TEST_WORKSPACE_ID,
-    });
-    expect(legacy.model).toBeUndefined();
-
-    runtime.updateConfig({ models: { default: MODEL_B } });
-    await runtime.chat({
-      message: "resumed",
-      conversationId: legacy.id,
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: USER,
-    });
-
-    // No pin to honor, so the turn follows current config — today's behavior,
-    // unchanged. The binding must not retroactively invent one.
-    expect(await modelsUsed(legacy.id)).toEqual([MODEL_B]);
-    expect(await pinOf(legacy.id)).toBeUndefined();
-  });
-
-  test("an unpinned conversation follows the resumer's preference", async () => {
-    // Resolving from current config is the third place the model is chosen,
-    // and it has to see the caller the same way the create path does. With no
-    // pin to defer to, an untinted resolution runs the org default here.
-    const seed = await runtime.chat({
-      message: "seed",
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: PICKY,
-    });
-    const store = await runtime.resolveConversationStore(seed.conversationId);
-    const legacy = await store!.create({
-      ownerId: PICKY.id,
-      workspaceId: TEST_WORKSPACE_ID,
-    });
-    expect(legacy.model).toBeUndefined();
-
-    runtime.updateConfig({ models: { default: MODEL_A } });
-    await runtime.chat({
-      message: "resumed",
-      conversationId: legacy.id,
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: PICKY,
-    });
-
-    expect(await modelsUsed(legacy.id)).toEqual([MODEL_B]);
-    expect(await pinOf(legacy.id)).toBeUndefined();
-  });
-});
-
 describe("the detached-turn path", () => {
   test("a conversation created by startTurn is bound like any other", async () => {
-    // `/v1/chat/start` → `startTurn` is the web client's chat path, and it
+    // `/v1/workspaces/:wsId/chat/start` → `startTurn` is the web client's chat path, and it
     // creates the conversation before delegating to `chat()` — so its own
     // `createOpts` is the only thing that binds a web-created conversation.
     runtime.updateConfig({ models: { default: MODEL_A } });
@@ -419,40 +360,6 @@ describe("how a client learns the binding", () => {
     // default here would contradict the conversation on its first paint.
     expect(data?.model).toBe(MODEL_B);
     expect(data?.model).toBe(await pinOf(conversationId));
-  });
-
-  test("announces no model on a conversation that has no binding", async () => {
-    // The turn still resolves a model from current config — but that is not a
-    // binding, and announcing it would let the client assert one that nothing
-    // holds, then quietly go stale the next time a slot moved.
-    runtime.updateConfig({ models: { default: MODEL_A } });
-    const seed = await runtime.chat({
-      message: "seed",
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: USER,
-    });
-    const store = await runtime.resolveConversationStore(seed.conversationId);
-    const legacy = await store!.create({
-      ownerId: USER.id,
-      workspaceId: TEST_WORKSPACE_ID,
-    });
-    expect(legacy.model).toBeUndefined();
-
-    const { sink, events } = recorder();
-    await runtime.chat(
-      { message: "resumed", conversationId: legacy.id, workspaceId: TEST_WORKSPACE_ID, identity: USER },
-      sink,
-    );
-
-    const data = events.find((e) => e.type === "chat.start")?.data as {
-      conversationId: string;
-      model?: string;
-    };
-    expect(data.conversationId).toBe(legacy.id);
-    expect(data.model).toBeUndefined();
-    // The turn did run on something; that something just is not a pin.
-    expect(await modelsUsed(legacy.id)).toEqual([MODEL_A]);
-    expect(await pinOf(legacy.id)).toBeUndefined();
   });
 
   test("a later turn announces the pin, not the current default", async () => {

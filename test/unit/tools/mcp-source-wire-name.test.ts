@@ -14,36 +14,25 @@ import { McpSource } from "../../../src/tools/mcp-source.ts";
 
 /** Reach the private accessor the emit sites use. */
 const emittedName = (s: McpSource): string =>
-  (s as unknown as { eventSourceName: string }).eventSourceName;
+  // biome-ignore lint/complexity/useLiteralKeys: `eventSourceName` is private; bracket access is TypeScript's typed path to it
+  s["eventSourceName"];
 
 const remote = { type: "remote" as const, url: new URL("https://example.test/mcp") };
 const sink = { emit: () => {} };
 
 describe("McpSource event source name", () => {
   test("a workspace connector emits its bare name", () => {
-    const s = new McpSource("gmail", remote as never, sink as never);
+    const s = new McpSource("gmail", remote, sink);
     expect(emittedName(s)).toBe("gmail");
   });
 
   test("a personal connector emits the MARKED name", () => {
-    const s = new McpSource(
-      "gmail",
-      remote as never,
-      sink as never,
-      undefined,
-      personalConnectorWireName("gmail"),
-    );
+    const s = new McpSource("gmail", remote, sink, undefined, personalConnectorWireName("gmail"));
     expect(emittedName(s)).toBe("my_gmail");
   });
 
   test("its registry key stays bare — dispatch and policy lookups depend on it", () => {
-    const s = new McpSource(
-      "gmail",
-      remote as never,
-      sink as never,
-      undefined,
-      personalConnectorWireName("gmail"),
-    );
+    const s = new McpSource("gmail", remote, sink, undefined, personalConnectorWireName("gmail"));
     expect(s.name).toBe("gmail");
   });
 });

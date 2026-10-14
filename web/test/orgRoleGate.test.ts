@@ -20,27 +20,16 @@ import type { SessionInfo } from "../src/context/SessionContext";
 import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
 import { resolveScopedRole, roleAtLeast } from "../src/hooks/useScopedRole";
 
-function makeSession(orgRole: "owner" | "admin" | "member" | undefined): SessionInfo {
+function makeSession(orgRole: "admin" | "member" | undefined): SessionInfo {
   return {
     authenticated: true,
-    user: orgRole
-      ? {
-          id: "u_test",
-          email: "u@example.com",
-          displayName: "Test User",
-          orgRole,
-          preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
-        }
-      : null,
-  } as SessionInfo;
+    ...(orgRole
+      ? { user: { id: "u_test", email: "u@example.com", displayName: "Test User", orgRole } }
+      : {}),
+  };
 }
 
 describe("org-admin gate for /org/skills (and every other /org/* route)", () => {
-  it("resolves org_owner from session.user.orgRole=owner regardless of workspace context", () => {
-    const role = resolveScopedRole(makeSession("owner"), null);
-    expect(role).toBe("org_owner");
-  });
-
   it("resolves org_admin from session.user.orgRole=admin regardless of workspace context", () => {
     const role = resolveScopedRole(makeSession("admin"), null);
     expect(role).toBe("org_admin");
@@ -49,9 +38,9 @@ describe("org-admin gate for /org/skills (and every other /org/* route)", () => 
   it("never resolves to org_admin from workspace-admin alone", () => {
     // Workspace admins must not bypass the org-admin gate. Org-tier writes
     // (org skills, org users, org registries) are reserved to identities
-    // the IDP marked admin/owner, not to any workspace's admin.
+    // the IDP marked admin, not to any workspace's admin.
     const session = makeSession("member");
-    const wsAdmin: Partial<WorkspaceInfo> = { id: "ws_x", userRole: "admin" };
+    const wsAdmin: Partial<WorkspaceInfo> = { id: "ws_008bd230f095f38a", userRole: "admin" };
     const role = resolveScopedRole(session, wsAdmin as WorkspaceInfo);
     expect(role).toBe("ws_admin");
     expect(roleAtLeast(role, "org_admin")).toBe(false);
@@ -59,20 +48,19 @@ describe("org-admin gate for /org/skills (and every other /org/* route)", () => 
 
   it("rejects ws_member against org_admin minimum (Phase 1 /org/skills surface)", () => {
     const session = makeSession("member");
-    const wsMember: Partial<WorkspaceInfo> = { id: "ws_x", userRole: "member" };
+    const wsMember: Partial<WorkspaceInfo> = { id: "ws_008bd230f095f38a", userRole: "member" };
     const role = resolveScopedRole(session, wsMember as WorkspaceInfo);
     expect(role).toBe("ws_member");
     expect(roleAtLeast(role, "org_admin")).toBe(false);
   });
 
   it("rejects 'none' (unauthenticated) against org_admin minimum", () => {
-    const role = resolveScopedRole({ authenticated: false, user: null } as SessionInfo, null);
+    const role = resolveScopedRole({ authenticated: false }, null);
     expect(role).toBe("none");
     expect(roleAtLeast(role, "org_admin")).toBe(false);
   });
 
-  it("admits org_admin and org_owner against the org_admin minimum", () => {
+  it("admits org_admin against the org_admin minimum", () => {
     expect(roleAtLeast("org_admin", "org_admin")).toBe(true);
-    expect(roleAtLeast("org_owner", "org_admin")).toBe(true);
   });
 });

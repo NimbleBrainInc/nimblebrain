@@ -2,8 +2,30 @@
 
 ## Unreleased
 
+### Removed
+
+- **`filePath` on `conversations__list` rows.** A row names a conversation by
+  `id` and its workspace by `workspaceId`; the server's storage path stays on
+  the server.
+- **The flat layout reader.** `listConversationFiles` reads only the
+  workspace-owned layout, so `ConversationFileRef.wsId`,
+  `ConversationChange.wsId` and `IndexEntry.workspaceId` are always a
+  workspace id, never `null`.
+- **The message-per-line reader.** Conversation files are read as event logs
+  only; `looksLikeEventLine` is gone. `fork` writes the new conversation as
+  events, and `update` always appends a `metadata.title` event.
+- **Readers for historic event shapes.** A header with no `model` is not
+  read, so `ConversationMetadata.model` is always present; `llm.response`
+  `usage` and `tool.done` `output` are read as required, and a `skills.loaded`
+  entry with no `name` is dropped (`skillNameFromId` is gone). `fork` stamps a
+  `finishReason` on every `llm.response` it writes.
+
 ### Changed
 
+- Every tool publishes a TypeBox output schema and returns its result as
+  `structuredContent` beside the unchanged JSON text. `DisplaySkill.scope` is a
+  string, since a recorded `skills.loaded` keeps the scope vocabulary it was
+  written with. A stored tool-call input that is not a JSON object reads as `{}`.
 - The streaming dot reads `active` from each `conversations__list` entry, which
   the server takes from the live turn state. It marks a reply generating on any
   tab or device, and the runtime announces a turn starting and ending so the

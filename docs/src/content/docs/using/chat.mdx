@@ -48,8 +48,11 @@ The agent has access to:
 |------|---------|
 | `nb__search` | Search installed tools (`scope: "tools"`) or the connector catalog (`scope: "catalog"`) |
 | `nb__status` | Platform status; `scope: "connectors"` for per-connector health, `scope: "skills"` for loaded skills |
+| `nb__open_app` | Open an app on your screen, optionally at a record inside it ("open People and find Chris") |
 
-The agent also has identity-level tools for managing your apps, connectors, conversations, files, and automations. It uses these when you ask it to install a capability or set up a scheduled run.
+The agent also has identity-level tools for managing your apps, connectors, conversations, files, and tasks. It uses these when you ask it to install a capability or set up a scheduled run.
+
+When you ask the agent to open or show something, it can move your screen: it finds the record with the app's own tools, then opens the app at that record. Every app opens this way. One that doesn't support opening at a record shows its home screen, or stays on what it was showing if it was already open. Only the tab you asked from moves, and only while the reply is coming in. Reopening the conversation later, or watching it from another tab, never moves your screen.
 
 <Aside type="tip">
   When more than 30 tools are available, NimbleBrain uses tiered tool surfacing. Only system tools and matched skill tools are surfaced directly; the agent uses `nb__search` to find other tools as needed.
@@ -69,7 +72,7 @@ Attached files appear as chips below the input. Remove one by clicking the X on 
 
 When extended thinking is enabled, the agent's reasoning shows up in the chat timeline as a collapsible **Thought** chip (it reads "Thinking…" while the reasoning is still streaming). Expand it to read the model's reasoning before the answer; collapse it to keep the transcript clean.
 
-Extended thinking is controlled by the **Extended Thinking** setting on the organization Model tab — choose Off, Adaptive (the model decides per call), or Enabled (always reason). Reasoning is billed as output tokens. See [Settings](/guide/settings) for where to set it.
+Extended thinking is controlled by the **Extended thinking** setting on the organization Model tab — choose Off, Adaptive (the model decides per call), or Enabled (always reason). Reasoning is billed as output tokens. See [Settings](/guide/settings) for where to set it.
 
 ## The Context Ledger
 
@@ -114,7 +117,7 @@ For example, with a calendar app open, asking "What's on my schedule?" leads the
 
 - **Be specific about what you want.** "Search for MCP servers related to Slack" works better than "find me something."
 - **Name the app when relevant.** If you have multiple apps installed, say "Use Granola to list my meetings" rather than just "list my meetings."
-- **Ask the agent to install what it needs.** The agent can search the connector catalog and install a connector on its own.
+- **Ask the agent what would help.** The agent can search the connector catalog and suggest a connector; a workspace admin installs it from **Settings → Connectors**.
 
 ## Cost transparency
 

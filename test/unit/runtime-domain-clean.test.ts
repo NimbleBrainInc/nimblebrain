@@ -51,8 +51,7 @@ const REPO_ROOT = join(import.meta.dir, "..", "..");
 // identifier (NOT the hyphenated vendor model `o3-deep-research`). The `report`
 // alternatives match a capability artifact type, not the English word: it must
 // be bound to `research`/`artifact` or appear as a snake/camel identifier.
-const DOMAIN_TERM_RE =
-  "deep_research|research[._-]report|report[._-]artifact|ResearchReport";
+const DOMAIN_TERM_RE = "deep_research|research[._-]report|report[._-]artifact|ResearchReport";
 
 // The kernel carries no domain capability. This is a hard ceiling, not a
 // benign-baseline budget.
@@ -61,10 +60,11 @@ const DOMAIN_HIT_CEILING = 0;
 function grepDomainHits(): string[] {
   // `--untracked` so a not-yet-committed file (the most likely way a capability
   // lands back in the kernel) is also caught.
-  const result = spawnSync(
-    ["git", "grep", "--untracked", "-niE", DOMAIN_TERM_RE, "--", "src/*"],
-    { cwd: REPO_ROOT, stdout: "pipe", stderr: "pipe" },
-  );
+  const result = spawnSync(["git", "grep", "--untracked", "-niE", DOMAIN_TERM_RE, "--", "src/*"], {
+    cwd: REPO_ROOT,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   // `git grep` exits 1 when there are no matches; treat that as empty, anything
   // else (e.g. exit 128 — not a work tree) as a real failure.
   if (result.exitCode !== 0 && result.exitCode !== 1) {
@@ -95,10 +95,24 @@ describe("runtime stays domain-clean", () => {
     // Affirmative guard: the generic resolver SHOULD be present (it is kernel
     // infrastructure), and it must NOT carry domain terms. If this file ever
     // disappears the matcher above silently policing nothing would go unnoticed.
-    const resolverPath = join(REPO_ROOT, "src", "host-resources", "artifacts", "artifact-resolver.ts");
+    const resolverPath = join(
+      REPO_ROOT,
+      "src",
+      "host-resources",
+      "artifacts",
+      "artifact-resolver.ts",
+    );
     expect(existsSync(resolverPath)).toBe(true);
     const grep = spawnSync(
-      ["git", "grep", "--untracked", "-niE", DOMAIN_TERM_RE, "--", "src/host-resources/artifacts/*"],
+      [
+        "git",
+        "grep",
+        "--untracked",
+        "-niE",
+        DOMAIN_TERM_RE,
+        "--",
+        "src/host-resources/artifacts/*",
+      ],
       { cwd: REPO_ROOT, stdout: "pipe", stderr: "pipe" },
     );
     const hits = grep.stdout

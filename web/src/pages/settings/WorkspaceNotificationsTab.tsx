@@ -15,14 +15,19 @@ import {
   setNotificationRoutes,
   setNotificationSourceLevel,
 } from "../../api/notifications";
+import { useBrandName } from "../../brand";
+import { useNotice } from "../../components/notices";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Select } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/textarea";
+import { useWorkspaceContext } from "../../context/WorkspaceContext";
+import { useAutosaveForm } from "../../hooks/useAutosaveForm";
 import { NOTIFICATION_LEVELS } from "../../lib/notification-levels";
 import { cn } from "../../lib/utils";
 import {
+  AutosaveField,
   EmptyState,
   InlineError,
   RequireActiveWorkspace,
@@ -114,11 +119,64 @@ function emptyDraft(): RouteDraft {
 }
 
 export function WorkspaceNotificationsTab() {
+  return (
+    <div className="space-y-6">
+      <SettingsPageHeader
+        title="Notifications"
+        description="What this workspace's connectors may report, and where it goes. A connector records facts on its own; nothing leaves this workspace until you raise its ceiling and write a route."
+      />
+      <RequireActiveWorkspace>
+        <ForActiveWorkspace />
+      </RequireActiveWorkspace>
+    </div>
+  );
+}
+
+/**
+ * Keyed by the workspace, so a switch starts fresh: the route keeps this
+ * element mounted across `/w/:slug` changes, and one workspace's drafts must
+ * never stand in for another's. Every read and write names `wsId`, so a save
+ * queued behind another still lands in the workspace it was made in.
+ */
+function ForActiveWorkspace() {
+  const { activeWorkspace } = useWorkspaceContext();
+  // RequireActiveWorkspace guarantees activeWorkspace is non-null here.
+  const ws = activeWorkspace!;
+  return <NotificationSettings key={ws.id} wsId={ws.id} />;
+}
+
+/** Each source's ceiling, keyed by source id. */
+type Ceilings = Record<string, NotificationLevel>;
+
+function NotificationSettings({ wsId }: { wsId: string }) {
+  const notify = useNotice();
   const [settings, setSettings] = useState<NotificationsSettingsOutput | null>(null);
   const [routes, setRoutes] = useState<RouteDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+
+  // A ceiling saves as it changes; it is one value with nothing to complete.
+  // Its save takes only the sources from the answer: the route drafts are the
+  // admin's unsaved work, and the answer's routes are what is stored.
+  const saveCeiling = useCallback(
+    async (source: string, maxLevel: NotificationLevel) => {
+      const next = await setNotificationSourceLevel({ source, maxLevel }, wsId);
+      setSettings(next);
+    },
+    [wsId],
+  );
+  const ceilingLabels = Object.fromEntries(
+    (settings?.sources ?? []).map((s) => [s.source, `${s.label} ceiling`]),
+  );
+  const ceilings = useAutosaveForm<Ceilings>(
+    {},
+    {
+      save: saveCeiling,
+      labels: ceilingLabels,
+      notices: Object.fromEntries(Object.keys(ceilingLabels).map((s) => [s, { undo: true }])),
+    },
+  );
+  const { load: loadCeilings } = ceilings;
 
   const apply = useCallback((next: NotificationsSettingsOutput) => {
     setSettings(next);
@@ -128,7 +186,9 @@ export function WorkspaceNotificationsTab() {
 
   const load = useCallback(async () => {
     try {
-      apply(await readNotificationSettings());
+      const next = await readNotificationSettings(wsId);
+      apply(next);
+      loadCeilings(Object.fromEntries(next.sources.map((s) => [s.source, s.maxLevel])));
     } catch (err) {
       setError(
         err instanceof Error
@@ -136,28 +196,20 @@ export function WorkspaceNotificationsTab() {
           : "Could not read this workspace's notification settings",
       );
     }
-  }, [apply]);
+  }, [apply, loadCeilings, wsId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const changeLevel = async (source: string, maxLevel: NotificationLevel) => {
-    setSaved(false);
-    try {
-      apply(await setNotificationSourceLevel({ source, maxLevel }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not change the ceiling");
-    }
-  };
-
+  // Routes keep an explicit save: a route is often half-built while it is
+  // edited, and the list is written as a whole.
   const save = async () => {
     setSaving(true);
-    setSaved(false);
     try {
       const payload = routes.map(materialize);
-      apply(await setNotificationRoutes({ routes: payload }));
-      setSaved(true);
+      apply(await setNotificationRoutes({ routes: payload }, wsId));
+      notify({ level: "success", title: "Routes saved" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the routes");
     } finally {
@@ -166,67 +218,60 @@ export function WorkspaceNotificationsTab() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <SettingsPageHeader
-        title="Notifications"
-        description="What this workspace's connectors may report, and where it goes. A connector records facts on its own; nothing leaves this workspace until you raise its ceiling and write a route."
-      />
-      <RequireActiveWorkspace>
-        {error ? <InlineError message={error} /> : null}
+    <>
+      {error ? <InlineError message={error} /> : null}
 
-        {settings ? <RoutesExecutedNotice executed={settings.routesExecuted} /> : null}
+      {settings ? <RoutesExecutedNotice executed={settings.routesExecuted} /> : null}
 
-        <Section
-          flush
-          title="Sources"
-          description="Every connector in this workspace that declares an outbox. The ceiling is the highest level its notifications may reach a route at — a new source starts at info, so a route asking for attention or urgency never fires for it until you raise this."
-        >
-          {settings ? <SourceList sources={settings.sources} onChange={changeLevel} /> : null}
-        </Section>
+      <Section
+        flush
+        title="Sources"
+        description="Every connector in this workspace that declares an outbox. The ceiling is the highest level its notifications may reach a route at — a new source starts at info, so a route asking for attention or urgency never fires for it until you raise this."
+      >
+        {settings ? <SourceList sources={settings.sources} ceilings={ceilings} /> : null}
+      </Section>
 
-        <Section
-          title="Routes"
-          description="A route matches notifications and delivers them. Match on source, on the event name the connector chose, and on a minimum level; deliver to a tool this workspace has installed, or wake one of your automations."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setRoutes((current) => [...current, emptyDraft()])}
-            >
-              <Plus className="size-3.5 mr-1.5" />
-              Add route
+      <Section
+        title="Routes"
+        description="A route matches notifications and delivers them. Match on source, on the event name the connector chose, and on a minimum level; deliver to a tool this workspace has installed, or wake one of your tasks."
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setRoutes((current) => [...current, emptyDraft()])}
+          >
+            <Plus className="size-3.5 mr-1.5" />
+            Add route
+          </Button>
+        }
+      >
+        <div className="space-y-4">
+          {routes.length === 0 ? (
+            <EmptyState message="No routes. Notifications still arrive in the inbox — a route is what sends one somewhere else." />
+          ) : null}
+          {routes.map((route, i) => (
+            <RouteEditor
+              key={route.key}
+              route={route}
+              settings={settings}
+              onChange={(next) =>
+                setRoutes((current) => current.map((r, j) => (j === i ? next : r)))
+              }
+              onRemove={() => setRoutes((current) => current.filter((_, j) => j !== i))}
+            />
+          ))}
+          <div className="flex items-center gap-3">
+            <Button size="sm" onClick={() => void save()} disabled={saving || settings === null}>
+              {saving ? "Saving…" : "Save routes"}
             </Button>
-          }
-        >
-          <div className="space-y-4">
-            {routes.length === 0 ? (
-              <EmptyState message="No routes. Notifications still arrive in the inbox — a route is what sends one somewhere else." />
-            ) : null}
-            {routes.map((route, i) => (
-              <RouteEditor
-                key={route.key}
-                route={route}
-                settings={settings}
-                onChange={(next) =>
-                  setRoutes((current) => current.map((r, j) => (j === i ? next : r)))
-                }
-                onRemove={() => setRoutes((current) => current.filter((_, j) => j !== i))}
-              />
-            ))}
-            <div className="flex items-center gap-3">
-              <Button size="sm" onClick={() => void save()} disabled={saving || settings === null}>
-                {saving ? "Saving…" : "Save routes"}
-              </Button>
-              {saved ? <span className="text-xs text-muted-foreground">Saved.</span> : null}
-              <span className="text-xs text-muted-foreground">
-                Saving replaces this workspace's whole route list, and stamps you as the author of
-                every route in it — the identity each one would dispatch under.
-              </span>
-            </div>
+            <span className="text-xs text-muted-foreground">
+              Saving replaces this workspace's whole route list, and stamps you as the author of
+              every route in it — the identity each one would dispatch under.
+            </span>
           </div>
-        </Section>
-      </RequireActiveWorkspace>
-    </div>
+        </div>
+      </Section>
+    </>
   );
 }
 
@@ -236,7 +281,7 @@ export function WorkspaceNotificationsTab() {
  * Tool targets dispatch; an agent target is matched and recorded and nothing
  * wakes it yet. Two notices rather than one because the two claims are
  * different sizes, and an admin writing a Slack route needs to know it will
- * fire as much as one writing an automation route needs to know it will not.
+ * fire as much as one writing a task route needs to know it will not.
  */
 function RoutesExecutedNotice({ executed }: { executed: boolean }) {
   if (!executed) {
@@ -253,19 +298,19 @@ function RoutesExecutedNotice({ executed }: { executed: boolean }) {
   return (
     <p data-testid="routes-executed" className="text-sm text-muted-foreground">
       A matching notification calls a <strong>tool</strong> target as the route's author, and wakes
-      an <strong>automation</strong> target — batched, so a burst is one run. Either way the result
-      is on the item in the inbox. Only an automation that runs on events can be woken; the picker
-      says which of yours do.
+      an <strong>task</strong> target — batched, so a burst is one run. Either way the result is on
+      the item in the inbox. Only a task that runs on events can be woken; the picker says which of
+      yours do.
     </p>
   );
 }
 
 function SourceList({
   sources,
-  onChange,
+  ceilings,
 }: {
   sources: NotificationSourceView[];
-  onChange: (source: string, level: NotificationLevel) => void;
+  ceilings: ReturnType<typeof useAutosaveForm<Ceilings>>;
 }) {
   if (sources.length === 0) {
     return (
@@ -288,20 +333,26 @@ function SourceList({
               <p className="mt-1 text-sm text-muted-foreground">{source.description}</p>
             ) : null}
           </div>
-          <div className="w-40 shrink-0 space-y-1">
-            <Label className="text-xs text-muted-foreground">Ceiling</Label>
-            <Select
-              aria-label={`Level ceiling for ${source.label}`}
-              value={source.maxLevel}
-              onChange={(e) => onChange(source.source, e.target.value as NotificationLevel)}
+          <div className="w-48 shrink-0">
+            <AutosaveField
+              id={`ceiling-${source.source}`}
+              label="Ceiling"
+              {...ceilings.fieldState(source.source)}
+              hint={source.configured ? undefined : "Default"}
             >
-              {NOTIFICATION_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {level}
-                </option>
-              ))}
-            </Select>
-            {!source.configured ? <p className="text-2xs text-muted-foreground">Default</p> : null}
+              <Select
+                id={`ceiling-${source.source}`}
+                aria-label={`Level ceiling for ${source.label}`}
+                {...ceilings.selectProps(source.source)}
+                value={ceilings.values[source.source] ?? source.maxLevel}
+              >
+                {NOTIFICATION_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </Select>
+            </AutosaveField>
           </div>
         </li>
       ))}
@@ -369,7 +420,7 @@ function RouteTest({ routeId }: { routeId?: string }) {
 /**
  * Outcomes that do not make the answer a warning.
  *
- * `deferred` is an agent target inside its automation's debounce window: the
+ * `deferred` is an agent target inside its task's debounce window: the
  * route is not broken, so the tone stays quiet — but nothing has been sent
  * either, which is {@link testMessage}'s job to say. `pending` is deliberately
  * absent: a first attempt that has not settled reads as a failure until it
@@ -395,13 +446,13 @@ function testMessage(result: NotificationsSendTestOutput): string {
   if (result.deliveries.length === 0) return "Matched, but nothing was dispatched.";
   const bad = result.deliveries.filter((d) => !SETTLED_OK.has(d.outcome));
   if (bad.length === 0) {
-    // An agent target sits `deferred` for as long as its automation's debounce
+    // An agent target sits `deferred` for as long as its task's debounce
     // window is open: the run has not started, there is no channel to look at,
     // and the row can still settle `denied` or `skipped`. "Delivered" here is
     // the same false green `pending` would be.
     const deferred = result.deliveries.find((d) => d.outcome === "deferred");
     return deferred
-      ? `${deferred.target}: queued for its automation's next run — nothing has been sent yet.`
+      ? `${deferred.target}: queued for its task's next run — nothing has been sent yet.`
       : "Delivered. Check the channel.";
   }
   const first = bad[0];
@@ -551,9 +602,10 @@ function TargetEditor({
   onChange: (next: NotificationDeliverTarget, text?: string) => void;
   onRemove?: () => void;
 }) {
+  const brandName = useBrandName();
   const placeholders = (settings?.placeholders ?? []).map((p) => `{{${p}}}`).join(", ");
   // A route can outlive the thing it names — the connector was uninstalled, the
-  // automation deleted. Dropping the stored value from the picker would silently
+  // task deleted. Dropping the stored value from the picker would silently
   // rewrite the route to "nothing" the next time anyone pressed Save, so the
   // gone target stays selectable and says what it is. Saving it is refused,
   // which is the reader's cue to change or remove it.
@@ -561,9 +613,9 @@ function TargetEditor({
     settings?.deliverableTools ?? [],
     target.kind === "tool" ? target.tool : "",
   );
-  const automationOptions = withCurrentAutomation(
-    settings?.automations ?? [],
-    target.kind === "agent" ? target.automation : "",
+  const taskOptions = withCurrentTask(
+    settings?.tasks ?? [],
+    target.kind === "agent" ? target.task : "",
   );
   return (
     <div className="rounded-sm bg-muted/40 p-3 space-y-2" data-testid="route-target">
@@ -576,14 +628,14 @@ function TargetEditor({
             onChange={(e) =>
               onChange(
                 e.target.value === "agent"
-                  ? { kind: "agent", automation: "" }
+                  ? { kind: "agent", task: "" }
                   : { kind: "tool", tool: "" },
                 "",
               )
             }
           >
             <option value="tool">A tool</option>
-            <option value="agent">An automation</option>
+            <option value="agent">A task</option>
           </Select>
         </div>
         <div className="min-w-48 flex-1 space-y-1">
@@ -605,14 +657,14 @@ function TargetEditor({
             </>
           ) : (
             <>
-              <Label className="text-xs text-muted-foreground">Automation</Label>
+              <Label className="text-xs text-muted-foreground">Task</Label>
               <Select
-                aria-label="Target automation"
-                value={target.automation}
-                onChange={(e) => onChange({ ...target, automation: e.target.value })}
+                aria-label="Target task"
+                value={target.task}
+                onChange={(e) => onChange({ ...target, task: e.target.value })}
               >
-                <option value="">Choose an automation…</option>
-                {automationOptions.map(({ value, label }) => (
+                <option value="">Choose a task…</option>
+                {taskOptions.map(({ value, label }) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
@@ -642,7 +694,7 @@ function TargetEditor({
           <p className="text-2xs text-muted-foreground">
             The tool's own arguments. {placeholders} are replaced when the route fires; any other{" "}
             {"{{…}}"} is refused, because it would be delivered as literal text. For a tool a person
-            reads outside NimbleBrain, link with {"{{inbox.url}}"} — {"{{link.resource}}"} is the
+            reads outside {brandName}, link with {"{{inbox.url}}"} — {"{{link.resource}}"} is the
             connector's own URI, which Slack and mail cannot open.
           </p>
         </div>
@@ -668,14 +720,14 @@ function withCurrent(available: readonly string[], current: string): Option[] {
 }
 
 /**
- * The caller's automations, plus a stored one that is gone.
+ * The caller's tasks, plus a stored one that is gone.
  *
- * An automation that does not run on events stays selectable and says so rather
+ * A task that does not run on events stays selectable and says so rather
  * than being hidden: it is a legal thing to name and the write accepts it, but
  * every notification sent to it is refused, and an operator reading the ledger
  * afterwards is the expensive way to learn that.
  */
-function withCurrentAutomation(
+function withCurrentTask(
   available: readonly { id: string; name: string; eventScheduled: boolean }[],
   current: string,
 ): Option[] {

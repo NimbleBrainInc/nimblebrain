@@ -1,0 +1,5 @@
+# Hold a newly published version for 14 days before it can be resolved. The
+# root bunfig.toml explains the window; bunfig is not resolved up the directory
+# tree, so every package with its own bun.lock carries a copy.
+[install]
+minimumReleaseAge = 1209600

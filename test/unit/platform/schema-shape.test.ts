@@ -11,25 +11,42 @@
  *   1. Every tool input schema is itself a typed object.
  *   2. Every nested property of type `"object"` declares `properties`.
  *   3. Every `array` declares `items`.
+ *   4. A field is cleared with `null`, not a `clear<Field>` boolean
+ *      (src/platform/AGENTS.md §1.3).
+ *   5. No `enum` holds `null` or sits beside a `type` array. Gemini rejected
+ *      that shape and failed every tool call for the tenant; a nullable enum
+ *      is `anyOf: [{ type: "string", enum }, { type: "null" }]`.
+ *   6. Every output schema has an object root and no `additionalProperties:
+ *      false` anywhere: the SDK client validates each success result against
+ *      it and fails a call whose result it rejects (src/platform/AGENTS.md
+ *      §2.1). Every platform app declares one on every tool.
  *
  * Adding a new platform source: register its factory in the `SOURCES`
  * array below. Adding a new tool to an existing source: nothing to do —
  * the test picks it up automatically via `tools/list`.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import type { McpSource } from "../../../src/tools/mcp-source.ts";
+import { resolveTasksConfig } from "../../../src/config/tasks.ts";
+import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
+import { createComposeSource } from "../../../src/platform/compose/source.ts";
 import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
 import { createFilesSource } from "../../../src/platform/files/source.ts";
-import { createAutomationsSource } from "../../../src/platform/automations/source.ts";
-import { createInstructionsSource } from "../../../src/platform/instructions/source.ts";
-import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
+import { createHooksSource } from "../../../src/platform/hooks/source.ts";
 import { createNotificationsSource } from "../../../src/platform/notifications/source.ts";
 import { createSkillsSource } from "../../../src/platform/skills/source.ts";
+import { createTasksSource } from "../../../src/platform/tasks/source.ts";
+import { createUsageSource } from "../../../src/platform/usage/source.ts";
+import { createRunAdmission } from "../../../src/runtime/admission.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
+import { createSpendBalances } from "../../../src/runtime/spend.ts";
+import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
+import { defineInProcessApp } from "../../../src/tools/in-process-app.ts";
+import type { McpSource } from "../../../src/tools/mcp-source.ts";
 
 // ── Minimal Runtime stub ─────────────────────────────────────────────────
 //
@@ -45,10 +62,6 @@ function makeRuntimeStub(workDir: string): unknown {
     getIdentityProvider: () => null,
     requireWorkspaceId: () => "_dev",
     getCurrentWorkspaceId: () => "_dev",
-    getInstructionsStore: () => ({
-      read: async () => "",
-      write: async () => ({ updated_at: new Date().toISOString() }),
-    }),
     getWorkspaceStore: () => ({ get: async () => null }),
     getWorkspaceScopedDir: () => workDir,
     getRequestContext: () => null,
@@ -56,19 +69,24 @@ function makeRuntimeStub(workDir: string): unknown {
     getContextSkills: () => [],
     getMatchableSkills: () => [],
     loadConversationSkills: () => [],
-    // Automations source registers a domain-context getter at construction.
+    // Tasks source registers a domain-context getter at construction.
     // Capture-and-discard for the lint test — we never invoke handlers.
-    registerAutomationsContext: () => {},
-    // Same shape for the event trigger, which the automations source also
+    registerTasksContext: () => {},
+    // Same shape for the event trigger, which the tasks source also
     // hands to the runtime at construction.
-    registerAutomationEventTrigger: () => {},
-    registerAutomationQuiescer: () => {},
+    registerTaskEventTrigger: () => {},
+    registerTaskQuiescer: () => {},
+    registerIdentityTaskSource: () => {},
     // The notifications source builds its poller at construction. It is
     // stopped with the source in `afterEach`, and with no instances to
     // enumerate its sweep has nothing to read.
     getLifecycle: () => ({ getInstances: () => [] }),
     getNotificationsDeclaration: async () => undefined,
     getNotificationsPollConfig: () => resolvePollConfig(),
+    getTasksConfig: () => resolveTasksConfig(),
+    getRunAdmission: () => createRunAdmission(),
+    getSpendBalances: () => createSpendBalances(),
+    getMaxIterations: () => 25,
   };
 }
 
@@ -76,19 +94,37 @@ function makeRuntimeStub(workDir: string): unknown {
 
 const SOURCES = [
   { name: "skills", factory: createSkillsSource },
-  { name: "instructions", factory: createInstructionsSource },
   { name: "files", factory: createFilesSource },
   { name: "conversations", factory: createConversationsSource },
-  { name: "automations", factory: createAutomationsSource },
+  { name: "tasks", factory: createTasksSource },
   { name: "notifications", factory: createNotificationsSource },
+  { name: "usage", factory: createUsageSource },
+  { name: "hooks", factory: createHooksSource },
+  { name: "compose", factory: createComposeSource },
+  // The core `nb` tools are not a platform app, but they take the same input
+  // conventions and `set_model_config` is the reference patch tool. They
+  // declare an output schema where they have one, so a missing one passes.
+  {
+    name: "nb",
+    outputsOptional: true,
+    factory: (runtime: Runtime, sink: NoopEventSink) =>
+      defineInProcessApp(
+        { name: "nb", version: "1.0.0", tools: createCoreToolDefs(runtime) },
+        sink,
+      ),
+  },
 ] as const;
 
 // ── Schema walker ────────────────────────────────────────────────────────
 
 interface SchemaNode {
   type?: string | string[];
+  additionalProperties?: unknown;
+  enum?: unknown[];
   properties?: Record<string, SchemaNode>;
   items?: SchemaNode;
+  anyOf?: SchemaNode[];
+  oneOf?: SchemaNode[];
 }
 
 /**
@@ -105,11 +141,26 @@ function findShapeViolations(node: SchemaNode, path = ""): string[] {
     violations.push(`${path}: object type missing 'properties'`);
   }
 
+  if (node.enum?.includes(null) || (node.enum && Array.isArray(node.type))) {
+    violations.push(`${path}: nullable enum; use anyOf with a separate { type: "null" } branch`);
+  }
+
   // Recurse into children
   if (node.properties) {
     for (const [key, child] of Object.entries(node.properties)) {
+      if (/^clear[A-Z]/.test(key) && child.type === "boolean") {
+        violations.push(`${path}.${key}: clear flag; clear the field by passing null`);
+      }
       violations.push(...findShapeViolations(child, `${path}.${key}`));
     }
+  }
+  for (const [keyword, branches] of [
+    ["anyOf", node.anyOf],
+    ["oneOf", node.oneOf],
+  ] as const) {
+    branches?.forEach((branch, i) => {
+      violations.push(...findShapeViolations(branch, `${path}.${keyword}[${i}]`));
+    });
   }
   if (node.items) {
     // type === "array" with no items would be a problem, but JSON Schema
@@ -125,6 +176,20 @@ function findShapeViolations(node: SchemaNode, path = ""): string[] {
   }
 
   return violations;
+}
+
+/** Paths in an output schema that close an object to unlisted properties. */
+function findClosedObjects(node: unknown, path = ""): string[] {
+  if (node === null || typeof node !== "object") return [];
+  if (Array.isArray(node))
+    return node.flatMap((child, i) => findClosedObjects(child, `${path}[${i}]`));
+  const record = node as Record<string, unknown>;
+  const here =
+    record.additionalProperties === false ? [`${path}: additionalProperties: false`] : [];
+  return [
+    ...here,
+    ...Object.entries(record).flatMap(([key, child]) => findClosedObjects(child, `${path}.${key}`)),
+  ];
 }
 
 // ── Test ─────────────────────────────────────────────────────────────────
@@ -145,7 +210,8 @@ afterEach(async () => {
 });
 
 describe("platform tool schemas — convention shape", () => {
-  for (const { name, factory } of SOURCES) {
+  for (const source of SOURCES) {
+    const { name, factory } = source;
     test(`${name}: every tool input schema is fully typed`, async () => {
       const runtime = makeRuntimeStub(workDir);
       // The factory is permissive about the runtime shape — it only
@@ -174,6 +240,16 @@ describe("platform tool schemas — convention shape", () => {
         }
         const violations = findShapeViolations(schema, tool.name);
         allViolations.push(...violations);
+
+        const output = tool.outputSchema as SchemaNode | undefined;
+        if (!output) {
+          if (!("outputsOptional" in source)) allViolations.push(`${tool.name}: no outputSchema`);
+          continue;
+        }
+        if (output.type !== "object") {
+          allViolations.push(`${tool.name}: top-level outputSchema must be type 'object'`);
+        }
+        allViolations.push(...findClosedObjects(output, `${tool.name} (output)`));
       }
 
       // Detail-rich failure message — when a future tool drifts, the
@@ -183,6 +259,8 @@ describe("platform tool schemas — convention shape", () => {
         throw new Error(
           `Platform source "${name}" has ${allViolations.length} schema-shape violation(s):\n  ${allViolations.join("\n  ")}\n\n` +
             `Every \`object\`-typed property must declare \`properties\`. Every \`array\` must declare \`items\`. ` +
+            `An output schema has an object root and stays open, and every platform tool declares one (§2.1). ` +
+            `A field clears with \`null\`, declared as \`anyOf\` with a \`{ type: "null" }\` branch (src/platform/AGENTS.md §1.3). ` +
             `Bare \`{ type: "object" }\` lets the model invent structure under-spec — see src/platform/skills/source.ts for the canonical pattern.`,
         );
       }

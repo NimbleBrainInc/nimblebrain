@@ -8,17 +8,25 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { defaultWorkDir } from "../../src/connectors/runtime/paths.ts";
 import {
   classifyPromptKey,
   readValueFromStream,
   runSecrets,
   type SecretsCommandIo,
 } from "../../src/cli/secrets.ts";
+import { defaultWorkDir } from "../../src/connectors/runtime/paths.ts";
 import { createCredentialSealer } from "../../src/tools/credential-seal.ts";
 import { type CredentialStore, FileCredentialStore } from "../../src/tools/credential-store.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
@@ -42,7 +50,12 @@ function harness(store?: CredentialStore) {
     store: backing,
     io,
     run: (argv: string[], readValue?: () => Promise<string>) =>
-      runSecrets(argv, readValue ? { ...io, readValue } : io, () => backing),
+      runSecrets(argv, readValue ? { ...io, readValue } : io, () => ({
+        store: backing,
+        configPath: join(dir, "nimblebrain.json"),
+        workDir: dir,
+        backend: "file",
+      })),
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
@@ -50,19 +63,28 @@ function harness(store?: CredentialStore) {
 describe("set", () => {
   test("writes the value read from the injected reader, in every scope", async () => {
     const h = harness();
-    seedWorkspaceRoot(h.dir, "ws_test");
+    seedWorkspaceRoot(h.dir, "ws_0076759dbbe19fcc");
     try {
       expect(await h.run(["set", "acme.key"])).toBe(0);
-      expect(await h.run(["set", "acme.key", "--scope", "workspace", "--workspace", "ws_test"])).toBe(
-        0,
-      );
+      expect(
+        await h.run([
+          "set",
+          "acme.key",
+          "--scope",
+          "workspace",
+          "--workspace",
+          "ws_0076759dbbe19fcc",
+        ]),
+      ).toBe(0);
       expect(await h.run(["set", "acme.key", "--scope", "user", "--user", "usr_alex01"])).toBe(0);
 
       expect((await h.store.get({ kind: "instance" }, "acme.key", READ))?.reveal()).toBe(
         "sk-from-stdin",
       );
       expect(
-        (await h.store.get({ kind: "workspace", wsId: "ws_test" }, "acme.key", READ))?.reveal(),
+        (
+          await h.store.get({ kind: "workspace", wsId: "ws_0076759dbbe19fcc" }, "acme.key", READ)
+        )?.reveal(),
       ).toBe("sk-from-stdin");
       expect(
         (await h.store.get({ kind: "user", userId: "usr_alex01" }, "acme.key", READ))?.reveal(),
@@ -136,7 +158,9 @@ describe("it writes through the installed backend, holding no format knowledge",
       const raw = readFileSync(join(dir, "credentials", "secrets", "acme.key"), "utf-8");
       expect(raw.startsWith("NBS1.")).toBe(true);
       expect(raw).not.toContain("sk-secret");
-      expect((await sealed.get({ kind: "instance" }, "acme.key", READ))?.reveal()).toBe("sk-secret");
+      expect((await sealed.get({ kind: "instance" }, "acme.key", READ))?.reveal()).toBe(
+        "sk-secret",
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
       h.cleanup();
@@ -226,12 +250,26 @@ describe("scope selection", () => {
     ["user with no id", ["list", "--scope", "user"]],
     // An id against the wrong scope would silently read or write somewhere
     // other than where the operator meant.
-    ["an id against the wrong scope", ["list", "--workspace", "ws_test"]],
+    ["an id against the wrong scope", ["list", "--workspace", "ws_0076759dbbe19fcc"]],
     ["a user id against instance", ["list", "--user", "usr_alex01"]],
     ["an unknown command", ["frobnicate"]],
     ["no command at all", []],
     ["an unknown flag", ["list", "--recursive"]],
   ];
+
+  test("an unknown command is reported before any config is opened", async () => {
+    const err: string[] = [];
+    const io = {
+      stdout: () => {},
+      stderr: (line: string) => err.push(line),
+      readValue: async () => "",
+    };
+    const code = await runSecrets(["frobnicate"], io, () => {
+      throw new Error("the store was opened");
+    });
+    expect(code).toBe(2);
+    expect(err.join("\n")).toContain('unknown command "frobnicate"');
+  });
 
   for (const [label, argv] of bad) {
     test(`${label} exits 2 with usage`, async () => {
@@ -293,7 +331,7 @@ describe("the work directory both entry points share", () => {
 describe("the hidden prompt's keymap", () => {
   // The prompt echoes nothing, so an operator cannot see that a correction did
   // not land. Every one of these is a key a terminal actually sends.
-  test.each([
+  test.each<[string, ReturnType<typeof classifyPromptKey>]>([
     ["\r", "submit"],
     ["\n", "submit"],
     ["\u0004", "submit"], // Ctrl-D
@@ -305,6 +343,39 @@ describe("the hidden prompt's keymap", () => {
     ["\u00e9", "append"],
   ])("%j is %s", (ch, action) => {
     expect(classifyPromptKey(ch)).toBe(action);
+  });
+});
+
+describe("a shell holding a different key than the deployment", () => {
+  // This store never reconciles, so the boot-time key check never ran on it. An
+  // operator whose shell carries the wrong key would seal the value where the
+  // server cannot open it.
+  test("set against ring [B] over files sealed under A exits non-zero and writes nothing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nb-cli-wrong-key-"));
+    const underA = createCredentialSealer([Buffer.alloc(32, 0x11)]).seal(
+      "instance",
+      "existing.key",
+      "v",
+    );
+    mkdirSync(join(dir, "credentials", "secrets"), { recursive: true });
+    writeFileSync(join(dir, "credentials", "secrets", "existing.key"), underA);
+    const h = harness(
+      new FileCredentialStore(dir, { sealer: createCredentialSealer([Buffer.alloc(32, 0x22)]) }),
+    );
+    let prompted = false;
+    try {
+      const code = await h.run(["set", "acme.key"], async () => {
+        prompted = true;
+        return "sk-secret";
+      });
+      expect(code).toBe(1);
+      expect(prompted).toBe(false);
+      expect(existsSync(join(dir, "credentials", "secrets", "acme.key"))).toBe(false);
+      expect(h.err.join("\n")).toContain("does not hold");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      h.cleanup();
+    }
   });
 });
 
@@ -320,21 +391,39 @@ describe("where the command decides to write — the real openStore", () => {
   // characterization, for the reasons their own comments give.
   const KEY_ENV = "NB_TEST_CLI_SEAL_KEY";
 
-  function scenario(): { dir: string; io: SecretsCommandIo; out: string[]; cleanup: () => void } {
-    const dir = mkdtempSync(join(tmpdir(), "nb-cli-openstore-"));
+  /**
+   * Runs from a fresh temp directory, because config resolution reads the
+   * current one: from a checkout holding a `.nimblebrain/`, these tests would
+   * otherwise resolve that instead of the config they set up.
+   */
+  function scenario(): {
+    dir: string;
+    io: SecretsCommandIo;
+    out: string[];
+    err: string[];
+    cleanup: () => void;
+  } {
+    // Real path, so it compares equal to what `process.cwd()` reports on a
+    // platform whose temp directory sits behind a symlink.
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "nb-cli-openstore-")));
     const out: string[] = [];
+    const err: string[] = [];
     const previousKey = process.env[KEY_ENV];
     const previousWorkDir = process.env.NB_WORK_DIR;
+    const previousCwd = process.cwd();
     process.env[KEY_ENV] = Buffer.alloc(32, 0x11).toString("base64");
+    process.chdir(dir);
     return {
       dir,
       out,
+      err,
       io: {
         stdout: (line) => out.push(line),
-        stderr: () => {},
+        stderr: (line) => err.push(line),
         readValue: async () => "sk-from-the-real-path",
       },
       cleanup: () => {
+        process.chdir(previousCwd);
         if (previousKey === undefined) delete process.env[KEY_ENV];
         else process.env[KEY_ENV] = previousKey;
         if (previousWorkDir === undefined) delete process.env.NB_WORK_DIR;
@@ -362,7 +451,9 @@ describe("where the command decides to write — the real openStore", () => {
     try {
       const workDir = join(s.dir, "data");
       writeFileSync(join(s.dir, "nimblebrain.json"), SEALED_CONFIG(workDir));
-      expect(await runSecrets(["set", "acme.key", "--config", join(s.dir, "nimblebrain.json")], s.io)).toBe(0);
+      expect(
+        await runSecrets(["set", "acme.key", "--config", join(s.dir, "nimblebrain.json")], s.io),
+      ).toBe(0);
       const raw = readFileSync(join(workDir, "credentials", "secrets", "acme.key"), "utf-8");
       expect(raw.startsWith("NBS1.")).toBe(true);
       expect(existsSync(join(process.cwd(), "credentials"))).toBe(false);
@@ -402,6 +493,86 @@ describe("where the command decides to write — the real openStore", () => {
       await runSecrets(["set", "acme.key"], s.io);
       expect(await runSecrets(["list"], s.io)).toBe(0);
       expect(s.out.map((l) => l.split("\t")[0])).toEqual(["acme.key"]);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  test("a config in the current directory and another in the work directory: exits 2, names both, writes nothing", async () => {
+    // Resolution would take the current directory's and write there, silently,
+    // while the server in the work directory never sees the value.
+    const s = scenario();
+    try {
+      const deployment = join(s.dir, "deployment");
+      mkdirSync(deployment);
+      writeFileSync(join(deployment, "nimblebrain.json"), SEALED_CONFIG(deployment));
+      process.env.NB_WORK_DIR = deployment;
+      const local = join(s.dir, ".nimblebrain");
+      mkdirSync(local);
+      writeFileSync(join(local, "nimblebrain.json"), SEALED_CONFIG(local));
+
+      for (const argv of [["set", "acme.key"], ["delete", "acme.key"], ["list"]]) {
+        expect(await runSecrets(argv, s.io)).toBe(2);
+      }
+      const said = s.err.join("\n");
+      expect(said).toContain(join(local, "nimblebrain.json"));
+      expect(said).toContain(join(deployment, "nimblebrain.json"));
+      expect(said).toContain("--config");
+      expect(existsSync(join(deployment, "credentials"))).toBe(false);
+      expect(existsSync(join(local, "credentials"))).toBe(false);
+
+      // Naming one resolves it, and the write lands there.
+      expect(
+        await runSecrets(
+          ["set", "acme.key", "--config", join(deployment, "nimblebrain.json")],
+          s.io,
+        ),
+      ).toBe(0);
+      expect(existsSync(join(deployment, "credentials", "secrets", "acme.key"))).toBe(true);
+      expect(existsSync(join(local, "credentials"))).toBe(false);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  test("the same file reached both ways is not ambiguous", async () => {
+    const s = scenario();
+    try {
+      const local = join(s.dir, ".nimblebrain");
+      mkdirSync(local);
+      writeFileSync(join(local, "nimblebrain.json"), SEALED_CONFIG(local));
+      process.env.NB_WORK_DIR = local;
+      expect(await runSecrets(["set", "acme.key"], s.io)).toBe(0);
+      expect(existsSync(join(local, "credentials", "secrets", "acme.key"))).toBe(true);
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  test("set and delete say where they are writing first, and never the value", async () => {
+    const s = scenario();
+    try {
+      process.env.NB_WORK_DIR = s.dir;
+      writeFileSync(join(s.dir, "nimblebrain.json"), SEALED_CONFIG(s.dir));
+      const expected = `config ${join(s.dir, "nimblebrain.json")} · work dir ${s.dir} · backend file · seals yes`;
+
+      expect(await runSecrets(["set", "acme.key"], s.io)).toBe(0);
+      expect(s.err[0]).toBe(expected);
+      expect(await runSecrets(["delete", "acme.key"], s.io)).toBe(0);
+      expect(s.err).toEqual([expected, "set acme.key", expected, "deleted acme.key"]);
+      expect(s.err.join("\n")).not.toContain("sk-from-the-real-path");
+    } finally {
+      s.cleanup();
+    }
+  });
+
+  test("an unsealed deployment says so", async () => {
+    const s = scenario();
+    try {
+      process.env.NB_WORK_DIR = s.dir;
+      writeFileSync(join(s.dir, "nimblebrain.json"), JSON.stringify({ version: "1" }));
+      expect(await runSecrets(["set", "acme.key"], s.io)).toBe(0);
+      expect(s.err[0]).toEndWith("backend file · seals no");
     } finally {
       s.cleanup();
     }

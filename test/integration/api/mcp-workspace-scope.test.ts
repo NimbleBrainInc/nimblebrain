@@ -5,20 +5,21 @@
  * rejects tools from sources not in the workspace registry.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
 import { rmSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { Runtime } from "../../../src/runtime/runtime.ts";
-import { startServer, type ServerHandle } from "../../../src/api/server.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { type ServerHandle, startServer } from "../../../src/api/server.ts";
 import { textContent } from "../../../src/engine/content-helpers.ts";
-import { SharedSourceRef } from "../../../src/tools/registry.ts";
-import type { ToolSource, Tool } from "../../../src/tools/types.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { Runtime } from "../../../src/runtime/runtime.ts";
+import { SharedSourceRef } from "../../../src/tools/registry.ts";
+import type { Tool, ToolSource } from "../../../src/tools/types.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { newMcpClient } from "../../helpers/mcp-client.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 // ── Fake tool sources ───────────────────────────────────────────────
 
@@ -36,10 +37,7 @@ class FakeToolSource implements ToolSource {
     return this.toolList;
   }
 
-  async execute(
-    toolName: string,
-    input: Record<string, unknown>,
-  ): Promise<ToolResult> {
+  async execute(toolName: string, _input: Record<string, unknown>): Promise<ToolResult> {
     return { content: textContent(`executed ${this.name}__${toolName}`), isError: false };
   }
 }
@@ -60,7 +58,8 @@ beforeAll(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-mcp-ws-scope-"));
 
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
   });
@@ -94,8 +93,8 @@ beforeAll(async () => {
     },
   ]);
 
-  // Sources are no longer registered on a global registry.
-  // They'll be added to the workspace registry below.
+  // Sources are registered on the workspace registry, not a global one.
+  // They'll be added below.
   const wsRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 
   // Protected source is shared via SharedSourceRef
@@ -103,7 +102,11 @@ beforeAll(async () => {
   // Allowed source is in the workspace
   wsRegistry.addSource(new SharedSourceRef(allowedSource));
 
-  // Denied source is NOT added to workspace registry
+  // The denied source is installed in another workspace the caller also
+  // administers, so the assertions below test the wall rather than the
+  // absence of a tool anywhere.
+  const otherWs = await provisionTestWorkspace(runtime, "ws_005820c54ca342ad", "Other");
+  runtime.getRegistryForWorkspace(otherWs).addSource(new SharedSourceRef(deniedSource));
 
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
@@ -117,21 +120,12 @@ afterAll(async () => {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-async function createMcpClient(
-  headers?: Record<string, string>,
-): Promise<Client> {
+async function createMcpClient(headers?: Record<string, string>): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
-    new URL(`${baseUrl}/mcp`),
-    {
-      requestInit: {
-        headers: {
-          "x-workspace-id": TEST_WORKSPACE_ID,
-          ...headers,
-        },
-      },
-    },
+    new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
+    { requestInit: { headers: { ...headers } } },
   );
-  const client = new Client({ name: "ws-scope-test", version: "1.0.0" });
+  const client = newMcpClient({ name: "ws-scope-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }
@@ -140,8 +134,8 @@ async function createMcpClient(
 
 describe("MCP workspace scoping", () => {
   // Every tool name is bare `<source>__<tool>`. Per-workspace registry filtering
-  // is what scopes the surface; the workspace itself comes from the request's
-  // validated `X-Workspace-Id`, never from the name — so a name cannot address
+  // is what scopes the surface; the workspace itself comes from the session's
+  // URL, never from the name — so a name cannot address
   // any workspace other than the session's own.
   it("ListTools returns only workspace + protected tools (not denied)", async () => {
     const client = await createMcpClient();
@@ -168,9 +162,7 @@ describe("MCP workspace scoping", () => {
         arguments: { name: "world" },
       });
       expect(result.isError).toBeFalsy();
-      expect(result.content).toEqual([
-        { type: "text", text: `executed ${ALLOWED_SOURCE}__greet` },
-      ]);
+      expect(result.content).toEqual([{ type: "text", text: `executed ${ALLOWED_SOURCE}__greet` }]);
     } finally {
       await client.close();
     }
@@ -192,7 +184,7 @@ describe("MCP workspace scoping", () => {
   it("CallTool to non-workspace connector returns a JSON-RPC error (unknown_tool_source)", async () => {
     const client = await createMcpClient();
     try {
-      // Stage 2: a source not in the target workspace's registry
+      // A source not in the target workspace's registry
       // surfaces as the orchestrator's `UnknownToolSource` →
       // -32601 MethodNotFound with `data.reason: "unknown_tool_source"`.
       let errorCode: number | undefined;

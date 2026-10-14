@@ -10,7 +10,14 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
-import { iconMapFromInstalled, MAX_INLINE_APPS, workspaceApps } from "../lib/workspace-apps";
+import {
+  appsByConnector,
+  connectorSettingsPath,
+  iconMapFromInstalled,
+  MAX_INLINE_APPS,
+  orderApps,
+  workspaceApps,
+} from "../lib/workspace-apps";
 import type { PlacementEntry } from "../types";
 
 function p(over: Partial<PlacementEntry> & { serverName: string; slot: string }): PlacementEntry {
@@ -26,7 +33,7 @@ function p(over: Partial<PlacementEntry> & { serverName: string; slot: string })
 describe("workspaceApps", () => {
   test("keeps only grouped sidebar slots", () => {
     const out = workspaceApps([
-      p({ serverName: "home", slot: "sidebar" }), // core nav — excluded
+      p({ serverName: "core-nav", slot: "sidebar" }), // core nav — excluded
       p({ serverName: "tray", slot: "sidebar.bottom" }), // utility tray — excluded
       p({ serverName: "main-app", slot: "main" }), // not a sidebar slot — excluded
       p({ serverName: "crm", slot: "sidebar.apps" }), // app — kept
@@ -58,13 +65,13 @@ describe("workspaceApps", () => {
   });
 
   test("returns [] when there are no app placements", () => {
-    expect(workspaceApps([p({ serverName: "home", slot: "sidebar" })])).toEqual([]);
+    expect(workspaceApps([p({ serverName: "core-nav", slot: "sidebar" })])).toEqual([]);
     expect(workspaceApps([])).toEqual([]);
   });
 
   test("MAX_INLINE_APPS is a small positive cap", () => {
     expect(MAX_INLINE_APPS).toBeGreaterThan(0);
-    expect(MAX_INLINE_APPS).toBeLessThanOrEqual(6);
+    expect(MAX_INLINE_APPS).toBeLessThanOrEqual(10);
   });
 });
 
@@ -83,5 +90,81 @@ describe("iconMapFromInstalled", () => {
 
   test("empty list -> empty map", () => {
     expect(iconMapFromInstalled([]).size).toBe(0);
+  });
+});
+
+describe("connectorSettingsPath", () => {
+  test("a connector's settings page in the workspace, its name encoded", () => {
+    expect(connectorSettingsPath("000f7ed6658f9d30", "com-acme-tasks")).toBe(
+      "/w/000f7ed6658f9d30/settings/connectors/com-acme-tasks",
+    );
+    expect(connectorSettingsPath("000f7ed6658f9d30", "a/b")).toBe(
+      "/w/000f7ed6658f9d30/settings/connectors/a%2Fb",
+    );
+  });
+
+  test("no workspace -> null", () => {
+    expect(connectorSettingsPath(null, "com-acme-tasks")).toBeNull();
+    expect(connectorSettingsPath(undefined, "com-acme-tasks")).toBeNull();
+  });
+
+  test("an identity app has no workspace settings page -> null", () => {
+    expect(connectorSettingsPath("000f7ed6658f9d30", "conversations")).toBeNull();
+  });
+});
+
+describe("appsByConnector", () => {
+  test("a connector that places several views is one app holding them in order", () => {
+    const apps = appsByConnector(
+      workspaceApps([
+        p({ serverName: "tasks", slot: "sidebar.apps", priority: 50 }),
+        p({ serverName: "people", slot: "sidebar.apps", priority: 11, route: "people/orgs" }),
+        p({ serverName: "people", slot: "sidebar.apps", priority: 10, route: "people" }),
+        p({ serverName: "people", slot: "sidebar.apps", priority: 60, route: "people/deals" }),
+      ]),
+    );
+    // Apps keep the order of their first view, so a later view of an earlier app
+    // does not move it.
+    expect(apps.map((a) => a.serverName)).toEqual(["people", "tasks"]);
+    expect(apps[0]?.views.map((v) => v.route)).toEqual(["people", "people/orgs", "people/deals"]);
+    expect(apps[1]?.views).toHaveLength(1);
+  });
+
+  test("no placements, no apps", () => {
+    expect(appsByConnector([])).toEqual([]);
+  });
+});
+
+describe("orderApps", () => {
+  const apps = appsByConnector(
+    workspaceApps([
+      p({ serverName: "crm", slot: "sidebar.apps", priority: 10 }),
+      p({ serverName: "tasks", slot: "sidebar.apps", priority: 20 }),
+      p({ serverName: "outbound", slot: "sidebar.apps", priority: 30 }),
+      p({ serverName: "people", slot: "sidebar.apps", priority: 40 }),
+    ]),
+  );
+  const names = (list: typeof apps) => list.map((a) => a.serverName);
+
+  test("pinned apps lead in pin order; the rest keep their order", () => {
+    expect(names(orderApps(apps, ["people", "outbound"]))).toEqual([
+      "people",
+      "outbound",
+      "crm",
+      "tasks",
+    ]);
+  });
+
+  test("a pin naming no app here is ignored", () => {
+    expect(names(orderApps(apps, ["gone", "tasks"]))).toEqual([
+      "tasks",
+      "crm",
+      "outbound",
+      "people",
+    ]);
+  });
+
+  test("no pins, order unchanged", () => {
+    expect(names(orderApps(apps, []))).toEqual(["crm", "tasks", "outbound", "people"]);
   });
 });

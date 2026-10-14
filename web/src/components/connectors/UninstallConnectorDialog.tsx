@@ -86,7 +86,7 @@ export function UninstallConnectorDialog({
   onUninstalled: (notice?: { text: string; tone: "error" | "info" }) => void;
 }) {
   const cat = installed.catalog;
-  const displayName = cat?.name ?? installed.connectorName ?? installed.serverName;
+  const displayName = installed.displayName;
   // Every key the entry names, from BOTH declaration sites — `secretHeaders`
   // and, for the built-in `credential` provider, `providerAuth.config.key`.
   // The rotation section reads only the first, which is right for a form that
@@ -94,9 +94,11 @@ export function UninstallConnectorDialog({
   // the second shape, and the server would delete it with nothing on screen
   // having said so.
   //
-  // Gated on `provider` because that is the only auth kind either site is wired
-  // on. Naming a key uninstall does not delete would make the dialog a worse
-  // lie than the silence it replaces.
+  // A `static` entry names its operator OAuth app's client secret, which goes
+  // with the app's last installed connector; when another still uses it, the
+  // retained notice says so afterwards. No other auth kind names a key, and
+  // naming one uninstall does not delete would make the dialog a worse lie than
+  // the silence it replaces.
   const keys = useMemo(() => (cat ? workspaceKeysDeclaredBy(cat) : []), [cat]);
 
   const [stored, setStored] = useState<Map<string, string> | null>(null);

@@ -12,8 +12,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { type Subprocess, spawn } from "bun";
+import { loadConfig } from "../src/cli/config.ts";
+import { defaultWorkDir } from "../src/connectors/runtime/paths.ts";
 import { log } from "../src/observability/log.ts";
 import { setAppDevMode } from "../src/runtime/dev-registry.ts";
+import { ensureDevInstanceConfig } from "./lib/dev-instance.ts";
 import { prepareCheckout } from "./lib/dev-prepare.ts";
 
 interface DevOptions {
@@ -258,6 +261,15 @@ async function runDev(options: DevOptions): Promise<void> {
 
   // The runtime entry, relative to this script (scripts/ -> ../src/cli/index.ts).
   const cliEntry = join(import.meta.dir, "..", "src", "cli", "index.ts");
+
+  // `serve` refuses a workdir with no instance.json. Resolve the workdir the
+  // way `serve` will and give it the dev adapter if it has none.
+  const { workDir } = loadConfig({
+    config: config ? resolve(config) : undefined,
+    defaultWorkDir: defaultWorkDir(),
+  });
+  const written = workDir ? ensureDevInstanceConfig(workDir) : null;
+  if (written) log.info(`[dev] Wrote ${written}: the dev identity provider, no login`);
 
   // --- API server with bun --watch ---
   const apiArgs = buildApiArgs(cliEntry, port, config, debug);

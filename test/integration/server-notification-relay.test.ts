@@ -18,22 +18,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from "bu
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
@@ -58,13 +52,13 @@ function notesSource(name: string, sink: ReturnType<Runtime["getEventSink"]>): M
           { name, version: "1.0.0" },
           { capabilities: { tools: {}, resources: { listChanged: true } } },
         );
-        server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        server.setRequestHandler("tools/list", async () => ({
           tools: [
             { name: "save", inputSchema: { type: "object", properties: {} } },
             { name: "list", inputSchema: { type: "object", properties: {} } },
           ],
         }));
-        server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
+        server.setRequestHandler("resources/list", async (request) => {
           const page = Number(request.params?.cursor ?? 0);
           return {
             resources: notes
@@ -73,10 +67,10 @@ function notesSource(name: string, sink: ReturnType<Runtime["getEventSink"]>): M
             ...(page + 1 < notes.length ? { nextCursor: String(page + 1) } : {}),
           };
         });
-        server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+        server.setRequestHandler("resources/templates/list", async () => ({
           resourceTemplates: [{ uriTemplate: `${name}://{index}`, name: "note" }],
         }));
-        server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        server.setRequestHandler("tools/call", async (request) => {
           if (request.params.name === "save") {
             notes.push("note");
             await server.sendResourceListChanged();
@@ -93,10 +87,10 @@ function notesSource(name: string, sink: ReturnType<Runtime["getEventSink"]>): M
 }
 
 async function createMcpClient(): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-    requestInit: { headers: { "x-workspace-id": TEST_WORKSPACE_ID } },
-  });
-  const client = new Client({ name: "app-iframe", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(
+    new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
+  );
+  const client = newMcpClient({ name: "app-iframe", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }
@@ -107,7 +101,8 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -215,11 +210,16 @@ describe("resource listings scoped to one server", () => {
       await client.callTool({ name: "notes__save", arguments: {} });
       await client.callTool({ name: "other__save", arguments: {} });
 
-      const first = await client.listResources(scoped("notes"));
+      // Page-level: the SDK's `listResources()` without a cursor aggregates
+      // every page, which would hide the pass-through under test.
+      const first = await client.request({ method: "resources/list", params: scoped("notes") });
       expect(first.resources.map((r) => r.uri)).toEqual(["notes://0"]);
       expect(first.nextCursor).toBe("1");
 
-      const second = await client.listResources({ ...scoped("notes"), cursor: first.nextCursor });
+      const second = await client.request({
+        method: "resources/list",
+        params: { ...scoped("notes"), cursor: first.nextCursor },
+      });
       expect(second.resources.map((r) => r.uri)).toEqual(["notes://1"]);
       expect(second.nextCursor).toBeUndefined();
     } finally {

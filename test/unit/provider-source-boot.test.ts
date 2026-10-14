@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { connectorHasStaticAuth } from "../../src/connectors/runtime/connector-auth.ts";
-import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
-import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
+import { connectorHasStaticAuth } from "../../src/connectors/runtime/connector-auth.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 
 class NoopSink implements EventSink {
   emit(_event: EngineEvent): void {}
@@ -17,7 +18,11 @@ function providerRef(): ConnectorRef {
     serverName: "web",
     transport: {
       type: "streamable-http",
-      auth: { type: "provider", provider: "minted", config: { audience: "mcp-fleet", scope: "mcp:invoke" } },
+      auth: {
+        type: "provider",
+        provider: "minted",
+        config: { audience: "mcp-fleet", scope: "mcp:invoke" },
+      },
     },
   };
 }
@@ -29,24 +34,31 @@ describe("connectorHasStaticAuth", () => {
 
   test("bearer and header url connectors have static auth", () => {
     expect(
-      connectorHasStaticAuth({ url: "u", transport: { auth: { type: "bearer", token: "t" } } }),
+      connectorHasStaticAuth({
+        url: "u",
+        serverName: "s",
+        transport: { auth: { type: "bearer", token: "t" } },
+      }),
     ).toBe(true);
     expect(
       connectorHasStaticAuth({
         url: "u",
+        serverName: "s",
         transport: { auth: { type: "header", name: "X-Key", value: "v" } },
       }),
     ).toBe(true);
   });
 
   test("auth:none and no-auth url connectors are NOT static (they take the OAuth path)", () => {
-    expect(connectorHasStaticAuth({ url: "u", transport: { auth: { type: "none" } } })).toBe(false);
-    expect(connectorHasStaticAuth({ url: "u" })).toBe(false);
+    expect(
+      connectorHasStaticAuth({ url: "u", serverName: "s", transport: { auth: { type: "none" } } }),
+    ).toBe(false);
+    expect(connectorHasStaticAuth({ url: "u", serverName: "s" })).toBe(false);
   });
 
   test("named and local-path connectors are not static-auth url sources", () => {
-    expect(connectorHasStaticAuth({ name: "n" })).toBe(false);
-    expect(connectorHasStaticAuth({ path: "/p" })).toBe(false);
+    expect(connectorHasStaticAuth(legacyConnectorRef({ name: "n" }))).toBe(false);
+    expect(connectorHasStaticAuth(legacyConnectorRef({ path: "/p" }))).toBe(false);
   });
 });
 
@@ -63,10 +75,12 @@ describe("seedInstance — provider-auth fleet source", () => {
       "https://web.svc.test/mcp",
       providerRef(),
       undefined,
-      "ws_test",
+      "ws_0076759dbbe19fcc",
     );
 
-    const conn = lifecycle.getInstance("web", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
+    const conn = lifecycle
+      .getInstance("web", "ws_0076759dbbe19fcc")
+      ?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("running");
     expect(conn?.state).not.toBe("not_authenticated");
   });
@@ -90,10 +104,12 @@ describe("seedInstance — provider-auth fleet source", () => {
       brokeredRef().url ?? "",
       brokeredRef(),
       undefined,
-      "ws_test",
+      "ws_0076759dbbe19fcc",
     );
 
-    const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
+    const conn = lifecycle
+      .getInstance("gmail", "ws_0076759dbbe19fcc")
+      ?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("not_authenticated");
   });
 
@@ -107,10 +123,12 @@ describe("seedInstance — provider-auth fleet source", () => {
       brokeredRef().url ?? "",
       brokeredRef(),
       undefined,
-      "ws_test",
+      "ws_0076759dbbe19fcc",
     );
 
-    const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
+    const conn = lifecycle
+      .getInstance("gmail", "ws_0076759dbbe19fcc")
+      ?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("running");
   });
 
@@ -124,10 +142,12 @@ describe("seedInstance — provider-auth fleet source", () => {
       brokeredRef().url ?? "",
       brokeredRef(),
       undefined,
-      "ws_test",
+      "ws_0076759dbbe19fcc",
     );
 
-    const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
+    const conn = lifecycle
+      .getInstance("gmail", "ws_0076759dbbe19fcc")
+      ?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("running");
   });
 });

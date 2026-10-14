@@ -1,9 +1,5 @@
-import {
-  ErrorCode,
-  type ListResourcesResult,
-  McpError,
-  type ReadResourceResult,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { ListResourcesResult, ReadResourceResult } from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { isTextMime } from "../files/mime.ts";
 import type { FileStore } from "../files/store.ts";
 import { FILE_URI_SCHEME, fileIdToUri, uriToFileId } from "../files/uri.ts";
@@ -11,14 +7,14 @@ import { log } from "../observability/log.ts";
 import { HOST_RESOURCES_MAX_READ_SIZE } from "./capability.ts";
 
 /**
- * MCP convention for "resource not found" responses to `resources/read`
- * requests. Not in the SDK's JSON-RPC ErrorCode enum (which only carries
- * the standard JSON-RPC numbers), but used by `resources/read` in the
- * spec. We deliberately surface the same code from
- * `ai.nimblebrain/resources/read` so a future upstream migration
- * (Layer 3) is a method-name rename, not an error-code rewrite.
+ * The specification's code for "resource not found" on `resources/read`:
+ * `-32602` with `{ uri }` as the data. `ai.nimblebrain/resources/read`
+ * answers with the same code, so a future upstream version of the method is
+ * a rename, not an error-code rewrite. The SDK's 2025 codec also rewrites a
+ * thrown `-32002` to `-32602` on the wire, so throwing the code that is sent
+ * keeps the log line and the wire in agreement.
  */
-const RESOURCE_NOT_FOUND = -32002;
+const RESOURCE_NOT_FOUND = -32602;
 
 /**
  * Impl-defined server-error code for "response too large." Sibling to
@@ -75,7 +71,7 @@ export interface HostResourcesResolver {
  * Files are workspace-owned: `getFileStore(wsId)` resolves the caller's store in one
  * workspace. The resolver passes `ctx.workspaceId` (the workspace the connector ran in), so a
  * `files://` read resolves in that workspace only — a file from another workspace is not
- * on disk there and collapses to `-32002`.
+ * on disk there and collapses to resource-not-found.
  */
 export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   constructor(
@@ -101,13 +97,13 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       // disk-side issue need visibility — log the actual error before
       // collapsing so the ops trail isn't blind.
       log.warn(
-        `[host-resources] [${ctx.connectorId}:${ctx.workspaceId}] read ${uri} failed (collapsing to -32002): ${err instanceof Error ? err.message : String(err)}`,
+        `[host-resources] [${ctx.connectorId}:${ctx.workspaceId}] read ${uri} failed (collapsing to resource-not-found): ${err instanceof Error ? err.message : String(err)}`,
       );
-      throw new McpError(RESOURCE_NOT_FOUND, "Resource not found", { uri });
+      throw new ProtocolError(RESOURCE_NOT_FOUND, "Resource not found", { uri });
     }
 
     if (result.size > this.maxReadSize) {
-      throw new McpError(RESPONSE_TOO_LARGE, "Response too large", {
+      throw new ProtocolError(RESPONSE_TOO_LARGE, "Response too large", {
         uri,
         size: result.size,
         maxSize: this.maxReadSize,
@@ -144,7 +140,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     // workspaces. The store is rooted at that one owner partition, so the
     // boundary is the directory, not a filter here.
     if (params.filter?.scheme && params.filter.scheme !== FILE_URI_SCHEME) {
-      throw new McpError(ErrorCode.InvalidParams, "Unsupported URI scheme", {
+      throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Unsupported URI scheme", {
         scheme: params.filter.scheme,
         supported: [FILE_URI_SCHEME],
       });
@@ -155,9 +151,13 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     // breaking polite pagination loops. Reject loudly so the connector
     // SDK can detect the missing feature.
     if (params.cursor && params.cursor.length > 0) {
-      throw new McpError(ErrorCode.InvalidParams, "Pagination is not supported in this version", {
-        cursor: params.cursor,
-      });
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        "Pagination is not supported in this version",
+        {
+          cursor: params.cursor,
+        },
+      );
     }
 
     const store = this.getFileStore(ctx.workspaceId);
@@ -177,9 +177,13 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
     // rejected — silently returning all files lies about whether the
     // filter ran.
     if (params.filter?.tags !== undefined && !Array.isArray(params.filter.tags)) {
-      throw new McpError(ErrorCode.InvalidParams, "filter.tags must be an array of strings", {
-        receivedType: typeof params.filter.tags,
-      });
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        "filter.tags must be an array of strings",
+        {
+          receivedType: typeof params.filter.tags,
+        },
+      );
     }
     const tagFilter = params.filter?.tags ?? [];
     const filteredByTags =
@@ -204,14 +208,14 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   /**
    * Single place that validates the URI scheme. Unknown schemes return
    * `-32602 Invalid params` with the supported set in `data.supported`,
-   * so a connector author with a typo gets actionable feedback. Phase 1
-   * advertises only `files`; future schemes (e.g. `entities`) get added
+   * so a connector author with a typo gets actionable feedback. The
+   * resolver advertises only `files`; other schemes (e.g. `entities`) get added
    * here as the resolver gains additional backends.
    */
   private requireFileScheme(uri: string): string {
     const id = uriToFileId(uri);
     if (id) return id;
-    throw new McpError(ErrorCode.InvalidParams, "Unsupported URI scheme", {
+    throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Unsupported URI scheme", {
       uri,
       supported: [FILE_URI_SCHEME],
     });

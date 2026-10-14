@@ -19,10 +19,11 @@
 import { brokeredCatalogConfig, type ConnectorAuthKind } from "../../connectors/auth-kind.ts";
 import { hostMetaToUiMeta, sanitizePlacements } from "../../connectors/runtime/defaults.ts";
 import { parseHookDeclarations } from "../../hooks/declaration.ts";
-import { parseLifecycleDeclaration } from "../../lifecycle/declaration.ts";
 import { parseNotificationsDeclaration } from "../../notifications/declaration.ts";
+import { parseAdminToolsDeclaration } from "../../permissions/admin-tools.ts";
 import { validateAdditionalAuthorizationParams } from "../../util/oauth-params.ts";
 import { isHttpUrl } from "../../util/url.ts";
+import { parseAccountLookup } from "./account-lookup.ts";
 import {
   type ComposioConnectorConfig,
   getNimbleBrainConnectorMeta,
@@ -52,8 +53,7 @@ import type { CatalogListing, ConnectorCatalogEntry } from "./types.ts";
  * so they stay inline at the catalog call site.
  *
  * `auth` always resolves (defaulting to `"dcr"`); the rest are present only
- * when the meta carries them, matching the `...(meta?.X ? { X } : {})`
- * shape both sites previously inlined.
+ * when the meta carries them (the `...(meta?.X ? { X } : {})` shape).
  */
 function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
   auth: ConnectorAuthKind;
@@ -152,7 +152,8 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
   const ui = hostMetaToUiMeta(getNimbleBrainHostMeta(s));
   const hooks = parseHookDeclarations(getNimbleBrainHostMeta(s));
   const notifications = parseNotificationsDeclaration(getNimbleBrainHostMeta(s));
-  const lifecycle = parseLifecycleDeclaration(getNimbleBrainHostMeta(s));
+  const adminTools = parseAdminToolsDeclaration(getNimbleBrainHostMeta(s), s.name);
+  const account = parseAccountLookup(meta?.account);
   // The "interactive" chip is cosmetic catalog metadata (no runtime behavior). Derive
   // it from whether the connector renders a VALID UI: an explicit connector flag OR a
   // placement that survives `sanitizePlacements` (the same check registration uses).
@@ -172,19 +173,19 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(interactive ? { interactive: true } : {}),
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),
     ...(meta?.personal === true ? { personal: true } : {}),
+    ...(account ? { account } : {}),
     ...(ui ? { ui } : {}),
     ...(hooks.length > 0 ? { hooks } : {}),
     ...(notifications ? { notifications } : {}),
-    ...(lifecycle ? { lifecycle } : {}),
+    ...(adminTools ? { adminTools } : {}),
   };
 }
 
 /**
  * Defense-in-depth safety check on a `ServerDetail` regardless of which
  * source emitted it. Runs at the directory boundary so registry-published
- * entries are scrubbed identically wherever they came from
- * static entries — pre-fix only static-source ran this check, so a
- * malicious publisher on a non-curated registry could ship
+ * and static entries are scrubbed identically: if it ran only on
+ * static-source entries, a malicious publisher on a non-curated registry could ship
  * `_meta.docsUrl: "javascript:..."` and the Configure page would render
  * it as a clickable `<a href>`. `target="_blank" rel="noopener noreferrer"`
  * does NOT block `javascript:` URI execution.
@@ -199,6 +200,8 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
  *   - additionalAuthorizationParams reserved-key smuggling (RFC 6749
  *     params client_id, redirect_uri, state, etc. — would let a
  *     catalog override OAuth-flow-critical parameters)
+ *   - a host block whose host_version is not major 1 (see
+ *     {@link isSupportedHostVersion})
  */
 export function validateServerDetailSafety(s: ServerDetail): string | null {
   for (const icon of s.icons ?? []) {
@@ -222,5 +225,22 @@ export function validateServerDetailSafety(s: ServerDetail): string | null {
   if (meta?.docsUrl !== undefined && !isHttpUrl(meta.docsUrl)) {
     return `docsUrl must be http(s): "${meta.docsUrl}"`;
   }
-  return null;
+  return hostVersionViolation(s);
+}
+
+function hostVersionViolation(s: ServerDetail): string | null {
+  const host = getNimbleBrainHostMeta(s);
+  if (host === undefined || host === null || isSupportedHostVersion(host.host_version)) return null;
+  return `host_version must be major 1 ("1.0"): ${JSON.stringify(host.host_version)}`;
+}
+
+/**
+ * Whether this runtime can read a host block of this `host_version`. Only the
+ * major is a contract: blocks are added under major 1 without a bump and are
+ * enabled by being present. A different major is a contract this runtime
+ * predates, and it would otherwise parse that block as major 1 and ignore what
+ * it does not know, so the entry is dropped: it cannot be installed.
+ */
+function isSupportedHostVersion(v: unknown): boolean {
+  return typeof v === "string" && /^1(\.\d+)?$/.test(v);
 }

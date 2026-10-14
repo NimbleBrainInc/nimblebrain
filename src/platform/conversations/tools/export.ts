@@ -4,13 +4,12 @@
  * Export a conversation as markdown or JSON.
  */
 
+import type {
+  ConversationsExportInput,
+  ConversationsExportOutput,
+} from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import { type DisplayMessage, readConversation } from "../jsonl-reader.ts";
-
-export interface ExportInput {
-  id: string;
-  format: "markdown" | "json";
-}
 
 /** Truncate a string to maxLen, appending "..." if truncated. */
 function truncate(s: string, maxLen: number): string {
@@ -83,11 +82,14 @@ function exportMarkdown(
   return lines.join("\n");
 }
 
+/** `ConversationsExportInput` once the source has resolved an omitted or "current" `id`. */
+type ResolvedInput = ConversationsExportInput & { id: string };
+
 export async function handleExport(
-  input: ExportInput,
+  input: ResolvedInput,
   index: ConversationIndex,
   access?: AccessContext,
-): Promise<object> {
+): Promise<ConversationsExportOutput> {
   const entry = index.get(input.id, access);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);

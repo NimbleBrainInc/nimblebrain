@@ -145,7 +145,7 @@ async function main() {
 
   // ── Force light mode ──
   console.log("Navigating to Product workspace...");
-  await navigate(ws, `${BASE_URL}/w/product/`);
+  await navigate(ws, `${BASE_URL}/w/d6cb464050493d41/`);
   await sleep(2000);
   console.log("Forcing light mode...");
   await evaluateJS(ws, `
@@ -175,7 +175,7 @@ async function main() {
   // ledger, which is most of what the page is for — a closed list would show
   // titles and nothing the docs page talks about.
   console.log("\n3. Notification inbox");
-  await navigate(ws, `${BASE_URL}/w/product/notifications`);
+  await navigate(ws, `${BASE_URL}/w/d6cb464050493d41/notifications`);
   await sleep(1500);
   await evaluateJS(
     ws,
@@ -186,7 +186,7 @@ async function main() {
 
   // ── 4. Notification settings — ceilings and the route editor ──
   console.log("\n4. Notification settings");
-  await navigate(ws, `${BASE_URL}/w/product/settings/notifications`);
+  await navigate(ws, `${BASE_URL}/w/d6cb464050493d41/settings/notifications`);
   await sleep(1500);
   await screenshot(ws, "notifications-settings.png");
 

@@ -8,13 +8,13 @@
  * createIdentityProvider factory. No mocks beyond the OIDC provider itself.
  */
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import type { webcrypto } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-
-import { createIdentityProvider } from "../../src/identity/provider.ts";
 import { loadInstanceConfig, saveInstanceConfig } from "../../src/identity/instance.ts";
+import { createIdentityProvider } from "../../src/identity/provider.ts";
 import { OidcIdentityProvider } from "../../src/identity/providers/oidc.ts";
 import { UserStore } from "../../src/identity/user.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
@@ -22,12 +22,17 @@ import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 // ── RSA key pair (generated once per suite) ───────────────────────
 
 let privateKey: CryptoKey;
-let publicJwk: JsonWebKey;
+let publicJwk: webcrypto.JsonWebKey;
 const KID = "integ-key-1";
 
 beforeAll(async () => {
   const keyPair = await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
     true,
     ["sign", "verify"],
   );
@@ -103,6 +108,8 @@ interface TokenOptions {
   exp?: number;
   sub?: string;
   email?: string;
+  /** Defaults to `true`; pass `undefined` explicitly to omit the claim. */
+  email_verified?: unknown;
   name?: string;
   kid?: string;
 }
@@ -121,6 +128,7 @@ async function buildJwt(opts: TokenOptions = {}): Promise<string> {
     exp: opts.exp ?? nowSec + 3600,
     sub: opts.sub ?? "integ-user-sub",
     email: opts.email ?? "alice@acme.com",
+    email_verified: "email_verified" in opts ? opts.email_verified : true,
     name: opts.name,
   };
 
@@ -135,7 +143,7 @@ async function buildJwt(opts: TokenOptions = {}): Promise<string> {
 }
 
 function bearerRequest(token: string): Request {
-  return new Request("http://localhost/v1/chat", {
+  return new Request("http://localhost/v1/bootstrap", {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
@@ -164,8 +172,7 @@ describe("OIDC integration: full flow", () => {
 
     // Create stores and adapter via factory
     const userStore = new UserStore(workDir);
-    const wsStore = new WorkspaceStore(workDir);
-    const adapter = createIdentityProvider(config, userStore, new WorkspaceStore(workDir));
+    const adapter = createIdentityProvider(config, userStore, workDir);
     expect(adapter).not.toBeNull();
     expect(adapter).toBeInstanceOf(OidcIdentityProvider);
 
@@ -178,6 +185,17 @@ describe("OIDC integration: full flow", () => {
     expect(identity!.displayName).toBe("Alice");
     expect(identity!.orgRole).toBe("member");
     expect(identity!.id).toMatch(/^usr_oidc_[0-9a-f]{12}$/);
+    // The stored user carries more (its IdP subject, timestamps); none of it
+    // may ride along on the verified identity, which is the user's identity
+    // fields plus the token's grant.
+    expect(Object.keys(identity!).sort()).toEqual([
+      "displayName",
+      "email",
+      "grant",
+      "id",
+      "orgRole",
+      "preferences",
+    ]);
 
     // User was persisted in the store
     const stored = await userStore.getByEmail("alice@acme.com");
@@ -187,7 +205,10 @@ describe("OIDC integration: full flow", () => {
 
   test("second login returns same user (no duplicate)", async () => {
     const userStore = new UserStore(workDir);
-    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore, new WorkspaceStore(workDir));
+    const adapter = new OidcIdentityProvider(
+      { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },
+      userStore,
+    );
 
     const sub = "repeat-integ-sub";
     const token1 = await buildJwt({ email: "bob@acme.com", sub, name: "Bob" });
@@ -214,9 +235,12 @@ describe("OIDC integration: full flow", () => {
     // Create a default workspace first
     const ws = await wsStore.create("Default");
 
-    // OidcIdentityProvider no longer auto-adds to workspaces — that is handled
+    // OidcIdentityProvider does not auto-add to workspaces — that is handled
     // by the runtime layer. Verify the user is provisioned and can be manually added.
-    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore, new WorkspaceStore(workDir));
+    const adapter = new OidcIdentityProvider(
+      { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },
+      userStore,
+    );
     const token = await buildJwt({ email: "carol@acme.com", sub: "carol-sub", name: "Carol" });
     const identity = await adapter.verifyRequest(bearerRequest(token));
     expect(identity).not.toBeNull();
@@ -236,7 +260,10 @@ describe("OIDC integration: full flow", () => {
 describe("OIDC integration: domain rejection", () => {
   test("valid JWT with wrong domain is rejected and no user is created", async () => {
     const userStore = new UserStore(workDir);
-    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore, new WorkspaceStore(workDir));
+    const adapter = new OidcIdentityProvider(
+      { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },
+      userStore,
+    );
 
     // JWT is cryptographically valid but email domain is not in allowedDomains
     const token = await buildJwt({ email: "eve@evil.com", sub: "evil-sub", name: "Eve" });
@@ -260,7 +287,7 @@ describe("OIDC integration: domain rejection", () => {
 
     const config = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
-    const adapter = createIdentityProvider(config, userStore, new WorkspaceStore(workDir));
+    const adapter = createIdentityProvider(config, userStore, workDir);
     expect(adapter).not.toBeNull();
 
     // acme.com is not in allowedDomains for this config
@@ -269,7 +296,11 @@ describe("OIDC integration: domain rejection", () => {
     expect(rejected).toBeNull();
 
     // trusted.org is allowed
-    const tokenGood = await buildJwt({ email: "alice@trusted.org", sub: "good-domain-sub", name: "Alice" });
+    const tokenGood = await buildJwt({
+      email: "alice@trusted.org",
+      sub: "good-domain-sub",
+      name: "Alice",
+    });
     const accepted = await adapter!.verifyRequest(bearerRequest(tokenGood));
     expect(accepted).not.toBeNull();
     expect(accepted!.email).toBe("alice@trusted.org");
@@ -289,20 +320,17 @@ describe("OIDC integration: factory wiring", () => {
 
     const config = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
-    const adapter = createIdentityProvider(config, userStore, new WorkspaceStore(workDir));
+    const adapter = createIdentityProvider(config, userStore, workDir);
 
     expect(adapter).toBeInstanceOf(OidcIdentityProvider);
   });
 
-  test("null config (dev mode) returns null adapter", () => {
-    const userStore = new UserStore(workDir);
-    const adapter = createIdentityProvider(null, userStore, new WorkspaceStore(workDir));
-    expect(adapter).toBeNull();
-  });
-
   test("admin-created user is found by OIDC login without duplication", async () => {
     const userStore = new UserStore(workDir);
-    const adapter = new OidcIdentityProvider({ adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS }, userStore, new WorkspaceStore(workDir));
+    const adapter = new OidcIdentityProvider(
+      { adapter: "oidc", issuer, clientId: CLIENT_ID, allowedDomains: ALLOWED_DOMAINS },
+      userStore,
+    );
 
     // Admin pre-creates user with admin role
     const adminUser = await userStore.create({
@@ -312,7 +340,11 @@ describe("OIDC integration: factory wiring", () => {
     });
 
     // Dave logs in via OIDC
-    const token = await buildJwt({ email: "dave@acme.com", sub: "dave-oidc-sub", name: "Dave OIDC" });
+    const token = await buildJwt({
+      email: "dave@acme.com",
+      sub: "dave-oidc-sub",
+      name: "Dave OIDC",
+    });
     const identity = await adapter.verifyRequest(bearerRequest(token));
     expect(identity).not.toBeNull();
 

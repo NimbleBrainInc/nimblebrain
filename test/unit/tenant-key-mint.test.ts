@@ -1,5 +1,5 @@
-import { createHmac, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
 import { describe, expect, it } from "bun:test";
+import { createHmac, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   buildMintRequest,
   createMintingFetch,
@@ -10,6 +10,7 @@ import {
   ServiceTokenCache,
   type TenantIdentity,
 } from "../../src/oauth/tenant-key-mint.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 // ---------------------------------------------------------------------------
 // Faithful inline mirror of the authorizer's verifier
@@ -43,7 +44,8 @@ function verifyMintAsAuthorizer(wire: string, master: Buffer, nowSeconds: number
   const payloadRaw = Buffer.from(payloadB64, "base64url");
   const peeked = JSON.parse(payloadRaw.toString("utf8")) as Record<string, unknown>;
   const tid = peeked.tid;
-  if (typeof tid !== "string" || !ALLOWED_TID.test(tid)) return { ok: false, reason: "invalid_tid" };
+  if (typeof tid !== "string" || !ALLOWED_TID.test(tid))
+    return { ok: false, reason: "invalid_tid" };
 
   const tenantKey = deriveTenantKey(master, tid);
   const macExpected = createHmac("sha256", tenantKey).update(`v1.${payloadB64}`).digest();
@@ -81,7 +83,7 @@ describe("buildMintRequest — authorizer parity", () => {
     const now = 1_700_000_000;
     const wire = buildMintRequest({
       tid: TID,
-      workspace: "ws_smoke",
+      workspace: "ws_006ecec8527e3353",
       audience: "artifacts",
       scope: "artifacts:write",
       tenantKey: TENANT_KEY,
@@ -92,7 +94,7 @@ describe("buildMintRequest — authorizer parity", () => {
     if (!v.ok) return;
     expect(v).toMatchObject({
       tid: "hq",
-      workspace: "ws_smoke",
+      workspace: "ws_006ecec8527e3353",
       audience: "artifacts",
       scope: "artifacts:write",
     });
@@ -103,7 +105,7 @@ describe("buildMintRequest — authorizer parity", () => {
     const wrongKey = deriveTenantKey(randomBytes(32), TID);
     const wire = buildMintRequest({
       tid: TID,
-      workspace: "ws_smoke",
+      workspace: "ws_006ecec8527e3353",
       audience: "artifacts",
       scope: "artifacts:write",
       tenantKey: wrongKey,
@@ -111,7 +113,7 @@ describe("buildMintRequest — authorizer parity", () => {
     });
     const v = verifyMintAsAuthorizer(wire, MASTER, now);
     expect(v.ok).toBe(false);
-    if (v.ok) return;
+    if (v.ok !== false) return;
     expect(v.reason).toBe("bad_mac");
   });
 
@@ -119,7 +121,7 @@ describe("buildMintRequest — authorizer parity", () => {
     const iat = 1_700_000_000;
     const wire = buildMintRequest({
       tid: TID,
-      workspace: "ws_smoke",
+      workspace: "ws_006ecec8527e3353",
       audience: "artifacts",
       scope: "artifacts:write",
       tenantKey: TENANT_KEY,
@@ -128,7 +130,7 @@ describe("buildMintRequest — authorizer parity", () => {
     });
     const v = verifyMintAsAuthorizer(wire, MASTER, iat + 61);
     expect(v.ok).toBe(false);
-    if (v.ok) return;
+    if (v.ok !== false) return;
     expect(v.reason).toBe("expired");
   });
 });
@@ -136,22 +138,29 @@ describe("buildMintRequest — authorizer parity", () => {
 describe("buildMintRequest — local validation", () => {
   const base = {
     tid: TID,
-    workspace: "ws_smoke",
+    workspace: "ws_006ecec8527e3353",
     audience: "artifacts",
     scope: "artifacts:write",
     tenantKey: TENANT_KEY,
   };
 
-  it("accepts the runtime's real workspace ids (ws_<hex>, ws_user_<id>) verbatim", () => {
+  it("accepts the runtime's workspace ids (ws_<16 hex>) verbatim", () => {
     expect(() => buildMintRequest({ ...base, workspace: "ws_1a2b3c4d5e6f7a8b" })).not.toThrow();
-    expect(() => buildMintRequest({ ...base, workspace: "ws_user_01HXYZ" })).not.toThrow();
+    expect(() => buildMintRequest({ ...base, workspace: "ws_007a979c480dcf8a" })).not.toThrow();
+  });
+
+  it("rejects a slug or user-derived id", () => {
+    expect(() => buildMintRequest({ ...base, workspace: "ws_acme_corp" })).toThrow(MintError);
+    expect(() => buildMintRequest({ ...base, workspace: "ws_user_usr_alice" })).toThrow(MintError);
   });
 
   it("rejects a string that is not a NimbleBrain workspace id", () => {
     // No ws_ prefix, traversal, and whitespace all fail the runtime's own grammar.
     expect(() => buildMintRequest({ ...base, workspace: "not-a-workspace" })).toThrow(MintError);
     expect(() => buildMintRequest({ ...base, workspace: "ws_../etc" })).toThrow(MintError);
-    expect(() => buildMintRequest({ ...base, workspace: "ws_a b" })).toThrow(MintError);
+    expect(() => buildMintRequest({ ...base, workspace: "ws_00079598e311c160 b" })).toThrow(
+      MintError,
+    );
   });
 
   it("rejects an over-long audience", () => {
@@ -173,7 +182,9 @@ describe("readTenantIdentityFromEnv", () => {
       /NB_MCP_AUTHORIZER_TENANT_KEY/,
     );
     expect(() =>
-      readTenantIdentityFromEnv({ NB_MCP_AUTHORIZER_TENANT_KEY: TENANT_KEY.toString("base64") } as NodeJS.ProcessEnv),
+      readTenantIdentityFromEnv({
+        NB_MCP_AUTHORIZER_TENANT_KEY: TENANT_KEY.toString("base64"),
+      } as NodeJS.ProcessEnv),
     ).toThrow(/NB_TENANT_ID/);
   });
 
@@ -190,10 +201,12 @@ describe("readTenantIdentityFromEnv", () => {
 /** A fake authorizer `/token` endpoint: verifies the inbound mint and returns a
  *  token whose value encodes the requested audience, so the test can assert the
  *  right token reached the caller. Counts calls for single-flight assertions. */
-function fakeAuthorizer(opts: { expiresIn?: number; failStatus?: number; now?: () => number } = {}) {
+function fakeAuthorizer(
+  opts: { expiresIn?: number; failStatus?: number; now?: () => number } = {},
+) {
   let calls = 0;
   const now = opts.now ?? (() => Math.floor(Date.now() / 1000));
-  const fetchImpl: typeof fetch = async (input, init) => {
+  const fetchImpl = fakeFetch(async (input, init) => {
     calls++;
     const url = String(input);
     if (!url.endsWith("/token")) return new Response("not found", { status: 404 });
@@ -204,13 +217,13 @@ function fakeAuthorizer(opts: { expiresIn?: number; failStatus?: number; now?: (
     expect(body.get("grant_type")).toBe("urn:nimblebrain:params:oauth:grant-type:tenant-key");
     const wire = body.get("tenant_assertion") ?? "";
     const v = verifyMintAsAuthorizer(wire, MASTER, now());
-    if (!v.ok) return new Response(`{"error":"${v.reason}"}`, { status: 400 });
+    if (v.ok === false) return new Response(`{"error":"${v.reason}"}`, { status: 400 });
     return Response.json({
       access_token: `tok-${v.audience}-${calls}`,
       token_type: "Bearer",
       expires_in: opts.expiresIn ?? 300,
     });
-  };
+  });
   return { fetchImpl, calls: () => calls };
 }
 
@@ -219,7 +232,7 @@ describe("mintServiceToken", () => {
     const { fetchImpl } = fakeAuthorizer({ expiresIn: 300, now: () => 1000 });
     const tok = await mintServiceToken({
       tokenUrl: "https://authz.test/token",
-      workspace: "ws_smoke",
+      workspace: "ws_006ecec8527e3353",
       audience: "artifacts",
       scope: "artifacts:write",
       identity: IDENTITY,
@@ -234,24 +247,33 @@ describe("mintServiceToken", () => {
     const { fetchImpl } = fakeAuthorizer({ failStatus: 400 });
     await expect(
       mintServiceToken({
-        issuer: "https://authz.test",
-        workspace: "ws_smoke",
+        tokenUrl: "https://authz.test/token",
+        workspace: "ws_006ecec8527e3353",
         audience: "artifacts",
         scope: "artifacts:write",
         identity: IDENTITY,
         fetchImpl,
       }),
-    ).rejects.toThrow(MintError);
+    ).rejects.toThrow(/rejected 400: \{"error":"invalid_request"\}/);
   });
 });
 
 describe("ServiceTokenCache", () => {
-  const req = { tokenUrl: "https://authz.test/token", workspace: "ws_smoke", audience: "artifacts", scope: "artifacts:write" };
+  const req = {
+    tokenUrl: "https://authz.test/token",
+    workspace: "ws_006ecec8527e3353",
+    audience: "artifacts",
+    scope: "artifacts:write",
+  };
 
   it("serves a cached token until the renew skew, then re-mints", async () => {
     let clock = 1000;
     const authz = fakeAuthorizer({ expiresIn: 300, now: () => clock });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => clock });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => clock,
+    });
 
     expect(await cache.getToken(req)).toBe("tok-artifacts-1");
     clock = 1100; // well within 300s - 30s skew → cache hit
@@ -265,9 +287,17 @@ describe("ServiceTokenCache", () => {
 
   it("dedupes concurrent mints for the same key (single-flight)", async () => {
     const authz = fakeAuthorizer({ expiresIn: 300, now: () => 1000 });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => 1000 });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => 1000,
+    });
 
-    const [a, b, c] = await Promise.all([cache.getToken(req), cache.getToken(req), cache.getToken(req)]);
+    const [a, b, c] = await Promise.all([
+      cache.getToken(req),
+      cache.getToken(req),
+      cache.getToken(req),
+    ]);
     expect(a).toBe(b);
     expect(b).toBe(c);
     expect(authz.calls()).toBe(1);
@@ -275,7 +305,11 @@ describe("ServiceTokenCache", () => {
 
   it("forceRefresh discards the cached token and re-mints (the 401-retry path)", async () => {
     const authz = fakeAuthorizer({ expiresIn: 300, now: () => 1000 });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => 1000 });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => 1000,
+    });
 
     expect(await cache.getToken(req)).toBe("tok-artifacts-1");
     expect(await cache.getToken(req, { forceRefresh: true })).toBe("tok-artifacts-2");
@@ -285,10 +319,10 @@ describe("ServiceTokenCache", () => {
   it("does not pin callers to a failed mint (in-flight marker cleared on error)", async () => {
     let mode: "fail" | "ok" = "fail";
     const okAuthz = fakeAuthorizer({ now: () => 1000 });
-    const fetchImpl: typeof fetch = async (input, init) => {
+    const fetchImpl = fakeFetch(async (input, init) => {
       if (mode === "fail") return new Response(`{"error":"boom"}`, { status: 500 });
       return okAuthz.fetchImpl(input, init);
-    };
+    });
     const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl, now: () => 1000 });
 
     await expect(cache.getToken(req)).rejects.toThrow(MintError);
@@ -298,16 +332,25 @@ describe("ServiceTokenCache", () => {
 });
 
 describe("createMintingFetch", () => {
-  const req = { tokenUrl: "https://authz.test/token", workspace: "ws_smoke", audience: "artifacts", scope: "artifacts:write" };
+  const req = {
+    tokenUrl: "https://authz.test/token",
+    workspace: "ws_006ecec8527e3353",
+    audience: "artifacts",
+    scope: "artifacts:write",
+  };
 
   it("attaches a freshly-minted bearer to each outbound request", async () => {
     const authz = fakeAuthorizer({ now: () => 1000 });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => 1000 });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => 1000,
+    });
     let seenAuth: string | null = null;
-    const baseFetch: typeof fetch = async (_input, init) => {
+    const baseFetch = fakeFetch(async (_input, init) => {
       seenAuth = new Headers(init?.headers).get("Authorization");
       return new Response("ok", { status: 200 });
-    };
+    });
     const f = createMintingFetch({ cache, ...req, baseFetch });
 
     const res = await f("https://artifacts.test/v1/artifacts", { method: "POST" });
@@ -317,15 +360,21 @@ describe("createMintingFetch", () => {
 
   it("force-re-mints and retries exactly once on a 401", async () => {
     const authz = fakeAuthorizer({ now: () => 1000 });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => 1000 });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => 1000,
+    });
     let serviceCalls = 0;
     const seen: (string | null)[] = [];
-    const baseFetch: typeof fetch = async (_input, init) => {
+    const baseFetch = fakeFetch(async (_input, init) => {
       serviceCalls++;
       seen.push(new Headers(init?.headers).get("Authorization"));
       // Reject the first token, accept the (re-minted) second.
-      return serviceCalls === 1 ? new Response("no", { status: 401 }) : new Response("ok", { status: 200 });
-    };
+      return serviceCalls === 1
+        ? new Response("no", { status: 401 })
+        : new Response("ok", { status: 200 });
+    });
     const f = createMintingFetch({ cache, ...req, baseFetch });
 
     const res = await f("https://artifacts.test/v1/artifacts");
@@ -337,12 +386,16 @@ describe("createMintingFetch", () => {
 
   it("does not retry on a non-auth error (e.g. 500)", async () => {
     const authz = fakeAuthorizer({ now: () => 1000 });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => 1000 });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => 1000,
+    });
     let serviceCalls = 0;
-    const baseFetch: typeof fetch = async () => {
+    const baseFetch = fakeFetch(async () => {
       serviceCalls++;
       return new Response("boom", { status: 500 });
-    };
+    });
     const f = createMintingFetch({ cache, ...req, baseFetch });
 
     const res = await f("https://artifacts.test/v1/artifacts");
@@ -351,7 +404,7 @@ describe("createMintingFetch", () => {
   });
 });
 
-describe("resolveAuthorizerTokenUrl (issuer/endpoint decoupling)", () => {
+describe("resolveAuthorizerTokenUrl", () => {
   const ENV = ["NB_FLEET_AUTHORIZER_TOKEN_URL", "NB_FLEET_AUTHORIZER_ISSUER"] as const;
   function withEnv(
     vals: Partial<Record<(typeof ENV)[number], string | undefined>>,
@@ -373,64 +426,27 @@ describe("resolveAuthorizerTokenUrl (issuer/endpoint decoupling)", () => {
     }
   }
 
-  it("uses an explicit tokenUrl verbatim, ignoring the issuer (location != identity)", () => {
-    // The whole point: a moved endpoint never disturbs the `iss` identity.
-    expect(
-      resolveAuthorizerTokenUrl({
-        tokenUrl: "http://mcp-authorizer.auth.svc/token",
-        issuer: "http://mcp-authorizer.mcp-shared.svc",
-      }),
-    ).toBe("http://mcp-authorizer.auth.svc/token");
-  });
-
-  it("derives `${issuer}/token` when no explicit tokenUrl (legacy fallback)", () => {
-    expect(resolveAuthorizerTokenUrl({ issuer: "http://mcp-authorizer.mcp-shared.svc" })).toBe(
-      "http://mcp-authorizer.mcp-shared.svc/token",
+  it("reads NB_FLEET_AUTHORIZER_TOKEN_URL", () => {
+    withEnv({ NB_FLEET_AUTHORIZER_TOKEN_URL: "http://mcp-authorizer.auth.svc/token" }, () =>
+      expect(resolveAuthorizerTokenUrl()).toBe("http://mcp-authorizer.auth.svc/token"),
     );
   });
 
-  it("prefers NB_FLEET_AUTHORIZER_TOKEN_URL over the issuer-derived endpoint", () => {
-    withEnv(
-      {
-        NB_FLEET_AUTHORIZER_TOKEN_URL: "http://mcp-authorizer.auth.svc/token",
-        NB_FLEET_AUTHORIZER_ISSUER: "http://mcp-authorizer.mcp-shared.svc",
-      },
-      () => expect(resolveAuthorizerTokenUrl()).toBe("http://mcp-authorizer.auth.svc/token"),
-    );
-  });
-
-  it("falls back to `${NB_FLEET_AUTHORIZER_ISSUER}/token` when the token-url var is unset", () => {
+  it("derives nothing from NB_FLEET_AUTHORIZER_ISSUER", () => {
     withEnv(
       {
         NB_FLEET_AUTHORIZER_TOKEN_URL: undefined,
         NB_FLEET_AUTHORIZER_ISSUER: "http://mcp-authorizer.mcp-shared.svc",
       },
-      () => expect(resolveAuthorizerTokenUrl()).toBe("http://mcp-authorizer.mcp-shared.svc/token"),
+      () => expect(resolveAuthorizerTokenUrl()).toBeUndefined(),
     );
   });
 
-  it("returns undefined when neither is configured", () => {
-    withEnv({ NB_FLEET_AUTHORIZER_TOKEN_URL: undefined, NB_FLEET_AUTHORIZER_ISSUER: undefined }, () =>
-      expect(resolveAuthorizerTokenUrl()).toBeUndefined(),
-    );
-  });
-
-  it("per-connection config wins over global env (a pinned authorizer is never silently redirected)", () => {
-    withEnv(
-      {
-        NB_FLEET_AUTHORIZER_TOKEN_URL: "http://global-authorizer.svc/token",
-        NB_FLEET_AUTHORIZER_ISSUER: "http://global-authorizer.svc",
-      },
-      () => {
-        // A connection pinned via config.issuer must beat the global TOKEN_URL env...
-        expect(resolveAuthorizerTokenUrl({ issuer: "http://pinned.example" })).toBe(
-          "http://pinned.example/token",
-        );
-        // ...and an explicit config.tokenUrl likewise.
-        expect(resolveAuthorizerTokenUrl({ tokenUrl: "http://pinned.example/token" })).toBe(
-          "http://pinned.example/token",
-        );
-      },
+  it("a per-connection tokenUrl wins over the global env (a pinned authorizer is never redirected)", () => {
+    withEnv({ NB_FLEET_AUTHORIZER_TOKEN_URL: "http://global-authorizer.svc/token" }, () =>
+      expect(resolveAuthorizerTokenUrl("http://pinned.example/token")).toBe(
+        "http://pinned.example/token",
+      ),
     );
   });
 });

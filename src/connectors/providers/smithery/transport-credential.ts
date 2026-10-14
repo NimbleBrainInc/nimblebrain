@@ -14,8 +14,9 @@
  * `config.ts`'s private business, so the broker credential can join the declared
  * `connectors.providers.smithery` block exactly like Composio's `apiKey` did.
  *
- * No legacy-mapping arm here, deliberately: `smithery` refs did not exist before
- * this seam, so there is no pre-provider shape in the field to normalize on read.
+ * No legacy-mapping arm here, deliberately: every `smithery` ref is written
+ * through this seam, so there is no pre-provider shape in the field to normalize
+ * on read.
  * The moment one could exist is the moment this file would need Composio's
  * `smitheryTransportConfig` counterpart.
  */

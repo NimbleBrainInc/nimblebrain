@@ -32,7 +32,7 @@ import { AA_NON_TEXT, contrastRatio, over } from "../../../web/src/theme/contras
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
 import { REPO, sourceFiles, themedTrees } from "./themed-trees.ts";
 
-const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * A rule that loops an animation while painting a host token.
@@ -84,8 +84,8 @@ function derivedCandidates(): { file: string; selector: string }[] {
  */
 const GUARDED = [
   {
-    what: "automations running dot",
-    file: join(REPO, "src", "platform", "automations", "ui", "src", "styles.ts"),
+    what: "tasks running dot",
+    file: join(REPO, "src", "platform", "tasks", "ui", "src", "styles.ts"),
     selector: ".dot-running",
   },
   {
@@ -103,10 +103,9 @@ const GUARDED = [
  */
 const EXEMPT: Record<string, string> = Object.fromEntries(
   [
-    ["automations", ".skel", "loading skeleton — 'not yet loaded', which the layout already shows"],
+    ["tasks", ".skel", "loading skeleton — 'not yet loaded', which the layout already shows"],
     ["conversations", ".skel", "loading skeleton — as above"],
     ["files", ".skel", "loading skeleton — as above"],
-    ["files", ".file-thumb-shimmer", "thumbnail placeholder — replaced by the image"],
     ["files", ".detail-shimmer", "detail-pane placeholder — replaced by content"],
   ].map(([connector, sel, why]) => [`${connector}::${sel}`, why]),
 );
@@ -121,7 +120,7 @@ function exemptKey(file: string, selector: string): string {
  * Read a stylesheet the way the app does.
  *
  * A `.ts` entry is EVALUATED rather than slurped as text, because
- * `automations/ui/src/styles.ts` is one big template literal and a stray
+ * `tasks/ui/src/styles.ts` is one big template literal and a stray
  * backtick in a comment terminates it. That is not theoretical: it happened,
  * and nothing caught it — `vite build` connectors without evaluating, the root
  * tsconfig excludes `src/platform/*&#47;ui`, and a `readFileSync` guard is
@@ -167,7 +166,7 @@ function blockBody(css: string, from: number, what: string): string {
  * guard is watching nothing.
  */
 function animationOf(css: string, selector: string): string | null {
-  const at = css.search(new RegExp(`${escape(selector)}\\s*\\{`));
+  const at = css.search(new RegExp(`${escapeRegExp(selector)}\\s*\\{`));
   if (at === -1) throw new Error(`no rule for ${selector}`);
   return /animation:\s*([a-zA-Z][\w-]*)/.exec(blockBody(css, at, selector))?.[1] ?? null;
 }
@@ -210,7 +209,10 @@ describe("every looping indicator is classified", () => {
   test("no looping token-painted rule is silently unguarded", () => {
     const guarded = new Set(GUARDED.map((g) => `${g.file}::${g.selector}`));
     const unclassified = derivedCandidates()
-      .filter((c) => !guarded.has(`${c.file}::${c.selector}`) && !(exemptKey(c.file, c.selector) in EXEMPT))
+      .filter(
+        (c) =>
+          !guarded.has(`${c.file}::${c.selector}`) && !(exemptKey(c.file, c.selector) in EXEMPT),
+      )
       .map((c) => `${c.selector} — ${relative(REPO, c.file)}`);
 
     expect(unclassified).toEqual([]);
@@ -245,7 +247,7 @@ for (const { what, selector, css } of LOADED) {
     // Read the painted token rather than hardcoding it, so repointing the
     // indicator at a dimmer token is caught here too.
     const painted = new RegExp(
-      `${escape(selector)}\\s*\\{[^}]*background:\\s*var\\((--[\\w-]+)\\)`,
+      `${escapeRegExp(selector)}\\s*\\{[^}]*background:\\s*var\\((--[\\w-]+)\\)`,
     ).exec(css)?.[1];
 
     test("the indicator paints a token the host injects", () => {
@@ -257,7 +259,7 @@ for (const { what, selector, css } of LOADED) {
      * Every ground the indicator renders on, derived rather than listed.
      *
      * The page and the card are the obvious two. The third, where a connector has
-     * one, is the row hover fill: `automations` paints a 30% mix of the border
+     * one, is the row hover fill: `tasks` paints a 30% mix of the border
      * token in `.run-row:hover` and `.rail-auto-item:hover`, and every dot in
      * that rail and run list renders inside one of those rows
      * (`ui/src/components/RailItem.tsx:40`, `:72`,
@@ -274,7 +276,7 @@ for (const { what, selector, css } of LOADED) {
       const out: [string, string][] = [];
       // Deduped by resulting COLOUR, not name. Two things collapse here and
       // both are real: in light mode the page and the card are the same white,
-      // and automations declares the identical hover mix twice. The same pair
+      // and tasks declares the identical hover mix twice. The same pair
       // asserted under two names would read as broader coverage than it is.
       const seen = new Set<string>();
       const add = (name: string, colour: string) => {
@@ -356,7 +358,7 @@ describe("reduced-motion overrides are placed where they win", () => {
             // `(?!none)` matters: without it this matches the override's own
             // `animation: none` and reports every correct override as dead.
             const decl = new RegExp(
-              `${escape(sel)}\\s*\\{[^}]*animation:\\s*(?!none\\b)[a-zA-Z]`,
+              `${escapeRegExp(sel)}\\s*\\{[^}]*animation:\\s*(?!none\\b)[a-zA-Z]`,
               "g",
             );
             for (const d of css.matchAll(decl)) {

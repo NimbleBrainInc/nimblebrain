@@ -129,7 +129,7 @@ export class WorkspaceContext {
   constructor(opts: { wsId: string; workDir: string }) {
     if (typeof opts.wsId !== "string" || !WORKSPACE_ID_RE.test(opts.wsId)) {
       throw new Error(
-        `[workspace-context] invalid wsId: "${opts.wsId}". Must match /^ws_[a-z0-9_]{1,64}$/i.`,
+        `[workspace-context] invalid wsId: "${opts.wsId}". Must match ${WORKSPACE_ID_RE}.`,
       );
     }
     if (typeof opts.workDir !== "string" || opts.workDir.length === 0) {
@@ -165,8 +165,8 @@ export class WorkspaceContext {
   /**
    * Absolute path to a workspace-scoped directory or file.
    *
-   *   ctx.getDataPath("root")                                  → workspaces/ws_x
-   *   ctx.getDataPath("conversations")                          → workspaces/ws_x/conversations
+   *   ctx.getDataPath("root")                                  → workspaces/ws_008bd230f095f38a
+   *   ctx.getDataPath("conversations")                          → workspaces/ws_008bd230f095f38a/conversations
    *   ctx.getDataPath("credentials", "secrets")                 → .../credentials/secrets
    *   ctx.getDataPath("data", deriveConnectorDataDir(name))        → .../data/{slug}
    *
@@ -221,14 +221,14 @@ const WORKSPACES_SEGMENT = "workspaces";
  * Derived from the path rather than from an argument, which is what lets every
  * workspace-scoped writer adopt the guard without threading a `wsId` it does
  * not already hold. The same trick `parseConversationPath` and
- * `parseAutomationPath` use, for the same reason: the path is the binding.
+ * `parseTaskPath` use, for the same reason: the path is the binding.
  *
  * **A `workspaces` segment only counts with a well-formed workspace id after
  * it**, and the scan looks for that PAIR rather than trusting one candidate
  * index. Trusting one is how this leaked: testing the segment after the *last*
- * `workspaces` read a path whose final segment is `workspaces` — the id of an
- * automation named "Workspaces", and `automationRunsDir` ends in
- * `runs/<automationId>` — as "not a workspace tree", and fell through to the
+ * `workspaces` read a path whose final segment is `workspaces` — the id of a
+ * task named "Workspaces", and `taskRunsDir` ends in
+ * `runs/<taskId>` — as "not a workspace tree", and fell through to the
  * unguarded mkdir this exists to prevent.
  *
  * Requiring the pair also settles first-match versus last: the outermost root
@@ -271,7 +271,7 @@ function workspaceRootOf(dir: string): { wsId: string; root: string } | null {
  * without changing what it does for the others.
  *
  * Call this directly when the writer must keep its own `mkdir` — the
- * credential and instructions dirs pass `mode: 0o700`, and several are
+ * credential dirs pass `mode: 0o700`, and several are
  * `await mkdir`, so swapping in {@link ensureWorkspaceDir} would widen them to
  * the umask default or make them synchronous. Both entry points read one rule
  * from one place; there is no second definition of it.

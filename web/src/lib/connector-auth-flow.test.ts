@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "bun:test";
 import { installCompletesWithoutSignIn } from "./connector-auth-flow.ts";
 
 describe("installCompletesWithoutSignIn", () => {

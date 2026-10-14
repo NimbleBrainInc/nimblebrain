@@ -1,12 +1,15 @@
 import { describe, expect, it } from "bun:test";
+import { readArtifactDataPlaneConfigFromEnv } from "../../src/host-resources/artifacts/data-plane-read-client.ts";
 import {
   ArtifactNotFoundError,
   ArtifactReadClient,
+  ArtifactReadError,
   ArtifactResolver,
   isArtifactUri,
   uriToArtifactId,
 } from "../../src/host-resources/artifacts/index.ts";
 import { ServiceTokenCache, type TenantIdentity } from "../../src/oauth/tenant-key-mint.ts";
+import { blobOf, textOf } from "../helpers/resource-contents.ts";
 
 // ---------------------------------------------------------------------------
 // Behavioral tests for the generic artifact:// host resolver.
@@ -144,7 +147,7 @@ function makeDataPlaneFetch(
       });
     }
 
-    return new Response("unexpected url: " + url, { status: 500 });
+    return new Response(`unexpected url: ${url}`, { status: 500 });
   }) as typeof fetch;
 }
 
@@ -164,8 +167,8 @@ function makeResolver(
   return new ArtifactResolver(client, undefined, dataPlaneFetch);
 }
 
-const WS_A = "ws_aaaa";
-const WS_B = "ws_bbbb";
+const WS_A = "ws_000bdd0fc094b355";
+const WS_B = "ws_001fbca0b355cd5f";
 
 describe("artifact:// URI parsing", () => {
   it("recognizes the artifact scheme and extracts the id", () => {
@@ -199,8 +202,8 @@ describe("ArtifactResolver.read — reads as the viewing user", () => {
     expect(first.uri).toBe("artifact://art_md");
     expect(first.mimeType).toBe("text/markdown");
     // text/* comes back as text, not blob.
-    expect(first.text).toBe("# Title\n\nbody");
-    expect(first.blob).toBeUndefined();
+    expect(textOf(first)).toBe("# Title\n\nbody");
+    expect(blobOf(first)).toBeUndefined();
   });
 
   it("denies a read from a DIFFERENT workspace (RLS) — surfaces not-found", async () => {
@@ -221,7 +224,7 @@ describe("ArtifactResolver.read — reads as the viewing user", () => {
     // ...and the legitimate owner CAN read it — proving the denial is about
     // identity, not a broken fixture.
     const owned = await resolver.read("artifact://art_secret", WS_A);
-    expect(owned.contents[0]!.text).toBe("secret");
+    expect(textOf(owned.contents[0]!)).toBe("secret");
   });
 
   it("brokers large bodies via a presigned URL (bytes off the read path)", async () => {
@@ -237,7 +240,7 @@ describe("ArtifactResolver.read — reads as the viewing user", () => {
       { art_big: big },
     );
     const result = await resolver.read("artifact://art_big", WS_A);
-    expect(result.contents[0]!.text).toBe("LARGE-BODY-CONTENT");
+    expect(textOf(result.contents[0]!)).toBe("LARGE-BODY-CONTENT");
   });
 
   it("returns binary mime as a base64 blob, not text", async () => {
@@ -249,8 +252,8 @@ describe("ArtifactResolver.read — reads as the viewing user", () => {
     const result = await resolver.read("artifact://art_png", WS_A);
     const first = result.contents[0]!;
     expect(first.mimeType).toBe("image/png");
-    expect(first.blob).toBe(png);
-    expect(first.text).toBeUndefined();
+    expect(blobOf(first)).toBe(png);
+    expect(textOf(first)).toBeUndefined();
   });
 
   it("surfaces not-found for an id that exists in no workspace", async () => {
@@ -350,7 +353,11 @@ function makeListFetch(byWorkspace: Record<string, ListRow[]>): typeof fetch {
         scope: string;
       };
       const token = Buffer.from(
-        JSON.stringify({ workspace: payload.workspace, aud: payload.audience, scope: payload.scope }),
+        JSON.stringify({
+          workspace: payload.workspace,
+          aud: payload.audience,
+          scope: payload.scope,
+        }),
       ).toString("base64url");
       return new Response(JSON.stringify({ access_token: token, expires_in: 300 }), {
         status: 200,
@@ -363,7 +370,10 @@ function makeListFetch(byWorkspace: Record<string, ListRow[]>): typeof fetch {
     if (url.startsWith(`${DATA_PLANE}/v1/artifacts`)) {
       const u = new URL(url);
       if (u.pathname !== "/v1/artifacts") return new Response("not list", { status: 500 });
-      const bearer = (new Headers(init?.headers).get("Authorization") ?? "").replace(/^Bearer\s+/, "");
+      const bearer = (new Headers(init?.headers).get("Authorization") ?? "").replace(
+        /^Bearer\s+/,
+        "",
+      );
       const claims = JSON.parse(Buffer.from(bearer, "base64url").toString("utf8")) as {
         workspace: string;
       };
@@ -376,14 +386,18 @@ function makeListFetch(byWorkspace: Record<string, ListRow[]>): typeof fetch {
       });
     }
 
-    return new Response("unexpected url: " + url, { status: 500 });
+    return new Response(`unexpected url: ${url}`, { status: 500 });
   }) as typeof fetch;
 }
 
 function makeListClient(byWorkspace: Record<string, ListRow[]>): ArtifactReadClient {
   const fetchImpl = makeListFetch(byWorkspace);
   const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl });
-  return new ArtifactReadClient({ config: { baseUrl: DATA_PLANE, tokenUrl: TOKEN_URL }, cache, fetchImpl });
+  return new ArtifactReadClient({
+    config: { baseUrl: DATA_PLANE, tokenUrl: TOKEN_URL },
+    cache,
+    fetchImpl,
+  });
 }
 
 describe("ArtifactReadClient.list — discovery as the viewing user", () => {
@@ -488,5 +502,28 @@ describe("ArtifactReadClient.list — discovery as the viewing user", () => {
 
     await client.list(WS_A, { limit: -3 });
     expect(urls.at(-1)).not.toContain("limit=");
+  });
+});
+
+describe("readArtifactDataPlaneConfigFromEnv", () => {
+  const BASE = "http://artifacts.example";
+
+  it("reads the token endpoint from NB_FLEET_AUTHORIZER_TOKEN_URL", () => {
+    expect(
+      readArtifactDataPlaneConfigFromEnv({
+        NB_ARTIFACTS_DATA_PLANE_URL: BASE,
+        NB_FLEET_AUTHORIZER_TOKEN_URL: "http://authorizer.example/token",
+      }),
+    ).toEqual({ baseUrl: BASE, tokenUrl: "http://authorizer.example/token" });
+  });
+
+  it("derives nothing from NB_FLEET_AUTHORIZER_ISSUER", () => {
+    const read = () =>
+      readArtifactDataPlaneConfigFromEnv({
+        NB_ARTIFACTS_DATA_PLANE_URL: BASE,
+        NB_FLEET_AUTHORIZER_ISSUER: "http://authorizer.example",
+      });
+    expect(read).toThrow(ArtifactReadError);
+    expect(read).toThrow("NB_FLEET_AUTHORIZER_TOKEN_URL is not set");
   });
 });

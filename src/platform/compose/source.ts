@@ -39,7 +39,8 @@ import {
   type SkillsLoadedEvent,
 } from "../../conversation/types.ts";
 import { textContent } from "../../engine/content-helpers.ts";
-import type { EventSink, ToolResult } from "../../engine/types.ts";
+import type { EventSink } from "../../engine/types.ts";
+import { filterAdmittedTools } from "../../permissions/admin-tools.ts";
 import {
   type ComposedPrompt,
   composeSystemPromptTraced,
@@ -50,22 +51,28 @@ import {
   wrapContained,
 } from "../../prompt/compose.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
-import { makeIdentitySkill, type Runtime } from "../../runtime/runtime.ts";
+import type { Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
 import { collectActivatableSkills, toCatalogEntries } from "../../skills/catalog.ts";
-import { skillDisplayName } from "../../skills/display-name.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../skills/select.ts";
-import type { InProcessTool } from "../../tools/in-process-app.ts";
-import { defineInProcessApp } from "../../tools/in-process-app.ts";
+import {
+  defineInProcessApp,
+  type InProcessTool,
+  type ToolErrorResult,
+  type ToolSuccessResult,
+  type TypedToolResult,
+  typedTool,
+} from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { surfaceTools } from "../../tools/surfacing.ts";
 import {
   type AssembledContextSkill,
   type AssembledContextSource,
   ComposeAssembledContextInput,
-  type ComposeAssembledContextOutput,
+  ComposeAssembledContextOutput,
   ComposeEffectiveContextInput,
+  ComposeEffectiveContextOutput,
 } from "../schemas/compose.ts";
 
 const COMPOSE_SOURCE_NAME = "compose";
@@ -80,7 +87,8 @@ const COMPOSE_DESCRIPTION =
   "for that run from the calling workspace's conv jsonl and verifies each " +
   "layer-3 skill's `contentHash` against its current source, flagging drift. " +
   "Pass `connector` to filter the response to that connector's contributions " +
-  "(the apps section and its focused-app section). Read-only. " +
+  "(in live mode, its app entry; in historical mode, the skills it published " +
+  "that loaded in the run). Read-only. " +
   "Use this to answer 'what's in the agent's prompt right now' or 'what was " +
   "in the prompt for run X'. " +
   "`totalTokens` is the size of the composed system prompt, in both modes — " +
@@ -101,31 +109,14 @@ const ASSEMBLED_CONTEXT_DESCRIPTION =
   "recomposition. Read-only. Use this to answer 'what entered this turn's " +
   "context, and how big was each part?'";
 
-interface ComposeArgs {
-  conversation_id?: string;
-  run_id?: string;
-  connector?: string;
-}
-
-/** Exported for unit testing. */
-export interface ComposeResponse {
-  mode: "live" | "historical";
-  conversationId: string;
-  runId?: string;
-  /**
-   * Size of the composed system prompt — this tool's subject, and the same
-   * quantity in both modes so the two are comparable. Live sums the composed
-   * layers; historical reads the run's recorded `system_prompt` row.
-   *
-   * NOT the size of the context window: tool descriptions and history are not
-   * part of the prompt. `compose__assembled_context` answers that, as
-   * `windowTokens`.
-   */
-  totalTokens: number;
-  text: string;
+/**
+ * The `compose__effective_context` result as the handler builds it: the output
+ * schema's shape, with each layer kept as the runtime `TracedLayer` the
+ * `connector` filter reads. Exported for unit testing.
+ */
+export type ComposeResponse = Omit<ComposeEffectiveContextOutput, "layers"> & {
   layers: TracedLayer[];
-  warnings: string[];
-}
+};
 
 /**
  * Build the platform source. One tool, one resource is implied (the source
@@ -134,12 +125,12 @@ export interface ComposeResponse {
  */
 export function createComposeSource(runtime: Runtime, eventSink: EventSink): McpSource {
   const tools: InProcessTool[] = [
-    {
+    typedTool({
       name: "effective_context",
       description: COMPOSE_DESCRIPTION,
       inputSchema: ComposeEffectiveContextInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
-        const args = input as ComposeArgs;
+      outputSchema: ComposeEffectiveContextOutput,
+      handler: async (args): Promise<TypedToolResult<typeof ComposeEffectiveContextOutput>> => {
         try {
           // Resolve conv id — explicit arg wins; fall back to the current
           // conversation in scope (set by `runtime.chat()` via RequestContext).
@@ -173,22 +164,18 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
             applyConnectorFilter(response, args.connector);
           }
 
-          return {
-            content: textContent(formatTextSummary(response)),
-            structuredContent: response as unknown as Record<string, unknown>,
-            isError: false,
-          };
+          return ok(formatTextSummary(response), response);
         } catch (err) {
           return errorResult(errorMessage(err));
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "assembled_context",
       description: ASSEMBLED_CONTEXT_DESCRIPTION,
       inputSchema: ComposeAssembledContextInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
-        const args = input as { conversation_id?: string; run_id?: string };
+      outputSchema: ComposeAssembledContextOutput,
+      handler: async (args): Promise<TypedToolResult<typeof ComposeAssembledContextOutput>> => {
         try {
           const convId = resolveConvId(args);
           if (!convId) {
@@ -203,16 +190,12 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
             );
           }
           const digest = await readAssembledContext(runtime, convId, args.run_id);
-          return {
-            content: textContent(formatAssembledSummary(digest)),
-            structuredContent: digest as unknown as Record<string, unknown>,
-            isError: false,
-          };
+          return ok(formatAssembledSummary(digest), digest);
         } catch (err) {
           return errorResult(errorMessage(err));
         }
       },
-    },
+    }),
   ];
 
   return defineInProcessApp(
@@ -242,15 +225,10 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  *
  * Inputs gathered (mirrors `runtime.chat()` for everything not request-
  * scoped):
- *   - `contextSkills` = global `runtime.getContextSkills()` PLUS the
- *     workspace identity override (`workspace.identity` synthesized into
- *     a priority-1 core skill). The override is the workspace-scoping
- *     piece — without it the trace would lie for any workspace using a
- *     custom identity.
+ *   - `contextSkills` = the conversation pool's context-role skills, every
+ *     tier.
  *   - `apps` = `runtime.buildAppsList(wsId)` — workspace-scoped, includes
  *     each connector's `app://instructions` overlay.
- *   - `overlays` = `runtime.readPromptOverlays(wsId)` — the workspace
- *     instruction overlay.
  *   - `layer3Skills` = `loadConversationSkills` ∩ `selectLayer3Skills`
  *     against the role-filtered active tool set, less the skills this
  *     conversation has muted.
@@ -267,15 +245,8 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   const wsId = runtime.requireWorkspaceId();
   const identity = runtime.getCurrentIdentity();
 
-  // Gather workspace metadata + the workspace identity override (per-
-  // workspace `workspace.identity` synthesized into a priority-1 context
-  // skill, exactly like `runtime.chat()` does at line ~708). Without this
-  // append, the trace would silently report `DEFAULT_IDENTITY` for any
-  // workspace operating under a custom identity — defeating the headline
-  // purpose of the tool.
   const ws = await runtime.getWorkspaceStore().get(wsId);
   const workspaceContext: WorkspaceContext = ws ? { id: ws.id, name: ws.name } : { id: wsId };
-  const identityOverride = ws?.identity ? makeIdentitySkill(ws.identity) : null;
   // Partition the conversation pool by ROLE, exactly as `runtime.chat()` does:
   // `context` (every tier, active only) → Layer 0/1; `capability` → Layer 3.
   // This trace must equal what chat composes — including workspace/user-tier
@@ -291,13 +262,8 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   const { context: poolContext, capability: poolCapability } = partitionSkillsByRole(
     runtime.loadConversationSkills(wsId, userId).filter((sk) => !suppressed.has(sk.manifest.name)),
   );
-  const requestContextSkills = identityOverride ? [...poolContext, identityOverride] : poolContext;
 
-  // Gather inputs in parallel where possible.
-  const [apps, overlays] = await Promise.all([
-    runtime.buildAppsList(wsId),
-    runtime.readPromptOverlays(wsId),
-  ]);
+  const apps = await runtime.buildAppsList(wsId);
 
   // Replicate `runtime.chat()`'s tool-set construction so the trace
   // matches reality:
@@ -311,8 +277,11 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   //      `proxied.length > 0`, so the trace MUST compute this correctly
   //      — the previous hard-coded `false` understated the prompt for
   //      Tier 2/3 workspaces (more than DEFAULT_MAX_DIRECT_TOOLS tools).
+  //   Connector `admin_tools` the caller is not admitted to leave the set
+  //   the same way they leave `runtime.chat()`'s.
   const registry = runtime.getRegistryForWorkspace(wsId);
-  const allTools = (await registry.availableTools()).filter((t) =>
+  const admission = await runtime.connectorAdmission(wsId, identity);
+  const allTools = filterAdmittedTools(await registry.availableTools(), admission).filter((t) =>
     isToolVisibleToRole(t.name, identity?.orgRole),
   );
   const { direct: directTools, proxied } = surfaceTools(allTools, null, {});
@@ -349,7 +318,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   );
 
   const composed: ComposedPrompt = composeSystemPromptTraced(
-    requestContextSkills,
+    poolContext,
     null, // matched skill — request-scoped, skipped in live mode
     apps,
     undefined, // focused app — request-scoped
@@ -363,7 +332,6 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
       : undefined,
     proxied.length > 0,
     workspaceContext,
-    overlays,
     layer3Entries,
     "chat",
     skillCatalog,
@@ -523,40 +491,33 @@ function findLatestContextAssembled(
 ): ContextAssembledEvent | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if (e?.type === "context.assembled") return e as ContextAssembledEvent;
+    if (e?.type === "context.assembled") return e;
   }
   return undefined;
 }
 
 /**
  * Project a recorded context source onto the wire shape (drops unknown extras).
- * A history row recorded before the field was renamed carries its message count
- * as `turns`; normalize it so readers only handle `messages`. `annotation` is
- * stamped from the same set `windowTokens` is summed over, so a renderer's row
- * layout and the total under it can't be derived from different rules.
+ * `annotation` is stamped from the same set `windowTokens` is summed over, so a
+ * renderer's row layout and the total under it can't be derived from different
+ * rules.
  */
 function toAssembledSource(s: ContextAssembledEvent["sources"][number]): AssembledContextSource {
-  const messages = typeof s.messages === "number" ? s.messages : s.turns;
   return {
     kind: s.kind,
     tokens: s.tokens,
     ...(typeof s.count === "number" ? { count: s.count } : {}),
-    ...(typeof messages === "number" ? { messages } : {}),
+    ...(typeof s.messages === "number" ? { messages: s.messages } : {}),
     ...(typeof s.compacted === "boolean" ? { compacted: s.compacted } : {}),
     ...(ANNOTATION_KINDS.has(s.kind) ? { annotation: true } : {}),
   };
 }
 
-/**
- * Project a recorded skill entry onto the wire shape. `name` is resolved here
- * rather than passed through, so every consumer of this tool — the web
- * surfaces and any agent reading `structuredContent` — gets a usable name even
- * for runs recorded before the field existed.
- */
+/** Project a recorded skill entry onto the wire shape. */
 function toAssembledSkill(s: SkillsLoadedEvent["skills"][number]): AssembledContextSkill {
   return {
     id: s.id,
-    name: skillDisplayName(s),
+    name: s.name,
     ...(s.connector ? { connector: s.connector } : {}),
     scope: s.scope,
     tokens: s.tokens,
@@ -684,6 +645,7 @@ function auditToSubItem(
     kind: "layer3_skill",
     id: entry.id,
     source: audit.body !== null ? entry.id : `${entry.id} (body unavailable)`,
+    ...(entry.connector ? { connector: entry.connector } : {}),
     metadata: {
       scope: entry.scope,
       loadedBy: entry.loadedBy,
@@ -744,7 +706,7 @@ interface L3SkillAudit {
 function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit {
   const path = entry.id;
   // `skill-in-memory:<name>` ids are synthesized for skills without a
-  // sourcePath (e.g. workspace identity overrides). Nothing to verify.
+  // sourcePath. Nothing to verify.
   // POSIX-only check — the platform's deployed targets (Linux, macOS) put
   // skill files under absolute POSIX paths. A future Windows port would
   // need to broaden this (`path.isAbsolute(path)`) since drive-letter
@@ -868,7 +830,7 @@ async function readConvEvents(
   // Mirrors the helper in skills.ts. Inlined here rather than imported so
   // this source doesn't take a dep on a sibling tool's private API.
   //
-  // Stage 1 single-owner: gate the read on ownership BEFORE touching
+  // Conversations are single-owner: gate the read on ownership BEFORE touching
   // the event log. The conversation id is a tool input — any
   // authenticated caller could pass an arbitrary id; without this
   // check, `effective_context` would happily read peer conversations'
@@ -933,12 +895,20 @@ export function applyConnectorFilter(response: ComposeResponse, connector: strin
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-function errorResult(message: string): ToolResult {
+/**
+ * A success: the model reads `summary` (in-process results reach it as
+ * `content` only), and the SDK checks `data` against the tool's output schema.
+ */
+function ok<T>(summary: string, data: T): ToolSuccessResult<T> {
+  return { content: textContent(summary), structuredContent: data, isError: false };
+}
+
+function errorResult(message: string): ToolErrorResult {
   return { content: textContent(message), isError: true };
 }
 
 /** Resolve the target conversation id: a non-empty `conversation_id` arg wins, else the in-scope conversation. */
-function resolveConvId(args: ComposeArgs): string | undefined {
+function resolveConvId(args: { conversation_id?: string }): string | undefined {
   const argConvId =
     typeof args.conversation_id === "string" && args.conversation_id.length > 0
       ? args.conversation_id

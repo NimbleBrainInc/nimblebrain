@@ -31,7 +31,7 @@ function shortHash(s: string): string {
 
 /** TTL of a message's / tool's Anthropic cache breakpoint, or undefined. */
 function ttlOf(x: { providerOptions?: Record<string, unknown> } | undefined): string | undefined {
-  const anthropic = x?.providerOptions?.["anthropic"] as
+  const anthropic = x?.providerOptions?.anthropic as
     | { cacheControl?: { ttl?: string } }
     | undefined;
   return anthropic?.cacheControl?.ttl;

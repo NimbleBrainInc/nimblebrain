@@ -1,9 +1,9 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { readCatalogServers, validateCatalog } from "../../src/connectors/catalog/read.ts";
+import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
 /**
  * `validateCatalog` is what a pre-merge gate runs over a catalog
@@ -81,6 +81,21 @@ describe("validateCatalog", () => {
     expect(diagnostics[0]?.message).toContain("duplicate name");
   });
 
+  test("two ids sharing one server name are both reported, naming each other and the name", () => {
+    // `a.b/c` and `a/b.c` both slugify to `a-b-c`.
+    writeCatalog("a.json", [{ ...VALID_ENTRY, name: "a.b/c" }, VALID_ENTRY]);
+    writeCatalog("b.json", [{ ...VALID_ENTRY, name: "a/b.c" }]);
+
+    const diagnostics = validateCatalog(dir);
+    expect(diagnostics.map((d) => d.name).sort()).toEqual(["a.b/c", "a/b.c"]);
+    for (const d of diagnostics) {
+      expect(d.collision).toBe(true);
+      expect(d.message).toContain('"a-b-c"');
+    }
+    expect(diagnostics.find((d) => d.name === "a.b/c")?.message).toContain('"a/b.c"');
+    expect(readCatalogServers(dir).map((s) => s.name)).toEqual(["com.example/mcp"]);
+  });
+
   test("an unparseable file is reported and does not sink its siblings", () => {
     writeFileSync(join(dir, "a-broken.json"), "{ not json");
     writeCatalog("b-fine.json", [VALID_ENTRY]);
@@ -156,6 +171,51 @@ describe("validateCatalog", () => {
     const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.message).toContain("must NOT have more than 100 characters");
+  });
+
+  test("a host block of another major is reported as a directory-boundary drop", () => {
+    // A host that predates major 2 would read its blocks as major 1 and
+    // ignore what it does not know — for admin_tools, widening access.
+    const withHost = (host_version: unknown) => ({
+      ...VALID_ENTRY,
+      _meta: { "ai.nimblebrain/host": { host_version, admin_tools: ["configure"] } },
+    });
+    writeCatalog("catalog.json", [withHost("2.0")]);
+
+    const diagnostics = validateCatalog(dir);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("directory boundary");
+    expect(diagnostics[0]?.message).toContain("host_version must be major 1");
+
+    // A null block is no block, as every host-block parser reads it.
+    writeCatalog("catalog.json", [{ ...VALID_ENTRY, _meta: { "ai.nimblebrain/host": null } }]);
+    expect(validateCatalog(dir)).toEqual([]);
+
+    for (const v of ["1", "1.0", "1.1", "1.5", "1.12"]) {
+      writeCatalog("catalog.json", [withHost(v)]);
+      expect(validateCatalog(dir)).toEqual([]);
+    }
+    for (const v of [undefined, 1, "2", "1.0.0", "v1", ""]) {
+      writeCatalog("catalog.json", [withHost(v)]);
+      expect(validateCatalog(dir)).toHaveLength(1);
+    }
+  });
+
+  test("a malformed admin_tools is reported, though the entry is kept", () => {
+    // The runtime keeps the entry and makes every tool on it admin-only, so
+    // members lose the connector; the gate is where that typo is caught.
+    const withAdmin = (admin_tools: unknown) => ({
+      ...VALID_ENTRY,
+      _meta: { "ai.nimblebrain/host": { host_version: "1.0", admin_tools } },
+    });
+    writeCatalog("catalog.json", [withAdmin("configure")]);
+    const diagnostics = validateCatalog(dir);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("every tool is admin-only");
+    expect(diagnostics[0]?.message).toContain("admin_tools is not a list");
+
+    writeCatalog("catalog.json", [withAdmin(["configure", "configure"])]);
+    expect(validateCatalog(dir)).toEqual([]);
   });
 
   test("an entry with neither packages nor remotes is reported as not installable", () => {

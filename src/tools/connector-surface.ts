@@ -29,7 +29,7 @@ import type { Tool, ToolResult, ToolSource } from "./types.ts";
 export interface ConnectorPort {
   /** Advertised tools, named as a declaration names them. For the contract check. */
   tools(): Promise<Tool[]>;
-  /** Invoke a tool by its bare name, through the ordinary MCP dispatch path. */
+  /** Invoke a tool by its bare name, through the source's MCP dispatch. */
   execute(toolName: string, input: Record<string, unknown>): Promise<ToolResult>;
   /**
    * Subscribe to "this source's tool set may have changed", returning an
@@ -54,12 +54,22 @@ type ConnectorSourceLike = Pick<ToolSource, "tools" | "execute" | "subscribeTool
  * is ever provisioned or notified. The two names are decomposed by
  * `splitInnerToolName`, the one grammar every door shares — a hand-rolled
  * `slice` here would be a second one.
+ *
+ * `inline` makes every call a plain inline `tools/call`. The lifecycle port asks
+ * for it: the `ai.nimblebrain/lifecycle` extension forbids task augmentation,
+ * and an uninstall waits behind the call.
  */
-export function connectorPortForSource(source: ConnectorSourceLike): ConnectorPort {
+export function connectorPortForSource(
+  source: ConnectorSourceLike,
+  opts: { inline?: boolean } = {},
+): ConnectorPort {
   return {
     tools: async () =>
       (await source.tools()).map((t) => ({ ...t, name: splitInnerToolName(t.name).bareToolName })),
-    execute: (toolName, input) => source.execute(toolName, input),
+    execute: (toolName, input) =>
+      opts.inline
+        ? source.execute(toolName, input, undefined, { inline: true })
+        : source.execute(toolName, input),
     subscribeToolsChanged: source.subscribeToolsChanged?.bind(source),
   };
 }

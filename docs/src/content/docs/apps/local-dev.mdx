@@ -205,7 +205,7 @@ curl -X POST http://localhost:8001/mcp \
 4. **Write your React app** with Synapse hooks:
    ```tsx
    // ui/src/App.tsx
-   import { SynapseProvider, useCallTool, useDataSync } from "@nimblebrain/synapse/react";
+   import { AppProvider, useCallTool, useDataSync } from "@nimblebrain/synapse/react";
 
    function MyApp() {
      const { call, isPending, data } = useCallTool("my_tool");
@@ -215,9 +215,9 @@ curl -X POST http://localhost:8001/mcp \
 
    export function App() {
      return (
-       <SynapseProvider name="myapp" version="1.0.0">
+       <AppProvider name="myapp" version="1.0.0">
          <MyApp />
-       </SynapseProvider>
+       </AppProvider>
      );
    }
    ```

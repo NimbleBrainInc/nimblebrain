@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RemoteTransportConfig } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent } from "../../src/engine/types.ts";
+import type { DeclaredRuntimeConfig } from "../../src/runtime/runtime.ts";
 import {
   _resetCredentialStoreForTest,
   FileCredentialStore,
@@ -24,16 +25,16 @@ import { resolveInstanceCredentialRefs } from "../../src/tools/instance-credenti
 import { resolveTransportCredential } from "../../src/tools/remote-transport.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
-const WS_ID = "ws_acme01";
+const WS_ID = "ws_0010b38da2d87d3d";
 let workDir: string;
 let store: FileCredentialStore;
 let events: EngineEvent[];
 
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-credref-"));
-  seedWorkspaceRoot(workDir, "ws_acme01");
-  seedWorkspaceRoot(workDir, "ws_tenanta");
-  seedWorkspaceRoot(workDir, "ws_tenantb");
+  seedWorkspaceRoot(workDir, "ws_0010b38da2d87d3d");
+  seedWorkspaceRoot(workDir, "ws_00741647fd740fac");
+  seedWorkspaceRoot(workDir, "ws_0075ad1326581881");
   events = [];
   store = new FileCredentialStore(workDir, { eventSink: { emit: (e) => events.push(e) } });
   setCredentialStore(store);
@@ -63,7 +64,11 @@ describe("transport auth — literal and reference", () => {
   test("a named header's value resolves the same way", async () => {
     await store.put({ kind: "workspace", wsId: WS_ID }, "acme.api_key", "k_stored");
     const config: RemoteTransportConfig = {
-      auth: { type: "header", name: "x-api-key", value: { ref: "credential", key: "acme.api_key" } },
+      auth: {
+        type: "header",
+        name: "x-api-key",
+        value: { ref: "credential", key: "acme.api_key" },
+      },
     };
     const { headers } = await resolveTransportCredential(config, WS_ID);
     expect(headers["x-api-key"]).toBe("k_stored");
@@ -78,11 +83,10 @@ describe("transport auth — literal and reference", () => {
     expect(headers).toEqual({ "x-trace": "t_stored", "x-plain": "kept" });
   });
 
-  test("`${VAR}` no longer resolves anywhere — it is sent verbatim", async () => {
+  test("`${VAR}` does not resolve anywhere — it is sent verbatim", async () => {
     process.env.NB_CREDREF_PROBE = "from-env";
     try {
       const config: RemoteTransportConfig = {
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal that must NOT expand
         auth: { type: "bearer", token: "${NB_CREDREF_PROBE}" },
       };
       const { headers } = await resolveTransportCredential(config, WS_ID);
@@ -97,17 +101,17 @@ describe("the same reference means a different secret per workspace", () => {
   // The property a fleet service depends on: one catalog entry, two workspaces,
   // two secrets. If scope leaked, one tenant would authenticate as another.
   test("two workspaces with the same key each send their own value", async () => {
-    await store.put({ kind: "workspace", wsId: "ws_tenanta" }, "acme.db_url", "a-secret");
-    await store.put({ kind: "workspace", wsId: "ws_tenantb" }, "acme.db_url", "b-secret");
+    await store.put({ kind: "workspace", wsId: "ws_00741647fd740fac" }, "acme.db_url", "a-secret");
+    await store.put({ kind: "workspace", wsId: "ws_0075ad1326581881" }, "acme.db_url", "b-secret");
     const config: RemoteTransportConfig = {
       auth: { type: "bearer", token: { ref: "credential", key: "acme.db_url" } },
     };
-    expect((await resolveTransportCredential(config, "ws_tenanta")).headers.Authorization).toBe(
-      "Bearer a-secret",
-    );
-    expect((await resolveTransportCredential(config, "ws_tenantb")).headers.Authorization).toBe(
-      "Bearer b-secret",
-    );
+    expect(
+      (await resolveTransportCredential(config, "ws_00741647fd740fac")).headers.Authorization,
+    ).toBe("Bearer a-secret");
+    expect(
+      (await resolveTransportCredential(config, "ws_0075ad1326581881")).headers.Authorization,
+    ).toBe("Bearer b-secret");
   });
 });
 
@@ -117,7 +121,7 @@ describe("failure is loud and names the cause", () => {
       auth: { type: "bearer", token: { ref: "credential", key: "acme.db_url" } },
     };
     await expect(resolveTransportCredential(config, WS_ID)).rejects.toThrow(
-      /acme\.db_url.*workspace:ws_acme01/s,
+      /acme\.db_url.*workspace:ws_0010b38da2d87d3d/s,
     );
   });
 
@@ -169,7 +173,7 @@ describe("audit", () => {
     expect(events).toHaveLength(1);
     expect(events[0]?.type).toBe("audit.credential_read");
     expect(events[0]?.data).toMatchObject({
-      scope: "workspace:ws_acme01",
+      scope: "workspace:ws_0010b38da2d87d3d",
       key: "acme.db_url",
       caller: "transport:header",
     });
@@ -200,9 +204,25 @@ describe("instance config references", () => {
   test("a gateway key under an operator-chosen name resolves without being named in code", async () => {
     await store.put({ kind: "instance" }, "acme.gateway_key", "gw-stored");
     const resolved = await resolveInstanceCredentialRefs({
-      connectors: { gateways: { acme: { apiKey: { ref: "credential", key: "acme.gateway_key" } } } },
+      connectors: {
+        gateways: { acme: { apiKey: { ref: "credential", key: "acme.gateway_key" } } },
+      },
     });
     expect(resolved.connectors.gateways.acme.apiKey).toBe("gw-stored");
+  });
+
+  test("a reference is typed only where the runtime can resolve one", () => {
+    const ref = { ref: "credential", key: "k" } as const;
+    const declared: DeclaredRuntimeConfig[] = [
+      { providers: { openai: { apiKey: ref, baseURL: ref } } },
+      // @ts-expect-error — a literal-union field takes no reference
+      { thinking: ref },
+      // @ts-expect-error — a nested literal-union field takes no reference
+      { logging: { level: ref } },
+      // @ts-expect-error — `workDir` is read before the credential store exists
+      { workDir: ref },
+    ];
+    expect(declared).toHaveLength(4);
   });
 
   test("a config with no references comes back as the very same object", async () => {
@@ -220,7 +240,7 @@ describe("instance config references", () => {
     await store.put({ kind: "instance" }, "k", "v");
     const config = {
       events: [sink],
-      providers: { anthropic: { apiKey: { ref: "credential", key: "k" } } },
+      providers: { anthropic: { apiKey: { ref: "credential" as const, key: "k" } } },
     };
     const resolved = await resolveInstanceCredentialRefs(config);
     expect(resolved.providers.anthropic.apiKey).toBe("v");

@@ -7,40 +7,62 @@
  * the soft-delete flow (the data half lives in UserStore tests).
  */
 
+import { beforeAll, describe, expect, it } from "bun:test";
+import type { webcrypto } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "bun:test";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { UserStore } from "../../../src/identity/user.ts";
-import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import {
+  stubWorkosUserManagement,
+  workosMembership,
+  workosMembershipList,
+  workosUser,
+} from "../../helpers/workos-sdk.ts";
 
 // ── Crypto helpers ──────────────────────────────────────────────────
 
 interface TestKeyPair {
   privateKey: CryptoKey;
-  publicJwk: JsonWebKey;
+  /** A JWKS entry: the WebCrypto key plus its RFC 7517 `kid`. */
+  publicJwk: webcrypto.JsonWebKey & { kid?: string };
   kid: string;
 }
 
 async function generateRSAKeyPair(kid: string): Promise<TestKeyPair> {
   const keyPair = await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
     true,
     ["sign", "verify"],
   );
-  const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
-  publicJwk.kid = kid;
-  publicJwk.use = "sig";
+  const publicJwk = {
+    ...(await crypto.subtle.exportKey("jwk", keyPair.publicKey)),
+    kid,
+    use: "sig",
+  };
   return { privateKey: keyPair.privateKey, publicJwk, kid };
 }
 
 function base64UrlEncode(data: Uint8Array): string {
-  return btoa(String.fromCharCode(...data)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return btoa(String.fromCharCode(...data))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
-async function createJwt(payload: Record<string, unknown>, privateKey: CryptoKey, kid: string): Promise<string> {
+async function createJwt(
+  payload: Record<string, unknown>,
+  privateKey: CryptoKey,
+  kid: string,
+): Promise<string> {
   const header = { alg: "RS256", typ: "JWT", kid };
   const headerB64 = base64UrlEncode(new TextEncoder().encode(JSON.stringify(header)));
   const payloadB64 = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
@@ -60,7 +82,6 @@ let workosKey: TestKeyPair;
 const CONFIG: WorkosAuth = {
   adapter: "workos",
   clientId: "client_soft_delete_test",
-  redirectUri: "http://localhost/callback",
   organizationId: "org_soft_delete_test",
   apiKey: "sk_test_fake",
 };
@@ -87,30 +108,27 @@ function jwksResponseBody(): string {
 function createProvider(): { provider: WorkosIdentityProvider; userStore: UserStore } {
   const dir = mkdtempSync(join(tmpdir(), "workos-soft-delete-"));
   const userStore = new UserStore(dir);
-  const workspaceStore = new WorkspaceStore(dir);
-  const provider = new WorkosIdentityProvider(CONFIG, userStore, workspaceStore);
+  const provider = new WorkosIdentityProvider(CONFIG, userStore);
 
-  const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-  workos.userManagement = {
-    getUser: async (userId: string) => ({
-      id: userId,
-      email: `${userId}@test.com`,
-      firstName: "Test",
-      lastName: "User",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }),
-    listOrganizationMemberships: async (opts: { userId: string; organizationId: string }) => ({
-      data: [{ id: "om_test", userId: opts.userId, organizationId: opts.organizationId, role: { slug: "member" }, status: "active" }],
-    }),
-  };
-  provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+  stubWorkosUserManagement(provider, {
+    getUser: async (userId) =>
+      workosUser({ id: userId, email: `${userId}@test.com`, firstName: "Test", lastName: "User" }),
+    listOrganizationMemberships: async (opts) =>
+      workosMembershipList([
+        workosMembership({
+          userId: opts.userId,
+          organizationId: opts.organizationId,
+          slug: "member",
+        }),
+      ]),
+  });
+  provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
   return { provider, userStore };
 }
 
 function makeRequest(token: string): Request {
-  return new Request("http://localhost:27247/v1/chat", {
+  return new Request("http://localhost:27247/v1/workspaces/ws_00079598e311c160/chat/start", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -118,7 +136,11 @@ function makeRequest(token: string): Request {
 
 async function makeValidToken(sub: string): Promise<string> {
   const nowSec = Math.floor(Date.now() / 1000);
-  return createJwt({ sub, exp: nowSec + 3600, iat: nowSec, org_id: CONFIG.organizationId }, workosKey.privateKey, workosKey.kid);
+  return createJwt(
+    { sub, exp: nowSec + 3600, iat: nowSec, org_id: CONFIG.organizationId },
+    workosKey.privateKey,
+    workosKey.kid,
+  );
 }
 
 // ── Tests ───────────────────────────────────────────────────────────

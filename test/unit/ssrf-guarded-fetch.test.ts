@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { FetchLike } from "@modelcontextprotocol/server";
 import { createSsrfGuardedFetch } from "../../src/tools/ssrf-guarded-fetch.ts";
 
 /**
@@ -10,9 +10,9 @@ import { createSsrfGuardedFetch } from "../../src/tools/ssrf-guarded-fetch.ts";
  */
 function stubFetch(routes: Record<string, { status: number; location?: string }>): {
   fetch: FetchLike;
-  calls: Array<{ url: string; redirect: RequestRedirect | undefined }>;
+  calls: Array<{ url: string; redirect: RequestInit["redirect"] }>;
 } {
-  const calls: Array<{ url: string; redirect: RequestRedirect | undefined }> = [];
+  const calls: Array<{ url: string; redirect: RequestInit["redirect"] }> = [];
   const fetch: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input.toString();
     calls.push({ url, redirect: init?.redirect });
@@ -147,7 +147,10 @@ describe("createSsrfGuardedFetch", () => {
 
   test("falls back to global fetch shape when no base fetch is given", () => {
     // Smoke: undefined baseFetch must still yield a callable FetchLike.
-    const guarded = createSsrfGuardedFetch(undefined, { allowInsecure: false, fleetInternal: false });
+    const guarded = createSsrfGuardedFetch(undefined, {
+      allowInsecure: false,
+      fleetInternal: false,
+    });
     expect(typeof guarded).toBe("function");
   });
 });

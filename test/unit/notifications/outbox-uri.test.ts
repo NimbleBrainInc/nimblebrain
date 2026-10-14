@@ -7,11 +7,11 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { NOTIFICATION_RETENTION_DAYS } from "../../../src/notifications/store.ts";
 import {
   NOTIFICATION_REPLAY_MAX_AGE_MS,
   outboxReadUri,
 } from "../../../src/notifications/outbox-uri.ts";
+import { NOTIFICATION_RETENTION_DAYS } from "../../../src/notifications/store.ts";
 
 describe("outboxReadUri", () => {
   test("omits the cursor on the bootstrap read", () => {

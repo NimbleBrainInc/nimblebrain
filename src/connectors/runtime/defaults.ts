@@ -1,53 +1,27 @@
-import type {
-  ConnectorRef,
-  ConnectorUiMeta,
-  HostManifestMeta,
-  LocalConnectorMeta,
-  PlacementDeclaration,
-} from "./types.ts";
+import type { ConnectorUiMeta, HostManifestMeta, PlacementDeclaration } from "./types.ts";
 
-/** Max length for a connector-authored display string (host `name`/`icon`, placement `label`/`icon`). */
+/** Max length for a connector-authored display string (placement `label`/`icon`). */
 const DISPLAY_STRING_MAX = 128;
-
-/**
- * Connectors included by default. Empty: platform capabilities
- * (conversations, files, home, settings, usage, automations) are in-process
- * MCP servers — see src/platform/.
- */
-export const DEFAULT_CONNECTORS: ConnectorRef[] = [];
-
-/** Merge default connectors with user-configured ones, deduplicating by URL. */
-export function mergeConnectors(
-  userConnectors: ConnectorRef[],
-  noDefaults?: boolean,
-): ConnectorRef[] {
-  const defaults = noDefaults ? [] : DEFAULT_CONNECTORS;
-  const userUrls = new Set(userConnectors.map((b) => b.url));
-  return [...defaults.filter((b) => !userUrls.has(b.url)), ...userConnectors];
-}
 
 /**
  * Map a host `_meta["ai.nimblebrain/host"]` block to the runtime's `ConnectorUiMeta`.
  * The single source of truth for this projection — used by every install path
  * (the curated catalog and the fleet-connector `ServerDetail._meta`), so
  * "an MCP server is an MCP server" holds at the `_meta` interface. Returns
- * null unless a `name` is present (the host needs a label to surface anything).
+ * null unless the block declares at least one valid placement.
+ *
+ * The block's `name`, `icon` and `category` are not read. A connector's display
+ * name is its catalog entry's core `title ?? name`, and its icon the entry's
+ * core `icons`, where the MCP Registry `ServerDetail` puts them.
  */
 export function hostMetaToUiMeta(hostMeta: HostManifestMeta | undefined): ConnectorUiMeta | null {
   // `hostMeta` is an unchecked cast over registry JSON (`getNimbleBrainHostMeta`),
-  // so every field here is `unknown` in practice and only the schema-gated
-  // install path has validated it. Type-check before touching, exactly as
-  // `sanitizePlacementFields` does below — a truthy non-string `name` would
-  // otherwise throw out of catalog projection and take the whole catalog with it.
-  if (typeof hostMeta?.name !== "string" || hostMeta.name === "") return null;
-  const ui: ConnectorUiMeta = {
-    name: hostMeta.name.slice(0, DISPLAY_STRING_MAX),
-    icon: typeof hostMeta.icon === "string" ? hostMeta.icon.slice(0, DISPLAY_STRING_MAX) : "",
-  };
-  if (Array.isArray(hostMeta.placements) && hostMeta.placements.length > 0) {
-    ui.placements = hostMeta.placements;
-  }
-  return ui;
+  // so `placements` is `unknown` in practice; `sanitizePlacements` type-checks
+  // every field before touching it. The raw list is kept: it is re-sanitized
+  // where it registers.
+  const placements = hostMeta?.placements;
+  if (!Array.isArray(placements) || sanitizePlacements(placements).length === 0) return null;
+  return { placements };
 }
 
 /** Validate a placement's slot and `ui://` resourceUri; return its authority, or null if malformed. */
@@ -90,7 +64,7 @@ function sanitizePlacementFields(p: PlacementDeclaration): PlacementDeclaration 
  *    authority (e.g. `people`) differs from the slugified server id
  *    (`ai-nimblebrain-people-mcp`) anyway, so they can't be equality-checked. It
  *    only stops a single declaration from MIXING authorities; it does NOT stop a
- *    connector from declaring a *sole* foreign authority (e.g. `ui://home/...`).
+ *    connector from declaring a *sole* foreign authority (e.g. `ui://files/...`).
  *    That is not a host-surface takeover: rendering resolves a placement's
  *    resource from its OWN `serverName` (SlotRenderer → `getResources(serverName,
  *    …)`, serverName-scoped iframe), so a connector only ever renders its own
@@ -115,20 +89,4 @@ export function sanitizePlacements(
     out.push(sanitizePlacementFields(p));
   }
   return out;
-}
-
-/**
- * Map a `ServerDetail`-shaped record's `_meta["ai.nimblebrain/host"]` block
- * onto the runtime's `LocalConnectorMeta`.
- */
-export function extractConnectorMeta(detail: Record<string, unknown>): LocalConnectorMeta {
-  const meta = detail._meta as Record<string, unknown> | undefined;
-  const hostMeta = meta?.["ai.nimblebrain/host"] as HostManifestMeta | undefined;
-  return {
-    manifestName: detail.name as string | undefined,
-    version: (detail.version as string) ?? "unknown",
-    description: detail.description as string | undefined,
-    ui: hostMetaToUiMeta(hostMeta),
-    briefing: hostMeta?.briefing ?? null,
-  };
 }

@@ -9,7 +9,19 @@
 import { appendFileSync, existsSync } from "node:fs";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ResourceLinkInfo } from "../engine/content-helpers.ts";
+import type {
+  ConnectorSkillInjectedPayload,
+  EngineEventPayloads,
+  LlmDonePayload,
+  RunDonePayload,
+  RunErrorPayload,
+  RunStartPayload,
+  SkillActivatedPayload,
+  SkillSuppressionPayload,
+  ToolDonePayload,
+  ToolProgressPayload,
+  ToolStartPayload,
+} from "../engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { ConversationCorruptedError } from "../runtime/errors.ts";
 import { ensureWorkspaceDir } from "../workspace/context.ts";
@@ -23,7 +35,6 @@ import { ConversationIndex, canAccess } from "./index-cache.ts";
 import {
   type ConnectorSkillInjectedEvent,
   type ContextAssembledEvent,
-  type ContextAssembledSource,
   type Conversation,
   type ConversationAccessContext,
   type ConversationEvent,
@@ -38,7 +49,6 @@ import {
   type RunStartEvent,
   type SkillActivatedEvent,
   type SkillSuppressionEvent,
-  type SkillsLoadedEntry,
   type SkillsLoadedEvent,
   type StoredMessage,
   type ToolDoneEvent,
@@ -59,16 +69,31 @@ function safeParseLines<T>(lines: string[]): T[] {
   return results;
 }
 
+/** Map an engine `llm.done` to a persisted `llm.response`. */
+function mapLlmDone(ts: string, d: LlmDonePayload): LlmResponseEvent {
+  return {
+    ts,
+    type: "llm.response",
+    runId: d.runId,
+    model: d.model,
+    content: d.content,
+    usage: d.usage,
+    llmMs: d.llmMs,
+    finishReason: d.finishReason,
+    // The engine omits an empty raw reason, so a present string is a real one.
+    ...(d.finishReasonRaw !== undefined ? { finishReasonRaw: d.finishReasonRaw } : {}),
+  };
+}
+
 /** Map an engine `skill.suppression` to a persisted event, or null when unnamed. */
-function mapSkillSuppression({ ts, d, runId }: EngineEventContext): ConversationEvent | null {
-  const skillName = typeof d.skillName === "string" ? d.skillName : "";
-  if (!skillName) return null;
+function mapSkillSuppression(ts: string, d: SkillSuppressionPayload): ConversationEvent | null {
+  if (!d.skillName) return null;
   const e: SkillSuppressionEvent = {
     ts,
     type: "skill.suppression",
-    runId,
-    skillName,
-    suppressed: d.suppressed === true,
+    runId: d.runId,
+    skillName: d.skillName,
+    suppressed: d.suppressed,
   };
   return e;
 }
@@ -111,7 +136,7 @@ function parseConversationHeader(raw: Record<string, unknown>): Conversation {
     title: (raw.title as string | null) ?? null,
     lastModel: (raw.lastModel as string | null) ?? null,
     ownerId: raw.ownerId as string,
-    ...(raw.model ? { model: raw.model as string } : {}),
+    model: raw.model as string,
     ...(raw.format ? { format: raw.format as "events" } : {}),
     ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
     ...(raw.visibility ? { visibility: raw.visibility as "private" | "shared" } : {}),
@@ -161,6 +186,18 @@ function forkUserEventLine(msg: StoredMessage): string {
 }
 
 /**
+ * The finish reason for an `llm.response` synthesized from a stored assistant
+ * message: the one its metadata recorded, else what its content implies — a
+ * message carrying tool calls ended to run them, anything else ended normally.
+ * Synthetic writers go through this so no `llm.response` is written without one.
+ */
+function synthesizedFinishReason(msg: StoredMessage): LlmResponseEvent["finishReason"] {
+  if (msg.metadata?.finishReason) return msg.metadata.finishReason;
+  const content = Array.isArray(msg.content) ? msg.content : [];
+  return content.some((c) => c.type === "tool-call") ? "tool-calls" : "stop";
+}
+
+/**
  * Serialize a forked assistant turn as run.start/llm.response/run.done event
  * lines. Each assistant turn must be wrapped in a synthetic run span — without
  * it, reconstructMessages drops the turn (assistant messages are only emitted
@@ -178,6 +215,7 @@ function forkAssistantEventLines(msg: StoredMessage, runId: string): string[] {
       content: msg.content,
       usage: msg.metadata?.usage ?? { inputTokens: 0, outputTokens: 0 },
       llmMs: msg.metadata?.llmMs ?? 0,
+      finishReason: synthesizedFinishReason(msg),
     }),
     JSON.stringify({
       ts: msg.timestamp,
@@ -207,184 +245,135 @@ function messagesToForkEventLines(messages: StoredMessage[]): string[] {
 // Engine event → conversation event mappers
 // ---------------------------------------------------------------------------
 
-/** Shared inputs for every engine→conversation event mapper. */
-interface EngineEventContext {
-  ts: string;
-  d: Record<string, unknown>;
-  runId: string;
-  debug: boolean;
-}
-
 /** Map an engine `run.start` to a persisted `run.start` event. */
-function mapRunStart({ ts, d, runId, debug }: EngineEventContext): RunStartEvent {
+function mapRunStart(ts: string, d: RunStartPayload, debug: boolean): RunStartEvent {
   return {
     ts,
     type: "run.start",
-    runId,
-    model: d.model as string,
-    ...(debug && d.systemPrompt ? { systemPrompt: d.systemPrompt as string } : {}),
-    ...(debug && d.messageRoles ? { messages: d.messageRoles as unknown[] } : {}),
-    ...(debug && d.toolNames ? { toolSchemas: d.toolNames as string[] } : {}),
+    runId: d.runId,
+    model: d.model,
+    ...(debug && d.systemPrompt ? { systemPrompt: d.systemPrompt } : {}),
+    ...(debug ? { messages: d.messageRoles, toolSchemas: d.toolNames } : {}),
   };
 }
 
 /** Map an engine `tool.start` to a persisted `tool.start` event. */
-function mapToolStart({ ts, d, runId, debug }: EngineEventContext): ToolStartEvent {
+function mapToolStart(ts: string, d: ToolStartPayload, debug: boolean): ToolStartEvent {
   return {
     ts,
     type: "tool.start",
-    runId,
-    name: d.name as string,
-    id: d.id as string,
-    ...(debug && d.input !== undefined ? { input: d.input } : {}),
+    runId: d.runId,
+    name: d.name,
+    id: d.id,
+    ...(debug ? { input: d.input } : {}),
   };
 }
 
 /** Map an engine `tool.done` to a persisted `tool.done` event. */
-function mapToolDone({ ts, d, runId }: EngineEventContext): ToolDoneEvent {
-  // Always persist the text output for conversation history reconstruction.
-  // The engine now sends `output` (extracted text) alongside `result` (full structured).
-  const output = typeof d.output === "string" ? d.output : undefined;
-  // Bounded model-view text, present only when the result exceeded the
-  // model-context bound. Replay uses it verbatim so the replayed prompt
-  // matches what the model saw live. See boundToolResultForModel.
-  const modelOutput = typeof d.modelOutput === "string" ? d.modelOutput : undefined;
-  // UI-binding resource references. The engine emits these on the live
-  // tool.done; persist them so a reopened conversation rehydrates its
-  // artifact viewers (the panel a tool's `artifact://` resource link renders into).
-  // They are small references, not bytes — the body is fetched on view.
-  const resourceUri = typeof d.resourceUri === "string" ? d.resourceUri : undefined;
-  const resourceLinks =
-    Array.isArray(d.resourceLinks) && d.resourceLinks.length > 0
-      ? (d.resourceLinks as ResourceLinkInfo[])
-      : undefined;
+function mapToolDone(ts: string, d: ToolDonePayload): ToolDoneEvent {
   return {
     ts,
     type: "tool.done",
-    runId,
-    name: d.name as string,
-    id: d.id as string,
-    ok: (d.ok as boolean) ?? true,
-    ms: (d.ms as number) ?? 0,
-    ...(output !== undefined ? { output } : {}),
-    ...(modelOutput !== undefined ? { modelOutput } : {}),
-    ...(resourceUri !== undefined ? { resourceUri } : {}),
-    ...(resourceLinks !== undefined ? { resourceLinks } : {}),
+    runId: d.runId,
+    name: d.name,
+    id: d.id,
+    ok: d.ok,
+    ms: d.ms,
+    // Always persisted: history reconstruction reads it.
+    output: d.output,
+    // Bounded model-view text, present only when the result exceeded the
+    // model-context bound. Replay uses it verbatim so the replayed prompt
+    // matches what the model saw live. See boundToolResultForModel.
+    ...(d.modelOutput !== undefined ? { modelOutput: d.modelOutput } : {}),
+    // UI-binding resource references, persisted so a reopened conversation
+    // rehydrates its artifact viewers (the panel a tool's `artifact://` resource
+    // link renders into). They are small references, not bytes — the body is
+    // fetched on view.
+    ...(d.resourceUri !== undefined ? { resourceUri: d.resourceUri } : {}),
+    ...(d.resourceLinks && d.resourceLinks.length > 0 ? { resourceLinks: d.resourceLinks } : {}),
   };
 }
 
 /** Map an engine `tool.progress` to a persisted `tool.progress` event. */
-function mapToolProgress({ ts, d, runId }: EngineEventContext): ConversationEvent {
-  return {
-    ts,
-    type: "tool.progress",
-    runId,
-    id: d.id as string,
-    message: (d.message as string) ?? "",
-  };
+function mapToolProgress(ts: string, d: ToolProgressPayload): ConversationEvent {
+  return { ts, type: "tool.progress", runId: d.runId, id: d.id, message: d.message };
 }
 
 /** Map an engine `run.done` to a persisted `run.done` event. */
-function mapRunDone({ ts, d, runId }: EngineEventContext): RunDoneEvent {
-  // Pass the engine's stopReason through verbatim. Defaulting to
-  // "complete" here used to mask length-truncation and other
-  // model-driven exits — the engine now derives the real reason
-  // from the final LLM call's finishReason. If d.stopReason is
-  // somehow missing, persist "other" so it's clear we don't know.
-  return {
-    ts,
-    type: "run.done",
-    runId,
-    stopReason: (d.stopReason as string) ?? "other",
-    totalMs: (d.totalMs as number) ?? 0,
-  };
+function mapRunDone(ts: string, d: RunDonePayload): RunDoneEvent {
+  // The engine's stopReason, verbatim: it derives the real reason from the
+  // final LLM call's finishReason, so length-truncation and other model-driven
+  // exits are recorded as themselves.
+  return { ts, type: "run.done", runId: d.runId, stopReason: d.stopReason, totalMs: d.totalMs };
 }
 
 /** Map an engine `run.error` to a persisted `run.error` event. */
-function mapRunError({ ts, d, runId }: EngineEventContext): RunErrorEvent {
-  return {
-    ts,
-    type: "run.error",
-    runId,
-    error: (d.error as string) ?? "Unknown error",
-    errorType: (d.type as string) ?? "Error",
-  };
+function mapRunError(ts: string, d: RunErrorPayload): RunErrorEvent {
+  return { ts, type: "run.error", runId: d.runId, error: d.error, errorType: d.type };
 }
 
 /** Map an engine `skills.loaded` to a persisted `skills.loaded` event. */
-function mapSkillsLoaded({ ts, d, runId }: EngineEventContext): SkillsLoadedEvent {
-  // Trust boundary: persisted JSON → typed projection. The cast assumes
-  // every emitter populates the full `SkillsLoadedEntry` shape (the
-  // platform's only emitter, `buildSkillsLoadedPayload`, does). Tools
-  // that depend on per-field guarantees on read should validate at
-  // their consumption point rather than assume the cast is sound for
-  // arbitrary on-disk data — the broader event-shape validation is its
-  // own audit, not in scope here.
-  const skills = Array.isArray(d.skills)
-    ? (d.skills as SkillsLoadedEntry[])
-    : ([] as SkillsLoadedEntry[]);
+function mapSkillsLoaded(ts: string, d: EngineEventPayloads["skills.loaded"]): SkillsLoadedEvent {
   return {
     ts,
     type: "skills.loaded",
-    runId,
-    skills,
-    totalTokens: (d.totalTokens as number) ?? 0,
+    runId: d.runId,
+    skills: d.skills,
+    totalTokens: d.totalTokens,
   };
 }
 
 /** Map an engine `context.assembled` to a persisted `context.assembled` event. */
-function mapContextAssembled({ ts, d, runId }: EngineEventContext): ContextAssembledEvent {
-  const sources = Array.isArray(d.sources)
-    ? (d.sources as ContextAssembledSource[])
-    : ([] as ContextAssembledSource[]);
-  const excluded = Array.isArray(d.excluded)
-    ? (d.excluded as ContextAssembledSource[])
-    : ([] as ContextAssembledSource[]);
+function mapContextAssembled(
+  ts: string,
+  d: EngineEventPayloads["context.assembled"],
+): ContextAssembledEvent {
   return {
     ts,
     type: "context.assembled",
-    runId,
-    sources,
-    excluded,
-    totalTokens: (d.totalTokens as number) ?? 0,
-    ...(typeof d.modelMaxContext === "number" ? { modelMaxContext: d.modelMaxContext } : {}),
-    ...(typeof d.headroomTokens === "number" ? { headroomTokens: d.headroomTokens } : {}),
+    runId: d.runId,
+    sources: d.sources,
+    excluded: d.excluded,
+    totalTokens: d.totalTokens,
+    ...(d.modelMaxContext !== undefined ? { modelMaxContext: d.modelMaxContext } : {}),
+    ...(d.headroomTokens !== undefined ? { headroomTokens: d.headroomTokens } : {}),
   };
 }
 
 /** Map an engine `connector.skill.injected` to a persisted event, or null when the body is empty. */
-function mapConnectorSkillInjected({ ts, d }: EngineEventContext): ConversationEvent | null {
+function mapConnectorSkillInjected(
+  ts: string,
+  d: ConnectorSkillInjectedPayload,
+): ConversationEvent | null {
   // The body is persisted verbatim; the reconstructor wraps it in
-  // `<connector-skill>` containment when it rebuilds the message. A
-  // missing body would surface an empty guidance block, so drop the
-  // event rather than persist a useless one.
-  const skillBody = typeof d.skillBody === "string" ? d.skillBody : "";
-  if (!skillBody) return null;
+  // `<connector-skill>` containment when it rebuilds the message. An empty
+  // body would surface an empty guidance block, so drop the event rather than
+  // persist a useless one.
+  if (!d.skillBody) return null;
   const e: ConnectorSkillInjectedEvent = {
     ts,
     type: "connector.skill.injected",
-    toolName: (d.toolName as string) ?? "",
-    skillName: (d.skillName as string) ?? "",
-    skillBody,
-    scope: (d.scope as string) ?? "connector",
+    toolName: d.toolName,
+    skillName: d.skillName,
+    skillBody: d.skillBody,
+    scope: d.scope,
   };
   return e;
 }
 
-/** Map an engine `skill.activated` to a persisted event, or null when the name is missing. */
-function mapSkillActivated({ ts, d, runId }: EngineEventContext): ConversationEvent | null {
+/** Map an engine `skill.activated` to a persisted event, or null when the name is empty. */
+function mapSkillActivated(ts: string, d: SkillActivatedPayload): ConversationEvent | null {
   // A nameless activation can neither dedup nor stamp a reconstruction
   // marker, so drop it rather than persist a useless record.
-  const skillName = typeof d.skillName === "string" ? d.skillName : "";
-  if (!skillName) return null;
+  if (!d.skillName) return null;
   const e: SkillActivatedEvent = {
     ts,
     type: "skill.activated",
-    runId,
-    toolCallId: (d.toolCallId as string) ?? "",
-    skillName,
-    scope: (d.scope as string) ?? "org",
-    tokens: (d.tokens as number) ?? 0,
+    runId: d.runId,
+    toolCallId: d.toolCallId,
+    skillName: d.skillName,
+    scope: d.scope,
+    tokens: d.tokens,
   };
   return e;
 }
@@ -437,7 +426,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   private activeConversationId: string | null = null;
   private pendingWrites = new Set<Promise<unknown>>();
   /** Flag for once-per-process logging when the usage fallback fires. */
-  private warnedMissingUsage = false;
 
   constructor(config: EventSourcedStoreConfig) {
     this.dir = config.dir;
@@ -485,7 +473,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       lastModel: null,
       ownerId: options.ownerId,
       format: "events",
-      ...(options.model ? { model: options.model } : {}),
+      model: options.model,
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options.metadata ? { metadata: options.metadata } : {}),
     };
@@ -506,12 +494,17 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
 
     const raw = JSON.parse(lines[0]!) as Record<string, unknown>;
     if (typeof raw.ownerId !== "string" || raw.ownerId.length === 0) {
-      // Stage 1 invariant: every conversation has an ownerId. A file
+      // Invariant: every conversation has an ownerId. A file
       // without one is pre-migration data and unreadable by this code.
       // Throw a typed error so the HTTP layer can map to a clean
       // `422 conversation_corrupted` (with the migration command in
       // the message) instead of bubbling as 500.
       throw new ConversationCorruptedError(id, "missing_owner");
+    }
+    if (typeof raw.model !== "string" || raw.model.length === 0) {
+      // Every conversation is bound to a model at create. A header without
+      // one predates the binding and was not converted before this release.
+      throw new ConversationCorruptedError(id, "missing_model");
     }
     const conversation = parseConversationHeader(raw);
 
@@ -533,19 +526,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   }
 
   /**
-   * Backward-compatible append for StoredMessage.
-   * Converts assistant messages to events; user messages to user.message events.
+   * Append a StoredMessage, converting it to events: a user message becomes a
+   * `user.message` event, an assistant message a synthetic run.
    */
   async append(conversation: Conversation, message: StoredMessage): Promise<void> {
-    if (conversation.format === "events") {
-      this.appendEventFormat(conversation, message);
-      return;
-    }
-    await this.appendLegacyFormat(conversation, message);
-  }
-
-  /** Append a StoredMessage to an event-format conversation, converting it to events. */
-  private appendEventFormat(conversation: Conversation, message: StoredMessage): void {
     if (message.role === "user") {
       const event: ConversationEvent = {
         ts: message.timestamp,
@@ -581,6 +565,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
           outputTokens: 0,
         },
         llmMs: message.metadata.llmMs ?? 0,
+        finishReason: synthesizedFinishReason(message),
       };
       const runDone: ConversationEvent = {
         ts: message.timestamp,
@@ -596,35 +581,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     }
   }
 
-  /** Append a StoredMessage to a legacy (message-format) conversation via atomic rewrite. */
-  private async appendLegacyFormat(
-    conversation: Conversation,
-    message: StoredMessage,
-  ): Promise<void> {
-    // Legacy format — same pattern as JsonlConversationStore
-    assertNoBinaryPayloads(message, `message(${message.role})`);
-    const path = this.path(conversation.id);
-    if (message.role === "assistant" && message.metadata) {
-      conversation.lastModel = message.metadata.model ?? conversation.lastModel;
-    }
-    conversation.updatedAt = message.timestamp;
-
-    const content = await readFile(path, "utf-8");
-    const lines = content.split("\n").filter(Boolean);
-    lines[0] = JSON.stringify(conversation);
-    lines.push(JSON.stringify(message));
-
-    const tmpPath = `${path}.tmp.${uniqueTmpSuffix()}`;
-    await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
-    await rename(tmpPath, path);
-    this.index.invalidate();
-    this.onMutate?.({ id: conversation.id, filePath: path });
-  }
-
   /**
    * Read raw conversation events for a single conversation. Returns []
-   * for missing files or legacy (message-format) conversations. The
-   * event-log read tools (`skills__loading_log`) consume this.
+   * for a missing file. The event-log read tools (`skills__loading_log`)
+   * consume this.
    */
   async readEvents(id: string): Promise<ConversationEvent[]> {
     const path = this.path(id);
@@ -632,7 +592,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const content = await readFile(path, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     if (lines.length < 2) return [];
-    if (!this.detectFormat(lines)) return [];
     return safeParseLines<ConversationEvent>(lines.slice(1));
   }
 
@@ -667,11 +626,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const lines = content.split("\n").filter(Boolean);
     if (lines.length < 2) return [];
 
-    if (this.detectFormat(lines)) {
-      const events = safeParseLines<ConversationEvent>(lines.slice(1));
-      return reconstructMessages(events, opts);
-    }
-    return safeParseLines<StoredMessage>(lines.slice(1));
+    const events = safeParseLines<ConversationEvent>(lines.slice(1));
+    return reconstructMessages(events, opts);
   }
 
   async list(
@@ -740,7 +696,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       // A fork continues the source conversation, so it inherits the binding.
       // Re-resolving here would silently move the copy onto the current
       // default and replay the source's history to a different provider.
-      ...(source.model ? { model: source.model } : {}),
+      model: source.model,
       ...(source.workspaceId ? { workspaceId: source.workspaceId } : {}),
     });
 
@@ -799,73 +755,36 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   // =========================================================================
 
   private mapEngineEvent(event: EngineEvent): ConversationEvent | null {
-    const ctx: EngineEventContext = {
-      ts: new Date().toISOString(),
-      d: event.data,
-      runId: event.data.runId as string,
-      debug: this.logLevel === "debug",
-    };
-
+    const ts = new Date().toISOString();
+    const debug = this.logLevel === "debug";
     switch (event.type) {
       case "run.start":
-        return mapRunStart(ctx);
+        return mapRunStart(ts, event.data, debug);
       case "llm.done":
-        return this.mapLlmDone(ctx);
+        return mapLlmDone(ts, event.data);
       case "tool.start":
-        return mapToolStart(ctx);
+        return mapToolStart(ts, event.data, debug);
       case "tool.done":
-        return mapToolDone(ctx);
+        return mapToolDone(ts, event.data);
       case "tool.progress":
-        return mapToolProgress(ctx);
+        return mapToolProgress(ts, event.data);
       case "run.done":
-        return mapRunDone(ctx);
+        return mapRunDone(ts, event.data);
       case "run.error":
-        return mapRunError(ctx);
+        return mapRunError(ts, event.data);
       case "skills.loaded":
-        return mapSkillsLoaded(ctx);
+        return mapSkillsLoaded(ts, event.data);
       case "context.assembled":
-        return mapContextAssembled(ctx);
+        return mapContextAssembled(ts, event.data);
       case "connector.skill.injected":
-        return mapConnectorSkillInjected(ctx);
+        return mapConnectorSkillInjected(ts, event.data);
       case "skill.activated":
-        return mapSkillActivated(ctx);
+        return mapSkillActivated(ts, event.data);
       case "skill.suppression":
-        return mapSkillSuppression(ctx);
+        return mapSkillSuppression(ts, event.data);
       default:
         return null;
     }
-  }
-
-  /** Map an engine `llm.done` to a persisted `llm.response`, backfilling usage if omitted. */
-  private mapLlmDone({ ts, d, runId }: EngineEventContext): LlmResponseEvent {
-    const finishReason = d.finishReason as LlmResponseEvent["finishReason"];
-    // Defensive default at the write boundary: a malformed emitter
-    // must not produce `usage: undefined` in the JSONL — that
-    // corrupts the file forever and crashes every downstream reader.
-    // The current engine always supplies `data.usage`, but this
-    // guard means a single bad code path can't poison the stream.
-    // Log once when the fallback fires so a regressed emitter isn't
-    // a silent telemetry blackout.
-    let usage = d.usage as LlmResponseEvent["usage"] | undefined;
-    if (!usage) {
-      if (!this.warnedMissingUsage) {
-        this.warnedMissingUsage = true;
-        process.stderr.write(
-          "[event-sourced-store] llm.done event arrived without `data.usage`; writing zeroed fallback. This indicates a regressed emitter — check the engine.\n",
-        );
-      }
-      usage = { inputTokens: 0, outputTokens: 0 };
-    }
-    return {
-      ts,
-      type: "llm.response",
-      runId,
-      model: d.model as string,
-      content: (d.content ?? []) as LlmResponseEvent["content"],
-      usage,
-      llmMs: (d.llmMs as number) ?? 0,
-      ...(finishReason !== undefined ? { finishReason } : {}),
-    };
   }
 
   /** Synchronously append an event line to a conversation file. */
@@ -878,34 +797,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     // hook names the one conversation that moved; the re-read it triggers is
     // lazy (next read) and scoped to that conversation's header.
     this.onMutate?.({ id, filePath: path });
-  }
-
-  /** Detect whether a conversation file uses event format or legacy message format. */
-  private detectFormat(lines: string[]): boolean {
-    const [firstLine, secondLine] = lines;
-
-    // Check line 1 for explicit format field
-    if (firstLine) {
-      try {
-        const meta = JSON.parse(firstLine) as Record<string, unknown>;
-        if (meta.format === "events") return true;
-      } catch {
-        // fall through
-      }
-    }
-
-    // Check line 2 for type field (event) vs role field (legacy)
-    if (secondLine) {
-      try {
-        const parsed = JSON.parse(secondLine) as Record<string, unknown>;
-        if ("type" in parsed) return true;
-        if ("role" in parsed) return false;
-      } catch {
-        // fall through
-      }
-    }
-
-    return false;
   }
 
   private async _update(id: string, patch: ConversationPatch): Promise<Conversation | null> {

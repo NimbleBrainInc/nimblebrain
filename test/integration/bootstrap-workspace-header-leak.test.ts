@@ -1,55 +1,58 @@
+import type { ApiErrorBody, BootstrapResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
- * Regression guard for the Hono **wildcard-leak** class: a sub-app's `.use("*")`
- * middleware flattens into a `/*` matcher that runs for every route mounted
- * AFTER it on the same app, silently attaching that middleware to sibling routes
- * that never asked for it. This file has caught two instances:
+ * Bootstrap chooses no workspace and reads none from the request, and routers
+ * mounted beside it do not leak workspace middleware onto it or onto other
+ * identity-scoped routes.
  *
- *   1. `conversationEventRoutes`' `optionalWorkspace` `.use("*")` leaked FORWARD
- *      onto `/v1/bootstrap` and hard-locked-out any user whose remembered
- *      workspace they'd lost access to (bootstrap is a discovery surface — it
- *      must NOT 403 on a stale `X-Workspace-Id`). Fixed by per-route middleware.
- *   2. `chatRoutes`' `optionalWorkspace` `.use("*")` leaked FORWARD onto
- *      `/v1/events` (identity-scoped, mounted after chat at `app.ts`), giving it
- *      a spurious membership 403. Fixed by requiring the workspace per-route on
- *      the chat send routes and dropping the chat-router wildcard.
+ * The browser may still send an `X-Workspace-Id` header (a stale client, a
+ * proxy); the server gives it no meaning anywhere:
+ *   - `GET  /v1/bootstrap` answers with the caller's workspaces and no focus,
+ *     whatever the header names — a workspace the caller belongs to, or one
+ *     they do not.
  *
- * Authorization correctness per endpoint, pinned end-to-end through the real app:
- *   - `GET  /v1/bootstrap` + non-member header → 200 (permissive; no backward leak)
- *   - `POST /v1/chat`       + absent header → 400, + non-member header → 403
- *     (enforces BY DESIGN — `requireWorkspace`, not a wildcard leak)
- *   - `GET  /v1/events`     + non-member header → NOT 403 (identity-scoped: it
- *     authorizes by identity and filters fan-out by server-computed membership,
- *     so it must ignore the header; a 403 here means the chat-router wildcard
- *     leaked forward again)
- *
- * The `/v1/events` case is the forward-leak guard the chat-door refactor would
- * otherwise have removed — reintroducing any `.use("*")` on a router mounted
- * before `eventRoutes` makes it 403 again, and this catches it.
+ * The Hono **wildcard-leak** class: a sub-app's `.use("*")` middleware flattens
+ * into a `/*` matcher that runs for every route mounted AFTER it on the same
+ * app, silently attaching that middleware to sibling routes that never asked for
+ * it. Workspace admission is per-route (`requireWorkspace` on the
+ * `/v1/workspaces/:wsId/…` routes), and these pin the boundary end-to-end:
+ *   - `POST /v1/workspaces/<non-member>/chat/start` → 404 `workspace_error`
+ *     (enforced BY DESIGN at the chat door)
+ *   - `POST /v1/chat/start` → router 404 `not_found`: a workspace-scoped request
+ *     without a workspace in its path has no route, never a default workspace
+ *   - `GET  /v1/events` → neither 403 nor 404 (identity-scoped: it authorizes by
+ *     identity and filters fan-out by server-computed membership; a workspace
+ *     refusal here means a router mounted before `eventRoutes` leaked its
+ *     workspace middleware forward)
  */
 
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import type { ServerHandle } from "../../src/api/server.ts";
+import { startServer } from "../../src/api/server.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
   IdentityProvider,
   ProviderCapabilities,
   UserIdentity,
+  VerifiedIdentity,
 } from "../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
-import type { ServerHandle } from "../../src/api/server.ts";
-import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeIdentity } from "../helpers/identity.ts";
 
-const ALICE: UserIdentity = {
+const ALICE: UserIdentity = makeIdentity({
   id: "usr_alice",
   email: "alice@example.com",
   displayName: "Alice",
   orgRole: "member",
-};
+});
 
 class TokenAuthAdapter implements IdentityProvider {
   readonly capabilities: ProviderCapabilities = {
@@ -59,10 +62,11 @@ class TokenAuthAdapter implements IdentityProvider {
     authorizationServer: false,
   };
   constructor(private readonly tokens: Record<string, UserIdentity>) {}
-  async verifyRequest(req: Request): Promise<UserIdentity | null> {
+  async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const authHeader = req.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) return null;
-    return this.tokens[authHeader.slice(7)] ?? null;
+    const who = this.tokens[authHeader.slice(7)];
+    return who ? { ...who, grant: FIRST_PARTY_GRANT } : null;
   }
   async listUsers(): Promise<User[]> {
     return [];
@@ -75,18 +79,21 @@ class TokenAuthAdapter implements IdentityProvider {
   }
 }
 
-describe("bootstrap does not enforce workspace membership (middleware-leak regression)", () => {
+describe("bootstrap ignores X-Workspace-Id", () => {
   const ALICE_TOKEN = "alice-token-1234567890";
   const workDir = join(tmpdir(), `nb-bootstrap-leak-${Date.now()}`);
   let runtime: Runtime;
   let handle: ServerHandle;
   let baseUrl: string;
+  let ownWs: string;
+  let sharedWs: string;
   let foreignWs: string;
 
   beforeAll(async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: () => new TokenAuthAdapter({ [ALICE_TOKEN]: ALICE }),
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -101,18 +108,24 @@ describe("bootstrap does not enforce workspace membership (middleware-leak regre
     );
 
     const wsStore = runtime.getWorkspaceStore();
-    // Alice's own workspace (so she has ≥1 membership — bootstrap invariant).
-    const mine = await wsStore.create("Alice WS", "alice_ws");
-    await wsStore.addMember(mine.id, ALICE.id, "admin");
-    // A workspace Alice is NOT a member of — this is the stale/foreign id the
-    // browser might still send in `X-Workspace-Id`.
-    const foreign = await wsStore.create("Someone Else", "someone_else");
+    // Alice's provisioned workspace.
+    const provisioned = await ensureUserWorkspace(wsStore, {
+      id: ALICE.id,
+      displayName: ALICE.displayName,
+    });
+    ownWs = provisioned[0]!.id;
+    // A shared workspace Alice belongs to — a header naming it must not make
+    // bootstrap choose it.
+    const shared = await wsStore.create("Acme Corp");
+    await wsStore.addMember(shared.id, ALICE.id, "member");
+    sharedWs = shared.id;
+    // A workspace Alice is NOT a member of.
+    const foreign = await wsStore.create("Tenant A");
     foreignWs = foreign.id;
 
     handle = startServer({
       runtime,
       port: 0,
-      provider: new TokenAuthAdapter({ [ALICE_TOKEN]: ALICE }),
     });
     baseUrl = `http://localhost:${handle.port}`;
   });
@@ -123,41 +136,35 @@ describe("bootstrap does not enforce workspace membership (middleware-leak regre
     rmSync(workDir, { recursive: true, force: true });
   });
 
-  test("bootstrap + a non-member X-Workspace-Id returns 200 (not 403)", async () => {
+  async function bootstrapWithHeader(wsId: string) {
     const res = await fetch(`${baseUrl}/v1/bootstrap`, {
       headers: {
         Authorization: `Bearer ${ALICE_TOKEN}`,
-        "X-Workspace-Id": foreignWs,
+        "X-Workspace-Id": wsId,
       },
     });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { activeWorkspace: string | null };
-    // The foreign id is ignored; bootstrap falls back to a real membership.
-    expect(body.activeWorkspace).not.toBe(foreignWs);
+    const body = await readJson<BootstrapResponse>(res);
+    return { status: res.status, body };
+  }
+
+  test("a header naming another workspace the caller belongs to chooses nothing", async () => {
+    const { status, body } = await bootstrapWithHeader(sharedWs);
+    expect(status).toBe(200);
+    expect("activeWorkspace" in body).toBe(false);
+    expect(body.workspaces.map((w) => w.id)).toContain(ownWs);
+    // The shared workspace is still listed — the header just chooses nothing.
+    expect(body.workspaces.map((w) => w.id)).toContain(sharedWs);
   });
 
-  test("a workspace-scoped data endpoint rejects the same non-member X-Workspace-Id (403)", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${ALICE_TOKEN}`,
-        "X-Workspace-Id": foreignWs,
-      },
-      body: JSON.stringify({ message: "hello" }),
-    });
-    // `/v1/chat` requires the workspace (requireWorkspace), so a non-member
-    // header is rejected at the door before the turn runs.
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("workspace_error");
+  test("a header naming a non-member workspace does not break bootstrap", async () => {
+    const { status, body } = await bootstrapWithHeader(foreignWs);
+    expect(status).toBe(200);
+    expect("activeWorkspace" in body).toBe(false);
+    expect(body.workspaces.map((w) => w.id)).not.toContain(foreignWs);
   });
 
-  test("the chat door rejects an ABSENT workspace header (400) — the headline 'require it'", async () => {
-    // The actual point of the refactor: no `X-Workspace-Id` is a 400 at the door,
-    // not a silent default to the caller's personal workspace. Covered at the
-    // resolver level in unit tests; this pins it end-to-end through the route.
-    const res = await fetch(`${baseUrl}/v1/chat`, {
+  test("the chat door refuses a non-member workspace in the path (404 workspace_error)", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${foreignWs}/chat/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -165,22 +172,40 @@ describe("bootstrap does not enforce workspace membership (middleware-leak regre
       },
       body: JSON.stringify({ message: "hello" }),
     });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("workspace_error");
+    // The chat route requires the workspace in its path (requireWorkspace), so a
+    // non-member is refused at the door before the turn runs.
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: "workspace_error",
+      message: "Workspace not found",
+    });
   });
 
-  test("the identity-scoped event stream does NOT 403 on a non-member header (forward-leak guard)", async () => {
+  test("a chat request with no workspace in its path has no route — never a default workspace", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/start`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ALICE_TOKEN}`,
+        "X-Workspace-Id": ownWs,
+      },
+      body: JSON.stringify({ message: "hello" }),
+    });
+    expect(res.status).toBe(404);
+    const body = await readJson<ApiErrorBody>(res);
+    expect(body.error).toBe("not_found");
+  });
+
+  test("the identity-scoped event stream is not refused for a workspace (forward-leak guard)", async () => {
     // `/v1/events` authorizes by identity and filters fan-out by server-computed
-    // membership, so it must IGNORE `X-Workspace-Id`. A non-member header opens
-    // the stream (the foreign workspace's events simply never fan out); a 403
-    // here means the chat router's `.use("*")` leaked forward onto it again.
+    // membership; it has no workspace to admit. A workspace refusal here (403,
+    // or the gate's 404) means a router's `.use("*")` leaked forward onto it.
     //
-    // The leak resolves a 403 IMMEDIATELY (a JSON error, no stream). A clean
-    // response is an SSE stream whose headers, in this harness, don't flush until
-    // the first byte — so we abort shortly after connecting and assert only that
-    // we did NOT get the fast 403. (Asserting an exact 200 would race the SSE
-    // header flush; "not 403" is the precise regression signature.)
+    // A leak resolves IMMEDIATELY (a JSON error, no stream). A clean response is
+    // an SSE stream whose headers, in this harness, don't flush until the first
+    // byte — so we abort shortly after connecting and assert only that we did
+    // NOT get a fast refusal. (Asserting an exact 200 would race the SSE header
+    // flush; "not refused" is the precise regression signature.)
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 1000);
     let status: number | null = null;
@@ -195,11 +220,12 @@ describe("bootstrap does not enforce workspace membership (middleware-leak regre
       status = res.status;
       await res.body?.cancel();
     } catch (err) {
-      // AbortError = the stream opened and we cancelled it (i.e. not a fast 403).
+      // AbortError = the stream opened and we cancelled it (i.e. not refused).
       if ((err as Error).name !== "AbortError") throw err;
     } finally {
       clearTimeout(timer);
     }
     expect(status).not.toBe(403);
+    expect(status).not.toBe(404);
   });
 });

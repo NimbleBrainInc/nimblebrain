@@ -1,4 +1,3 @@
-export { JsonlConversationStore } from "./jsonl-store.ts";
 export { InMemoryConversationStore } from "./memory-store.ts";
 export type {
   Conversation,

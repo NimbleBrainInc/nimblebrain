@@ -1,4 +1,5 @@
 import { type Static, Type } from "@sinclair/typebox";
+import { StringEnum } from "./_shared.ts";
 
 export const ComposeEffectiveContextInput = Type.Object({
   conversation_id: Type.Optional(
@@ -19,8 +20,9 @@ export const ComposeEffectiveContextInput = Type.Object({
   connector: Type.Optional(
     Type.String({
       description:
-        "Filter the response to that connector's contributions (the apps " +
-        "section and its focused-app section).",
+        "Filter the response to that connector's contributions (in live " +
+        "mode, its app entry; in historical mode, the skills it published " +
+        "that loaded in the run).",
     }),
   ),
 });
@@ -44,7 +46,7 @@ export const ComposeAssembledContextInput = Type.Object({
 });
 export type ComposeAssembledContextInput = Static<typeof ComposeAssembledContextInput>;
 
-// ── Output shapes (mirrored to web via codegen) ────────────────────────────
+// ── Output schemas (mirrored to web via codegen) ───────────────────────────
 
 /**
  * One row of a run's assembled context, as recorded in the
@@ -68,13 +70,13 @@ export type ComposeAssembledContextInput = Static<typeof ComposeAssembledContext
  * so nothing is billed twice); only the row it is attributed to is coarser
  * than the wire.
  */
-export interface AssembledContextSource {
-  kind: string;
-  tokens: number;
-  count?: number;
+export const AssembledContextSource = Type.Object({
+  kind: Type.String(),
+  tokens: Type.Number(),
+  count: Type.Optional(Type.Number()),
   /** `history`: how many messages the windowed history holds. */
-  messages?: number;
-  compacted?: boolean;
+  messages: Type.Optional(Type.Number()),
+  compacted: Type.Optional(Type.Boolean()),
   /**
    * True when this row measures part of another row rather than adding a
    * region of its own — `skills` inside `system_prompt` today.
@@ -84,25 +86,33 @@ export interface AssembledContextSource {
    * only would draw a region row whose tokens are absent from the
    * `windowTokens` printed beneath it.
    */
-  annotation?: boolean;
-}
+  annotation: Type.Optional(Type.Boolean()),
+});
+export type AssembledContextSource = Static<typeof AssembledContextSource>;
 
 /**
- * One layer-3 skill that loaded for the run, projected from the
- * `skills.loaded` event with provenance for why it loaded.
+ * One skill that loaded for the run, projected from the `skills.loaded` event
+ * with provenance for why it loaded.
+ *
+ * `scope` is the storage tier as recorded, and a recorded event keeps the
+ * vocabulary it was written in: today's runs record `org`, `workspace`, `user`,
+ * or `provided`, and an older run can hold a tier name this build no longer
+ * uses. So it is an open string, and a renderer falls back to the stored value
+ * for a tier it does not know.
  */
-export interface AssembledContextSkill {
-  id: string;
+export const AssembledContextSkill = Type.Object({
+  id: Type.String(),
   /** The skill's own name — resolved server-side, safe to render directly. */
-  name: string;
+  name: Type.String(),
   /** The MCP server that published it; absent for filesystem skills. */
-  connector?: string;
-  scope: "org" | "workspace" | "user" | "provided";
-  tokens: number;
+  connector: Type.Optional(Type.String()),
+  scope: Type.String(),
+  tokens: Type.Number(),
   /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
-  loadedBy: "always" | "tool_affinity" | "trigger";
-  reason: string;
-}
+  loadedBy: StringEnum(["always", "tool_affinity", "trigger"] as const),
+  reason: Type.String(),
+});
+export type AssembledContextSkill = Static<typeof AssembledContextSkill>;
 
 /**
  * `compose__assembled_context` response — the recorded context digest for
@@ -111,62 +121,91 @@ export interface AssembledContextSkill {
  * recomposition. `runId` / `ts` are `null` when the conversation exists but
  * no run has recorded assembled-context telemetry yet.
  */
-export interface ComposeAssembledContextOutput {
-  conversationId: string;
-  runId: string | null;
-  ts: string | null;
-  sources: AssembledContextSource[];
-  excluded: AssembledContextSource[];
+export const ComposeAssembledContextOutput = Type.Object({
+  conversationId: Type.String(),
+  runId: Type.Union([Type.String(), Type.Null()]),
+  ts: Type.Union([Type.String(), Type.Null()]),
+  sources: Type.Array(AssembledContextSource),
+  excluded: Type.Array(AssembledContextSource),
   /**
    * The recorded sum of every row in `sources`, preserved as recorded. It
    * counts the composed skill bodies twice — once inside `system_prompt`, once
    * in the `skills` annotation — so it is NOT the size of the context window.
    * Read `windowTokens` for that.
    */
-  totalTokens: number;
+  totalTokens: Type.Number(),
   /**
    * How much of the context window the turn occupied: the sum of the rows that
    * name a region, with the annotation rows left out. The number a reader means
    * by "how big was this turn". Computed here rather than by each caller, so
    * one answer reaches every consumer of this tool.
    */
-  windowTokens: number;
-  skills: AssembledContextSkill[];
+  windowTokens: Type.Number(),
+  skills: Type.Array(AssembledContextSkill),
   /** Present only when the run recorded them (not emitted on current runs). */
-  modelMaxContext?: number;
-  headroomTokens?: number;
-}
+  modelMaxContext: Type.Optional(Type.Number()),
+  headroomTokens: Type.Optional(Type.Number()),
+});
+export type ComposeAssembledContextOutput = Static<typeof ComposeAssembledContextOutput>;
+
+/**
+ * One entry of a section that aggregates several items (`apps`, the skills
+ * layer): the runtime `TracedSubItem`. `metadata` is free-form per kind (a
+ * skill's scope and hash status, an app's UI descriptor). The `connector`
+ * filter matches on `connector`.
+ */
+export const TracedSubItemView = Type.Object({
+  kind: Type.String(),
+  id: Type.String(),
+  source: Type.String(),
+  connector: Type.Optional(Type.String()),
+  metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+});
+export type TracedSubItemView = Static<typeof TracedSubItemView>;
 
 /**
  * One section of the composed system prompt with provenance and body — the
- * web-facing projection of the runtime `TracedLayer`. Carries `text` (the
- * exact composed body of the layer) so the context inspector can show what
- * actually entered the window. Lighter consumers may ignore `text`; it is the
- * largest field and only the inspector renders it. The runtime `subItems`
- * (per-app / per-skill breakdown) are omitted: they exist for the server-side
- * `connector` filter, which runs on the runtime `TracedLayer`, and the inspector
- * renders each layer's composed `text`, not its sub-items.
+ * projection of the runtime `TracedLayer`. Carries `text` (the exact composed
+ * body of the layer) so the context inspector can show what actually entered
+ * the window. Lighter consumers may ignore `text`; it is the largest field and
+ * only the inspector renders it. `subItems` is the per-app / per-skill
+ * breakdown the server-side `connector` filter runs on; the inspector renders
+ * each layer's composed `text` instead.
  */
-export interface TracedLayerView {
-  kind: string;
-  segment: "stable" | "volatile";
-  id: string;
-  source: string;
-  tokens: number;
-  text: string;
-  connector?: string;
-}
+export const TracedLayerView = Type.Object({
+  kind: Type.String(),
+  segment: StringEnum(["stable", "volatile"] as const),
+  id: Type.String(),
+  source: Type.String(),
+  tokens: Type.Number(),
+  text: Type.String(),
+  connector: Type.Optional(Type.String()),
+  subItems: Type.Optional(Type.Array(TracedSubItemView)),
+});
+export type TracedLayerView = Static<typeof TracedLayerView>;
 
 /**
- * `compose__effective_context` response as consumed by the context inspector.
- * The runtime tool also returns the full composed `text` at the top level;
- * that field is intentionally absent here — the inspector reads each layer's
- * `text` and never the whole-prompt blob.
+ * `compose__effective_context` response. `text` is the whole composed prompt
+ * in live mode, and in historical mode the reconstructed skills layer under a
+ * banner saying it is a partial; the inspector reads each layer's `text`
+ * instead. `runId` is present in historical mode.
+ *
+ * `totalTokens` is not the size of the context window, which also holds tool
+ * descriptions and history: `compose__assembled_context` answers that, as
+ * `windowTokens`.
  */
-export interface ComposeEffectiveContextOutput {
-  mode: "live" | "historical";
-  conversationId: string;
-  totalTokens: number;
-  layers: TracedLayerView[];
-  warnings: string[];
-}
+export const ComposeEffectiveContextOutput = Type.Object({
+  mode: StringEnum(["live", "historical"] as const),
+  conversationId: Type.String(),
+  runId: Type.Optional(Type.String()),
+  /**
+   * Size of the composed system prompt, the same quantity in both modes so the
+   * two are comparable: live sums the composed layers, historical reads the
+   * run's recorded `system_prompt` row.
+   */
+  totalTokens: Type.Number(),
+  text: Type.String(),
+  layers: Type.Array(TracedLayerView),
+  warnings: Type.Array(Type.String()),
+});
+export type ComposeEffectiveContextOutput = Static<typeof ComposeEffectiveContextOutput>;

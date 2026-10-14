@@ -1,16 +1,36 @@
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { Hono } from "hono";
 import { securityHeaders } from "../../../src/api/middleware/security-headers.ts";
 import { mcpAuthRoutes } from "../../../src/api/routes/mcp-auth.ts";
+import type { ApiErrorBody, OAuthInitiateResponse } from "../../../src/api/schemas/responses.ts";
 import type { AppContext, AppEnv } from "../../../src/api/types.ts";
-import { ConnectorBusyError } from "../../../src/connectors/runtime/lifecycle.ts";
+import {
+  ConnectorBusyError,
+  type ConnectorLifecycleManager,
+} from "../../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorInstance } from "../../../src/connectors/runtime/types.ts";
 import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
+import { FIRST_PARTY_GRANT, type IdentityProvider } from "../../../src/identity/provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { log } from "../../../src/observability/log.ts";
-import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-flow-registry.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
+import {
+  _clearAll,
+  DEFAULT_FLOW_TTL_MS,
+  OAuthFlowRefusedError,
+  register as registerFlow,
+  resolveWithCode,
+} from "../../../src/tools/oauth-flow-registry.ts";
+import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { readJson } from "../../helpers/http.ts";
+import { stub } from "../../helpers/stub.ts";
+import { makeWorkspace } from "../../helpers/test-workspace.ts";
+
+/** What `POST .../mcp-auth/initiate` answers: `null` when no interactive step is needed. */
 
 /**
  * Unit coverage for `mcpAuthRoutes` — the route is the security boundary
@@ -18,12 +38,24 @@ import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-fl
  * cache headers). The provider, lifecycle, and registry all have their own
  * tests; this file covers the route-handler logic directly.
  *
- * The middleware (`requireAuth`, `requireWorkspace`) is bypassed by setting
- * `c.var.workspaceId` from a parent app. We're testing the route's cookie
- * binding, not the auth/workspace middleware (which has its own tests).
+ * The workspace-scoped initiate route runs its real middleware in dev mode:
+ * `requireAuth` passes with no identity, and `requireWorkspace` admits the dev
+ * user to the workspace named in the path because the stub store lists it as
+ * a member. We're testing the route's cookie binding, not the auth/workspace
+ * middleware (which has its own tests).
  */
 
-const WS_ID = "ws_test";
+const WS_ID = "ws_0076759dbbe19fcc";
+/** The dev user, the one member of `WS_ID`. */
+const DEV_USER_ID = "usr_default";
+/** Auth that verifies every request as the dev user, as the `dev` provider does. */
+const DEV_AUTH = {
+  provider: stub<IdentityProvider>({
+    verifyRequest: async () => ({ ...DEV_IDENTITY, grant: FIRST_PARTY_GRANT }),
+  }),
+  eventSink: { emit: () => {} },
+};
+const INITIATE_PATH = `/v1/workspaces/${WS_ID}/mcp-auth/initiate`;
 const WS_OWNER = { kind: "workspace", wsId: WS_ID } as const;
 const USER_ID = "usr_test";
 
@@ -35,12 +67,12 @@ interface StubLifecycle {
   /** Pre-canned URL the stub `startAuth` returns. Unset ⇒ throws; value `null` ⇒
    *  connected without an interactive flow (already authenticated). */
   authUrls: Map<string, string | null>; // key: "serverName|wsId|principalId"
-  instances: Map<string, { oauthScope?: "workspace" | "user" }>; // key: "serverName|wsId"
+  instances: Map<string, Partial<ConnectorInstance>>; // key: "serverName|wsId"
   /** Pre-canned URL the stub `startIdentityAuth` returns. Unset ⇒ throws; value
    *  `null` ⇒ connected without an interactive flow (already authenticated).
    *  Key: "serverName|userId". */
   identityAuthUrls: Map<string, string | null>;
-  getInstance(serverName: string, wsId: string): { oauthScope?: "workspace" | "user" } | null;
+  getInstance(serverName: string, wsId: string): ConnectorInstance | null;
   startAuth(
     serverName: string,
     wsId: string,
@@ -57,13 +89,14 @@ interface StubLifecycle {
 function makeStubLifecycle(): StubLifecycle {
   const authUrls = new Map<string, string | null>();
   const identityAuthUrls = new Map<string, string | null>();
-  const instances = new Map<string, { oauthScope?: "workspace" | "user" }>();
+  const instances = new Map<string, Partial<ConnectorInstance>>();
   return {
     authUrls,
     identityAuthUrls,
     instances,
     getInstance(serverName, wsId) {
-      return instances.get(`${serverName}|${wsId}`) ?? null;
+      const instance = instances.get(`${serverName}|${wsId}`);
+      return instance ? stub<ConnectorInstance>(instance) : null;
     },
     async startAuth(serverName, wsId, principalId) {
       const key = `${serverName}|${wsId}|${principalId}`;
@@ -83,34 +116,30 @@ function makeApp(
   secureCookies = false,
   workDir = "/tmp/nb-test",
 ): Hono<AppEnv> {
-  const ctx = {
-    runtime: {
-      getLifecycle: () => lifecycle,
+  const ctx = stub<AppContext>({
+    runtime: stub<Runtime>({
+      getLifecycle: () => stub<ConnectorLifecycleManager>(lifecycle),
       getWorkDir: () => workDir,
       getAllowInsecureRemotes: () => false,
-      // Dev-mode: no real identity → the fixed test user.
+      // The route's owner resolution, fixed to the test user.
       resolveRequestUserId: () => USER_ID,
-    },
-    // Dev-mode auth so requireAuth() passes through without an identity. No
-    // identity → requireWorkspace() also passes through without setting
-    // workspaceId. We set it ourselves in the wrapping middleware below.
-    authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
-    workspaceStore: {},
+    }),
+    authOptions: DEV_AUTH,
+    workspaceStore: stub<WorkspaceStore>({
+      get: async (id: string) =>
+        id === WS_ID
+          ? makeWorkspace({ id, members: [{ userId: DEV_USER_ID, role: "admin" }] })
+          : null,
+    }),
     secureCookies,
-  } as unknown as AppContext;
+  });
 
   const app = new Hono<AppEnv>();
-  // Bypass the workspace middleware by pre-setting the var. The route's own
-  // requireWorkspace middleware (in dev mode) is a no-op.
-  app.use("*", async (c, next) => {
-    c.set("workspaceId", WS_ID);
-    await next();
-  });
   app.route("/", mcpAuthRoutes(ctx));
   return app;
 }
 
-describe("POST /v1/mcp-auth/initiate", () => {
+describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
   let app: Hono<AppEnv>;
   let lifecycle: StubLifecycle;
 
@@ -125,14 +154,14 @@ describe("POST /v1/mcp-auth/initiate", () => {
     lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
     lifecycle.authUrls.set(`granola|${WS_ID}|_workspace`, authUrl);
 
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "granola" }),
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<OAuthInitiateResponse>(res);
     expect(body.authorizationUrl).toBe(authUrl);
 
     const setCookie = res.headers.get("Set-Cookie");
@@ -142,19 +171,16 @@ describe("POST /v1/mcp-auth/initiate", () => {
     expect(setCookie!).toContain("SameSite=Lax");
     expect(setCookie!).toContain("Path=/v1/mcp-auth/callback");
     expect(setCookie!).toContain("Max-Age=900");
-    // secureCookies=false (dev) → no Secure flag
+    // secureCookies=false → no Secure flag
     expect(setCookie!).not.toContain("Secure");
   });
 
   test("adds Secure flag when secureCookies is set", async () => {
     lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
-    lifecycle.authUrls.set(
-      `granola|${WS_ID}|_workspace`,
-      "https://granola.test/auth?state=s",
-    );
+    lifecycle.authUrls.set(`granola|${WS_ID}|_workspace`, "https://granola.test/auth?state=s");
     const prodApp = makeApp(lifecycle, /* secureCookies */ true);
 
-    const res = await prodApp.request("http://api.example.com/v1/mcp-auth/initiate", {
+    const res = await prodApp.request(`http://api.example.com${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "granola" }),
@@ -171,46 +197,46 @@ describe("POST /v1/mcp-auth/initiate", () => {
     lifecycle.instances.set(`minted|${WS_ID}`, { oauthScope: "workspace" });
     lifecycle.authUrls.set(`minted|${WS_ID}|_workspace`, null);
 
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "minted" }),
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<OAuthInitiateResponse>(res);
     expect(body.authorizationUrl).toBeNull();
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 
   test("returns 404 with no cookie when connector is not installed", async () => {
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "no-such-connector" }),
     });
 
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("connector_not_found");
     // No cookie should be set when no flow exists.
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 
   test("returns 400 on missing serverName", async () => {
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({}),
     });
 
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
   test("returns 400 on non-JSON body", async () => {
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "not-json",
@@ -222,17 +248,49 @@ describe("POST /v1/mcp-auth/initiate", () => {
     // A URL without `?state=…` shouldn't reach this code path in production,
     // but the route guards against it explicitly.
     lifecycle.instances.set(`bad|${WS_ID}`, { oauthScope: "workspace" });
-    lifecycle.authUrls.set(
-      `bad|${WS_ID}|_workspace`,
-      "https://granola.test/auth?client_id=x",
-    );
+    lifecycle.authUrls.set(`bad|${WS_ID}|_workspace`, "https://granola.test/auth?client_id=x");
 
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "bad" }),
     });
     expect(res.status).toBe(500);
+  });
+
+  test("returns 404 workspace_error and starts no flow for a workspace the caller is not in", async () => {
+    lifecycle.instances.set(`granola|ws_005820c54ca342ad`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(
+      `granola|ws_005820c54ca342ad|_workspace`,
+      "https://granola.test/auth?state=s",
+    );
+
+    const res = await app.request(
+      "http://localhost/v1/workspaces/ws_005820c54ca342ad/mcp-auth/initiate",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ serverName: "granola" }),
+      },
+    );
+
+    expect(res.status).toBe(404);
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("workspace_error");
+    expect(res.headers.get("Set-Cookie")).toBeNull();
+  });
+
+  test("the unscoped /v1/mcp-auth/initiate path is not a route", async () => {
+    lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(`granola|${WS_ID}|_workspace`, "https://granola.test/auth?state=s");
+
+    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ serverName: "granola" }),
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 });
 
@@ -268,10 +326,10 @@ describe("GET /v1/mcp-auth/callback", () => {
     expect(html).toContain("Authorization complete");
 
     // Redirect back to the workspace-scoped connectors page for the
-    // workspace the flow was initiated in (WS_ID = "ws_test" → slug
+    // workspace the flow was initiated in (WS_ID = "ws_0076759dbbe19fcc" → slug
     // "test"). The pre-scoping `/settings/workspace/connectors` path is
     // gone — landing there 404s now that connectors live under `/w/<slug>`.
-    expect(html).toContain("/w/test/settings/connectors");
+    expect(html).toContain("/w/0076759dbbe19fcc/settings/connectors");
     expect(html).not.toContain("/settings/workspace/connectors");
 
     // Cookie cleared: Max-Age=0
@@ -290,16 +348,16 @@ describe("GET /v1/mcp-auth/callback", () => {
     // own CSP, and the security-headers middleware must respect it (per
     // its `if (!c.res.headers.has(...)) set` precedent). This test wires
     // the real middleware in front of the route and verifies both.
-    const ctx = {
-      runtime: {
-        getLifecycle: () => lifecycle,
+    const ctx = stub<AppContext>({
+      runtime: stub<Runtime>({
+        getLifecycle: () => stub<ConnectorLifecycleManager>(lifecycle),
         getWorkDir: () => "/tmp/nb-test",
         getAllowInsecureRemotes: () => false,
-      },
-      authOptions: { mode: { type: "dev" }, eventSink: { emit: () => {} } },
-      workspaceStore: {},
+      }),
+      authOptions: DEV_AUTH,
+      workspaceStore: stub<WorkspaceStore>({}),
       secureCookies: false,
-    } as unknown as AppContext;
+    });
     const wrapped = new Hono<AppEnv>();
     wrapped.use("*", securityHeaders());
     wrapped.use("*", async (c, next) => {
@@ -330,9 +388,7 @@ describe("GET /v1/mcp-auth/callback", () => {
     // tests) fails here before it ships as an unstyled page in prod.
     const styleMatch = html.match(/<style>([\s\S]*?)<\/style>/);
     expect(styleMatch).not.toBeNull();
-    const servedStyleHash = createHash("sha256")
-      .update(styleMatch![1])
-      .digest("base64");
+    const servedStyleHash = createHash("sha256").update(styleMatch![1]).digest("base64");
     expect(csp!).toContain(`'sha256-${servedStyleHash}'`);
     await expect(flowPromise).resolves.toBe("auth-code-csp");
   });
@@ -367,10 +423,9 @@ describe("GET /v1/mcp-auth/callback", () => {
     // Cookie is sha256(some-other-state), not sha256(state) — the timing-safe
     // comparison must reject.
     const wrongCookie = `nb_oauth_state=${sha256Hex("some-other-state")}`;
-    const res = await app.request(
-      `http://localhost/v1/mcp-auth/callback?code=c&state=${state}`,
-      { headers: { cookie: wrongCookie } },
-    );
+    const res = await app.request(`http://localhost/v1/mcp-auth/callback?code=c&state=${state}`, {
+      headers: { cookie: wrongCookie },
+    });
 
     expect(res.status).toBe(400);
     const html = await res.text();
@@ -387,10 +442,9 @@ describe("GET /v1/mcp-auth/callback", () => {
     const state = "ghost-state";
     const cookie = `nb_oauth_state=${sha256Hex(state)}`;
 
-    const res = await app.request(
-      `http://localhost/v1/mcp-auth/callback?code=c&state=${state}`,
-      { headers: { cookie } },
-    );
+    const res = await app.request(`http://localhost/v1/mcp-auth/callback?code=c&state=${state}`, {
+      headers: { cookie },
+    });
 
     expect(res.status).toBe(404);
     const html = await res.text();
@@ -420,11 +474,137 @@ describe("GET /v1/mcp-auth/callback", () => {
   });
 
   test("response is not cacheable", async () => {
-    const res = await app.request(
-      "http://localhost/v1/mcp-auth/callback?code=x&state=y",
-    );
+    const res = await app.request("http://localhost/v1/mcp-auth/callback?code=x&state=y");
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(res.headers.get("Pragma")).toBe("no-cache");
+  });
+});
+
+describe("GET /v1/mcp-auth/callback — invalid_scope falls back to the connector's own scope", () => {
+  let app: Hono<AppEnv>;
+  const state = "fallback-state";
+  const fallbackUrl = `https://vendor.test/authorize?state=${state}&scope=mcp&client_id=cid`;
+  const cookie = `nb_oauth_state=${sha256Hex(state)}`;
+  const refused = `http://localhost/v1/mcp-auth/callback?error=invalid_scope&state=${state}`;
+  let used: number;
+  let flow: Promise<string>;
+
+  beforeEach(() => {
+    app = makeApp(makeStubLifecycle());
+    used = 0;
+    flow = registerFlow(state, WS_OWNER, "granola", DEFAULT_FLOW_TTL_MS, {
+      url: fallbackUrl,
+      onUse: () => used++,
+    });
+    flow.catch(() => {});
+  });
+
+  afterEach(() => {
+    _clearAll();
+  });
+
+  test("sends the browser to the fallback once, and the same flow still completes", async () => {
+    const res = await app.request(refused, { headers: { cookie } });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(fallbackUrl);
+    expect(used).toBe(1);
+
+    expect(resolveWithCode(state, "auth-code-1")).toBe(true);
+    await expect(flow).resolves.toBe("auth-code-1");
+  });
+
+  test("takes no fallback without the session's state cookie", async () => {
+    const res = await app.request(refused);
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
+    expect(used).toBe(0);
+  });
+
+  test("takes no fallback for any other refusal", async () => {
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?error=access_denied&state=${state}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(400);
+    expect(used).toBe(0);
+  });
+});
+
+describe("GET /v1/mcp-auth/callback — a refusal ends the flow (#1433)", () => {
+  // A flow left pending after the server refused it holds its connector's
+  // start for the whole TTL: the connection reads as connecting and a second
+  // Connect on a personal connector answers 409 until the timer fires.
+  let app: Hono<AppEnv>;
+  const state = "refused-state-abcdef";
+  const cookie = `nb_oauth_state=${sha256Hex(state)}`;
+  const denied = `http://localhost/v1/mcp-auth/callback?error=access_denied&state=${state}`;
+
+  beforeEach(() => {
+    app = makeApp(makeStubLifecycle());
+  });
+
+  afterEach(() => {
+    _clearAll();
+  });
+
+  test("a refusal from the session that began the flow rejects it at once", async () => {
+    const flow = registerFlow(state, WS_OWNER, "granola");
+    flow.catch(() => {});
+
+    const res = await app.request(denied, { headers: { cookie } });
+
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("access_denied");
+    const err = await flow.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(OAuthFlowRefusedError);
+    // The flow is gone: a late code for it resolves nothing.
+    expect(resolveWithCode(state, "late-code")).toBe(false);
+  });
+
+  test("a refusal without the session's state cookie leaves the flow pending", async () => {
+    const flow = registerFlow(state, WS_OWNER, "granola");
+    flow.catch(() => {});
+
+    const noCookie = await app.request(denied);
+    const wrongCookie = await app.request(denied, {
+      headers: { cookie: `nb_oauth_state=${sha256Hex("another-state")}` },
+    });
+
+    expect(noCookie.status).toBe(400);
+    expect(wrongCookie.status).toBe(400);
+    expect(resolveWithCode(state, "auth-code-1")).toBe(true);
+    await expect(flow).resolves.toBe("auth-code-1");
+  });
+
+  test("a refusal that names no flow still answers 400", async () => {
+    const unknown = await app.request(denied, { headers: { cookie } });
+    const stateless = await app.request(
+      "http://localhost/v1/mcp-auth/callback?error=access_denied",
+    );
+
+    expect(unknown.status).toBe(400);
+    expect(stateless.status).toBe(400);
+  });
+
+  test("invalid_scope ends the flow once no fallback is left", async () => {
+    let used = 0;
+    const flow = registerFlow(state, WS_OWNER, "granola", DEFAULT_FLOW_TTL_MS, {
+      url: `https://vendor.test/authorize?state=${state}&scope=mcp`,
+      onUse: () => used++,
+    });
+    flow.catch(() => {});
+    const refused = `http://localhost/v1/mcp-auth/callback?error=invalid_scope&state=${state}`;
+
+    // The first refusal takes the fallback and keeps the flow.
+    expect((await app.request(refused, { headers: { cookie } })).status).toBe(302);
+    // The server refuses the fallback too: nothing is left to try.
+    expect((await app.request(refused, { headers: { cookie } })).status).toBe(400);
+
+    expect(used).toBe(1);
+    await expect(flow).rejects.toBeInstanceOf(OAuthFlowRefusedError);
   });
 });
 
@@ -508,6 +688,26 @@ describe("GET /v1/mcp-auth/callback — outcome logging (#1244)", () => {
     });
   });
 
+  test("a refusal from the flow's session logs the flow id and whether it ended a flow", async () => {
+    const state = "refused-state-abcdef";
+    const refusal = `http://localhost/v1/mcp-auth/callback?error=access_denied&state=${state}`;
+    const headers = { cookie: `nb_oauth_state=${sha256Hex(state)}` };
+    registerFlow(state, WS_OWNER, "granola").catch(() => {});
+
+    await app.request(refusal, { headers });
+    expect(loggedFields()).toMatchObject({
+      outcome: "provider_error",
+      providerError: "access_denied",
+      flow: state.slice(0, 8),
+      flowEnded: true,
+    });
+
+    // The same refusal again finds no flow left to end.
+    warn.mockClear();
+    await app.request(refusal, { headers });
+    expect(loggedFields()).toMatchObject({ outcome: "provider_error", flowEnded: false });
+  });
+
   test("a hostile error param cannot write an unbounded log field", async () => {
     const huge = "x".repeat(5000);
     await app.request(`http://localhost/v1/mcp-auth/callback?error=${huge}&state=y`);
@@ -549,11 +749,10 @@ describe("GET /v1/mcp-auth/callback — the line a deployed pod actually writes"
     process.env.NB_LOG_FORMAT = "json";
     const lines: string[] = [];
     const origWrite = process.stderr.write.bind(process.stderr);
-    // @ts-expect-error narrow override for capture
-    process.stderr.write = (chunk: string) => {
+    process.stderr.write = ((chunk: string) => {
       lines.push(String(chunk));
       return true;
-    };
+    }) as typeof process.stderr.write;
     try {
       // No cookie header → the session check refuses, which is the branch that
       // carries the field.
@@ -603,7 +802,7 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
     // bouncer 302s the callback back to this tenant's `publicOrigin()` (the
     // return leg). Set it so the callback handler can build the return URL —
     // without it, `publicOrigin()` fails closed (NB_TENANT_ID set, no host facts).
-    process.env.NB_PLATFORM_HOST = `${TID}.platform.nimblebrain.ai`;
+    process.env.NB_PLATFORM_HOST = `${TID}.nb.example.com`;
     const { _resetBouncerModeForTest } = await import("../../../src/oauth/bouncer-config.ts");
     _resetBouncerModeForTest();
     lifecycle = makeStubLifecycle();
@@ -627,14 +826,14 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
     lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
     lifecycle.authUrls.set(`granola|${WS_ID}|_workspace`, authUrl);
 
-    const res = await app.request("http://localhost/v1/mcp-auth/initiate", {
+    const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ serverName: "granola" }),
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<OAuthInitiateResponse>(res);
 
     // The authorizationUrl returned to the client has the wrapped state
     // in place of the SDK-generated inner state.
@@ -649,6 +848,31 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
     const setCookie = res.headers.get("Set-Cookie");
     expect(setCookie).not.toBeNull();
     expect(setCookie!).toContain(`nb_oauth_state=${sha256Hex(innerState)}`);
+  });
+
+  test("an invalid_scope callback's fallback carries the state re-wrapped for the bouncer", async () => {
+    const { signEnvelope, verifyEnvelopeAsTenant } = await import("../../../src/oauth/envelope.ts");
+    const tenantKey = Buffer.from(TENANT_KEY_B64, "base64");
+    const innerState = "inner-state-for-fallback";
+    const wireState = signEnvelope({ tid: TID, inner: innerState, tenantKey });
+    registerFlow(innerState, WS_OWNER, "granola", DEFAULT_FLOW_TTL_MS, {
+      url: `https://vendor.test/authorize?state=${innerState}&scope=mcp`,
+      onUse: () => {},
+    }).catch(() => {});
+
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?error=invalid_scope&state=${encodeURIComponent(wireState)}`,
+      { headers: { cookie: `nb_oauth_state=${sha256Hex(innerState)}` } },
+    );
+
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get("location") ?? "");
+    expect(location.searchParams.get("scope")).toBe("mcp");
+    const rewrapped = location.searchParams.get("state") ?? "";
+    expect(rewrapped.startsWith("v1.")).toBe(true);
+    expect(verifyEnvelopeAsTenant({ wire: rewrapped, tenantKey, expectedTid: TID }).inner).toBe(
+      innerState,
+    );
   });
 
   test("callback unwraps the envelope, applies cookie binding, and resolves the flow", async () => {
@@ -783,7 +1007,7 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     });
 
     expect(res.status).toBe(200);
-    expect((await res.json()).authorizationUrl).toContain("/authorize");
+    expect((await readJson<OAuthInitiateResponse>(res)).authorizationUrl).toContain("/authorize");
     const setCookie = res.headers.get("Set-Cookie");
     expect(setCookie).not.toBeNull();
     expect(setCookie!).toContain(`nb_oauth_state=${sha256Hex(state)}`);
@@ -806,7 +1030,7 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<OAuthInitiateResponse>(res);
     expect(body.authorizationUrl).toBeNull();
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
@@ -830,7 +1054,7 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     });
 
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toBe("connector_busy");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("connector_busy");
     expect(res.headers.get("Retry-After")).not.toBeNull();
     // Busy is not a flow start — no state cookie set.
     expect(res.headers.get("Set-Cookie")).toBeNull();
@@ -843,7 +1067,7 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
       body: JSON.stringify({ serverName: "not-installed" }),
     });
     expect(res.status).toBe(404);
-    expect((await res.json()).error).toBe("connector_not_found");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("connector_not_found");
     // No flow started, no cookie set.
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
@@ -875,5 +1099,38 @@ describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
     // Never a workspace-scoped page for a personal connector.
     expect(html).not.toContain("/w/");
     await expect(flowPromise).resolves.toBe("code-1");
+  });
+});
+
+describe("fleet authorizer: startup validation", () => {
+  const FLEET_ENV_VARS = [
+    "NB_FLEET_AUTHORIZER_ISSUER",
+    "NB_MCP_AUTHORIZER_TENANT_KEY",
+    "NB_TENANT_ID",
+  ] as const;
+  let savedEnv: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    savedEnv = Object.fromEntries(FLEET_ENV_VARS.map((k) => [k, process.env[k]]));
+    process.env.NB_FLEET_AUTHORIZER_ISSUER = "http://fleet-authorizer.internal";
+    process.env.NB_TENANT_ID = "tenant-a";
+  });
+
+  afterEach(() => {
+    for (const k of FLEET_ENV_VARS) {
+      const v = savedEnv[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  test("refuses to build the routes when the fleet issuer is set without a tenant key", () => {
+    delete process.env.NB_MCP_AUTHORIZER_TENANT_KEY;
+    expect(() => makeApp(makeStubLifecycle())).toThrow(/NB_MCP_AUTHORIZER_TENANT_KEY/);
+  });
+
+  test("builds the routes when the tenant key is provisioned", () => {
+    process.env.NB_MCP_AUTHORIZER_TENANT_KEY = randomBytes(32).toString("base64");
+    expect(() => makeApp(makeStubLifecycle())).not.toThrow();
   });
 });

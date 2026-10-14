@@ -3,6 +3,7 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightSidebarTopics from 'starlight-sidebar-topics';
 import starlightLinksValidator from 'starlight-links-validator';
+import { starlightThemeCss } from './src/theme/starlight.ts';
 
 // https://astro.build/config
 export default defineConfig({
@@ -36,7 +37,15 @@ export default defineConfig({
     '/cli/status': '/cli/overview/',
     '/cli/reload': '/cli/overview/',
     '/cli/telemetry': '/using/telemetry/',
-    '/cli/automation': '/using/automations/',
+    '/cli/automation': '/using/tasks/',
+    // Extension pages moved into their own section.
+    '/apps/facets': '/extensions/facets/',
+    '/apps/lifecycle': '/extensions/lifecycle/',
+    '/apps/notifications': '/extensions/notifications/',
+    '/apps/placements': '/extensions/placements/',
+    '/apps/custom-instructions': '/extensions/custom-instructions/',
+    '/mcp/host-resources': '/extensions/host-resources/',
+    '/mcp/reserved-keys': '/extensions/reserved-keys/',
   },
   integrations: [
     starlight({
@@ -48,7 +57,7 @@ export default defineConfig({
         alt: 'NimbleBrain',
         replacesTitle: true,
       },
-      customCss: ['./src/styles/custom.css'],
+      customCss: ['@fontsource-variable/jetbrains-mono', './src/styles/custom.css'],
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/NimbleBrainInc/nimblebrain' },
         { icon: 'discord', label: 'Discord', href: 'https://nimblebrain.ai/discord' },
@@ -59,9 +68,11 @@ export default defineConfig({
           tag: 'link',
           attrs: {
             rel: 'stylesheet',
-            href: 'https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,500;0,7..72,600;0,7..72,700;1,7..72,400;1,7..72,500;1,7..72,600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Mono:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap',
+            href: 'https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap',
           },
         },
+        // Colours and font stacks, projected from the runtime palette at build time.
+        { tag: 'style', content: starlightThemeCss() },
       ],
       plugins: [
         starlightLinksValidator({ errorOnLocalLinks: false }),
@@ -98,9 +109,10 @@ export default defineConfig({
                   { label: 'Chat', slug: 'using/chat' },
                   { label: 'Conversations', slug: 'using/conversations' },
                   { label: 'Workspaces', slug: 'using/workspaces' },
+                  { label: 'Files', slug: 'using/files' },
                   { label: 'File Context', slug: 'using/file-context' },
                   { label: 'Skills', slug: 'using/skills' },
-                  { label: 'Automations', slug: 'using/automations' },
+                  { label: 'Tasks', slug: 'using/tasks' },
                   {
                     label: 'Notifications',
                     items: [
@@ -132,6 +144,15 @@ export default defineConfig({
             ],
           },
           {
+            label: 'MCP',
+            link: '/mcp/overview',
+            icon: 'seti:json',
+            items: [
+              { label: 'NimbleBrain and MCP', slug: 'mcp/overview' },
+              { label: 'Protocol Support', slug: 'mcp/protocol-support' },
+            ],
+          },
+          {
             label: 'Connect via MCP',
             link: '/connect/external-clients',
             icon: 'external',
@@ -149,15 +170,33 @@ export default defineConfig({
               { label: 'Manifest Reference', slug: 'apps/manifest' },
               { label: 'Synapse SDK', slug: 'apps/synapse' },
               { label: 'Tool Results & Content Routing', slug: 'apps/tool-results' },
-              { label: 'Notifications', slug: 'apps/notifications' },
-              { label: 'Lifecycle', slug: 'apps/lifecycle' },
               { label: 'MCP App Bridge', slug: 'apps/bridge' },
               { label: 'UI Resources', slug: 'apps/ui-resources' },
               { label: 'Theming', slug: 'apps/theming' },
-              { label: 'Placements & Navigation', slug: 'apps/placements' },
-              { label: 'Custom Instructions', slug: 'apps/custom-instructions' },
               { label: 'Local Development', slug: 'apps/local-dev' },
               { label: 'Example: Hello World App', slug: 'apps/hello-world' },
+            ],
+          },
+          {
+            label: 'Extensions',
+            link: '/extensions/overview',
+            icon: 'server',
+            items: [
+              { label: 'Overview', slug: 'extensions/overview' },
+              { label: 'Lifecycle', slug: 'extensions/lifecycle' },
+              { label: 'Facets', slug: 'extensions/facets' },
+              { label: 'Notifications', slug: 'extensions/notifications' },
+              { label: 'Inbound Webhooks', slug: 'extensions/webhooks' },
+              { label: 'Settings Sections', slug: 'extensions/settings-sections' },
+              { label: 'Admin-only Tools', slug: 'extensions/admin-tools' },
+              { label: 'Placements & Navigation', slug: 'extensions/placements' },
+              { label: 'Host Resources', slug: 'extensions/host-resources' },
+              { label: 'Custom Instructions', slug: 'extensions/custom-instructions' },
+              {
+                label: 'App Bridge Extensions',
+                link: '/apps/bridge/#nimblebrain-extensions-ainimblebrain',
+              },
+              { label: 'Reserved Keys', slug: 'extensions/reserved-keys' },
             ],
           },
           {
@@ -186,6 +225,7 @@ export default defineConfig({
               { label: 'Connectors Catalog', slug: 'config/connectors-catalog' },
               { label: 'Logging', slug: 'config/logging' },
               { label: 'Feature Flags', slug: 'config/features' },
+              { label: 'Branding', slug: 'config/branding' },
               { label: 'Environment Variables', slug: 'config/environment' },
             ],
           },
@@ -206,6 +246,7 @@ export default defineConfig({
             icon: 'cloud-download',
             items: [
               { label: 'Docker Compose', slug: 'deploy/docker' },
+              { label: 'White-labeling', slug: 'deploy/white-label' },
               { label: 'Security', slug: 'deploy/security' },
               { label: 'Observability', slug: 'deploy/observability' },
             ],

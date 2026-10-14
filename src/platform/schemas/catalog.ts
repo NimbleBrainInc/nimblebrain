@@ -1,13 +1,11 @@
 import type { Static, TSchema } from "@sinclair/typebox";
-import * as Automations from "./automations.ts";
 import * as Compose from "./compose.ts";
 import * as Conversations from "./conversations.ts";
 import * as Files from "./files.ts";
-import * as Home from "./home.ts";
-import * as Instructions from "./instructions.ts";
 import * as ManageTools from "./manage-tools.ts";
 import * as Notifications from "./notifications.ts";
 import * as Skills from "./skills.ts";
+import * as Tasks from "./tasks.ts";
 import * as Usage from "./usage.ts";
 
 // Registry mapping (source, tool) → input schema. The web client and any
@@ -29,28 +27,23 @@ export const PlatformToolCatalog = {
     activate: { input: Skills.SkillsActivateInput },
     deactivate: { input: Skills.SkillsDeactivateInput },
   },
-  home: {
-    activity: { input: Home.HomeActivityInput },
-  },
   usage: {
     report: { input: Usage.UsageReportInput },
-  },
-  instructions: {
-    write_instructions: { input: Instructions.InstructionsWriteInput },
   },
   compose: {
     effective_context: { input: Compose.ComposeEffectiveContextInput },
     assembled_context: { input: Compose.ComposeAssembledContextInput },
   },
-  automations: {
-    create: { input: Automations.AutomationsCreateInput },
-    update: { input: Automations.AutomationsUpdateInput },
-    delete: { input: Automations.AutomationsDeleteInput },
-    list: { input: Automations.AutomationsListInput },
-    status: { input: Automations.AutomationsStatusInput },
-    runs: { input: Automations.AutomationsRunsInput },
-    run: { input: Automations.AutomationsRunInput },
-    cancel: { input: Automations.AutomationsCancelInput },
+  tasks: {
+    create: { input: Tasks.TasksCreateInput },
+    update: { input: Tasks.TasksUpdateInput },
+    delete: { input: Tasks.TasksDeleteInput },
+    list: { input: Tasks.TasksListInput },
+    status: { input: Tasks.TasksStatusInput },
+    runs: { input: Tasks.TasksRunsInput },
+    run: { input: Tasks.TasksRunInput },
+    cancel: { input: Tasks.TasksCancelInput },
+    assess: { input: Tasks.TasksAssessInput },
   },
   conversations: {
     list: { input: Conversations.ConversationsListInput },

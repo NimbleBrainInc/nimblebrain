@@ -21,19 +21,14 @@ beforeEach(() => {
   nextId = 1;
   timers = [];
   // Replace setTimeout with a deterministic fake so tests don't depend on
-  // real-clock progression. Cast through `unknown` because Node and DOM
-  // disagree about the return type.
-  (globalThis as unknown as { setTimeout: typeof setTimeout }).setTimeout = ((
-    fn: () => void,
-    ms: number,
-  ) => {
+  // real-clock progression. The fake's ids are numbers, which is what the DOM
+  // lib's `setTimeout` returns.
+  globalThis.setTimeout = ((fn: () => void, ms: number) => {
     const id = nextId++;
     timers.push({ at: now + ms, fn, id });
-    return id as unknown as ReturnType<typeof setTimeout>;
+    return id;
   }) as typeof setTimeout;
-  (globalThis as unknown as { clearTimeout: typeof clearTimeout }).clearTimeout = ((
-    id: number,
-  ) => {
+  globalThis.clearTimeout = ((id: number) => {
     timers = timers.filter((t) => t.id !== id);
   }) as typeof clearTimeout;
 });

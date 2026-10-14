@@ -18,13 +18,15 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ServerHandle } from "../../src/api/server.ts";
+import type { ChatResponse } from "../../src/api/schemas/responses.ts";
 import { startServer } from "../../src/api/server.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
+import { readJson } from "../helpers/http.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
-import { createTestAuthAdapter, TEST_IDENTITY } from "../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const API_KEY = "mid-turn-compaction-wiring-key-1234";
@@ -67,7 +69,8 @@ function growingModel() {
 async function startRuntime(workDir: string, compaction: boolean) {
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
-    model: { provider: "custom", adapter: growingModel() },
+    identityProvider: testAuthAdapter(API_KEY),
+    languageModel: growingModel(),
     logging: { disabled: true },
     workDir,
     features: { compaction },
@@ -75,28 +78,25 @@ async function startRuntime(workDir: string, compaction: boolean) {
     maxOutputTokens: 512,
     maxIterations: TOOL_STEPS + 2,
   });
-  await provisionTestWorkspace(runtime);
+  await provisionTestWorkspace(runtime, TEST_WORKSPACE_ID, "Test Workspace", [TEST_IDENTITY.id]);
   const handle = startServer({
     runtime,
     port: 0,
-    provider: createTestAuthAdapter(API_KEY, runtime),
   });
   return { runtime, handle, baseUrl: `http://localhost:${handle.port}` };
 }
 
 /** One chat turn. The loop inside it is what this test is about. */
 async function sendTurn(baseUrl: string): Promise<string> {
-  const res = await fetch(`${baseUrl}/v1/chat`, {
-    method: "POST",
+  const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${API_KEY}`,
-      "X-Workspace-Id": TEST_WORKSPACE_ID,
     },
     body: JSON.stringify({ message: "Work through this with your tools." }),
   });
   expect(res.status).toBe(200);
-  return (await res.json()).conversationId as string;
+  return (await readJson<ChatResponse>(res)).conversationId as string;
 }
 
 function readEvents(workDir: string, conversationId: string): ConversationEvent[] {
@@ -134,52 +134,44 @@ afterAll(async () => {
 });
 
 describe("mid-turn compaction — wired path", () => {
-  test(
-    "a single turn folds mid-loop, bills the summarizer, and persists no compaction event",
-    async () => {
-      const convId = await sendTurn(on.baseUrl);
-      const events = readEvents(onDir, convId);
+  test("a single turn folds mid-loop, bills the summarizer, and persists no compaction event", async () => {
+    const convId = await sendTurn(on.baseUrl);
+    const events = readEvents(onDir, convId);
 
-      // The fold ran inside the turn. This is a FIRST turn — it opened on one
-      // message — so turn-setup compaction had nothing to fold and cannot be
-      // what produced this.
-      expect(events.filter(isCompactionUsage).length).toBeGreaterThan(0);
+    // The fold ran inside the turn. This is a FIRST turn — it opened on one
+    // message — so turn-setup compaction had nothing to fold and cannot be
+    // what produced this.
+    expect(events.filter(isCompactionUsage).length).toBeGreaterThan(0);
 
-      // Its cost is visible: the summarizer runs outside the agentic loop and
-      // emits no llm.response, so the aux.usage append is the only record.
-      const usage = events.find(isCompactionUsage) as { usage?: { inputTokens?: number } };
-      expect(usage.usage?.inputTokens).toBeDefined();
+    // Its cost is visible: the summarizer runs outside the agentic loop and
+    // emits no llm.response, so the aux.usage append is the only record.
+    const usage = events.find(isCompactionUsage) as { usage?: { inputTokens?: number } };
+    expect(usage.usage?.inputTokens).toBeDefined();
 
-      // And it left the conversation's record alone: a mid-turn fold is
-      // in-memory for the turn, so nothing rewrites the stored projection.
-      expect(events.some((e) => e.type === "history.compacted")).toBe(false);
+    // And it left the conversation's record alone: a mid-turn fold is
+    // in-memory for the turn, so nothing rewrites the stored projection.
+    expect(events.some((e) => e.type === "history.compacted")).toBe(false);
 
-      // Both folds attribute to the conversation, so `source="compaction"` has
-      // one origin rather than depending on which one fired. This fold gets it
-      // from `engine.run`'s own wrap (`engine.applyHistoryRewrite` awaits the
-      // `rewriteHistory` hook inside it); the between-turns fold gets it from
-      // the turn scope `chat()` opens, asserted in `compaction-wiring.test.ts`.
-      // Pinning both is what keeps a future move of either one from quietly
-      // reverting half the attribution.
-      const metricsBody = await (await fetch(`${on.baseUrl}/metrics`)).text();
-      expect(metricsBody).toMatch(
-        /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
-      );
-    },
-    30_000,
-  );
+    // Both folds attribute to the conversation, so `source="compaction"` has
+    // one origin rather than depending on which one fired. This fold gets it
+    // from `engine.run`'s own wrap (`engine.applyHistoryRewrite` awaits the
+    // `rewriteHistory` hook inside it); the between-turns fold gets it from
+    // the turn scope `chat()` opens, asserted in `compaction-wiring.test.ts`.
+    // Pinning both is what keeps a future move of either one from quietly
+    // reverting half the attribution.
+    const metricsBody = await (await fetch(`${on.baseUrl}/metrics`)).text();
+    expect(metricsBody).toMatch(
+      /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
+    );
+  }, 30_000);
 
-  test(
-    "features.compaction off makes no summarizer call on the same turn",
-    async () => {
-      const convId = await sendTurn(off.baseUrl);
-      const events = readEvents(offDir, convId);
+  test("features.compaction off makes no summarizer call on the same turn", async () => {
+    const convId = await sendTurn(off.baseUrl);
+    const events = readEvents(offDir, convId);
 
-      // Same growth, same budget, gate closed: the hook is never installed, so
-      // an operator who turned compaction off is not billed for folds.
-      expect(events.filter(isCompactionUsage)).toEqual([]);
-      expect(events.some((e) => e.type === "history.compacted")).toBe(false);
-    },
-    30_000,
-  );
+    // Same growth, same budget, gate closed: the hook is never installed, so
+    // an operator who turned compaction off is not billed for folds.
+    expect(events.filter(isCompactionUsage)).toEqual([]);
+    expect(events.some((e) => e.type === "history.compacted")).toBe(false);
+  }, 30_000);
 });

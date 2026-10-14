@@ -1,23 +1,54 @@
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
-import { buildHostContext, buildHostExtensions } from "../bridge/host-extensions";
+import { buildHostExtensions, type ConnectorForHostContext } from "../bridge/host-extensions";
 import type { CreateIframeOptions } from "../bridge/iframe";
 import { createAppIframe } from "../bridge/iframe";
-import type { BridgeCallbacks, UiChatContext } from "../bridge/types";
+import type { AppTrailEntry } from "../bridge/schemas";
+import type { AppNotice, BridgeCallbacks } from "../bridge/types";
+import { useFileLimits } from "../context/ChatContext";
 import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { useAppDisplayName } from "../hooks/useAppDisplayName";
+import { useHostContextSync } from "../hooks/useHostContextSync";
 import type { PlacementEntry } from "../types";
+import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
+import { useNotice } from "./notices";
 
 interface SlotRendererProps {
   placements: PlacementEntry[];
   className?: string;
   /** If set, only show the placement matching this route */
   routeFilter?: string;
-  onChat?: (message: string, context?: UiChatContext) => void;
-  onNavigate?: (route: string) => void;
+  onChat?: (message: string) => void;
+  /**
+   * Called with a placement's trail each time it sends
+   * `ai.nimblebrain/location`, and a `navigate` that asks that same placement
+   * to go to one of its trail entries.
+   */
+  onLocation?: (trail: AppTrailEntry[], navigate: (id: string) => void) => void;
+  /**
+   * A view to open inside the placement, by its stable address, sent as
+   * `ai.nimblebrain/navigate` once the placement's app is listening (it has
+   * reported a location): at its first report when the target came with the
+   * mount, and again whenever `key` changes after that. `key` identifies the
+   * request, so the same address asked for twice is sent twice.
+   */
+  target?: { id: string; key: string };
+  /**
+   * Whether the viewer can manage the connector these placements belong to.
+   * Set only by the connector settings page; when set, it reaches the app as
+   * the `connector` host-context extension. Every other mount leaves it unset.
+   */
+  canManage?: boolean;
+  /**
+   * Size each iframe to its content instead of filling the container. For a
+   * placement in a flow layout (a page section), where `height: 100%` has no
+   * height to resolve against.
+   */
+  fitContent?: boolean;
 }
 
 /**
@@ -46,6 +77,30 @@ function appendLoadError(container: HTMLElement, entry: PlacementEntry, err: unk
 }
 
 /**
+ * Placeholder shown in an app's place while its UI resource is fetched.
+ *
+ * The resource is one inlined HTML document, often several hundred KB, so the
+ * fetch can take seconds, and without this the slot is blank for all of it —
+ * indistinguishable from an app that failed or has nothing to show. Built as a
+ * DOM node for the same reason `appendLoadError` is: the container is populated
+ * imperatively. The caller removes it once the fetch settles either way.
+ */
+function appendLoading(container: HTMLElement, entry: PlacementEntry): HTMLElement {
+  const box = document.createElement("div");
+  box.setAttribute("role", "status");
+  box.className = "flex items-center justify-center h-full gap-2 p-6 text-sm text-muted-foreground";
+  const spinner = document.createElement("span");
+  spinner.className =
+    "inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent";
+  spinner.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.textContent = `Loading ${entry.label ?? "app"}…`;
+  box.append(spinner, label);
+  container.appendChild(box);
+  return box;
+}
+
+/**
  * Mount one placement's sandboxed iframe into `container` and wire its bridge.
  *
  * Extracted from the render loop so that loop stays a readable
@@ -57,10 +112,15 @@ function mountPlacement(
   entry: PlacementEntry,
   resource: { html: string; metaUi?: McpUiResourceMeta },
   themeMode: CreateIframeOptions["themeMode"],
-  callbacks: BridgeCallbacks,
+  shared: BridgeCallbacks,
+  fitContent: boolean,
+  onLocation: SlotRendererProps["onLocation"],
+  onLocationReport: (bridge: BridgeHandle) => void,
+  /** Raise an app's notice; the caller names the app from `serverName`. */
+  notifyFromApp: (serverName: string, notice: AppNotice) => void,
 ): BridgeHandle {
   const { html, metaUi } = resource;
-  const iframe = createAppIframe(html, entry.serverName, {
+  const iframe = createAppIframe(fitContent ? buildSizedHtml(html) : html, entry.serverName, {
     themeMode,
     connectDomains: metaUi?.csp?.connectDomains,
     resourceDomains: metaUi?.csp?.resourceDomains,
@@ -70,7 +130,7 @@ function mountPlacement(
     prefersBorder: metaUi?.prefersBorder,
   });
   iframe.style.width = "100%";
-  iframe.style.height = "100%";
+  iframe.style.height = fitContent ? `${DEFAULT_CONTENT_HEIGHT}px` : "100%";
   iframe.style.display = "block";
   iframe.style.opacity = "0";
   iframe.style.transition = "opacity 200ms ease-in";
@@ -81,7 +141,28 @@ function mountPlacement(
     iframe.style.opacity = "1";
   });
 
-  return createBridge(iframe, entry.serverName, callbacks);
+  // The trail's `navigate` must reach this placement's own bridge, which
+  // exists only once `createBridge` returns; the app cannot send a location
+  // before its handshake, so the binding is in place by the time it is read.
+  let bridge: BridgeHandle | null = null;
+  const callbacks: BridgeCallbacks = {
+    ...shared,
+    onNotify: (notice) => notifyFromApp(entry.serverName, notice),
+    onLocation: (trail) => {
+      if (bridge) onLocationReport(bridge);
+      onLocation?.(trail, (id) => bridge?.navigate(id));
+    },
+  };
+  if (fitContent) {
+    // A non-positive report comes from an app whose root has not rendered yet;
+    // keep the current height until it reports real content.
+    callbacks.onResize = (reported) => {
+      const h = Math.min(reported, RUNAWAY_HEIGHT_GUARD);
+      if (h > 0) iframe.style.height = `${h}px`;
+    };
+  }
+  bridge = createBridge(iframe, entry.serverName, callbacks);
+  return bridge;
 }
 
 export function SlotRenderer({
@@ -89,7 +170,10 @@ export function SlotRenderer({
   className,
   routeFilter,
   onChat,
-  onNavigate,
+  onLocation,
+  target,
+  canManage,
+  fitContent = false,
 }: SlotRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bridgesRef = useRef<BridgeHandle[]>([]);
@@ -104,20 +188,67 @@ export function SlotRenderer({
   // workspace from the render that mounted the iframe.
   const workspaceRef = useRef(activeWorkspace);
   workspaceRef.current = activeWorkspace;
+  // Same reason as `workspaceRef`: the handshake reads the value current when
+  // the iframe finishes loading, not the one from the render that mounted it.
+  const connector: ConnectorForHostContext = canManage === undefined ? undefined : { canManage };
+  const connectorRef = useRef(connector);
+  connectorRef.current = connector;
+  // Instance config, fixed at startup; a ref only so the callbacks built once
+  // in the mount effect read it without joining that effect's dependencies.
+  const uploadLimits = useFileLimits();
+  const uploadLimitsRef = useRef(uploadLimits);
+  uploadLimitsRef.current = uploadLimits;
 
   // Keep callbacks in refs so the iframe-mounting effect doesn't re-run
   // when callback identity changes (e.g. during chat streaming).
   const onChatRef = useRef(onChat);
   onChatRef.current = onChat;
-  const onNavigateRef = useRef(onNavigate);
-  onNavigateRef.current = onNavigate;
+  const onLocationRef = useRef(onLocation);
+  onLocationRef.current = onLocation;
+  const notify = useNotice();
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
+  const nameApp = useAppDisplayName();
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  // The `key` of the last target delivered, so a target is delivered once
+  // whether the mount or the key change delivers it.
+  const sentTargetKeyRef = useRef<string | null>(null);
+  // A target reaches an app only once it is listening, which is once it has
+  // reported a location: the bridge flushes held messages at the handshake,
+  // before the app has rendered the code that subscribes to `navigate`, and an
+  // app drops a notification nobody subscribed to. An app that reports a trail
+  // subscribes in the same render as its first report (`useTrail`), so the
+  // report is the signal. Until then the target waits here, and the app's first
+  // report delivers it. An app that never reports a trail has no handler for
+  // `navigate` and is never sent one, as the bridge documents.
+  const listeningRef = useRef(new WeakSet<BridgeHandle>());
+  const pendingTargetRef = useRef<SlotRendererProps["target"]>(undefined);
+
+  /** Deliver `target` to every mounted app already listening; the rest get it on their first report. */
+  const deliverTarget = useCallback((next: SlotRendererProps["target"]) => {
+    if (!next) return;
+    sentTargetKeyRef.current = next.key;
+    pendingTargetRef.current = next;
+    for (const bridge of bridgesRef.current) {
+      if (listeningRef.current.has(bridge)) bridge.navigate(next.id);
+    }
+  }, []);
+
+  /** A placement reported a location. The first time, it listens now, so a waiting target reaches it. */
+  const onLocationReport = useCallback((bridge: BridgeHandle) => {
+    if (listeningRef.current.has(bridge)) return;
+    listeningRef.current.add(bridge);
+    const waiting = pendingTargetRef.current;
+    if (waiting) bridge.navigate(waiting.id);
+  }, []);
 
   const filtered = routeFilter ? placements.filter((p) => p.route === routeFilter) : placements;
 
   // Stable key: only re-mount iframes when the actual placements change
   const placementKey = filtered.map((p) => p.resourceUri).join(",");
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-mount iframes only when placementKey changes — `filtered` is read at run time but changes identity every render (depending on it would thrash iframes), and mode is read through a ref
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `placementKey` stands for `filtered`, a new array every render, so depending on it would remount every iframe each render; `fitContent` is fixed per mount site, and `deliverTarget`, `onLocationReport` and `nameApp` keep one identity for the component's life
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -129,20 +260,34 @@ export function SlotRenderer({
     // so none of them close over the entry. Built once outside the loop.
     const bridgeCallbacks: BridgeCallbacks = {
       onChat: (...args) => onChatRef.current?.(...args),
-      onNavigate: (...args) => onNavigateRef.current?.(...args),
-      getHostExtensions: () => buildHostExtensions(workspaceRef.current),
+      getHostExtensions: () =>
+        buildHostExtensions(workspaceRef.current, connectorRef.current, uploadLimitsRef.current),
+      getUploadLimits: () => uploadLimitsRef.current,
     };
 
     // Fetch + mount one placement. A failure is contained here: it renders its
     // own message in place of the iframe and yields no bridge, so one broken app
     // never stops the placements after it from mounting.
     async function renderOne(entry: PlacementEntry): Promise<BridgeHandle | null> {
+      const loading = appendLoading(container!, entry);
       try {
         // Pass the full path after ui:// (e.g., "ui://crm/main" -> "crm/main")
         const resourcePath = uiPathFromUri(entry.resourceUri);
-        const resource = await getResources(entry.serverName, resourcePath);
+        const resource = await getResources(entry.serverName, resourcePath).finally(() =>
+          loading.remove(),
+        );
         if (cancelled) return null;
-        return mountPlacement(container!, entry, resource, modeRef.current, bridgeCallbacks);
+        return mountPlacement(
+          container!,
+          entry,
+          resource,
+          modeRef.current,
+          bridgeCallbacks,
+          fitContent,
+          (trail, navigate) => onLocationRef.current?.(trail, navigate),
+          onLocationReport,
+          (serverName, notice) => notifyRef.current({ ...notice, source: nameApp(serverName) }),
+        );
       } catch (err) {
         console.warn(`Failed to load placement ${entry.resourceUri}:`, err);
         if (!cancelled) appendLoadError(container!, entry, err);
@@ -160,6 +305,7 @@ export function SlotRenderer({
         if (bridge) bridges.push(bridge);
       }
       bridgesRef.current = bridges;
+      if (!cancelled) deliverTarget(targetRef.current);
     }
 
     renderPlacements();
@@ -169,24 +315,33 @@ export function SlotRenderer({
       bridges.forEach((b) => {
         b.destroy();
       });
+      // A target arriving before the next mount finishes goes to that mount,
+      // never to these destroyed bridges. A waiting target was these
+      // placements' own: the next ones get only the target they mount with.
+      bridgesRef.current = [];
+      pendingTargetRef.current = undefined;
       if (container) container.innerHTML = "";
     };
     // Only re-mount iframes when placements change, not when callbacks change.
     // Callbacks are accessed via refs so bridges always call the latest version.
   }, [placementKey]);
 
-  // Propagate host-context changes (theme + workspace) to mounted iframes
-  // via the ext-apps `host-context-changed` notification. Iframes stay
-  // mounted; apps that observe `useHostContext()` (or `useTheme()`) re-render
-  // and refetch workspace-scoped data without losing local state.
+  // A new target for placements already mounted. One that arrives before the
+  // mount finishes is delivered by the mount instead, as `sentTargetKeyRef` records.
   useEffect(() => {
-    const ctx = buildHostContext(mode, activeWorkspace);
-    for (const bridge of bridgesRef.current) {
-      bridge.setHostContext(ctx);
-    }
-  }, [mode, activeWorkspace]);
+    if (!target || target.key === sentTargetKeyRef.current) return;
+    if (bridgesRef.current.length === 0) return;
+    deliverTarget(target);
+  }, [target, deliverTarget]);
+
+  // Iframes stay mounted across a theme, workspace or role change; apps that
+  // observe `useHostContext()` (or `useTheme()`) re-render and refetch
+  // workspace-scoped data without losing local state.
+  useHostContextSync(() => bridgesRef.current, mode, activeWorkspace, connector, uploadLimits);
 
   if (filtered.length === 0) return null;
 
-  return <div ref={containerRef} className={`w-full h-full ${className ?? ""}`} />;
+  return (
+    <div ref={containerRef} className={`w-full ${fitContent ? "" : "h-full"} ${className ?? ""}`} />
+  );
 }

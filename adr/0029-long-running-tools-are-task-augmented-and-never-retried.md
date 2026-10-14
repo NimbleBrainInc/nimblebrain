@@ -1,6 +1,6 @@
 # 0029. Long-running tools are task-augmented; inline calls retry on transport error, task calls never do
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0046
 - Date: 2026-09-03
 - Serves: orchestrate remote MCP
 
@@ -11,10 +11,11 @@ blocking request over HTTP does not survive one — an idle timeout somewhere in
 the path kills the socket long before the work finishes, and the failure looks
 like a transport error rather than like "still working."
 
-MCP's answer is task augmentation: the client attaches a task to `tools/call`,
-the server acknowledges immediately with a task handle, and progress and the
-eventual result arrive on a stream the client polls. The client can cancel what
-it started.
+MCP's answer is task augmentation, which the runtime speaks as the
+`2026-07-28` tasks extension only (ADR-0046). The client claims the extension on
+a `tools/call`, and the server decides per call whether to answer outright or
+with a task handle. The client polls the handle with `tasks/get`, which carries
+the result once the task ends, and cancels it with `tasks/cancel`.
 
 That changes what a failure means, in a way that matters more than the plumbing.
 An inline call that fails on transport either never reached the server or never
@@ -26,15 +27,22 @@ has begun. Re-issuing it starts a second one.
 ## Decision
 
 **Long-running tools are task-augmented, and the retry policy inverts with the
-augmentation.** Both halves live in `src/tools/mcp-source.ts` — task start,
-polling, and cancellation on one side, and the shared recovery path
-(`handleExecuteError`, `RecoveryShape`) that reads the idempotency flag on the
-other.
+augmentation.** Task start, polling and cancellation live in
+`src/tools/mcp-source.ts` and its task wire (`src/tools/mcp-task-client.ts`);
+the shared recovery path (`handleExecuteError`, `RecoveryShape`) that reads the
+idempotency flag lives in `mcp-source.ts`.
 
-The client advertises `tasks` because it exercises it (ADR-0023): the stream is
-opened, status is polled, and cancellation dispatches `tasks/cancel`. A server
-marks a tool `execution.taskSupport`, and the runtime reads that off the listing
-and attaches a task rather than blocking.
+On a connection whose server advertises the tasks extension, every call claims
+it in that request's client capabilities (ADR-0023), and the server decides per
+call: the answer is a complete result or a flat task. The client polls a task
+with `tasks/get` until it ends and cancels it with `tasks/cancel`. On a 2025-era
+connection a call runs inline, and a tool whose `execution.taskSupport` is
+`"required"` is refused before dispatch.
+
+- *Amended by ADR-0046:* task augmentation is the 2026-07-28 tasks extension
+  only. On a 2025-era connection no task is attached: an `"optional"` tool is
+  called inline (and so retries as one), and a `"required"` tool is refused
+  before dispatch. The retry policy here is unchanged.
 
 **An inline call is treated as idempotent for recovery purposes.** On a transport
 failure it routes through the shared recovery path — classify, then surface,

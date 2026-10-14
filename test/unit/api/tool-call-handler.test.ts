@@ -1,17 +1,24 @@
 import { describe, expect, it } from "bun:test";
 import { handleResourceProxy, handleToolCall } from "../../../src/api/handlers.ts";
-import type { ResolvedFeatures } from "../../../src/config/features.ts";
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
+import { resolveFeatures } from "../../../src/config/features.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
-import type { UserIdentity } from "../../../src/identity/provider.ts";
+import type { ToolRegistry } from "../../../src/tools/registry.ts";
+import type { Tool, ToolSource } from "../../../src/tools/types.ts";
+import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { readJson } from "../../helpers/http.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
+import { stub } from "../../helpers/stub.ts";
+import { makeWorkspace } from "../../helpers/test-workspace.ts";
 
-// Cross-workspace coverage for the OTHER two endpoints the qualified-name
-// resolver was wired into (handleReadResource is covered separately). A
-// qualified `ws_<id>-<source>` names its own workspace: it must resolve there
-// by membership (not the ambient X-Workspace-Id) and address the registry by
-// the BARE source name. handleToolCall additionally normalizes the tool name.
+// On REST the workspace is the one in the URL path (ADR-0037). A qualified
+// `ws_<id>-<name>` server, app or tool is refused with a 400 — never routed to
+// the workspace it names, never stripped to its bare remainder — and a bare
+// name resolves in the URL's workspace. handleReadResource is covered in
+// read-resource-handler.test.ts.
 
-const features = {} as unknown as ResolvedFeatures; // our tool isn't feature-mapped → always enabled
-const identityU1 = { id: "u1", orgRole: "member" } as unknown as UserIdentity;
+const features = resolveFeatures(); // our tool isn't feature-mapped → always enabled
+const identityU1 = makeIdentity({ id: "u1", orgRole: "member" });
 
 // ── handleToolCall ──────────────────────────────────────────────────
 
@@ -23,17 +30,23 @@ interface ToolCallStub {
   recoverable?: string;
 }
 
-function makeToolCallRuntime(opts: ToolCallStub = {}): { runtime: Runtime; executed: string[] } {
+function makeToolCallRuntime(opts: ToolCallStub = {}): {
+  runtime: Runtime;
+  executed: string[];
+  /** Workspaces whose registry the handler opened, in order. */
+  registryWs: string[];
+} {
   const memberOf = opts.memberOf ?? [];
   const sourceName = opts.sourceName ?? "synapse-collateral";
   const toolNames = opts.toolNames ?? [`${sourceName}__preview`];
   const executed: string[] = [];
-  const source = {
+  const registryWs: string[] = [];
+  const source = stub<ToolSource>({
     name: sourceName,
-    tools: async () => toolNames.map((name) => ({ name })),
-  };
+    tools: async () => toolNames.map((name) => stub<Tool>({ name })),
+  });
   const present = new Set(opts.recoverable ? [] : [sourceName]);
-  const registry = {
+  const registry = stub<ToolRegistry>({
     hasSource: (n: string) => present.has(n),
     hasEstablishedSource: (n: string) => present.has(n),
     getSources: () => [source],
@@ -41,128 +54,171 @@ function makeToolCallRuntime(opts: ToolCallStub = {}): { runtime: Runtime; execu
       executed.push(call.name);
       return { content: [{ type: "text", text: "ok" }], structuredContent: {}, isError: false };
     },
-  };
-  const runtime = {
+  });
+  const runtime = stub<Runtime>({
     getIdentitySource: () => undefined,
-    getWorkspaceStore: () => ({
-      getWorkspacesForUser: async () => memberOf.map((id) => ({ id })),
-    }),
-    ensureWorkspaceRegistry: async () => registry,
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({
+        getWorkspacesForUser: async () => memberOf.map((id) => makeWorkspace({ id })),
+      }),
+    ensureWorkspaceRegistry: async (wsId: string) => {
+      registryWs.push(wsId);
+      return registry;
+    },
     recoverWorkspaceSource: async (_wsId: string, name: string) => {
       if (present.has(name)) return true;
       if (name !== opts.recoverable) return false;
       present.add(name);
       return true;
     },
-  } as unknown as Runtime;
-  return { runtime, executed };
+  });
+  return { runtime, executed, registryWs };
 }
 
 function toolReq(body: unknown): Request {
-  return new Request("http://x/v1/tools/call", {
+  return new Request("http://nb.example.com/v1/workspaces/ws_007dc0488ce56f9e/tools/call", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
 
-describe("handleToolCall — qualified cross-workspace server", () => {
-  it("resolves to the owning workspace (ignoring X-Workspace-Id) and normalizes the tool name", async () => {
-    const { runtime, executed } = makeToolCallRuntime({ memberOf: ["ws_nimblebrain_shared"] });
+describe("handleToolCall — the workspace is the one in the URL", () => {
+  it("refuses a qualified server with a 400 naming the bare server, and runs nothing", async () => {
+    const { runtime, executed, registryWs } = makeToolCallRuntime({
+      memberOf: ["ws_0073c806fc50dc07"],
+    });
     const res = await handleToolCall(
-      toolReq({ server: "ws_nimblebrain_shared-synapse-collateral", tool: "preview" }),
+      toolReq({ server: "ws_0073c806fc50dc07-synapse-collateral", tool: "preview" }),
       runtime,
       features,
-      // Ambient workspace is the user's PERSONAL ws — not where the tool lives.
-      { workspaceId: "ws_user_u1", identity: identityU1 },
+      // The caller is a member of the named workspace; the name is still refused.
+      { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 },
     );
-    expect(res.status).toBe(200);
-    // Bare tool ("preview") normalized to the registry's `<bareSource>__<tool>`.
-    expect(executed).toEqual(["synapse-collateral__preview"]);
+    expect(res.status).toBe(400);
+    const body = await readJson<ApiErrorBody>(res);
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toContain("uses the retired ws_<id>- server-name form");
+    expect(body.message).toContain('"synapse-collateral"');
+    expect(body.details).toEqual({
+      server: "ws_0073c806fc50dc07-synapse-collateral",
+      reason: "legacy_namespaced_form",
+    });
+    expect(registryWs).toEqual([]);
+    expect(executed).toEqual([]);
   });
 
-  it("revives an installed-but-unregistered source instead of 404ing the tool", async () => {
-    // Same boot-race shape as the resource doors: installed, absent from the
-    // registry, recoverable. Membership alone would report the tool missing.
-    const { runtime, executed } = makeToolCallRuntime({
-      memberOf: ["ws_nimblebrain_shared"],
+  it("refuses a qualified tool name with a 400, even beside a bare server", async () => {
+    const { runtime, executed } = makeToolCallRuntime();
+    const res = await handleToolCall(
+      toolReq({
+        server: "synapse-collateral",
+        tool: "ws_0073c806fc50dc07-synapse-collateral__preview",
+      }),
+      runtime,
+      features,
+      { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 },
+    );
+    expect(res.status).toBe(400);
+    const body = await readJson<ApiErrorBody>(res);
+    expect(body.message).toContain("uses the retired ws_<id>- tool-name form");
+    expect(body.details.reason).toBe("legacy_namespaced_form");
+    expect(executed).toEqual([]);
+  });
+
+  it("refuses a malformed ws_ server as a bad request", async () => {
+    const { runtime, executed } = makeToolCallRuntime();
+    const res = await handleToolCall(
+      toolReq({ server: "ws_BAD ID-synapse-collateral", tool: "preview" }),
+      runtime,
+      features,
+      { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 },
+    );
+    expect(res.status).toBe(400);
+    expect(executed).toEqual([]);
+  });
+
+  it("revives an installed-but-unregistered source in the URL's workspace instead of 404ing the tool", async () => {
+    // A connector whose endpoint was unreachable at boot is installed but
+    // absent from the registry. Membership alone would report the tool missing.
+    const { runtime, executed, registryWs } = makeToolCallRuntime({
       recoverable: "synapse-collateral",
     });
     const res = await handleToolCall(
-      toolReq({ server: "ws_nimblebrain_shared-synapse-collateral", tool: "preview" }),
+      toolReq({ server: "synapse-collateral", tool: "preview" }),
       runtime,
       features,
-      { workspaceId: "ws_user_u1", identity: identityU1 },
+      { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 },
     );
     expect(res.status).toBe(200);
+    expect(registryWs).toEqual(["ws_007dc0488ce56f9e"]);
     expect(executed).toEqual(["synapse-collateral__preview"]);
   });
 
   it("normalizes a source-prefixed tool name", async () => {
-    const { runtime, executed } = makeToolCallRuntime({ memberOf: ["ws_nimblebrain_shared"] });
+    const { runtime, executed } = makeToolCallRuntime();
     await handleToolCall(
-      toolReq({
-        server: "ws_nimblebrain_shared-synapse-collateral",
-        tool: "synapse-collateral__preview",
-      }),
+      toolReq({ server: "synapse-collateral", tool: "synapse-collateral__preview" }),
       runtime,
       features,
-      { workspaceId: "ws_user_u1", identity: identityU1 },
+      { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 },
     );
     expect(executed).toEqual(["synapse-collateral__preview"]);
   });
 
-  it("normalizes a fully-qualified tool name (strips the ws_<id>- server prefix)", async () => {
-    const { runtime, executed } = makeToolCallRuntime({ memberOf: ["ws_nimblebrain_shared"] });
-    await handleToolCall(
-      toolReq({
-        server: "ws_nimblebrain_shared-synapse-collateral",
-        tool: "ws_nimblebrain_shared-synapse-collateral__preview",
-      }),
-      runtime,
-      features,
-      { workspaceId: "ws_user_u1", identity: identityU1 },
-    );
-    expect(executed).toEqual(["synapse-collateral__preview"]);
-  });
-
-  it("403s a non-member of the named workspace", async () => {
-    const { runtime, executed } = makeToolCallRuntime({ memberOf: ["ws_some_other"] });
-    const res = await handleToolCall(
-      toolReq({ server: "ws_nimblebrain_shared-synapse-collateral", tool: "preview" }),
-      runtime,
-      features,
-      { workspaceId: "ws_user_u1", identity: identityU1 },
-    );
-    expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe("workspace_access_denied");
-    expect(executed).toEqual([]);
-  });
-
-  it("401s a qualified call with no identity", async () => {
-    const { runtime } = makeToolCallRuntime({ memberOf: ["ws_nimblebrain_shared"] });
-    const res = await handleToolCall(
-      toolReq({ server: "ws_nimblebrain_shared-synapse-collateral", tool: "preview" }),
-      runtime,
-      features,
-      { workspaceId: "ws_nimblebrain_shared" },
-    );
-    expect(res.status).toBe(401);
-  });
-
-  it("keeps the workspace_required contract for a bare source with no workspace", async () => {
-    // Regression guard: the shared resolver must not silently downgrade this
-    // endpoint's original `workspace_required` error to `bad_request`.
-    const { runtime } = makeToolCallRuntime();
-    const res = await handleToolCall(toolReq({ server: "calendar", tool: "main" }), runtime, features, {
-      identity: identityU1,
+  // Workspace admins and members who are not org admins rename, manage, and
+  // read rosters through manage_workspaces, so the REST role gate lets it
+  // through to the handler's own per-action check. manage_users stays gated.
+  it("lets an org member's manage_workspaces call through to the handler; manage_users stays refused", async () => {
+    const { runtime, executed } = makeToolCallRuntime({
+      sourceName: "nb",
+      toolNames: ["nb__manage_workspaces", "nb__manage_users"],
     });
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe("workspace_required");
+    const opts = { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 };
+    // Both flags on, so a refusal here can only be the role gate's.
+    const enabled = resolveFeatures({
+      workspaceManagement: true,
+      userManagement: true,
+    });
+
+    const listed = await handleToolCall(
+      toolReq({ server: "nb", tool: "manage_workspaces", arguments: { action: "list_members" } }),
+      runtime,
+      enabled,
+      opts,
+    );
+    expect(listed.status).toBe(200);
+    expect(executed).toEqual(["nb__manage_workspaces"]);
+
+    const users = await handleToolCall(
+      toolReq({ server: "nb", tool: "manage_users", arguments: { action: "list" } }),
+      runtime,
+      enabled,
+      opts,
+    );
+    expect(users.status).toBe(403);
+    expect((await readJson<ApiErrorBody>(users)).error).toBe("forbidden");
+    expect(executed).toEqual(["nb__manage_workspaces"]);
+  });
+
+  it("resolves a bare source in the workspace from the URL", async () => {
+    const { runtime, executed, registryWs } = makeToolCallRuntime({ sourceName: "calendar" });
+    const res = await handleToolCall(
+      toolReq({ server: "calendar", tool: "preview" }),
+      runtime,
+      features,
+      {
+        workspaceId: "ws_007dc0488ce56f9e",
+        identity: identityU1,
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(registryWs).toEqual(["ws_007dc0488ce56f9e"]);
+    expect(executed).toEqual(["calendar__preview"]);
   });
 });
 
-// ── handleResourceProxy (GET /v1/apps/:name/resources/*) ────────────
+// ── handleResourceProxy (GET /v1/workspaces/:wsId/apps/:name/resources/*) ──
 
 function makeProxyRuntime(opts: {
   memberOf?: string[];
@@ -179,15 +235,16 @@ function makeProxyRuntime(opts: {
   const present = new Set(opts.recoverable ? [] : [sourceName]);
   const calls: Array<{ server: string; uri: string; wsId: string }> = [];
   const recoverCalls: Array<{ wsId: string; name: string }> = [];
-  const registry = {
+  const registry = stub<ToolRegistry>({
     hasSource: (n: string) => present.has(n),
     hasEstablishedSource: (n: string) => present.has(n),
-  };
-  const runtime = {
+  });
+  const runtime = stub<Runtime>({
     getIdentitySource: () => undefined,
-    getWorkspaceStore: () => ({
-      getWorkspacesForUser: async () => memberOf.map((id) => ({ id })),
-    }),
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({
+        getWorkspacesForUser: async () => memberOf.map((id) => makeWorkspace({ id })),
+      }),
     ensureWorkspaceRegistry: async () => registry,
     recoverWorkspaceSource: async (wsId: string, name: string) => {
       recoverCalls.push({ wsId, name });
@@ -200,60 +257,60 @@ function makeProxyRuntime(opts: {
       calls.push({ server, uri, wsId });
       return { text: "ok", mimeType: "text/plain" };
     },
-  } as unknown as Runtime;
+  });
   return { runtime, calls, recoverCalls };
 }
 
-describe("handleResourceProxy — qualified cross-workspace app", () => {
-  it("resolves to the owning workspace and reads via the bare source name", async () => {
-    const { runtime, calls } = makeProxyRuntime({ memberOf: ["ws_nimblebrain_shared"] });
+describe("handleResourceProxy — the workspace is the one in the URL", () => {
+  it("refuses a qualified app name with a 400, and reads nothing", async () => {
+    const { runtime, calls, recoverCalls } = makeProxyRuntime({
+      memberOf: ["ws_0073c806fc50dc07"],
+    });
     const res = await handleResourceProxy(
-      "ws_nimblebrain_shared-synapse-collateral",
+      "ws_0073c806fc50dc07-synapse-collateral",
       "main", // not "primary" — avoids the lifecycle/placement lookup
       runtime,
-      "ws_user_u1", // ambient personal ws, must be overridden by the name
-      identityU1,
+      "ws_007dc0488ce56f9e",
     );
-    expect(res.status).toBe(200);
-    expect(calls).toEqual([{ server: "synapse-collateral", uri: "main", wsId: "ws_nimblebrain_shared" }]);
+    expect(res.status).toBe(400);
+    const body = await readJson<ApiErrorBody>(res);
+    expect(body.message).toContain("uses the retired ws_<id>- app-name form");
+    expect(body.details).toEqual({
+      app: "ws_0073c806fc50dc07-synapse-collateral",
+      reason: "legacy_namespaced_form",
+    });
+    expect(calls).toEqual([]);
+    expect(recoverCalls).toEqual([]);
   });
 
-  it("403s a non-member of the named workspace", async () => {
-    const { runtime, calls } = makeProxyRuntime({ memberOf: ["ws_some_other"] });
+  it("reads a bare app in the URL's workspace", async () => {
+    const { runtime, calls } = makeProxyRuntime({});
     const res = await handleResourceProxy(
-      "ws_nimblebrain_shared-synapse-collateral",
+      "synapse-collateral",
       "main",
       runtime,
-      "ws_user_u1",
-      identityU1,
+      "ws_0073c806fc50dc07",
     );
-    expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe("workspace_access_denied");
-    expect(calls).toEqual([]);
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([
+      { server: "synapse-collateral", uri: "main", wsId: "ws_0073c806fc50dc07" },
+    ]);
   });
 
-  it("revives an installed-but-unregistered app, addressed by the resolved workspace", async () => {
-    // A connector whose endpoint was unreachable at boot is installed but absent
-    // from the registry. Membership alone reads that as permanently gone.
+  it("revives an installed-but-unregistered app, addressed by the URL's workspace", async () => {
     const { runtime, calls, recoverCalls } = makeProxyRuntime({
-      memberOf: ["ws_nimblebrain_shared"],
       recoverable: "synapse-collateral",
     });
     const res = await handleResourceProxy(
-      "ws_nimblebrain_shared-synapse-collateral",
+      "synapse-collateral",
       "main",
       runtime,
-      "ws_user_u1",
-      identityU1,
+      "ws_0073c806fc50dc07",
     );
     expect(res.status).toBe(200);
-    // The heal must target the RESOLVED workspace and the BARE source name —
-    // the ambient workspace or the qualified name here would heal nothing.
-    expect(recoverCalls).toEqual([
-      { wsId: "ws_nimblebrain_shared", name: "synapse-collateral" },
-    ]);
+    expect(recoverCalls).toEqual([{ wsId: "ws_0073c806fc50dc07", name: "synapse-collateral" }]);
     expect(calls).toEqual([
-      { server: "synapse-collateral", uri: "main", wsId: "ws_nimblebrain_shared" },
+      { server: "synapse-collateral", uri: "main", wsId: "ws_0073c806fc50dc07" },
     ]);
   });
 });

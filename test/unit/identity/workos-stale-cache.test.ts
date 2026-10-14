@@ -8,20 +8,26 @@
  * - Fail-closed behavior is preserved when no cache exists
  */
 
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "bun:test";
+import type { webcrypto } from "node:crypto";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { TransientAuthError } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
-import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import {
+  stubWorkosUserManagement,
+  workosMembership,
+  workosMembershipList,
+  workosUser,
+  workosUserManagement,
+} from "../../helpers/workos-sdk.ts";
 
 // ── Key generation helpers (shared with workos-authkit.test.ts) ──
 
 interface TestKeyPair {
   privateKey: CryptoKey;
-  publicJwk: JsonWebKey;
+  /** A JWKS entry: the WebCrypto key plus its RFC 7517 `kid`. */
+  publicJwk: webcrypto.JsonWebKey & { kid?: string };
   kid: string;
 }
 
@@ -36,9 +42,11 @@ async function generateRSAKeyPair(kid: string): Promise<TestKeyPair> {
     true,
     ["sign", "verify"],
   );
-  const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
-  publicJwk.kid = kid;
-  publicJwk.use = "sig";
+  const publicJwk = {
+    ...(await crypto.subtle.exportKey("jwk", keyPair.publicKey)),
+    kid,
+    use: "sig",
+  };
   return { privateKey: keyPair.privateKey, publicJwk, kid };
 }
 
@@ -71,7 +79,6 @@ let workosKey: TestKeyPair;
 const CONFIG: WorkosAuth = {
   adapter: "workos",
   clientId: "client_stale_test",
-  redirectUri: "http://localhost/callback",
   organizationId: "org_stale_test",
   apiKey: "sk_test_fake",
 };
@@ -98,43 +105,29 @@ function jwksResponseBody() {
 }
 
 function createProvider() {
-  const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "workos-stale-")));
-  const provider = new WorkosIdentityProvider(CONFIG, undefined, workspaceStore);
+  const provider = new WorkosIdentityProvider(CONFIG, undefined);
 
-  const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-  workos.userManagement = {
-    getUser: async (userId: string) => ({
-      id: userId,
-      email: `${userId}@test.com`,
-      firstName: "Test",
-      lastName: "User",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }),
-    listOrganizationMemberships: async (opts: { userId: string; organizationId: string }) => ({
-      data: [
-        {
-          id: "om_test",
+  stubWorkosUserManagement(provider, {
+    getUser: async (userId) =>
+      workosUser({ id: userId, email: `${userId}@test.com`, firstName: "Test", lastName: "User" }),
+    listOrganizationMemberships: async (opts) =>
+      workosMembershipList([
+        workosMembership({
           userId: opts.userId,
           organizationId: opts.organizationId,
-          role: { slug: "member" },
-          status: "active",
-        },
-      ],
-    }),
+          slug: "member",
+        }),
+      ]),
     getAuthorizationUrl: () => "https://fake.workos.com/authorize",
-    listUsers: async () => ({ data: [] }),
-    createUser: async () => ({}),
-    deleteUser: async () => {},
-  };
+  });
 
-  provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+  provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
   return provider;
 }
 
 function makeRequest(token: string): Request {
-  return new Request("http://localhost:27247/v1/chat", {
+  return new Request("http://localhost:27247/v1/workspaces/ws_00079598e311c160/chat/start", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -166,7 +159,9 @@ describe("JWKS stale cache fallback", () => {
     provider.now = () => baseTime + 6 * 60 * 1000;
 
     // JWKS endpoint returns 500
-    provider.fetcher = async () => new Response("Internal Server Error", { status: 500 });
+    provider.fetcher = fakeFetch(
+      async () => new Response("Internal Server Error", { status: 500 }),
+    );
 
     // Should still verify using stale cached keys
     const token2 = await makeValidToken("user_jwks_1", baseTime + 6 * 60 * 1000);
@@ -188,9 +183,9 @@ describe("JWKS stale cache fallback", () => {
     provider.now = () => baseTime + 6 * 60 * 1000;
 
     // Network error
-    provider.fetcher = async () => {
+    provider.fetcher = fakeFetch(async () => {
       throw new Error("ECONNREFUSED");
-    };
+    });
 
     const token2 = await makeValidToken("user_jwks_2", baseTime + 6 * 60 * 1000);
     const result = await provider.verifyRequest(makeRequest(token2));
@@ -201,7 +196,7 @@ describe("JWKS stale cache fallback", () => {
   it("signals unavailable when JWKS fetch fails and no cache exists", async () => {
     const provider = createProvider();
     // JWKS endpoint down from the start — no cache to fall back on
-    provider.fetcher = async () => new Response("Service Unavailable", { status: 503 });
+    provider.fetcher = fakeFetch(async () => new Response("Service Unavailable", { status: 503 }));
 
     const token = await makeValidToken("user_no_cache", Date.now());
     // Not `null`: we never reached a verdict about this token, so the caller
@@ -234,13 +229,12 @@ describe("resolveUser stale cache fallback", () => {
     provider.now = () => baseTime + 6 * 60 * 1000;
 
     // WorkOS getUser now throws
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).getUser = async () => {
+    workosUserManagement(provider).getUser = async () => {
       throw new Error("WorkOS API timeout");
     };
 
     // JWKS cache also expired — provide fresh JWKS so we isolate the resolveUser failure
-    provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+    provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
     const token2 = await makeValidToken("user_resolve_1", baseTime + 6 * 60 * 1000);
     const second = await provider.verifyRequest(makeRequest(token2));
@@ -249,12 +243,44 @@ describe("resolveUser stale cache fallback", () => {
     expect(second!.email).toBe("user_resolve_1@test.com");
   });
 
+  it("serves the stale identity until the stale limit, then signals unavailable", async () => {
+    const provider = createProvider();
+    const baseTime = Date.now();
+    provider.now = () => baseTime;
+    expect(
+      await provider.verifyRequest(makeRequest(await makeValidToken("user_stale_limit", baseTime))),
+    ).not.toBeNull();
+
+    workosUserManagement(provider).getUser = async () => {
+      throw new Error("WorkOS API timeout");
+    };
+
+    // Just inside the limit: the cached identity is still served.
+    const inside = baseTime + 29 * 60 * 1000;
+    provider.now = () => inside;
+    const served = await provider.verifyRequest(
+      makeRequest(await makeValidToken("user_stale_limit", inside)),
+    );
+    expect(served?.id).toBe("user_stale_limit");
+
+    // Past it: no verdict, so 503 rather than the old answer or a 401.
+    const past = baseTime + 31 * 60 * 1000;
+    provider.now = () => past;
+    const err = await provider
+      .verifyRequest(makeRequest(await makeValidToken("user_stale_limit", past)))
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(TransientAuthError);
+    expect((err as TransientAuthError).reason).toBe("user_unresolvable");
+  });
+
   it("signals unavailable when WorkOS API fails and no user cache exists", async () => {
     const provider = createProvider();
 
     // WorkOS getUser throws from the start — no cache to fall back on
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).getUser = async () => {
+    workosUserManagement(provider).getUser = async () => {
       throw new Error("WorkOS API down");
     };
 
@@ -280,12 +306,11 @@ describe("resolveUser stale cache fallback", () => {
     expect(await provider.verifyRequest(makeRequest(token))).not.toBeNull();
 
     // Memberships endpoint goes down. getUser still works.
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).listOrganizationMemberships = async () => {
+    workosUserManagement(provider).listOrganizationMemberships = async () => {
       throw new Error("WorkOS memberships 429");
     };
     provider.now = () => baseTime + 6 * 60 * 1000;
-    provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+    provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
     // The other half of the fix: the outage must not evict the entry. Deleting
     // it here would deny THIS request and every later one for the outage's
@@ -309,8 +334,7 @@ describe("resolveUser stale cache fallback", () => {
     // outage (429, degraded endpoint). Returning null here reached
     // resolveUser's definitive "no org membership" branch and 401'd a valid
     // session while deleting the cache that would have saved the next request.
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).listOrganizationMemberships = async () => {
+    workosUserManagement(provider).listOrganizationMemberships = async () => {
       throw new Error("WorkOS memberships 429");
     };
 
@@ -336,12 +360,10 @@ describe("resolveUser stale cache fallback", () => {
     provider.now = () => baseTime + 6 * 60 * 1000;
 
     // User's org membership was revoked (not an error — empty result)
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).listOrganizationMemberships = async () => ({
-      data: [], // No memberships — access definitively revoked
-    });
+    workosUserManagement(provider).listOrganizationMemberships = async () =>
+      workosMembershipList([]);
 
-    provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+    provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
     const token2 = await makeValidToken("user_revoked", baseTime + 6 * 60 * 1000);
     const second = await provider.verifyRequest(makeRequest(token2));

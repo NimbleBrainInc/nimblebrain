@@ -30,7 +30,12 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { log } from "../../observability/log.ts";
-import { projectServerDetailToCatalogListing, validateServerDetailSafety } from "./projection.ts";
+import { slugifyServerName } from "../runtime/paths.ts";
+import {
+  projectServerDetailToCatalogListing,
+  serverDetailToCatalogEntry,
+  validateServerDetailSafety,
+} from "./projection.ts";
 import { type ServerDetail, validateServerDetail } from "./server-detail.ts";
 
 const CATALOG_EXTENSIONS = new Set([".yaml", ".yml", ".json"]);
@@ -54,6 +59,12 @@ export interface CatalogDiagnostic {
   name?: string;
   /** Operator-facing description, already formatted. */
   message: string;
+  /**
+   * The entry was refused because its server name collides with another
+   * entry's. An error rather than a warning: the operator published two
+   * connectors and neither installs.
+   */
+  collision?: true;
 }
 
 /** A surviving entry, kept with where it came from so a later stage can name it. */
@@ -87,13 +98,15 @@ export function readCatalogServers(path: string): ServerDetail[] {
 }
 
 /**
- * Report the entries at `path` that would not reach Browse, without
- * loading them into a registry and without logging.
+ * Report the entries at `path` that would not reach Browse, or would reach it
+ * with every tool admin-only (a malformed `admin_tools`, which the runtime
+ * keeps and fails closed on), without loading them into a registry.
  *
  * An entry is removed silently at three points, and all three show the
  * operator the same nothing — the connector is absent, no error anywhere:
  *
- *   1. this source's `ServerDetail` schema + name-dedup checks;
+ *   1. this source's `ServerDetail` schema + name-dedup checks, and the
+ *      refusal of every entry whose server name another entry shares;
  *   2. `validateServerDetailSafety` at the directory boundary — unsafe
  *      icon/docs/portal URL, reserved OAuth param;
  *   3. the directory's projection returning null — `remotes` is optional in
@@ -144,6 +157,16 @@ export function validateCatalog(path: string): CatalogDiagnostic[] {
         name: detail.name,
         message: `${tag} dropped at the directory boundary — not installable: needs a \`remotes\` entry (this runtime connects to remote MCP servers; it does not acquire \`packages\`)`,
       });
+      continue;
+    }
+    const adminTools = serverDetailToCatalogEntry(detail)?.adminTools;
+    if (adminTools?.kind === "all") {
+      diagnostics.push({
+        source,
+        index,
+        name: detail.name,
+        message: `${tag} every tool is admin-only — ${adminTools.reason}`,
+      });
     }
   }
   return diagnostics;
@@ -176,7 +199,49 @@ export function readCatalogEntries(path: string): CatalogRead {
       diagnostics,
     );
   }
-  return { entries, diagnostics };
+  return { entries: refuseServerNameCollisions(entries, diagnostics), diagnostics };
+}
+
+/**
+ * Drop every entry whose server name another entry also slugifies to.
+ *
+ * An installed connector is bound to its catalog entry by that server name
+ * (`binding.ts`), so two entries sharing one would leave the binding to read
+ * order: one connector would be installed under the other's grants. Distinct
+ * ids can share one, because `slugifyServerName` maps both `.` and `/` to `-`
+ * (`a.b/c` and `a/b.c` are both `a-b-c`). Neither entry is the right answer, so
+ * neither loads, and every other entry still does. The rule is not changed to
+ * avoid the collision because changing it would rename installed connectors.
+ */
+function refuseServerNameCollisions(
+  entries: CatalogEntry[],
+  diagnostics: CatalogDiagnostic[],
+): CatalogEntry[] {
+  const bySlug = new Map<string, CatalogEntry[]>();
+  for (const e of entries) {
+    const slug = slugifyServerName(e.detail.name);
+    bySlug.set(slug, [...(bySlug.get(slug) ?? []), e]);
+  }
+  const kept: CatalogEntry[] = [];
+  for (const e of entries) {
+    const slug = slugifyServerName(e.detail.name);
+    const group = bySlug.get(slug) ?? [];
+    if (group.length === 1) {
+      kept.push(e);
+      continue;
+    }
+    const others = group.filter((o) => o !== e).map((o) => `"${o.detail.name}"`);
+    diagnostics.push({
+      source: e.source,
+      index: e.index,
+      name: e.detail.name,
+      collision: true,
+      message:
+        `${e.source}[${e.index}:${e.detail.name}] refused — its server name "${slug}" is also ` +
+        `the server name of ${others.join(", ")}; neither loads until one id changes`,
+    });
+  }
+  return kept;
 }
 
 /**

@@ -59,6 +59,16 @@ const ORPHANED_TOOL_CALLS_MARKER =
   "[Previous turn called tools but tool execution did not complete (the run was cut short before any tool returned). The tool calls were dropped on reload.]";
 
 /**
+ * Marker for a stopped run (`run.done` stopReason "cancelled": the run's abort
+ * signal fired, whether from the Stop button or another abort). The model would
+ * otherwise read a stopped turn as one that ended normally, or as one that
+ * produced nothing. It
+ * ends the stopped run's messages, so the next user message still follows an
+ * assistant turn.
+ */
+const CANCELLED_RUN_MARKER = "[This turn was stopped before it finished.]";
+
+/**
  * Generic marker for a run scope that emitted no messages at all (no
  * llm.response events between `run.start` and the run's terminator —
  * process died before any model call returned, or some other edge case).
@@ -95,8 +105,8 @@ export interface DerivedConversationMeta {
  * Scans for `metadata.title` events; falls back to `defaults` (from line 1)
  * when none are present.
  *
- * Stage 1 simplification: the previous `metadata.visibility` and
- * `metadata.participants` event types are gone — single-owner only.
+ * Conversations are single-owner, so there are no visibility or
+ * participants metadata events to derive.
  */
 export function deriveConversationMeta(
   events: readonly ConversationEvent[],
@@ -217,6 +227,8 @@ interface RunCollections {
 /** A collected run span plus the index of the first event past it. */
 interface CollectedRun extends RunCollections {
   nextIndex: number;
+  /** Timestamp of the run's `run.done` when its stopReason is "cancelled". */
+  cancelledAt?: string;
 }
 
 function buildMessagesFromEvents(events: readonly ConversationEvent[]): StoredMessage[] {
@@ -399,6 +411,9 @@ function collectRunEvents(
 
     if (isExplicitRunTerminator(inner, runId)) {
       i++;
+      if (inner.type === "run.done" && inner.stopReason === "cancelled") {
+        return { ...acc, nextIndex: i, cancelledAt: inner.ts };
+      }
       break;
     }
 
@@ -428,6 +443,7 @@ function appendRunMessages(
 ): number {
   const runStart = events[runStartIndex] as RunStartEvent;
   const run = collectRunEvents(events, runStartIndex + 1, runStart.runId);
+  const runFirstMessage = messages.length;
 
   // Faithful replay shape: each llm.response becomes ONE assistant message whose
   // content array preserves the provider's original block ordering — text,
@@ -489,7 +505,46 @@ function appendRunMessages(
     if (cs.afterResponses === 0) messages.push(buildConnectorSkillMessage(cs.event));
   }
 
+  if (run.cancelledAt !== undefined) {
+    appendCancelledMarker(messages, runFirstMessage, run.cancelledAt);
+  }
+
   return run.nextIndex;
+}
+
+/**
+ * Tell the model this run was stopped. The marker goes on the run's last
+ * message when that is a text-only assistant message (partial text beside a
+ * tool call that never returned, or the orphaned-tool-calls placeholder), and
+ * otherwise becomes its own assistant message after the run's tool results, or
+ * after the user message when the stop came before any model call returned.
+ *
+ * An assistant message carrying reasoning is left as it is: Anthropic rejects a
+ * latest assistant message whose thinking content differs from what it returned,
+ * and a second assistant message after it would be merged into it.
+ */
+function appendCancelledMarker(
+  messages: StoredMessage[],
+  runFirstMessage: number,
+  ts: string,
+): void {
+  const last = messages.length > runFirstMessage ? messages[messages.length - 1] : undefined;
+  if (last?.role === "assistant") {
+    if (last.content.every((c) => c.type === "text")) {
+      last.content = [...last.content, { type: "text", text: CANCELLED_RUN_MARKER }];
+    }
+    return;
+  }
+  messages.push({
+    role: "assistant",
+    content: [{ type: "text", text: CANCELLED_RUN_MARKER }],
+    timestamp: ts,
+    metadata: {
+      usage: { inputTokens: 0, outputTokens: 0 },
+      llmMs: 0,
+      iterations: 0,
+    },
+  });
 }
 
 /** Assistant-message metadata shared by every message derived from one llm.response. */
@@ -499,7 +554,7 @@ function baseResponseMetadata(llmResp: LlmResponseEvent, iterations: number) {
     model: llmResp.model,
     llmMs: llmResp.llmMs,
     iterations,
-    ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
+    finishReason: llmResp.finishReason,
   };
 }
 
@@ -517,7 +572,7 @@ function buildToolCallMeta(
     id: tc.toolCallId,
     name: tc.toolName,
     input: (toolInputs.get(tc.toolCallId) ?? parseToolInput(tc.input)) as Record<string, unknown>,
-    output: done.output ?? "",
+    output: done.output,
     ok: done.ok ?? true,
     ms: done.ms ?? 0,
   };
@@ -552,7 +607,7 @@ function buildToolResultMessage(
         toolName: tc.toolName,
         output: {
           type: "text",
-          value: done.modelOutput ?? boundToolResultForModel(done.output ?? ""),
+          value: done.modelOutput ?? boundToolResultForModel(done.output),
         },
       },
     ],
@@ -600,7 +655,7 @@ function buildPlaceholderMessage(
   const reasoningWithMeta = replayContent.filter(
     (c): c is LanguageModelV4ReasoningPart => c.type === "reasoning" && c.providerOptions != null,
   );
-  const hasAbnormalFinish = llmResp.finishReason != null && llmResp.finishReason !== "stop";
+  const hasAbnormalFinish = llmResp.finishReason !== "stop";
   const hasAnyReasoning = replayContent.some((c) => c.type === "reasoning");
   const shouldEmitPlaceholder = hasOrphanedToolCalls || hasAnyReasoning || hasAbnormalFinish;
 
@@ -608,7 +663,7 @@ function buildPlaceholderMessage(
 
   const placeholderText = hasOrphanedToolCalls
     ? ORPHANED_TOOL_CALLS_MARKER
-    : (TRUNCATION_MARKERS[llmResp.finishReason ?? "other"] ?? TRUNCATION_MARKERS.other!);
+    : (TRUNCATION_MARKERS[llmResp.finishReason] ?? TRUNCATION_MARKERS.other!);
   const reasoningRoundTrips = !hasOrphanedToolCalls && reasoningWithMeta.length > 0;
   // Inferred type: ReasoningPart[] | [{type:"text",text:string}]. Both are
   // assignable to the assistant variant's content union; an explicit
@@ -794,10 +849,7 @@ export function deriveUsageMetrics(events: readonly ConversationEvent[]): UsageM
   let lastModel: string | null = null;
 
   for (const event of events) {
-    // Pre-unification events stored token counts as flat fields and have
-    // no `usage` struct. We deliberately do not migrate them — they
-    // contribute zero to derived totals — but we must not crash on them.
-    if (event.type === "llm.response" && event.usage) {
+    if (event.type === "llm.response") {
       totalInputTokens += event.usage.inputTokens;
       totalOutputTokens += event.usage.outputTokens;
       lastModel = event.model;

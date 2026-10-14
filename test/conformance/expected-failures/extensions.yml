@@ -1,0 +1,3 @@
+# Extension scenarios /mcp/<wsId> fails, each with why. A scenario here that
+# passes fails the run, so remove it in the PR that fixes it.
+server: []

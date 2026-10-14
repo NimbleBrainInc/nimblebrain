@@ -1,10 +1,10 @@
+import type { EngineEvent } from "../../src/engine/types.ts";
 import {
   _resetCredentialStoreForTest,
   type CredentialStore,
   FileCredentialStore,
   setCredentialStore,
 } from "../../src/tools/credential-store.ts";
-import type { EngineEvent } from "../../src/engine/types.ts";
 
 /**
  * Install a process-wide credential store rooted at `workDir`, the way

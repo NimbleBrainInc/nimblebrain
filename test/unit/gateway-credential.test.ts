@@ -4,19 +4,19 @@ import {
   gatewayCredentialProvider,
   registerGatewayCredentialProviders,
 } from "../../src/connectors/gateways/transport-credential.ts";
+import { COMPOSIO_CREDENTIAL_PROVIDER } from "../../src/connectors/providers/composio/transport-credential.ts";
 import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
-import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
-import { COMPOSIO_CREDENTIAL_PROVIDER } from "../../src/connectors/providers/composio/transport-credential.ts";
 import { SMITHERY_CREDENTIAL_PROVIDER } from "../../src/connectors/providers/smithery/transport-credential.ts";
-import { CREDENTIAL_PROVIDER } from "../../src/tools/credential-transport-credential.ts";
+import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
 import {
   _resetCredentialProvidersForTest,
   getCredentialProvider,
   registerCredentialProvider,
 } from "../../src/tools/credential-provider.ts";
+import { CREDENTIAL_PROVIDER } from "../../src/tools/credential-transport-credential.ts";
 
 const ENV_KEYS = ["MCP360_API_KEY", "ACME_API_KEY", "MY_GATEWAY_API_KEY"];
 let saved: Record<string, string | undefined>;

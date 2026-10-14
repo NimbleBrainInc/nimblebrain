@@ -15,35 +15,40 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { brokeredConnectorDir } from "../../src/connectors/runtime/brokered.ts";
-import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
-import type { ConnectionLiveness, ProbeTarget } from "../../src/connectors/runtime/connection-probe.ts";
-import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import { uninstallWorkspaceConnector } from "../../src/connectors/runtime/uninstall.ts";
-import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type {
   BrokeredStateOptions,
   ManagedConnectorProvider,
 } from "../../src/connectors/providers/managed-provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
+import { brokeredConnectorDir } from "../../src/connectors/runtime/brokered.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
+import type {
+  ConnectionLiveness,
+  ProbeTarget,
+} from "../../src/connectors/runtime/connection-probe.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { uninstallWorkspaceConnector } from "../../src/connectors/runtime/uninstall.ts";
+import type { UserStore } from "../../src/identity/user.ts";
+import type { LifecycleNotifyDeps } from "../../src/lifecycle/notify.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
-import {
-  createManageConnectorsTool,
-  type ManageConnectorsContext,
-} from "../../src/tools/connector-tools.ts";
+import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../helpers/identity.ts";
+import { stub } from "../helpers/stub.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const PROVIDER_ID = "example-broker";
 const CONNECTOR_ID = "com.example/widgets";
-const ADMIN = { id: "usr_admin", name: "Admin", email: "admin@test" };
+const ADMIN = makeIdentity({ id: "usr_admin", displayName: "Admin", email: "admin@test" });
 
 // ── The provider ────────────────────────────────────────────────────
 //
@@ -85,7 +90,8 @@ function exampleBroker(
       return { upstreamDeleted: true, localDeleted: false };
     },
 
-    hasConnection: (o) => (opts.connectedLeases ?? new Set()).has(o.brokered.providerRef?.lease ?? ""),
+    hasConnection: (o) =>
+      (opts.connectedLeases ?? new Set()).has(o.brokered.providerRef?.lease ?? ""),
 
     probe: () => ({
       providerId: PROVIDER_ID,
@@ -135,7 +141,7 @@ function catalogYaml(): string {
 
 function buildHarness(provider: ManagedConnectorProvider): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-example-broker-"));
-  const wsId = "ws_test";
+  const wsId = "ws_0076759dbbe19fcc";
   const workspaceStore = new WorkspaceStore(workDir);
   writeFileSync(join(workDir, "catalog.yaml"), catalogYaml());
   const registry = managedConnectorRegistryOf([provider]);
@@ -144,7 +150,7 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
   lifecycle.setWorkDir(workDir);
   const workspaceRegistry = new ToolRegistry();
 
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
     getConnectorCatalog: () => new ConnectorCatalog(join(workDir, "catalog.yaml")),
@@ -152,20 +158,22 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,
     getEventSink: () => new NoopEventSink(),
-    getPermissionStore: () => ({
-      deleteConnector: async () => {},
-      listConnectorGrants: async () => ({}),
-      getConnectorGrants: async () => [],
-      revokeConnector: async () => {},
-    }),
-    getUserStore: () => ({ get: async () => null }),
+    getPermissionStore: () =>
+      stub<PermissionStore>({
+        deleteConnector: async () => {},
+        listConnectorGrants: async () => ({}),
+        getConnectorGrants: async () => [],
+        revokeConnector: async () => {},
+      }),
+    getUserStore: () => stub<UserStore>({ get: async () => null }),
     getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getManagedConnectorRegistry: () => registry,
-    getLifecycleNotifyDeps: () => ({
-      declarationFor: async () => undefined,
-      portFor: () => undefined,
-    }),
-  } as unknown as Runtime;
+    getLifecycleNotifyDeps: () =>
+      stub<LifecycleNotifyDeps>({
+        declarationFor: async () => undefined,
+        portFor: () => undefined,
+      }),
+  });
 
   return { workDir, wsId, workspaceStore, lifecycle, runtime };
 }
@@ -175,7 +183,7 @@ function buildTool(h: Harness) {
     runtime: h.runtime,
     getIdentity: () => ADMIN,
     getWorkspaceId: () => h.wsId,
-  } as unknown as ManageConnectorsContext);
+  });
 }
 
 function widgetsEntry(): CatalogListing {
@@ -183,20 +191,24 @@ function widgetsEntry(): CatalogListing {
     id: CONNECTOR_ID,
     name: "Widgets",
     description: "Widgets, brokered",
-    install: {
-      kind: "remote-oauth",
-      url: "https://widgets.example/mcp",
-      transportType: "streamable-http",
-      auth: PROVIDER_ID,
-      [PROVIDER_ID]: { realm: "acme", widget: "sprockets" },
-    },
-  } as unknown as CatalogListing;
+    // The provider's config block rides under the provider's own id, a key the
+    // install type names only for the providers that ship with the runtime.
+    install: Object.assign(
+      {
+        kind: "remote-oauth" as const,
+        url: "https://widgets.example/mcp",
+        transportType: "streamable-http" as const,
+        auth: PROVIDER_ID,
+      },
+      { [PROVIDER_ID]: { realm: "acme", widget: "sprockets" } },
+    ),
+  };
 }
 
 /** The ref an install of this connector persists. */
 function installedRef(): ConnectorRef {
   return {
-    url: "https://broker.example/acme/acme.sprockets.ws:ws_test/mcp",
+    url: "https://broker.example/acme/acme.sprockets.ws:ws_0076759dbbe19fcc/mcp",
     serverName: "com-example-widgets",
     oauthScope: "workspace",
     transport: {
@@ -206,7 +218,7 @@ function installedRef(): ConnectorRef {
     brokered: {
       provider: PROVIDER_ID,
       connectorId: CONNECTOR_ID,
-      providerRef: { lease: "acme.sprockets.ws:ws_test", realm: "acme" },
+      providerRef: { lease: "acme.sprockets.ws:ws_0076759dbbe19fcc", realm: "acme" },
     },
   };
 }
@@ -224,7 +236,7 @@ describe("example-broker — install", () => {
   beforeEach(async () => {
     calls = noCalls();
     h = buildHarness(exampleBroker(calls));
-    await h.workspaceStore.create("Test", h.wsId.slice(3));
+    await seedWorkspace(h.workspaceStore, h.wsId, { name: "Test" });
     await h.workspaceStore.addMember(h.wsId, ADMIN.id, "admin");
   });
 
@@ -235,7 +247,7 @@ describe("example-broker — install", () => {
     expect(calls.sessions).toHaveLength(1);
     expect(calls.sessions[0]?.connectorId).toBe(CONNECTOR_ID);
     expect(calls.sessions[0]?.config).toEqual({ realm: "acme", widget: "sprockets" });
-    expect(calls.sessions[0]?.userId).toBe("ws:ws_test");
+    expect(calls.sessions[0]?.userId).toBe("ws:ws_0076759dbbe19fcc");
 
     const ws = await h.workspaceStore.get(h.wsId);
     const ref = ws?.connectors.find((b) => b.brokered !== undefined);
@@ -243,11 +255,11 @@ describe("example-broker — install", () => {
     expect(ref?.brokered?.connectorId).toBe(CONNECTOR_ID);
     // Opaque both ways: persisted exactly as returned.
     expect(ref?.brokered?.providerRef).toEqual({
-      lease: "acme.sprockets.ws:ws_test",
+      lease: "acme.sprockets.ws:ws_0076759dbbe19fcc",
       realm: "acme",
     });
     // The session URL, not the catalog placeholder.
-    expect(ref?.url).toContain("/acme.sprockets.ws:ws_test/mcp");
+    expect(ref?.url).toContain("/acme.sprockets.ws:ws_0076759dbbe19fcc/mcp");
     // The transport names the provider's credential — no secret at rest.
     expect(ref?.transport?.auth).toEqual({ type: "provider", provider: PROVIDER_ID, config: {} });
   });
@@ -271,7 +283,7 @@ describe("example-broker — install", () => {
   test("refuses when no provider is registered for the kind", async () => {
     const bare = buildHarness({ ...exampleBroker(calls), id: "some-other-broker" });
     try {
-      await bare.workspaceStore.create("Test", bare.wsId.slice(3));
+      await seedWorkspace(bare.workspaceStore, bare.wsId, { name: "Test" });
       await bare.workspaceStore.addMember(bare.wsId, ADMIN.id, "admin");
       const result = await buildTool(bare).handler({
         action: "install",
@@ -310,7 +322,9 @@ describe("example-broker — probe", () => {
 
     expect(verdict).toBe("credential_lost");
     // The probe reads its own opaque coordinates off the ref it was handed.
-    expect(calls.probed[0]?.ref.brokered?.providerRef?.lease).toBe("acme.sprockets.ws:ws_test");
+    expect(calls.probed[0]?.ref.brokered?.providerRef?.lease).toBe(
+      "acme.sprockets.ws:ws_0076759dbbe19fcc",
+    );
   });
 });
 
@@ -320,7 +334,7 @@ describe("example-broker — cleanup on uninstall", () => {
   beforeEach(async () => {
     calls = noCalls();
     h = buildHarness(exampleBroker(calls));
-    await h.workspaceStore.create("Test", h.wsId.slice(3));
+    await seedWorkspace(h.workspaceStore, h.wsId, { name: "Test" });
     await h.workspaceStore.addMember(h.wsId, ADMIN.id, "admin");
   });
 
@@ -390,7 +404,7 @@ describe("example-broker — boot-state derivation", () => {
   test("a connected connector seeds running", async () => {
     calls = noCalls();
     h = buildHarness(
-      exampleBroker(calls, { connectedLeases: new Set(["acme.sprockets.ws:ws_test"]) }),
+      exampleBroker(calls, { connectedLeases: new Set(["acme.sprockets.ws:ws_0076759dbbe19fcc"]) }),
     );
     const ref = installedRef();
     await h.lifecycle.seedInstance("com-example-widgets", ref.url ?? "", ref, undefined, h.wsId);

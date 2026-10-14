@@ -1,9 +1,9 @@
-import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { ChatProvider, useChatContext } from "../src/context/ChatContext.tsx";
-import type { ChatMessage } from "../src/hooks/useChat.ts";
+import type { ChatMessage } from "../src/hooks/chat-store.ts";
 
 // ---------------------------------------------------------------------------
 // Regression for #254 under the server-authoritative model: a turn streaming
@@ -14,7 +14,10 @@ import type { ChatMessage } from "../src/hooks/useChat.ts";
 
 type StreamCb = (type: string, data: unknown, seq: number) => void;
 const streamsByConv = new Map<string, StreamCb>();
-const subscribedByConv = new Map<string, (info: { isActive: boolean; activeSeq: number }) => void>();
+const subscribedByConv = new Map<
+  string,
+  (info: { isActive: boolean; activeSeq: number }) => void
+>();
 
 const B_MESSAGES: ChatMessage[] = [
   { role: "user", content: "b-question" },

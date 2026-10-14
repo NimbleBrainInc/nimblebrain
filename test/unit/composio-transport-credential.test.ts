@@ -1,31 +1,30 @@
 /**
- * The Composio transport credential and the forward-mapping of legacy refs.
+ * The Composio transport credential.
  *
  * The invariant under test: **persisted state names what credential it needs,
- * never where the value comes from.** A ref written today names the `composio`
- * credential provider; a ref written before the seam carries a
- * `${COMPOSIO_API_KEY}` env reference and is mapped forward on read, so both
- * resolve identically — including on a deploy whose broker credential lives in
- * `nimblebrain.json` rather than the environment.
+ * never where the value comes from.** A Composio ref names the `composio`
+ * credential provider, so it resolves the same whether the broker credential
+ * lives in `nimblebrain.json` or the environment.
  *
  * Nothing here mocks `@composio/core`. The credential path is vendor-free, so a
  * vendor load would itself be the bug.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { RemoteTransportConfig } from "../../src/connectors/runtime/types.ts";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   COMPOSIO_CREDENTIAL_PROVIDER,
   composioCredentialProvider,
-  composioTransportConfig,
   registerComposioCredentialProvider,
 } from "../../src/connectors/providers/composio/transport-credential.ts";
 import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
+import type { RemoteTransportConfig } from "../../src/connectors/runtime/types.ts";
 import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 const ENV_KEYS = ["COMPOSIO_API_KEY", "COMPOSIO_API_BASE_URL"] as const;
 let saved: Record<string, string | undefined>;
@@ -46,11 +45,10 @@ afterEach(() => {
   _resetComposioConfigForTest();
 });
 
-/** The shape a pre-seam install persisted into `workspace.json`. */
-const LEGACY_AUTH: RemoteTransportConfig = {
+/** The transport a Composio install persists into `workspace.json`. */
+const PROVIDER_AUTH: RemoteTransportConfig = {
   type: "streamable-http",
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal legacy placeholder under test
-  auth: { type: "header", name: "x-api-key", value: "${COMPOSIO_API_KEY}" },
+  auth: { type: "provider", provider: COMPOSIO_CREDENTIAL_PROVIDER, config: {} },
   headers: { "x-trace": "keep-me" },
 };
 
@@ -75,8 +73,8 @@ describe("the credential provider attaches the resolved broker key", () => {
 
   it("is workspace-independent — one broker account serves the tenant", () => {
     process.env.COMPOSIO_API_KEY = "k_env";
-    const a = composioCredentialProvider.credentialFor("ws_a", {});
-    const b = composioCredentialProvider.credentialFor("ws_b", {});
+    const a = composioCredentialProvider.credentialFor("ws_00079598e311c160", {});
+    const b = composioCredentialProvider.credentialFor("ws_001c32f121060ff3", {});
     expect(a).toEqual(b);
   });
 
@@ -94,12 +92,11 @@ describe("registration happens at the composition root", () => {
   // `test/integration/composio-credential-boot.test.ts` — asserting it here
   // would only prove that calling the register function registers.
 
-  it("resolves a config-only key onto a legacy ref's transport header — the headline case", async () => {
-    // The single combination this PR exists to enable, end to end and in one
-    // test: broker credential declared ONLY in nimblebrain.json, nothing in the
-    // environment, against a ref installed before the seam existed. Asserting
-    // the header VALUE, not just that nothing threw — the two halves passing
-    // separately is what let the boot-ordering bug through.
+  it("resolves a config-only key onto an installed ref's transport header — the headline case", async () => {
+    // End to end in one test: broker credential declared ONLY in
+    // nimblebrain.json, nothing in the environment. Asserting the header VALUE,
+    // not just that nothing threw — the two halves passing separately is what
+    // let the boot-ordering bug through.
     delete process.env.COMPOSIO_API_KEY;
     setConnectorsConfig({ providers: { composio: { apiKey: "k_config" } } });
     _resetComposioConfigForTest();
@@ -111,16 +108,16 @@ describe("registration happens at the composition root", () => {
 
     const transport = await createRemoteTransport(
       new URL("https://composio.test/mcp"),
-      composioTransportConfig(LEGACY_AUTH),
+      PROVIDER_AUTH,
       undefined,
       {},
     );
     const seen: Headers[] = [];
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+    globalThis.fetch = fakeFetch(async (_input, init) => {
       seen.push(new Headers(init?.headers));
       return new Response(null, { status: 202 });
-    }) as unknown as typeof fetch;
+    });
     try {
       await transport.send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" });
     } finally {
@@ -129,7 +126,7 @@ describe("registration happens at the composition root", () => {
     expect(seen.at(-1)?.get("x-api-key")).toBe("k_config");
   });
 
-  it("builds a transport for a mapped legacy ref without a registry lookup", async () => {
+  it("builds a transport for an installed ref once the provider is registered", async () => {
     const { registerComposioCredentialProvider } = await import(
       "../../src/connectors/providers/composio/transport-credential.ts"
     );
@@ -137,60 +134,15 @@ describe("registration happens at the composition root", () => {
     process.env.COMPOSIO_API_KEY = "k_env";
     registerComposioCredentialProvider();
 
-    // The end-to-end path a boot-start takes: persisted legacy ref → forward map
-    // → transport. Previously threw "provider \"composio\" is not registered".
+    // The end-to-end path a boot-start takes: persisted ref → transport.
     await expect(
-      createRemoteTransport(
-        new URL("https://composio.test/mcp"),
-        composioTransportConfig(LEGACY_AUTH),
-        undefined,
-        {},
-      ),
+      createRemoteTransport(new URL("https://composio.test/mcp"), PROVIDER_AUTH, undefined, {}),
     ).resolves.toBeDefined();
   });
 });
 
-describe("legacy refs map forward on read", () => {
-  it("rewrites the env-template auth to name the provider", () => {
-    const migrated = composioTransportConfig(LEGACY_AUTH);
-    expect(migrated?.auth).toEqual({
-      type: "provider",
-      provider: COMPOSIO_CREDENTIAL_PROVIDER,
-      config: {},
-    });
-  });
-
-  it("preserves everything else on the ref", () => {
-    const migrated = composioTransportConfig(LEGACY_AUTH);
-    expect(migrated?.type).toBe("streamable-http");
-    expect(migrated?.headers).toEqual({ "x-trace": "keep-me" });
-  });
-
-  it("is idempotent — an already-migrated ref passes through untouched", () => {
-    const once = composioTransportConfig(LEGACY_AUTH);
-    expect(composioTransportConfig(once)).toEqual(once);
-  });
-
-  it("leaves every other transport shape alone", () => {
-    const untouched: RemoteTransportConfig[] = [
-      { type: "streamable-http", auth: { type: "bearer", token: "t" } },
-      { type: "streamable-http", auth: { type: "none" } },
-      // Same header name, a different value — someone else's credential.
-      { type: "streamable-http", auth: { type: "header", name: "x-api-key", value: "literal" } },
-      // A different header carrying the legacy template — not Composio's auth.
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal placeholder under test
-      { type: "streamable-http", auth: { type: "header", name: "x-other", value: "${COMPOSIO_API_KEY}" } },
-      { type: "streamable-http", auth: { type: "provider", provider: "minted", config: {} } },
-    ];
-    for (const config of untouched) {
-      expect(composioTransportConfig(config)).toBe(config);
-    }
-    expect(composioTransportConfig(undefined)).toBeUndefined();
-  });
-});
-
 describe("the transport's own SSRF posture, not just the URL gate's", () => {
-  // `startAuthInner` (Reconnect / `POST /v1/mcp-auth/initiate`) builds its source
+  // `startAuthInner` (Reconnect / `POST /v1/workspaces/:wsId/mcp-auth/initiate`) builds its source
   // WITHOUT calling `validateConnectorUrl` — grep it: the only call sites are
   // `startup.ts`, `ssrf-guarded-fetch.ts` and `workspace-oauth-provider.ts`. So on
   // that path `isMintedFleetSource` inside `createRemoteTransport` is the ONLY
@@ -203,8 +155,12 @@ describe("the transport's own SSRF posture, not just the URL gate's", () => {
     const transport = await createRemoteTransport(new URL(IN_CLUSTER), {
       type: "streamable-http",
       auth: { type: "provider", provider, config: {} },
-    } as never);
-    return (transport as unknown as Record<string, (u: string) => Promise<unknown>>)._fetch;
+    });
+    if (!(transport instanceof StreamableHTTPClientTransport)) {
+      throw new Error("expected a streamable-http transport");
+    }
+    // biome-ignore lint/complexity/useLiteralKeys: `_fetch` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
+    return transport["_fetch"];
   }
 
   it("refuses an in-cluster plain-HTTP target for a brokered Composio session", async () => {

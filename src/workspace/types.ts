@@ -6,6 +6,14 @@ import type { ModelSlots } from "../runtime/types.ts";
 /** Workspace-level member roles. */
 export type WorkspaceRole = "admin" | "member";
 
+/**
+ * Longest workspace name, in characters (Unicode code points). Long enough for
+ * any real name, short enough to fit the sidebar and the switcher. The General
+ * tab's name field and the New workspace form cap input at the same number
+ * (`web/src/lib/workspace-name.ts`).
+ */
+export const MAX_WORKSPACE_NAME_CHARS = 80;
+
 /** A user's membership in a workspace. */
 export interface WorkspaceMember {
   userId: string;
@@ -22,33 +30,8 @@ export interface Workspace {
   updatedAt: string;
 
   /**
-   * `true` for a user's personal workspace (auto-provisioned at first login
-   * via `ensureUserWorkspace`). `false` for shared/team workspaces.
-   *
-   * Source of truth for the "is this personal?" predicate — never parse the
-   * workspace id. Enforced co-required with `ownerUserId`: a personal
-   * workspace ALWAYS has its owner declared. Not patchable after creation;
-   * a workspace's "personal-ness" is part of its identity.
-   *
-   * Optional in the type for read back-compat with workspaces created before
-   * Stage 1 (defaults to `false` when absent on disk). The Task 003
-   * migration backfills the field eagerly.
-   */
-  isPersonal?: boolean;
-  /**
-   * For personal workspaces only — the id of the user who owns this
-   * workspace. The reverse pointer for the user↔workspace relationship.
-   * Code that needs to ask "who owns this workspace?" reads this field;
-   * it never regex-parses the id string.
-   *
-   * MUST be set when `isPersonal: true`. MUST be absent when
-   * `isPersonal: false` / undefined. Not patchable post-creation.
-   */
-  ownerUserId?: string;
-  /**
    * Short human-readable description. Populated by the workspace
-   * settings UI and consumed by the Stage 3+ discovery layer (workspace
-   * directory). Defined now so the schema doesn't migrate twice.
+   * settings UI.
    *
    * Defaults to `null` on creation. Patchable.
    */
@@ -58,8 +41,6 @@ export interface Workspace {
   skillDirs?: string[];
   /** Optional model slot overrides for this workspace. */
   models?: Partial<ModelSlots>;
-  /** Optional markdown identity override for this workspace's agent persona. */
-  identity?: string;
   /**
    * Per-workspace catalog allow-list. When set, only catalog entries
    * whose `id` is in this array appear on the Connections page for
@@ -86,10 +67,11 @@ export interface Workspace {
    * separate so the secret never sits next to non-secret config and
    * the type system isn't carrying a `Redacted` for what's a public id.
    *
-   * Lifecycle is independent of connector install: setting up an OAuth
-   * app makes the connector installable for the whole workspace;
-   * uninstalling the connector does NOT remove this config (so a
-   * later re-install reuses it). Explicit removal goes through
+   * Setting up an OAuth app makes the connector installable for the
+   * whole workspace. The app lives as long as something uses it: the
+   * uninstall that removes the last installed connector built on it
+   * removes this record and its secret together, so a reinstall asks
+   * for both again. With nothing installed, an admin removes it through
    * `manage_connectors.remove_operator_setup`.
    */
   oauthOperatorApps?: Record<string, OAuthOperatorAppConfig>;

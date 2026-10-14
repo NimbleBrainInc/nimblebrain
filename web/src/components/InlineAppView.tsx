@@ -5,9 +5,14 @@ import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
 import { buildHostExtensions } from "../bridge/host-extensions";
 import { createAppIframe } from "../bridge/iframe";
+import { useFileLimits } from "../context/ChatContext";
+import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
-
-import type { ToolResultForUI } from "../hooks/useChat";
+import type { ToolResultForUI } from "../hooks/chat-store";
+import { useAppDisplayName } from "../hooks/useAppDisplayName";
+import { useHostContextSync } from "../hooks/useHostContextSync";
+import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
+import { useNotice } from "./notices";
 
 export interface InlineAppViewProps {
   appName: string;
@@ -15,56 +20,9 @@ export interface InlineAppViewProps {
   toolResult?: { tool: string; result?: ToolResultForUI };
 }
 
-const DEFAULT_HEIGHT = 200;
-// Runaway guard, NOT a layout budget. An inline app renders at whatever height
-// its content reports, the same as it would in any other MCP host.
-//
-// Any bound shorter than the content hides it *silently*: INLINE_SIZING_CSS sets
-// `overflow:hidden` inside the frame and the wrapper clips too, so there is no
-// scrollbar and no affordance — a truncated card is indistinguishable from a tool
-// that returned less. That is why the ceiling sits far above real content instead
-// of at a layout budget; it exists only so an app reporting an absurd height
-// cannot mint a multi-million-pixel element.
-//
-// It also terminates a growth loop this component cannot otherwise stop:
-// INLINE_SIZING_CSS neutralizes `100vh` on `html,body` only, so a descendant with
-// `min-height:100vh` resolves against the iframe viewport, and an app shaped as
-// that element plus a trailing sibling of height K reports H+K, then H+2K, and so
-// on. Such an app is misshapen for an inline widget either way; the guard bounds
-// how badly it fails.
-const RUNAWAY_HEIGHT_GUARD = 20_000;
-
-// Force content-based sizing in inline widget iframes.
-// Full-page app templates often set height: 100vh or min-height: 100% which
-// causes the iframe to report the full viewport height instead of content height.
-const INLINE_SIZING_CSS = `<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0!important}</style>`;
-
-// Report content height to the host from INSIDE the iframe. The app frame is
-// sandboxed without `allow-same-origin` (opaque origin), so the host cannot
-// read `iframe.contentDocument` to measure it — the content must report its own
-// size. A ResizeObserver posts `ui/notifications/size-changed` (the ext-apps
-// resize protocol the bridge already routes to `onResize`) on every content
-// change plus once on start; the host floors at >0 and otherwise honors it.
-// Reports `body.scrollHeight` (true content height, so the widget shrinks as
-// well as grows) — NOT `documentElement.scrollHeight`, whose viewport floor
-// ratchets the height and never lets it shrink. An empty root (async app,
-// pre-mount) reports ~0, which the host's `onResize` lower bound ignores. This
-// is host-injected wrapper markup, not app code; CSP `script-src 'unsafe-inline'`
-// permits it, and `injectCSP` replaces any app-declared CSP so it always runs.
-const INLINE_RESIZE_REPORTER = `<script>(function(){function r(){try{var b=document.body;parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/size-changed",params:{height:b?b.scrollHeight:document.documentElement.scrollHeight}},"*");}catch(e){}}function s(){try{new ResizeObserver(r).observe(document.body||document.documentElement);}catch(e){}r();}if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",s);}else{s();}})();</script>`;
-
-/** Inject inline auto-sizing CSS + a content-height reporter into app HTML so full-page templates size to content, not the viewport. */
-function buildSizedHtml(html: string): string {
-  const inject = `${INLINE_SIZING_CSS}\n${INLINE_RESIZE_REPORTER}`;
-  const headPattern = /<head([^>]*)>/i;
-  return headPattern.test(html)
-    ? html.replace(headPattern, (m) => `${m}\n${inject}`)
-    : `${inject}\n${html}`;
-}
-
 /**
  * On iframe load, clear the loading overlay. Content sizing is driven by the
- * in-iframe reporter (INLINE_RESIZE_REPORTER) via the bridge's `onResize`, not
+ * in-iframe reporter (CONTENT_RESIZE_REPORTER) via the bridge's `onResize`, not
  * by reading `iframe.contentDocument` — the opaque-origin frame is not readable
  * from the host.
  */
@@ -92,16 +50,30 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
   // re-renders with a new object reference (e.g., during streaming text deltas).
   const toolResultRef = useRef(toolResult);
   toolResultRef.current = toolResult;
-  // Mirror SlotRenderer: publish workspace into hostContext so apps mounted
-  // here see the same `useHostContext().workspace` value as in placements.
-  // Inline previews don't push host-context-changed (they're scoped to a
-  // single tool result, no workspace switching mid-life), so the handshake
-  // is the only delivery point.
+  const notify = useNotice();
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
+  const nameApp = useAppDisplayName();
+  // Mirror SlotRenderer: the same host context at the handshake and on every
+  // change, so an app mounted here sees what it would in a placement and
+  // follows a theme toggle while its iframe stays mounted.
+  const { mode } = useTheme();
   const { activeWorkspace } = useWorkspaceContext();
   const workspaceRef = useRef(activeWorkspace);
   workspaceRef.current = activeWorkspace;
+  const uploadLimits = useFileLimits();
+  const uploadLimitsRef = useRef(uploadLimits);
+  uploadLimitsRef.current = uploadLimits;
 
-  const [height, setHeight] = useState(DEFAULT_HEIGHT);
+  useHostContextSync(
+    () => (bridgeRef.current ? [bridgeRef.current] : []),
+    mode,
+    activeWorkspace,
+    undefined,
+    uploadLimits,
+  );
+
+  const [height, setHeight] = useState(DEFAULT_CONTENT_HEIGHT);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -132,7 +104,7 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
           prefersBorder: metaUi?.prefersBorder,
         });
         iframe.style.width = "100%";
-        iframe.style.height = `${DEFAULT_HEIGHT}px`;
+        iframe.style.height = `${DEFAULT_CONTENT_HEIGHT}px`;
         iframe.style.display = "block";
         iframe.style.maxWidth = "100%";
 
@@ -161,7 +133,10 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
               bridge.sendToolResult(tr.result);
             }
           },
-          getHostExtensions: () => buildHostExtensions(workspaceRef.current),
+          getHostExtensions: () =>
+            buildHostExtensions(workspaceRef.current, undefined, uploadLimitsRef.current),
+          getUploadLimits: () => uploadLimitsRef.current,
+          onNotify: (notice) => notifyRef.current({ ...notice, source: nameApp(appName) }),
         });
         bridgeRef.current = bridge;
 
@@ -189,7 +164,7 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
         container.innerHTML = "";
       }
     };
-  }, [appName, resourceUri]);
+  }, [appName, resourceUri, nameApp]);
 
   return (
     <div className="w-full max-w-full my-2 rounded-sm overflow-hidden border border-border bg-card">

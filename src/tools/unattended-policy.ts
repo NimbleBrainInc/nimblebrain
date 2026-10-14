@@ -6,8 +6,8 @@
  * a scheduled run inside its lane have to be spelled differently here:
  *
  *   - **A run has surfacing.** `executeTask` filters the tool list it shows the
- *     model, and `surfaceTools` drops every `INTERNAL_TOOL_ANNOTATION`
- *     tool from it. Neither is a boundary — an internal tool stays callable by
+ *     model, and `surfaceTools` drops every tool whose `ui.visibility` lacks
+ *     `"model"`. Neither is a boundary — an app-only tool stays callable by
  *     name, deliberately, because the web shell reaches it that way.
  *   - **A single dispatch has none.** There is no list, so a name that
  *     surfacing would have hidden arrives at the door regardless. What the
@@ -15,7 +15,7 @@
  *     builds.
  *
  * The set is one rule: **a surface that grows the principal's future
- * capability**. A new automation fires again later as them; a new skill loads
+ * capability**. A new task fires again later as them; a new skill loads
  * itself into their later sessions; a connector install adds tools and
  * credentials that were not reachable before. Reaching any of those is how an
  * unattended call would widen its own reach, which is the foothold the
@@ -31,10 +31,8 @@
  *
  * This is a name policy and nothing more, and it is only half the boundary. The
  * other half is ambient: a source refuses its own barred tools whenever
- * `RequestContext.unattended` is set, whatever router dispatched the call —
- * which is why `instructions__write_instructions` needs no entry here despite
- * matching the rule exactly (`checkWritePermission` refuses it before every
- * other gate). What the names buy is an answer of "denied" up front, from the
+ * `RequestContext.unattended` is set, whatever router dispatched the call.
+ * What the names buy is an answer of "denied" up front, from the
  * policy, instead of a source-specific error raised three layers down.
  */
 
@@ -47,7 +45,7 @@ import { isTaskForbiddenIdentityTool } from "./identity-sources.ts";
  * `nb__manage_connectors` installs and disconnects connectors and drives the
  * OAuth handshakes behind them, so reaching it unattended is how a dispatch
  * would acquire capabilities its principal never granted it. It carries
- * `INTERNAL_TOOL_ANNOTATION`, which keeps it out of every listing — the
+ * `ui.visibility: ["app"]`, which keeps it out of every listing — the
  * reason a scheduled run has never needed it named here, and the reason a
  * dispatch does.
  */

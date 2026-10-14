@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
 // UninstallConnectorDialog — what the uninstall takes with it.
 //
-// Uninstall used to remove the connector and leave its credentials on the
-// volume, where nothing referenced them and no surface admitted they existed:
-// the rotation section renders only for an INSTALLED connector, so the moment
-// the connector was gone its secret was unreachable from the UI entirely. In a
+// An uninstall that removed the connector and left its credentials on the
+// volume would leave them where nothing references them and no surface admits
+// they exist: the rotation section renders only for an INSTALLED connector, so
+// once the connector is gone its secret is unreachable from the UI entirely. In a
 // store that is plaintext-on-disk in v1, that orphan is a live outbound
 // capability nobody can see.
 //
@@ -22,17 +22,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 const HOUR_AGO = new Date(Date.now() - 3_600_000).toISOString();
 
@@ -62,7 +57,6 @@ mock.module("../api/client", () => ({
   uninstallConnector,
 }));
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 
@@ -72,21 +66,27 @@ const { UninstallConnectorDialog } = await import(
 
 import type { InstalledConnector } from "../api/client";
 
-const DECLARED = { "X-Db-Url": { ref: "credential", key: "acme.db_url" } };
-const TWO_DECLARED = {
+const DECLARED: CatalogEntry["secretHeaders"] = {
+  "X-Db-Url": { ref: "credential", key: "acme.db_url" },
+};
+const TWO_DECLARED: CatalogEntry["secretHeaders"] = {
   "X-Db-Url": { ref: "credential", key: "acme.db_url" },
   "X-Api-Key": { ref: "credential", key: "acme.api_key" },
 };
 
 /** An installed connector carrying a catalog entry, shaped by the test's needs. */
-function installed(overrides: {
-  auth?: string;
-  secretHeaders?: Record<string, unknown>;
-  providerAuth?: { provider: string; config: Record<string, unknown> };
-}): InstalledConnector {
+type CatalogEntry = NonNullable<InstalledConnector["catalog"]>;
+
+function installed(
+  overrides: Partial<
+    Pick<CatalogEntry, "auth" | "secretHeaders" | "providerAuth" | "operatorSetup">
+  >,
+): InstalledConnector {
   return {
     serverName: "com-acme-db-query",
     connectorName: "https://mcp.acme.test/mcp",
+    displayName: "Acme DB Query",
+    disconnectable: false,
     version: "1.0.0",
     state: "running",
     scope: "workspace",
@@ -101,8 +101,9 @@ function installed(overrides: {
       auth: overrides.auth ?? "provider",
       ...(overrides.secretHeaders ? { secretHeaders: overrides.secretHeaders } : {}),
       ...(overrides.providerAuth ? { providerAuth: overrides.providerAuth } : {}),
+      ...(overrides.operatorSetup ? { operatorSetup: overrides.operatorSetup } : {}),
     },
-  } as unknown as InstalledConnector;
+  };
 }
 
 interface Mounted {
@@ -180,8 +181,7 @@ function dialogButton(text: string): HTMLButtonElement | null {
 }
 
 async function click(el: Element | null): Promise<void> {
-  const MouseEventCtor = (globalThis as unknown as { window: { MouseEvent: typeof MouseEvent } })
-    .window.MouseEvent;
+  const MouseEventCtor = window.MouseEvent;
   await act(async () => {
     el?.dispatchEvent(new MouseEventCtor("click", { bubbles: true }));
   });
@@ -248,6 +248,23 @@ describe("UninstallConnectorDialog — what it names", () => {
       }),
     );
     expect(popup()?.textContent).not.toContain("will be deleted");
+  });
+
+  test("a static-auth connector names its operator client secret", async () => {
+    listResult = async () => ({ keys: [{ key: "acme.client_secret", updatedAt: HOUR_AGO }] });
+    mounted = await open(
+      installed({
+        auth: "static",
+        operatorSetup: {
+          portalUrl: "https://developer.acme.test",
+          hint: "Register an app",
+          clientSecretKey: "acme.client_secret",
+        },
+      }),
+    );
+    const text = popup()?.textContent ?? "";
+    expect(text).toContain("will be deleted");
+    expect(text).toContain("acme.client_secret");
   });
 
   test("a non-provider connector declaring secretHeaders names nothing", async () => {

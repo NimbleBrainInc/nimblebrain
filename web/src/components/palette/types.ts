@@ -60,6 +60,8 @@ export interface CommandRunContext {
   toggleSidebar: () => void;
   toggleTheme: () => void;
   openKeyboardShortcuts: () => void;
+  /** Open a URL off the app, in a new tab. */
+  openExternal: (url: string) => void;
   logout: () => void;
   /** Close the palette. Most `run`s call this last. */
   closePalette: () => void;
@@ -96,8 +98,8 @@ export interface CommandSourceContext {
   /**
    * True when the current route is a workspace route (`/w/:slug`). Chat lives
    * only inside a workspace, so the chat action gates on this — NOT on
-   * `activeWorkspaceSlug`, which is set (to the personal workspace) even on the
-   * home / profile surfaces.
+   * `activeWorkspaceSlug`, which is set (to the user's default workspace) even
+   * on the home / profile surfaces.
    */
   isWorkspaceRoute?: boolean;
 }

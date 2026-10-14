@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
-// ChatChrome — the chat panel chrome: floating toggle, sliding
-// sidebar/fullscreen panel, resize handle, keyboard shortcuts, unread
-// tracking, and deep-link open.
+// ChatChrome — the chat panel chrome: sliding sidebar/fullscreen panel,
+// resize handle, keyboard shortcuts, unread tracking, and deep-link open.
+// The control that opens it is the top bar's Chat button (`ChatToggle`);
+// this publishes the unread count it shows and returns focus to it.
 //
 // INVARIANT: mounted exactly once, globally, by ShellLayout. A second
 // mount renders a second panel. Nothing else may render it — every route
@@ -13,18 +14,16 @@
 // panel reads it to stamp `AppContext` on messages typed into the main
 // composer. Without it, the backend resolves no focused app and the
 // agent can't see the app's visible state (e.g. the open document).
-// The inline "[App Context: …]" text prefix is a separate concern and
-// still lives in AppWithChat's in-app channel.
 // ---------------------------------------------------------------------------
 
-import { MessageSquare } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
+import { matchesShortcut, SHORTCUTS } from "../lib/shortcuts";
 import type { ChatPanelRef } from "./ChatPanel";
 import { ChatPanel } from "./ChatPanel";
 import { ResizeHandle } from "./ResizeHandle";
@@ -57,42 +56,19 @@ function resolvePanelWidth({
   return panelWidth;
 }
 
-/** Floating chat toggle shown when the panel is closed; badges the unread assistant-message count. */
-function ChatToggleButton({
-  visible,
-  unreadCount,
-  onOpen,
-}: {
-  visible: boolean;
-  unreadCount: number;
-  onOpen: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="fixed bottom-6 right-6 z-40 flex items-center justify-center w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 transition-all duration-200"
-      style={{
-        opacity: visible ? 1 : 0,
-        transition: "opacity 200ms ease-in, background-color 200ms",
-      }}
-      title="Chat (⌘K)"
-      data-testid="chat-chrome-open-button"
-    >
-      <MessageSquare className="w-5 h-5" />
-      {unreadCount > 0 && (
-        <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center">
-          {unreadCount}
-        </span>
-      )}
-    </button>
-  );
-}
-
 export function ChatChrome() {
-  const { panelState, panelWidth, setPanelWidth, openPanel, closePanel, toggleFullscreen } =
-    useChatPanelContext();
+  const {
+    panelState,
+    panelWidth,
+    setPanelWidth,
+    openPanel,
+    closePanel,
+    toggleFullscreen,
+    setUnreadCount,
+    toggleButtonRef,
+  } = useChatPanelContext();
   const panelRef = useRef<ChatPanelRef>(null);
+  const panelElRef = useRef<HTMLDivElement>(null);
   const chat = useChatContext();
   const sidebar = useSidebar();
   const isMobile = useIsMobile();
@@ -102,13 +78,13 @@ export function ChatChrome() {
   // Collapse fullscreen when the route changes — same logic AppWithChat
   // had; lifting it here makes it work globally.
   const prevPathnameRef = useRef(location.pathname);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only react to pathname changes
+  const collapseFullscreen = useEffectEvent(() => {
+    if (panelState === "fullscreen") toggleFullscreen();
+  });
   useEffect(() => {
     if (location.pathname !== prevPathnameRef.current) {
       prevPathnameRef.current = location.pathname;
-      if (panelState === "fullscreen") {
-        toggleFullscreen();
-      }
+      collapseFullscreen();
     }
   }, [location.pathname]);
 
@@ -117,19 +93,20 @@ export function ChatChrome() {
   // shared link while the chat was left fullscreen, would be covered — so
   // collapse fullscreen once on mount when we land directly on such a route.
   const mountCollapseHandled = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount
-  useEffect(() => {
+  const collapseOnLanding = useEffectEvent(() => {
     if (mountCollapseHandled.current) return;
     mountCollapseHandled.current = true;
     if (panelState === "fullscreen" && /^\/w\/[^/]+\/context\//.test(location.pathname)) {
       toggleFullscreen();
     }
+  });
+  useEffect(() => {
+    collapseOnLanding();
   }, []);
 
   // Deep-link: open chat from ?chat=<conversationId> on mount.
   const deepLinkHandled = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount
-  useEffect(() => {
+  const openFromUrl = useEffectEvent(() => {
     if (deepLinkHandled.current) return;
     deepLinkHandled.current = true;
     const params = new URLSearchParams(window.location.search);
@@ -137,11 +114,13 @@ export function ChatChrome() {
     if (chatId) {
       openPanel(chatId);
     }
+  });
+  useEffect(() => {
+    openFromUrl();
   }, []);
 
   // Unread tracking: count assistant messages added while panel is closed.
   const lastSeenAssistantCount = useRef(0);
-  const [buttonVisible, setButtonVisible] = useState(() => panelState === "closed");
 
   const assistantMessageCount = useMemo(
     () => chat.messages.filter((m) => m.role === "assistant").length,
@@ -159,16 +138,40 @@ export function ChatChrome() {
       ? Math.max(0, assistantMessageCount - lastSeenAssistantCount.current)
       : 0;
 
-  // Delayed entrance animation: fade in the button 300ms after panel closes.
+  // Published for the top bar's Chat button, which must not read ChatContext
+  // itself (it re-renders on every streamed token); this changes only when the
+  // count does.
   useEffect(() => {
-    if (panelState === "closed") {
-      const timer = setTimeout(() => setButtonVisible(true), 300);
-      return () => clearTimeout(timer);
-    }
-    setButtonVisible(false);
-  }, [panelState]);
+    setUnreadCount(unreadCount);
+  }, [unreadCount, setUnreadCount]);
 
-  // Keyboard shortcuts — Esc closes, ⌘K toggles, ⌘⇧K toggles fullscreen.
+  // Focus follows the panel. The closed panel is inert, so nothing in it can
+  // take focus; this runs after the commit that clears `inert`, which is the
+  // earliest the composer can accept it. Every open path lands here — the
+  // toggle, ⌘J, ⌘⇧J, `?chat=` deep links, and `openPanel` from an app or the
+  // command palette. Opening is an explicit move to the chat, so it takes focus
+  // even from an app iframe, which MessageInput's turn-ended refocus leaves
+  // alone. On the phone layout the composer is not focused, since that raises
+  // the on-screen keyboard over the conversation. On close, focus left inside
+  // the now-inert panel (Esc, Close, Back, ⌘J) moves to the top bar's Chat
+  // button, the control that reopens it.
+  const isOpen = panelState !== "closed";
+  const wasOpenRef = useRef(isOpen);
+  useEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = isOpen;
+    if (isOpen) {
+      if (!wasOpen && !isMobile) panelRef.current?.requestInputFocus();
+      return;
+    }
+    if (!wasOpen) return;
+    const active = document.activeElement;
+    const stranded =
+      active === null || active === document.body || panelElRef.current?.contains(active);
+    if (stranded) toggleButtonRef.current?.focus({ preventScroll: true });
+  }, [isOpen, isMobile, toggleButtonRef]);
+
+  // Keyboard shortcuts — Esc closes, ⌘J toggles, ⌘⇧J toggles fullscreen.
   useEffect(() => {
     // Esc — close the panel when it's open; left to the browser when already closed.
     function handleEscape(e: KeyboardEvent) {
@@ -177,43 +180,40 @@ export function ChatChrome() {
       closePanel();
     }
 
-    // ⌘⇧K — toggle fullscreen, opening the panel first when it's closed, then focus the composer.
+    // ⌘⇧J — toggle fullscreen, opening the panel first when it's closed, then
+    // focus the composer (the focus effect above does it on open).
     function toggleFullscreenShortcut() {
       if (panelState === "closed") {
         openPanel();
         toggleFullscreen();
-        setTimeout(() => panelRef.current?.requestInputFocus(), 350);
       } else {
         toggleFullscreen();
         setTimeout(() => panelRef.current?.requestInputFocus(), 100);
       }
     }
 
-    // ⌘K — open the panel (focusing the composer once it settles) or close it.
+    // ⌘J — open the panel (the focus effect above focuses the composer) or close it.
     function togglePanelShortcut() {
       if (panelState === "closed") {
         openPanel();
-        setTimeout(() => panelRef.current?.requestInputFocus(), 350);
       } else {
         closePanel();
       }
     }
 
     function handleKeyDown(e: KeyboardEvent) {
-      const mod = e.metaKey || e.ctrlKey;
-
       if (e.key === "Escape") {
         handleEscape(e);
         return;
       }
 
-      if (mod && e.shiftKey && (e.key === "K" || e.key === "k")) {
+      if (matchesShortcut(e, SHORTCUTS.chatFullscreen)) {
         e.preventDefault();
         toggleFullscreenShortcut();
         return;
       }
 
-      if (mod && e.key === "k") {
+      if (matchesShortcut(e, SHORTCUTS.chat)) {
         e.preventDefault();
         togglePanelShortcut();
         return;
@@ -240,7 +240,6 @@ export function ChatChrome() {
 
   const isSidebar = panelState === "sidebar";
   const isFullscreen = panelState === "fullscreen";
-  const isOpen = isSidebar || isFullscreen;
   const transitionTiming = isFullscreen ? TRANSITION_FULLSCREEN : TRANSITION_STANDARD;
   const panelWidthValue = resolvePanelWidth({
     isMobile,
@@ -251,17 +250,13 @@ export function ChatChrome() {
 
   return (
     <>
-      {/* Floating chat toggle — visible when panel is closed */}
-      {panelState === "closed" && (
-        <ChatToggleButton
-          visible={buttonVisible}
-          unreadCount={unreadCount}
-          onOpen={() => openPanel()}
-        />
-      )}
-
-      {/* Chat panel — full-width on mobile, fixed sidebar on desktop */}
+      {/* Chat panel — full-width on mobile, fixed sidebar on desktop. It stays
+          mounted when closed so the slide plays and the chat keeps its state,
+          and is inert + aria-hidden then: no focusable controls, not announced. */}
       <div
+        ref={panelElRef}
+        inert={!isOpen}
+        aria-hidden={!isOpen}
         className="fixed top-0 right-0 h-full z-10 bg-background"
         data-testid="chat-chrome-panel"
         style={{

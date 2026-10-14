@@ -21,8 +21,7 @@
  *     {@link RunBus.cancel} (the Stop button) does.
  *
  * Scope: single-process, in-memory. Multi-replica (`platform.replicas > 1`)
- * needs a Redis-backed log + conversationId-sticky routing — deferred,
- * mirrors the `SessionRegistry` pattern.
+ * needs a Redis-backed log + conversationId-sticky routing — deferred.
  */
 
 import { log as logger } from "../observability/log.ts";
@@ -130,7 +129,7 @@ export class RunBus {
    */
   publish(conversationId: string, type: string, data: unknown): BufferedRunEvent | null {
     const log = this.runs.get(conversationId);
-    if (!log || log.status !== "running") return null;
+    if (log?.status !== "running") return null;
 
     // Overflow check BEFORE seq increment / push: the terminal error event
     // itself counts toward seq but is intentionally allowed past the cap so
@@ -181,7 +180,7 @@ export class RunBus {
    *  after the grace window. */
   end(conversationId: string, status: Exclude<RunStatus, "running">): void {
     const log = this.runs.get(conversationId);
-    if (!log || log.status !== "running") return;
+    if (log?.status !== "running") return;
     log.status = status;
     log.endedAt = Date.now();
     this.scheduleGc(log);
@@ -193,7 +192,7 @@ export class RunBus {
    */
   cancel(conversationId: string): boolean {
     const log = this.runs.get(conversationId);
-    if (!log || log.status !== "running") return false;
+    if (log?.status !== "running") return false;
     log.abort.abort();
     this.end(conversationId, "cancelled");
     return true;

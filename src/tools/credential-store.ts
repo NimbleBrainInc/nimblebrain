@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, type Stats } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -123,6 +123,20 @@ export interface CredentialStore {
    * to call.
    */
   reconcile?(): Promise<void>;
+  /**
+   * Throw if what is stored was written under a key this store does not hold,
+   * so a write now would be one the rest of the deployment cannot read back.
+   * Optional, like `reconcile`, which calls it: a backend with no key omits it.
+   * A writer that builds its own store and never reconciles calls it before
+   * `put`.
+   */
+  assertKeyRecognized?(): Promise<void>;
+  /**
+   * Whether a write is sealed before it reaches storage. Descriptive: an
+   * operator-facing writer reports it so a person can see what a write is about
+   * to do. Nothing branches on it. Omitted by a backend that does not say.
+   */
+  readonly seals?: boolean;
 }
 
 /**
@@ -205,9 +219,19 @@ function legacyPlaintext(raw: string): string {
 interface ResealTally {
   resealed: number;
   current: number;
+  /** Files left exactly as they were. */
   skipped: number;
+  /**
+   * The skips that were plaintext: read, and not re-sealed. Holds strict mode
+   * off. The rest of `skipped` does not — see {@link FileCredentialStore.reconcile}.
+   */
+  plaintextSkipped: number;
   /** Scope roots that exist and could not be listed. Holds strict mode off. */
   unreadable: number;
+}
+
+function emptyTally(): ResealTally {
+  return { resealed: 0, current: 0, skipped: 0, plaintextSkipped: 0, unreadable: 0 };
 }
 
 /**
@@ -237,11 +261,28 @@ function isMissingDirectory(err: unknown): boolean {
  * audit line carries, so a query over the log can group by cause without
  * parsing prose.
  */
-type SealFailureReason =
+export type SealFailureReason =
   | CredentialSealFailure
   | "no_sealer"
   | "plaintext_refused"
   | "reseal_skipped";
+
+/**
+ * The closed set above as values, for a consumer that must reject anything
+ * outside it or enumerate it ahead of the first failure.
+ */
+export const SEAL_FAILURE_REASONS: Record<SealFailureReason, true> = {
+  malformed: true,
+  unknown_kid: true,
+  auth_failed: true,
+  no_sealer: true,
+  plaintext_refused: true,
+  reseal_skipped: true,
+};
+
+export function isSealFailureReason(value: unknown): value is SealFailureReason {
+  return typeof value === "string" && Object.hasOwn(SEAL_FAILURE_REASONS, value);
+}
 
 /**
  * What an operator does about each way an open can fail. Separate strings
@@ -366,6 +407,10 @@ export class FileCredentialStore implements CredentialStore {
     this.#workDir = workDir;
     this.#eventSink = opts?.eventSink;
     this.#sealer = opts?.sealer;
+  }
+
+  get seals(): boolean {
+    return this.#sealer !== undefined;
   }
 
   /**
@@ -599,27 +644,126 @@ export class FileCredentialStore implements CredentialStore {
     const sealer = this.#sealer;
     // Nothing to reconcile without one, and strict mode stays off: an unsealed
     // deployment is plaintext by design, not by omission.
-    if (!sealer) return;
+    if (!sealer) {
+      this.#emitReconciled(false);
+      return;
+    }
 
-    const tally: ResealTally = { resealed: 0, current: 0, skipped: 0, unreadable: 0 };
-    for (const scope of await this.#everyScope(tally)) {
+    const tally = emptyTally();
+    const scopes = await this.#everyScope(tally);
+    // Before any write: a sweep under the wrong key would re-seal every
+    // plaintext file under it too, and strand those alongside the rest.
+    await this.#assertRingRecognizes(sealer, scopes);
+    for (const scope of scopes) {
       await this.#resealScope(scope, sealer, tally);
     }
 
-    // Only a sweep that finished has proved every secret is sealed, so only a
-    // sweep that finished has earned the right to call a plaintext file an
-    // injection. A root it could not list counts against that as much as a file
-    // it could not open: both mean there are secrets it did not see.
-    if (tally.skipped === 0 && tally.unreadable === 0) {
+    // Only a sweep that has proved no legitimate plaintext is left has earned
+    // the right to call a plaintext file an injection. Two things disprove it: a
+    // root it could not list, which may hold plaintext it never saw, and
+    // plaintext it read and could not re-seal.
+    //
+    // Every other skip is deliberately absent. A sealed file this ring cannot
+    // open is not plaintext, and neither is a file the runtime cannot read at
+    // all; each is refused on use whatever this decides. Counting either against
+    // strict mode would hand anyone who can write the directory, without the
+    // key, a switch for the control that exists to stop them: one planted file
+    // starting with the sealed-value magic, and plaintext is accepted on every
+    // boot after.
+    if (tally.plaintextSkipped === 0 && tally.unreadable === 0) {
       this.#strictPlaintextRefusal = true;
     }
     log.info("[credential-store] sealed-secret reconcile complete", {
       resealed: tally.resealed,
       alreadyCurrent: tally.current,
       skipped: tally.skipped,
+      plaintextSkipped: tally.plaintextSkipped,
       unreadable: tally.unreadable,
       strictPlaintextRefusal: this.#strictPlaintextRefusal,
     });
+    this.#emitReconciled(true);
+  }
+
+  /**
+   * Announce what the sweep decided, once per boot. A sealed store that still
+   * accepts plaintext has a control switched off, and that is a standing state
+   * worth alerting on rather than a line in one boot log. Only `reconcile`
+   * changes strict mode, so this one event is the whole story.
+   */
+  #emitReconciled(sealed: boolean): void {
+    this.#eventSink?.emit({
+      type: "credential_store.reconciled",
+      data: { sealed, strictPlaintextRefusal: this.#strictPlaintextRefusal },
+    });
+  }
+
+  /**
+   * Refuse to serve over sealed secrets this ring recognizes none of.
+   *
+   * Every such state is data loss in progress: the outgoing key dropped from
+   * the ring before the sweep re-wrapped what it sealed, a volume restored from
+   * another deployment, or simply the wrong key loaded. The canary cannot tell
+   * — it seals and opens under the same key — so without this the runtime boots
+   * clean, refuses every secret on use, and seals anything written meanwhile (an
+   * OAuth refresh, an admin setting a secret) under a key that is about to be
+   * replaced, stranding it once the right one is restored.
+   *
+   * A MIX does not throw. Some files under a ring key and some not is a stray,
+   * and one stray file must not crash-loop a tenant; the sweep skips and audits
+   * it. A store holding no sealed file, which is every deployment the first time
+   * sealing is switched on, has nothing to disagree with.
+   */
+  async assertKeyRecognized(): Promise<void> {
+    const sealer = this.#sealer;
+    if (!sealer) return;
+    // A throwaway tally: this path reports nothing, and the sweep counts for itself.
+    await this.#assertRingRecognizes(sealer, await this.#everyScope(emptyTally()));
+  }
+
+  async #assertRingRecognizes(
+    sealer: CredentialSealer,
+    scopes: readonly CredentialScope[],
+  ): Promise<void> {
+    const foreign = new Set<string>();
+    for (const scope of scopes) {
+      let names: string[];
+      try {
+        names = await readdir(this.#dir(scope));
+      } catch {
+        continue; // the sweep counts and reports a root it cannot list
+      }
+      for (const key of names) {
+        const kid = await this.#sealedKid(scope, key);
+        if (kid === undefined) continue;
+        if (sealer.kids.includes(kid)) return;
+        foreign.add(kid);
+      }
+    }
+    if (foreign.size === 0) return;
+    // Key ids are MACs over a constant and disclose nothing. Both lists are what
+    // tell "the outgoing key was dropped" from "this volume came from elsewhere".
+    throw new Error(
+      `[credential-store] every sealed secret on disk is under a key this ring does not hold ` +
+        `(on disk: ${[...foreign].sort().join(", ")}; ring: ${sealer.kids.join(", ")}). ` +
+        "Refusing to start rather than write secrets under a key the rest of them cannot join. " +
+        "Load the key that sealed them — at the back of the ring, if you are rotating.",
+    );
+  }
+
+  /**
+   * The key id a stored secret is sealed under, or undefined for anything that
+   * is not a key, not readable, plaintext, or malformed. A malformed value
+   * carries no key id, so it is evidence of nothing about the ring.
+   */
+  async #sealedKid(scope: CredentialScope, key: string): Promise<string | undefined> {
+    if (!KEY_RE.test(key)) return undefined;
+    let raw: string;
+    try {
+      raw = await readFile(join(this.#dir(scope), key), "utf-8");
+    } catch {
+      return undefined; // a directory, or unreadable: the sweep reports it
+    }
+    return isSealedValue(raw) ? parseSealedValue(raw)?.kid : undefined;
   }
 
   /** Every secret in one scope, counted into the running tally. */
@@ -648,7 +792,13 @@ export class FileCredentialStore implements CredentialStore {
       // `ignored` is not counted: a directory sitting where a key should be is
       // not a secret that was already current, and a tally an operator reads
       // should not say it was.
-      if (outcome !== "ignored") tally[outcome]++;
+      if (outcome === "ignored") continue;
+      if (outcome === "plaintextSkipped") {
+        tally.skipped++;
+        tally.plaintextSkipped++;
+      } else {
+        tally[outcome]++;
+      }
     }
   }
 
@@ -658,18 +808,21 @@ export class FileCredentialStore implements CredentialStore {
    * deployment down over a key nothing uses, and the operator's only visible
    * symptom would be a crash loop.
    *
-   * A skip is not free, though: it holds strict mode off, so the deployment
-   * keeps accepting plaintext until someone resolves the file.
+   * A skip of plaintext is not free, though: it holds strict mode off, so the
+   * deployment keeps accepting plaintext until someone resolves the file. Any
+   * other skip leaves strict mode to the rest of the sweep.
    */
   async #resealOne(
     scope: CredentialScope,
     key: string,
     sealer: CredentialSealer,
-  ): Promise<"resealed" | "current" | "skipped" | "ignored"> {
+  ): Promise<"resealed" | "current" | "skipped" | "plaintextSkipped" | "ignored"> {
     const label = credentialScopeLabel(scope);
     const path = join(this.#dir(scope), key);
+    let plaintext = false;
+    let before: Stats;
     try {
-      const before = await stat(path);
+      before = await stat(path);
       if (!before.isFile()) return "ignored";
       const raw = await readFile(path, "utf-8");
 
@@ -678,16 +831,11 @@ export class FileCredentialStore implements CredentialStore {
         if (parseSealedValue(raw)?.kid === sealer.sealingKid) return "current";
         value = sealer.open(label, key, raw);
       } else {
+        plaintext = true;
         value = legacyPlaintext(raw);
       }
 
       await this.put(scope, key, value);
-      // `list` derives `updatedAt` from mtime, so without this the first boot
-      // after enabling sealing — and every rotation after — reports every
-      // secret as just-changed. "Last set" would quietly become "last sealed",
-      // destroying the only provenance `list` offers.
-      await utimes(path, before.atime, before.mtime);
-      return "resealed";
     } catch (err) {
       this.#auditSealFailure(scope, key, undefined, "reseal_skipped");
       log.warn("[credential-store] could not re-seal a secret; leaving it as it is", {
@@ -695,8 +843,24 @@ export class FileCredentialStore implements CredentialStore {
         key,
         error: err instanceof Error ? err.message : String(err),
       });
-      return "skipped";
+      return plaintext ? "plaintextSkipped" : "skipped";
     }
+
+    // `list` derives `updatedAt` from mtime, so without this the first boot
+    // after enabling sealing — and every rotation after — reports every
+    // secret as just-changed. "Last set" would quietly become "last sealed",
+    // destroying the only provenance `list` offers. The file is sealed by now,
+    // so a failure here costs the timestamp, not the re-seal: it is no skip.
+    try {
+      await utimes(path, before.atime, before.mtime);
+    } catch (err) {
+      log.warn("[credential-store] re-sealed a secret but could not restore its mtime", {
+        scope: label,
+        key,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return "resealed";
   }
 
   /**

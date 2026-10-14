@@ -4,40 +4,34 @@
 // Pinning the two behavioral guarantees callers depend on:
 //
 // 1. `setAuthToken(...)` fires the registered lifecycle handler on real
-//    changes (logout / identity boundary). `mcp-bridge-client.ts` relies on
-//    this to drop its identity-bound MCP session on logout — without it,
-//    the next iframe call would dispatch against the previous identity.
+//    changes (logout / identity boundary), so a holder of identity-bound
+//    state (the SSE event clients) can drop it.
 //
-// 2. `setActiveWorkspaceId(...)` does NOT fire the handler. Stage 2 / Q3
-//    (locked 2026-05-22): the `/mcp` session is identity-bound, not
-//    workspace-bound. Workspace switches reuse the same session and
-//    dispatch context via the per-request `X-Workspace-Id` header. A
-//    regression to the old "reset on switch" wiring would force a fresh
-//    handshake on every browse — which is the failure Q3 codified.
+// 2. `setActiveWorkspaceId(...)` does NOT fire the auth handler. A workspace
+//    switch is not an identity boundary; workspace-bound state listens on the
+//    separate workspace lifecycle hook, and REST helpers and the bridge's
+//    `/mcp` sender read the active workspace per request.
 //
 // Both setters keep their equality guard: noop sets must not fire the
-// handler (avoids tearing down the MCP transport on every benign re-set).
-//
-// We don't test the wiring at module-load time (mcp-bridge-client's call
-// to `setAuthLifecycleHandler(resetMcpBridgeClient)`) because mocking that
-// reliably across the full test suite means fighting Bun's module cache.
-// The wiring is one line and trivially verifiable by code review; the
-// contracts this file pins are the much more important properties.
+// handler (avoids tearing down a stream on every benign re-set).
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { realClient } from "../../test/setup";
+import { addAuthLifecycleHandler, setActiveWorkspaceId, setAuthToken } from "../api/client";
 
-import {
-  addAuthLifecycleHandler,
-  setActiveWorkspaceId,
-  setAuthLifecycleHandler,
-  setAuthToken,
-} from "../api/client";
+/** Unsubscribes for every handler a test registered, run after each test. */
+const registered: Array<() => void> = [];
+
+/** Register an auth lifecycle handler that is removed after the test. */
+function onAuthChange(handler: () => void): void {
+  registered.push(addAuthLifecycleHandler(handler));
+}
 
 afterEach(() => {
   // Reset module state so tests don't leak handlers / tokens / workspaces
   // into each other (the module is shared across the suite).
-  setAuthLifecycleHandler(null);
+  for (const off of registered.splice(0)) off();
   setAuthToken(null);
   setActiveWorkspaceId(null);
 });
@@ -45,7 +39,7 @@ afterEach(() => {
 describe("auth lifecycle handler", () => {
   test("setAuthToken fires the registered handler", () => {
     const handler = mock(() => {});
-    setAuthLifecycleHandler(handler);
+    onAuthChange(handler);
 
     setAuthToken("tok-1");
     expect(handler).toHaveBeenCalledTimes(1);
@@ -57,13 +51,11 @@ describe("auth lifecycle handler", () => {
     expect(handler).toHaveBeenCalledTimes(3);
   });
 
-  test("setActiveWorkspaceId does NOT fire the registered handler (Q3 — bridge survives switches)", () => {
-    // Q3 (locked 2026-05-22): the `/mcp` session is identity-bound; a
-    // workspace switch must NOT drop the bridge transport. A regression
-    // here would force a fresh handshake every time the user changes
-    // workspaces.
+  test("setActiveWorkspaceId does NOT fire the registered auth handler", () => {
+    // A workspace switch is not an identity boundary. Clients bound to a
+    // workspace listen on `addWorkspaceLifecycleHandler` instead.
     const handler = mock(() => {});
-    setAuthLifecycleHandler(handler);
+    onAuthChange(handler);
 
     setActiveWorkspaceId("ws-1");
     setActiveWorkspaceId("ws-2");
@@ -71,40 +63,12 @@ describe("auth lifecycle handler", () => {
     expect(handler).toHaveBeenCalledTimes(0);
   });
 
-  test("setAuthLifecycleHandler(null) silences subsequent setter calls", () => {
-    const handler = mock(() => {});
-    setAuthLifecycleHandler(handler);
-
-    setAuthToken("tok-a");
-    expect(handler).toHaveBeenCalledTimes(1);
-
-    setAuthLifecycleHandler(null);
-
-    setAuthToken("tok-b");
-    expect(handler).toHaveBeenCalledTimes(1);
-  });
-
-  test("replacing the handler swaps the callback target", () => {
-    const first = mock(() => {});
-    const second = mock(() => {});
-
-    setAuthLifecycleHandler(first);
-    setAuthToken("tok-a");
-    expect(first).toHaveBeenCalledTimes(1);
-    expect(second).toHaveBeenCalledTimes(0);
-
-    setAuthLifecycleHandler(second);
-    setAuthToken("tok-b");
-    expect(first).toHaveBeenCalledTimes(1);
-    expect(second).toHaveBeenCalledTimes(1);
-  });
-
   test("setAuthToken with the same value does NOT fire the handler", () => {
     // Equality guard: noop sets shouldn't tear down the MCP transport.
     // Re-handshaking on every benign re-set is a perf hit (~100ms per
     // call) with no security benefit.
     const handler = mock(() => {});
-    setAuthLifecycleHandler(handler);
+    onAuthChange(handler);
 
     setAuthToken("tok-same");
     expect(handler).toHaveBeenCalledTimes(1);
@@ -119,7 +83,7 @@ describe("auth lifecycle handler", () => {
   });
 
   test("setActiveWorkspaceId equality guard: noop sets are still cheap (no internal work)", () => {
-    // Q3: the handler doesn't fire for workspace switches at all (see test
+    // The auth handler doesn't fire for workspace switches at all (see test
     // above). But the equality guard is still load-bearing: production
     // callers (`WorkspaceContext` provider, route guards, App.tsx bootstrap)
     // repeatedly set the same value during render, and we want each call
@@ -127,7 +91,7 @@ describe("auth lifecycle handler", () => {
     // variable. We assert the user-facing property: the handler is never
     // invoked, real-change or noop.
     const handler = mock(() => {});
-    setAuthLifecycleHandler(handler);
+    onAuthChange(handler);
 
     setActiveWorkspaceId("ws-same");
     setActiveWorkspaceId("ws-same");
@@ -145,8 +109,8 @@ describe("addAuthLifecycleHandler — multi-listener", () => {
     // each register their own teardown. Both must run.
     const a = mock(() => {});
     const b = mock(() => {});
-    addAuthLifecycleHandler(a);
-    addAuthLifecycleHandler(b);
+    onAuthChange(a);
+    onAuthChange(b);
 
     setAuthToken("tok-1");
     expect(a).toHaveBeenCalledTimes(1);
@@ -178,27 +142,30 @@ describe("addAuthLifecycleHandler — multi-listener", () => {
       throw new Error("boom");
     });
     const good = mock(() => {});
-    addAuthLifecycleHandler(thrower);
-    addAuthLifecycleHandler(good);
+    onAuthChange(thrower);
+    onAuthChange(good);
 
     setAuthToken("tok-1");
 
     expect(thrower).toHaveBeenCalledTimes(1);
     expect(good).toHaveBeenCalledTimes(1);
   });
+});
 
-  test("setAuthLifecycleHandler (deprecated) clears the multi-listener set", () => {
-    // Deprecated alias preserves single-slot semantics for external
-    // callers that haven't migrated: clear-all-and-set. Internal callers
-    // should use `addAuthLifecycleHandler`.
-    const added = mock(() => {});
-    const set = mock(() => {});
-    addAuthLifecycleHandler(added);
-
-    setAuthLifecycleHandler(set);
-
-    setAuthToken("tok-1");
-    expect(added).toHaveBeenCalledTimes(0); // cleared
-    expect(set).toHaveBeenCalledTimes(1);
+describe("workspace lifecycle handlers", () => {
+  // Through `realClient`: other suites replace `../api/client` process-wide
+  // with a mock whose `setActiveWorkspaceId` does nothing (see test/setup.ts).
+  test("fire on a real workspace change only, never on a noop set", () => {
+    const handler = mock(() => {});
+    const off = realClient.addWorkspaceLifecycleHandler(handler);
+    try {
+      realClient.setActiveWorkspaceId("ws-wl-1");
+      realClient.setActiveWorkspaceId("ws-wl-1");
+      realClient.setActiveWorkspaceId("ws-wl-2");
+      expect(handler).toHaveBeenCalledTimes(2);
+    } finally {
+      off();
+      realClient.setActiveWorkspaceId(null);
+    }
   });
 });

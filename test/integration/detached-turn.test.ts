@@ -2,18 +2,17 @@ import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ChatResponse } from "../../src/api/schemas/responses.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
-import type { ConversationAccessContext } from "../../src/conversation/types.ts";
-import {
-  ConversationAccessDeniedError,
-  RunInProgressError,
-} from "../../src/runtime/errors.ts";
-import { Runtime } from "../../src/runtime/runtime.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { ConversationNotFoundError, RunInProgressError } from "../../src/runtime/errors.ts";
 import type { BufferedRunEvent, RunStatus } from "../../src/runtime/run-bus.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
 const testDir = join(tmpdir(), `nimblebrain-detached-${Date.now()}`);
@@ -21,7 +20,8 @@ const testDir = join(tmpdir(), `nimblebrain-detached-${Date.now()}`);
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -59,6 +59,7 @@ async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<void> {
 describe("detached turns (server-authoritative streaming)", () => {
   it("returns a conversation id immediately and runs to completion in the background", async () => {
     const { conversationId } = await runtime.startTurn({
+      identity: DEV_IDENTITY,
       message: "Hello detached",
       workspaceId: TEST_WORKSPACE_ID,
     });
@@ -70,6 +71,29 @@ describe("detached turns (server-authoritative streaming)", () => {
     expect(events.length).toBeGreaterThan(0);
     // Sequence numbers are monotonic 1..n.
     expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
+    // `done` carries the finished turn's `ChatResponse`, cost included.
+    const done = events[events.length - 1]?.data as ChatResponse;
+    expect(done.conversationId).toBe(conversationId);
+    expect(typeof done.inputTokens).toBe("number");
+    expect(typeof done.outputTokens).toBe("number");
+    expect(Number.isFinite(done.usage.costUsd)).toBe(true);
+  });
+
+  it("buffers only the events a viewer reads: no system prompt, no run accounting", async () => {
+    const { conversationId } = await runtime.startTurn({
+      identity: DEV_IDENTITY,
+      message: "What reaches the viewer?",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+
+    const { events, status } = await awaitTurn(conversationId);
+    expect(status).toBe("done");
+    const types = new Set(events.map((e) => e.type));
+    // `run.start` carries the assembled system prompt; it never leaves the server.
+    expect(types.has("run.start")).toBe(false);
+    expect(types.has("run.done")).toBe(false);
+    expect(types.has("chat.start")).toBe(true);
+    expect(types.has("text.delta")).toBe(true);
   });
 
   it("announces the owner's conversations once the run has ended", async () => {
@@ -79,7 +103,7 @@ describe("detached turns (server-authoritative streaming)", () => {
     const ownerId = "usr_default";
     const created = await runtime
       .workspaceConversationStore(TEST_WORKSPACE_ID, ownerId)
-      .create({ ownerId, workspaceId: TEST_WORKSPACE_ID });
+      .create({ model: "anthropic:claude-sonnet-4-6", ownerId, workspaceId: TEST_WORKSPACE_ID });
     const activeAtAnnounce: boolean[] = [];
     const original = runtime.announceIdentitySourceChange.bind(runtime);
     const spy = spyOn(runtime, "announceIdentitySourceChange").mockImplementation(
@@ -92,6 +116,7 @@ describe("detached turns (server-authoritative streaming)", () => {
     );
     try {
       await runtime.startTurn({
+        identity: DEV_IDENTITY,
         message: "Announce my end",
         conversationId: created.id,
         workspaceId: TEST_WORKSPACE_ID,
@@ -108,6 +133,7 @@ describe("detached turns (server-authoritative streaming)", () => {
 
   it("persists the turn server-side with no viewer attached", async () => {
     const { conversationId } = await runtime.startTurn({
+      identity: DEV_IDENTITY,
       message: "Persist me",
       workspaceId: TEST_WORKSPACE_ID,
     });
@@ -123,53 +149,67 @@ describe("detached turns (server-authoritative streaming)", () => {
     expect(events.length).toBeGreaterThan(0);
   });
 
-  it("does not double-create on concurrent starts with the same provided id", async () => {
-    // Force both starts into the load→create window by delaying load. With the
-    // race fix (begin before storage), the loser's begin throws before it can
-    // create — so create runs exactly once. Without it, both create and the
-    // loser's truncating writeFile would clobber the winner's file.
-    const proto = EventSourcedConversationStore.prototype;
-    const realLoad = proto.load;
-    const loadSpy = spyOn(proto, "load").mockImplementation(async function (
-      this: EventSourcedConversationStore,
-      id: string,
-      access?: ConversationAccessContext,
-    ) {
-      await new Promise((r) => setTimeout(r, 25));
-      return realLoad.call(this, id, access);
-    });
-    const createSpy = spyOn(proto, "create");
+  it("refuses an unknown provided id without creating it or reserving a run", async () => {
+    // A provided id is only ever resumed. One that is not in the workspace is
+    // `ConversationNotFoundError`, before `begin`, and nothing is written.
+    const createSpy = spyOn(EventSourcedConversationStore.prototype, "create");
     try {
-      const id = "conv_face0000face0001"; // conv_ + 16 hex, not yet on disk
-      const results = await Promise.allSettled([
-        runtime.startTurn({ message: "a", conversationId: id, workspaceId: TEST_WORKSPACE_ID }),
-        runtime.startTurn({ message: "b", conversationId: id, workspaceId: TEST_WORKSPACE_ID }),
-      ]);
-
-      const createsForId = createSpy.mock.calls.filter(
-        (c) => (c[0] as { id?: string })?.id === id,
+      const id = "conv_face0000face0001"; // conv_ + 16 hex, not on disk
+      await expect(
+        runtime.startTurn({
+          identity: DEV_IDENTITY,
+          message: "a",
+          conversationId: id,
+          workspaceId: TEST_WORKSPACE_ID,
+        }),
+      ).rejects.toBeInstanceOf(ConversationNotFoundError);
+      expect(createSpy.mock.calls.filter((c) => (c[0] as { id?: string })?.id === id)).toHaveLength(
+        0,
       );
-      expect(createsForId.length).toBe(1);
-
-      const rejected = results.filter((r) => r.status === "rejected");
-      expect(rejected.length).toBe(1);
-      expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(RunInProgressError);
+      expect(runtime.isTurnActive(id)).toBe(false);
+      expect(await runtime.findConversation(id)).toBeNull();
     } finally {
-      loadSpy.mockRestore();
       createSpy.mockRestore();
     }
   });
 
-  it("authorizes a provided conversationId BEFORE reserving the run", async () => {
-    // Seed a conversation owned by a different user. startTurn must reject on
-    // ownership BEFORE runBus.begin() flips the run active — otherwise an
-    // unauthorized caller could mutate another user's run state.
+  it("serializes concurrent starts on the same existing conversation", async () => {
+    const { conversationId: id } = await runtime.startTurn({
+      identity: DEV_IDENTITY,
+      message: "seed",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    await awaitTurn(id);
+
+    const results = await Promise.allSettled([
+      runtime.startTurn({
+        identity: DEV_IDENTITY,
+        message: "a",
+        conversationId: id,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
+      runtime.startTurn({
+        identity: DEV_IDENTITY,
+        message: "b",
+        conversationId: id,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
+    ]);
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(rejected.length).toBe(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(RunInProgressError);
+    await awaitTurn(id);
+  });
+
+  it("refuses another user's conversation BEFORE reserving the run", async () => {
+    // Seed a conversation owned by a different user. startTurn must refuse it
+    // BEFORE runBus.begin() flips the run active — otherwise an unauthorized
+    // caller could mutate another user's run state.
     const convId = "conv_d00dd00dd00dd00d";
-    // Seed the foreign conversation in its owner's workspace
-    // (`workspaces/ws_user_<id>/conversations/<ownerId>/`) so the locator
-    // resolves it and startTurn's ownership check fires.
+    // Seed the foreign conversation in a workspace of its owner's
+    // (`workspaces/<wsId>/conversations/<ownerId>/`).
     const foreignOwner = "usr_someone_else";
-    const convDir = workspaceConversationsDir(testDir, `ws_user_${foreignOwner}`, foreignOwner);
+    const convDir = workspaceConversationsDir(testDir, "ws_006f297ff466f8d6", foreignOwner);
     mkdirSync(convDir, { recursive: true });
     writeFileSync(
       join(convDir, `${convId}.jsonl`),
@@ -184,20 +224,27 @@ describe("detached turns (server-authoritative streaming)", () => {
     );
 
     await expect(
-      runtime.startTurn({ message: "hijack", conversationId: convId, workspaceId: TEST_WORKSPACE_ID }),
-    ).rejects.toBeInstanceOf(ConversationAccessDeniedError);
+      runtime.startTurn({
+        identity: DEV_IDENTITY,
+        message: "hijack",
+        conversationId: convId,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundError);
     // The run was never reserved.
     expect(runtime.isTurnActive(convId)).toBe(false);
   });
 
   it("allows a new turn on the same conversation once idle", async () => {
     const { conversationId } = await runtime.startTurn({
+      identity: DEV_IDENTITY,
       message: "first",
       workspaceId: TEST_WORKSPACE_ID,
     });
     await awaitTurn(conversationId);
 
     const again = await runtime.startTurn({
+      identity: DEV_IDENTITY,
       message: "second",
       conversationId,
       workspaceId: TEST_WORKSPACE_ID,
@@ -206,21 +253,13 @@ describe("detached turns (server-authoritative streaming)", () => {
     await awaitTurn(conversationId);
   });
 
-  it("starts an identity-level turn with no workspaceId (personal-workspace fallback)", async () => {
-    // Parity with the sync `chat()` path and `/v1/chat`: a chat-start with no
-    // focused workspace (home / identity route) is identity-level, not an
-    // error. startTurn must fall back to the caller's personal workspace
-    // instead of throwing (which surfaced as a raw 500 via handleChatStart).
-    const { conversationId } = await runtime.startTurn({ message: "no workspace here" });
-    expect(conversationId).toMatch(/^conv_/);
-
-    const { status } = await awaitTurn(conversationId);
-    expect(status).toBe("done");
-
-    // Conversation persisted with the personal-workspace breadcrumb.
-    const conv = await runtime.findConversation(conversationId, { userId: "usr_default" });
-    expect(conv).not.toBeNull();
-    expect(conv?.workspaceId).toBe("ws_user_usr_default");
+  it("refuses a turn that names no workspace", async () => {
+    // Parity with the sync `chat()` path: the runtime never picks a workspace,
+    // under any identity provider. (REST always names the workspace in its
+    // path, so this is reachable only from in-process callers.)
+    await expect(
+      runtime.startTurn({ identity: DEV_IDENTITY, message: "no workspace here" }),
+    ).rejects.toThrow("request names no workspace");
   });
 });
 
@@ -236,13 +275,11 @@ describe("cancel delivers a terminal frame to live viewers (Stop button)", () =>
   beforeAll(async () => {
     mkdirSync(dir, { recursive: true });
     rt = await Runtime.start({
-      model: {
-        provider: "custom",
-        adapter: createMockModel(async () => {
-          await gate;
-          return { content: [{ type: "text", text: "unreached" }] };
-        }),
-      },
+      identityProvider: devProvider,
+      languageModel: createMockModel(async () => {
+        await gate;
+        return { content: [{ type: "text", text: "unreached" }] };
+      }),
       logging: { disabled: true },
       workDir: dir,
     });
@@ -262,6 +299,7 @@ describe("cancel delivers a terminal frame to live viewers (Stop button)", () =>
     rt.onTurnEvent = (_cid, e) => captured.push(e);
 
     const { conversationId } = await rt.startTurn({
+      identity: DEV_IDENTITY,
       message: "hang",
       workspaceId: TEST_WORKSPACE_ID,
     });
@@ -290,14 +328,12 @@ describe("shutdown aborts in-flight detached turns (RunBus teardown)", () => {
     let capturedSignal: AbortSignal | undefined;
 
     const rt = await Runtime.start({
-      model: {
-        provider: "custom",
-        adapter: createMockModel(async (options) => {
-          capturedSignal = options.abortSignal;
-          await gate;
-          return { content: [{ type: "text", text: "unreached" }] };
-        }),
-      },
+      identityProvider: devProvider,
+      languageModel: createMockModel(async (options) => {
+        capturedSignal = options.abortSignal;
+        await gate;
+        return { content: [{ type: "text", text: "unreached" }] };
+      }),
       logging: { disabled: true },
       workDir: dir,
     });
@@ -305,6 +341,7 @@ describe("shutdown aborts in-flight detached turns (RunBus teardown)", () => {
 
     try {
       const { conversationId } = await rt.startTurn({
+        identity: DEV_IDENTITY,
         message: "hang until shutdown",
         workspaceId: TEST_WORKSPACE_ID,
       });

@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { artifactResolutionsTotal } from "../api/metrics.ts";
 import { OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
-import { textContent } from "../engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION, type ThinkingEffort, type ToolResult } from "../engine/types.ts";
+import { structuredContent, textContent } from "../engine/content-helpers.ts";
+import type { ThinkingEffort, ToolResult } from "../engine/types.ts";
 import {
   type ArtifactListItem,
   type ArtifactListOptions,
@@ -15,35 +15,22 @@ import {
 } from "../host-resources/artifacts/index.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import { getAvailableModels, isModelAllowed, isModelInPolicy } from "../model/catalog.ts";
-import { resolveModelString } from "../model/registry.ts";
+import { unqualifiedModelIdError } from "../model/model-id.ts";
 import { isModelSlot, MODEL_SLOTS } from "../model/slots.ts";
-import { log } from "../observability/log.ts";
-import {
-  getRequestContext,
-  type RequestContext,
-  runWithRequestContext,
-} from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
-import { recordLlmCall } from "../usage/record.ts";
-import type { TokenUsage } from "../usage/types.ts";
-import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import type { InProcessTool } from "./in-process-app.ts";
+import { McpSource } from "./mcp-source.ts";
+import { createOpenAppTool } from "./open-app.ts";
+import { SharedSourceRef } from "./registry.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
-const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
-  name: string;
-  version: string;
-  dependencies: Record<string, string>;
-};
+const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 // Prefer the build-time-injected git tag; fall back to package.json for local dev.
 const VERSION = process.env.NB_VERSION || pkg.version;
 
-import { ActivityCollector } from "../services/activity-collector.ts";
-import { BriefingCache } from "../services/briefing-cache.ts";
-import { collectBriefingFacets } from "../services/briefing-collector.ts";
-import { BriefingGenerator } from "../services/briefing-generator.ts";
-import { renderBriefingText } from "../services/briefing-render.ts";
-import type { BriefingOutput } from "../services/home-types.ts";
+import type { BriefingItem, BriefingOutput } from "../platform/schemas/home.ts";
+import { createBriefingCollector } from "../services/briefing-collector.ts";
+import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
 // --- set_model_config helpers -------------------------------------------------
 // The handler is a linear validate → normalize → merge → write pipeline; each
@@ -61,33 +48,41 @@ const THINKING_EFFORTS = [
 ] as const satisfies readonly ThinkingEffort[];
 
 /**
- * Every scalar field an operator can set, each with its `clear*` flag and
- * on-disk coercion.
+ * Every scalar field an operator can set, with its on-disk coercion.
  *
- * Driven from a table because they all move together through four stages —
- * normalize, validate, persist, patch the live runtime. Written out longhand,
- * a new field has to be remembered in each, and a clear that lands on some
- * stages but not others leaves disk and process disagreeing.
+ * Driven from a table because they all move together through three stages —
+ * validate, persist, patch the live runtime. Written out longhand, a new field
+ * has to be remembered in each, and a clear that lands on some stages but not
+ * others leaves disk and process disagreeing.
  *
- * Every settable field needs a clear, or "unset" becomes a state the operator
- * can leave but never return to: the first save pins a value permanently and
- * the deployment stops tracking the platform default. A separate boolean
- * rather than a `null` value keeps each field's schema type single — which
- * Gemini's function-calling subset requires. Model slots are absent from this
- * table because they clear with `""`; see `mergeModelSlots`.
+ * Each field takes the patch convention (`src/platform/AGENTS.md` §1.3):
+ * omitted leaves it alone, a value sets it, `null` clears it. Every settable
+ * field needs that clear, or "unset" becomes a state the operator can leave but
+ * never return to: the first save pins a value permanently and the deployment
+ * stops tracking the platform default. Model slots are absent from this table
+ * because they are nested under `models`; see `mergeModelSlots`.
  */
 const CLEARABLE_FIELDS = [
-  { key: "thinking", clearFlag: "clearThinking", coerce: String },
-  { key: "thinkingEffort", clearFlag: "clearThinkingEffort", coerce: String },
-  { key: "thinkingBudgetTokens", clearFlag: "clearThinkingBudget", coerce: Number },
-  { key: "maxIterations", clearFlag: "clearMaxIterations", coerce: Number },
-  { key: "maxInputTokens", clearFlag: "clearMaxInputTokens", coerce: Number },
-  { key: "maxOutputTokens", clearFlag: "clearMaxOutputTokens", coerce: Number },
+  { key: "thinking", coerce: String },
+  { key: "thinkingEffort", coerce: String },
+  { key: "thinkingBudgetTokens", coerce: Number },
+  { key: "maxIterations", coerce: Number },
+  { key: "maxInputTokens", coerce: Number },
+  { key: "maxOutputTokens", coerce: Number },
 ] as const;
 
-/** Org-admin gate. Dev mode (no identity provider) bypasses. */
+/**
+ * A nullable tool-input property: `null` is the patch convention's clear
+ * (`src/platform/AGENTS.md` §1.3). Written as `anyOf` with a `null` branch
+ * rather than a `type` array so constraints such as `enum` stay on the typed
+ * branch, the form every provider's tool schema accepts.
+ */
+function nullable(schema: Record<string, unknown>): { anyOf: Record<string, unknown>[] } {
+  return { anyOf: [schema, { type: "null" }] };
+}
+
+/** Org-admin gate. */
 function checkModelConfigAccess(runtime: Runtime): string | null {
-  if (runtime.getIdentityProvider() === null) return null;
   const identity = runtime.getCurrentIdentity();
   if (!identity) {
     return (
@@ -96,31 +91,7 @@ function checkModelConfigAccess(runtime: Runtime): string | null {
     );
   }
   if (!ORG_ADMIN_ROLES.has(identity.orgRole)) {
-    return "Only org admins or owners can change model configuration. The model config affects every workspace.";
-  }
-  return null;
-}
-
-/**
- * Normalize the `clear*` boolean sentinels into the canonical `null` the merge
- * logic understands. Mutates `input` in place (each tool call owns its input).
- * Returns an error message if mutually-exclusive fields were combined.
- *
- * The three fields are independent. Clearing `thinking` used to cascade onto
- * the other two on the grounds that a depth or a budget means nothing without
- * a mode — that stopped being true when the resolver's no-mode path started
- * reading both: an effort alone selects the tier, and a budget alone resolves
- * to `enabled` at that budget. Cascading now deletes settings that are still
- * in force, and rejects the payload the settings UI sends for its own default
- * mode.
- */
-function normalizeModelConfigClears(input: Record<string, unknown>): string | null {
-  for (const { key, clearFlag } of CLEARABLE_FIELDS) {
-    if (input[clearFlag] !== true) continue;
-    if (input[key] != null) {
-      return `Cannot set both \`${key}\` and \`${clearFlag}\`. Use one or the other.`;
-    }
-    input[key] = null;
+    return "Only org admins can change model configuration. The model config affects every workspace.";
   }
   return null;
 }
@@ -132,7 +103,7 @@ function positiveIntFieldError(
   min: number,
   max?: number,
 ): string | null {
-  // `null` is the normalized clear sentinel, not a value to range-check.
+  // `null` is the clear, not a value to range-check.
   // `Number(null)` is 0, which would fail every one of these floors.
   if (value == null) return null;
   const n = Number(value);
@@ -146,10 +117,9 @@ function positiveIntFieldError(
 
 function unreachableModelError(model: string, runtime: Runtime, slot?: string): string | null {
   const subject = slot ? `Invalid model "${model}" for slot "${slot}"` : `Invalid model "${model}"`;
-  // Qualified before the policy check: `isModelInPolicy` is an exact match on
-  // `provider:id`, and a bare id is legal input here — legacy saved values and
-  // the settings tab both pass one through.
-  if (!isModelInPolicy(resolveModelString(model), runtime.getModelPolicy())) {
+  const unqualified = unqualifiedModelIdError(model, slot ? `models.${slot}` : "Model");
+  if (unqualified) return unqualified;
+  if (!isModelInPolicy(model, runtime.getModelPolicy())) {
     return `${subject}. It is not in this organization's allowed models.`;
   }
   if (isModelAllowed(model, runtime.getProviderConfigs())) return null;
@@ -162,9 +132,10 @@ function validateModelSlots(input: Record<string, unknown>, runtime: Runtime): s
     if (!isModelSlot(slot)) {
       return `Unknown model slot "${slot}". Valid slots: ${MODEL_SLOTS.join(", ")}.`;
     }
-    // `""` clears the slot; there is no model to check the allowlist against.
+    // `null` clears the slot; there is no model to check the allowlist against.
+    if (value === null) continue;
     const model = String(value);
-    if (model === "") continue;
+    if (model === "") return `Model slot "${slot}" cannot be empty. Pass null to clear it.`;
     const error = unreachableModelError(model, runtime, slot);
     if (error) return error;
   }
@@ -177,7 +148,7 @@ function validateModelSlots(input: Record<string, unknown>, runtime: Runtime): s
  * Narrower than it looks: a slot pointed *at* a forbidden model is already
  * refused upstream by `validateModelSlots`, which checks each named value. What
  * reaches here is the case no named value covers — a slot **cleared** with
- * `""`, which falls back to a default the list may not contain.
+ * `null`, which falls back to a default the list may not contain.
  */
 function policyStrandingError(input: Record<string, unknown>, runtime: Runtime): string | null {
   const effective = runtime.getModelPolicy();
@@ -188,10 +159,8 @@ function policyStrandingError(input: Record<string, unknown>, runtime: Runtime):
 /**
  * Would this allowed-list leave a slot pointing outside it once the call lands?
  *
- * Judged on the **post-write** slots, which the runtime computes — an earlier
- * version derived them here from `input.models` alone and missed the deprecated
- * `defaultModel` input, which also repoints the default slot, while rejecting
- * the `""` clear because it read the sentinel as a model name.
+ * Judged on the **post-write** slots, which the runtime computes, so a slot
+ * clear is read as a fallback to the default model rather than as a model name.
  *
  * Read from `configuredModelSlots`, not `getDefaultModel`: the latter is tinted
  * by the calling admin's own preference, so an admin whose personal model
@@ -206,10 +175,8 @@ function strandedSlotError(
   runtime: Runtime,
   allowed: string[],
 ): string | null {
-  const pendingDefault = typeof input.defaultModel === "string" ? input.defaultModel : undefined;
   const slots = runtime.configuredModelSlots({
-    models: (input.models ?? {}) as Partial<Record<string, string>>,
-    ...(pendingDefault !== undefined ? { defaultModel: pendingDefault } : {}),
+    models: (input.models ?? {}) as Partial<Record<string, string | null>>,
   });
 
   for (const slot of MODEL_SLOTS) {
@@ -231,10 +198,7 @@ function strandedSlotError(
  * lie one layer quieter.
  */
 function unwritableFieldError(input: Record<string, unknown>): string | null {
-  const writable = new Set<string>([
-    ...OVERRIDE_WRITABLE_KEYS,
-    ...CLEARABLE_FIELDS.map((f) => f.clearFlag),
-  ]);
+  const writable = new Set<string>(OVERRIDE_WRITABLE_KEYS);
   for (const key of Object.keys(input)) {
     if (input[key] === undefined || writable.has(key)) continue;
     if (key === "modelPolicy") {
@@ -243,12 +207,6 @@ function unwritableFieldError(input: Record<string, unknown>): string | null {
     return `\`${key}\` is not a field this tool writes.`;
   }
   return null;
-}
-
-/** The deprecated top-level `defaultModel` input. `models.default` supersedes it. */
-function validateDefaultModel(input: Record<string, unknown>, runtime: Runtime): string | null {
-  if (input.defaultModel === undefined) return null;
-  return unreachableModelError(String(input.defaultModel), runtime);
 }
 
 function validateModelConfigLimits(input: Record<string, unknown>): string | null {
@@ -285,7 +243,6 @@ function validateModelConfigPatch(input: Record<string, unknown>, runtime: Runti
   return (
     unwritableFieldError(input) ??
     validateModelSlots(input, runtime) ??
-    validateDefaultModel(input, runtime) ??
     policyStrandingError(input, runtime) ??
     validateModelConfigLimits(input) ??
     validateModelConfigThinking(input)
@@ -298,8 +255,8 @@ function mergeModelSlots(existing: Record<string, unknown>, input: Record<string
   if (!existing.models || typeof existing.models !== "object") existing.models = {};
   const existingModels = existing.models as Record<string, unknown>;
   for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
-    // `""` clears the slot, mirroring the live-config path in `updateConfig`.
-    if (String(value) === "") delete existingModels[slot];
+    // `null` clears the slot, mirroring the live-config path in `updateConfig`.
+    if (value === null) delete existingModels[slot];
     else existingModels[slot] = String(value);
   }
   // Leave no empty husk behind: `"models": {}` in the override file reads as a
@@ -313,7 +270,6 @@ function mergeModelConfigOverride(
   input: Record<string, unknown>,
 ): void {
   mergeModelSlots(existing, input);
-  if (input.defaultModel !== undefined) existing.defaultModel = String(input.defaultModel);
   // null = clear the operator override; undefined = leave alone. Fields are
   // independent: clearing the thinking mode does not clear the depth or budget.
   for (const { key, coerce } of CLEARABLE_FIELDS) {
@@ -327,7 +283,10 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
   const modelsPatch =
     input.models !== undefined && typeof input.models === "object"
       ? Object.fromEntries(
-          Object.entries(input.models as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+          Object.entries(input.models as Record<string, unknown>).map(([k, v]) => [
+            k,
+            v === null ? null : String(v),
+          ]),
         )
       : undefined;
   // `null` reaches updateConfig verbatim: it gates on `!== undefined`, so a
@@ -340,7 +299,6 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
   }
   return {
     ...(modelsPatch ? { models: modelsPatch } : {}),
-    ...(input.defaultModel !== undefined ? { defaultModel: String(input.defaultModel) } : {}),
     ...scalarPatch,
   };
 }
@@ -370,7 +328,7 @@ function buildPreferencesPatch(input: Record<string, unknown>): Record<string, u
     // them back sends exactly that — and storing it would pin the user to an
     // empty model id they cannot correct without a working turn.
     const chosen = typeof input.model === "string" ? input.model.trim() : "";
-    patch.models = chosen ? { default: resolveModelString(chosen) } : {};
+    patch.models = chosen ? { default: chosen } : {};
   }
   return patch;
 }
@@ -385,9 +343,10 @@ function preferredModelError(input: Record<string, unknown>, runtime: Runtime): 
   if (typeof input.model !== "string") return null;
   const chosen = input.model.trim();
   if (chosen === "") return null; // clearing, nothing to validate
+  const unqualified = unqualifiedModelIdError(chosen);
+  if (unqualified) return unqualified;
   if (runtime.isModelPermitted(chosen)) return null;
-  const qualified = resolveModelString(chosen);
-  return `Model "${qualified}" is not permitted. Either its provider is not configured or it is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ") || "(none)"}`;
+  return `Model "${chosen}" is not permitted. Either its provider is not configured or it is not in the allowlist. Configured providers: ${runtime.getConfiguredProviders().join(", ") || "(none)"}`;
 }
 
 // --- list_artifacts / read_artifact helpers -----------------------------------
@@ -471,172 +430,29 @@ function artifactReadErrorResult(err: unknown, uri: string): ToolResult {
 
 // --- briefing helpers ---------------------------------------------------------
 
-/** The authenticated caller resolved by the runtime for the current request. */
-type CurrentIdentity = NonNullable<ReturnType<Runtime["getCurrentIdentity"]>>;
-/** The workspace's home/briefing config (user name, timezone, cache TTL). */
-type HomeConfig = ReturnType<Runtime["getHomeConfig"]>;
-
-/**
- * Build the briefing tool result. `content` carries the rendered briefing (the
- * only field the model sees — the engine never feeds `structuredContent` to the
- * prompt), prefixed with the status note. `structuredContent` keeps the typed
- * payload for the dashboard.
- */
-function briefingOk(briefing: BriefingOutput, note: string): ToolResult {
-  return {
-    content: textContent(`${note}\n\n${renderBriefingText(briefing)}`),
-    structuredContent: briefing as unknown as Record<string, unknown>,
-    isError: false,
-  };
-}
-
-/** Get or create the per-workspace briefing cache. */
-function getBriefingCache(
-  caches: Map<string, BriefingCache>,
-  wsId: string,
-  cacheTtlMinutes: number,
-): BriefingCache {
-  let cache = caches.get(wsId);
-  if (!cache) {
-    cache = new BriefingCache(cacheTtlMinutes);
-    caches.set(wsId, cache);
-  }
-  return cache;
-}
-
-/**
- * Persist a briefing generation's token usage. The fast-slot generation emits no
- * llm.response, so usage lands as an aux.usage event. The metric fires for every
- * generation (including the background refresh, which has no conversation to
- * attribute to — Prometheus captures the cost the aux.usage event can't); the
- * event only appends when a foreground conversation is in context.
- */
-function recordBriefingUsage(
-  runtime: Runtime,
-  wsId: string,
-  identity: CurrentIdentity,
-  modelString: string,
-  usage: TokenUsage,
-  llmMs: number,
-): void {
-  recordLlmCall({ source: "briefing", model: modelString ?? "unknown", usage, llmMs });
-  const convId = getRequestContext()?.conversationId;
-  if (!convId) return;
-  // The foreground briefing runs inside the caller's conversation, whose
-  // workspace is this focused workspace + owner — so append by path directly
-  // (O(1)), never a cross-workspace `locate` walk. Guard the append so a missed
-  // aux.usage event can never break briefing generation.
-  try {
-    runtime.workspaceConversationStore(wsId, identity.id).appendEvent(convId, {
-      ts: new Date().toISOString(),
-      type: "aux.usage",
-      source: "briefing",
-      model: modelString ?? "unknown",
-      usage,
-      llmMs,
-    });
-  } catch {
-    // best-effort: usage attribution, not correctness
-  }
-}
-
-/**
- * Collect activity + facets, then run the fast model (the slow part). Reads
- * request-scoped state (workspace, identity, model slot), so it must run inside a
- * request context — the foreground request's, or the re-established one for the
- * background refresh.
- */
-async function generateBriefing(
-  runtime: Runtime,
-  wsId: string,
-  identity: CurrentIdentity,
-  homeConfig: HomeConfig,
-): Promise<BriefingOutput> {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const until = new Date().toISOString();
-  const collector = new ActivityCollector({
-    logDir: join(runtime.getWorkspaceScopedDir(wsId), "logs"),
-    conversations: {
-      kind: "store",
-      // Bound to this workspace here, at the boundary — the collector receives
-      // an already-scoped lister and cannot widen it.
-      list: (o, a) => runtime.listConversations(wsId, o, a),
-    },
-    access: { userId: identity.id },
-  });
-  const activity = await collector.collect({ since });
-  const registry = runtime.getRegistryForCurrentWorkspace();
-  const instances = runtime.getConnectorInstancesForWorkspace(wsId);
-  const facetContext = await collectBriefingFacets(instances, registry, { since, until });
-  const modelString = runtime.getModelSlot("fast");
-  const generator = new BriefingGenerator(
-    runtime.resolveModel(modelString),
-    modelString,
-    {
-      userName: homeConfig.userName,
-      timezone: homeConfig.timezone,
-      cacheTtlMinutes: homeConfig.cacheTtlMinutes,
-    },
-    (usage, llmMs) => recordBriefingUsage(runtime, wsId, identity, modelString, usage, llmMs),
-  );
-  return generator.generate(activity, facetContext);
-}
-
-/**
- * Serve a briefing from cache when one is available: fresh → instant; stale →
- * serve-stale while scheduling a background refresh. Returns null when nothing is
- * cached and the caller must generate synchronously.
- */
-function serveCachedBriefing(
-  runtime: Runtime,
-  briefingCache: BriefingCache,
-  wsId: string,
-  identity: CurrentIdentity,
-  homeConfig: HomeConfig,
-): ToolResult | null {
-  // Fresh cache → instant.
-  const fresh = briefingCache.get();
-  if (fresh) return briefingOk(fresh, "Briefing retrieved from cache.");
-
-  // Stale-while-revalidate: serve the last (expired) briefing immediately and
-  // regenerate in the BACKGROUND, so the dashboard never waits on the LLM after
-  // the first generation.
-  const stale = briefingCache.getStale();
-  if (!stale) return null;
-  scheduleBriefingRefresh(runtime, briefingCache, wsId, identity, homeConfig);
-  return briefingOk(stale, "Briefing (refreshing in background).");
-}
-
-/**
- * Stale-while-revalidate: kick off a single background regeneration, guarded so a
- * burst of dashboard loads during the regen window can't fan out into N
- * concurrent fast-model calls (thundering herd on a hot path). The bg task
- * re-establishes the workspace request context — `collectBriefingFacets`
- * dispatches facet tools via `registry.execute`, which read `requireWorkspaceId()`
- * / identity from that context.
- */
-function scheduleBriefingRefresh(
-  runtime: Runtime,
-  briefingCache: BriefingCache,
-  wsId: string,
-  identity: CurrentIdentity,
-  homeConfig: HomeConfig,
-): void {
-  if (!briefingCache.beginRefresh()) return;
-  const bgCtx: RequestContext = {
-    identity,
-    workspaceId: wsId,
-  };
-  void runWithRequestContext(bgCtx, () => generateBriefing(runtime, wsId, identity, homeConfig))
-    .then((b) => briefingCache.set(b))
-    .catch((err) =>
-      log.warn(
-        `[briefing] background refresh failed for ${wsId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      ),
+/** One line per item, for the tool result's `content`. */
+function renderBriefingText(items: BriefingItem[]): string {
+  if (items.length === 0) return "Nothing is waiting in this workspace's apps.";
+  return items
+    .map((item) =>
+      item.state === "ok"
+        ? `${item.count} ${item.label} (${item.app})`
+        : `${item.label} (${item.app}): unavailable`,
     )
-    .finally(() => briefingCache.endRefresh());
+    .join("\n");
+}
+
+/**
+ * The workspace's MCP source for a connector, unwrapped from a shared ref, or
+ * null when the workspace has none by that name.
+ */
+function workspaceMcpSource(runtime: Runtime, wsId: string, serverName: string): McpSource | null {
+  const source = runtime
+    .getRegistryForWorkspace(wsId)
+    .getSources()
+    .find((s) => s.name === serverName);
+  const unwrapped = source instanceof SharedSourceRef ? source.unwrap() : source;
+  return unwrapped instanceof McpSource ? unwrapped : null;
 }
 
 /**
@@ -646,41 +462,19 @@ function scheduleBriefingRefresh(
  * passes them to `defineInProcessApp` to build the in-process MCP server.
  */
 export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
-  // Per-workspace briefing caches keyed by workspace ID (or "_global" for dev mode).
-  const briefingCaches = new Map<string, BriefingCache>();
+  // One collector per runtime: its listing and count caches are keyed by
+  // workspace, server and facet, never by the member who asked.
+  const briefingCollector = createBriefingCollector({
+    resolveSource: (wsId, serverName) => workspaceMcpSource(runtime, wsId, serverName),
+    connectorTitles: () => runtime.connectorTitles(),
+  });
 
   const toolDefs: InProcessTool[] = [
-    {
-      name: "list_apps",
-      description: "List installed apps/connectors with status, tool count, and trust scores.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
-      handler: async (): Promise<ToolResult> => {
-        try {
-          const apps = await runtime.getApps();
-          return {
-            content: textContent(`${apps.length} app(s) installed.`),
-            structuredContent: { apps },
-            isError: false,
-          };
-        } catch (err) {
-          return {
-            content: textContent(
-              `Failed to list apps: ${err instanceof Error ? err.message : String(err)}`,
-            ),
-            isError: true,
-          };
-        }
-      },
-    },
     {
       name: "get_config",
       description:
         "Get current runtime configuration: default model, configured providers, and limits.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
       inputSchema: {
         type: "object",
         properties: {},
@@ -725,7 +519,13 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                 displayName: identity?.displayName ?? "",
                 timezone: preferences.timezone ?? "",
                 locale: preferences.locale ?? "en-US",
-                theme: preferences.theme ?? "system",
+                // Absent when unset, as in /v1/bootstrap. The shell applies any
+                // theme it is given, so reporting "system" for a user who never
+                // chose one overrode the theme their browser holds whenever a
+                // `config.changed` event made it re-read this. A brand's
+                // `defaultTheme` reaches the shell through `/v1/brand.js` instead,
+                // so it is never mistaken for the person's own choice.
+                ...(preferences.theme ? { theme: preferences.theme } : {}),
                 // Empty when unset, so a client can tell "following the
                 // configured default" from "chose this model deliberately".
                 model: preferences.models?.default ?? "",
@@ -744,27 +544,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       },
     },
     {
-      name: "version",
-      description:
-        "Get platform version info: agent version and all dependency versions from package.json.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
-      handler: async (): Promise<ToolResult> => {
-        return {
-          content: textContent(`${pkg.name} v${VERSION}`),
-          structuredContent: {
-            name: pkg.name,
-            version: VERSION,
-            dependencies: pkg.dependencies,
-          },
-          isError: false,
-        };
-      },
-    },
-    {
       // Atomic write (temp + rename) but NOT lock-protected against
       // concurrent calls: two parallel set_model_config invocations both
       // read the override file, both apply their patch to the read state,
@@ -775,8 +554,8 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       // mutex via async-mutex or similar.
       name: "set_model_config",
       description:
-        "Update model selection and runtime limits. Writes atomically to nimblebrain.overrides.json (preserved across deploys). Does not allow changing API keys or secrets.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+        "Update model selection and runtime limits. A patch: omit a field to leave it unchanged, pass a value to set it, or pass null to clear the override and revert to the default. Writes atomically to nimblebrain.overrides.json (preserved across deploys). Does not allow changing API keys or secrets.",
+      meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
       inputSchema: {
         type: "object",
         properties: {
@@ -785,92 +564,56 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             description: "Role-based model slots. Each slot maps to a provider:model-id string.",
             properties: {
               default: {
-                type: "string",
-                description: "Primary model for chat. Empty string clears the slot.",
+                ...nullable({ type: "string" }),
+                description:
+                  "Primary model for chat, as provider:model-id (e.g. anthropic:claude-sonnet-4-6). null clears the slot.",
               },
               fast: {
-                type: "string",
+                ...nullable({ type: "string" }),
                 description:
-                  "Cheap/fast model for auxiliary tasks. Empty string clears the slot (falls back to the default model).",
+                  "Cheap/fast model for auxiliary tasks, as provider:model-id. null clears the slot (falls back to the built-in default model).",
               },
             },
           },
-          defaultModel: {
-            type: "string",
-            description: "Default model ID. Deprecated — use models.default instead.",
-          },
           maxIterations: {
-            type: "number",
+            ...nullable({ type: "number" }),
             description:
-              "Max agentic iterations per request (1-25). Use clearMaxIterations=true to revert to the platform default.",
-          },
-          clearMaxIterations: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted max-iterations override. Mutually exclusive with `maxIterations`.",
+              "Max agentic iterations per request (1-25). null reverts to the platform default.",
           },
           maxInputTokens: {
-            type: "number",
+            ...nullable({ type: "number" }),
             description:
-              "Max input tokens per request (must be > 0). Use clearMaxInputTokens=true to revert to the platform default.",
-          },
-          clearMaxInputTokens: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted max-input-tokens override. Mutually exclusive with `maxInputTokens`.",
+              "Max input tokens per request (must be > 0). null reverts to the platform default.",
           },
           maxOutputTokens: {
-            type: "number",
+            ...nullable({ type: "number" }),
             description:
-              "Max output tokens per LLM call (must be > 0). Use clearMaxOutputTokens=true to revert to the model-derived default.",
-          },
-          clearMaxOutputTokens: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted max-output-tokens override. Mutually exclusive with `maxOutputTokens`.",
+              "Max output tokens per LLM call (must be > 0). null reverts to the model-derived default.",
           },
           thinking: {
-            type: "string",
-            enum: ["off", "adaptive", "enabled"],
+            ...nullable({ type: "string", enum: ["off", "adaptive", "enabled"] }),
             description:
               "Extended-thinking mode for reasoning-capable models. " +
               "off: never reason. adaptive: model decides per call. " +
               "enabled: always reason, at thinkingEffort. " +
-              "Use clearThinking=true to revert to the platform default.",
-          },
-          clearThinking: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted thinking override and reverts to the platform default. " +
-              "Mutually exclusive with `thinking`.",
+              "null reverts to the platform default.",
           },
           thinkingEffort: {
-            type: "string",
-            enum: [...THINKING_EFFORTS],
+            ...nullable({ type: "string", enum: [...THINKING_EFFORTS] }),
             description:
               "How hard to think when reasoning is on. The portable control — every " +
               "reasoning-capable provider can express a depth. Applies to thinking=enabled " +
-              "and to the platform default. Use clearThinkingEffort=true to revert.",
-          },
-          clearThinkingEffort: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted thinking effort. Mutually exclusive with `thinkingEffort`.",
+              "and to the platform default. null reverts to the default depth.",
           },
           thinkingBudgetTokens: {
-            type: "number",
+            ...nullable({ type: "number" }),
             description:
               "Explicit token budget for thinking, for metering in tokens rather than " +
               "naming a depth. Only honored by providers that meter thinking in tokens " +
               "(Anthropic up to 4.6, Gemini 2.5); elsewhere thinkingEffort applies — " +
               "Gemini 3 takes a level, not a budget. " +
-              "Counts toward maxOutputTokens. Anthropic requires a minimum of 1,024.",
-          },
-          clearThinkingBudget: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted thinking budget. " +
-              "Mutually exclusive with `thinkingBudgetTokens`.",
+              "Counts toward maxOutputTokens. Anthropic requires a minimum of 1,024. " +
+              "null clears the budget.",
           },
         },
       },
@@ -895,13 +638,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               isError: true,
             };
           }
-
-          // Normalize the `clear*` booleans into the canonical `null` sentinel
-          // the merge logic understands (booleans keep the schema string-typed,
-          // which Gemini requires). Mutates `input`; safe because each tool call
-          // owns its input.
-          const clearError = normalizeModelConfigClears(input);
-          if (clearError) return { content: textContent(clearError), isError: true };
 
           const validationError = validateModelConfigPatch(input, runtime);
           if (validationError) return { content: textContent(validationError), isError: true };
@@ -957,6 +693,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "set_preferences",
       description:
         "Set user preferences: display name, timezone, locale, theme, or the model this user's new conversations run on. Use this when the user says their name, asks to change timezone/language/theme, or asks to use a particular model.",
+      meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: {
         type: "object",
         properties: {
@@ -1027,90 +764,10 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       },
     },
     {
-      name: "manage_identity",
-      description:
-        "Write or reset the workspace agent personality override. Only workspace admins or org admins can modify.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
-      inputSchema: {
-        type: "object",
-        properties: {
-          body: {
-            type: "string",
-            description: "Markdown content to write as the workspace identity override.",
-          },
-          action: {
-            type: "string",
-            enum: ["reset"],
-            description: 'Set to "reset" to clear the workspace identity override.',
-          },
-        },
-      },
-      handler: async (input): Promise<ToolResult> => {
-        try {
-          const wsId = runtime.requireWorkspaceId();
-          const identity = runtime.getCurrentIdentity();
-
-          // Workspace-scoped write gate (STRICT): only a workspace admin member
-          // may modify identity; orgRole grants no bypass.
-          // Null identity (dev/unauthenticated mode) is intentionally allowed
-          // through here, matching the prior behavior where the gate was wrapped
-          // in `if (identity)`.
-          if (identity) {
-            const ws = await runtime.getWorkspaceStore().get(wsId);
-            const decision = canWriteWorkspaceScoped(identity, ws);
-            if (!decision.allowed) {
-              return {
-                content: textContent(decision.reason),
-                isError: true,
-              };
-            }
-          }
-
-          if (input.action === "reset") {
-            await runtime.getWorkspaceStore().update(wsId, { identity: undefined });
-            runtime.getEventSink().emit({
-              type: "config.changed",
-              data: { fields: ["identity"] },
-            });
-            return {
-              content: textContent("Workspace identity override cleared."),
-              structuredContent: { action: "reset", success: true },
-              isError: false,
-            };
-          }
-
-          if (typeof input.body === "string") {
-            await runtime.getWorkspaceStore().update(wsId, { identity: input.body });
-            runtime.getEventSink().emit({
-              type: "config.changed",
-              data: { fields: ["identity"] },
-            });
-            return {
-              content: textContent("Workspace identity override saved."),
-              structuredContent: { action: "write", success: true },
-              isError: false,
-            };
-          }
-
-          return {
-            content: textContent("Either 'body' (string) or 'action: \"reset\"' is required."),
-            isError: true,
-          };
-        } catch (err) {
-          return {
-            content: textContent(
-              `Failed to manage identity: ${err instanceof Error ? err.message : String(err)}`,
-            ),
-            isError: true,
-          };
-        }
-      },
-    },
-    {
       name: "workspace_info",
       description:
         "Get workspace metadata: platform version, telemetry status, and install ID. Used by the web client on startup.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+      meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
       inputSchema: {
         type: "object",
         properties: {},
@@ -1200,63 +857,46 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
         }
       },
     },
-    // --- Briefing tool (in-process, uses runtime model resolver) ---
+    // --- Briefing tool: the workspace's open counts, read from its apps ---
     {
       name: "briefing",
       description:
-        "Generate a personalized activity briefing for the workspace using the fast model slot. Returns a summary of recent activity, upcoming items, and anything needing attention. May take a few seconds.",
-      meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+        "List what is waiting in this workspace's apps: one item per facet an app's server reports through the ai.nimblebrain/facets extension, with its count and the app to open. The same for every member.",
+      meta: { ui: { visibility: ["app"] } },
       inputSchema: {
         type: "object",
         properties: {
           force_refresh: {
             type: "boolean",
-            description: "Bypass cache and regenerate. Default: false.",
+            description: "Re-read every facet instead of serving cached counts. Default: false.",
           },
         },
       },
       handler: async (input): Promise<ToolResult> => {
         try {
-          const homeConfig = runtime.getHomeConfig();
           const wsId = runtime.requireWorkspaceId();
-
-          // Conversations live at the user level (post-Stage 1); the activity
-          // collector reads the top-level store with an ownership filter so
-          // the briefing stays scoped to the caller, not the whole deployment.
-          const identity = runtime.getCurrentIdentity();
-          if (!identity) {
-            return {
-              content: textContent("Briefing requires an authenticated identity."),
-              isError: true,
-            };
-          }
-
-          const briefingCache = getBriefingCache(briefingCaches, wsId, homeConfig.cacheTtlMinutes);
-
-          // Skip the cache entirely on force_refresh; otherwise serve a fresh or
-          // stale-while-revalidating result if one is cached.
-          const cached = input.force_refresh
-            ? null
-            : serveCachedBriefing(runtime, briefingCache, wsId, identity, homeConfig);
-          if (cached) return cached;
-
-          // No cached briefing yet (first generation), or an explicit
-          // force_refresh: generate synchronously. generate() throws on LLM
-          // failure → the outer catch turns it into an isError result, which
-          // the workspace overview renders as a retry state.
-          const briefing = await generateBriefing(runtime, wsId, identity, homeConfig);
-          briefingCache.set(briefing);
-          return briefingOk(briefing, "Briefing generated.");
+          const items = await briefingCollector.collect(
+            wsId,
+            runtime.getConnectorInstancesForWorkspace(wsId),
+            { force: input.force_refresh === true },
+          );
+          const output: BriefingOutput = { items, generated_at: new Date().toISOString() };
+          return {
+            content: textContent(renderBriefingText(items)),
+            structuredContent: structuredContent(output),
+            isError: false,
+          };
         } catch (err) {
           return {
             content: textContent(
-              `Failed to generate briefing: ${err instanceof Error ? err.message : String(err)}`,
+              `Failed to collect the briefing: ${err instanceof Error ? err.message : String(err)}`,
             ),
             isError: true,
           };
         }
       },
     },
+    createOpenAppTool(runtime),
   ];
 
   return toolDefs;

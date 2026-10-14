@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { serverDetailToCatalogEntry } from "../../src/connectors/catalog/projection.ts";
+import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
 import { sanitizePlacements } from "../../src/connectors/runtime/defaults.ts";
 import type { PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
-import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
-import { serverDetailToCatalogEntry } from "../../src/connectors/catalog/projection.ts";
 import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
 
 // A fleet connector ServerDetail with a host-placement _meta block, mirroring
@@ -28,18 +28,14 @@ describe("serverDetailToCatalogEntry — host UI from ServerDetail._meta", () =>
         host_version: "1.1",
         name: "People",
         icon: "users",
-        placements: [
-          { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" },
-        ],
+        placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" }],
       }),
     );
     expect(entry?.ui).toEqual({
-      name: "People",
-      icon: "users",
-      placements: [
-        { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" },
-      ],
+      placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" }],
     });
+    // The display name is the core title, never the host block's `name`.
+    expect(entry?.name).toBe("People");
   });
 
   test("no host block → no ui (connector still projects, tools-only)", () => {
@@ -48,11 +44,22 @@ describe("serverDetailToCatalogEntry — host UI from ServerDetail._meta", () =>
     expect(entry?.ui).toBeUndefined();
   });
 
-  test("host block without a name → no ui (host needs a label to surface anything)", () => {
+  test("host block without a name still projects its placements", () => {
     const entry = serverDetailToCatalogEntry(
       fleetDetail({ host_version: "1.0", placements: [{ slot: "main", resourceUri: "ui://x/y" }] }),
     );
-    expect(entry?.ui).toBeUndefined();
+    expect(entry?.ui).toEqual({ placements: [{ slot: "main", resourceUri: "ui://x/y" }] });
+  });
+
+  test("a host block name does not rename the connector", () => {
+    const entry = serverDetailToCatalogEntry(
+      fleetDetail({
+        host_version: "1.0",
+        name: "Spoofed",
+        placements: [{ slot: "main", resourceUri: "ui://x/y" }],
+      }),
+    );
+    expect(entry?.name).toBe("People");
   });
 });
 
@@ -75,7 +82,11 @@ describe("serverDetailToCatalogEntry — interactive badge is derived, not trust
       },
     } as ServerDetail;
   }
-  const withApp = { host_version: "1.1", name: "People", placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" }] };
+  const withApp = {
+    host_version: "1.1",
+    name: "People",
+    placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" }],
+  };
 
   test("host placements present, no explicit flag → interactive (the People drift fix)", () => {
     expect(serverDetailToCatalogEntry(detail(withApp))?.interactive).toBe(true);
@@ -100,7 +111,12 @@ describe("registration sanitizes before the registry (install AND boot paths)", 
   // The earlier gap: placements persist RAW on the ConnectorRef, so a spoof dropped
   // at install would re-register verbatim at boot. This pins the shared contract:
   // sanitize → register → read-back never lets a foreign authority through.
-  function registerLikeRuntime(reg: PlacementRegistry, server: string, raw: PlacementDeclaration[], wsId: string) {
+  function registerLikeRuntime(
+    reg: PlacementRegistry,
+    server: string,
+    raw: PlacementDeclaration[],
+    wsId: string,
+  ) {
     const safe = sanitizePlacements(raw);
     if (safe.length > 0) reg.register(server, safe, wsId);
   }
@@ -113,14 +129,14 @@ describe("registration sanitizes before the registry (install AND boot paths)", 
       "ai.nimblebrain.people/mcp",
       [
         { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" },
-        { slot: "sidebar", resourceUri: "ui://home/dashboard", label: "Home (spoof)" },
+        { slot: "sidebar", resourceUri: "ui://files/browser", label: "Files (spoof)" },
       ],
-      "ws_hq",
+      "ws_0040ca83ea2a00f5",
     );
-    const entries = reg.forWorkspace("ws_hq");
+    const entries = reg.forWorkspace("ws_0040ca83ea2a00f5");
     expect(entries.map((e) => e.resourceUri)).toEqual(["ui://people/main"]);
-    // the spoof at ui://home/* is absent
-    expect(entries.some((e) => e.resourceUri.startsWith("ui://home/"))).toBe(false);
+    // the spoof at ui://files/* is absent
+    expect(entries.some((e) => e.resourceUri.startsWith("ui://files/"))).toBe(false);
   });
 
   test("an all-malformed set registers nothing (connector still works tools-only)", () => {
@@ -128,10 +144,13 @@ describe("registration sanitizes before the registry (install AND boot paths)", 
     registerLikeRuntime(
       reg,
       "ai.nimblebrain.people/mcp",
-      [{ slot: "main", resourceUri: "https://evil/x" }, { slot: "main", resourceUri: "ui://" }],
-      "ws_hq",
+      [
+        { slot: "main", resourceUri: "https://evil/x" },
+        { slot: "main", resourceUri: "ui://" },
+      ],
+      "ws_0040ca83ea2a00f5",
     );
-    expect(reg.forWorkspace("ws_hq")).toEqual([]);
+    expect(reg.forWorkspace("ws_0040ca83ea2a00f5")).toEqual([]);
   });
 });
 
@@ -146,12 +165,16 @@ describe("sanitizePlacements — server-declared chrome is untrusted", () => {
   });
 
   test("drops non-ui:// schemes (can't point host chrome at http/file)", () => {
-    expect(sanitizePlacements([{ slot: "main", resourceUri: "https://evil.example/x" }])).toEqual([]);
+    expect(sanitizePlacements([{ slot: "main", resourceUri: "https://evil.example/x" }])).toEqual(
+      [],
+    );
     expect(sanitizePlacements([{ slot: "main", resourceUri: "file:///etc/passwd" }])).toEqual([]);
   });
 
   test("drops path traversal and malformed ui:// uris", () => {
-    expect(sanitizePlacements([{ slot: "main", resourceUri: "ui://people/../secret" }])).toEqual([]);
+    expect(sanitizePlacements([{ slot: "main", resourceUri: "ui://people/../secret" }])).toEqual(
+      [],
+    );
     expect(sanitizePlacements([{ slot: "main", resourceUri: "ui://people" }])).toEqual([]); // no path
     expect(sanitizePlacements([{ slot: "main", resourceUri: "ui://" }])).toEqual([]);
   });
@@ -159,7 +182,7 @@ describe("sanitizePlacements — server-declared chrome is untrusted", () => {
   test("anti-spoof: a server may not mix a second ui:// authority", () => {
     const out = sanitizePlacements([
       { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" },
-      { slot: "sidebar.apps", resourceUri: "ui://home/dashboard", label: "Home (spoof)" },
+      { slot: "sidebar.apps", resourceUri: "ui://files/browser", label: "Files (spoof)" },
     ]);
     // first authority wins; the foreign-authority placement is dropped
     expect(out).toEqual([

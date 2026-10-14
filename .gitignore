@@ -65,3 +65,6 @@ test/**/.tmp-*/
 
 # git worktrees (local dev only — never commit worktree checkouts)
 .worktrees/
+
+# the identity config docker-compose.yml mounts; it can hold an IdP API key
+/instance.json

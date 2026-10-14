@@ -1,5 +1,5 @@
 /**
- * Metadata passthrough tests for the POST /v1/chat endpoint.
+ * Metadata passthrough tests for a chat turn (`POST /v1/workspaces/:wsId/chat/start`).
  *
  * Verifies that:
  * - metadata is stored in the conversation and accessible after chat
@@ -9,16 +9,19 @@
  * Uses the real Runtime + HTTP server with the echo model (no LLM calls).
  */
 
-import { describe, expect, test, afterAll, beforeAll } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Runtime } from "../../src/runtime/runtime.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
-import { startServer } from "../../src/api/server.ts";
+import { join } from "node:path";
+import type { ApiErrorBody, ChatResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { startServer } from "../../src/api/server.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Setup: Runtime + HTTP server with echo model
@@ -31,224 +34,200 @@ let baseUrl: string;
 const workDir = join(tmpdir(), `nimblebrain-chat-metadata-${Date.now()}`);
 
 beforeAll(async () => {
-	mkdirSync(workDir, { recursive: true });
-	runtime = await Runtime.start({
-		model: { provider: "custom", adapter: createEchoModel() },
-		logging: { disabled: true },
-		workDir,
-	});
+  mkdirSync(workDir, { recursive: true });
+  runtime = await Runtime.start({
+    identityProvider: testAuthAdapter(API_KEY),
+    languageModel: createEchoModel(),
+    logging: { disabled: true },
+    workDir,
+  });
 
-	await provisionTestWorkspace(runtime);
+  await provisionTestWorkspace(runtime, TEST_WORKSPACE_ID, "Test Workspace", [TEST_IDENTITY.id]);
 
-	handle = startServer({
-		runtime,
-		port: 0,
-		provider: createTestAuthAdapter(API_KEY, runtime),
-	});
-	baseUrl = `http://localhost:${handle.port}`;
+  handle = startServer({
+    runtime,
+    port: 0,
+  });
+  baseUrl = `http://localhost:${handle.port}`;
 });
 
 afterAll(async () => {
-	handle?.stop(true);
-	await runtime?.shutdown();
-	rmSync(workDir, { recursive: true, force: true });
+  handle?.stop(true);
+  await runtime?.shutdown();
+  rmSync(workDir, { recursive: true, force: true });
 });
 
 function authHeaders(): Record<string, string> {
-	return {
-		"Content-Type": "application/json",
-		Authorization: `Bearer ${API_KEY}`,
-		"X-Workspace-Id": TEST_WORKSPACE_ID,
-	};
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${API_KEY}`,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Metadata passthrough
 // ---------------------------------------------------------------------------
 
-describe("POST /v1/chat — metadata passthrough", () => {
-	test("metadata stored in conversation and returned", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({
-				message: "Hello with metadata",
-				metadata: { source: "test", automationId: "auto-123" },
-			}),
-		});
+describe("POST /v1/workspaces/:wsId/chat/start — metadata passthrough", () => {
+  test("metadata stored in conversation and returned", async () => {
+    const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
+      headers: authHeaders(),
+      body: JSON.stringify({
+        message: "Hello with metadata",
+        metadata: { source: "test", taskId: "auto-123" },
+      }),
+    });
 
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.conversationId).toBeDefined();
+    expect(res.status).toBe(200);
+    const body = await readJson<ChatResponse>(res);
+    expect(body.conversationId).toBeDefined();
 
-		// The conversation should exist and we can continue it
-		const followUp = await fetch(`${baseUrl}/v1/chat`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({
-				message: "Follow up",
-				conversationId: body.conversationId,
-			}),
-		});
+    // The conversation should exist and we can continue it
+    const followUp = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
+      headers: authHeaders(),
+      body: JSON.stringify({
+        message: "Follow up",
+        conversationId: body.conversationId,
+      }),
+    });
 
-		expect(followUp.status).toBe(200);
-		const followUpBody = await followUp.json();
-		// Same conversation
-		expect(followUpBody.conversationId).toBe(body.conversationId);
-	});
+    expect(followUp.status).toBe(200);
+    const followUpBody = await readJson<ChatResponse>(followUp);
+    // Same conversation
+    expect(followUpBody.conversationId).toBe(body.conversationId);
+  });
 
-	test("invalid metadata (array) returns 400", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({
-				message: "Bad metadata",
-				metadata: ["not", "an", "object"],
-			}),
-		});
+  test("invalid metadata (array) returns 400", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        message: "Bad metadata",
+        metadata: ["not", "an", "object"],
+      }),
+    });
 
-		expect(res.status).toBe(400);
-		const body = await res.json();
-		expect(body.error).toBe("bad_request");
-		// Schema validator surfaces the offending field in the message;
-		// exact wording is owned by the validator and may change.
-		expect(body.message).toContain("metadata");
-	});
+    expect(res.status).toBe(400);
+    const body = await readJson<ApiErrorBody>(res);
+    expect(body.error).toBe("bad_request");
+    // Schema validator surfaces the offending field in the message;
+    // exact wording is owned by the validator and may change.
+    expect(body.message).toContain("metadata");
+  });
 
-	test("invalid metadata (string) returns 400", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({
-				message: "Bad metadata",
-				metadata: "just a string",
-			}),
-		});
+  test("invalid metadata (string) returns 400", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        message: "Bad metadata",
+        metadata: "just a string",
+      }),
+    });
 
-		expect(res.status).toBe(400);
-	});
+    expect(res.status).toBe(400);
+  });
 });
 
 // ---------------------------------------------------------------------------
 // AllowedTools filtering
 // ---------------------------------------------------------------------------
 
-describe("POST /v1/chat — allowedTools filtering", () => {
-	test("allowedTools restricts available tools", async () => {
-		// Use echo model that just echoes — won't actually call tools, but
-		// the surfacing logic still filters. We verify via a successful chat
-		// that doesn't error out with allowedTools set.
-		const res = await fetch(`${baseUrl}/v1/chat`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({
-				message: "Use only echo tools",
-				allowedTools: ["echo__*"],
-			}),
-		});
+describe("POST /v1/workspaces/:wsId/chat/start — allowedTools filtering", () => {
+  test("allowedTools restricts available tools", async () => {
+    // Use echo model that just echoes — won't actually call tools, but
+    // the surfacing logic still filters. We verify via a successful chat
+    // that doesn't error out with allowedTools set.
+    const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
+      headers: authHeaders(),
+      body: JSON.stringify({
+        message: "Use only echo tools",
+        allowedTools: ["echo__*"],
+      }),
+    });
 
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.response).toBeDefined();
-		expect(body.conversationId).toBeDefined();
-	});
+    expect(res.status).toBe(200);
+    const body = await readJson<ChatResponse>(res);
+    expect(body.response).toBeDefined();
+    expect(body.conversationId).toBeDefined();
+  });
 
-	test("invalid allowedTools (not array) returns 400", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({
-				message: "Bad tools",
-				allowedTools: "echo__*",
-			}),
-		});
+  test("invalid allowedTools (not array) returns 400", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        message: "Bad tools",
+        allowedTools: "echo__*",
+      }),
+    });
 
-		expect(res.status).toBe(400);
-		const body = await res.json();
-		expect(body.error).toBe("bad_request");
-		expect(body.message).toContain("allowedTools");
-	});
+    expect(res.status).toBe(400);
+    const body = await readJson<ApiErrorBody>(res);
+    expect(body.error).toBe("bad_request");
+    expect(body.message).toContain("allowedTools");
+  });
 
-	test("invalid allowedTools (array of non-strings) returns 400", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({
-				message: "Bad tools",
-				allowedTools: [123, true],
-			}),
-		});
+  test("invalid allowedTools (array of non-strings) returns 400", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        message: "Bad tools",
+        allowedTools: [123, true],
+      }),
+    });
 
-		expect(res.status).toBe(400);
-	});
+    expect(res.status).toBe(400);
+  });
 });
 
 // ---------------------------------------------------------------------------
 // Regression: no metadata/allowedTools works identically
 // ---------------------------------------------------------------------------
 
-describe("POST /v1/chat — regression (no metadata, no allowedTools)", () => {
-	test("chat without metadata or allowedTools works unchanged", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({
-				message: "Just a normal message",
-			}),
-		});
+describe("POST /v1/workspaces/:wsId/chat/start — regression (no metadata, no allowedTools)", () => {
+  test("chat without metadata or allowedTools works unchanged", async () => {
+    const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
+      headers: authHeaders(),
+      body: JSON.stringify({
+        message: "Just a normal message",
+      }),
+    });
 
-		expect(res.status).toBe(200);
-		const body = await res.json();
+    expect(res.status).toBe(200);
+    const body = await readJson<ChatResponse>(res);
 
-		expect(body.response).toBeDefined();
-		expect(typeof body.response).toBe("string");
-		expect(body.conversationId).toBeDefined();
-		expect(body.inputTokens).toBeGreaterThanOrEqual(0);
-		expect(body.outputTokens).toBeGreaterThanOrEqual(0);
-	});
+    expect(body.response).toBeDefined();
+    expect(typeof body.response).toBe("string");
+    expect(body.conversationId).toBeDefined();
+    expect(body.inputTokens).toBeGreaterThanOrEqual(0);
+    expect(body.outputTokens).toBeGreaterThanOrEqual(0);
+  });
 
-	test("chat with conversationId only works unchanged", async () => {
-		// First message
-		const res1 = await fetch(`${baseUrl}/v1/chat`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({
-				message: "First message",
-			}),
-		});
-		const body1 = await res1.json();
-		const convId = body1.conversationId;
+  test("chat with conversationId only works unchanged", async () => {
+    // First message
+    const res1 = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
+      headers: authHeaders(),
+      body: JSON.stringify({
+        message: "First message",
+      }),
+    });
+    const body1 = await readJson<ChatResponse>(res1);
+    const convId = body1.conversationId;
 
-		// Second message in same conversation
-		const res2 = await fetch(`${baseUrl}/v1/chat`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({
-				message: "Second message",
-				conversationId: convId,
-			}),
-		});
+    // Second message in same conversation
+    const res2 = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
+      headers: authHeaders(),
+      body: JSON.stringify({
+        message: "Second message",
+        conversationId: convId,
+      }),
+    });
 
-		expect(res2.status).toBe(200);
-		const body2 = await res2.json();
-		expect(body2.conversationId).toBe(convId);
-		expect(body2.response).toBeDefined();
-	});
-
-	test("streaming chat without metadata works unchanged", async () => {
-		const res = await fetch(`${baseUrl}/v1/chat/stream`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({
-				message: "Stream without metadata",
-			}),
-		});
-
-		expect(res.status).toBe(200);
-		expect(res.headers.get("content-type")).toContain("text/event-stream");
-
-		const text = await res.text();
-		// Should contain at least a done event
-		expect(text).toContain("event: done");
-	});
+    expect(res2.status).toBe(200);
+    const body2 = await readJson<ChatResponse>(res2);
+    expect(body2.conversationId).toBe(convId);
+    expect(body2.response).toBeDefined();
+  });
 });

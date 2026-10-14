@@ -1,22 +1,19 @@
-import { describe, expect, it, afterAll, afterEach, beforeEach } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import {
-	ListToolsRequestSchema,
-	CallToolRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { join } from "node:path";
+import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import { defaultWorkDir } from "../../src/connectors/runtime/paths.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { WorkspaceContext } from "../../src/workspace/context.ts";
 import {
-	installTestCredentialStore,
-	resetTestCredentialStore,
+  installTestCredentialStore,
+  resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-lifecycle-${Date.now()}`);
@@ -24,34 +21,34 @@ const testDir = join(tmpdir(), `nimblebrain-lifecycle-${Date.now()}`);
 // Every path here reaches `seedInstance`, which derives the boot Connection
 // state from the OAuth token record — a key in the credential store.
 beforeEach(() => {
-	installTestCredentialStore(testDir);
+  installTestCredentialStore(testDir);
 });
 
 afterEach(() => {
-	resetTestCredentialStore();
+  resetTestCredentialStore();
 });
 
 function setupTestDir() {
-	if (existsSync(testDir)) rmSync(testDir, { recursive: true });
-	mkdirSync(testDir, { recursive: true });
+  if (existsSync(testDir)) rmSync(testDir, { recursive: true });
+  mkdirSync(testDir, { recursive: true });
 }
 
 afterAll(() => {
-	if (existsSync(testDir)) rmSync(testDir, { recursive: true });
+  if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
 function makeEventCollector(): EventSink & { events: EngineEvent[] } {
-	const events: EngineEvent[] = [];
-	return {
-		events,
-		emit(event: EngineEvent) {
-			events.push(event);
-		},
-	};
+  const events: EngineEvent[] = [];
+  return {
+    events,
+    emit(event: EngineEvent) {
+      events.push(event);
+    },
+  };
 }
 
 function eventTypes(collector: { events: EngineEvent[] }): string[] {
-	return collector.events.map((e) => e.type);
+  return collector.events.map((e) => e.type);
 }
 
 // ---------------------------------------------------------------------------
@@ -61,61 +58,61 @@ function eventTypes(collector: { events: EngineEvent[] }): string[] {
 // ---------------------------------------------------------------------------
 
 interface MockRemoteServer {
-	url: string;
-	close: () => void;
+  url: string;
+  close: () => void;
 }
 
 function startMockRemoteServer(): MockRemoteServer {
-	const transports: WebStandardStreamableHTTPServerTransport[] = [];
-	const servers: Server[] = [];
+  const transports: WebStandardStreamableHTTPServerTransport[] = [];
+  const servers: Server[] = [];
 
-	const httpServer = Bun.serve({
-		port: 0,
-		async fetch(req: Request) {
-			if (new URL(req.url).pathname !== "/mcp") return new Response("Not found", { status: 404 });
+  const httpServer = Bun.serve({
+    port: 0,
+    async fetch(req: Request) {
+      if (new URL(req.url).pathname !== "/mcp") return new Response("Not found", { status: 404 });
 
-			const mcpServer = new Server(
-				{ name: "remote-echo", version: "0.1.0" },
-				{ capabilities: { tools: {} } },
-			);
-			mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
-				tools: [
-					{
-						name: "echo",
-						description: "Echo input",
-						inputSchema: {
-							type: "object" as const,
-							properties: { message: { type: "string" } },
-						},
-					},
-				],
-			}));
-			mcpServer.setRequestHandler(CallToolRequestSchema, async (req) => ({
-				content: [{ type: "text", text: `Echo: ${req.params.arguments?.message}` }],
-			}));
-			servers.push(mcpServer);
+      const mcpServer = new Server(
+        { name: "remote-echo", version: "0.1.0" },
+        { capabilities: { tools: {} } },
+      );
+      mcpServer.setRequestHandler("tools/list", async () => ({
+        tools: [
+          {
+            name: "echo",
+            description: "Echo input",
+            inputSchema: {
+              type: "object" as const,
+              properties: { message: { type: "string" } },
+            },
+          },
+        ],
+      }));
+      mcpServer.setRequestHandler("tools/call", async (req) => ({
+        content: [{ type: "text", text: `Echo: ${req.params.arguments?.message}` }],
+      }));
+      servers.push(mcpServer);
 
-			const transport = new WebStandardStreamableHTTPServerTransport({
-				sessionIdGenerator: undefined,
-			});
-			transports.push(transport);
-			await mcpServer.connect(transport);
-			return transport.handleRequest(req);
-		},
-	});
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+      });
+      transports.push(transport);
+      await mcpServer.connect(transport);
+      return transport.handleRequest(req);
+    },
+  });
 
-	return {
-		url: `http://localhost:${httpServer.port}/mcp`,
-		close() {
-			httpServer.stop(true);
-			for (const t of transports) t.close().catch(() => {});
-			for (const s of servers) s.close().catch(() => {});
-		},
-	};
+  return {
+    url: `http://localhost:${httpServer.port}/mcp`,
+    close() {
+      httpServer.stop(true);
+      for (const t of transports) t.close().catch(() => {});
+      for (const s of servers) s.close().catch(() => {});
+    },
+  };
 }
 
 const SERVER_NAME = "remote-echo";
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 
 /**
  * Connect the mock server and record it on the lifecycle, as the install path
@@ -124,21 +121,21 @@ const WS = "ws_test";
  * `not_authenticated` until an OAuth flow completes.
  */
 async function connectAndSeed(
-	lifecycle: ConnectorLifecycleManager,
-	registry: ToolRegistry,
-	url: string,
+  lifecycle: ConnectorLifecycleManager,
+  registry: ToolRegistry,
+  url: string,
 ): Promise<ConnectorRef> {
-	const ref: ConnectorRef = {
-		url,
-		serverName: SERVER_NAME,
-		transport: { type: "streamable-http", auth: { type: "bearer", token: "t" } },
-	};
-	const { meta } = await startConnectorSource(ref, registry, new NoopEventSink(), {
-		allowInsecureRemotes: true,
-		wsId: WS,
-	});
-	await lifecycle.seedInstance(SERVER_NAME, url, ref, meta ?? undefined, WS);
-	return ref;
+  const ref: ConnectorRef = {
+    url,
+    serverName: SERVER_NAME,
+    transport: { type: "streamable-http", auth: { type: "bearer", token: "t" } },
+  };
+  const { meta } = await startConnectorSource(ref, registry, new NoopEventSink(), {
+    allowInsecureRemotes: true,
+    workspaceContext: new WorkspaceContext({ wsId: WS, workDir: defaultWorkDir() }),
+  });
+  await lifecycle.seedInstance(SERVER_NAME, url, ref, meta ?? undefined, WS);
+  return ref;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,55 +143,55 @@ async function connectAndSeed(
 // ---------------------------------------------------------------------------
 
 describe("ConnectorLifecycleManager — uninstall", () => {
-	let mockServer: MockRemoteServer;
+  let mockServer: MockRemoteServer;
 
-	beforeEach(() => {
-		setupTestDir();
-		mockServer = startMockRemoteServer();
-	});
+  beforeEach(() => {
+    setupTestDir();
+    mockServer = startMockRemoteServer();
+  });
 
-	afterEach(() => {
-		mockServer?.close();
-	});
+  afterEach(() => {
+    mockServer?.close();
+  });
 
-	it("uninstalls a connector: source removed, instance dropped, event emitted", async () => {
-		const registry = new ToolRegistry();
-		const sink = makeEventCollector();
-		const lifecycle = new ConnectorLifecycleManager(sink, true);
-		await connectAndSeed(lifecycle, registry, mockServer.url);
+  it("uninstalls a connector: source removed, instance dropped, event emitted", async () => {
+    const registry = new ToolRegistry();
+    const sink = makeEventCollector();
+    const lifecycle = new ConnectorLifecycleManager(sink, true);
+    await connectAndSeed(lifecycle, registry, mockServer.url);
 
-		expect(registry.hasSource(SERVER_NAME)).toBe(true);
+    expect(registry.hasSource(SERVER_NAME)).toBe(true);
 
-		await lifecycle.uninstall(SERVER_NAME, registry, WS);
+    await lifecycle.uninstall(SERVER_NAME, registry, WS);
 
-		expect(registry.hasSource(SERVER_NAME)).toBe(false);
-		expect(eventTypes(sink)).toContain("connector.uninstalled");
-		expect(lifecycle.getInstance(SERVER_NAME, WS)).toBeUndefined();
-	}, 15_000);
+    expect(registry.hasSource(SERVER_NAME)).toBe(false);
+    expect(eventTypes(sink)).toContain("connector.uninstalled");
+    expect(lifecycle.getInstance(SERVER_NAME, WS)).toBeUndefined();
+  }, 15_000);
 
-	it("does not delete data directories on uninstall", async () => {
-		// A data directory that must survive uninstall — credentials are config,
-		// data is not.
-		const dataDir = join(testDir, "data", "echo");
-		mkdirSync(dataDir, { recursive: true });
-		writeFileSync(join(dataDir, "records.json"), "[]");
+  it("does not delete data directories on uninstall", async () => {
+    // A data directory that must survive uninstall — credentials are config,
+    // data is not.
+    const dataDir = join(testDir, "data", "echo");
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(join(dataDir, "records.json"), "[]");
 
-		const registry = new ToolRegistry();
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
-		await connectAndSeed(lifecycle, registry, mockServer.url);
-		await lifecycle.uninstall(SERVER_NAME, registry, WS);
+    const registry = new ToolRegistry();
+    const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
+    await connectAndSeed(lifecycle, registry, mockServer.url);
+    await lifecycle.uninstall(SERVER_NAME, registry, WS);
 
-		expect(existsSync(join(dataDir, "records.json"))).toBe(true);
-	}, 15_000);
+    expect(existsSync(join(dataDir, "records.json"))).toBe(true);
+  }, 15_000);
 
-	it("uninstall for a nonexistent server name is a silent no-op", async () => {
-		const registry = new ToolRegistry();
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
+  it("uninstall for a nonexistent server name is a silent no-op", async () => {
+    const registry = new ToolRegistry();
+    const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
 
-		await lifecycle.uninstall("completely-nonexistent-server", registry, WS);
+    await lifecycle.uninstall("completely-nonexistent-server", registry, WS);
 
-		expect(lifecycle.getInstance("completely-nonexistent-server", WS)).toBeUndefined();
-	});
+    expect(lifecycle.getInstance("completely-nonexistent-server", WS)).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -202,59 +199,59 @@ describe("ConnectorLifecycleManager — uninstall", () => {
 // ---------------------------------------------------------------------------
 
 describe("ConnectorLifecycleManager — start and stop", () => {
-	let mockServer: MockRemoteServer;
+  let mockServer: MockRemoteServer;
 
-	beforeEach(() => {
-		setupTestDir();
-		mockServer = startMockRemoteServer();
-	});
+  beforeEach(() => {
+    setupTestDir();
+    mockServer = startMockRemoteServer();
+  });
 
-	afterEach(() => {
-		mockServer?.close();
-	});
+  afterEach(() => {
+    mockServer?.close();
+  });
 
-	it("stop transitions state to stopped", async () => {
-		const registry = new ToolRegistry();
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
-		await connectAndSeed(lifecycle, registry, mockServer.url);
-		const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
-		expect(instance.state).toBe("running");
+  it("stop transitions state to stopped", async () => {
+    const registry = new ToolRegistry();
+    const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
+    await connectAndSeed(lifecycle, registry, mockServer.url);
+    const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
+    expect(instance.state).toBe("running");
 
-		await lifecycle.stopConnector(SERVER_NAME, WS, registry);
-		expect(instance.state).toBe("stopped");
+    await lifecycle.stopConnector(SERVER_NAME, WS, registry);
+    expect(instance.state).toBe("stopped");
 
-		await registry.removeSource(SERVER_NAME);
-	}, 15_000);
+    await registry.removeSource(SERVER_NAME);
+  }, 15_000);
 
-	it("start transitions a stopped connector back to running", async () => {
-		const registry = new ToolRegistry();
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
-		await connectAndSeed(lifecycle, registry, mockServer.url);
-		const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
+  it("start transitions a stopped connector back to running", async () => {
+    const registry = new ToolRegistry();
+    const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
+    await connectAndSeed(lifecycle, registry, mockServer.url);
+    const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
 
-		await lifecycle.stopConnector(SERVER_NAME, WS, registry);
-		expect(instance.state).toBe("stopped");
+    await lifecycle.stopConnector(SERVER_NAME, WS, registry);
+    expect(instance.state).toBe("stopped");
 
-		await lifecycle.startConnector(SERVER_NAME, WS, registry);
-		expect(instance.state).toBe("running");
+    await lifecycle.startConnector(SERVER_NAME, WS, registry);
+    expect(instance.state).toBe("running");
 
-		await registry.removeSource(SERVER_NAME);
-	}, 15_000);
+    await registry.removeSource(SERVER_NAME);
+  }, 15_000);
 
-	it("a dead connector requires an explicit startConnector to run again", async () => {
-		const registry = new ToolRegistry();
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
-		await connectAndSeed(lifecycle, registry, mockServer.url);
-		const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
+  it("a dead connector requires an explicit startConnector to run again", async () => {
+    const registry = new ToolRegistry();
+    const lifecycle = new ConnectorLifecycleManager(makeEventCollector(), true);
+    await connectAndSeed(lifecycle, registry, mockServer.url);
+    const instance = lifecycle.getInstance(SERVER_NAME, WS)!;
 
-		lifecycle.transition(instance, "dead");
-		expect(instance.state).toBe("dead");
+    lifecycle.transition(instance, "dead");
+    expect(instance.state).toBe("dead");
 
-		await lifecycle.startConnector(SERVER_NAME, WS, registry);
-		expect(instance.state).toBe("running");
+    await lifecycle.startConnector(SERVER_NAME, WS, registry);
+    expect(instance.state).toBe("running");
 
-		await registry.removeSource(SERVER_NAME);
-	}, 15_000);
+    await registry.removeSource(SERVER_NAME);
+  }, 15_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -262,70 +259,66 @@ describe("ConnectorLifecycleManager — start and stop", () => {
 // ---------------------------------------------------------------------------
 
 describe("ConnectorLifecycleManager — instance tracking", () => {
-	it("seedInstance records the ref's UI and derives the connection state", async () => {
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
+  it("seedInstance records the ref's UI and derives the connection state", async () => {
+    const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
 
-		await lifecycle.seedInstance(
-			"ipinfo",
-			"https://ipinfo.example.com/mcp",
-			{
-				url: "https://ipinfo.example.com/mcp",
-				serverName: "ipinfo",
-				ui: { name: "IPInfo", icon: "globe" },
-			},
-			undefined,
-			"ws_test",
-		);
+    await lifecycle.seedInstance(
+      "ipinfo",
+      "https://ipinfo.example.com/mcp",
+      {
+        url: "https://ipinfo.example.com/mcp",
+        serverName: "ipinfo",
+        ui: { placements: [{ slot: "sidebar.apps", resourceUri: "ui://ipinfo/main" }] },
+      },
+      undefined,
+      "ws_0076759dbbe19fcc",
+    );
 
-		const instance = lifecycle.getInstance("ipinfo", "ws_test")!;
-		expect(instance).toBeDefined();
-		expect(instance.ui?.name).toBe("IPInfo");
-		// No credential on the ref and no persisted tokens: the connector is
-		// installed but not connected, and the seeded state says so.
-		expect(instance.state).toBe("not_authenticated");
-		expect(lifecycle.getInstances()).toHaveLength(1);
-	});
+    const instance = lifecycle.getInstance("ipinfo", "ws_0076759dbbe19fcc")!;
+    expect(instance).toBeDefined();
+    expect(instance.ui?.placements?.[0]?.resourceUri).toBe("ui://ipinfo/main");
+    // No credential on the ref and no persisted tokens: the connector is
+    // installed but not connected, and the seeded state says so.
+    expect(instance.state).toBe("not_authenticated");
+    expect(lifecycle.getInstances()).toHaveLength(1);
+  });
 
-	it("seedInstance prefers the manifest name over the config label", async () => {
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
+  it("seedInstance prefers the manifest name over the config label", async () => {
+    const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
 
-		await lifecycle.seedInstance(
-			"crm",
-			"https://crm.example.com/mcp",
-			{ url: "https://crm.example.com/mcp", serverName: "crm" },
-			{
-				manifestName: "ai.nimblebrain/crm",
-				version: "0.1.0",
-				ui: null,
-				briefing: {
-					facets: [{ name: "deals", label: "Deals", type: "delta", tool: "crm__deals" }],
-				},
-			},
-			"ws_eng",
-		);
+    await lifecycle.seedInstance(
+      "crm",
+      "https://crm.example.com/mcp",
+      { url: "https://crm.example.com/mcp", serverName: "crm" },
+      {
+        manifestName: "ai.nimblebrain/crm",
+        version: "0.1.0",
+        ui: null,
+      },
+      "ws_002fbb9fda6654ca",
+    );
 
-		const instance = lifecycle.getInstance("crm", "ws_eng")!;
-		expect(instance.connectorName).toBe("ai.nimblebrain/crm");
-		expect(instance.version).toBe("0.1.0");
-		expect(instance.briefing?.facets).toHaveLength(1);
-		expect(instance.wsId).toBe("ws_eng");
-	});
+    const instance = lifecycle.getInstance("crm", "ws_002fbb9fda6654ca")!;
+    expect(instance.connectorName).toBe("ai.nimblebrain/crm");
+    expect(instance.version).toBe("0.1.0");
+    expect(instance.wsId).toBe("ws_002fbb9fda6654ca");
+  });
 
-	it("seedInstance retains the ref so a source can be reconstructed on demand", async () => {
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
-		const ref: ConnectorRef = {
-			url: "https://crm.example.com/mcp",
-			serverName: "crm",
-			scopes: ["read"],
-		};
+  it("seedInstance retains the ref so a source can be reconstructed on demand", async () => {
+    const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
+    const ref: ConnectorRef = {
+      url: "https://crm.example.com/mcp",
+      serverName: "crm",
+      scopes: ["read"],
+    };
 
-		await lifecycle.seedInstance("crm", ref.url, ref, undefined, "ws_eng");
+    await lifecycle.seedInstance("crm", ref.url, ref, undefined, "ws_002fbb9fda6654ca");
 
-		expect(lifecycle.getInstance("crm", "ws_eng")?.ref).toEqual(ref);
-	});
+    expect(lifecycle.getInstance("crm", "ws_002fbb9fda6654ca")?.ref).toEqual(ref);
+  });
 
-	it("getInstance returns undefined for an unknown server name", () => {
-		const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
-		expect(lifecycle.getInstance("nonexistent", "ws_test")).toBeUndefined();
-	});
+  it("getInstance returns undefined for an unknown server name", () => {
+    const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
+    expect(lifecycle.getInstance("nonexistent", "ws_0076759dbbe19fcc")).toBeUndefined();
+  });
 });

@@ -9,7 +9,7 @@
  *
  * The final block runs the script as a subprocess against the actual
  * `src/` tree — exit 0 there proves the predicate set above doesn't
- * false-positive on the post-Stage-2 codebase. The matching "exit 1 on
+ * false-positive on the actual codebase. The matching "exit 1 on
  * violation" half is covered by the predicate unit tests above — each
  * is a single fixture snippet that the predicate either flags or not.
  */
@@ -45,9 +45,7 @@ function findFirst<T extends ts.Node>(
 
 describe("check-credential-paths — isUserCredentialJoin", () => {
   test("matches `join(workDir, 'users', userId, 'credentials', connectorName)`", () => {
-    const src = parse(
-      `const path = join(workDir, "users", userId, "credentials", connectorName);`,
-    );
+    const src = parse(`const path = join(workDir, "users", userId, "credentials", connectorName);`);
     const call = findFirst(src, ts.isCallExpression);
     expect(call).toBeDefined();
     expect(isUserCredentialJoin(call!)).toBe(true);
@@ -60,9 +58,7 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
   });
 
   test("does NOT match `join(workDir, 'workspaces', wsId, 'credentials', name)` (the intended workspace shape)", () => {
-    const src = parse(
-      `const dir = join(workDir, "workspaces", wsId, "credentials", name);`,
-    );
+    const src = parse(`const dir = join(workDir, "workspaces", wsId, "credentials", name);`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isUserCredentialJoin(call!)).toBe(false);
   });
@@ -79,12 +75,12 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
     expect(isUserCredentialJoin(call!)).toBe(true);
   });
 
-  test("does NOT match the sanctioned `users/<id>/credentials/mcp-oauth/...` carve-out", () => {
+  test("matches `users/<id>/credentials/mcp-oauth/...` in a join", () => {
     const src = parse(
       `const p = join(workDir, "users", userId, "credentials", "mcp-oauth", serverName);`,
     );
     const call = findFirst(src, ts.isCallExpression);
-    expect(isUserCredentialJoin(call!)).toBe(false);
+    expect(isUserCredentialJoin(call!)).toBe(true);
   });
 
   // A brokered provider's home has no carve-out and must not get one:
@@ -99,10 +95,8 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
     expect(isUserCredentialJoin(call!)).toBe(true);
   });
 
-  test("still matches a non-carve-out child of `users/<id>/credentials/`", () => {
-    const src = parse(
-      `const p = join(workDir, "users", userId, "credentials", "secrets", "x");`,
-    );
+  test("matches any other child of `users/<id>/credentials/`", () => {
+    const src = parse(`const p = join(workDir, "users", userId, "credentials", "secrets", "x");`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isUserCredentialJoin(call!)).toBe(true);
   });
@@ -110,18 +104,14 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
 
 describe("check-credential-paths — isUserCredentialTemplate", () => {
   test("matches a template literal that spells out the user-credential path", () => {
-    const src = parse(
-      "const p = `${workDir}/users/${userId}/credentials/${connectorName}.json`;",
-    );
+    const src = parse("const p = `${workDir}/users/${userId}/credentials/${connectorName}.json`;");
     const node = findFirst(src, ts.isTemplateExpression);
     expect(node).toBeDefined();
     expect(isUserCredentialTemplate(node!)).toBe(true);
   });
 
   test("does NOT match a template that uses /workspaces/<id>/credentials/", () => {
-    const src = parse(
-      "const p = `${workDir}/workspaces/${wsId}/credentials/${name}.json`;",
-    );
+    const src = parse("const p = `${workDir}/workspaces/${wsId}/credentials/${name}.json`;");
     const node = findFirst(src, ts.isTemplateExpression);
     expect(isUserCredentialTemplate(node!)).toBe(false);
   });
@@ -132,12 +122,12 @@ describe("check-credential-paths — isUserCredentialTemplate", () => {
     expect(isUserCredentialTemplate(node!)).toBe(false);
   });
 
-  test("does NOT match the sanctioned `users/<id>/credentials/mcp-oauth/...` carve-out", () => {
+  test("matches `users/<id>/credentials/mcp-oauth/...` in a template", () => {
     const src = parse(
       "const p = `${workDir}/users/${userId}/credentials/mcp-oauth/${server}.json`;",
     );
     const node = findFirst(src, ts.isTemplateExpression);
-    expect(isUserCredentialTemplate(node!)).toBe(false);
+    expect(isUserCredentialTemplate(node!)).toBe(true);
   });
 });
 
@@ -148,12 +138,10 @@ describe("check-credential-paths — isUserCredentialStringLiteral", () => {
     expect(isUserCredentialStringLiteral(node!)).toBe(true);
   });
 
-  test("does NOT match the sanctioned `users/<id>/credentials/mcp-oauth/...` carve-out", () => {
-    const src = parse(
-      `const p = "/work/users/user_abc/credentials/mcp-oauth/notion/tokens.json";`,
-    );
+  test("matches `users/<id>/credentials/mcp-oauth/...` in a string literal", () => {
+    const src = parse(`const p = "/work/users/user_abc/credentials/mcp-oauth/notion/tokens.json";`);
     const node = findFirst(src, ts.isStringLiteral);
-    expect(isUserCredentialStringLiteral(node!)).toBe(false);
+    expect(isUserCredentialStringLiteral(node!)).toBe(true);
   });
 
   test("DOES match a hand-built brokered credential path literal", () => {
@@ -165,7 +153,7 @@ describe("check-credential-paths — isUserCredentialStringLiteral", () => {
   });
 
   test("does NOT match a string with /credentials/ but no /users/", () => {
-    const src = parse(`const p = "/work/workspaces/ws_a/credentials/foo.json";`);
+    const src = parse(`const p = "/work/workspaces/ws_00079598e311c160/credentials/foo.json";`);
     const node = findFirst(src, ts.isStringLiteral);
     expect(isUserCredentialStringLiteral(node!)).toBe(false);
   });
@@ -198,7 +186,7 @@ describe("check-credential-paths — allow-marker discipline", () => {
 describe("check-credential-paths — script self-invocation", () => {
   test("clean tree: running the script produces a passing message and exits 0", async () => {
     // Subprocess invocation: the lint runs against the current src/
-    // tree, which is the post-Stage-2 clean state. Exit 0 here proves
+    // tree, which is clean. Exit 0 here proves
     // the predicate set above doesn't false-positive on the actual
     // codebase. The matching "exit 1 on violation" half is covered by
     // the predicate unit tests above — each is a single fixture

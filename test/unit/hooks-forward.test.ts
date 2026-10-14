@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { FetchLike } from "@modelcontextprotocol/server";
 import { buildForwardHeaders, forwardDelivery } from "../../src/hooks/forward.ts";
 import {
   _resetCredentialStoreForTest,
@@ -38,6 +38,7 @@ describe("what survives the forward", () => {
 
   test.each([
     "authorization",
+    "cookie",
     "x-api-key",
     "x-tenant-id",
     "x-workspace-id",
@@ -92,6 +93,17 @@ describe("declared header renames", () => {
     expect(headers.get("authorization")).toBeNull();
   });
 
+  test("never move the browser's cookie, even when a stored rename names it", () => {
+    // The connector declares its renames. A browser posting to the hook URL
+    // attaches the user's session cookie, which no rename may carry out.
+    const headers = build(
+      { cookie: "nb_session=user-session" },
+      { renames: { cookie: "x-acme-cookie" } },
+    );
+    expect(headers.get("x-acme-cookie")).toBeNull();
+    expect(headers.get("cookie")).toBeNull();
+  });
+
   test("apply to a header that would have passed through anyway", () => {
     const headers = build({ "x-old": "v" }, { renames: { "x-old": "x-new" } });
     expect(headers.get("x-new")).toBe("v");
@@ -103,7 +115,6 @@ describe("the connection's own credential", () => {
   test("cannot be displaced by an inbound header of the same name", () => {
     const headers = buildForwardHeaders({
       inbound: new Headers({ "x-connector-key": "attacker-value" }),
-      kid: "hk_abc",
       credentialHeaders: { "x-connector-key": "operator-value" },
     });
     expect(headers.get("x-connector-key")).toBe("operator-value");
@@ -112,7 +123,7 @@ describe("the connection's own credential", () => {
   test("is resolved per delivery, so a put between two deliveries reaches the second", async () => {
     // The same rule the connector's MCP transport follows: a rotated secret is
     // on the next request, whichever plane sends it.
-    const wsId = "ws_forward01";
+    const wsId = "ws_0037dad0a604b221";
     const key = "acme.signing_secret";
     const workDir = mkdtempSync(join(tmpdir(), "nb-forward-ref-"));
     seedWorkspaceRoot(workDir, wsId);

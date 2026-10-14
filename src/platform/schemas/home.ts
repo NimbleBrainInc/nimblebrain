@@ -1,61 +1,47 @@
-import { type Static, Type } from "@sinclair/typebox";
-import { StringEnum } from "./_shared.ts";
-
-export const HomeActivityInput = Type.Object({
-  since: Type.Optional(Type.String({ description: "ISO timestamp. Default: 24 hours ago." })),
-  until: Type.Optional(Type.String({ description: "ISO timestamp. Default: now." })),
-  category: Type.Optional(
-    StringEnum(["conversations", "connectors", "tools", "errors"] as const, {
-      description: "Filter to one category.",
-    }),
-  ),
-  limit: Type.Optional(Type.Number({ description: "Max items per category. Default: 50." })),
-});
-export type HomeActivityInput = Static<typeof HomeActivityInput>;
-
 // ── Briefing output ────────────────────────────────────────────────────────
 //
 // Canonical contract for the `nb__briefing` tool's structured output. Per the
 // output-schema convention these are type-only (we don't wire-validate
-// outputs): `src/services/home-types.ts` re-exports them for the backend
-// (generator, cache, core-source), and `bun run codegen` emits them to
-// `web/src/_generated/platform-schemas/home.d.ts` for the web briefing surface.
-// Single source of truth — do not hand-redeclare on either side.
-
-/** Dashboard state derived from briefing content. */
-export type BriefingState = "empty" | "quiet" | "all-clear" | "normal" | "attention";
+// outputs): the backend imports them from here, and `bun run codegen` emits
+// them to `web/src/_generated/platform-schemas/home.d.ts` for the web briefing
+// surface. Single source of truth — do not hand-redeclare on either side.
 
 /**
- * Action attached to a briefing section. `type` discriminates the payload —
- * `navigate` uses `route`, `startChat` uses `prompt` — but both fields are
- * always present (null for the unused variant) because the LLM structured-
- * output schema requires every property. Consumers check `type` first.
+ * How urgent an item is, most urgent first: something has stopped, someone
+ * should act, worth knowing. A facet's is declared by its server (`warning`
+ * when it declares none); a connector-status row's is the host's.
  */
-export interface BriefingAction {
-  type: "navigate" | "startChat";
+export type BriefingLevel = "critical" | "warning" | "info";
+
+/**
+ * One facet of one app: `<count> <label>`, opening the app. Built from a count
+ * the app's server returned over the `ai.nimblebrain/facets` extension; nothing
+ * in it is generated. `label` and `count` are untrusted server data: render the
+ * label as text and the count as a number.
+ */
+export interface BriefingItem {
+  /** The app's display name. */
+  app: string;
+  /** The facet's name, stable within the app's server. */
+  facet: string;
+  /** The facet resource's `title`. */
   label: string;
-  /** Set on navigate actions; null on startChat. */
+  /** Things waiting, as the server counted them. 0 when `state` is `unavailable`. */
+  count: number;
+  /** The facet's declared urgency. */
+  level: BriefingLevel;
+  /** The app's first placement route, or null when it has none. */
   route: string | null;
-  /** Set on startChat actions; null on navigate. */
-  prompt: string | null;
+  /** `unavailable` when the read failed, timed out, or returned no valid count. */
+  state: "ok" | "unavailable";
 }
 
-/** Individual briefing section — one line item under a category heading. */
-export interface BriefingSection {
-  id: string;
-  text: string;
-  type: "positive" | "neutral" | "warning";
-  category: "recent" | "upcoming" | "attention";
-  action?: BriefingAction;
-}
-
-/** Complete briefing output returned by `nb__briefing`. */
+/**
+ * Complete briefing output returned by `nb__briefing`. One per workspace,
+ * shared by every member, so it carries nothing about the viewer. An item
+ * whose count is zero is omitted; an empty `items` means nothing is waiting.
+ */
 export interface BriefingOutput {
-  greeting: string;
-  date: string;
-  lede: string;
-  sections: BriefingSection[];
-  state: BriefingState;
+  items: BriefingItem[];
   generated_at: string;
-  cached: boolean;
 }

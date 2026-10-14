@@ -18,8 +18,10 @@ import { join } from "node:path";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { makeIdentity } from "../helpers/identity.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** Auto-title generation is async and shares the model queue; wait it out. */
 async function waitForTitle(runtime: Runtime, conversationId: string, timeoutMs = 5000) {
@@ -37,12 +39,12 @@ async function waitForTitle(runtime: Runtime, conversationId: string, timeoutMs 
 const PINNED = "anthropic:claude-sonnet-5";
 const RETARGETED = "nebius:moonshotai/Kimi-K2.6";
 
-const USER: UserIdentity = {
+const USER: UserIdentity = makeIdentity({
   id: "usr_status",
   email: "status@example.com",
   displayName: "Status",
   orgRole: "member",
-};
+});
 
 const testDir = join(tmpdir(), `nimblebrain-status-model-${Date.now()}`);
 
@@ -87,20 +89,18 @@ describe("what nb__status reports about the running model", () => {
     const sink: EventSink = { emit: (e) => events.push(e) };
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       events: [sink],
-      model: {
-        provider: "custom",
-        adapter: createEchoModel({
-          responses: [
-            ...statusThenReply("call_1"),
-            // The auto-title call lands between the two turns and draws from
-            // this same queue; without a slot of its own it would eat turn 2's
-            // tool call.
-            { text: "A title" },
-            ...statusThenReply("call_2"),
-          ],
-        }),
-      },
+      languageModel: createEchoModel({
+        responses: [
+          ...statusThenReply("call_1"),
+          // The auto-title call lands between the two turns and draws from
+          // this same queue; without a slot of its own it would eat turn 2's
+          // tool call.
+          { text: "A title" },
+          ...statusThenReply("call_2"),
+        ],
+      }),
       logging: { disabled: true },
       workDir,
       models: { default: PINNED, fast: PINNED },
@@ -144,7 +144,7 @@ describe("what nb__status reports about the running model", () => {
       await runtime.shutdown();
     }
   });
-  it("an automation run names its own model, and there is no conversation to bind it to", async () => {
+  it("a task run names its own model, and there is no conversation to bind it to", async () => {
     // `executeTask` stamps the context too. Nothing is pinned — there is no
     // conversation — so the report has to be true without appealing to one.
     const workDir = join(testDir, "status-task-model");
@@ -154,11 +154,9 @@ describe("what nb__status reports about the running model", () => {
     const sink: EventSink = { emit: (e) => events.push(e) };
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       events: [sink],
-      model: {
-        provider: "custom",
-        adapter: createEchoModel({ responses: statusThenReply("t_1") }),
-      },
+      languageModel: createEchoModel({ responses: statusThenReply("t_1") }),
       logging: { disabled: true },
       workDir,
       // Default deliberately differs from what the run is told to use, or the
@@ -188,7 +186,7 @@ describe("what nb__status reports about the running model", () => {
           .toLocaleString()}`,
       );
       expect(runtime.getMaxOutputTokens(RETARGETED)).not.toBe(runtime.getMaxOutputTokens(PINNED));
-      // The binding sentence must hold here too: an automation has no
+      // The binding sentence must hold here too: a task has no
       // conversation, so it cannot claim one.
       expect(out).toContain("Fixed for this turn");
       expect(out).not.toContain("conversation was created");
@@ -205,30 +203,28 @@ describe("what nb__status reports about the running model", () => {
     const sink: EventSink = { emit: (e) => events.push(e) };
 
     const runtime = await Runtime.start({
+      identityProvider: devProvider,
       events: [sink],
-      model: {
-        provider: "custom",
-        adapter: createEchoModel({
-          responses: [
-            // Turn 1 binds the conversation, before the default moves.
-            { text: "hello" },
-            // Auto-title takes the next slot.
-            { text: "A title" },
-            // Turn 2 asks, after the default has moved away from the pin.
-            {
-              text: "checking",
-              toolCalls: [
-                {
-                  toolCallId: "o_1",
-                  toolName: "nb__status",
-                  input: JSON.stringify({ scope: "overview" }),
-                },
-              ],
-            },
-            { text: "answered" },
-          ],
-        }),
-      },
+      languageModel: createEchoModel({
+        responses: [
+          // Turn 1 binds the conversation, before the default moves.
+          { text: "hello" },
+          // Auto-title takes the next slot.
+          { text: "A title" },
+          // Turn 2 asks, after the default has moved away from the pin.
+          {
+            text: "checking",
+            toolCalls: [
+              {
+                toolCallId: "o_1",
+                toolName: "nb__status",
+                input: JSON.stringify({ scope: "overview" }),
+              },
+            ],
+          },
+          { text: "answered" },
+        ],
+      }),
       logging: { disabled: true },
       workDir,
       models: { default: PINNED, fast: PINNED },

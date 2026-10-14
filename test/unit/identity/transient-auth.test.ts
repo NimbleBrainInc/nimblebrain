@@ -9,11 +9,16 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
-import { authenticateRequest, isAuthError } from "../../../src/api/auth-middleware.ts";
 import type { AuthMiddlewareOptions } from "../../../src/api/auth-middleware.ts";
-import { TransientAuthError } from "../../../src/identity/provider.ts";
-import type { IdentityProvider, UserIdentity } from "../../../src/identity/provider.ts";
+import { authenticateRequest, isAuthError } from "../../../src/api/auth-middleware.ts";
+import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
+import type {
+  IdentityProvider,
+  UserIdentity,
+  VerifiedIdentity,
+} from "../../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT, TransientAuthError } from "../../../src/identity/provider.ts";
+import { stub } from "../../helpers/stub.ts";
 
 const IDENTITY: UserIdentity = {
   id: "user_1",
@@ -29,13 +34,11 @@ function recordingSink(): { sink: EventSink; events: EngineEvent[] } {
   return { sink: { emit: (e: EngineEvent) => events.push(e) }, events };
 }
 
-function optionsWith(verify: () => Promise<UserIdentity | null>, sink: EventSink) {
-  const provider = { verifyRequest: verify } as unknown as IdentityProvider;
-  return {
-    mode: { type: "adapter", provider },
-    internalToken: "internal-token-not-used-here",
-    eventSink: sink,
-  } as unknown as AuthMiddlewareOptions;
+function optionsWith(
+  verify: () => Promise<VerifiedIdentity | null>,
+  sink: EventSink,
+): AuthMiddlewareOptions {
+  return { provider: stub<IdentityProvider>({ verifyRequest: verify }), eventSink: sink };
 }
 
 const req = () => new Request("https://example.test/v1/bootstrap");
@@ -43,7 +46,10 @@ const req = () => new Request("https://example.test/v1/bootstrap");
 describe("authenticateRequest — verdict vs unavailability", () => {
   it("maps a terminal null to 401 and audits it", async () => {
     const { sink, events } = recordingSink();
-    const result = await authenticateRequest(req(), optionsWith(async () => null, sink));
+    const result = await authenticateRequest(
+      req(),
+      optionsWith(async () => null, sink),
+    );
 
     expect(isAuthError(result)).toBe(true);
     expect((result as Response).status).toBe(401);
@@ -88,12 +94,20 @@ describe("authenticateRequest — verdict vs unavailability", () => {
         throw boom;
       }, sink),
     );
-    expect(await promise.then(() => null, (e) => e)).toBe(boom);
+    expect(
+      await promise.then(
+        () => null,
+        (e) => e,
+      ),
+    ).toBe(boom);
   });
 
   it("still returns the identity on success", async () => {
     const { sink } = recordingSink();
-    const result = await authenticateRequest(req(), optionsWith(async () => IDENTITY, sink));
+    const result = await authenticateRequest(
+      req(),
+      optionsWith(async () => ({ ...IDENTITY, grant: FIRST_PARTY_GRANT }), sink),
+    );
     expect(isAuthError(result)).toBe(false);
     expect((result as { identity?: UserIdentity }).identity).toEqual(IDENTITY);
   });

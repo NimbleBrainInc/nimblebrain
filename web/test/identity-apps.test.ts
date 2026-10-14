@@ -11,10 +11,10 @@ import {
 // `Runtime.getIdentitySource` in src/.
 
 describe("identity-apps", () => {
-  it("recognizes conversations, files, and automations as kernel identity apps", () => {
+  it("recognizes conversations, files, and tasks as kernel identity apps", () => {
     expect(isIdentityApp("conversations")).toBe(true);
     expect(isIdentityApp("files")).toBe(true);
-    expect(isIdentityApp("automations")).toBe(true);
+    expect(isIdentityApp("tasks")).toBe(true);
   });
 
   it("treats workspace apps and the platform nb source as NOT identity apps", () => {
@@ -32,18 +32,20 @@ describe("identity-apps", () => {
   it("the route segment is the bare source name (relative under /w/:slug)", () => {
     expect(identityAppSegment("conversations")).toBe("conversations");
     expect(identityAppSegment("files")).toBe("files");
-    expect(identityAppSegment("automations")).toBe("automations");
+    expect(identityAppSegment("tasks")).toBe("tasks");
   });
 
   it("maps an identity app to its workspace-scoped view route", () => {
     // The view is workspace-scoped now (the slug = the focused workspace); the
     // tools still dispatch bare through the identity door.
-    expect(identityAppRoute("conversations", "helix")).toBe("/w/helix/conversations");
-    expect(identityAppRoute("files", "user_u1")).toBe("/w/user_u1/files");
-    expect(identityAppRoute("automations", "acme")).toBe("/w/acme/automations");
+    expect(identityAppRoute("conversations", "003eba8844413cd9")).toBe(
+      "/w/003eba8844413cd9/conversations",
+    );
+    expect(identityAppRoute("files", "007dc0488ce56f9e")).toBe("/w/007dc0488ce56f9e/files");
+    expect(identityAppRoute("tasks", "000f7ed6658f9d30")).toBe("/w/000f7ed6658f9d30/tasks");
   });
 
-  it("identity set is exactly { conversations, files, automations }", () => {
-    expect([...IDENTITY_APP_SOURCES]).toEqual(["conversations", "files", "automations"]);
+  it("identity set is exactly { conversations, files, tasks }", () => {
+    expect([...IDENTITY_APP_SOURCES]).toEqual(["conversations", "files", "tasks"]);
   });
 });

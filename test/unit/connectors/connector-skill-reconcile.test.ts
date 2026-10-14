@@ -1,11 +1,16 @@
 import { describe, expect, it } from "bun:test";
+import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 import {
   bootReconcileConnectorSkills,
   type ConnectorSkillReconcileDeps,
   reconcileConnectorSkills,
 } from "../../../src/connectors/runtime/connector-skill-reconcile.ts";
-import type { ConnectorRef, ConnectorSkillLockEntry } from "../../../src/connectors/runtime/types.ts";
-import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
+import type {
+  BrokeredRef,
+  ConnectorRef,
+  ConnectorSkillLockEntry,
+} from "../../../src/connectors/runtime/types.ts";
+import { stub } from "../../helpers/stub.ts";
 
 const PIN = "v0.3.0";
 
@@ -18,19 +23,23 @@ function connector(fields: {
   serverName: string;
   skillsLock?: ConnectorSkillLockEntry[];
   composio?: { connectorId: string };
-  smithery?: { connectorId: string; connectionId: string; namespace: string; baseUrl: string };
+  brokered?: BrokeredRef;
 }): ConnectorRef {
   return {
     url: fields.url ?? "https://example.test/mcp",
     serverName: fields.serverName,
     ...(fields.skillsLock ? { skillsLock: fields.skillsLock } : {}),
     ...(fields.composio ? { composio: fields.composio } : {}),
-    ...(fields.smithery ? { smithery: fields.smithery } : {}),
+    ...(fields.brokered ? { brokered: fields.brokered } : {}),
   };
 }
 
-function catalog(entries: Record<string, Partial<ConnectorCatalogEntry>>): Map<string, ConnectorCatalogEntry> {
-  return new Map(Object.entries(entries)) as unknown as Map<string, ConnectorCatalogEntry>;
+function catalog(
+  entries: Record<string, Partial<ConnectorCatalogEntry>>,
+): Map<string, ConnectorCatalogEntry> {
+  return new Map(
+    Object.entries(entries).map(([key, entry]) => [key, stub<ConnectorCatalogEntry>(entry)]),
+  );
 }
 
 interface Captured {
@@ -70,11 +79,15 @@ function skillsLockOf(ref: ConnectorRef): ConnectorSkillLockEntry[] | undefined 
 
 describe("reconcileConnectorSkills", () => {
   it("refreshes a stale connector, skips one at the pin, passes non-connectors through", async () => {
-    const stale = connector({ serverName: "com-outlook-mcp", skillsLock: [lock("outlook", "v0.2.0")] });
+    const stale = connector({
+      serverName: "com-outlook-mcp",
+      skillsLock: [lock("outlook", "v0.2.0")],
+    });
     const current = connector({ serverName: "com-gmail-mcp", skillsLock: [lock("gmail", PIN)] });
-    const registry = { name: "@nimblebraininc/synapse-crm" } as ConnectorRef;
+    // biome-ignore lint/plugin/double-cast: a pre-URL registry row as it sits on disk, claimed as a ConnectorRef, which does not admit it
+    const registry = { name: "@nimblebraininc/synapse-crm" } as unknown as ConnectorRef;
     const { deps, cap } = buildDeps(
-      [{ id: "ws_a", connectors: [stale, current, registry] }],
+      [{ id: "ws_00079598e311c160", connectors: [stale, current, registry] }],
       (identity) => [lock(identity, PIN)],
     );
 
@@ -82,21 +95,27 @@ describe("reconcileConnectorSkills", () => {
 
     // Only the stale connector synced — reusing its authoritative lock identity.
     expect(cap.syncCalls).toEqual([
-      { identity: "outlook", serverName: "com-outlook-mcp", wsId: "ws_a" },
+      { identity: "outlook", serverName: "com-outlook-mcp", wsId: "ws_00079598e311c160" },
     ]);
     expect(result).toEqual({ workspacesScanned: 1, connectorsRefreshed: 1 });
     expect(cap.persisted).toHaveLength(1);
 
     const persisted = cap.persisted[0]!.connectors;
-    const updatedStale = persisted.find((b) => "serverName" in b && b.serverName === "com-outlook-mcp");
+    const updatedStale = persisted.find(
+      (b) => "serverName" in b && b.serverName === "com-outlook-mcp",
+    );
     expect(skillsLockOf(updatedStale!)?.[0]?.version).toBe(PIN);
     // Untouched entries survive verbatim.
-    expect(persisted.some((b) => "name" in b && b.name === "@nimblebraininc/synapse-crm")).toBe(true);
+    expect(persisted.some((b) => "name" in b && b.name === "@nimblebraininc/synapse-crm")).toBe(
+      true,
+    );
   });
 
   it("is a no-op (no sync, no persist) when every connector is already at the pin", async () => {
     const current = connector({ serverName: "com-gmail-mcp", skillsLock: [lock("gmail", PIN)] });
-    const { deps, cap } = buildDeps([{ id: "ws_a", connectors: [current] }], () => [lock("gmail", PIN)]);
+    const { deps, cap } = buildDeps([{ id: "ws_00079598e311c160", connectors: [current] }], () => [
+      lock("gmail", PIN),
+    ]);
 
     const result = await reconcileConnectorSkills(deps);
 
@@ -108,7 +127,7 @@ describe("reconcileConnectorSkills", () => {
   it("first-binds a DCR connector (no lock), deriving the identity from the canonical catalog name", async () => {
     const dcr = connector({ url: "https://api.dropbox.test/mcp", serverName: "com-dropbox-mcp" });
     const { deps, cap } = buildDeps(
-      [{ id: "ws_a", connectors: [dcr] }],
+      [{ id: "ws_00079598e311c160", connectors: [dcr] }],
       (identity) => (identity === "dropbox" ? [lock("dropbox", PIN)] : []),
       { byUrl: catalog({ "https://api.dropbox.test/mcp": { id: "com.dropbox/mcp" } }) },
     );
@@ -125,12 +144,18 @@ describe("reconcileConnectorSkills", () => {
     const composio = connector({
       url: "https://composio.session/ephemeral",
       serverName: "com-outlook-mcp",
-      composio: { connectorId: "com.microsoft/outlook" },
+      brokered: { provider: "composio", connectorId: "com.microsoft/outlook" },
     });
     const { deps, cap } = buildDeps(
-      [{ id: "ws_a", connectors: [composio] }],
+      [{ id: "ws_00079598e311c160", connectors: [composio] }],
       (identity) => (identity === "outlook" ? [lock("outlook", PIN)] : []),
-      { byId: catalog({ "com.microsoft/outlook": { composio: { toolkit: "outlook" } } as Partial<ConnectorCatalogEntry> }) },
+      {
+        byId: catalog({
+          "com.microsoft/outlook": {
+            composio: { toolkit: "outlook" },
+          } as Partial<ConnectorCatalogEntry>,
+        }),
+      },
     );
 
     await reconcileConnectorSkills(deps);
@@ -146,15 +171,18 @@ describe("reconcileConnectorSkills", () => {
     const smithery = connector({
       url: "https://api.smithery.ai/connect/ns/nb-abc/mcp",
       serverName: "ai-bassethound-mcp",
-      smithery: {
+      brokered: {
+        provider: "smithery",
         connectorId: "ai.bassethound/mcp",
-        connectionId: "nb-abc",
-        namespace: "ns",
-        baseUrl: "https://api.smithery.ai",
+        providerRef: {
+          connectionId: "nb-abc",
+          namespace: "ns",
+          baseUrl: "https://api.smithery.ai",
+        },
       },
     });
     const { deps, cap } = buildDeps(
-      [{ id: "ws_a", connectors: [smithery] }],
+      [{ id: "ws_00079598e311c160", connectors: [smithery] }],
       (identity) => (identity === "bassethound" ? [lock("bassethound", PIN)] : []),
       { byId: catalog({ "ai.bassethound/mcp": { id: "ai.bassethound/mcp" } }) },
     );
@@ -166,7 +194,7 @@ describe("reconcileConnectorSkills", () => {
 
   it("leaves a connector untouched and does not persist when the fetch returns nothing", async () => {
     const stale = connector({ serverName: "com-x-mcp", skillsLock: [lock("x", "v0.2.0")] });
-    const { deps, cap } = buildDeps([{ id: "ws_a", connectors: [stale] }], () => []); // 404 / transient
+    const { deps, cap } = buildDeps([{ id: "ws_00079598e311c160", connectors: [stale] }], () => []); // 404 / transient
 
     const result = await reconcileConnectorSkills(deps);
 

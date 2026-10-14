@@ -1,315 +1,78 @@
 // ---------------------------------------------------------------------------
-// WorkspaceNav — the workspace tree (the whole left-nav body).
+// WorkspaceNav — the focused workspace's views (the left-nav body).
 //
-// A single labelled WORKSPACES list. Each workspace is a disclosure row; the
-// FOCUSED workspace is expanded and the rest collapse to one row. Single-expand
-// is the point — it mirrors the runtime, which walls every session to exactly
-// one workspace at a time, so exactly one workspace is ever open here. The way
-// to "see another workspace's stuff" is to focus it (the accordion swings over).
+// One workspace at a time, flat: the runtime walls every session to exactly
+// one workspace, so the nav shows only that one's views, and the way to see
+// another workspace's is to switch to it (WorkspaceSwitcher, above this).
 //
-// Personal sorts first as the "Home · Personal" row. The focused workspace's
-// subtree nests its identity views (Conversations / Automations / Files), then
-// its APPS (People, Tasks, … — capped with a View-all overflow), then a
-// CONNECTORS row — each routed into `/w/<slug>/…`. The identity views' TOOLS
-// still dispatch bare through the identity door (see lib/identity-apps); the
-// slug here is the focused workspace = view scope, not a tool namespace.
+// Order: Overview, the identity views (Conversations / Tasks / Files),
+// then APPS (People, Tasks, … — the viewer's pinned apps first, capped with a
+// View-all overflow). Each routes
+// into `/w/<slug>/…`. An app that places several views is one entry; while it
+// is open its views list beneath it. The inbox is not here: it is the top
+// bar's bell (InboxToggle).
 //
-// This replaces the previous "Conversations / Automations / Files are global
-// top-level nav, workspaces are a sibling category" arrangement: those views
-// are workspace-scoped now (the runtime walls each session to one workspace and
-// there is no cross-workspace list), so the UI nests them under the workspace.
+// APPS holds everything installed. A connector with a view gets a row; the
+// ones without (tools the agent uses, with nothing to open) share one row,
+// their icons and a count, that opens the installed list where each is
+// configured. So every install shows up, and screen-less ones cost one row.
+// With nothing installed, a member who may install sees an "Add an app" row.
+// The header's "+" opens the catalog. The identity views' TOOLS still
+// dispatch bare through the identity door (see lib/identity-apps); the slug
+// here is the focused workspace = view scope, not a tool namespace.
+//
+// Collapsed (icon rail) renders the same destinations as icon buttons, each
+// named by a tooltip, with the "+" last.
 // ---------------------------------------------------------------------------
 
-import { ArrowRight, ChevronRight, Home, Plus } from "lucide-react";
-import { useCallback, useMemo } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { useNotifications } from "../../context/NotificationsContext";
+import { ArrowRight, LayoutGrid, Pin, Plus } from "lucide-react";
+import { useMemo } from "react";
+import { Link, NavLink, useLocation } from "react-router-dom";
+import type { InstalledConnector } from "../../api/client";
 import { useShellContext } from "../../context/ShellContext";
 import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
+import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import { resolveIcon } from "../../lib/icons";
 import { identityAppRoute, isIdentityApp } from "../../lib/identity-apps";
+import { usePinnedApps } from "../../lib/pinned-apps";
 import { cn } from "../../lib/utils";
-import { MAX_INLINE_APPS, workspaceApps } from "../../lib/workspace-apps";
-import { getWorkspaceAvatar } from "../../lib/workspace-avatar";
-import { orderWorkspacesForSidebar } from "../../lib/workspace-order";
+import {
+  appsByConnector,
+  MAX_INLINE_APPS,
+  orderApps,
+  type WorkspaceApp,
+  workspaceApps,
+} from "../../lib/workspace-apps";
 import { toSlug } from "../../lib/workspace-slug";
 import { ConnectorIcon } from "../connectors/ConnectorIcon";
+import { Tooltip } from "../ui/tooltip";
 
 interface WorkspaceNavProps {
-  /**
-   * Collapsed sidebar = icon-only mode. We render workspace avatars only (no
-   * header, no `+`, no expansion): nested rows have no room for labels and an
-   * icon-only tree reads as noise. Click an avatar to focus that workspace.
-   */
+  /** Icon rail: every destination as an icon button with a tooltip. */
   collapsed?: boolean;
 }
 
 export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
-  const wsCtx = useWorkspaceContext();
-  const navigate = useNavigate();
-
-  const ordered = useMemo(() => orderWorkspacesForSidebar(wsCtx.workspaces), [wsCtx.workspaces]);
-  const focusedId = wsCtx.activeWorkspace?.id;
-
-  const handleSelect = useCallback(
-    (ws: WorkspaceInfo) => {
-      // React-layer equality guard mirrors the api/client setter's T009
-      // invariant: re-focusing the active workspace is a no-op for
-      // setActiveWorkspaceId (it must not fire the bridge reset hook).
-      if (wsCtx.activeWorkspace?.id !== ws.id) wsCtx.setActiveWorkspace(ws);
-      // Every workspace opens its own overview — Personal included. Personal is
-      // just the workspace labelled "Home · Personal", not a detour through the
-      // global landing grid.
-      navigate(`/w/${toSlug(ws.id)}/`);
-    },
-    [wsCtx, navigate],
-  );
-
-  const handleAdd = useCallback(() => navigate("/org/workspaces"), [navigate]);
-
-  if (wsCtx.loading) {
-    return (
-      <div
-        className={cn("text-xs", collapsed ? "px-2 py-2 text-center" : "px-4 py-2")}
-        data-testid="sidebar-workspace-nav-loading"
-      >
-        {collapsed ? "…" : "Loading workspaces…"}
-      </div>
-    );
-  }
-
-  if (collapsed) {
-    return (
-      <div
-        className="flex flex-col mt-2"
-        data-testid="sidebar-workspace-nav"
-        data-workspace-count={ordered.length}
-        data-collapsed="true"
-      >
-        {ordered.map((ws) => (
-          <WorkspaceAvatarButton
-            key={ws.id}
-            workspace={ws}
-            focused={ws.id === focusedId}
-            onSelect={() => handleSelect(ws)}
-          />
-        ))}
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="flex flex-col mt-3"
-      data-testid="sidebar-workspace-nav"
-      data-workspace-count={ordered.length}
-      data-collapsed="false"
-    >
-      <div className="flex items-center justify-between px-4 pt-1 pb-1">
-        <div className="text-2xs font-bold tracking-[0.08em] uppercase">Workspaces</div>
-        <button
-          type="button"
-          onClick={handleAdd}
-          aria-label="Add workspace"
-          title="Add workspace"
-          data-testid="sidebar-workspace-add"
-          className="p-1 rounded-sm hover:bg-sidebar-foreground/10 transition-colors"
-        >
-          <Plus className="size-3.5" />
-        </button>
-      </div>
-
-      {ordered.length === 0 ? (
-        <div className="px-4 py-2 text-xs italic" data-testid="sidebar-workspace-nav-empty">
-          No workspaces
-        </div>
-      ) : (
-        ordered.map((ws) => (
-          <WorkspaceTreeNode
-            key={ws.id}
-            workspace={ws}
-            focused={ws.id === focusedId}
-            onSelect={() => handleSelect(ws)}
-          />
-        ))
-      )}
-
-      <button
-        type="button"
-        onClick={handleAdd}
-        data-testid="sidebar-workspace-new"
-        className="flex items-center gap-2 mx-2 my-px px-3 py-1.5 rounded-sm text-sm hover:bg-sidebar-foreground/5 transition-colors"
-      >
-        <Plus className="size-[18px] shrink-0" />
-        <span className="flex-1 truncate text-left">New workspace</span>
-      </button>
-    </div>
-  );
+  const { activeWorkspace } = useWorkspaceContext();
+  if (!activeWorkspace) return null;
+  return <WorkspaceViews workspace={activeWorkspace} collapsed={collapsed} />;
 }
 
-// A workspace disclosure node: the header row (chevron + avatar + name) and its
-// nested contents. The contents stay mounted whether or not the node is focused
-// so that BOTH expand and collapse animate — the wrapper transitions its height
-// (grid-rows 0fr↔1fr, the pure-CSS route to/from `auto`) plus a fade. On a
-// switch the leaving node collapses while the entering node expands, in sync.
-function WorkspaceTreeNode({
+function WorkspaceViews({
   workspace,
-  focused,
-  onSelect,
+  collapsed,
 }: {
   workspace: WorkspaceInfo;
-  focused: boolean;
-  onSelect: () => void;
+  collapsed: boolean;
 }) {
-  return (
-    <div
-      className="flex flex-col"
-      data-testid="sidebar-workspace-node"
-      data-workspace-id={workspace.id}
-    >
-      <WorkspaceHeaderRow workspace={workspace} focused={focused} onSelect={onSelect} />
-      <div
-        // grid-rows 0fr→1fr animates height to/from content size; the inner
-        // `overflow-hidden` + `min-h-0` clips during the transition. This is an
-        // in-place disclosure (no slide/parallax), so it plays even under
-        // prefers-reduced-motion — that setting targets large-scale motion, and
-        // suppressing this would leave the chevron rotating while the panel
-        // snapped, which reads as broken.
-        className={cn(
-          "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
-          focused ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
-        )}
-        data-testid="sidebar-workspace-contents"
-        data-workspace-id={workspace.id}
-        data-expanded={focused ? "true" : "false"}
-        // Collapsed contents are inert — removed from tab order + the
-        // accessibility tree, so only the focused node's views are reachable.
-        inert={focused ? undefined : true}
-      >
-        <div className="min-h-0 overflow-hidden">
-          <WorkspaceContents workspace={workspace} focused={focused} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// The clickable workspace header row: a disclosure chevron, the avatar (or a
-// Home glyph for Personal), and the name. The whole row focuses the workspace —
-// the chevron is a state indicator, not a separate toggle, since exactly one
-// workspace (the focused one) is ever expanded.
-function WorkspaceHeaderRow({
-  workspace,
-  focused,
-  onSelect,
-}: {
-  workspace: WorkspaceInfo;
-  focused: boolean;
-  onSelect: () => void;
-}) {
-  const isPersonal = workspace.isPersonal === true;
-  const label = isPersonal ? "Home · Personal" : workspace.name;
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      // The focused workspace is a location indicator, not the active route —
-      // the nested NavLink carries aria-current="page" for the actual view.
-      aria-current={focused ? "location" : undefined}
-      aria-expanded={focused}
-      title={label}
-      data-testid="sidebar-workspace-header"
-      data-workspace-id={workspace.id}
-      data-focused={focused ? "true" : "false"}
-      data-is-personal={isPersonal ? "true" : "false"}
-      className={cn(
-        "group flex items-center gap-1.5 text-sm transition-colors text-left rounded-sm mx-2 my-px px-1.5 py-1.5",
-        focused
-          ? "bg-sidebar-foreground/10 font-medium text-foreground"
-          : "font-normal hover:bg-sidebar-foreground/5",
-      )}
-    >
-      <ChevronRight
-        aria-hidden="true"
-        className={cn("size-3.5 shrink-0 transition-transform", focused && "rotate-90")}
-      />
-      <WorkspaceGlyph workspace={workspace} personal={isPersonal} />
-      <span className="flex-1 truncate">{label}</span>
-    </button>
-  );
-}
-
-// The avatar slot. Personal shows a Home glyph (it's home, not a named team);
-// every other workspace shows its deterministic letter+color avatar.
-function WorkspaceGlyph({ workspace, personal }: { workspace: WorkspaceInfo; personal: boolean }) {
-  if (personal) {
-    return (
-      <span
-        aria-hidden="true"
-        className="size-[18px] shrink-0 flex items-center justify-center rounded-sm bg-sidebar-foreground/10"
-      >
-        <Home className="size-3" />
-      </span>
-    );
-  }
-  const avatar = getWorkspaceAvatar(workspace);
-  return (
-    <span
-      aria-hidden="true"
-      data-testid="workspace-avatar"
-      className="size-[18px] shrink-0 flex items-center justify-center rounded-sm text-white text-3xs font-semibold"
-      style={{ backgroundColor: avatar.color }}
-    >
-      {avatar.letter}
-    </span>
-  );
-}
-
-// Avatar-only button for the collapsed (icon-only) sidebar.
-function WorkspaceAvatarButton({
-  workspace,
-  focused,
-  onSelect,
-}: {
-  workspace: WorkspaceInfo;
-  focused: boolean;
-  onSelect: () => void;
-}) {
-  const isPersonal = workspace.isPersonal === true;
-  const label = isPersonal ? "Home · Personal" : workspace.name;
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-label={label}
-      aria-current={focused ? "location" : undefined}
-      title={label}
-      data-testid="sidebar-workspace-header"
-      data-workspace-id={workspace.id}
-      data-focused={focused ? "true" : "false"}
-      data-is-personal={isPersonal ? "true" : "false"}
-      className={cn(
-        "flex items-center justify-center p-1.5 mx-2 my-px rounded-sm transition-colors",
-        focused ? "bg-sidebar-foreground/10" : "hover:bg-sidebar-foreground/5",
-      )}
-    >
-      <WorkspaceGlyph workspace={workspace} personal={isPersonal} />
-    </button>
-  );
-}
-
-// A workspace's subtree: identity views, then APPS, then CONNECTORS. Indented
-// under the header with a connecting rule (Notion/Linear tree look). Rendered
-// for every node (so collapse animates), but only the focused node shows its
-// apps + a live connector count — a collapsed node is mid-transition and hidden.
-function WorkspaceContents({ workspace, focused }: { workspace: WorkspaceInfo; focused: boolean }) {
   const shell = useShellContext();
-  const { iconFor, connectorCount } = useWorkspaceAppIcons();
-  const { unread } = useNotifications();
+  const { iconFor, connectors } = useWorkspaceAppIcons();
+  // Installing writes the workspace, so only a member who may write it gets the "+".
+  const canInstall = useCanWriteActiveWorkspace();
   const slug = toSlug(workspace.id);
 
-  // Identity views (Conversations / Automations / Files): the bare-"sidebar"
+  // Identity views (Conversations / Tasks / Files): the bare-"sidebar"
   // placements that are identity-owned, priority-ordered.
   const identityViews = useMemo(() => {
     const placements = shell?.forSlot("sidebar") ?? [];
@@ -323,167 +86,386 @@ function WorkspaceContents({ workspace, focused }: { workspace: WorkspaceInfo; f
   // so without the gate a switch would briefly paint the previous workspace's
   // apps (mirrors the overview grid's readiness check).
   const ready = shell != null && shell.shellWorkspaceId === workspace.id;
+  const { pinned, toggle: togglePin } = usePinnedApps(workspace.id);
   const apps = useMemo(
-    () => (ready && shell ? workspaceApps(shell.forSlot("sidebar")) : []),
-    [ready, shell],
+    () =>
+      ready && shell
+        ? orderApps(appsByConnector(workspaceApps(shell.forSlot("sidebar"))), pinned)
+        : [],
+    [ready, shell, pinned],
   );
-  const shownApps = apps.slice(0, MAX_INLINE_APPS);
+  const shownApps = collapsed ? apps : apps.slice(0, MAX_INLINE_APPS);
   const hasAppOverflow = apps.length > shownApps.length;
 
+  // Installed connectors with no view of their own. Anything installed that is
+  // not an app above lands here, so each install appears exactly once. Read
+  // only once the list names this workspace (it lags a switch, like the shell).
+  const toolsOnly = useMemo(() => {
+    if (!ready || connectors?.workspaceId !== workspace.id) return [];
+    const withViews = new Set(apps.map((app) => app.serverName));
+    return connectors.installed.filter(
+      (c) => !withViews.has(c.serverName) && !isIdentityApp(c.serverName),
+    );
+  }, [ready, connectors, workspace.id, apps]);
+  const hasSection = shownApps.length > 0 || toolsOnly.length > 0 || canInstall;
+  // Nothing installed, known only once both lists name this workspace. The
+  // header's "+" hides at rest on a pointer device, so the empty section says
+  // what to do in a row of its own.
+  const empty =
+    ready &&
+    connectors?.workspaceId === workspace.id &&
+    apps.length === 0 &&
+    toolsOnly.length === 0;
+  // A connector's display name (its catalog title), from the same installed list.
+  const nameFor = (serverName: string) =>
+    connectors?.workspaceId === workspace.id
+      ? connectors.installed.find((c) => c.serverName === serverName)?.displayName
+      : undefined;
+
   return (
-    <div className="ml-[18px] mr-2 mb-1 mt-px flex flex-col border-l border-sidebar-foreground/10 pl-2">
+    <div
+      className={cn("group/nav flex flex-col gap-px", collapsed ? "items-center px-3" : "px-2")}
+      data-testid="sidebar-workspace-nav"
+      data-workspace-id={workspace.id}
+      data-collapsed={collapsed ? "true" : "false"}
+    >
+      <ViewLink to={`/w/${slug}/`} icon={LayoutGrid} label="Overview" end collapsed={collapsed} />
       {identityViews.map((p) => (
-        <NestedNavLink
+        <ViewLink
           key={p.resourceUri}
           to={identityAppRoute(p.serverName, slug)}
-          icon={p.icon}
+          icon={resolveIcon(p.icon)}
           label={p.label ?? p.serverName}
           end
+          collapsed={collapsed}
         />
       ))}
 
-      {/* The inbox sits with the identity views, not under Apps: it belongs to
-          the workspace rather than to any connector, and the count is the
-          FOCUSED workspace's unread — a collapsed node omits it so one
-          workspace's number never appears on another's row mid-collapse. */}
-      <NestedNavLink
-        to={`/w/${slug}/notifications`}
-        icon="bell"
-        label="Inbox"
-        count={focused ? unread : undefined}
-      />
-
-      {shownApps.length > 0 && (
-        <>
-          <SubLabel>Apps</SubLabel>
-          {shownApps.map((p) => (
-            <NestedAppLink
-              key={p.resourceUri}
-              to={`/w/${slug}/app/${p.route}`}
-              label={p.label ?? p.route ?? "App"}
-              serverName={p.serverName}
-              iconUrl={iconFor(p.serverName)}
-            />
-          ))}
-          {hasAppOverflow && (
-            <Link
-              to={`/w/${slug}/`}
-              data-testid="sidebar-workspace-view-all"
-              className="flex items-center gap-1.5 px-2 py-1 rounded-sm text-xs hover:bg-sidebar-foreground/5 transition-colors"
-            >
-              <ArrowRight className="size-3 shrink-0" />
-              <span className="truncate">View all {apps.length} apps</span>
-            </Link>
-          )}
-        </>
+      {hasSection &&
+        (collapsed ? (
+          <div aria-hidden="true" className="my-1.5 h-px w-6 bg-sidebar-border" />
+        ) : (
+          <div className="flex items-center justify-between pt-3 pr-1 pb-1 pl-2">
+            <span className="text-2xs font-bold tracking-[0.08em] uppercase">Apps</span>
+            {canInstall && <AddLink slug={slug} collapsed={false} />}
+          </div>
+        ))}
+      {shownApps.map((app) => (
+        <AppEntry
+          key={app.serverName}
+          app={app}
+          slug={slug}
+          name={nameFor(app.serverName)}
+          iconUrl={iconFor(app.serverName)}
+          collapsed={collapsed}
+          pinned={pinned.includes(app.serverName)}
+          onTogglePin={() => togglePin(app.serverName)}
+        />
+      ))}
+      {hasAppOverflow && (
+        <Link
+          to={`/w/${slug}/`}
+          data-testid="sidebar-workspace-view-all"
+          className="flex items-center gap-2.5 rounded-sm px-2 py-1 text-xs transition-colors hover:bg-sidebar-foreground/5"
+        >
+          <ArrowRight className="size-3 shrink-0" />
+          <span className="truncate">View all {apps.length} apps</span>
+        </Link>
       )}
 
-      <SubLabel>Connectors</SubLabel>
-      {/* Connectors — the workspace's installed tools. Routes to its settings
-          tab; sub-routes (browse, detail) keep it lit, so not `end`. The count
-          is the focused workspace's installed connectors (the provider holds
-          one workspace's set); a collapsed node omits it to avoid showing the
-          focused workspace's number on a different row mid-collapse. */}
-      <NestedNavLink
-        to={`/w/${slug}/settings/connectors`}
-        icon="plug"
-        label="Connectors"
-        count={focused ? connectorCount : undefined}
-      />
+      {toolsOnly.length > 0 && (
+        <ToolsOnlyLink
+          to={`/w/${slug}/settings/connectors`}
+          connectors={toolsOnly}
+          afterApps={shownApps.length > 0}
+          collapsed={collapsed}
+        />
+      )}
+      {!collapsed && empty && canInstall && (
+        <Link
+          to={`/w/${slug}/settings/connectors/browse`}
+          data-testid="sidebar-workspace-apps-empty"
+          className={cn(rowClass(false, false), "text-muted-foreground")}
+        >
+          <Plus className="size-4 shrink-0" />
+          <span className="flex-1 truncate">Add an app</span>
+        </Link>
+      )}
+      {collapsed && canInstall && <AddLink slug={slug} collapsed />}
     </div>
   );
 }
 
-function SubLabel({ children }: { children: React.ReactNode }) {
+// The "+" that opens the connector catalog. Beside the APPS header it shows
+// while the pointer is over the nav or it has keyboard focus; `hover:` applies
+// only on devices that hover, so a touch screen shows it at rest. In the rail
+// it is an icon button like the rows above it.
+function AddLink({ slug, collapsed }: { slug: string; collapsed: boolean }) {
+  const label = "Add apps and tools";
   return (
-    <div className="px-2 pt-2 pb-0.5 text-2xs font-bold tracking-[0.08em] uppercase">
-      {children}
-    </div>
+    <Tooltip label={label} side="right">
+      <Link
+        to={`/w/${slug}/settings/connectors/browse`}
+        aria-label={label}
+        data-testid="sidebar-add-connector"
+        className={cn(
+          "flex items-center justify-center rounded-sm transition-colors hover:bg-sidebar-foreground/10 hover:text-foreground",
+          collapsed
+            ? "size-9"
+            : "size-5 transition-opacity [@media(hover:hover)]:opacity-0 group-hover/nav:opacity-100 focus-visible:opacity-100",
+        )}
+      >
+        <Plus className={collapsed ? "size-4" : "size-3.5"} />
+      </Link>
+    </Tooltip>
   );
 }
 
-// A nested workspace view with a lucide icon — identity views + Connectors.
-// Optional trailing count badge (right-aligned, muted).
-function NestedNavLink({
+// The installed connectors with no view, as one row: up to three of their
+// icons, overlapped, and a count (or the name, when there is one). Lit on the
+// installed list and its sub-pages, so not `end`.
+const STACKED_ICONS = 3;
+
+function ToolsOnlyLink({
   to,
-  icon,
-  label,
-  end,
-  count,
+  connectors,
+  afterApps,
+  collapsed,
 }: {
   to: string;
-  icon?: string;
+  connectors: InstalledConnector[];
+  afterApps: boolean;
+  collapsed: boolean;
+}) {
+  const names = connectors.map((c) => c.displayName).join(", ");
+  const [only] = connectors;
+  const label =
+    connectors.length === 1 && only
+      ? only.displayName
+      : `${connectors.length} ${afterApps ? "more " : ""}connected`;
+  const shown = connectors.slice(0, collapsed ? 1 : STACKED_ICONS);
+  const link = (
+    <NavLink
+      to={to}
+      aria-label={collapsed ? `${label}: ${names}` : undefined}
+      title={collapsed ? undefined : names}
+      data-testid="sidebar-workspace-tools"
+      className={({ isActive }) => rowClass(isActive, collapsed)}
+    >
+      <span className="flex shrink-0 -space-x-1">
+        {shown.map((c) => (
+          <ConnectorIcon
+            key={c.serverName}
+            name={c.displayName}
+            iconUrl={c.iconUrl}
+            className="size-4 rounded-xs text-3xs ring-2 ring-sidebar"
+          />
+        ))}
+      </span>
+      {!collapsed && <span className="flex-1 truncate">{label}</span>}
+    </NavLink>
+  );
+  return collapsed ? (
+    <Tooltip label={names} side="right">
+      {link}
+    </Tooltip>
+  ) : (
+    link
+  );
+}
+
+const rowClass = (isActive: boolean, collapsed: boolean) =>
+  cn(
+    "flex items-center rounded-sm text-sm transition-colors",
+    collapsed ? "size-9 justify-center" : "gap-2.5 px-2 min-h-8",
+    isActive
+      ? "bg-sidebar-active font-medium text-sidebar-active-foreground"
+      : "font-normal hover:bg-sidebar-foreground/5 hover:text-foreground",
+  );
+
+// A workspace view with a lucide icon.
+function ViewLink({
+  to,
+  icon: Icon,
+  label,
+  end,
+  collapsed,
+}: {
+  to: string;
+  icon: React.ComponentType<{ className?: string }>;
   label: string;
   end?: boolean;
-  count?: number;
+  collapsed: boolean;
 }) {
-  const Icon = resolveIcon(icon);
-  return (
+  const link = (
     <NavLink
       to={to}
       end={end}
-      title={label}
+      aria-label={collapsed ? label : undefined}
       data-testid="sidebar-workspace-view"
-      className={({ isActive }) =>
-        cn(
-          "flex items-center gap-2 text-sm transition-colors rounded-sm px-2 py-1",
-          isActive
-            ? "bg-sidebar-foreground/10 font-medium text-foreground"
-            : "font-normal hover:bg-sidebar-foreground/5",
-        )
-      }
+      className={({ isActive }) => rowClass(isActive, collapsed)}
     >
-      <Icon className="size-[18px] shrink-0" />
-      <span className="flex-1 truncate">{label}</span>
-      <CountBadge count={count} />
+      <Icon className="size-4 shrink-0" />
+      {!collapsed && <span className="flex-1 truncate">{label}</span>}
     </NavLink>
+  );
+  return collapsed ? (
+    <Tooltip label={label} side="right">
+      {link}
+    </Tooltip>
+  ) : (
+    link
   );
 }
 
-// A nested workspace app with a brand icon (letter-avatar fallback). Exact-match
+// One app. With a single view it is that view's link. With several it is a row
+// that opens the first view, and while any of its views is on screen they list
+// beneath it: the views are the app's own navigation, so they appear when the
+// app is in use and stay out of the nav otherwise. The open view carries the
+// highlight and `aria-current`; the app row only reads as open.
+function AppEntry({
+  app,
+  slug,
+  name,
+  iconUrl,
+  collapsed,
+  pinned,
+  onTogglePin,
+}: {
+  app: WorkspaceApp;
+  slug: string;
+  /** The connector's display name; until the installed list lands, the first view's label. */
+  name?: string;
+  iconUrl?: string;
+  collapsed: boolean;
+  pinned: boolean;
+  onTogglePin: () => void;
+}) {
+  const { pathname } = useLocation();
+  const [first] = app.views;
+  if (!first) return null;
+  const to = (view: WorkspaceApp["views"][number]) => `/w/${slug}/app/${view.route}`;
+  const viewLabel = (view: WorkspaceApp["views"][number]) => view.label ?? view.route ?? "App";
+  if (app.views.length === 1) {
+    return (
+      <AppLink
+        to={to(first)}
+        label={viewLabel(first)}
+        iconUrl={iconUrl}
+        serverName={app.serverName}
+        collapsed={collapsed}
+        pinned={pinned}
+        onTogglePin={onTogglePin}
+      />
+    );
+  }
+  const open = app.views.some((view) => pathname === to(view));
+  return (
+    <>
+      <AppLink
+        to={to(first)}
+        label={name ?? viewLabel(first)}
+        iconUrl={iconUrl}
+        serverName={app.serverName}
+        collapsed={collapsed}
+        open={open}
+        pinned={pinned}
+        onTogglePin={onTogglePin}
+      />
+      {open && !collapsed && (
+        <div className="flex flex-col gap-px" data-testid="sidebar-workspace-app-views">
+          {app.views.map((view) => (
+            <NavLink
+              key={view.resourceUri}
+              to={to(view)}
+              end
+              data-testid="sidebar-workspace-app-view"
+              className={({ isActive }) => cn(rowClass(isActive, false), "pl-[2.125rem]")}
+            >
+              <span className="flex-1 truncate">{viewLabel(view)}</span>
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+// A workspace app with a brand icon (letter-avatar fallback). Exact-match
 // active: app routes are leaf paths, so the URL maps to one placement (a
 // `startsWith` would mis-light `crm` when viewing a sibling `crm-archive`).
-function NestedAppLink({
+// `open` is set by an app whose views list beneath it: the row then reads as
+// open rather than current, because the current page is one of its views.
+// Expanded, the pin toggle is a sibling of the link, laid over its right edge
+// (an interactive control cannot nest in a link), as on the home grid's tiles.
+// The rail has no room for it; pinned apps still lead there.
+function AppLink({
   to,
   label,
   serverName,
   iconUrl,
+  collapsed,
+  open,
+  pinned,
+  onTogglePin,
 }: {
   to: string;
   label: string;
   serverName: string;
   iconUrl?: string;
+  collapsed: boolean;
+  open?: boolean;
+  pinned: boolean;
+  onTogglePin: () => void;
 }) {
-  const location = useLocation();
-  const isActive = location.pathname === to;
-  return (
+  const exact = useLocation().pathname === to;
+  // Collapsed, the views are not listed, so the app's icon is what marks the page.
+  const isActive = open === undefined ? exact : open && collapsed;
+  const link = (
     <Link
       to={to}
-      title={label}
+      aria-label={collapsed ? label : undefined}
       data-testid="sidebar-workspace-app"
       data-app-route={serverName}
       data-is-active={isActive ? "true" : "false"}
       aria-current={isActive ? "page" : undefined}
       className={cn(
-        "flex items-center gap-2 text-sm transition-colors rounded-sm px-2 py-1",
-        isActive
-          ? "bg-sidebar-foreground/10 font-medium text-foreground"
-          : "font-normal hover:bg-sidebar-foreground/5",
+        rowClass(isActive, collapsed),
+        !collapsed && "pr-7",
+        open && "font-medium text-foreground",
       )}
     >
-      <ConnectorIcon name={label} iconUrl={iconUrl} className="size-[18px] rounded-xs text-3xs" />
-      <span className="flex-1 truncate">{label}</span>
+      <ConnectorIcon name={label} iconUrl={iconUrl} className="size-4 rounded-xs text-3xs" />
+      {!collapsed && <span className="flex-1 truncate">{label}</span>}
     </Link>
   );
-}
-
-// A right-aligned muted count. Renders nothing for undefined / zero — an empty
-// list shows no badge rather than a "0".
-function CountBadge({ count }: { count?: number }) {
-  if (count === undefined || count <= 0) return null;
+  if (collapsed) {
+    return (
+      <Tooltip label={label} side="right">
+        {link}
+      </Tooltip>
+    );
+  }
   return (
-    <span data-testid="sidebar-workspace-count" className="shrink-0 text-2xs tabular-nums">
-      {count}
-    </span>
+    <div className="group/app relative">
+      {link}
+      <button
+        type="button"
+        onClick={onTogglePin}
+        aria-label={pinned ? `Unpin ${label}` : `Pin ${label} to the top`}
+        aria-pressed={pinned}
+        title={pinned ? "Unpin" : "Pin to top"}
+        data-testid="sidebar-workspace-app-pin"
+        data-app-route={serverName}
+        className={cn(
+          "absolute top-1/2 right-1 -translate-y-1/2 rounded-xs p-1 transition-opacity",
+          "hover:bg-sidebar-foreground/10 hover:text-foreground",
+          "focus-visible:opacity-100 group-hover/app:opacity-100 [@media(pointer:coarse)]:opacity-100",
+          pinned ? "opacity-60" : "opacity-0",
+        )}
+      >
+        <Pin className={cn("size-3", pinned && "fill-current")} aria-hidden="true" />
+      </button>
+    </div>
   );
 }

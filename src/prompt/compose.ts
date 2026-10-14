@@ -1,5 +1,4 @@
-// `ParticipantInfo` was the participants-section input; gone post Stage 1.
-// Stage 4 reintroduces a participants concept with policy gating.
+import { renderBrandName } from "../brand/index.ts";
 import type { SkillCatalogEntry } from "../skills/catalog.ts";
 import type { LoadedBy } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
@@ -19,13 +18,16 @@ export type ContainmentTag =
   | "app-instructions"
   | "app-custom-instructions"
   | "app-description"
+  | "app-resource-templates"
   | "app-guide"
   | "app-state"
-  | "workspace-instructions"
   | "layer3-skill"
   | "connector-skill"
+  | "connector-instructions"
   | "activated-skill"
-  | "skill-instructions";
+  | "skill-instructions"
+  | "run-input"
+  | "judge-feedback";
 
 /**
  * Wrap untrusted `body` in `<tag>…</tag>`, neutralising every closing form of
@@ -63,8 +65,9 @@ export function wrapContained(tag: ContainmentTag, body: string): string {
  * `subItems` is populated for sections that aggregate multiple operator-
  * authored entries (apps, layer3 skills). It lets debug tools render per-
  * item attribution and detect content drift on a per-skill basis without
- * re-parsing the section text; the apps entries also carry the connector
- * the `connector` filter matches on.
+ * re-parsing the section text; an app entry, and a skill entry rebuilt from a
+ * recorded `skills.loaded` event, also carry the connector the `connector`
+ * filter matches on.
  */
 export interface TracedLayer {
   kind: TracedLayerKind;
@@ -77,7 +80,7 @@ export interface TracedLayer {
   segment: "stable" | "volatile";
   /**
    * Stable identifier. Filesystem path for file-backed layers; `nb:<slug>`
-   * for runtime-derived layers; `instructions://<scope>` for overlays.
+   * for runtime-derived layers.
    */
   id: string;
   /** Human-readable origin (display string for the debug tool's row UI). */
@@ -87,9 +90,8 @@ export interface TracedLayer {
   /** Approximate tokens for `text`. */
   tokens: number;
   /**
-   * Connector attribution, when applicable — the apps section and the
-   * focused-app section. Used by the compose-effective-context tool's
-   * `connector` filter.
+   * Connector attribution of a whole section (the focused-app section). Used
+   * by the compose-effective-context tool's `connector` filter.
    */
   connector?: string;
   /**
@@ -107,7 +109,6 @@ export type TracedLayerKind =
   | "user_prefs"
   | "current_date"
   | "workspace_context"
-  | "workspace_overlay"
   | "layer3_skills"
   | "skill_catalog"
   | "apps"
@@ -138,10 +139,10 @@ export interface ComposedPrompt {
  * Volatility-tiered system composition.
  *
  * `stableSystem` is the cacheable system prefix (identity, scoped skills,
- * overlays, apps). `volatileHead` is the per-turn-volatile content (current
+ * apps). `volatileHead` is the per-turn-volatile content (current
  * date, app/focused-app state, matched skill) wrapped in a single
  * `<runtime-context>` block — the runtime prepends it to the latest user
- * message so a per-turn change no longer rewrites the cached system prefix.
+ * message so a per-turn change does not rewrite the cached system prefix.
  * `volatileHead` is "" when there is no volatile content.
  *
  * `layers` and `totalTokens` mirror `ComposedPrompt` (the full set, both tiers).
@@ -173,10 +174,10 @@ const VOLATILE_KINDS: ReadonlySet<TracedLayerKind> = new Set([
  * record inert instead of throwing out of `composeSystemPrompt` on every turn.
  * Identity on strings, so the common path is unchanged.
  */
-function sanitizeLineField(value: string): string {
+export function sanitizeLineField(value: string): string {
   return (
     String(value)
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — stripping control chars is the security mitigation
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: a newline or control byte in a field could open a forged prompt line, so matching them is the mitigation
       .replace(/[\n\r\x00-\x1f\x7f]/g, " ")
       .trim()
   );
@@ -185,7 +186,7 @@ function sanitizeLineField(value: string): string {
 /** Skills with priority ≤ this threshold are core context (identity layer). */
 export const CORE_PRIORITY_THRESHOLD = 10;
 
-export const DEFAULT_IDENTITY = `You are a helpful assistant powered by NimbleBrain.
+const DEFAULT_IDENTITY_TEMPLATE = `You are a helpful assistant powered by {{brand.name}}.
 
 You have access to tools provided via the API. When a user asks you to do something, use your tools to accomplish it. Do not guess or make up answers when you have tools that can find the real answer. If you're unsure, try using a tool first.
 
@@ -194,7 +195,16 @@ Be concise and direct. Lead with actions, not explanations.
 IMPORTANT: Only use tools that are provided to you via the tools parameter. Never fabricate tool calls as XML, JSON, or any other text format.`;
 
 /**
- * Identity framing for task-mode invocations (e.g. scheduled automations,
+ * The fallback identity when no core-context skill produced content. Rendered
+ * with the same `{{brand.name}}` substitution as the vendored `soul.md`, so the
+ * two cannot disagree about whose assistant this is.
+ */
+export function defaultIdentity(): string {
+  return renderBrandName(DEFAULT_IDENTITY_TEMPLATE);
+}
+
+/**
+ * Identity framing for task-mode invocations (e.g. scheduled tasks,
  * eval runs, future webhook-triggered jobs). Prepended above the core
  * skills when `composeSystemPrompt({ mode: "task" })`. The runtime owns
  * this contract; connectors cannot spoof it by wrapping the user message.
@@ -209,7 +219,7 @@ Produce a finished, self-contained deliverable as your final response. Format as
 You still have full access to tools and can call them as many times as the task needs. The deliverable is your final assistant message, not an intermediate one.`;
 
 /** Invocation mode. `chat` is the conversational surface; `task` is the
- *  unattended artifact-production surface (automations, evals, etc.). */
+ *  unattended artifact-production surface (tasks, evals, etc.). */
 export type ComposeMode = "chat" | "task";
 
 /** Lightweight app descriptor for system prompt injection. */
@@ -230,17 +240,14 @@ export interface PromptAppInfo {
    * say over how the agent should behave when using this connector.
    */
   customInstructions?: string;
+  /**
+   * URI shapes of the records this connector serves (its
+   * `resources/templates/list`, already filtered and bounded by
+   * `readableRecordTemplates`). Rendered inside `<app-resource-templates>` so
+   * the model knows `nb__read_resource` reads them.
+   */
+  resourceTemplates?: Array<{ uriTemplate: string; name: string }>;
   ui: { name: string } | null;
-}
-
-/**
- * Per-scope overlay text injected after the identity layer. Each scope
- * is independent: an empty string (or undefined) skips the layer entirely,
- * leaving no marker tag in the assembled prompt.
- */
-export interface OverlayLayers {
-  /** Workspace-level overlay. Empty or absent skips the layer entirely. */
-  workspace?: string;
 }
 
 /**
@@ -271,7 +278,7 @@ export interface FocusedAppInfo {
   referenceResourceUri?: string;
 }
 
-/** App state entry from the bridge's appStateStore. */
+/** App state a live app view pushed via `ui/update-model-context` (the web bridge's `getAppState`). */
 export interface AppStateInfo {
   state: Record<string, unknown>;
   summary?: string;
@@ -297,7 +304,7 @@ export interface WorkspaceContext {
  * Compose the system prompt from context skills and an optional matched skill.
  *
  * Context skills are sorted by priority (caller's responsibility).
- * If no context skills are provided, DEFAULT_IDENTITY is used as fallback.
+ * If no context skills are provided, `defaultIdentity()` is used as fallback.
  * The matched skill body is appended last.
  * If apps are provided and non-empty, an "## Installed Apps" section is injected.
  */
@@ -310,7 +317,6 @@ export function composeSystemPrompt(
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
   workspaceContext?: WorkspaceContext,
-  overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
   mode?: ComposeMode,
   skillCatalog?: SkillCatalogEntry[],
@@ -324,7 +330,6 @@ export function composeSystemPrompt(
     userPrefs,
     hasProxiedTools,
     workspaceContext,
-    overlays,
     layer3Skills,
     mode,
     skillCatalog,
@@ -353,7 +358,6 @@ export function composeSystemPromptTraced(
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
   workspaceContext?: WorkspaceContext,
-  overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
   mode: ComposeMode = "chat",
   skillCatalog?: SkillCatalogEntry[],
@@ -379,13 +383,11 @@ export function composeSystemPromptTraced(
   layers.push(...userIdentityLayers(userPrefs));
   layers.push(...currentDateLayers(userPrefs));
 
-  // Layer 1.6: Participants section — removed in Stage 1 (single-owner
-  // conversations). Returns in Stage 4 with policy-gated sharing.
+  // No participants section: a conversation has exactly one owner.
 
-  // Layers 1.7 → 4, in prompt order: workspace context, workspace overlay,
-  // Layer 3 skills, installed apps, app state, focused app, matched skill.
+  // Layers 1.7 → 4, in prompt order: workspace context, Layer 3 skills,
+  // installed apps, app state, focused app, matched skill.
   layers.push(...workspaceContextLayers(workspaceContext));
-  layers.push(...overlayLayers(overlays));
   layers.push(...layer3SkillsLayers(layer3Skills));
   layers.push(...skillCatalogLayers(skillCatalog));
   layers.push(...appsLayers(apps, hasProxiedTools));
@@ -473,12 +475,17 @@ function coreContextLayers(coreContext: Skill[]): PendingLayer[] {
   const layers: PendingLayer[] = [];
   for (const ctx of coreContext) {
     if (!ctx.body) continue;
+    // `{{brand.name}}` is first-party templating: only the platform's own
+    // vendored skills are rendered. A tenant's core skill reaches the model
+    // exactly as its author wrote it.
+    const text =
+      ctx.manifest.provenance?.origin === "vendored" ? renderBrandName(ctx.body) : ctx.body;
     layers.push({
       kind: "core_skill",
       id: ctx.sourcePath || `core:${ctx.manifest.name}`,
       source: ctx.sourcePath || `core skill "${ctx.manifest.name}"`,
-      text: ctx.body,
-      tokens: approxTokens(ctx.body),
+      text,
+      tokens: approxTokens(text),
     });
   }
   return layers;
@@ -486,12 +493,13 @@ function coreContextLayers(coreContext: Skill[]): PendingLayer[] {
 
 /** Platform default identity — the fallback when no core-context skill produced content. */
 function defaultIdentityLayer(): PendingLayer {
+  const identity = defaultIdentity();
   return {
     kind: "default_identity",
     id: "nb:default-identity",
     source: "platform default (no core context skills loaded)",
-    text: DEFAULT_IDENTITY,
-    tokens: approxTokens(DEFAULT_IDENTITY),
+    text: identity,
+    tokens: approxTokens(identity),
   };
 }
 
@@ -588,27 +596,6 @@ function workspaceContextLayers(workspaceContext?: WorkspaceContext): PendingLay
 }
 
 /**
- * Layer 1.8: the workspace instruction overlay, skipped when blank.
- *
- * Workspace-tier only. Org-wide standing guidance is an org-tier skill, which
- * reaches every workspace through the layer-3 channel below.
- */
-function overlayLayers(overlays?: OverlayLayers): PendingLayer[] {
-  const layers: PendingLayer[] = [];
-  if (overlays?.workspace && overlays.workspace.trim().length > 0) {
-    const text = formatScopeOverlay("Workspace Instructions", overlays.workspace);
-    layers.push({
-      kind: "workspace_overlay",
-      id: "instructions://workspace",
-      source: "workspace-tier instruction overlay",
-      text,
-      tokens: approxTokens(text),
-    });
-  }
-  return layers;
-}
-
-/**
  * Layer 1.9: Layer 3 skills section. One TracedLayer for the whole section;
  * per-skill detail in `subItems` so the debug tool can filter / inspect /
  * hash-verify each skill independently. Empty when the list is empty or the
@@ -689,6 +676,7 @@ function appsLayers(apps?: PromptAppInfo[], hasProxiedTools?: boolean): PendingL
           hasCustomInstructions:
             !!app.customInstructions && app.customInstructions.trim().length > 0,
           ui: app.ui,
+          resourceTemplates: app.resourceTemplates?.length ?? 0,
         },
       })),
     },
@@ -770,7 +758,8 @@ function skillKey(sourcePath: string | undefined, name: string): string {
  *
  * This overlap has always been reachable for a filesystem skill declaring both
  * fields. For a server-published skill it is the ordinary case, because
- * synthesis stamps `toolAffinity: ["<server>__*"]` on every one.
+ * synthesis stamps a tool-affinity on every one (`<server>__*` when the skill
+ * declares none).
  */
 function matchedSkillLayers(
   matchedSkill?: Skill | null,
@@ -797,7 +786,7 @@ function matchedSkillLayers(
  * Same composition (delegates to the traced builder — single source of truth
  * for layer order and classification), but splits the result into the cacheable
  * `stableSystem` prefix and the per-turn `volatileHead`. The runtime sends
- * `stableSystem` as the system block (so a per-turn change no longer rewrites
+ * `stableSystem` as the system block (so a per-turn change does not rewrite
  * the 1h-cached prefix) and prepends `volatileHead` to the latest user message.
  */
 export function composeSystemSegments(
@@ -809,7 +798,6 @@ export function composeSystemSegments(
   userPrefs?: UserPrefs,
   hasProxiedTools?: boolean,
   workspaceContext?: WorkspaceContext,
-  overlays?: OverlayLayers,
   layer3Skills?: Layer3SkillEntry[],
   mode: ComposeMode = "chat",
   skillCatalog?: SkillCatalogEntry[],
@@ -823,7 +811,6 @@ export function composeSystemSegments(
     userPrefs,
     hasProxiedTools,
     workspaceContext,
-    overlays,
     layer3Skills,
     mode,
     skillCatalog,
@@ -853,9 +840,9 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
   const lines = ["## Installed Apps"];
   for (const app of apps) {
     // Both names land on one `- ` bullet, so an unescaped newline in either
-    // forges a sibling entry. `ui.name` is connector-authored and is the one that
-    // can carry one; `app.name` is a slug unless an operator hand-sets
-    // `ref.serverName`. Sanitized together because the line is shared.
+    // forges a sibling entry. `ui.name` is the catalog entry's title, and
+    // `app.name` is a slug unless an operator hand-sets `ref.serverName`.
+    // Sanitized together because the line is shared.
     const uiLabel = app.ui ? `has UI: ${sanitizeLineField(app.ui.name)}` : "no UI";
     lines.push(`- ${sanitizeLineField(app.name)} (${uiLabel})`);
     if (app.description) {
@@ -874,11 +861,17 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
       // the connector author, but the same containment guarantee applies.
       lines.push(wrapContained("app-custom-instructions", app.customInstructions));
     }
+    if (app.resourceTemplates && app.resourceTemplates.length > 0) {
+      lines.push(wrapContained("app-resource-templates", formatResourceTemplates(app)));
+    }
   }
   lines.push(
     "",
     "When you create or modify data in apps that have a UI, mention that the user can view the result in the sidebar.",
   );
+  if (apps.some((app) => (app.resourceTemplates?.length ?? 0) > 0)) {
+    lines.push("", READABLE_RECORDS_NOTE);
+  }
   if (hasProxiedTools) {
     lines.push(
       "",
@@ -888,6 +881,21 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
   return lines.join("\n");
 }
 
+/**
+ * How the model uses `<app-resource-templates>`. Emitted once, and only when
+ * some app lists templates, so a workspace without record-serving connectors
+ * gets the same prompt as before.
+ */
+const READABLE_RECORDS_NOTE =
+  "Each line of an `app-resource-templates` block is the URI shape of a record that app serves. To read one record whole, fill in its braced parts (an id from that app's tool results, which often carry the record's `uri`) and pass the URI to `nb__read_resource`.";
+
+/** One `<shape> — <name>` line per template, each field flattened to one line. */
+function formatResourceTemplates(app: PromptAppInfo): string {
+  return (app.resourceTemplates ?? [])
+    .map((t) => `${sanitizeLineField(t.uriTemplate)} — ${sanitizeLineField(t.name).slice(0, 80)}`)
+    .join("\n");
+}
+
 const INTERACTION_RULES = `### Interaction Rules
 
 - When the user describes a change, identify which tool achieves it and call it directly. Do not ask for confirmation unless the action is destructive or ambiguous.
@@ -895,7 +903,6 @@ const INTERACTION_RULES = `### Interaction Rules
 - If unsure which tool to use, call \`nb__search\` with \`scope: "tools"\` and a keyword. Its top matches are activated automatically — call them directly. Only use \`nb__manage_tools\` to activate a different match from the results, or to remove tools when clearly switching domains (batch removes with the next adds).
 - When the user says "undo" or "go back," check if the app has undo, snapshot, or history tools. If not, say undo is not available for this app.
 - When the user gives vague feedback ("I don't like it," "make it better"), ask ONE clarifying question about what specifically to change.
-- Messages may include an \`[App Context: ...]\` header with metadata from the app. Use it to understand what the user was looking at.
 - Other apps are still available via \`nb__search\` (scope: "tools") if the user's request spans apps; its top matches are auto-activated, so you can usually call them directly.`;
 
 function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {
@@ -955,19 +962,6 @@ function formatAppStateSection(appState: AppStateInfo): string | null {
   }
 
   return `## Current App State\nLast updated: ${appState.updatedAt}\n\n${wrapContained("app-state", inner)}`;
-}
-
-/**
- * Format the top-level workspace instruction overlay.
- *
- * The body sits in a containment tag, so a debug reader can attribute it to
- * its source. The escape pattern matches `<app-instructions>` — any literal
- * closing tag inside the body is rewritten to `&lt;/...>` before wrapping,
- * defending against prompt injection from a writer who tries to break out of
- * containment.
- */
-function formatScopeOverlay(heading: string, body: string): string {
-  return `## ${heading}\n\n${wrapContained("workspace-instructions", body)}`;
 }
 
 /**
@@ -1107,7 +1101,7 @@ function formatNoWorkspaceContext(): string {
     "",
     "The user is at their identity-level home — **not in any single workspace**. There is no current workspace. If the user asks which workspace they're in, tell them they're at their home view, not a specific one.",
     "",
-    "Your active tools are your personal workspace's — its apps plus the platform tools. A specific workspace's apps and tools are **not reachable from the home view**: to use them, the user must open that workspace. `nb__search` here searches only your personal workspace — it does not reach into other workspaces, so it won't surface a workspace's apps.",
+    "Your active tools are those of the one workspace this session runs in — its apps plus the platform tools. Another workspace's apps and tools are **not reachable from the home view**: to use them, the user must open that workspace. `nb__search` here searches only this session's workspace — it does not reach into other workspaces, so it won't surface their apps.",
     "",
     IDENTITY_SCOPE_NOTE,
   ].join("\n");

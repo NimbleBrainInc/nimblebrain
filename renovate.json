@@ -9,8 +9,10 @@
   "prHourlyLimit": 2,
   "minimumReleaseAge": "14 days",
   "lockFileMaintenance": {
+    "description": "The package managers pick a refresh's versions, so the 14-day window is enforced there (each bunfig.toml, and exclude-newer in uv.toml). Renovate's own check cannot judge a refresh, which has no single release date, and would hold its status pending forever.",
     "enabled": true,
-    "schedule": ["before 6am on the first day of the month"]
+    "schedule": ["before 6am on the first day of the month"],
+    "minimumReleaseAge": null
   },
   "major": {
     "dependencyDashboardApproval": true
@@ -106,6 +108,28 @@
       "description": "`latest` tracks whatever bun is installed and is not a version to pin.",
       "matchPackageNames": ["@types/bun"],
       "enabled": false
+    },
+    {
+      "description": "bun is pinned as a binary (Dockerfile ARG, workflow setup-bun), as an image (web/Dockerfile), and as every package.json's packageManager, which is the bun Renovate itself runs to regenerate lock files. test/unit/build-pins.test.ts requires them equal, so they move in one PR.",
+      "matchPackageNames": ["oven-sh/bun", "oven/bun", "bun"],
+      "groupName": "bun"
+    },
+    {
+      "description": "The runtime image installs Node from NodeSource's 24.x repo (setup_24.x); a Node major needs that URL changed too.",
+      "matchPackageNames": ["node"],
+      "matchManagers": ["custom.regex"],
+      "allowedVersions": "<25"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Version pins Renovate's own managers can't see: the bun and Node versions the runtime Dockerfile installs (ARG) and the bun every workflow sets up. Each carries a `# renovate:` comment naming its source.",
+      "managerFilePatterns": ["/(^|/)Dockerfile$/", "/^\\.github/workflows/[^/]+\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s*\\n\\s*(?:ARG [A-Z_]+=|[A-Za-z_-]+: )\"?(?<currentValue>[^\"\\s]+)\"?"
+      ],
+      "extractVersionTemplate": "{{#if extractVersion}}{{{extractVersion}}}{{else}}^v?(?<version>.+)${{/if}}"
     }
   ]
 }

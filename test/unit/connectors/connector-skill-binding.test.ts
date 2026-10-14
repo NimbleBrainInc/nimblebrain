@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { ConnectorLifecycleManager } from "../../../src/connectors/runtime/lifecycle.ts";
 import { defaultWorkDir } from "../../../src/connectors/runtime/paths.ts";
-import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import { CONNECTOR_SKILLS_SUBDIR } from "../../../src/skills/connector-skill-store.ts";
+import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import { stub } from "../../helpers/stub.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 /**
@@ -44,17 +46,24 @@ function workDir(): string {
   return d;
 }
 
-function manager(routes: Record<string, { status: number; body?: string }>): ConnectorLifecycleManager {
+function manager(
+  routes: Record<string, { status: number; body?: string }>,
+): ConnectorLifecycleManager {
   const m = new ConnectorLifecycleManager(new NoopEventSink());
-  m.setConnectorSkillFetch((async (url: string | URL | Request) => {
-    const u = typeof url === "string" ? url : url.toString();
-    const r = routes[u];
-    return r ? new Response(r.body ?? "", { status: r.status }) : new Response("", { status: 404 });
-  }) as unknown as typeof fetch);
+  m.setConnectorSkillFetch(
+    fakeFetch(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      const r = routes[u];
+      return r
+        ? new Response(r.body ?? "", { status: r.status })
+        : new Response("", { status: 404 });
+    }),
+  );
   return m;
 }
 
-const gmailUrl = "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.3.0/gmail/SKILL.md";
+const gmailUrl =
+  "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.4.0/gmail/SKILL.md";
 
 function connectorSkillsDir(wd: string): string {
   return new WorkspaceContext({ wsId: WS_ID, workDir: wd }).getDataPath(CONNECTOR_SKILLS_SUBDIR);
@@ -68,7 +77,7 @@ describe("ConnectorLifecycleManager.syncBoundSkills (P4)", () => {
     const lock = await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
     expect(lock).toHaveLength(1);
     expect(lock[0]!.identity).toBe("gmail");
-    expect(lock[0]!.version).toBe("v0.3.0");
+    expect(lock[0]!.version).toBe("v0.4.0");
     expect(lock[0]!.sha).toMatch(/^[0-9a-f]{64}$/);
     expect(existsSync(lock[0]!.path)).toBe(true);
   });
@@ -84,9 +93,11 @@ describe("ConnectorLifecycleManager.syncBoundSkills (P4)", () => {
   it("is non-fatal (returns []) when the fetch fails", async () => {
     const wd = workDir();
     const m = new ConnectorLifecycleManager(new NoopEventSink());
-    m.setConnectorSkillFetch((() => {
-      throw new Error("network down");
-    }) as unknown as typeof fetch);
+    m.setConnectorSkillFetch(
+      fakeFetch(() => {
+        throw new Error("network down");
+      }),
+    );
     const lock = await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
     expect(lock).toEqual([]);
   });
@@ -120,7 +131,10 @@ describe("ConnectorLifecycleManager.syncBoundSkills (P4)", () => {
 
     // Real uninstall path (no instance/config/registry source needed — step 4d
     // runs regardless and uses the wired workDir).
-    const registry = { hasSource: () => false, hasEstablishedSource: () => false } as unknown as ToolRegistry;
+    const registry = stub<ToolRegistry>({
+      hasSource: () => false,
+      hasEstablishedSource: () => false,
+    });
     await m.uninstall("gmail", registry, WS_ID);
 
     expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(false);

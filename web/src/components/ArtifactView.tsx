@@ -3,7 +3,7 @@
 //
 // The third leg of ToolWidgets, beside InlineAppView (ui://) and
 // ResourceLinkView (everything else). It fetches the artifact through the host
-// resolver (POST /v1/resources/read, which the host routes to the data plane
+// resolver (POST …/resources/read, which the host routes to the data plane
 // and resolves as the viewing user — RLS enforced) and hands the bytes to the
 // curated, sanitizing ArtifactRenderer registry, keyed by mime_type.
 //
@@ -13,8 +13,9 @@
 
 import { Download, FileText, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { ApiClientError, type ReadResourceContent, readResource } from "../api/client";
+import { ApiClientError, readResource } from "../api/client";
 import { normalizeMime } from "../lib/artifact-kind";
+import type { ResourceContents } from "../types";
 import { ArtifactRenderer, rendererKindFor } from "./ArtifactRenderer";
 
 export interface ArtifactViewProps {
@@ -55,10 +56,7 @@ function errorMessage(err: unknown): string {
 }
 
 /** Object URL for a resource's binary body (blob), or null for a text body. */
-function objectUrlFor(
-  content: ReadResourceContent,
-  fallbackMime: string | undefined,
-): string | null {
+function objectUrlFor(content: ResourceContents, fallbackMime: string | undefined): string | null {
   if (content.blob === undefined) return null;
   const bytes = base64ToBytes(content.blob);
   const blob = new Blob([bytes.buffer as ArrayBuffer], {
@@ -68,7 +66,7 @@ function objectUrlFor(
 }
 
 /** Read the artifact and return its first content part, throwing on an empty result. */
-async function loadArtifactContent(server: string, uri: string): Promise<ReadResourceContent> {
+async function loadArtifactContent(server: string, uri: string): Promise<ResourceContents> {
   const result = await readResource(server, uri);
   const first = result.contents[0];
   if (!first) throw new Error("No content returned");
@@ -76,7 +74,7 @@ async function loadArtifactContent(server: string, uri: string): Promise<ReadRes
 }
 
 export function ArtifactView({ uri, appName, name, mimeType, description }: ArtifactViewProps) {
-  const [content, setContent] = useState<ReadResourceContent | null>(null);
+  const [content, setContent] = useState<ResourceContents | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

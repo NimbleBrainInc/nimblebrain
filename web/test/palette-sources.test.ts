@@ -9,16 +9,17 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
-import { appsSource } from "../src/components/palette/sources/apps";
 import { actionsSource } from "../src/components/palette/sources/actions";
+import { appsSource } from "../src/components/palette/sources/apps";
 import { workspacesSource } from "../src/components/palette/sources/workspaces";
 import type { CommandRunContext, CommandSourceContext } from "../src/components/palette/types";
 import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
 import type { ScopedRole } from "../src/hooks/useScopedRole";
+import { DOCS_URL } from "../src/lib/docs";
 import type { PlacementEntry } from "../src/types";
 
 function ws(id: string, name: string, extra?: Partial<WorkspaceInfo>): WorkspaceInfo {
-  return { id, name, memberCount: 1, connectors: [], ...extra };
+  return { id, name, memberCount: 1, connectorCount: 0, ...extra };
 }
 
 const baseCtx: CommandSourceContext = {
@@ -29,9 +30,14 @@ const baseCtx: CommandSourceContext = {
 
 function recordRunContext(): {
   ctx: CommandRunContext;
-  calls: { navigate: string[]; setActiveWorkspace: string[]; closed: number };
+  calls: { navigate: string[]; setActiveWorkspace: string[]; external: string[]; closed: number };
 } {
-  const calls = { navigate: [] as string[], setActiveWorkspace: [] as string[], closed: 0 };
+  const calls = {
+    navigate: [] as string[],
+    setActiveWorkspace: [] as string[],
+    external: [] as string[],
+    closed: 0,
+  };
   const ctx: CommandRunContext = {
     navigate: (to) => calls.navigate.push(to),
     setActiveWorkspace: (w) => calls.setActiveWorkspace.push(w.id),
@@ -39,6 +45,7 @@ function recordRunContext(): {
     toggleSidebar: () => {},
     toggleTheme: () => {},
     openKeyboardShortcuts: () => {},
+    openExternal: (url) => calls.external.push(url),
     logout: () => {},
     closePalette: () => {
       calls.closed += 1;
@@ -52,7 +59,7 @@ describe("workspacesSource", () => {
     ...baseCtx,
     workspaces: [
       ws("ws_aaaaaaaaaaaaaaaa", "Pacific Clinic", { userRole: "member" }),
-      ws("ws_bbbbbbbbbbbbbbbb", "Personal", { userRole: "admin", isPersonal: true }),
+      ws("ws_bbbbbbbbbbbbbbbb", "Zeta Labs", { userRole: "admin" }),
       ws("ws_cccccccccccccccc", "Helix Sales", { userRole: "admin" }),
     ],
     activeWorkspaceId: "ws_cccccccccccccccc",
@@ -83,14 +90,28 @@ describe("workspacesSource", () => {
 
 describe("appsSource", () => {
   const apps: PlacementEntry[] = [
-    { serverName: "crm", slot: "sidebar.apps", resourceUri: "ui://crm", priority: 1, label: "CRM", route: "crm" },
-    { serverName: "pipeline", slot: "sidebar.apps", resourceUri: "ui://pipe", priority: 2, label: "Pipeline", route: "pipeline" },
+    {
+      serverName: "crm",
+      slot: "sidebar.apps",
+      resourceUri: "ui://crm",
+      priority: 1,
+      label: "CRM",
+      route: "crm",
+    },
+    {
+      serverName: "pipeline",
+      slot: "sidebar.apps",
+      resourceUri: "ui://pipe",
+      priority: 2,
+      label: "Pipeline",
+      route: "pipeline",
+    },
   ];
 
   test("returns empty when shell not ready (no apps)", () => {
     const items = appsSource.getItems("", {
       ...baseCtx,
-      activeWorkspaceSlug: "helix",
+      activeWorkspaceSlug: "003eba8844413cd9",
       apps: [],
     });
     expect(items).toEqual([]);
@@ -101,12 +122,12 @@ describe("appsSource", () => {
   });
 
   test("matches apps and builds workspace-scoped route on run", () => {
-    const ctx = { ...baseCtx, activeWorkspaceSlug: "helix", apps };
+    const ctx = { ...baseCtx, activeWorkspaceSlug: "003eba8844413cd9", apps };
     const items = appsSource.getItems("crm", ctx);
     expect(items.map((i) => i.title)).toEqual(["CRM"]);
     const { ctx: run, calls } = recordRunContext();
     items[0]!.run(run);
-    expect(calls.navigate).toEqual(["/w/helix/app/crm"]);
+    expect(calls.navigate).toEqual(["/w/003eba8844413cd9/app/crm"]);
     expect(calls.closed).toBe(1);
   });
 });
@@ -120,7 +141,7 @@ describe("actionsSource", () => {
 
   test("shows workspace-scoped actions when a workspace is focused", () => {
     const ids = actionsSource
-      .getItems("", { ...baseCtx, activeWorkspaceSlug: "helix" })
+      .getItems("", { ...baseCtx, activeWorkspaceSlug: "003eba8844413cd9" })
       .map((i) => i.id);
     expect(ids).toContain("action:workspace-settings");
   });
@@ -136,7 +157,7 @@ describe("actionsSource", () => {
       ).not.toContain("action:org-settings");
     }
 
-    const admitted: ScopedRole[] = ["org_admin", "org_owner"];
+    const admitted: ScopedRole[] = ["org_admin"];
     for (const scopedRole of admitted) {
       expect(actionsSource.getItems("org", { ...baseCtx, scopedRole }).map((i) => i.id)).toContain(
         "action:org-settings",
@@ -150,7 +171,7 @@ describe("actionsSource", () => {
     // here. These are the literals a gate must never be handed directly —
     // `useScopedRole` maps them, and skipping it is what leaves the action
     // unreachable for the people it exists for.
-    for (const raw of ["owner", "admin", "member"]) {
+    for (const raw of ["admin", "member"]) {
       expect(
         actionsSource
           .getItems("org", { ...baseCtx, scopedRole: raw as ScopedRole })
@@ -162,12 +183,23 @@ describe("actionsSource", () => {
   test("workspace-settings run builds the scoped route", () => {
     const items = actionsSource.getItems("workspace settings", {
       ...baseCtx,
-      activeWorkspaceSlug: "helix",
+      activeWorkspaceSlug: "003eba8844413cd9",
     });
     const item = items.find((i) => i.id === "action:workspace-settings");
     expect(item).toBeDefined();
     const { ctx: run, calls } = recordRunContext();
     item!.run(run);
-    expect(calls.navigate).toEqual(["/w/helix/settings"]);
+    expect(calls.navigate).toEqual(["/w/003eba8844413cd9/settings"]);
+  });
+
+  test("documentation run opens the docs site and closes the palette", () => {
+    const item = actionsSource
+      .getItems("docs", baseCtx)
+      .find((i) => i.id === "action:documentation");
+    expect(item).toBeDefined();
+    const { ctx: run, calls } = recordRunContext();
+    item!.run(run);
+    expect(calls.external).toEqual([DOCS_URL]);
+    expect(calls.closed).toBe(1);
   });
 });

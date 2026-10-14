@@ -20,7 +20,7 @@ import type { LanguageModelV4Usage } from "@ai-sdk/provider";
 
 /**
  * Who a priced LLM call was made on behalf of, as distinct from *which slot*
- * made it (`LlmUsageSource` — main / title / compaction / briefing).
+ * made it (`LlmUsageSource` — main / title / compaction).
  *
  * Derived from the request context, never asserted by a caller: `task` when the
  * context is unattended, `chat` when it carries a conversation, `system` for a
@@ -58,11 +58,11 @@ export interface UsageRates {
 /**
  * One priced LLM call, as written to the durable usage ledger.
  *
- * Usage used to be derived from a storage side effect — a conversation JSONL
- * happening to exist, in a workspace still on disk — so any call path that did
- * not write one was invisible by default, and four such paths existed. A line
- * here is a *fact recorded at the point of spend*, which is what makes the next
- * non-conversation call path visible without anyone remembering to wire it.
+ * Usage derived from a storage side effect — a conversation JSONL happening to
+ * exist, in a workspace still on disk — misses every call path that does not
+ * write one. A line here is a *fact recorded at the point of spend*, which is
+ * what makes a non-conversation call path visible without anyone remembering
+ * to wire it.
  *
  * Written only by `src/usage/record.ts`; read only by `src/usage/aggregate.ts`.
  */
@@ -89,42 +89,17 @@ export interface UsageLedgerEntry {
   /**
    * The engine run this call belongs to — one `run.start`→`run.done` span,
    * which is one assistant turn. Present for chat and task alike; absent on
-   * the forked fast-slot calls (title, compaction, briefing), which emit no
+   * the forked fast-slot calls (title, compaction), which emit no
    * event and are not a turn of their own.
    */
   runId?: string;
   /**
-   * The automation run this call belongs to (`executeTask`'s correlation id).
-   * Absent in chat. Distinct from {@link runId}: this is the id the automations
+   * The task run this call belongs to (`executeTask`'s correlation id).
+   * Absent in chat. Distinct from {@link runId}: this is the id the tasks
    * connector persists the run result under, so it is the join key from spend back
    * to a stored run.
    */
   taskRunId?: string;
-  /**
-   * @deprecated Legacy read-only. Held whichever id correlated the work — a
-   * conversation for chat, an automation run for a task — discriminated by
-   * `origin`. No longer written; `conversationId` / `taskRunId` carry those
-   * two facts under their own names, and `runId` adds the per-turn grain the
-   * single field could not express.
-   *
-   * Readers must keep honouring it until every retained record predating the
-   * split has aged out (see `retentionMonths`, default 24). `aggregate.ts`
-   * normalizes it; nothing else should read it.
-   */
-  sessionId?: string;
-  /**
-   * @deprecated Legacy read-only. Set on records written while the runtime
-   * could spawn a sub-agent from inside a turn: `delegated` marked such a
-   * call and `parentRunId` named the top-level run it belonged to. Neither is
-   * written any more — a run starts one way, and its calls carry `runId`.
-   *
-   * `aggregate.ts` still reads `parentRunId` so a retained record from that
-   * era rolls onto the turn that spawned it (see `retentionMonths`, default
-   * 24). Nothing else should read either field.
-   */
-  delegated?: boolean;
-  /** @deprecated Legacy read-only. See {@link delegated}. */
-  parentRunId?: string;
   /** Resolved unit prices. Absent when the catalog did not know the model. */
   rates?: UsageRates;
 }
@@ -156,7 +131,7 @@ export interface TokenUsage {
  * Cost treats an absent split as all-1h (the 2x rate; see `cost.ts`), so a
  * caller that sets `cache_control` breakpoints AND maps usage only through here
  * would over-cost its cache writes. Safe for the current callers (the forked
- * `fast`-slot utility calls — compaction summarizer, auto-title, briefing —
+ * `fast`-slot utility calls — compaction summarizer, auto-title —
  * issue raw `doGenerate` with no breakpoints, so `cacheWriteTokens` is ~0); the
  * engine layers the 1h split on top of this for the main loop.
  */

@@ -84,14 +84,13 @@ export function originOf(): LlmCallOrigin {
  *
  * `event` is the emitting engine event's `data` payload, when there is one —
  * it supplies `runId`, the per-turn grain. The forked fast-slot calls (title,
- * compaction, briefing) emit no event, so they omit it and carry no run.
+ * compaction) emit no event, so they omit it and carry no run.
  *
  * Note that omitting the event says nothing about `origin`, which comes from
  * whatever scope the call runs in — not from its `source`. A turn's own forked
  * calls are wrapped in the turn's context by `chat()`, so a compaction summary
  * and an auto-title bill as `chat`, the conversation whose work they are doing.
- * A fast-slot call outside a turn is not: the background briefing refresh runs
- * its own context with no `conversationId` and correctly bills `system`.
+ * A call outside any turn's scope bills `system`.
  *
  * `test/integration/compaction-wiring.test.ts` and
  * `mid-turn-compaction-wiring.test.ts` drive real folds and assert this off
@@ -130,11 +129,6 @@ export function recordLlmCall(args: {
     // what it is holding. `runId` is the engine's, and it is the only one of the
     // three that is per-TURN, so it is what makes "what did this turn cost"
     // answerable at all.
-    //
-    // `sessionId` is deliberately not written any more. It held a
-    // conversation-or-run union discriminated by `origin`; the three fields
-    // here say the same things without the discriminator, and say one more.
-    // `aggregate.ts` still reads the old field for records already on disk.
     ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
     ...(ctx?.runId ? { taskRunId: ctx.runId } : {}),
     ...(typeof args.event?.runId === "string" ? { runId: args.event.runId } : {}),

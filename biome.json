@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.10/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -9,9 +9,12 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "complexity": {
-        "noExcessiveCognitiveComplexity": { "level": "error", "options": { "maxAllowedComplexity": 15 } }
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": { "maxAllowedComplexity": 15 }
+        }
       },
       "style": {
         "noNonNullAssertion": "off"
@@ -37,13 +40,172 @@
     }
   },
   "files": {
-    "includes": ["src/**", "web/src/**", "instrument/**", "scripts/**", "!**/dist/**", "!web/src/_generated/**"]
+    "includes": [
+      "src/**",
+      "web/src/**",
+      "web/test/**",
+      "instrument/**",
+      "scripts/**",
+      "test/**/*.ts",
+      "test/**/*.tsx",
+      "!**/dist/**",
+      "!web/src/_generated/**",
+      "!web/src/assets/**"
+    ]
   },
   "overrides": [
     {
-      "includes": ["src/tools/core-resources/*.iife.js"],
-      "linter": { "enabled": false },
-      "formatter": { "enabled": false }
+      "includes": ["scripts/**", "src/**", "web/src/**", "test/**", "web/test/**"],
+      "plugins": ["./biome-plugins/double-cast.grit"]
+    },
+    {
+      "includes": [
+        "scripts/**",
+        "src/**",
+        "web/src/**",
+        "web/test/**",
+        "test/**"
+      ],
+      "plugins": ["./biome-plugins/never-cast.grit"]
+    },
+    {
+      "includes": ["src/**/*.ts", "!src/api/app.ts"],
+      "plugins": ["./biome-plugins/router-use.grit"]
+    },
+    {
+      "includes": ["src/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@sentry/**"],
+                    "message": "The kernel stays vendor-neutral OpenTelemetry. A Sentry SDK belongs in web/."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/runtime/**/*.ts",
+        "!src/runtime/runtime.ts",
+        "!src/runtime/workspace-runtime.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@sentry/**"],
+                    "message": "The kernel stays vendor-neutral OpenTelemetry. A Sentry SDK belongs in web/."
+                  },
+                  {
+                    "group": [
+                      "{../,../../,../../../}tools/**",
+                      "{../,../../,../../../}platform/**"
+                    ],
+                    "message": "runtime/ must not import tools/ or platform/; only runtime.ts and workspace-runtime.ts compose them (AGENTS.md, Layering)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/config/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@sentry/**"],
+                    "message": "The kernel stays vendor-neutral OpenTelemetry. A Sentry SDK belongs in web/."
+                  },
+                  {
+                    "group": [
+                      "{../,../../,../../../}runtime/**",
+                      "{../,../../,../../../}tools/**",
+                      "{../,../../,../../../}platform/**"
+                    ],
+                    "message": "config/ must not import runtime/, tools/, or platform/ (AGENTS.md, Layering)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/engine/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@sentry/**"],
+                    "message": "The kernel stays vendor-neutral OpenTelemetry. A Sentry SDK belongs in web/."
+                  },
+                  {
+                    "group": ["{../,../../,../../../}runtime/**"],
+                    "message": "engine/ must not import runtime/; put a helper both need in util/ (AGENTS.md, Layering)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/**/*.ts",
+        "!src/observability/log.ts",
+        "!src/adapters/console-events.ts",
+        "!src/adapters/debug-events.ts",
+        "!src/model/sync-models.ts",
+        "!src/model/sync-nebius.ts"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": { "noConsole": "error" }
+        }
+      }
+    },
+    {
+      "includes": ["scripts/**", "src/**"],
+      "plugins": [
+        "./biome-plugins/inline-type-import.grit",
+        "./biome-plugins/containment-tag.grit",
+        "./biome-plugins/control-byte.grit"
+      ]
+    },
+    {
+      "includes": ["test/**", "web/test/**"],
+      "linter": {
+        "rules": {
+          "complexity": { "noExcessiveCognitiveComplexity": "off" },
+          "suspicious": { "noTemplateCurlyInString": "off" }
+        }
+      }
     }
   ]
 }

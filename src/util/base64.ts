@@ -4,7 +4,7 @@
  * loop) and falls back to a stack-safe `btoa` loop for runtimes without
  * `Buffer`.
  *
- * Used by both the `/v1/resources/read` API path and the in-process MCP
+ * Used by both the `/v1/workspaces/:wsId/resources/read` API path and the in-process MCP
  * server resource read path. Lives in `util/` so neither layer depends on
  * the other to share encoding details.
  */

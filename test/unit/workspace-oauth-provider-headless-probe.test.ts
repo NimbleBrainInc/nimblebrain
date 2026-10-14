@@ -1,10 +1,8 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { _clearAll } from "../../src/tools/oauth-flow-registry.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 // The redirect-probe is a headless-only optimization. For a normal
 // interactive provider (Granola, Claude.ai, …) it MUST NOT run: fetching
@@ -17,14 +15,12 @@ const AUTH_URL =
   "https://mcp-auth.granola.example/oauth2/authorize?response_type=code&client_id=c1&code_challenge=ch&code_challenge_method=S256&state=st_abc&redirect_uri=https%3A%2F%2Fhq.example%2Fv1%2Fmcp-auth%2Fcallback";
 
 function makeProvider(
-  workDir: string,
   headlessAuthProbe: boolean,
   onInteractiveAuthRequired: (url: string) => void,
 ): WorkspaceOAuthProvider {
   const provider = new WorkspaceOAuthProvider({
-    owner: { type: "workspace", wsId: "ws_test" },
+    owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
     serverName: "granola-test",
-    workDir,
     callbackUrl: "https://hq.example/v1/mcp-auth/callback",
     allowInsecureRemotes: true,
     headlessAuthProbe,
@@ -38,11 +34,9 @@ function makeProvider(
 }
 
 describe("WorkspaceOAuthProvider — redirect-probe is gated on headlessAuthProbe", () => {
-  let workDir: string;
   let origFetch: typeof fetch;
 
   beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "nb-probe-gate-"));
     origFetch = globalThis.fetch;
   });
   afterEach(() => {
@@ -52,10 +46,10 @@ describe("WorkspaceOAuthProvider — redirect-probe is gated on headlessAuthProb
 
   it("interactive (default, headlessAuthProbe=false): does NOT fetch /authorize; goes straight to the interactive branch", async () => {
     const fetchSpy = mock(async () => new Response("login page", { status: 200 }));
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fakeFetch(fetchSpy);
 
     let capturedUrl = "";
-    const p = makeProvider(workDir, false, (u) => {
+    const p = makeProvider(false, (u) => {
       capturedUrl = u;
     });
     p.state(); // initializes pendingFlow (the SDK calls this before redirect)
@@ -71,9 +65,9 @@ describe("WorkspaceOAuthProvider — redirect-probe is gated on headlessAuthProb
 
   it("headless (headlessAuthProbe=true): DOES probe /authorize server-side", async () => {
     const fetchSpy = mock(async () => new Response("login page", { status: 200 }));
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fakeFetch(fetchSpy);
 
-    const p = makeProvider(workDir, true, () => {});
+    const p = makeProvider(true, () => {});
     p.state();
 
     // 200 from the probe → not headless → falls through to interactive (throws),

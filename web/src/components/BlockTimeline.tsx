@@ -31,14 +31,14 @@
  */
 
 import { AlertCircle, Check, Copy, Loader2 } from "lucide-react";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Streamdown } from "streamdown";
 import type {
   ContentBlock,
   PreparingTool,
   StreamingState,
   ToolCallDisplay,
-} from "../hooks/useChat";
+} from "../hooks/chat-store";
 import { useMinDisplayTime, type VisualStatus } from "../hooks/useMinDisplayTime";
 import { isDocumentArtifact } from "../lib/artifact-kind";
 import { formatDuration, stripServerPrefix } from "../lib/format";
@@ -132,9 +132,18 @@ function isBlankText(text: string): boolean {
   return text.trim().length === 0;
 }
 
-/** Append a reasoning row for non-empty thought; an empty block renders nothing. */
+/**
+ * Append a reasoning row for non-empty thought; an empty block renders nothing.
+ *
+ * Trimmed, because the row draws the text `pre-wrap` and providers bracket a
+ * thought with newlines — so an untrimmed block renders its trailing blank
+ * line as real height inside the box, which reads as broken padding rather
+ * than as the invisible characters it is. Trimming also settles emptiness: a
+ * whitespace-only thought is nothing to show, not a blank row.
+ */
 function pushReasoning(rows: ActivityRow[], text: string): void {
-  if (text.length > 0) rows.push({ kind: "reasoning", text });
+  const thought = text.trim();
+  if (thought.length > 0) rows.push({ kind: "reasoning", text: thought });
 }
 
 /** Fold a tool block into the trailing tool row when they share a non-empty
@@ -190,7 +199,7 @@ export function BlockTimeline({
         const isTailDelta = isCurrentMessage && isLast && streamingState === "streaming";
         if (item.kind === "text") {
           return (
-            // biome-ignore lint/suspicious/noArrayIndexKey: items derived from append-only blocks; identity by position is stable
+            // biome-ignore lint/suspicious/noArrayIndexKey: items fold append-only blocks, so a streamed block grows the last item or adds one and never moves an earlier one
             <div key={`text:${idx}`} className="min-h-[1em]">
               <Streamdown
                 className="streamdown-container presence-assistant-message"
@@ -204,7 +213,7 @@ export function BlockTimeline({
           );
         }
         return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: same as above
+          // biome-ignore lint/suspicious/noArrayIndexKey: items fold append-only blocks, so a streamed block grows the last item or adds one and never moves an earlier one
           <div key={`activity:${idx}`} className="flex flex-col gap-3">
             <ActivityChip
               rows={item.rows}
@@ -259,13 +268,44 @@ function LiveCursor({
   preparingTool: PreparingTool | null;
 }) {
   const label = liveCursorLabel(streamingState, preparingTool);
+  const elapsed = useElapsedSeconds(label);
   if (label === null) return null;
   return (
     <div className="live-cursor" role="status" aria-live="polite">
       <Loader2 className="live-cursor__spinner" style={{ width: 12, height: 12 }} />
       <span className="live-cursor__label">{label}</span>
+      {elapsed >= ELAPSED_VISIBLE_AFTER_S && (
+        <span className="live-cursor__elapsed">{elapsed}s</span>
+      )}
     </div>
   );
+}
+
+/** Seconds a state must hold before the cursor starts counting out loud. */
+const ELAPSED_VISIBLE_AFTER_S = 3;
+
+/**
+ * Seconds the current cursor state has held, restarting whenever the label
+ * changes and stopping at `null` (turn over).
+ *
+ * The wait itself is the thing a reader can't see: a model that thinks for two
+ * minutes and a model that has hung both render as one still spinner. A number
+ * that keeps moving separates them without the client learning anything about
+ * what the model is doing.
+ */
+function useElapsedSeconds(label: string | null): number {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (label === null) {
+      setElapsed(0);
+      return;
+    }
+    const startedAt = Date.now();
+    setElapsed(0);
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [label]);
+  return elapsed;
 }
 
 function liveCursorLabel(
@@ -337,7 +377,7 @@ function ActivityChip({ rows, isReasoningTailStreaming, displayDetail }: Activit
           <SingleRowBody row={smoothedRows[0]} />
         ) : (
           smoothedRows.map((row, idx) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: rows within a segment are append-only and don't reorder
+            // biome-ignore lint/suspicious/noArrayIndexKey: a segment's rows come from append-only blocks, so rows are only added at the end
             <ActivityRowView key={`row:${idx}`} row={row} />
           ))
         )
@@ -661,7 +701,7 @@ function CopyButton({ content }: { content: string }) {
 
 function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
   // A personal connector mounts no iframe. Its `ui://` read would resolve
-  // through the WORKSPACE registry (`GET /v1/apps/:name/resources/*` tries the
+  // through the WORKSPACE registry (`GET /v1/workspaces/:wsId/apps/:name/resources/*` tries the
   // kernel identity sources, then that registry — a connector is in neither), so
   // a same-named workspace app would answer and its bridge would dispatch on the
   // workspace's credentials. Excluded here rather than left to 404: the marked
@@ -674,7 +714,7 @@ function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
       !isPersonalConnectorAppName(tc.appName),
   );
   // Same marker exclusion as `widgets` above. A personal connector has no app
-  // surface to resolve against — `/v1/apps/<name>/resources/*` searches the
+  // surface to resolve against — `/v1/workspaces/:wsId/apps/<name>/resources/*` searches the
   // workspace registry, which a `my_`-marked name can never match — so a link
   // rendered here previews a 404. Fail-closed either way, but a broken tile is
   // worse than no tile.

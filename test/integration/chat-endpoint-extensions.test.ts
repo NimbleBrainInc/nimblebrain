@@ -1,14 +1,16 @@
-import { describe, expect, it, afterAll } from "bun:test";
-import { existsSync, rmSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, describe, expect, it } from "bun:test";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
-import { Runtime } from "../../src/runtime/runtime.ts";
-import { surfaceTools } from "../../src/tools/surfacing.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import type { ToolSchema } from "../../src/engine/types.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
 import type { Skill } from "../../src/skills/types.ts";
+import { surfaceTools } from "../../src/tools/surfacing.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-chat-ext-${Date.now()}`);
 
@@ -29,13 +31,13 @@ function makeSystemTools(): ToolSchema[] {
 function makeSkill(opts: { allowedTools?: string[] } = {}): Skill {
   return {
     manifest: {
+      loadingStrategy: "dynamic",
+      status: "active",
       name: "test-skill",
       description: "Test",
       version: "1.0.0",
-      type: "skill",
       priority: 50,
       allowedTools: opts.allowedTools,
-      metadata: { keywords: ["test"], triggers: [] },
     },
     body: "You are a test expert.",
     sourcePath: "/test/skill.md",
@@ -157,7 +159,8 @@ describe("ChatRequest.metadata — conversation persistence", () => {
   it("metadata is persisted in conversation object", async () => {
     const workDir = join(testDir, `meta-${Date.now()}`);
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
       workDir,
     });
 
@@ -165,24 +168,27 @@ describe("ChatRequest.metadata — conversation persistence", () => {
       await provisionTestWorkspace(runtime);
 
       const result = await runtime.chat({
+        identity: DEV_IDENTITY,
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
-        metadata: { source: "automation", id: "test-123" },
+        metadata: { source: "task", id: "test-123" },
       });
 
       // Load the conversation and verify metadata is present
       const conv = await runtime.findConversation(result.conversationId);
       expect(conv).not.toBeNull();
-      expect(conv!.metadata).toEqual({ source: "automation", id: "test-123" });
+      expect(conv!.metadata).toEqual({ source: "task", id: "test-123" });
 
       // Verify it's actually in the JSONL file's first line under the workspace's
       // owner partition (dev owner `usr_default`, focused on TEST_WORKSPACE_ID).
       const convDir = workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
-      const files = require("fs").readdirSync(convDir).filter((f: string) => f.endsWith(".jsonl"));
+      const files = require("node:fs")
+        .readdirSync(convDir)
+        .filter((f: string) => f.endsWith(".jsonl"));
       expect(files.length).toBeGreaterThan(0);
       const content = readFileSync(join(convDir, files[0]!), "utf-8");
       const firstLine = JSON.parse(content.split("\n")[0]!);
-      expect(firstLine.metadata).toEqual({ source: "automation", id: "test-123" });
+      expect(firstLine.metadata).toEqual({ source: "task", id: "test-123" });
     } finally {
       await runtime.shutdown();
     }
@@ -191,7 +197,8 @@ describe("ChatRequest.metadata — conversation persistence", () => {
   it("chat without metadata — no metadata field in conversation", async () => {
     const workDir = join(testDir, `nometa-${Date.now()}`);
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
       workDir,
     });
 
@@ -199,6 +206,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
       await provisionTestWorkspace(runtime);
 
       const result = await runtime.chat({
+        identity: DEV_IDENTITY,
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
       });
@@ -213,7 +221,8 @@ describe("ChatRequest.metadata — conversation persistence", () => {
   it("metadata is only set on new conversations, not overwritten on existing", async () => {
     const workDir = join(testDir, `metakeep-${Date.now()}`);
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
       workDir,
     });
 
@@ -222,6 +231,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
 
       // First message sets metadata
       const result1 = await runtime.chat({
+        identity: DEV_IDENTITY,
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
         metadata: { source: "first" },
@@ -229,6 +239,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
 
       // Second message with different metadata on same conversation — original metadata kept
       await runtime.chat({
+        identity: DEV_IDENTITY,
         message: "world",
         conversationId: result1.conversationId,
         workspaceId: TEST_WORKSPACE_ID,

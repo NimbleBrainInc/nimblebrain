@@ -21,9 +21,7 @@ describe("validateAdditionalAuthorizationParams", () => {
 
   test("throws on each reserved key", () => {
     for (const key of RESERVED_AUTHORIZE_PARAMS) {
-      expect(() => validateAdditionalAuthorizationParams({ [key]: "x" })).toThrow(
-        /reserved keys/,
-      );
+      expect(() => validateAdditionalAuthorizationParams({ [key]: "x" })).toThrow(/reserved keys/);
     }
   });
 

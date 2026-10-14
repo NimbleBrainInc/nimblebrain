@@ -17,36 +17,38 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFilesSource } from "../../../src/platform/files/source.ts";
-import { createHomeSource } from "../../../src/platform/home/source.ts";
-import { createUsageSource } from "../../../src/platform/usage/source.ts";
-import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
+import { createFilesSource } from "../../../src/platform/files/source.ts";
+import { createUsageSource } from "../../../src/platform/usage/source.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import { validateToolInput } from "../../../src/tools/validate-input.ts";
-import type { Runtime } from "../../../src/runtime/runtime.ts";
+import { stub } from "../../helpers/stub.ts";
 
 /**
  * Minimal runtime stub sufficient for every synchronous / lazy platform
  * factory.
  *
- * Coverage gap: automations is excluded. Its factory starts a `Scheduler`
+ * Coverage gap: tasks is excluded. Its factory starts a `Scheduler`
  * at construction that the resulting `InlineSource` doesn't expose a stop
  * hook for, so including it here leaks timers across tests. Its schemas
  * are exercised indirectly by the real tests in test/unit/platform/
- * automations/. Tracked by #30 — closing this gap cleanly means giving
+ * tasks/. Tracked by #30 — closing this gap cleanly means giving
  * `InlineSource` an optional onStop callback factories can wire through.
  */
 function makeRuntime(workDir: string): Runtime {
-  return {
+  return stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceScopedDir: () => workDir,
-    getCurrentWorkspaceId: () => "ws_audit",
+    getCurrentWorkspaceId: () => "ws_001b7d589bde72e7",
     getCurrentIdentity: () => null,
     getDefaultModel: () => "claude-sonnet-4-6",
     getWorkspaceStore: () => null,
-    chat: async () => ({ content: [], usage: { inputTokens: 0, outputTokens: 0 } }),
-  } as unknown as Runtime;
+    chat: async () => {
+      throw new Error("the schema audit lists tools and runs no chat");
+    },
+  });
 }
 
 async function auditSource(source: McpSource): Promise<void> {
@@ -69,15 +71,6 @@ describe("Connector audit — every inline connector has compilable schemas", ()
     const dir = mkdtempSync(join(tmpdir(), "nb-audit-files-"));
     try {
       await auditSource(createFilesSource(makeRuntime(dir), new NoopEventSink()));
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("home", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "nb-audit-home-"));
-    try {
-      await auditSource(createHomeSource(makeRuntime(dir), new NoopEventSink()));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

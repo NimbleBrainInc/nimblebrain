@@ -1,7 +1,7 @@
-import { render } from "@testing-library/react";
 import { describe, expect, it } from "bun:test";
+import { render } from "@testing-library/react";
 import { MessageList } from "../src/components/MessageList.tsx";
-import type { ChatMessage } from "../src/hooks/useChat.ts";
+import type { ChatMessage } from "../src/hooks/chat-store.ts";
 
 /**
  * The "Try again" control must track whether a retry can actually replay, not
@@ -33,15 +33,13 @@ describe("MessageList retry affordance", () => {
       <MessageList
         messages={[erroredMsg]}
         isStreaming={false}
-        streamingState="idle"
+        streamingState={null}
         displayDetail="balanced"
       />,
     );
     // The written explanation is the headline, not a collapsed detail, and the
     // generic "you can try again" copy is gone along with the button.
-    expect(container.textContent).toContain(
-      "This response was interrupted and never finished.",
-    );
+    expect(container.textContent).toContain("This response was interrupted and never finished.");
     expect(container.textContent).not.toContain("You can try again");
     expect(container.getElementsByTagName("details")).toHaveLength(0);
     expect(retryButton(container)).toBeNull();
@@ -52,7 +50,7 @@ describe("MessageList retry affordance", () => {
       <MessageList
         messages={[erroredMsg]}
         isStreaming={false}
-        streamingState="idle"
+        streamingState={null}
         displayDetail="balanced"
         onRetry={() => {}}
       />,

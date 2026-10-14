@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import type { ShellData } from "./api/client";
 import {
-  callTool,
+  callToolWithoutWorkspace,
   logout,
-  setActiveWorkspaceId,
   setAuthToken,
   setOnAuthError,
   setOnWorkspaceError,
@@ -12,15 +10,18 @@ import {
   tryBootstrap,
 } from "./api/client";
 import { closeEventsClient } from "./api/events-client";
+import { AppFrameSkeleton } from "./components/AppFrameSkeleton";
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Login } from "./components/Login";
+import { NoticeProvider } from "./components/notices";
 import { CommandPalette } from "./components/palette/CommandPalette";
 import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
+import { AppLocationProvider } from "./context/AppLocationContext";
 import { ArtifactPanelProvider } from "./context/ArtifactPanelContext";
-import { ChatProvider, useChatConfigContext, useChatContext } from "./context/ChatContext";
+import { ChatProvider, useChatConfigContext } from "./context/ChatContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
 import { FocusedAppProvider } from "./context/FocusedAppContext";
 import { NotificationsProvider } from "./context/NotificationsProvider";
@@ -28,19 +29,29 @@ import { PaletteProvider } from "./context/PaletteContext";
 import { SessionProvider } from "./context/SessionContext";
 import { ShellProvider } from "./context/ShellContext";
 import { SidebarProvider } from "./context/SidebarContext";
-import { ThemeProvider, useTheme } from "./context/ThemeContext.tsx";
+import { type ThemePreference, ThemeProvider, useTheme } from "./context/ThemeContext.tsx";
 import { WorkspaceAppIconsProvider } from "./context/WorkspaceAppIconsProvider";
 import {
   useWorkspaceContext,
   type WorkspaceInfo,
   WorkspaceProvider,
 } from "./context/WorkspaceContext";
+import { WorkspaceUnreadProvider } from "./context/WorkspaceUnreadContext";
 import { chatStore } from "./hooks/chat-store";
 import { useEvents } from "./hooks/useEvents";
 import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
+import { type AppRouteState, isOpenAppCall, resolveAppRouteIn } from "./lib/open-app";
+import { routablePlacements } from "./lib/routable-placements";
+import {
+  landingTab,
+  ORG_SETTINGS_TABS,
+  PROFILE_TABS,
+  WORKSPACE_SETTINGS_TABS,
+} from "./lib/settings-tabs";
+import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { ContextInspectorPage } from "./pages/ContextInspectorPage";
@@ -59,13 +70,12 @@ import { OrgUsageTab } from "./pages/settings/OrgUsageTab";
 import { ProfileConnectorsTab } from "./pages/settings/ProfileConnectorsTab";
 import { ProfileSkillsTab } from "./pages/settings/ProfileSkillsTab";
 import { ProfileTab } from "./pages/settings/ProfileTab";
-import { SettingsAppPanel } from "./pages/settings/SettingsAppPanel";
 import { SkillsTab } from "./pages/settings/SkillsTab";
 import { UsersTab } from "./pages/settings/UsersTab";
-import { WorkspaceAppsTab } from "./pages/settings/WorkspaceAppsTab";
 import { WorkspaceConnectorsTab } from "./pages/settings/WorkspaceConnectorsTab";
 import { WorkspaceDetailPage } from "./pages/settings/WorkspaceDetailPage";
 import { WorkspaceGeneralTab } from "./pages/settings/WorkspaceGeneralTab";
+import { WorkspaceMcpTab } from "./pages/settings/WorkspaceMcpTab";
 import { WorkspaceMembersTab } from "./pages/settings/WorkspaceMembersTab";
 import { WorkspaceNotificationsTab } from "./pages/settings/WorkspaceNotificationsTab";
 import { WorkspaceSettingsPage } from "./pages/settings/WorkspaceSettingsPage";
@@ -74,8 +84,14 @@ import { WorkspaceWebhooksTab } from "./pages/settings/WorkspaceWebhooksTab";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { clearSentryContext, setSentryUser } from "./sentry";
 import { initTelemetry } from "./telemetry";
-import type { BootstrapResponse, ConfigInfo, PlacementEntry } from "./types";
+import type { BootstrapResponse, ConfigInfo, FileLimits, PlacementEntry } from "./types";
 import "./index.css";
+
+/** Stores a theme toggled from the palette or shortcut as the person's preference. */
+async function saveThemePreference(theme: ThemePreference): Promise<void> {
+  const res = await callToolWithoutWorkspace("nb", "set_preferences", { theme });
+  if (res.isError) throw new Error(res.content?.[0]?.text ?? "Theme preference not saved.");
+}
 
 function AuthenticatedApp({
   token,
@@ -94,7 +110,7 @@ function AuthenticatedApp({
 
   // Fire-and-forget telemetry init (non-blocking)
   useEffect(() => {
-    callTool("nb", "workspace_info", {})
+    callToolWithoutWorkspace("nb", "workspace_info", {})
       .then((res) => {
         let raw: unknown = res.structuredContent;
         if (!raw && res.content?.[0]?.text) {
@@ -114,13 +130,12 @@ function AuthenticatedApp({
 
   const initialWorkspaces: WorkspaceInfo[] = bootstrapWorkspacesToInfo(bootstrap.workspaces);
 
-  const initialShell: ShellData = bootstrap.shell;
-
   const initialConfig = {
     configuredProviders: bootstrap.config.configuredProviders,
     newConversationModel: bootstrap.config.newConversationModel,
     availableModels: bootstrap.config.availableModels,
     preferences: bootstrap.user.preferences,
+    fileLimits: bootstrap.config.files,
   };
 
   // Build session info from bootstrap user data
@@ -135,21 +150,21 @@ function AuthenticatedApp({
   };
 
   return (
-    <ThemeProvider>
-      <SessionProvider session={session}>
-        <WorkspaceProvider
-          initialWorkspaces={initialWorkspaces}
-          initialActiveId={bootstrap.activeWorkspace ?? undefined}
-        >
-          <BootstrappedShell
-            token={token}
-            initialShell={initialShell}
-            initialConfig={initialConfig}
-            currentUserId={bootstrap.user.id}
-            onLogout={onLogout}
-          />
-        </WorkspaceProvider>
-      </SessionProvider>
+    <ThemeProvider savePreference={saveThemePreference}>
+      <NoticeProvider>
+        <SessionProvider session={session}>
+          <WorkspaceProvider initialWorkspaces={initialWorkspaces}>
+            <WorkspaceUnreadProvider workspaces={bootstrap.workspaces}>
+              <BootstrappedShell
+                token={token}
+                initialConfig={initialConfig}
+                currentUserId={bootstrap.user.id}
+                onLogout={onLogout}
+              />
+            </WorkspaceUnreadProvider>
+          </WorkspaceProvider>
+        </SessionProvider>
+      </NoticeProvider>
     </ThemeProvider>
   );
 }
@@ -157,18 +172,17 @@ function AuthenticatedApp({
 /** Inner component that has access to WorkspaceContext (needed for useShell workspace switch). */
 function BootstrappedShell({
   token,
-  initialShell,
   initialConfig,
   currentUserId,
   onLogout,
 }: {
   token: string;
-  initialShell: ShellData;
   initialConfig: {
     configuredProviders: string[];
     newConversationModel?: string;
     availableModels?: ConfigInfo["availableModels"];
     preferences?: { displayName?: string; timezone?: string; locale?: string; theme?: string };
+    fileLimits?: FileLimits;
   };
   currentUserId: string;
   onLogout: () => void;
@@ -181,7 +195,7 @@ function BootstrappedShell({
     forSlot,
     mainRoutes,
     refresh: refreshShell,
-  } = useShell(token, activeWorkspace?.id, initialShell);
+  } = useShell(token, activeWorkspace?.id);
 
   if (loading) {
     return (
@@ -208,21 +222,22 @@ function BootstrappedShell({
 
   return (
     <SidebarProvider>
-      <WorkspaceAppIconsProvider token={token} workspaceId={activeWorkspace?.id}>
-        <NotificationsProvider token={token} workspaceId={activeWorkspace?.id}>
+      <WorkspaceAppIconsProvider workspaceId={activeWorkspace?.id}>
+        <NotificationsProvider workspaceId={activeWorkspace?.id}>
           <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
             <ChatPanelProvider>
               <ArtifactPanelProvider>
                 <PaletteProvider>
                   <FocusedAppProvider>
-                    <AuthenticatedAppContent
-                      token={token}
-                      forSlot={forSlot}
-                      mainRoutes={mainRoutes}
-                      shellWorkspaceId={shellWorkspaceId}
-                      refreshShell={refreshShell}
-                      onLogout={onLogout}
-                    />
+                    <AppLocationProvider>
+                      <AuthenticatedAppContent
+                        forSlot={forSlot}
+                        mainRoutes={mainRoutes}
+                        shellWorkspaceId={shellWorkspaceId}
+                        refreshShell={refreshShell}
+                        onLogout={onLogout}
+                      />
+                    </AppLocationProvider>
                   </FocusedAppProvider>
                 </PaletteProvider>
               </ArtifactPanelProvider>
@@ -243,14 +258,12 @@ function BootstrappedShell({
  * ActionBridge, a non-rendering child component.
  */
 function AuthenticatedAppContent({
-  token,
   forSlot,
   mainRoutes,
   shellWorkspaceId,
   refreshShell,
   onLogout,
 }: {
-  token: string;
   forSlot: (slot: string) => PlacementEntry[];
   mainRoutes: () => PlacementEntry[];
   shellWorkspaceId: string | undefined;
@@ -261,7 +274,7 @@ function AuthenticatedAppContent({
   const { applyPreference } = useTheme();
   const wsCtx = useWorkspaceContext();
   const onServerNotification = useServerNotificationRelay();
-  useEvents(token, wsCtx.activeWorkspace?.id, {
+  useEvents({
     onServerNotification,
     onConfigChanged: () => config.refreshConfig(),
     // Auto-title arrived — update the matching conversation's slice so the
@@ -298,8 +311,8 @@ function AuthenticatedAppContent({
   const location = useLocation();
   const activeSlug = wsCtx.activeWorkspace ? toSlug(wsCtx.activeWorkspace.id) : null;
 
-  // Recover from a stale/invalid workspace context. A data call that fires
-  // with an X-Workspace-Id the server rejects (deleted workspace, lost
+  // Recover from a stale/invalid workspace context. A data call to a workspace
+  // path the server rejects (deleted workspace, lost
   // membership, or a dynamic /w/:slug deep-link the user can't see) returns
   // `workspace_error`. Bootstrap validates the active workspace on load, so
   // this is the mid-session net: drop the bad selection (excluding the
@@ -312,55 +325,44 @@ function AuthenticatedAppContent({
         wsCtx.activeWorkspace?.id,
         wsCtx.setActiveWorkspace,
         () => navigate("/", { replace: true }),
+        () => window.location.assign("/"),
       );
     });
     return () => setOnWorkspaceError(null);
   }, [wsCtx, navigate]);
 
   const handleNavigate = useCallback(
-    (route: string) => {
+    (route: string, state?: AppRouteState) => {
       if (route.startsWith("/")) {
-        navigate(route);
+        navigate(route, { state });
       } else {
         // App routes get workspace prefix: /w/<slug>/app/<route>
         const prefix = activeSlug ? `/w/${activeSlug}` : "";
-        navigate(`${prefix}/app/${route}`);
+        navigate(`${prefix}/app/${route}`, { state });
       }
     },
     [navigate, activeSlug],
   );
 
-  // Resolve an app name to its placement route. Apps emit just a name (e.g. "typst-pdf");
-  // the shell owns the route mapping (e.g. "@nimblebraininc/typst-pdf").
+  // Resolve an app name to where it renders. Apps emit just a name (e.g. "typst-pdf"),
+  // the agent's `nb__open_app` a name or sidebar label; the shell owns the route
+  // mapping (e.g. "@nimblebraininc/typst-pdf"). The forms match the server's
+  // `findOpenableApp`, so whatever the tool accepts, this opens.
   const resolveAppRoute = useCallback(
-    (name: string): string | null => {
+    (name: string): string | null =>
       // Search ALL placements (not just mainRoutes) so sidebar.apps are included
-      const all = forSlot("sidebar").concat(forSlot("main")).concat(forSlot("sidebar.bottom"));
-      // Exact route match first
-      const exact = all.find((p) => p.route === name);
-      if (exact) return exact.route!;
-      // Match by serverName (what connectors know themselves as)
-      const byServer = all.find((p) => p.serverName === name);
-      if (byServer?.route) return byServer.route;
-      return null;
-    },
-    [forSlot],
+      resolveAppRouteIn(
+        forSlot("sidebar").concat(forSlot("main")).concat(forSlot("sidebar.bottom")),
+        name,
+        activeSlug,
+      ),
+    [forSlot, activeSlug],
   );
 
-  // Collect all routable placements from main + sidebar (deduplicated by route).
-  // Sidebar placements can have routes too (e.g., Conversations).
-  const mainPlacementRoutes = mainRoutes();
-  const sidebarRoutes = forSlot("sidebar").filter(
-    (p) => p.route && !p.slot.startsWith("sidebar.bottom"),
-  );
-  const seen = new Set<string>();
-  const allRoutable: PlacementEntry[] = [];
-  for (const p of [...sidebarRoutes, ...mainPlacementRoutes]) {
-    if (p.route && !seen.has(p.route)) {
-      seen.add(p.route);
-      allRoutable.push(p);
-    }
-  }
+  // Collect all routable placements from main + sidebar, one per route, a
+  // platform placement ahead of any connector's. Sidebar placements can have
+  // routes too (e.g., Conversations).
+  const allRoutable = routablePlacements(forSlot("sidebar"), mainRoutes());
 
   // App placements: everything routable except route "/", which is the shell's
   // own: `/` is `GlobalHomePage` (workspace-agnostic) and `/w/<slug>/` is
@@ -380,15 +382,19 @@ function AuthenticatedAppContent({
     <ShellProvider value={{ forSlot, mainRoutes, shellWorkspaceId }}>
       {/* ActionBridge handles iframe action events. It consumes ChatContext
           (streaming) but renders nothing, so its re-renders are free. */}
-      <ActionBridge handleNavigate={handleNavigate} resolveAppRoute={resolveAppRoute} />
-      {/* Command palette (⌘P) — global surface, sibling of the shell layout
+      <ActionBridge
+        handleNavigate={handleNavigate}
+        resolveAppRoute={resolveAppRoute}
+        activeSlug={activeSlug}
+      />
+      {/* Command palette (⌘K) — global surface, sibling of the shell layout
           and chat chrome, so it's reachable from any route. */}
       <CommandPalette onLogout={onLogout} />
       <ShellLayout forSlot={forSlot} onLogout={onLogout}>
         <ErrorBoundary resetKeys={[location.pathname]}>
           <Routes>
             {/* Global Home — workspace-agnostic landing (greeting +
-                workspaces grid). Chat, Conversations, Automations, Files
+                workspaces grid). Chat, Conversations, Tasks, Files
                 are all identity-bound now, so the root URL is the
                 user's cross-workspace home. */}
             <Route path="/" element={<GlobalHomePage />} />
@@ -402,7 +408,7 @@ function AuthenticatedAppContent({
             <Route path="/w/:slug" element={<WorkspaceRouteGuard />}>
               {/* Workspace overview — header + app grid. */}
               <Route index element={<WorkspaceOverviewPage />} />
-              {/* Identity views (Conversations / Automations / Files) — each at
+              {/* Identity views (Conversations / Tasks / Files) — each at
                   its own segment (e.g. `/w/<slug>/conversations`). The view is
                   workspace-scoped (the slug = the focused workspace); the tools
                   still dispatch bare through the identity door (see the bridge,
@@ -411,7 +417,7 @@ function AuthenticatedAppContent({
                 <Route
                   key={p.route}
                   path={identityAppSegment(p.serverName)}
-                  element={<AppWithChat placement={p} onNavigate={handleNavigate} />}
+                  element={<AppWithChat placement={p} />}
                 />
               ))}
               {/* Apps within workspace */}
@@ -419,7 +425,7 @@ function AuthenticatedAppContent({
                 <Route
                   key={p.route}
                   path={`app/${p.route}`}
-                  element={<AppWithChat placement={p} onNavigate={handleNavigate} />}
+                  element={<AppWithChat placement={p} />}
                 />
               ))}
               {/* Full-page context inspector for a conversation — opened from the
@@ -430,17 +436,19 @@ function AuthenticatedAppContent({
                   workspace rather than to any connector, and no connector may
                   claim, reorder, or replace it. */}
               <Route path="notifications" element={<NotificationsPage />} />
-              {/* Workspace settings — General/Members/Usage/Apps/Connectors/Skills/Webhooks. */}
+              {/* Workspace settings — General/Members/Connectors/Skills/MCP/Notifications/Webhooks. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
-                <Route index element={<Navigate to="general" replace />} />
+                <Route
+                  index
+                  element={<Navigate to={landingTab(WORKSPACE_SETTINGS_TABS)} replace />}
+                />
                 <Route path="general" element={<WorkspaceGeneralTab />} />
                 <Route path="members" element={<WorkspaceMembersTab />} />
-                <Route path="apps" element={<WorkspaceAppsTab />} />
-                <Route path="apps/:serverName" element={<SettingsAppPanel />} />
                 <Route path="connectors" element={<WorkspaceConnectorsTab />} />
                 <Route path="connectors/browse" element={<ConnectorBrowsePage />} />
                 <Route path="connectors/:serverName" element={<ConnectorDetailPage />} />
                 <Route path="skills" element={<SkillsTab />} />
+                <Route path="mcp" element={<WorkspaceMcpTab />} />
                 <Route path="notifications" element={<WorkspaceNotificationsTab />} />
                 <Route path="webhooks" element={<WorkspaceWebhooksTab />} />
               </Route>
@@ -465,7 +473,10 @@ function AuthenticatedAppContent({
                 config (custom instructions, model prefs) slots in
                 alongside the Skills tab. */}
             <Route path="/profile" element={<ProfilePage />}>
-              <Route index element={<Navigate to="/profile/general" replace />} />
+              <Route
+                index
+                element={<Navigate to={`/profile/${landingTab(PROFILE_TABS)}`} replace />}
+              />
               <Route path="general" element={<ProfileTab />} />
               <Route path="connectors" element={<ProfileConnectorsTab />} />
               <Route path="skills" element={<ProfileSkillsTab />} />
@@ -476,7 +487,10 @@ function AuthenticatedAppContent({
                 model config, the full workspace/user roster), so
                 it lives outside any workspace URL. About is role-exempt. */}
             <Route path="/org" element={<OrgSettingsPage />}>
-              <Route index element={<Navigate to="/org/workspaces" replace />} />
+              <Route
+                index
+                element={<Navigate to={`/org/${landingTab(ORG_SETTINGS_TABS)}`} replace />}
+              />
               <Route
                 path="model"
                 element={
@@ -553,51 +567,58 @@ function AuthenticatedAppContent({
 
 /**
  * Non-rendering component that handles iframe action events (nb:action).
- * Isolated here so that consuming ChatContext (streaming) doesn't re-render
+ * Isolated here so that consuming the chat panel context doesn't re-render
  * the shell layout.
  */
 function ActionBridge({
   handleNavigate,
   resolveAppRoute,
+  activeSlug,
 }: {
-  handleNavigate: (route: string) => void;
+  handleNavigate: (route: string, state?: AppRouteState) => void;
   resolveAppRoute: (name: string) => string | null;
+  activeSlug: string | null;
 }) {
   const chatPanel = useChatPanelContext();
-  const chat = useChatContext();
 
   // Use refs so the event handler doesn't need to re-register on every
-  // streaming tick — only the ref contents update.
-  const chatRef = useRef(chat);
-  chatRef.current = chat;
+  // render — only the ref contents update.
   const chatPanelRef = useRef(chatPanel);
   chatPanelRef.current = chatPanel;
   const navigateRef = useRef(handleNavigate);
   navigateRef.current = handleNavigate;
   const resolveRef = useRef(resolveAppRoute);
   resolveRef.current = resolveAppRoute;
+  const slugRef = useRef(activeSlug);
+  slugRef.current = activeSlug;
 
   useEffect(() => {
     // Dispatch table keyed by action name. Each handler reads current state
     // through the refs, so the listener registers once and unknown actions
-    // no-op. Params carry the event detail (id, prompt, name, route).
+    // no-op. Params carry the event detail (`id`, `name`, and the bridge's
+    // `serverName`).
     const actions: Record<string, (params: Record<string, unknown>) => void> = {
       openConversation(params) {
         if (params.id) chatPanelRef.current.openPanel(params.id as string);
       },
-      startChat(params) {
-        chatPanelRef.current.openPanel();
-        const prompt = params.prompt as string | undefined;
-        if (prompt) chatRef.current.sendMessage(prompt);
-      },
+      // `target` is a view inside the app (its stable address); the routed
+      // app view hands it to the app as `ai.nimblebrain/navigate`.
       openApp(params) {
         const name = params.name as string | undefined;
         if (!name) return;
         const route = resolveRef.current(name);
-        if (route) navigateRef.current(route);
+        if (!route) return;
+        const target = typeof params.target === "string" ? params.target : undefined;
+        navigateRef.current(route, target ? { appTarget: target } : undefined);
       },
-      navigate(params) {
-        if (params.route) navigateRef.current(params.route as string);
+      // The sending connector's own settings page. The connector is the one the
+      // bridge names, never a param, so an app can open only its own. Identity
+      // apps have no workspace settings page, so they no-op.
+      openConnectorSettings(params) {
+        const serverName = params.serverName as string | undefined;
+        if (!serverName) return;
+        const path = connectorSettingsPath(slugRef.current, serverName);
+        if (path) navigateRef.current(path);
       },
     };
 
@@ -613,7 +634,20 @@ function ActionBridge({
     };
 
     window.addEventListener("nb:action", handler);
-    return () => window.removeEventListener("nb:action", handler);
+
+    // The agent's `nb__open_app`, once it finishes in a turn this tab sent: the
+    // same `openApp` an app asks for. The store never reports a call from
+    // history, a resumed stream, or another tab, so only the screen of the
+    // person who asked moves.
+    const offToolDone = chatStore.onToolDone((call) => {
+      if (!call.ok || !isOpenAppCall(call.name)) return;
+      actions.openApp?.({ name: call.input.app, target: call.input.target });
+    });
+
+    return () => {
+      window.removeEventListener("nb:action", handler);
+      offToolDone();
+    };
   }, []); // Stable — all dependencies are refs
 
   return null;
@@ -668,12 +702,9 @@ export function App() {
       setAuthToken("__cookie__");
       // onAuthError fires only after silent token refresh has already failed
       setOnAuthError(handleLogout);
-
-      if (data.activeWorkspace) {
-        setActiveWorkspaceId(data.activeWorkspace);
-      } else if (data.workspaces.length > 0) {
-        setActiveWorkspaceId(data.workspaces[0].id);
-      }
+      // The active workspace is not set here: WorkspaceProvider seeds it on
+      // mount and the route guard projects the URL onto it. A write from here
+      // lands whenever bootstrap resolves, which can be after the guard's.
 
       setPlatformVersion(data.version, data.buildSha);
       setBootstrap(data);
@@ -686,19 +717,18 @@ export function App() {
   // Bootstrap carries no workspace hint — the focused workspace is owned by
   // the URL (`/w/:slug`), and login lands on `/` (the workspace-agnostic home).
   useEffect(() => {
+    let cancelled = false;
     tryBootstrap().then((data) => {
+      if (cancelled) return;
       if (data) initFromBootstrap(data);
       setChecking(false);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [initFromBootstrap]);
 
-  if (checking) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-background text-muted-foreground text-sm">
-        Loading...
-      </div>
-    );
-  }
+  if (checking) return <AppFrameSkeleton />;
 
   if (!authenticated || !bootstrap) {
     return <Login onLogin={initFromBootstrap} />;

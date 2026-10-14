@@ -1,33 +1,47 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import type { Brand } from "../brand/index.ts";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
+import type { TasksConfig } from "../config/tasks.ts";
 import type { ConnectorsConfig } from "../connectors/providers/config.ts";
 import type { EventSink, ThinkingEffort } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
-import type { UserIdentity } from "../identity/provider.ts";
+import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
+import type { UserStore } from "../identity/user.ts";
 import type { ProvidersConfig } from "../model/registry.ts";
 import type { NotificationsPollConfig } from "../notifications/poll-config.ts";
 import type { TokenUsage } from "../usage/types.ts";
+import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import type { AdmissionLease } from "./admission.ts";
 import type { RunTrigger } from "./run-spec.ts";
+import type { SpendAccount } from "./spend.ts";
 
 /** Model slot configuration. Each slot maps to a provider:model-id string. */
 export interface ModelSlots {
   /** Primary model for chat and general requests. */
   default: string;
-  /** Cheap/fast model for briefings, auto-title, and both history folds. */
+  /** Cheap/fast model for auto-title and both history folds. */
   fast: string;
 }
 
-export interface RuntimeConfig {
-  /** Model provider configuration. */
-  model?:
-    | { provider: "anthropic"; apiKey?: string }
-    | { provider: "openai"; apiKey?: string; baseURL?: string }
-    | { provider: "google"; apiKey?: string }
-    | { provider: "custom"; adapter: LanguageModelV4 };
+/** The runtime's identity stores, handed to `RuntimeConfig.identityProvider`. */
+export interface IdentityStores {
+  workDir: string;
+  userStore: UserStore;
+  workspaceStore: WorkspaceStore;
+}
 
-  /** Multi-provider configuration. Takes precedence over `model` when set. */
+export interface RuntimeConfig {
+  /**
+   * One model that serves every model string, in place of the provider
+   * registry. For tests and embedders that bring their own adapter; it has no
+   * `nimblebrain.json` form. Slots, policy and provider listings still read
+   * `models` and `providers`.
+   */
+  languageModel?: LanguageModelV4;
+
+  /** Provider configuration. Absent means Anthropic, keyed from the environment. */
   providers?: ProvidersConfig["providers"];
 
   /** Allow HTTP (non-TLS) remote connector connections. Dev only. */
@@ -36,7 +50,6 @@ export interface RuntimeConfig {
   /** Directories to scan for skill files. */
   skillDirs?: string[];
 
-  /** Role-based model slots. Takes precedence over `defaultModel`. */
   /**
    * Slots the operator set. Partial because setting one slot is not setting
    * the other — the resolved view where both are always present is
@@ -57,9 +70,6 @@ export interface RuntimeConfig {
    * reachable.
    */
   modelPolicy?: { allowed?: string[] };
-
-  /** @deprecated Use models.default instead. Kept for backward compat. */
-  defaultModel?: string;
 
   /** Max agentic iterations per request. Capped at 25. Default: 10. */
   maxIterations?: number;
@@ -163,23 +173,6 @@ export interface RuntimeConfig {
   confirmationGate?: ConfirmationGate;
 
   /**
-   * MCP session metadata store. Controls how sessions for `/mcp` are tracked
-   * across the cluster. Defaults to `memory` (process-local) — fine for any
-   * single-replica deploy. Set `type: "redis"` with a `redis.url` for
-   * multi-replica deploys; the registry shares session metadata across
-   * processes. See `src/api/session-store/`.
-   */
-  sessionStore?: {
-    type?: "memory" | "redis";
-    /** Idle TTL in seconds. Default: 28800 (8 h). */
-    ttlSeconds?: number;
-    redis?: {
-      url?: string;
-      keyPrefix?: string;
-    };
-  };
-
-  /**
    * Durable usage ledger — one JSONL line per priced LLM call, under
    * `{workDir}/usage/`. See `src/usage/ledger.ts`.
    */
@@ -212,11 +205,26 @@ export interface RuntimeConfig {
   workDir?: string;
 
   /**
+   * Builds the identity provider, for an in-process caller that supplies its
+   * own (a test). It is handed the runtime's own stores, the ones a provider
+   * built from `instance.json` gets. Omitted, the runtime builds the one
+   * `<workDir>/instance.json` names. The HTTP server authenticates with
+   * whichever one the runtime holds.
+   */
+  identityProvider?: (stores: IdentityStores) => IdentityProvider;
+
+  /**
    * Which backend holds this deployment's secrets, and that backend's own
    * settings. Omit for the default: one plaintext file per secret under
    * `workDir`. See {@link SecretsConfig}.
    */
   secrets?: SecretsConfig;
+
+  /**
+   * White-label branding: name, logos, accent colour, fonts. Absent is
+   * NimbleBrain. Validated and installed by `loadBrand` (`src/brand/`).
+   */
+  brand?: Brand;
 
   /** Anonymous telemetry configuration. */
   telemetry?: {
@@ -224,16 +232,10 @@ export interface RuntimeConfig {
     enabled?: boolean;
   };
 
-  /** Home dashboard configuration. */
+  /** Legacy tenant default; `preferences.timezone` takes precedence. */
   home?: {
-    /** Enable the Home dashboard. Default: true. */
-    enabled?: boolean;
-    /** User's first name for the greeting. Default: "there". */
-    userName?: string;
     /** IANA timezone (e.g., "Pacific/Honolulu"). Empty uses system timezone. */
     timezone?: string;
-    /** Briefing cache TTL in minutes. Default: 5. */
-    cacheTtlMinutes?: number;
   };
 
   /**
@@ -248,6 +250,12 @@ export interface RuntimeConfig {
     poll?: NotificationsPollConfig;
   };
 
+  /**
+   * Tasks — how many runs the process holds in flight and waiting, and
+   * the ceilings on any one run. See `src/config/tasks.ts`.
+   */
+  tasks?: TasksConfig;
+
   /** File context configuration. */
   files?: {
     maxFileSize?: number;
@@ -258,7 +266,7 @@ export interface RuntimeConfig {
 
   /** User preferences for personalization. */
   preferences?: {
-    /** Display name. Falls back to home.userName. */
+    /** Display name. */
     displayName?: string;
     /** IANA timezone. Falls back to home.timezone. */
     timezone?: string;
@@ -288,16 +296,16 @@ export interface ChatRequest {
   maxIterations?: number;
   /**
    * The workspace the chat is *focused* on (the `/w/:slug` the user is
-   * viewing, plumbed from the `X-Workspace-Id` header). Drives the
+   * viewing, plumbed from the workspace in the chat URL). Drives the
    * deterministic, workspace-scoped **briefing**: the Installed Apps
-   * section and the org/workspace instruction overlays reflect THIS
+   * section reflects THIS
    * workspace, identical for every member (no per-user generation).
    *
    * It is ALSO the tool scope: a session is walled to this one workspace —
    * its tools plus the caller's identity tools, all bare, via
    * `listToolsForWorkspace(workspaceId)`. There is no cross-workspace union.
-   * Absent → the chat isn't focused on a workspace (e.g. the home control
-   * panel); it falls back to the personal workspace, which is then the workspace.
+   * Required at runtime, under every identity provider: a request naming
+   * none is refused, and the runtime never chooses a workspace for it.
    */
   workspaceId?: string;
   /**
@@ -329,17 +337,17 @@ export interface ChatRequest {
    * `tasks/cancel`; inline tool calls abort their RPC.
    *
    * Without this, callers racing `runtime.chat()` against an external
-   * deadline (e.g. the automations executor's `Promise.race` against
+   * deadline (e.g. the tasks executor's `Promise.race` against
    * `maxRunDurationMs`) ORPHAN the in-flight LLM/tool work — the chat
    * keeps running, finishes, writes the conversation to disk, but the
-   * caller never sees the result. Production proof: `morning-brief-6am-pt`
-   * runs in ws_nimblebrain_shared completed in 6-7m while the 5m
+   * caller never sees the result. Production proof: a task's
+   * runs completed in 6-7m while the 5m
    * Promise.race silently abandoned them, leaving fake `timeout` run
    * records and ~$X of wasted LLM spend per missed run.
    *
    * Cooperative: the engine checks the signal between iterations and the
    * current tool call may run to completion before the loop exits. Long-
-   * running tools honor the signal via the contract in CLAUDE.md
+   * running tools honor the signal via the contract in src/tools/AGENTS.md
    * §"Long-Running Tools (MCP Tasks)".
    */
   signal?: AbortSignal;
@@ -370,9 +378,9 @@ export interface ChatResult {
    * carrying the reserved `my_` marker. Stored raw; display name and friendly
    * name are rendered on the fly. The workspace is NOT in the name — it is the
    * session's, resolved from the conversation. There is no top-level
-   * `ChatResult.workspaceId` field (removed by T006 — different tool
-   * calls in the same turn can land in different workspaces, so a
-   * single result-level workspaceId would be misleading).
+   * `ChatResult.workspaceId` field (different tool calls in the same
+   * turn can land in different workspaces, so a single result-level
+   * workspaceId would be misleading).
    */
   toolCalls: Array<{
     id: string;
@@ -392,7 +400,7 @@ export interface ChatResult {
 /**
  * Request shape for `runtime.executeTask()` — the unattended agent
  * invocation primitive that sits beside `runtime.chat()`. Use this when
- * the agent runs without a user present (scheduled automations, eval
+ * the agent runs without a user present (scheduled tasks, eval
  * runs, future webhook triggers). The runtime owns the framing contract
  * (no greetings, deliverable output, no follow-up questions) via the
  * task-mode system prompt; callers supply only the task description.
@@ -422,7 +430,7 @@ export interface TaskRequest {
   /** The task description. Goes in as the user message. */
   prompt: string;
   /**
-   * What woke the agent. `schedule` is an automations cron tick, `manual` an
+   * What woke the agent. `schedule` is a tasks cron tick, `manual` an
    * operator pressing Run now; the default `api` covers a caller driving the
    * runtime directly (embedded, CLI, evals). `chat` is not reachable here —
    * that trigger has its own door.
@@ -433,29 +441,40 @@ export interface TaskRequest {
   trigger?: Exclude<RunTrigger, "chat">;
   /**
    * Identity the task runs under. Resolution mirrors `ChatRequest.identity`:
-   * if an identity provider is configured, this MUST be set; in dev mode
-   * an unset identity falls back to `DEV_IDENTITY`. The scheduler builds
-   * a minimal identity from the automation's `ownerId` field.
+   * it MUST be set; a task without one is refused. The scheduler builds a
+   * minimal identity from the task's `ownerId` field.
    */
   identity?: UserIdentity;
   /**
-   * Focused workspace (optional). When set, drives the active tool set
-   * (that workspace's tools + identity tools) and the focused-workspace
-   * briefing layer in the system prompt. When omitted, the active tool
-   * set is the owner's personal-workspace tools + identity tools; `nb__search`
-   * discovers the rest of that one workspace, NOT a cross-workspace union
-   * (progressive disclosure, same shape as chat). The focused-workspace
-   * briefing layer is skipped — `TASK_IDENTITY` carries the framing.
+   * The workspace the task runs in. Drives the active tool set (that
+   * workspace's tools + identity tools; `nb__search` discovers the rest of
+   * that one workspace, NOT a cross-workspace union) and the workspace
+   * briefing layer in the system prompt. Required at runtime, as for
+   * `ChatRequest.workspaceId`: a task naming none is refused.
    */
   workspaceId?: string;
   model?: string;
   maxIterations?: number;
-  maxInputTokens?: number;
+  /**
+   * Input tokens the whole run may spend, summed over every model call. Before
+   * each call the run ends with stopReason `max_input_tokens` if that call's
+   * projected input would pass it (see `EngineConfig.maxRunInputTokens`).
+   * Absent = no cap.
+   */
+  maxRunInputTokens?: number;
+  /**
+   * The spend accounts the run draws on: opaque ids the caller chose, each with
+   * a unit and the amount remaining. Runs in flight that name the same id share
+   * one balance. Each model call's output is clamped to what they allow, and
+   * the run ends with stopReason `spend_limit` before a call they cannot pay
+   * for (`src/runtime/spend.ts`). Absent = no account.
+   */
+  spendAccounts?: SpendAccount[];
   /** Glob patterns filtering which tools are available. Matches use the same logic as chat. */
   allowedTools?: string[];
   /**
-   * Arbitrary metadata. The automations executor stamps `source` and
-   * `automationId` here so the run is correlated to its automation in logs
+   * Arbitrary metadata. The tasks executor stamps `source` and
+   * `taskId` here so the run is correlated to its task in logs
    * and audit. Pass-through; the runtime does not persist a conversation.
    */
   metadata?: Record<string, unknown>;
@@ -463,10 +482,33 @@ export interface TaskRequest {
    * Cancellation signal forwarded into the engine and threaded down to
    * every tool call. Same morning-brief contract as `ChatRequest.signal`:
    * without it, callers racing the task against an external deadline
-   * (notably the automations executor's `Promise.race` against
+   * (notably the tasks executor's `Promise.race` against
    * `maxRunDurationMs`) orphan in-flight LLM/tool work.
+   *
+   * A run still waiting for a run slot leaves the queue when it fires, and
+   * the call rejects with an `AbortError`.
    */
   signal?: AbortSignal;
+  /**
+   * The run's id, when the caller named it before the run started: a caller
+   * that hands out a handle for the run (a task id) mints the id first, so the
+   * handle and the run's own records share it. Absent: the door mints one.
+   */
+  runId?: string;
+  /**
+   * An opaque key for run admission (`src/runtime/admission.ts`): a call whose
+   * key already holds a slot or waits for one is refused. The runtime never
+   * interprets it. Ignored when `admission` is passed.
+   */
+  admissionKey?: string;
+  /**
+   * A slot the caller already holds from `Runtime.getRunAdmission()`, for a
+   * caller that must know at request time whether its run started or queued
+   * and re-check its own state when the slot is granted. The run uses it
+   * instead of acquiring one, and releases it when it ends. A lease the pool
+   * does not hold is ignored, and the run acquires its own.
+   */
+  admission?: AdmissionLease;
 }
 
 /**
@@ -475,9 +517,9 @@ export interface TaskRequest {
  * Modeled on `ChatResult` but with chat-specific fields removed:
  *  - No `skillName` — task mode does not perform skill matching on the
  *    prompt; connector-affined skills still surface via Layer 3.
- *  - `response` renamed to `output` to reflect the deliverable contract.
+ *  - `output` rather than `response`, to reflect the deliverable contract.
  *  - `runId` is a traceability anchor — the id of the run, under which the
- *    caller (the automations app) persists the run result (output +
+ *    caller (the tasks app) persists the run result (output +
  *    activity log + output-file refs). No conversation is created.
  *
  * Always returned on completion — including timeout, max_iterations,
@@ -505,5 +547,15 @@ export interface TaskResult {
     errorReason?: string;
   }>;
   stopReason: string;
+  /**
+   * The last model call's unified finish reason and provider-native stop
+   * reason. See `EngineResult.finishReason` / `finishReasonRaw`. Together they
+   * let the caller explain a `stopReason` of "other", which several distinct
+   * provider outcomes share.
+   */
+  finishReason?: string;
+  finishReasonRaw?: string;
+  /** The account that stopped the run, when `stopReason` is `spend_limit`. */
+  spendAccountId?: string;
   usage: TurnUsage;
 }

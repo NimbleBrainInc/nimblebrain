@@ -60,12 +60,12 @@ describe("toolMatches", () => {
   });
 
   test("exact pattern matches only its exact name", () => {
-    expect(toolMatches("synapse-collateral__patch_source", "synapse-collateral__patch_source")).toBe(
-      true,
-    );
-    expect(toolMatches("synapse-collateral__patch_sources", "synapse-collateral__patch_source")).toBe(
-      false,
-    );
+    expect(
+      toolMatches("synapse-collateral__patch_source", "synapse-collateral__patch_source"),
+    ).toBe(true);
+    expect(
+      toolMatches("synapse-collateral__patch_sources", "synapse-collateral__patch_source"),
+    ).toBe(false);
     expect(toolMatches("synapse-collateral__set_source", "synapse-collateral__patch_source")).toBe(
       false,
     );
@@ -227,7 +227,7 @@ describe("partitionSkillsByRole", () => {
       makeSkill({
         name: "ws-rule",
         loadingStrategy: "always",
-        sourcePath: "/work/workspaces/ws_x/skills/ws-rule.md",
+        sourcePath: "/work/workspaces/ws_008bd230f095f38a/skills/ws-rule.md",
       }),
     ];
     const { context, capability } = partitionSkillsByRole(pool);

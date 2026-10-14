@@ -14,7 +14,12 @@ import { describe, expect, test } from "bun:test";
 
 import type { SessionInfo } from "../context/SessionContext";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
-import { canWriteWorkspace, resolveScopedRole, roleAtLeast } from "../hooks/useScopedRole";
+import {
+  canManageWorkspaceMembers,
+  canWriteWorkspace,
+  resolveScopedRole,
+  roleAtLeast,
+} from "../hooks/useScopedRole";
 
 function session(orgRole?: string, authenticated = true): SessionInfo {
   return {
@@ -24,16 +29,10 @@ function session(orgRole?: string, authenticated = true): SessionInfo {
 }
 
 function workspace(userRole?: "admin" | "member"): WorkspaceInfo {
-  return { id: "ws_demo", name: "Demo", memberCount: 1, connectors: [], userRole };
+  return { id: "ws_002afe1142297ff4", name: "Demo", memberCount: 1, connectorCount: 0, userRole };
 }
 
 describe("resolveScopedRole — org-level overrides", () => {
-  test("org owner is org_owner regardless of workspace membership", () => {
-    expect(resolveScopedRole(session("owner"), null)).toBe("org_owner");
-    expect(resolveScopedRole(session("owner"), workspace())).toBe("org_owner");
-    expect(resolveScopedRole(session("owner"), workspace("member"))).toBe("org_owner");
-  });
-
   test("org admin is org_admin regardless of workspace membership", () => {
     expect(resolveScopedRole(session("admin"), null)).toBe("org_admin");
     expect(resolveScopedRole(session("admin"), workspace("member"))).toBe("org_admin");
@@ -67,13 +66,12 @@ describe("resolveScopedRole — unauthenticated", () => {
 
 describe("roleAtLeast", () => {
   test("each role meets its own threshold", () => {
-    for (const role of ["none", "ws_member", "ws_admin", "org_admin", "org_owner"] as const) {
+    for (const role of ["none", "ws_member", "ws_admin", "org_admin"] as const) {
       expect(roleAtLeast(role, role)).toBe(true);
     }
   });
 
-  test("higher roles meet lower thresholds (org owners pass ws_admin gate)", () => {
-    expect(roleAtLeast("org_owner", "ws_admin")).toBe(true);
+  test("higher roles meet lower thresholds (org admins pass ws_admin gate)", () => {
     expect(roleAtLeast("org_admin", "ws_admin")).toBe(true);
     expect(roleAtLeast("ws_admin", "ws_member")).toBe(true);
   });
@@ -121,11 +119,22 @@ describe("canWriteWorkspace", () => {
     // ...and write says no. If these ever agree, one of them is wrong.
     expect(canWriteWorkspace(ws.userRole)).toBe(false);
   });
+});
 
-  test("org owner gets no bypass either", () => {
-    expect(roleAtLeast(resolveScopedRole(session("owner"), workspace("member")), "ws_admin")).toBe(
-      true,
-    );
-    expect(canWriteWorkspace("member")).toBe(false);
+// ---------------------------------------------------------------------------
+// canManageWorkspaceMembers — membership is governed at org scope. Mirrors the
+// server's `canManageWorkspaceMembers`: an org admin, or an admin member.
+// ---------------------------------------------------------------------------
+
+describe("canManageWorkspaceMembers", () => {
+  test("an org admin may manage members without a membership", () => {
+    expect(canManageWorkspaceMembers("admin", undefined)).toBe(true);
+  });
+
+  test("otherwise it is the write rule: admin members only", () => {
+    expect(canManageWorkspaceMembers("member", "admin")).toBe(true);
+    expect(canManageWorkspaceMembers("member", "member")).toBe(false);
+    expect(canManageWorkspaceMembers("member", undefined)).toBe(false);
+    expect(canManageWorkspaceMembers(undefined, undefined)).toBe(false);
   });
 });

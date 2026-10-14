@@ -1,14 +1,18 @@
-import { describe, expect, it, afterAll, beforeAll } from "bun:test";
-import { mkdirSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Runtime } from "../../src/runtime/runtime.ts";
-import { runWithRequestContext } from "../../src/runtime/request-context.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { startServer } from "../../src/api/server.ts";
+import { join } from "node:path";
+import type { ApiErrorBody, ToolCallResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { startServer } from "../../src/api/server.ts";
+import { runWithRequestContext } from "../../src/runtime/request-context.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
+/** What `POST …/tools/call` answers: the tool result's wire fields. */
 
 const testDir = join(tmpdir(), `nimblebrain-core-reg-${Date.now()}`);
 
@@ -17,22 +21,23 @@ let handle: ServerHandle;
 let baseUrl: string;
 
 beforeAll(async () => {
-	const workDir = join(testDir, "work");
-	mkdirSync(workDir, { recursive: true });
-	runtime = await Runtime.start({
-		model: { provider: "custom", adapter: createEchoModel() },
-		workDir,
-		logging: { disabled: true },
-	});
-	await provisionTestWorkspace(runtime);
-	handle = startServer({ runtime, port: 0 });
-	baseUrl = `http://localhost:${handle.port}`;
+  const workDir = join(testDir, "work");
+  mkdirSync(workDir, { recursive: true });
+  runtime = await Runtime.start({
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
+    workDir,
+    logging: { disabled: true },
+  });
+  await provisionTestWorkspace(runtime);
+  handle = startServer({ runtime, port: 0 });
+  baseUrl = `http://localhost:${handle.port}`;
 });
 
 afterAll(async () => {
-	handle.stop(true);
-	await runtime.shutdown();
-	if (existsSync(testDir)) rmSync(testDir, { recursive: true });
+  handle.stop(true);
+  await runtime.shutdown();
+  if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
 // =============================================================================
@@ -40,156 +45,116 @@ afterAll(async () => {
 // =============================================================================
 
 describe("nb-core registration in Runtime", () => {
-	it("registry contains 'nb' source after startup", () => {
-		const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
-		expect(registry.hasSource("nb")).toBe(true);
-	});
+  it("registry contains 'nb' source after startup", () => {
+    const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
+    expect(registry.hasSource("nb")).toBe(true);
+  });
 
-	it("nb__ tools appear in availableTools()", async () => {
-		const tools = await runtime.availableTools();
-		const coreTools = tools.filter((t) => t.name.startsWith("nb__"));
-		expect(coreTools.length).toBeGreaterThanOrEqual(6);
-		const names = coreTools.map((t) => t.name).sort();
-		expect(names).toContain("nb__manage_identity");
-	});
+  it("nb__ tools appear in availableTools()", async () => {
+    const tools = await runtime.availableTools();
+    const coreTools = tools.filter((t) => t.name.startsWith("nb__"));
+    expect(coreTools.length).toBeGreaterThanOrEqual(6);
+    const names = coreTools.map((t) => t.name).sort();
+    expect(names).toContain("nb__set_preferences");
+  });
 
-	it("nb__ tools are callable via ToolRegistry.execute()", async () => {
-		const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
-		const result = await runWithRequestContext(
-			{ identity: null, workspaceId: TEST_WORKSPACE_ID },
-			() => registry.execute({
-				id: "test-core-exec",
-				name: "nb__list_apps",
-				input: {},
-			}),
-		);
-		expect(result.isError).toBe(false);
-		const data = result.structuredContent as Record<string, unknown>;
-		expect(data.apps).toBeDefined();
-		expect(Array.isArray(data.apps)).toBe(true);
-	});
+  it("nb__ tools are callable via ToolRegistry.execute()", async () => {
+    const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
+    const result = await runWithRequestContext(
+      { identity: null, workspaceId: TEST_WORKSPACE_ID },
+      () =>
+        registry.execute({
+          id: "test-core-exec",
+          name: "nb__workspace_info",
+          input: {},
+        }),
+    );
+    expect(result.isError).toBe(false);
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(typeof data.version).toBe("string");
+  });
 });
 
 // =============================================================================
-// 2. Resource serving via GET /v1/apps/nb/resources/:path
+// 2. Resource serving via GET /v1/workspaces/:wsId/apps/nb/resources/:path
 // =============================================================================
 
-// The endpoint returns an MCP `ReadResourceResult`-shaped envelope so the
-// per-content `_meta` (including ext-apps `_meta.ui.*`) reaches the client
-// unchanged. Previously it returned raw HTML with `Content-Type: text/html`;
-// that contract was widened when `_meta.ui` plumbing shipped.
-describe("GET /v1/apps/nb/resources/:path", () => {
-	function extractHtml(envelope: unknown): string {
-		const contents = (envelope as { contents?: Array<{ text?: string }> })
-			.contents;
-		return contents?.[0]?.text ?? "";
-	}
-
-	it("returns HTML for app-nav", async () => {
-		const res = await fetch(
-			`${baseUrl}/v1/apps/nb/resources/app-nav`,
-			{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
-		);
-		expect(res.status).toBe(200);
-		expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
-		const envelope = await res.json();
-		const html = extractHtml(envelope);
-		expect(html).toContain("<!DOCTYPE html>");
-		expect(html).toContain("postMessage");
-	});
-
-	it("returns HTML for every core resource", async () => {
-		const resources = ["app-nav", "settings-link", "model-selector"];
-		for (const name of resources) {
-			const res = await fetch(
-				`${baseUrl}/v1/apps/nb/resources/${name}`,
-				{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
-			);
-			expect(res.status).toBe(200);
-			expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
-			const envelope = await res.json();
-			const html = extractHtml(envelope);
-			expect(html).toContain("<!DOCTYPE html>");
-		}
-	});
-
-	it("returns 404 for unknown core resource", async () => {
-		const res = await fetch(
-			`${baseUrl}/v1/apps/nb/resources/unknown`,
-			{ headers: { "X-Workspace-Id": TEST_WORKSPACE_ID } },
-		);
-		expect(res.status).toBe(404);
-		const body = await res.json();
-		expect(body.error).toBe("resource_not_found");
-	});
+describe("GET /v1/workspaces/:wsId/apps/nb/resources/:path", () => {
+  it("returns 404 for unknown core resource", async () => {
+    const res = await fetch(
+      `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/apps/nb/resources/unknown`,
+    );
+    expect(res.status).toBe(404);
+    const body = await readJson<ApiErrorBody>(res);
+    expect(body.error).toBe("resource_not_found");
+  });
 });
 
 // =============================================================================
 // 3. Tool call proxy with server=nb
 // =============================================================================
 
-describe("POST /v1/tools/call with server=nb", () => {
-	it("calls nb__list_apps and returns data", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
-			body: JSON.stringify({
-				server: "nb",
-				tool: "list_apps",
-				arguments: {},
-			}),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.isError).toBe(false);
-		expect(Array.isArray(body.content)).toBe(true);
-	});
+describe("POST /v1/workspaces/:wsId/tools/call with server=nb", () => {
+  it("calls nb__workspace_info and returns data", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        server: "nb",
+        tool: "workspace_info",
+        arguments: {},
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await readJson<ToolCallResponse>(res);
+    expect(body.isError).toBe(false);
+    expect(Array.isArray(body.content)).toBe(true);
+  });
 
-	it("returns 404 for unknown tool on nb server", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
-			body: JSON.stringify({
-				server: "nb",
-				tool: "nonexistent_tool",
-				arguments: {},
-			}),
-		});
-		expect(res.status).toBe(404);
-		const body = await res.json();
-		expect(body.error).toBe("tool_not_found");
-	});
+  it("returns 404 for unknown tool on nb server", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        server: "nb",
+        tool: "nonexistent_tool",
+        arguments: {},
+      }),
+    });
+    expect(res.status).toBe(404);
+    const body = await readJson<ApiErrorBody>(res);
+    expect(body.error).toBe("tool_not_found");
+  });
 });
 
-describe("POST /v1/tools/call with an identity source (conversations)", () => {
-	// conversations is a kernel identity source — removed from workspace
-	// registries. The REST tool-call path must resolve it through the identity
-	// door (like /mcp), not the workspace registry, which would 404 "not found
-	// on server". Regression guard for the bug where clicking/searching
-	// conversations failed after the registry partition.
-	it("routes conversations__list through the identity door with NO workspace", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" }, // no X-Workspace-Id
-			body: JSON.stringify({ server: "conversations", tool: "list", arguments: {} }),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.isError).toBe(false);
-	});
+describe("POST /v1/workspaces/:wsId/tools/call with an identity source (conversations)", () => {
+  // conversations is a kernel identity source — absent from workspace
+  // registries. The REST tool-call path must resolve it through the identity
+  // door (like /mcp), not the workspace registry in the path, which would 404
+  // "not found on server".
+  it("routes conversations__list through the identity door", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server: "conversations", tool: "list", arguments: {} }),
+    });
+    expect(res.status).toBe(200);
+    const body = await readJson<ToolCallResponse>(res);
+    expect(body.isError).toBe(false);
+  });
 
-	it("ignores a (stale) X-Workspace-Id on an identity source — search still routes", async () => {
-		const res = await fetch(`${baseUrl}/v1/tools/call`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
-			body: JSON.stringify({
-				server: "conversations",
-				tool: "search",
-				arguments: { query: "anything" },
-			}),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.isError).toBe(false);
-	});
+  it("routes conversations__search through the identity door", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        server: "conversations",
+        tool: "search",
+        arguments: { query: "anything" },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await readJson<ToolCallResponse>(res);
+    expect(body.isError).toBe(false);
+  });
 });

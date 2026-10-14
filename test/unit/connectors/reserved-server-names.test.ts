@@ -15,7 +15,6 @@
 
 import { describe, expect, test } from "bun:test";
 import {
-  deriveServerName,
   isReservedServerName,
   slugifyServerName,
   validateServerName,
@@ -31,7 +30,7 @@ describe("reserved server names", () => {
       "nb",
       "conversations",
       "files",
-      "automations",
+      "tasks",
       `${PERSONAL_CONNECTOR_PREFIX}gmail`,
       "crm",
       "gmail",
@@ -51,7 +50,7 @@ describe("reserved server names", () => {
     // Reserved *because* workspace names went bare. While they carried a
     // `ws_<id>-` prefix a workspace `conversations` was distinguishable from the
     // identity one; now it would be silently shadowed.
-    for (const name of ["conversations", "files", "automations"]) {
+    for (const name of ["conversations", "files", "tasks"]) {
       expect(isReservedServerName(name)).toBe(true);
     }
   });
@@ -67,21 +66,8 @@ describe("reserved server names", () => {
     }
   });
 
-  test("an existing URL connector can derive a newly-reserved name — it stops starting", () => {
-    // The upgrade consequence, pinned rather than left implicit: `deriveServerName`
-    // takes the last path segment, so these were installable before and refuse to
-    // start after. Contained per-entry (siblings are unaffected), but an operator
-    // sees only a stderr line, so the message has to say what to do.
-    for (const url of ["https://example.com/conversations", "https://example.com/files"]) {
-      const name = deriveServerName(url);
-      expect(isReservedServerName(name)).toBe(true);
-      expect(() => validateServerName(name)).toThrow(/reserved/);
-    }
-    expect(isReservedServerName(deriveServerName("https://example.com/crm"))).toBe(false);
-  });
-
   test("an ordinary source name is not reserved", () => {
-    for (const name of ["crm", "gmail", "granola", "ai-bassethound-mcp", "precision_outbound"]) {
+    for (const name of ["crm", "gmail", "granola", "ai-bassethound-mcp", "acme_outbound"]) {
       expect(isReservedServerName(name)).toBe(false);
       expect(() => validateServerName(name)).not.toThrow();
     }

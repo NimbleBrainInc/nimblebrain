@@ -2,8 +2,8 @@
 // Workspace Event Stream — singleton client
 //
 // One `/v1/events` SSE connection per tab, fanned out to many subscribers
-// via the typed `subscribe` API. Same shape as `mcp-bridge-client.ts` —
-// lazy module-level singleton with lifecycle reset.
+// via the typed `subscribe` API: a lazy module-level singleton, reset on the
+// auth lifecycle hook in `api/client.ts`.
 //
 // Why this exists. Pre-singleton, `useEvents` opened its own
 // `connectEvents()` inside the hook's `useEffect`. Every component that
@@ -31,11 +31,11 @@
 //     `ensureOpen()`.
 // ---------------------------------------------------------------------------
 
-import type { SseEventMap, SseEventType } from "../types";
+import type { WorkspaceStreamEvents } from "../types";
 import { addAuthLifecycleHandler, getAuthToken } from "./client";
 import { type ConnectEventsOptions, connectEvents, type EventConnection } from "./sse";
 
-type Handler<K extends SseEventType> = (data: SseEventMap[K]) => void;
+type Handler<K extends keyof WorkspaceStreamEvents> = (data: WorkspaceStreamEvents[K]) => void;
 type ReconnectHandler = () => void;
 
 // The connector the singleton actually calls. Defaults to the real SSE
@@ -50,8 +50,18 @@ type ReconnectHandler = () => void;
 type Connector = (options: ConnectEventsOptions) => EventConnection;
 let connectImpl: Connector = connectEvents;
 
-// biome-ignore lint/suspicious/noExplicitAny: subscriber set is keyed by event type; type-safety is enforced by `subscribe<K>` at the public boundary
-const eventHandlers = new Map<SseEventType, Set<Handler<any>>>();
+/**
+ * Each event type's subscribers. A `Map` cannot relate a key's type to its
+ * value's, so this view of it does: the set under `K` holds `Handler<K>`s, and
+ * `get` and `set` are the only ways in.
+ */
+interface HandlersByType {
+  get<K extends keyof WorkspaceStreamEvents>(type: K): Set<Handler<K>> | undefined;
+  set<K extends keyof WorkspaceStreamEvents>(type: K, handlers: Set<Handler<K>>): void;
+  values(): Iterable<{ readonly size: number }>;
+  clear(): void;
+}
+const eventHandlers: HandlersByType = new Map();
 const reconnectHandlers = new Set<ReconnectHandler>();
 
 let connection: EventConnection | null = null;
@@ -68,12 +78,12 @@ function ensureOpen(): void {
   if (connection) return;
   connection = connectImpl({
     token: getAuthToken() ?? undefined,
-    onEvent: <K extends SseEventType>(type: K, data: SseEventMap[K]) => {
+    onEvent: <K extends keyof WorkspaceStreamEvents>(type: K, data: WorkspaceStreamEvents[K]) => {
       const set = eventHandlers.get(type);
       if (!set) return;
       for (const h of set) {
         try {
-          (h as Handler<K>)(data);
+          h(data);
         } catch (err) {
           console.warn("[events-client] event handler threw for", type, err);
         }
@@ -127,7 +137,10 @@ addAuthLifecycleHandler(authLifecycleHandler);
  * Handler errors are caught so a buggy subscriber can't strand
  * subsequent handlers for the same event.
  */
-export function subscribe<K extends SseEventType>(type: K, handler: Handler<K>): () => void {
+export function subscribe<K extends keyof WorkspaceStreamEvents>(
+  type: K,
+  handler: Handler<K>,
+): () => void {
   ensureOpen();
   let set = eventHandlers.get(type);
   if (!set) {
@@ -182,10 +195,8 @@ export const __internal__ = {
     closeEventsClient();
     eventHandlers.clear();
     reconnectHandlers.clear();
-    // Other test files in the suite may have called
-    // `setAuthLifecycleHandler(null)` to neutralize the MCP bridge's
-    // handler — which also clears ours. Re-register idempotently so
-    // events-client tests can rely on the lifecycle hook firing.
+    // Re-register idempotently (the handler set dedupes) so events-client
+    // tests can rely on the lifecycle hook firing.
     addAuthLifecycleHandler(authLifecycleHandler);
   },
 };

@@ -20,6 +20,7 @@ import {
   type Attributes,
   context,
   propagation,
+  ROOT_CONTEXT,
   type Span,
   SpanStatusCode,
   trace,
@@ -39,7 +40,7 @@ let provider: NodeTracerProvider | undefined;
 
 /**
  * Install tracing for this process. Idempotent — safe to call from every entry
- * point (serve, dev, automations, tests). Reads two operator knobs:
+ * point (serve, dev, tasks, tests). Reads two operator knobs:
  *   - `OTEL_EXPORTER_OTLP_ENDPOINT` — collector base URL; unset = no export.
  *   - `NB_TENANT_ID` — this deployment's tenant; stamped on the Resource so
  *     every span carries it and it cannot be spoofed by a request.
@@ -182,6 +183,11 @@ export async function withInboundSpan<T>(
   });
   const parent = propagation.extract(context.active(), carrier);
   return context.with(parent, () => withSpan(name, attrs, fn));
+}
+
+/** Run `fn` with no active span, so any span it opens starts a new trace. */
+export function withRootContext<T>(fn: () => T): T {
+  return context.with(ROOT_CONTEXT, fn);
 }
 
 /** The active trace id (32-hex), or undefined outside any span. For log

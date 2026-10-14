@@ -49,7 +49,7 @@ import { ARTIFACT_URI_SCHEME } from "../host-resources/artifacts/artifact-uri.ts
  * Their home is here because no single module owns one: each is published as
  * resources by whichever in-process app serves them.
  */
-const REGISTRY_RESOURCE_SCHEMES = ["skill", "ui", "instructions"] as const;
+const REGISTRY_RESOURCE_SCHEMES = ["skill", "ui"] as const;
 
 /**
  * The `app://` scheme, and the single URI under it the runtime reads.
@@ -75,7 +75,7 @@ export const APP_INSTRUCTIONS_URI = `${APP_URI_SCHEME}://instructions`;
  *
  * Composed rather than restated: `artifact` and `files` are taken from the
  * modules that own them, each of which already validates its own scheme as the
- * single authority for it. Adding a seventh means extending
+ * single authority for it. Adding a sixth means extending
  * {@link REGISTRY_RESOURCE_SCHEMES}, importing the constant its owner exports, or —
  * when the scheme has no owner but this module — declaring it here as `app` is
  * declared. Never a second spelling of a scheme that already has a home.
@@ -118,4 +118,34 @@ export function isReservedResourceScheme(uri: string): boolean {
   if (colon < 0) return false;
   const scheme = uri.slice(0, colon).toLowerCase();
   return (RESERVED_RESOURCE_SCHEMES as readonly string[]).includes(scheme);
+}
+
+/** Most templates one app lists in the prompt. A server publishing more is cut, not refused. */
+export const MAX_PROMPT_RESOURCE_TEMPLATES = 10;
+
+/** Longest template kept. A URI shape longer than this is not one the model should type. */
+const MAX_RESOURCE_TEMPLATE_CHARS = 200;
+
+/**
+ * The connector templates worth naming to the model as readable records: each
+ * server's `resources/templates/list`, minus templates in a scheme the host
+ * resolves itself (a `skill://` or `ui://` template is reached through its own
+ * mechanism, not as a record), deduplicated by template, and bounded in count
+ * and length so a server cannot grow the prompt without limit. Order is the
+ * server's, so the prompt stays byte-stable while the server's list does.
+ */
+export function readableRecordTemplates<T extends { uriTemplate: string }>(
+  templates: readonly T[],
+): T[] {
+  const seen = new Set<string>();
+  const kept: T[] = [];
+  for (const t of templates) {
+    if (kept.length >= MAX_PROMPT_RESOURCE_TEMPLATES) break;
+    const shape = t.uriTemplate.trim();
+    if (!shape.includes("://") || shape.length > MAX_RESOURCE_TEMPLATE_CHARS) continue;
+    if (isReservedResourceScheme(shape) || seen.has(shape)) continue;
+    seen.add(shape);
+    kept.push({ ...t, uriTemplate: shape });
+  }
+  return kept;
 }

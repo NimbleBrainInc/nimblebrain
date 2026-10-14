@@ -30,7 +30,7 @@ afterEach(() => {
 
 describe("workspaceSlug", () => {
   test("strips the ws_ prefix and nothing else", () => {
-    expect(workspaceSlug("ws_a1b2c3d4")).toBe("a1b2c3d4");
+    expect(workspaceSlug("ws_0008dee6ad8a6142")).toBe("0008dee6ad8a6142");
   });
 
   test("leaves an id that does not carry the prefix alone", () => {
@@ -46,16 +46,16 @@ describe("workspaceSlug", () => {
 
 describe("workspaceUrl", () => {
   test("roots the path under the workspace", () => {
-    expect(workspaceUrl("ws_team", "/settings/connectors")).toBe(
-      "https://tenant.example/w/team/settings/connectors",
+    expect(workspaceUrl("ws_0071a5bbf40116e6", "/settings/connectors")).toBe(
+      "https://tenant.example/w/0071a5bbf40116e6/settings/connectors",
     );
   });
 });
 
 describe("notificationInboxUrl", () => {
   test("addresses one item by query parameter", () => {
-    expect(notificationInboxUrl("ws_team", "acme:evt_1")).toBe(
-      "https://tenant.example/w/team/notifications?item=acme%3Aevt_1",
+    expect(notificationInboxUrl("ws_0071a5bbf40116e6", "acme:evt_1")).toBe(
+      "https://tenant.example/w/0071a5bbf40116e6/notifications?item=acme%3Aevt_1",
     );
   });
 
@@ -63,8 +63,8 @@ describe("notificationInboxUrl", () => {
     // Both halves are a server's own strings: the source name and the event id.
     // Neither is constrained to anything URL-safe, so the encode is load-bearing
     // rather than decorative — an unescaped `&` would truncate the parameter.
-    expect(notificationInboxUrl("ws_team", "acme/mcp:evt?a=1&b=2")).toBe(
-      "https://tenant.example/w/team/notifications?item=acme%2Fmcp%3Aevt%3Fa%3D1%26b%3D2",
+    expect(notificationInboxUrl("ws_0071a5bbf40116e6", "acme/mcp:evt?a=1&b=2")).toBe(
+      "https://tenant.example/w/0071a5bbf40116e6/notifications?item=acme%2Fmcp%3Aevt%3Fa%3D1%26b%3D2",
     );
   });
 });

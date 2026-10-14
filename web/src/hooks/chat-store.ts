@@ -15,17 +15,17 @@ import { nameFromSkillId } from "../lib/skill-display.ts";
 import type {
   AppContext,
   ChatRequest,
-  ChatResult,
-  ChatStreamEventMap,
+  ChatResponse,
+  ConversationStreamEvents,
   LedgerSkill,
   LlmDoneEvent,
-  ReasoningDeltaEvent,
   StreamErrorEvent,
   TextDeltaEvent,
-  ToolCallResult,
+  ToolCallResponse,
   ToolDoneEvent,
   ToolPreparingEvent,
   ToolStartEvent,
+  UserMessageEvent,
 } from "../types";
 
 export type { LedgerSkill } from "../types";
@@ -44,8 +44,7 @@ export interface SkillsLoadedContext {
 
 // ===========================================================================
 // Public display types (shared across the chat UI). These live here — not in
-// useChat — because the slice store is the lowest layer that owns them and
-// `useChat` re-exports them for backward-compatible imports.
+// useChat — because the slice store is the lowest layer that owns them.
 // ===========================================================================
 
 export type StreamingState =
@@ -140,13 +139,13 @@ export interface ChatMessage {
   };
 }
 
-/** Conversation-level metadata (Stage 1: single-owner only). */
+/** Conversation-level metadata (conversations are single-owner). */
 export interface LoadedConversationMeta {
   ownerId?: string;
   /**
    * The model this conversation is bound to, from `conversations__get`. Fixed
    * at create and never changes, so the composer states it rather than
-   * offering it. Absent on conversations that predate the binding.
+   * offering it. Absent until the conversation's metadata has arrived.
    */
   model?: string;
   /**
@@ -154,8 +153,7 @@ export interface LoadedConversationMeta {
    * `conversations__get` metadata). The panel uses it to avoid resuming a
    * conversation that belongs to a workspace other than the one currently
    * focused — see `ChatProvider`'s re-scope effect. Absent on legacy records
-   * with no stamped workspace (they read as the owner's personal workspace);
-   * absence means "workspace unknown — don't reconcile", which preserves the
+   * with no stamped workspace; absence means "workspace unknown — don't reconcile", which preserves the
    * open-in-progress race guard.
    */
   workspaceId?: string;
@@ -235,12 +233,18 @@ interface ConversationSlice {
    *  verbatim rather than re-deriving them from current UI state, so a retry
    *  reproduces the original send even if the UI has moved on since. */
   lastSend?: StartTurnParams;
-  /** Stop pressed before `/v1/chat/start` resolved (no conversationId yet).
+  /** Stop pressed before `/v1/workspaces/:wsId/chat/start` resolved (no conversationId yet).
    *  `sendTurn` fires the cancel as soon as it has the id. */
   cancelRequested: boolean;
   /** First `subscribed` frame of a resume should trim a stale in-flight turn
    *  from disk history (the replay rebuilds it). */
   resumeOnSubscribe: boolean;
+  /** The open connection watches a turn this tab sent (`sendTurn`), not one it
+   *  re-attached to. Only such a turn announces finished tool calls. */
+  watchingOwnTurn: boolean;
+  /** Tool calls already announced to `onToolDone` listeners, so a replayed
+   *  `tool.done` never announces a call twice. */
+  announcedToolIds: Set<string>;
   /** A resume already refetched this transcript to try to complete a partial
    *  tail. The refetch is a bet that the server has since persisted the
    *  terminal event; if the tail comes back pending anyway, the bet lost and
@@ -322,7 +326,7 @@ const updateTool =
 /** Fill in tool results the stream never resolved from the terminal `done` payload. */
 function backfillToolResults(
   slice: ConversationSlice,
-  resultToolCalls: ChatResult["toolCalls"],
+  resultToolCalls: ChatResponse["toolCalls"],
 ): void {
   const outputMap = new Map(resultToolCalls.map((tc) => [tc.id, tc.output]));
   const backfill = (tc: ToolCallDisplay): ToolCallDisplay => {
@@ -338,11 +342,10 @@ function backfillToolResults(
 
 /** Assemble the finalized assistant message from the terminal `done` payload. */
 function buildFinalAssistantMessage(
-  result: ChatResult,
+  result: ChatResponse,
   finalBlocks: ContentBlock[],
   finalTools: ToolCallDisplay[] | undefined,
   usage: ChatMessage["usage"],
-  resultFiles: MessageFileAttachment[] | undefined,
   skillsLoaded: SkillsLoadedContext | undefined,
 ): ChatMessage {
   return {
@@ -355,7 +358,6 @@ function buildFinalAssistantMessage(
     ...(result.stopReason && result.stopReason !== "complete"
       ? { stopReason: result.stopReason }
       : {}),
-    ...(resultFiles && resultFiles.length > 0 ? { files: resultFiles } : {}),
   };
 }
 
@@ -385,16 +387,15 @@ function buildOptimisticUserMessage(
     role: "user",
     content: params.text,
     timestamp: new Date().toISOString(),
-    // `userId` is intentional forward-compat plumbing (Stage 4 sharing), not
-    // dead code: it has no UI consumer today (single-owner → userId is always
-    // the current user, so the removed speaker labels never showed), but the
-    // per-message author id is round-tripped end to end. Keep it.
+    // `userId` is the per-message author id, round-tripped end to end. It
+    // has no UI consumer (single-owner → userId is always the current user),
+    // but it is not dead code. Keep it.
     ...(params.currentUserId ? { userId: params.currentUserId } : {}),
     ...(userFiles && userFiles.length > 0 ? { files: userFiles } : {}),
   };
 }
 
-/** Build the `/v1/chat/start` request body from the slice + send params. */
+/** Build the `/v1/workspaces/:wsId/chat/start` request body from the slice + send params. */
 function buildChatRequest(slice: ConversationSlice, params: StartTurnParams): ChatRequest {
   return {
     message: params.text,
@@ -421,7 +422,7 @@ interface LoadedConversation {
  * Throws on an error result; falls back to parsing `content[0].text` as JSON
  * when the server returned no `structuredContent`.
  */
-function parseConversationResult(res: ToolCallResult): LoadedConversation {
+function parseConversationResult(res: ToolCallResponse): LoadedConversation {
   if (res.isError) {
     const errText = res.content
       ?.map((b) => b.text ?? "")
@@ -465,6 +466,16 @@ export function isDraftKey(key: string): boolean {
 
 const MAX_SLICES = 30;
 
+/** A tool call that finished in a turn this tab sent, as `onToolDone` reports it. */
+export interface FinishedToolCall {
+  id: string;
+  /** The tool's wire name, e.g. `nb__open_app`. */
+  name: string;
+  ok: boolean;
+  /** The arguments the agent called it with. */
+  input: Record<string, unknown>;
+}
+
 export interface ChatStore {
   ensureSlice(key: string, opts?: { conversationId?: string | null }): void;
   getSnapshot(key: string): ChatSnapshot;
@@ -504,6 +515,12 @@ export interface ChatStore {
    *  {@link closeAllConnections}. */
   reattachStreaming(): void;
   sliceCount(): number;
+  /**
+   * Hear each tool call that finishes in a turn this tab sent and is watching
+   * live: never one from history, a resumed stream, or another tab. For host
+   * UI driven by the agent (`nb__open_app`). Returns the unsubscribe.
+   */
+  onToolDone(listener: (call: FinishedToolCall) => void): () => void;
 }
 
 export function createChatStore(): ChatStore {
@@ -512,6 +529,7 @@ export function createChatStore(): ChatStore {
   const listeners = new Map<string, Set<() => void>>();
   const draftListeners = new Map<string, Set<() => void>>();
   const activeCounts = new Map<string, number>();
+  const toolDoneListeners = new Set<(call: FinishedToolCall) => void>();
 
   // -- snapshot + notification --
 
@@ -612,6 +630,8 @@ export function createChatStore(): ChatStore {
       pendingEcho: false,
       cancelRequested: false,
       resumeOnSubscribe: false,
+      watchingOwnTurn: false,
+      announcedToolIds: new Set(),
       resumeRefetched: false,
       // A fresh draft is fully "loaded" (empty IS its full history); a slice
       // keyed by a real conversation id starts unhydrated until fetched.
@@ -817,6 +837,7 @@ export function createChatStore(): ChatStore {
   function openConnection(slice: ConversationSlice, conversationId: string, resume: boolean): void {
     closeConnection(slice);
     slice.resumeOnSubscribe = resume;
+    slice.watchingOwnTurn = !resume;
     // A fresh turn is a new bet: whatever stranded the previous tail says
     // nothing about this one, so the one-refetch allowance resets with it.
     if (!resume) slice.resumeRefetched = false;
@@ -900,7 +921,7 @@ export function createChatStore(): ChatStore {
   // -- stream reducer --
 
   function handleUserMessage(slice: ConversationSlice, data: unknown): void {
-    const evt = data as { content: string; userId?: string; timestamp?: string };
+    const evt = data as UserMessageEvent;
     resetScratch(slice);
     if (slice.pendingEcho) {
       // Our optimistic user message + assistant placeholder are already in
@@ -928,11 +949,11 @@ export function createChatStore(): ChatStore {
   }
 
   function handleChatStart(slice: ConversationSlice, data: unknown): void {
-    const evt = data as ChatStreamEventMap["chat.start"];
+    const evt = data as ConversationStreamEvents["chat.start"];
     // The binding arrives with the id because a just-created conversation is
     // never loaded, so `loadConversation` would never supply it — and the
     // composer has to state the model the server pinned, not the one asked for.
-    const learnedModel = evt.model && slice.meta?.model !== evt.model;
+    const learnedModel = slice.meta?.model !== evt.model;
     if (learnedModel) slice.meta = { ...slice.meta, model: evt.model };
     if (evt.conversationId && slice.conversationId !== evt.conversationId) {
       slice.conversationId = evt.conversationId;
@@ -956,12 +977,10 @@ export function createChatStore(): ChatStore {
   /**
    * One untrusted stream entry → a ledger row, every field defaulted.
    *
-   * The `name` fallback is a malformed-frame guard, not the legacy path: the
-   * runtime stamps `name` on every entry it emits, and events recorded before
-   * that field existed reach the UI only through replay, where the
-   * conversations app resolves a name before this ever sees them. It still
-   * derives rather than printing the id, because every connector skill's id
-   * ends in `/SKILL.md` — the guard firing must not put that back on screen.
+   * The `name` fallback is a malformed-frame guard: the runtime stamps `name`
+   * on every entry it emits. It derives rather than printing the id, because
+   * every connector skill's id ends in `/SKILL.md` — the guard firing must not
+   * put that back on screen.
    */
   function toLedgerSkill(s: Record<string, unknown>): LedgerSkill {
     return {
@@ -1006,7 +1025,11 @@ export function createChatStore(): ChatStore {
   }
 
   function handleReasoningDelta(slice: ConversationSlice, data: unknown): void {
-    const evt = data as ReasoningDeltaEvent;
+    const evt = data as TextDeltaEvent;
+    // A reasoning block's cryptographic signature arrives as a delta carrying
+    // no text. Taking it as "streaming" hides the live cursor behind a block
+    // that renders nothing, leaving the turn with no indicator at all.
+    if (evt.text === "") return;
     slice.streamingState = "streaming";
     slice.preparingTool = null;
     const last = slice.blocks[slice.blocks.length - 1];
@@ -1032,9 +1055,6 @@ export function createChatStore(): ChatStore {
       status: "running",
       resourceUri: evt.resourceUri,
       input: evt.input,
-      // Bare source/app name. Parse the namespace first (#354): a naive
-      // `__` split leaves the `ws_<id>-` prefix attached, which fails
-      // registry.hasSource() with a 403 on the resource-read path.
       appName: appNameFromToolName(evt.name),
     };
     slice.toolCalls = [...slice.toolCalls, newTool];
@@ -1054,6 +1074,28 @@ export function createChatStore(): ChatStore {
     const anyRunning = slice.toolCalls.some((tc) => tc.status === "running");
     slice.streamingState = anyRunning ? "working" : "analyzing";
     flush(slice);
+    announceToolDone(slice, evt);
+  }
+
+  // A finished tool call reaches `onToolDone` listeners only from a turn this
+  // tab sent and is watching live, and only once. A conversation loaded from
+  // history never runs these reducers; one re-attached after a reload or from
+  // another tab is a resume, and a replayed frame repeats an announced id. A
+  // turn left streaming in the background, after the person moved to another
+  // conversation or workspace, is not being watched: its slice is no longer
+  // active. The panel's open state does not enter into it, since the chat
+  // stays active while the panel is closed.
+  function announceToolDone(slice: ConversationSlice, evt: ToolDoneEvent): void {
+    if (!slice.watchingOwnTurn || !isActive(slice) || slice.announcedToolIds.has(evt.id)) return;
+    slice.announcedToolIds.add(evt.id);
+    const tool = slice.toolCalls.find((tc) => tc.id === evt.id);
+    const done: FinishedToolCall = {
+      id: evt.id,
+      name: evt.name,
+      ok: evt.ok,
+      input: tool?.input ?? {},
+    };
+    for (const listener of toolDoneListeners) listener(done);
   }
 
   function handleLlmDone(slice: ConversationSlice, data: unknown): void {
@@ -1067,7 +1109,7 @@ export function createChatStore(): ChatStore {
   }
 
   function handleDone(slice: ConversationSlice, data: unknown): void {
-    const result = data as ChatResult;
+    const result = data as ChatResponse;
     slice.streamingState = null;
     slice.preparingTool = null;
     slice.isStreaming = false;
@@ -1089,11 +1131,6 @@ export function createChatStore(): ChatStore {
           llmMs: result.usage.llmMs,
         }
       : undefined;
-    // Cast: `files` is attached to the done payload by the server but isn't
-    // on the typed ChatResult — read it defensively.
-    const resultFiles = (result as unknown as Record<string, unknown>).files as
-      | MessageFileAttachment[]
-      | undefined;
 
     const updated = [...slice.messages];
     if (updated.length > 0 && updated[updated.length - 1].role === "assistant") {
@@ -1102,7 +1139,6 @@ export function createChatStore(): ChatStore {
         finalBlocks,
         finalTools,
         usage,
-        resultFiles,
         slice.skillsLoaded,
       );
       slice.messages = updated;
@@ -1137,16 +1173,17 @@ export function createChatStore(): ChatStore {
     closeConnection(slice);
   }
 
-  // Per-type reducers. Unlisted types (and `tool.preparing.done`) are
-  // intentional no-ops — the same fall-through the switch had.
-  const STREAM_EVENT_HANDLERS: Record<string, (slice: ConversationSlice, data: unknown) => void> = {
+  // Per-type reducers, keyed by the stream's catalog. Unlisted types
+  // (`subscribed`, `heartbeat`) are intentional no-ops.
+  const STREAM_EVENT_HANDLERS: Partial<
+    Record<keyof ConversationStreamEvents, (slice: ConversationSlice, data: unknown) => void>
+  > = {
     "user.message": handleUserMessage,
     "chat.start": handleChatStart,
     "skills.loaded": handleSkillsLoaded,
     "text.delta": handleTextDelta,
     "reasoning.delta": handleReasoningDelta,
     "tool.preparing": handleToolPreparing,
-    "tool.preparing.done": () => {},
     "tool.start": handleToolStart,
     "tool.done": handleToolDone,
     "llm.done": handleLlmDone,
@@ -1159,7 +1196,7 @@ export function createChatStore(): ChatStore {
     // Own-key guard so an inherited name (constructor/toString/__proto__) can't
     // resolve to an Object.prototype member; unknown types no-op as the switch did.
     if (Object.hasOwn(STREAM_EVENT_HANDLERS, type)) {
-      STREAM_EVENT_HANDLERS[type]?.(slice, data);
+      STREAM_EVENT_HANDLERS[type as keyof ConversationStreamEvents]?.(slice, data);
     }
   }
 
@@ -1304,7 +1341,7 @@ export function createChatStore(): ChatStore {
     const slice = byKey.get(key);
     if (!slice) return;
     if (!slice.conversationId) {
-      // Stop pressed before `/v1/chat/start` resolved — latch it; `sendTurn`
+      // Stop pressed before `/v1/workspaces/:wsId/chat/start` resolved — latch it; `sendTurn`
       // fires the cancel as soon as it has the id.
       slice.cancelRequested = true;
       return;
@@ -1403,6 +1440,12 @@ export function createChatStore(): ChatStore {
 
   return {
     ensureSlice,
+    onToolDone(listener) {
+      toolDoneListeners.add(listener);
+      return () => {
+        toolDoneListeners.delete(listener);
+      };
+    },
     getSnapshot(key) {
       return byKey.get(key)?.snapshot ?? EMPTY_SNAPSHOT;
     },

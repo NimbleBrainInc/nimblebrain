@@ -1,12 +1,9 @@
-import type { LanguageModelV4Message, LanguageModelV4ToolCall } from "@ai-sdk/provider";
 import { describe, expect, it } from "bun:test";
+import type { LanguageModelV4Message, LanguageModelV4ToolCall } from "@ai-sdk/provider";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
-import {
-  AgentEngine,
-  resolveMaxParallelToolCallsPerSource,
-} from "../../src/engine/engine.ts";
+import { AgentEngine, resolveMaxParallelToolCallsPerSource } from "../../src/engine/engine.ts";
 import type { EngineConfig, ToolCall, ToolResult, ToolSchema } from "../../src/engine/types.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 
@@ -17,9 +14,7 @@ const config: EngineConfig = {
   maxOutputTokens: 16_384,
 };
 
-const USER: LanguageModelV4Message[] = [
-  { role: "user", content: [{ type: "text", text: "go" }] },
-];
+const USER: LanguageModelV4Message[] = [{ role: "user", content: [{ type: "text", text: "go" }] }];
 
 function schema(name: string): ToolSchema {
   return { name, description: name, inputSchema: { type: "object", properties: {} } };
@@ -82,7 +77,7 @@ describe("engine tool-call fan-out is bounded per source", () => {
 
     // Read the SAME source the engine reads (process.env), not the hardcoded
     // default — otherwise this goes red on correct code in any shell that
-    // exports the knob, which is precisely what this PR invites operators to do.
+    // exports the knob, which operators are invited to do.
     // Clamped to the group size, since that is the real ceiling on in-flight.
     // Exact, not a range: with 25 calls queued behind it the pool starts `cap`
     // workers immediately, so peak IS the cap. Stronger than `<= cap` (which a

@@ -35,9 +35,7 @@ describe("truncateMarkdownToBudget", () => {
   });
 
   test("drops multiple trailing sections and pluralizes marker", () => {
-    const sections = ["# A", "# B", "# C", "# D"]
-      .map((h) => `${h}\n${"x".repeat(30)}`)
-      .join("\n");
+    const sections = ["# A", "# B", "# C", "# D"].map((h) => `${h}\n${"x".repeat(30)}`).join("\n");
     // Only fit ~one section after marker reserve.
     const result = truncateMarkdownToBudget(sections, 100);
     expect(result.truncated).toBe(true);
@@ -75,8 +73,7 @@ describe("truncateMarkdownToBudget", () => {
     const bodyBeforeMarker = result.body.split("\n\n[truncated")[0]!;
     // Either ends right after "# Big" (line break) or includes some run
     // that ends at a newline — never partial line.
-    expect(bodyBeforeMarker.endsWith("a") && !bodyBeforeMarker.endsWith("\n"))
-      .toBe(false);
+    expect(bodyBeforeMarker.endsWith("a") && !bodyBeforeMarker.endsWith("\n")).toBe(false);
   });
 
   test("empty content returns empty result", () => {

@@ -19,14 +19,6 @@ export interface WorkosAuth {
   adapter: "workos";
   /** WorkOS Client ID (client_...). */
   clientId: string;
-  /**
-   * OAuth callback URL (e.g., https://app.example.com/v1/auth/callback).
-   * Optional: when omitted the provider derives `${publicOrigin()}/v1/auth/callback`
-   * from the canonical public origin. An explicit value (legacy
-   * `WORKOS_REDIRECT_URI`) still overrides — kept as a fallback during the
-   * migration off that secret.
-   */
-  redirectUri?: string;
   /** WorkOS Organization ID — scopes auth to a specific customer org. */
   organizationId?: string;
   /** WorkOS API key — can also come from WORKOS_API_KEY env var. */
@@ -43,28 +35,46 @@ export interface WorkosAuth {
    * `["admin", "owner"]`; an explicit list REPLACES the defaults and must
    * contain at least one non-empty slug. Set this when your WorkOS org's admin
    * role carries a custom slug (e.g. `org-admin`) — otherwise it silently maps
-   * to `member`. Any slug not listed maps to `member` (and is logged). Note:
-   * `owner` is an app-internal elevation assigned via `manage_users`, not a
-   * WorkOS-derived role; listing an `owner` slug here grants app `admin`, not
-   * app `owner`.
+   * to `member`. Any slug not listed maps to `member` (and is logged). The
+   * default `owner` is WorkOS's org-owner role name; it grants app `admin`,
+   * the top app role.
    */
   adminRoleSlugs?: string[];
+  /**
+   * Client IDs of this operator's own apps that obtain tokens from AuthKit
+   * (for example a chat-channel bridge). An AuthKit token whose signed
+   * `client_id` claim is listed is first-party — admitted on every route,
+   * gated by workspace membership, like the web login. Any other AuthKit token
+   * is a resource token, valid only at the `/mcp/<wsId>` its `aud` names.
+   * Omitted or empty, no AuthKit token is first-party. The audience never
+   * decides this: a token any MCP client refreshes without a `resource`
+   * carries the same `aud` as one of these apps' tokens.
+   */
+  firstPartyClientIds?: string[];
 }
 
-export type AuthConfig = OidcAuth | WorkosAuth;
+/**
+ * The dev identity provider: every request authenticates as one local
+ * developer, with no credential checked. Chosen only by writing it here, so an
+ * instance without `instance.json` has no provider at all rather than this one.
+ */
+export interface DevAuth {
+  adapter: "dev";
+}
+
+export type AuthConfig = OidcAuth | WorkosAuth | DevAuth;
 
 // ── Instance config ─────────────────────────────────────────────────
 
 export interface InstanceConfig {
   auth: AuthConfig;
   integrations?: Record<string, unknown>;
-  orgName?: string;
   orgId?: string;
 }
 
 // ── Validation ──────────────────────────────────────────────────────
 
-const VALID_ADAPTERS = new Set(["oidc", "workos"]);
+const VALID_ADAPTERS = new Set(["dev", "oidc", "workos"]);
 
 /** Return a defined string, throwing `fieldError` on a non-string; `undefined` passes through unchanged. */
 function optionalString(value: unknown, fieldError: string): string | undefined {
@@ -87,6 +97,14 @@ function validateAdminRoleSlugs(value: unknown): string[] | undefined {
       "instance.json: workos auth 'adminRoleSlugs' must contain at least one " +
         'non-empty slug (omit the field to use the default ["admin", "owner"])',
     );
+  return value as string[];
+}
+
+/** Validate optional first-party client IDs — an array of strings; empty means none. */
+function validateFirstPartyClientIds(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((s) => typeof s !== "string"))
+    throw new Error("instance.json: workos auth 'firstPartyClientIds' must be an array of strings");
   return value as string[];
 }
 
@@ -120,17 +138,19 @@ function buildWorkosAuth(auth: Record<string, unknown>): WorkosAuth {
     adapter: "workos",
     clientId: auth.clientId as string,
   };
-  // redirectUri is optional — the provider derives it from publicOrigin()
-  // when absent. Validate only if present.
-  const redirectUri = optionalString(
-    auth.redirectUri,
-    "instance.json: workos auth 'redirectUri' must be a string",
-  );
-  if (redirectUri !== undefined) workos.redirectUri = redirectUri;
   const organizationId = optionalString(
     auth.organizationId,
     "instance.json: workos auth 'organizationId' must be a string",
   );
+  // The provider reads a falsy organizationId as "no organization scope", so a
+  // blank value would boot without the org gate. A config renderer that
+  // interpolates an unset variable produces exactly that, so refuse it here and
+  // keep "no organization" expressible only by omitting the field.
+  if (organizationId !== undefined && organizationId.trim() === "")
+    throw new Error(
+      "instance.json: workos auth 'organizationId' must not be empty " +
+        "(omit the field to run without an organization)",
+    );
   if (organizationId !== undefined) workos.organizationId = organizationId;
   const apiKey = optionalString(
     auth.apiKey,
@@ -144,6 +164,8 @@ function buildWorkosAuth(auth: Record<string, unknown>): WorkosAuth {
   if (authkitDomain !== undefined) workos.authkitDomain = authkitDomain;
   const adminRoleSlugs = validateAdminRoleSlugs(auth.adminRoleSlugs);
   if (adminRoleSlugs !== undefined) workos.adminRoleSlugs = adminRoleSlugs;
+  const firstPartyClientIds = validateFirstPartyClientIds(auth.firstPartyClientIds);
+  if (firstPartyClientIds !== undefined) workos.firstPartyClientIds = firstPartyClientIds;
   return workos;
 }
 
@@ -159,6 +181,7 @@ function validateAuthConfig(raw: unknown): AuthConfig {
     );
   }
 
+  if (adapter === "dev") return { adapter: "dev" };
   if (adapter === "oidc") return buildOidcAuth(auth);
   if (adapter === "workos") return buildWorkosAuth(auth);
   throw new Error(`instance.json: unknown auth adapter "${adapter}"`);
@@ -180,10 +203,6 @@ function validateInstanceConfig(raw: unknown): InstanceConfig {
     }
     config.integrations = obj.integrations as Record<string, unknown>;
   }
-  if (obj.orgName !== undefined) {
-    if (typeof obj.orgName !== "string") throw new Error("instance.json: orgName must be a string");
-    config.orgName = obj.orgName as string;
-  }
   if (obj.orgId !== undefined) {
     if (typeof obj.orgId !== "string") throw new Error("instance.json: orgId must be a string");
     config.orgId = obj.orgId as string;
@@ -201,7 +220,8 @@ function uniqueTmpSuffix(): string {
 
 /**
  * Load instance config from `workDir/instance.json`.
- * Returns null if the file does not exist (dev mode signal).
+ * Returns null if the file does not exist; `Runtime.start` then refuses to
+ * start unless its caller passed a provider (`missingInstanceConfigError`).
  * Throws on malformed JSON or schema validation failure.
  */
 export async function loadInstanceConfig(workDir: string): Promise<InstanceConfig | null> {
@@ -227,6 +247,24 @@ export async function loadInstanceConfig(workDir: string): Promise<InstanceConfi
   // resolved. Same instance scope and same rule as `nimblebrain.json` — any
   // string field here may be a reference instead.
   return validateInstanceConfig(await resolveInstanceCredentialRefs(raw));
+}
+
+/**
+ * The startup error for an instance with no `instance.json`. It names the file
+ * and the two ways to write it, because a missing identity config never
+ * defaults to one.
+ */
+export function missingInstanceConfigError(workDir: string): Error {
+  const filePath = join(workDir, INSTANCE_FILE);
+  return new Error(
+    `No identity provider: ${filePath} does not exist, and the runtime does not start without one.\n` +
+      `  Local development, every request as one developer with no login:\n` +
+      `    {"auth":{"adapter":"dev"}}\n` +
+      `  A real identity provider:\n` +
+      `    {"auth":{"adapter":"oidc","issuer":"https://idp.example.com","clientId":"<client id>","allowedDomains":["example.com"]}}\n` +
+      `    or {"auth":{"adapter":"workos","clientId":"<client id>"}}\n` +
+      `  See https://docs.nimblebrain.ai/config/instance-json/`,
+  );
 }
 
 /**

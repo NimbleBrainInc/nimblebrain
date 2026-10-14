@@ -21,24 +21,21 @@
  * the duplication survived the existing connector-skill suite.
  */
 
-import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** Reverse-DNS slug, like a fleet connector — never the skills' own names. */
 const SERVER = "ai-nimblebrain-surface-mcp";
@@ -60,21 +57,24 @@ function createFixtureServer(): Server {
 
   const server = new Server(
     { name: "surface", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [{ name: "doit", description: "Do it", inputSchema: { type: "object", properties: {} } }],
+  server.setRequestHandler("tools/list", async () => ({
+    tools: [
+      { name: "doit", description: "Do it", inputSchema: { type: "object", properties: {} } },
+    ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [
       { uri: "skill://alpha/SKILL.md", name: "alpha", mimeType: "text/markdown" },
       { uri: "skill://beta/SKILL.md", name: "beta", mimeType: "text/markdown" },
     ],
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (r) => {
+  serveSkills(server, () => bodies);
+  server.setRequestHandler("resources/read", async (r) => {
     const text = bodies[r.params.uri];
     if (!text) throw new Error(`Resource not found: ${r.params.uri}`);
     return { contents: [{ uri: r.params.uri, mimeType: "text/markdown", text }] };
@@ -110,24 +110,22 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
 
   runtime = await Runtime.start({
-    model: {
-      provider: "custom",
-      adapter: createMockModel((options) => {
-        prompts.push(options.prompt);
-        modelCalls += 1;
-        // First pass calls the server's tool — that is what fires the surface-once
-        // hook. Everything after answers, so the run terminates.
-        if (modelCalls === 1) {
-          return {
-            content: [
-              { type: "tool-call", toolCallId: "call-1", toolName: CALLED_TOOL, input: "{}" },
-            ],
-            finishReason: "tool-calls",
-          };
-        }
-        return { content: [{ type: "text", text: "ok" }] };
-      }),
-    },
+    identityProvider: devProvider,
+    languageModel: createMockModel((options) => {
+      prompts.push(options.prompt);
+      modelCalls += 1;
+      // First pass calls the server's tool — that is what fires the surface-once
+      // hook. Everything after answers, so the run terminates.
+      if (modelCalls === 1) {
+        return {
+          content: [
+            { type: "tool-call", toolCallId: "call-1", toolName: CALLED_TOOL, input: "{}" },
+          ],
+          finishReason: "tool-calls",
+        };
+      }
+      return { content: [{ type: "text", text: "ok" }] };
+    }),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },
@@ -162,6 +160,7 @@ describe("published skills and the surface-once channel", () => {
     // The server's tool is direct, so Layer 3 selects BOTH published skills at
     // turn start (one `<server>__*` glob covers the pair).
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "do the thing",
       allowedTools: [CALLED_TOOL],
@@ -175,7 +174,7 @@ describe("published skills and the surface-once channel", () => {
     // The called tool's own skill: composed once, and still once after the call.
     expect(peakOccurrences(MARKER_A)).toBe(1);
     // Its neighbour on the same server: the affinity glob is per-SERVER, so this
-    // is the one that used to double without any tool of its own being called.
+    // is the one that could double without any tool of its own being called.
     expect(peakOccurrences(MARKER_B)).toBe(1);
   });
 
@@ -186,6 +185,7 @@ describe("published skills and the surface-once channel", () => {
     // turn start and Layer 3 selects neither skill — the exact case the channel
     // exists for. The model promotes and calls it mid-turn.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "promote and call it",
       allowedTools: ["nb__*"],
@@ -225,6 +225,7 @@ describe("published skills and the surface-once channel", () => {
     prompts = [];
     modelCalls = 0;
     await runtime.executeTask({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       prompt: "do the thing",
       allowedTools: [CALLED_TOOL],

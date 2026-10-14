@@ -6,10 +6,13 @@
 // iframe trust boundary) and TypeScript types (Static<>). See `./schemas.ts`
 // for the trust-boundary policy and the canonical envelope shapes.
 //
-// Non-envelope types (BridgeCallbacks, UiChatContext) live here because
+// Non-envelope types (BridgeCallbacks) live here because
 // they describe the host's API to its callers, not a wire shape that
 // crosses a trust boundary.
 // ---------------------------------------------------------------------------
+
+import type { UploadLimits } from "./host-extensions";
+import type { AppTrailEntry } from "./schemas";
 
 export type {
   // App → Host envelopes
@@ -28,6 +31,7 @@ export type {
   ResourcesReadMessage,
   ResourceTemplatesListMessage,
   SynapseRequestFileMessage,
+  SynapseUploadFilesMessage,
   ToolsCallMessage,
   UiActionMessage,
   UiKeydownMessage,
@@ -37,7 +41,6 @@ export type {
   UiResourceResultResponse,
   UiSizeChangedMessage,
   UiToolResultError,
-  UiToolResultMessage,
   UiToolResultResponse,
   UiUpdateModelContextMessage,
 } from "./schemas";
@@ -46,25 +49,34 @@ export type {
 // Bridge callbacks
 // ---------------------------------------------------------------------------
 
-/** Context attached to a ui/message from an app (extracted from _meta). */
-export interface UiChatContext {
-  action?: string;
-  entity?: { type: string; id: string };
-  state?: Record<string, unknown>;
+/** A notice an app asked to show, as the bridge passes it on. */
+export interface AppNotice {
+  level: "success" | "info" | "warning" | "error";
+  title: string;
+  description?: string;
 }
 
 /** Callbacks the bridge invokes when the iframe sends messages. */
 export interface BridgeCallbacks {
   /** Called when the iframe sends a ui/message with chat content. */
-  onChat?: (message: string, context?: UiChatContext) => void;
+  onChat?: (message: string) => void;
   /** Called when the iframe requests a resize (inline views). */
   onResize?: (height: number) => void;
-  /** Called when the iframe requests navigation to a route. */
-  onNavigate?: (route: string) => void;
-  /** Called when the iframe requests a semantic action. */
+  /** Called when the iframe requests a semantic action. `params.serverName` is the sending view's server, set by the bridge. */
   onAction?: (action: string, params: Record<string, unknown>) => void;
   /** Called when the iframe confirms handshake complete. */
   onInitialized?: () => void;
+  /**
+   * Called with the app's whole trail, root first, each time it sends
+   * `ai.nimblebrain/location`. Each call replaces the last.
+   */
+  onLocation?: (trail: AppTrailEntry[]) => void;
+  /**
+   * Called when the app asks to show a notice (`ai.nimblebrain/notify`), after
+   * the bridge has checked it. The caller shows it labelled with the app; the
+   * label comes from the bundle's manifest, never from the message.
+   */
+  onNotify?: (notice: AppNotice) => void;
   /**
    * Provide NimbleBrain-specific extensions to merge into the ext-apps
    * `hostContext` at handshake time (e.g. `{ workspace: { id, name } }`).
@@ -76,4 +88,11 @@ export interface BridgeCallbacks {
    * the bridge and override any same-named keys returned here.
    */
   getHostExtensions?: () => Record<string, unknown>;
+  /**
+   * The instance's upload limits, which the `ai.nimblebrain/request-file`
+   * picker enforces before it uploads. Unset, the picker holds files to the
+   * `maxSize` the app asks for (25 MB by default) and leaves the total to the
+   * server.
+   */
+  getUploadLimits?: () => UploadLimits | undefined;
 }

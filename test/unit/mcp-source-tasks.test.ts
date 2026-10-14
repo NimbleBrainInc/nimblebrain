@@ -1,20 +1,28 @@
 import { describe, expect, it } from "bun:test";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import type { CallToolResult, Task } from "@modelcontextprotocol/sdk/types.js";
+import type { Client } from "@modelcontextprotocol/client";
+import type { CallToolResult, Task } from "@modelcontextprotocol/server";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import {
+  type TaskStreamMessage as ProductionTaskStreamMessage,
+  TASKS_EXTENSION_ID,
+  type TaskClient,
+} from "../../src/tools/mcp-task-client.ts";
 import {
   TaskAlreadyTerminalError,
   TaskNotFoundError,
   type TaskOwnerContext,
 } from "../../src/tools/types.ts";
+import { payloadsOf } from "../helpers/engine-events.ts";
+import { mcpSourceInternals, mockTryRestart } from "../helpers/mcp-source-internals.ts";
+import { stub } from "../helpers/stub.ts";
 
 // Unit coverage for McpSource's task-augmented surface.
 //
 // We can't stand up a real MCP server inside a unit test, so we construct a
-// McpSource and poke its private fields to install a scripted `client` whose
-// `experimental.tasks.callToolStream` yields a controlled message sequence.
-// The scenarios mirror the MCP draft 2025-11-25 task stream:
+// McpSource and poke its private fields to install a scripted task client whose
+// `callToolStream` yields a controlled message sequence. The scenarios mirror
+// the task stream `mcp-task-client.ts` produces:
 // `taskCreated → taskStatus* → (result | error)`, plus abort, ownership
 // enforcement, TTL sweeping, and protocol-violation edge cases.
 
@@ -28,35 +36,20 @@ function recordingSink(): RecordingSink {
   return { events, sink: { emit: (e) => events.push(e) } };
 }
 
-function progressEvents(events: EngineEvent[]) {
-  return events.filter((e) => e.type === "tool.progress");
+function taskStatusEvents(events: EngineEvent[]) {
+  return payloadsOf(events, "tool.task_status");
 }
 
-function runErrorEvents(events: EngineEvent[]) {
-  return events.filter((e) => e.type === "run.error");
+function healthEvents(events: EngineEvent[]) {
+  return payloadsOf(events, "connector.health");
 }
 
 /**
- * The four message shapes the SDK's task stream yields, per
- * `node_modules/@modelcontextprotocol/sdk/.../experimental/tasks/client.js`
- * and `shared/protocol.js`. The error variant is specifically an `McpError`
- * INSTANCE — the SDK constructs `new McpError(InternalError, "Task <id>
- * failed")`, whose `.message` is the wrapped form `"MCP error -32603:
- * Task <id> failed"`.
- *
- * Forbidding plain-object error mocks (`{ message: "Task X failed" }`)
- * at this seam is load-bearing: a previous test wrote that shape and
- * masked the fact that the engine's recovery regex couldn't match the
- * real wrapped production message. The fix shipped, the test passed
- * anyway, and recovery was a no-op in production. Match the production
- * type strictly here and that whole class of test-fixture-vs-production
- * drift becomes a compile error.
+ * The stream's message shape is the production one (`mcp-task-client.ts`), so a
+ * fixture that drifts from what the runtime yields fails to compile rather than
+ * passing against a shape production never produces.
  */
-type TaskStreamMessage =
-  | { type: "taskCreated"; task: Task }
-  | { type: "taskStatus"; task: Task }
-  | { type: "result"; result: CallToolResult }
-  | { type: "error"; error: McpError };
+type TaskStreamMessage = ProductionTaskStreamMessage;
 
 /**
  * Test-only stream driver. Resolves `next()` with the messages pushed via
@@ -65,7 +58,7 @@ type TaskStreamMessage =
  * a terminal `result`/`error` message.
  */
 interface StreamDriver {
-  stream: AsyncGenerator<unknown, void, void>;
+  stream: AsyncGenerator<TaskStreamMessage, void, void>;
   emit(message: TaskStreamMessage): void;
   throwNext(err: Error): void;
   end(): void;
@@ -73,13 +66,11 @@ interface StreamDriver {
 
 function streamDriver(): StreamDriver {
   const queue: Array<
-    | { kind: "value"; value: TaskStreamMessage }
-    | { kind: "error"; error: Error }
-    | { kind: "end" }
+    { kind: "value"; value: TaskStreamMessage } | { kind: "error"; error: Error } | { kind: "end" }
   > = [];
   let resolveNext: (() => void) | null = null;
 
-  async function* gen(): AsyncGenerator<unknown, void, void> {
+  async function* gen(): AsyncGenerator<TaskStreamMessage, void, void> {
     while (true) {
       while (queue.length === 0) {
         await new Promise<void>((r) => {
@@ -127,10 +118,8 @@ interface BuildOptions {
   stream?: () => AsyncGenerator<TaskStreamMessage>;
   /** Drives the stream one message at a time so tests can interleave calls. */
   driver?: StreamDriver;
-  /** Fake `client.experimental.tasks.getTask` return value. */
+  /** Fake task client `getTask` (`tasks/get`) return value. */
   getTaskImpl?: (taskId: string) => Promise<Task>;
-  /** Fake `client.experimental.tasks.getTaskResult` return value. */
-  getTaskResultImpl?: (taskId: string) => Promise<CallToolResult>;
   onTryRestart?: () => Promise<boolean>;
 }
 
@@ -141,48 +130,38 @@ function buildTaskAugmentedSource(sink: EventSink, opts: BuildOptions): McpSourc
     sink,
   );
 
-  const fakeClient = {
-    experimental: {
-      tasks: {
-        callToolStream: (_req: unknown, _o: unknown, _r: unknown) =>
-          opts.driver ? opts.driver.stream : (opts.stream?.() ?? emptyStream()),
-        getTask: opts.getTaskImpl ?? (() => Promise.reject(new Error("getTask not mocked"))),
-        getTaskResult:
-          opts.getTaskResultImpl ??
-          (() => Promise.reject(new Error("getTaskResult not mocked"))),
-      },
-    },
-    // McpSource.stop() awaits client.close(); without a no-op the stop()
-    // path that's exercised by the cleanup test (and any flush in
-    // afterEach under suite load) throws TypeError mid-teardown.
+  const fakeTaskClient = stub<TaskClient>({
+    callToolStream: () => (opts.driver ? opts.driver.stream : (opts.stream?.() ?? emptyStream())),
+    getTask: opts.getTaskImpl ?? (() => Promise.reject(new Error("getTask not mocked"))),
+  });
+  // McpSource.stop() awaits client.close(); without a no-op the stop()
+  // path that's exercised by the cleanup test (and any flush in
+  // afterEach under suite load) throws TypeError mid-teardown. The server
+  // advertises the 2026-07-28 tasks extension, which is what puts every call
+  // on the task path.
+  const fakeClient = stub<Client>({
     close: async () => {},
-  };
+    getServerCapabilities: () => ({ extensions: { [TASKS_EXTENSION_ID]: {} } }),
+  });
 
-  // Test-only: inject fake client + pre-seed the tool cache so findTool()
-  // returns a task-augmented tool without having to hit start()/tools().
-  const internals = source as unknown as {
-    client: unknown;
-    cachedTools: unknown;
-    tryRestart: () => Promise<boolean>;
-  };
+  // Test-only: inject a fake 2026-07-28 client and task client, and pre-seed
+  // the tool cache so findTool() resolves without having to hit
+  // start()/tools().
+  const internals = mcpSourceInternals(source);
   internals.client = fakeClient;
+  internals.taskClient = fakeTaskClient;
+  internals.protocolEra = "modern";
   internals.cachedTools = [
-    {
-      name: "test__do_work",
-      description: "",
-      inputSchema: {},
-      source: "mcp:test",
-      execution: { taskSupport: "optional" },
-    },
+    { name: "test__do_work", description: "", inputSchema: {}, source: "mcp:test" },
   ];
   if (opts.onTryRestart) {
-    internals.tryRestart = opts.onTryRestart;
+    mockTryRestart(source).mockImplementation(opts.onTryRestart);
   }
 
   return source;
 }
 
-async function* emptyStream(): AsyncGenerator<unknown, void, void> {
+async function* emptyStream(): AsyncGenerator<TaskStreamMessage, void, void> {
   // no-op
 }
 
@@ -198,7 +177,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
-const OWNER: TaskOwnerContext = { workspaceId: "ws_1", identityId: "user_1" };
+const OWNER: TaskOwnerContext = { workspaceId: "ws_0002ee92e8791c13", identityId: "user_1" };
 
 // ──────────────────────────────────────────────────────────────────────
 // Existing agent-loop contract (callToolAsTask wrapper preserved)
@@ -227,11 +206,11 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     expect(result.content).toEqual([{ type: "text", text: "done" }]);
 
     // taskCreated (emitted inline by startToolAsTask) + one taskStatus both
-    // become tool.progress events
-    const progress = progressEvents(events);
+    // become tool.task_status events
+    const progress = taskStatusEvents(events);
     expect(progress.length).toBe(2);
-    expect(progress.every((e) => (e.data as { tool: string }).tool === "do_work")).toBe(true);
-    expect((progress[1]!.data as { message?: string }).message).toBe("halfway");
+    expect(progress.every((d) => d.tool === "do_work")).toBe(true);
+    expect(progress[1]!.message).toBe("halfway");
   });
 
   it("stream-level `error` message is surfaced as isError without restart", async () => {
@@ -253,149 +232,10 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     expect(result.isError).toBe(true);
     expect((result.content[0] as { text: string }).text).toMatch(/research failed/);
     expect(restartCalled).toBe(false);
-    expect(runErrorEvents(events).length).toBe(0);
+    expect(healthEvents(events).length).toBe(0);
   });
 
-  it("recovers tasks/result content when SDK reports generic `Task <id> failed`", async () => {
-    // Regression: the upstream SDK's task stream emits an
-    // `McpError(InternalError, "Task <id> failed")` whenever the server-
-    // side task status is `failed`, discarding the server's
-    // `tasks/result` payload. A connector that misclassified its own
-    // terminal status (post-result exception flipping COMPLETED→FAILED
-    // while a usable payload was already stored — the synapse-research
-    // production failure mode) would otherwise surface to the agent as
-    // a useless string with the real output gone. The engine now tries
-    // one extra fetch.
-    //
-    // CRITICAL: this test must construct a real `McpError` instance —
-    // NOT a plain `{ message: "Task <id> failed" }` object. McpError's
-    // constructor wraps the message as `"MCP error <code>: <message>"`,
-    // so a plain-object mock matches a broken implementation that
-    // anchors to the bare message and silently fails in production.
-    let getResultCalledFor: string | null = null;
-    const { sink } = recordingSink();
-    const source = buildTaskAugmentedSource(sink, {
-      stream: async function* () {
-        yield {
-          type: "taskCreated",
-          task: makeTask({ taskId: "t-recover", status: "working" }),
-        };
-        yield {
-          type: "error",
-          error: new McpError(ErrorCode.InternalError, "Task t-recover failed"),
-        };
-      },
-      getTaskResultImpl: async (taskId) => {
-        getResultCalledFor = taskId;
-        return {
-          content: [{ type: "text", text: "the real report content" }],
-          isError: false,
-        };
-      },
-    });
-
-    const result = await source.execute("do_work", {});
-
-    expect(getResultCalledFor).toBe("t-recover");
-    expect(result.isError).toBe(false);
-    expect((result.content[0] as { text: string }).text).toBe("the real report content");
-  });
-
-  it("falls back to generic error when tasks/result fetch also fails", async () => {
-    // Best-effort recovery: when the server genuinely has no result
-    // for the failed task, we surface the SDK's original wrapped
-    // error string rather than masking the real failure.
-    const { sink } = recordingSink();
-    const source = buildTaskAugmentedSource(sink, {
-      stream: async function* () {
-        yield {
-          type: "taskCreated",
-          task: makeTask({ taskId: "t-norecover", status: "working" }),
-        };
-        yield {
-          type: "error",
-          error: new McpError(ErrorCode.InternalError, "Task t-norecover failed"),
-        };
-      },
-      getTaskResultImpl: async () => {
-        throw new Error("not available");
-      },
-    });
-
-    const result = await source.execute("do_work", {});
-
-    expect(result.isError).toBe(true);
-    // McpError wraps the message; the engine surfaces the wrapped form.
-    expect((result.content[0] as { text: string }).text).toBe(
-      "MCP error -32603: Task t-norecover failed",
-    );
-  });
-
-  it("does NOT attempt recovery when error message is connector-specific (not generic SDK shape)", async () => {
-    // The recovery path keys off the SDK's exact generic format
-    // `Task <id> failed` (with or without the McpError wrapping
-    // prefix) — anything else carries real information from the
-    // connector and should be surfaced verbatim, not overridden.
-    let getResultCalled = false;
-    const { sink } = recordingSink();
-    const source = buildTaskAugmentedSource(sink, {
-      stream: async function* () {
-        yield {
-          type: "taskCreated",
-          task: makeTask({ taskId: "t-specific", status: "working" }),
-        };
-        yield {
-          type: "error",
-          error: new McpError(ErrorCode.InternalError, "upstream API returned 503"),
-        };
-      },
-      getTaskResultImpl: async () => {
-        getResultCalled = true;
-        return { content: [{ type: "text", text: "should not appear" }], isError: false };
-      },
-    });
-
-    const result = await source.execute("do_work", {});
-
-    expect(getResultCalled).toBe(false);
-    expect(result.isError).toBe(true);
-    expect((result.content[0] as { text: string }).text).toBe(
-      "MCP error -32603: upstream API returned 503",
-    );
-  });
-
-  it("does NOT recover when generic-failed shape names a DIFFERENT task id", async () => {
-    // Pathological: the SDK message ends with "Task <some-id> failed"
-    // but the id doesn't match handle.taskId. Shouldn't happen in
-    // practice (the SDK builds the message from the current task's id),
-    // but the discriminator must be specific to THIS task or we'd
-    // recover against a stale/wrong payload.
-    let getResultCalled = false;
-    const { sink } = recordingSink();
-    const source = buildTaskAugmentedSource(sink, {
-      stream: async function* () {
-        yield {
-          type: "taskCreated",
-          task: makeTask({ taskId: "t-mine", status: "working" }),
-        };
-        yield {
-          type: "error",
-          error: new McpError(ErrorCode.InternalError, "Task t-someone-else failed"),
-        };
-      },
-      getTaskResultImpl: async () => {
-        getResultCalled = true;
-        return { content: [{ type: "text", text: "wrong task's payload" }], isError: false };
-      },
-    });
-
-    const result = await source.execute("do_work", {});
-
-    expect(getResultCalled).toBe(false);
-    expect(result.isError).toBe(true);
-  });
-
-  it("abort mid-stream emits terminal tool.progress(status=cancelled) and does NOT restart", async () => {
+  it("abort mid-stream emits terminal tool.task_status(status=cancelled) and does NOT restart", async () => {
     const { sink, events } = recordingSink();
     const controller = new AbortController();
     let restartCalled = false;
@@ -419,12 +259,10 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
 
     expect(result.isError).toBe(true);
     expect((result.content[0] as { text: string }).text).toMatch(/cancelled/i);
-    const cancelled = progressEvents(events).filter(
-      (e) => (e.data as { status: string }).status === "cancelled",
-    );
+    const cancelled = taskStatusEvents(events).filter((d) => d.status === "cancelled");
     expect(cancelled.length).toBe(1);
     expect(restartCalled).toBe(false);
-    expect(runErrorEvents(events).length).toBe(0);
+    expect(healthEvents(events).length).toBe(0);
   });
 
   it("task-augmented transport failure is NOT auto-retried (no tryRestart, no inline fallback)", async () => {
@@ -447,9 +285,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     expect(result.isError).toBe(true);
     expect((result.content[0] as { text: string }).text).toMatch(/cannot be auto-retried/);
     expect(restartCalled).toBe(false);
-    const crashed = runErrorEvents(events).filter(
-      (e) => (e.data as { event?: string }).event === "source.crashed",
-    );
+    const crashed = healthEvents(events).filter((d) => d.event === "source.crashed");
     expect(crashed.length).toBe(1);
   });
 
@@ -465,9 +301,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     const result = await source.execute("do_work", {});
 
     expect(result.isError).toBe(true);
-    expect((result.content[0] as { text: string }).text).toMatch(
-      /stream ended without a terminal/,
-    );
+    expect((result.content[0] as { text: string }).text).toMatch(/stream ended without a terminal/);
   });
 
   it("taskCreated carries the taskId into subsequent progress events", async () => {
@@ -488,9 +322,9 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
 
     await source.execute("do_work", {});
 
-    const progress = progressEvents(events);
+    const progress = taskStatusEvents(events);
     expect(progress.length).toBe(2);
-    expect(progress.every((e) => (e.data as { taskId: string }).taskId === "task-42")).toBe(true);
+    expect(progress.every((d) => d.taskId === "task-42")).toBe(true);
   });
 });
 
@@ -529,9 +363,9 @@ describe("McpSource.startToolAsTask", () => {
       },
     });
 
-    await expect(
-      source.startToolAsTask("do_work", {}, { ownerContext: OWNER }),
-    ).rejects.toThrow(/before yielding taskCreated/);
+    await expect(source.startToolAsTask("do_work", {}, { ownerContext: OWNER })).rejects.toThrow(
+      /before yielding taskCreated/,
+    );
   });
 });
 
@@ -703,7 +537,7 @@ describe("McpSource owner-context enforcement", () => {
 
   it("wrong workspaceId → getTaskStatus rejects with TaskNotFoundError", async () => {
     const { source, driver } = await startedSource();
-    const bogus: TaskOwnerContext = { workspaceId: "ws_other", identityId: "user_1" };
+    const bogus: TaskOwnerContext = { workspaceId: "ws_005820c54ca342ad", identityId: "user_1" };
     await expect(source.getTaskStatus("t1", { ownerContext: bogus })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
@@ -714,17 +548,20 @@ describe("McpSource owner-context enforcement", () => {
 
   it("wrong identityId → awaitToolTaskResult rejects with TaskNotFoundError", async () => {
     const { source, driver } = await startedSource();
-    const bogus: TaskOwnerContext = { workspaceId: "ws_1", identityId: "user_other" };
-    await expect(
-      source.awaitToolTaskResult("t1", { ownerContext: bogus }),
-    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    const bogus: TaskOwnerContext = {
+      workspaceId: "ws_0002ee92e8791c13",
+      identityId: "user_other",
+    };
+    await expect(source.awaitToolTaskResult("t1", { ownerContext: bogus })).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
     driver.emit({ type: "result", result: { content: [], isError: false } });
     await source.awaitToolTaskResult("t1", { ownerContext: OWNER });
   });
 
   it("wrong workspaceId → cancelTask rejects with TaskNotFoundError", async () => {
     const { source, driver } = await startedSource();
-    const bogus: TaskOwnerContext = { workspaceId: "ws_other" };
+    const bogus: TaskOwnerContext = { workspaceId: "ws_005820c54ca342ad" };
     await expect(source.cancelTask("t1", { ownerContext: bogus })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
@@ -734,9 +571,9 @@ describe("McpSource owner-context enforcement", () => {
 
   it("nonexistent taskId → TaskNotFoundError (does NOT leak existence)", async () => {
     const { source, driver } = await startedSource();
-    await expect(
-      source.getTaskStatus("nope", { ownerContext: OWNER }),
-    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await expect(source.getTaskStatus("nope", { ownerContext: OWNER })).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
     driver.emit({ type: "result", result: { content: [], isError: false } });
     await source.awaitToolTaskResult("t1", { ownerContext: OWNER });
   });
@@ -766,18 +603,16 @@ describe("McpSource TTL sweeper", () => {
     await source.startToolAsTask("do_work", {}, { ownerContext: OWNER });
 
     // Sanity: the handle exists right now.
-    const internals = source as unknown as { _taskHandleCountForTesting(): number };
-    expect(internals._taskHandleCountForTesting()).toBe(1);
+    expect(source._taskHandleCountForTesting()).toBe(1);
 
     // Force a sweep.
-    const testMethod = source as unknown as { _sweepExpiredTasksForTesting(): number };
-    const remaining = testMethod._sweepExpiredTasksForTesting();
+    const remaining = source._sweepExpiredTasksForTesting();
     expect(remaining).toBe(0);
 
     // Post-sweep lookups fail as TaskNotFoundError.
-    await expect(
-      source.getTaskStatus("t1", { ownerContext: OWNER }),
-    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await expect(source.getTaskStatus("t1", { ownerContext: OWNER })).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
   });
 });
 
@@ -802,7 +637,89 @@ describe("McpSource.stop() cleanup", () => {
     await expect(awaiting).rejects.toThrow(/source stopped/);
 
     // Map is cleared.
-    const internals = source as unknown as { _taskHandleCountForTesting(): number };
-    expect(internals._taskHandleCountForTesting()).toBe(0);
+    expect(source._taskHandleCountForTesting()).toBe(0);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// A 2025-era connection: no task is ever attached (ADR-0046)
+// ──────────────────────────────────────────────────────────────────────
+
+/**
+ * A source on a 2025-era connection whose `do_work` declares `taskSupport`,
+ * recording every `tools/call` that reaches the client and every task stream
+ * opened. The task client fails the test if it is ever used.
+ */
+function buildLegacySource(taskSupport: "optional" | "required") {
+  const sent: Parameters<Client["callTool"]>[0][] = [];
+  let streamsOpened = 0;
+  const source = new McpSource(
+    "test",
+    { type: "remote", url: new URL("http://localhost:0/mcp") },
+    recordingSink().sink,
+  );
+  const internals = mcpSourceInternals(source);
+  internals.client = stub<Client>({
+    close: async () => {},
+    getServerCapabilities: () => ({ tools: {} }),
+    callTool: async (params) => {
+      sent.push(params);
+      return { content: [{ type: "text", text: "inline answer" }] };
+    },
+  });
+  internals.taskClient = stub<TaskClient>({
+    callToolStream: () => {
+      streamsOpened++;
+      return emptyStream();
+    },
+    getTask: () => Promise.reject(new Error("no task on a 2025-era connection")),
+  });
+  internals.protocolEra = "legacy";
+  internals.cachedTools = [
+    {
+      name: "test__do_work",
+      description: "",
+      inputSchema: {},
+      source: "mcp:test",
+      execution: { taskSupport },
+    },
+  ];
+  return { source, sent, streamsOpened: () => streamsOpened };
+}
+
+describe("McpSource on a 2025-era connection", () => {
+  it('calls a taskSupport "optional" tool inline, attaching no task', async () => {
+    const { source, sent, streamsOpened } = buildLegacySource("optional");
+
+    const result = await source.execute("do_work", { q: 1 });
+
+    expect(result.isError).toBe(false);
+    expect((result.content[0] as { text: string }).text).toBe("inline answer");
+    expect(sent).toEqual([{ name: "do_work", arguments: { q: 1 } }]);
+    expect(streamsOpened()).toBe(0);
+  });
+
+  it('refuses a taskSupport "required" tool before dispatch, naming the reason', async () => {
+    const { source, sent, streamsOpened } = buildLegacySource("required");
+
+    const result = await source.execute("do_work", {});
+
+    expect(result.isError).toBe(true);
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain('requires a task (execution.taskSupport "required")');
+    expect(text).toContain("2025-11-25 tasks utility");
+    expect(text).toContain("ADR-0046");
+    expect(sent).toEqual([]);
+    expect(streamsOpened()).toBe(0);
+  });
+
+  it('refuses to start a taskSupport "required" tool as a task, sending nothing', async () => {
+    const { source, sent, streamsOpened } = buildLegacySource("required");
+
+    await expect(source.startToolAsTask("do_work", {}, { ownerContext: OWNER })).rejects.toThrow(
+      "2025-11-25 tasks utility",
+    );
+    expect(sent).toEqual([]);
+    expect(streamsOpened()).toBe(0);
   });
 });

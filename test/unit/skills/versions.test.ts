@@ -13,12 +13,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import {
-  joinSkillBody,
-  readSkill,
-  updateSkill,
-  writeSkill,
-} from "../../../src/skills/writer.ts";
+import { parseSkillContent } from "../../../src/skills/loader.ts";
+import type { SkillManifest } from "../../../src/skills/types.ts";
 import {
   listSkillVersions,
   readSkillVersionRaw,
@@ -26,8 +22,7 @@ import {
   versionFilePath,
   versionsDirFor,
 } from "../../../src/skills/versions.ts";
-import { parseSkillContent } from "../../../src/skills/loader.ts";
-import type { SkillManifest } from "../../../src/skills/types.ts";
+import { joinSkillBody, readSkill, updateSkill, writeSkill } from "../../../src/skills/writer.ts";
 
 let dir: string;
 
@@ -253,7 +248,7 @@ describe("version history", () => {
     // scope/permission/symlink gates all validate the skill `id`, never the
     // file a version resolves to — this is the only thing holding that line.
     for (const bad of [
-      "../".repeat(6) + "etc/passwd",
+      `${"../".repeat(6)}etc/passwd`,
       "..",
       "2026-01-01T00-00-00-000Z/../../../secret",
       "",

@@ -13,18 +13,18 @@
  * so those fixtures are unaffected by it.
  *
  * **Separator: `-`.** Workspace ids match
- * `WORKSPACE_ID_PATTERN = ^ws_[a-z0-9_]{1,64}$` (no `-`), so the first
+ * `WORKSPACE_ID_PATTERN = ^ws_[a-f0-9]{16}$` (no `-`), so the first
  * `-` is unambiguously the workspace/tool boundary. We chose `-` over
  * `/` because LLM provider tool-name validators (OpenAI, Anthropic,
  * etc.) constrain names to `[a-zA-Z0-9_-]{1,128}` — `/` is rejected
  * at the provider boundary, breaking tool registration. `-` satisfies
  * both the provider regex and our unambiguity requirement.
  *
- * Design rules (matching Stage 1 lessons):
+ * Design rules:
  *
- * 1. **Strict invariants over defensive defaults** (lesson 3). Every
+ * 1. **Strict invariants over defensive defaults.** Every
  *    invalid shape throws — no `??` / `?? null` / `?? ""` fallbacks
- *    anywhere. The orchestrator (T004) catches `UnknownNamespacedToolName`
+ *    anywhere. The orchestrator catches `UnknownNamespacedToolName`
  *    and decides what to do; the primitive does not guess.
  * 2. **Single source of truth for `wsId` validation.**
  *    `WORKSPACE_ID_RE` is imported from `src/workspace/workspace-store.ts`
@@ -35,8 +35,8 @@
  * 3. **First-`-` split** when parsing. Tool names may contain `-`
  *    themselves (e.g. `crm-tool__search`); the first `-` is the
  *    workspace boundary, the rest is the tool name verbatim.
- *    `parseNamespacedToolName("ws_helix-foo-bar")` returns
- *    `{ wsId: "ws_helix", toolName: "foo-bar" }`. Asserted in
+ *    `parseNamespacedToolName("ws_3f9a1c7e0b2d4856-foo-bar")` returns
+ *    `{ wsId: "ws_3f9a1c7e0b2d4856", toolName: "foo-bar" }`. Asserted in
  *    `test/unit/tools/namespace.test.ts`.
  * 4. **No `as unknown as T` casts.** Pure string functions; type flow
  *    is direct.
@@ -59,7 +59,7 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
  *   - **identity** — bare `<toolName>` (no prefix). A *singleton* of the
  *     authenticated identity: platform system tools (`nb__*`) and the
  *     user's own entity apps (`conversations__*`, later `files__*` /
- *     `automations__*`). It carries no workspace; dispatched against the
+ *     `tasks__*`). It carries no workspace; dispatched against the
  *     identity context. The orchestrator validates the source against the
  *     kernel identity-source set before routing; entity reads are then
  *     gated by `canAccess` (owner ∪ shares) in the handler (see ACCESS_MODEL).
@@ -93,7 +93,7 @@ export class UnknownNamespacedToolName extends Error {
    *
    * Values: `empty_input`, `empty_tool_name`, `invalid_wsid`, and
    * `legacy_namespaced_form` (raised by the orchestrator for the retired
-   * `ws_<id>-` wire form, which parses fine but is no longer routed).
+   * `ws_<id>-` wire form, which parses fine but is not routed).
    */
   readonly reason: string;
 
@@ -120,9 +120,9 @@ export class UnknownNamespacedToolName extends Error {
  * Grammar:
  *   - `ws_<id>-<toolName>` → `{ kind: "workspace", wsId }`, toolName is the
  *     remainder after the first `-`. Workspace ids can't contain `-`
- *     (`^ws_[a-z0-9_]{1,64}$`), so the first `-` is the workspace boundary;
+ *     (`^ws_[a-f0-9]{16}$`), so the first `-` is the workspace boundary;
  *     tool names may contain `-` and round-trip cleanly
- *     (`ws_helix-foo-bar` → wsId `ws_helix`, toolName `foo-bar`).
+ *     (`ws_3f9a1c7e0b2d4856-foo-bar` → wsId `ws_3f9a1c7e0b2d4856`, toolName `foo-bar`).
  *   - **bare** `<toolName>` (anything not matching the above) →
  *     `{ kind: "identity" }`, toolName is the WHOLE input (no prefix to
  *     strip). Platform tools (`nb__search`) and the user's own entity-app
@@ -137,7 +137,7 @@ export class UnknownNamespacedToolName extends Error {
  *
  * Throws `UnknownNamespacedToolName` only on:
  *   - Input not a string, or empty.
- *   - A `ws_<id>-` workspace prefix with an EMPTY tool name (`"ws_helix-"`).
+ *   - A `ws_<id>-` workspace prefix with an EMPTY tool name (`"ws_3f9a1c7e0b2d4856-"`).
  *   - A leading segment that starts with `ws_` (a workspace attempt) but
  *     fails `WORKSPACE_ID_RE` — a malformed/hostile workspace id, surfaced
  *     rather than silently treated as a (bare) identity name.
@@ -213,17 +213,13 @@ export function bareToolName(s: string): string {
  *
  * A source name has the same `ws_<id>-<rest>` shape as a tool name, but its
  * `<rest>` is a bare source name (`synapse-collateral`) with no `__<tool>`
- * suffix — a wire tool name is `<source>__<tool>` while registry *sources*
- * keep their bare name. So a namespaced tool
- * `ws_<id>-synapse-collateral__preview` surfaces an `appName`/`server` of
- * `ws_<id>-synapse-collateral`, which the REST resource/tool endpoints must
- * split into its owning workspace (`ws_<id>`) and the bare source the
- * registry is keyed on (`synapse-collateral`).
+ * suffix. The REST endpoints use it to recognise the retired form and refuse
+ * it, naming `<rest>` as the bare name to send: on REST the workspace is the
+ * one in the URL path and nothing else.
  *
- * Returns `null` for a bare (unqualified) source name — the caller falls back
- * to the ambient request workspace. Throws (via `parseNamespacedToolName`)
- * only for a malformed `ws_`-prefixed id, which is a probe/typo the caller
- * should reject rather than treat as bare.
+ * Returns `null` for a bare (unqualified) name. Throws (via
+ * `parseNamespacedToolName`) only for a malformed `ws_`-prefixed id, which is
+ * a probe/typo the caller should reject rather than treat as bare.
  *
  * Built on `parseNamespacedToolName` so the separator and `WORKSPACE_ID_RE`
  * boundary stay defined once (and `check:tool-namespace` keeps the parse in

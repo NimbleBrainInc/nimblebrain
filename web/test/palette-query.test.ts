@@ -18,15 +18,25 @@ import type { PlacementEntry } from "../src/types";
 const SOURCES = [workspacesSource, appsSource, actionsSource];
 
 function ws(id: string, name: string, extra?: Partial<WorkspaceInfo>): WorkspaceInfo {
-  return { id, name, memberCount: 1, connectors: [], ...extra };
+  return { id, name, memberCount: 1, connectorCount: 0, ...extra };
 }
 
 const apps: PlacementEntry[] = [
-  { serverName: "crm", slot: "sidebar.apps", resourceUri: "ui://crm", priority: 1, label: "CRM", route: "crm" },
+  {
+    serverName: "crm",
+    slot: "sidebar.apps",
+    resourceUri: "ui://crm",
+    priority: 1,
+    label: "CRM",
+    route: "crm",
+  },
 ];
 
 const ctx: CommandSourceContext = {
-  workspaces: [ws("ws_aaaaaaaaaaaaaaaa", "Pacific Clinic"), ws("ws_bbbbbbbbbbbbbbbb", "Helix Sales")],
+  workspaces: [
+    ws("ws_aaaaaaaaaaaaaaaa", "Pacific Clinic"),
+    ws("ws_bbbbbbbbbbbbbbbb", "Helix Sales"),
+  ],
   activeWorkspaceId: "ws_bbbbbbbbbbbbbbbb",
   activeWorkspaceName: "Helix Sales",
   activeWorkspaceSlug: "bbbbbbbbbbbbbbbb",

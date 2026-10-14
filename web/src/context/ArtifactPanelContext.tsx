@@ -18,7 +18,7 @@ import { createContext, useCallback, useContext, useMemo, useState } from "react
 
 /** The minimal descriptor needed to fetch + render an artifact resource. */
 export interface ArtifactDescriptor {
-  /** Server/app that owns the resource — forwarded to POST /v1/resources/read. */
+  /** Server/app that owns the resource — forwarded to POST /v1/workspaces/:wsId/resources/read. */
   appName: string;
   /** Resource URI from the resource_link block (e.g. `files://<id>`). */
   uri: string;

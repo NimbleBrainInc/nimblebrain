@@ -22,8 +22,9 @@ import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-alwayson-cost-${Date.now()}`);
 let runtime: Runtime;
@@ -48,7 +49,8 @@ async function createAlwaysOn(scope: string, name: string, body: string) {
 
 beforeAll(async () => {
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },

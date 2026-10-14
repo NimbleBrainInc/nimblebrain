@@ -2,6 +2,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SchemaValidateFunction, ValidateFunction } from "ajv";
 import Ajv from "ajv";
+import { unqualifiedModelIdError } from "../model/model-id.ts";
 import { findInlineKeyMaterial } from "./secrets.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,14 @@ export const SCHEMA_PATH = resolve(__dirname, "nimblebrain-config.schema.json");
 export const NO_INLINE_KEY_MATERIAL_KEYWORD = "nbNoInlineKeyMaterial";
 
 /**
+ * Schema keyword: this string is a model id, so it must be `provider:model`.
+ * Declared on every field that names a model. A keyword rather than a
+ * `pattern`, because the refusal has to name the qualified form to write, and
+ * a pattern can only say the string does not match.
+ */
+export const QUALIFIED_MODEL_ID_KEYWORD = "nbQualifiedModelId";
+
+/**
  * One AJV instance shape for every compile of this schema. A second factory
  * that forgot the keyword would compile the same document with the guard
  * silently absent — AJV runs non-strict, so an unknown keyword is ignored
@@ -50,6 +59,19 @@ function createAjv(): Ajv {
     schemaType: "boolean",
     errors: true,
     validate,
+  });
+  const validateModelId: SchemaValidateFunction = (schemaValue: unknown, data: unknown) => {
+    if (schemaValue !== true || typeof data !== "string") return true;
+    const reason = unqualifiedModelIdError(data);
+    if (!reason) return true;
+    validateModelId.errors = [{ keyword: QUALIFIED_MODEL_ID_KEYWORD, params: {}, message: reason }];
+    return false;
+  };
+  ajv.addKeyword({
+    keyword: QUALIFIED_MODEL_ID_KEYWORD,
+    schemaType: "boolean",
+    errors: true,
+    validate: validateModelId,
   });
   return ajv;
 }

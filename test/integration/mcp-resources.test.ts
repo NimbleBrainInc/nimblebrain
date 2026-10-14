@@ -2,23 +2,24 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+  type Client,
+  ResourceNotFoundError,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import { McpSource } from "../../src/tools/mcp-source.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { McpSource } from "../../src/tools/mcp-source.ts";
+import { buildMcpRequest, readMcpAnswer } from "../../web/src/mcp-bridge-client.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { newMcpClient } from "../helpers/mcp-client.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
+import { textOf } from "../helpers/resource-contents.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
@@ -46,24 +47,28 @@ function createFixtureServer(config: FixtureConfig): Server {
     { capabilities: { tools: {}, resources: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
-      { name: "ping", description: "Returns pong", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "ping",
+        description: "Returns pong",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "pong" }],
   }));
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [
       { uri: dashboardUri, name: "Dashboard", mimeType: "text/html" },
       { uri: greetingUri, name: "Greeting", mimeType: "text/plain" },
     ],
   }));
 
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  server.setRequestHandler("resources/read", async (request) => {
     if (request.params.uri === dashboardUri) {
       return {
         contents: [{ uri: request.params.uri, mimeType: "text/html", text: config.htmlBody }],
@@ -83,7 +88,7 @@ function createFixtureServer(config: FixtureConfig): Server {
 // ---------------------------------------------------------------------------
 // Shared harness: one runtime, one server, two workspaces with different sources.
 // ---------------------------------------------------------------------------
-const OTHER_WORKSPACE_ID = "ws_other";
+const OTHER_WORKSPACE_ID = "ws_005820c54ca342ad";
 const testDir = join(tmpdir(), `nimblebrain-mcp-resources-${Date.now()}`);
 
 let runtime: Runtime;
@@ -100,7 +105,8 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
 
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -192,12 +198,8 @@ afterAll(async () => {
 }, 30_000);
 
 async function createMcpClient(workspaceId: string = TEST_WORKSPACE_ID): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-    requestInit: {
-      headers: { "x-workspace-id": workspaceId },
-    },
-  });
-  const client = new Client({ name: "mcp-resources-test", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${workspaceId}`));
+  const client = newMcpClient({ name: "mcp-resources-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }
@@ -206,7 +208,7 @@ async function createMcpClient(workspaceId: string = TEST_WORKSPACE_ID): Promise
 // Tests
 // ---------------------------------------------------------------------------
 describe("MCP /mcp — resources", () => {
-  it("advertises the resources capability in InitializeResult", async () => {
+  it("advertises the resources capability in server/discover", async () => {
     const client = await createMcpClient();
     try {
       const caps = client.getServerCapabilities();
@@ -235,10 +237,10 @@ describe("MCP /mcp — resources", () => {
 
   it("resources/read on a known URI returns the resource's bytes", async () => {
     // Parity acceptance criterion: /mcp's `resources/read` must return the
-    // same shape as `POST /v1/resources/read` — `{ contents: [{ uri,
-    // mimeType?, text?, blob? }] }` — with identical bytes for a given URI.
+    // same shape as `POST /v1/workspaces/:wsId/resources/read` — `{ contents:
+    // [{ uri, mimeType?, text?, blob? }] }` — with identical bytes for a given URI.
     //
-    // We can't exercise the legacy REST endpoint directly here because it
+    // We can't exercise the REST endpoint directly here because it
     // goes through `Runtime.readAppResource`, which checks connector lifecycle
     // state (`lifecycle.getInstance`) and returns null for sources added
     // straight to the registry. We still assert the canonical spec shape
@@ -250,12 +252,12 @@ describe("MCP /mcp — resources", () => {
       const mcpEntry = mcpResult.contents[0]!;
       expect(mcpEntry.uri).toBe("ui://fixture/dashboard");
       expect(mcpEntry.mimeType).toBe("text/html");
-      expect(mcpEntry.text).toBe(FIXTURE_HTML);
+      expect(textOf(mcpEntry)).toBe(FIXTURE_HTML);
 
       // A second URI on the same source, different mimeType, same shape.
       const textResult = await client.readResource({ uri: "text://fixture/greeting" });
       expect(textResult.contents).toHaveLength(1);
-      expect(textResult.contents[0]!.text).toBe(FIXTURE_TEXT);
+      expect(textOf(textResult.contents[0]!)).toBe(FIXTURE_TEXT);
       expect(textResult.contents[0]!.mimeType).toBe("text/plain");
     } finally {
       await client.close();
@@ -265,79 +267,32 @@ describe("MCP /mcp — resources", () => {
   it("resources/read on an unknown URI returns a JSON-RPC error (not 500)", async () => {
     const client = await createMcpClient();
     try {
-      await expect(
-        client.readResource({ uri: "ui://fixture/does-not-exist" }),
-      ).rejects.toThrow(/not found/i);
+      await expect(client.readResource({ uri: "ui://fixture/does-not-exist" })).rejects.toThrow(
+        /not found/i,
+      );
     } finally {
       await client.close();
     }
 
     // Drive the request at the raw HTTP layer too to confirm the transport
-    // surfaces a JSON-RPC `error` envelope with code -32002 instead of a 500.
-    const initRes = await fetch(`${baseUrl}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        "x-workspace-id": TEST_WORKSPACE_ID,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-06-18",
-          capabilities: {},
-          clientInfo: { name: "raw", version: "1.0.0" },
-        },
-      }),
+    // surfaces a JSON-RPC `error` envelope instead of a 500.
+    const { headers, body } = buildMcpRequest("2", "resources/read", {
+      uri: "ui://fixture/does-not-exist",
     });
-    expect(initRes.status).toBe(200);
-    const sessionId = initRes.headers.get("mcp-session-id");
-    expect(sessionId).toBeTruthy();
-
-    // The SDK requires an `initialized` notification before further requests.
-    await fetch(`${baseUrl}/mcp`, {
+    const readRes = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        "x-workspace-id": TEST_WORKSPACE_ID,
-        "mcp-session-id": sessionId!,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "notifications/initialized",
-      }),
+      headers,
+      body,
     });
-
-    const readRes = await fetch(`${baseUrl}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        "x-workspace-id": TEST_WORKSPACE_ID,
-        "mcp-session-id": sessionId!,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "resources/read",
-        params: { uri: "ui://fixture/does-not-exist" },
-      }),
-    });
-    // Transport returns 200 with an error envelope (not 500).
-    expect(readRes.status).toBe(200);
-    const raw = await readRes.text();
-    const payload = parseJsonOrSsePayload(raw);
-    expect(payload.error).toBeDefined();
-    expect(payload.error?.code).toBe(-32002);
+    expect(readRes.status).toBeLessThan(500);
+    const answer = await readMcpAnswer(readRes);
+    expect("error" in answer && answer.error.code).toBe(-32602);
   });
 
   it("SECURITY: a walled session cannot list or read another workspace's resources", async () => {
     // The dev identity is a member of both `TEST_WORKSPACE_ID` and
     // `OTHER_WORKSPACE_ID`, but the wall bounds a `/mcp` session to the one
-    // named by `X-Workspace-Id`. Focused on TEST_WORKSPACE_ID,
+    // its URL names. At TEST_WORKSPACE_ID's URL,
     // `ui://other/dashboard` is neither listed nor readable.
     const focused = await createMcpClient(TEST_WORKSPACE_ID);
     try {
@@ -347,7 +302,7 @@ describe("MCP /mcp — resources", () => {
 
       // The focused workspace's own resource still reads.
       const own = await focused.readResource({ uri: "ui://fixture/dashboard" });
-      expect(own.contents[0]!.text).toBe(FIXTURE_HTML);
+      expect(textOf(own.contents[0]!)).toBe(FIXTURE_HTML);
 
       // The other workspace's resource is out of reach — the read fails,
       // never returns its bytes.
@@ -363,7 +318,7 @@ describe("MCP /mcp — resources", () => {
     const otherFocused = await createMcpClient(OTHER_WORKSPACE_ID);
     try {
       const other = await otherFocused.readResource({ uri: "ui://other/dashboard" });
-      expect(other.contents[0]!.text).toBe("<h1>Other Workspace</h1>");
+      expect(textOf(other.contents[0]!)).toBe("<h1>Other Workspace</h1>");
     } finally {
       await otherFocused.close();
     }
@@ -386,7 +341,7 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
         uri: "ui://fixture/dashboard",
         _meta: scopedTo("fixture"),
       });
-      expect(own.contents[0]!.text).toBe(FIXTURE_HTML);
+      expect(textOf(own.contents[0]!)).toBe(FIXTURE_HTML);
     } finally {
       await client.close();
     }
@@ -397,7 +352,7 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
     try {
       await expect(
         client.readResource({ uri: "ui://neighbor/dashboard", _meta: scopedTo("fixture") }),
-      ).rejects.toMatchObject({ code: -32002 });
+      ).rejects.toBeInstanceOf(ResourceNotFoundError);
     } finally {
       await client.close();
     }
@@ -410,7 +365,7 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
       for (const source of ["no-such-source", "other"]) {
         await expect(
           client.readResource({ uri: "ui://neighbor/dashboard", _meta: scopedTo(source) }),
-        ).rejects.toMatchObject({ code: -32002 });
+        ).rejects.toBeInstanceOf(ResourceNotFoundError);
       }
     } finally {
       await client.close();
@@ -424,7 +379,7 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
         uri: "ui://neighbor/dashboard",
         _meta: scopedTo("neighbor"),
       });
-      expect(result.contents[0]!.text).toBe("<h1>Neighbor</h1>");
+      expect(textOf(result.contents[0]!)).toBe("<h1>Neighbor</h1>");
     } finally {
       await client.close();
     }
@@ -434,36 +389,9 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
     const client = await createMcpClient();
     try {
       const result = await client.readResource({ uri: "ui://neighbor/dashboard" });
-      expect(result.contents[0]!.text).toBe("<h1>Neighbor</h1>");
+      expect(textOf(result.contents[0]!)).toBe("<h1>Neighbor</h1>");
     } finally {
       await client.close();
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * The streamable-HTTP transport may return either a JSON body or an SSE
- * stream for a single JSON-RPC response. Parse both.
- */
-function parseJsonOrSsePayload(raw: string): {
-  error?: { code: number; message: string };
-  result?: unknown;
-} {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("{")) {
-    return JSON.parse(trimmed) as { error?: { code: number; message: string } };
-  }
-  // SSE: find the data: lines.
-  for (const line of trimmed.split("\n")) {
-    if (line.startsWith("data:")) {
-      return JSON.parse(line.slice(5).trim()) as {
-        error?: { code: number; message: string };
-      };
-    }
-  }
-  throw new Error(`Unexpected response body: ${raw}`);
-}

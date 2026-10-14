@@ -1,16 +1,8 @@
 import { describe, expect, it, mock } from "bun:test";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 import { realClient } from "./setup";
 
-// happy-dom's Window stub doesn't expose SyntaxError/TypeError; querySelector's
-// selector parser constructs one and trips on the gap. Same patch the
-// SkillsBrowser suite uses.
-{
-  const win = (globalThis as unknown as { window?: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 // The component module imports `callTool`; mock it before the module is first
 // evaluated, then pull the component (and the pure `relativeTime` export) via
@@ -98,7 +90,9 @@ function conv(over: Partial<Record<string, unknown>> = {}) {
 describe("RecentConversationsPopover", () => {
   it("requests the 10 most recent conversations, sorted by updated", async () => {
     listCalls.length = 0;
-    listImpl = async () => ({ structuredContent: { conversations: [], nextCursor: null, totalCount: 0 } });
+    listImpl = async () => ({
+      structuredContent: { conversations: [], nextCursor: null, totalCount: 0 },
+    });
     await openPopover();
     await waitFor(() => expect(listCalls.length).toBeGreaterThan(0));
     const call = listCalls.at(-1)!;
@@ -121,7 +115,9 @@ describe("RecentConversationsPopover", () => {
   });
 
   it("shows the empty state when there are no conversations", async () => {
-    listImpl = async () => ({ structuredContent: { conversations: [], nextCursor: null, totalCount: 0 } });
+    listImpl = async () => ({
+      structuredContent: { conversations: [], nextCursor: null, totalCount: 0 },
+    });
     const container = await openPopover();
     await waitFor(() => expect(container.textContent).toContain("No conversations yet"));
   });
@@ -135,7 +131,9 @@ describe("RecentConversationsPopover", () => {
   });
 
   it("calls onOpen with the row id when a row is clicked", async () => {
-    let opened: string | null = null;
+    // Assigned in a callback, which control flow does not see; the cast keeps
+    // `opened` from narrowing to `null` at the assertion.
+    let opened = null as string | null;
     listImpl = async () => ({
       structuredContent: {
         conversations: [conv({ id: "c9", title: "Pick me", preview: "" })],

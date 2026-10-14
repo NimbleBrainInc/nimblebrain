@@ -28,7 +28,7 @@
  * (owner, server) and is torn down by the final test.
  */
 
-import { describe, expect, it, afterAll } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
@@ -55,7 +55,7 @@ const E2E_NAMESPACE = "nimblebrain";
 afterAll(_resetConnectorsConfigForTest);
 
 const SERVER = "nimblebrain/bassethound";
-const OWNER = { type: "workspace", wsId: "ws_seamcheck" } as const;
+const OWNER = { type: "workspace", wsId: "ws_006b5974b9f09299" } as const;
 
 /** The minted session, or undefined when the broker wants setup completed first. */
 let session: { type: string; url: string; providerRef?: Record<string, string> } | undefined;
@@ -80,7 +80,11 @@ if (HAVE_CREDS) {
   authHeaders = { Authorization: `Bearer ${options.apiKey}` };
 
   try {
-    session = await provider.createSession({ userId: provider.userId(OWNER), toolkit: SERVER });
+    session = await provider.createSession({
+      userId: provider.userId(OWNER),
+      connectorId: SERVER,
+      config: { server: SERVER },
+    });
   } catch (err) {
     const e = err as { name?: string; state?: string; setupUrl?: string };
     if (e.name !== "SmitheryConnectionNotReadyError") throw err;
@@ -180,7 +184,8 @@ describe.skipIf(!HAVE_CREDS)(
         const provider = createSmitheryProvider();
         const again = await provider.createSession({
           userId: provider.userId(OWNER),
-          toolkit: SERVER,
+          connectorId: SERVER,
+          config: { server: SERVER },
         });
         expect(again.url).toBe(session?.url);
         expect(again.providerRef?.connectionId).toBe(connectionId);

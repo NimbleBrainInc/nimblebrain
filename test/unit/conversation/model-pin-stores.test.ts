@@ -4,20 +4,20 @@
  * runtime happens to be typed to.
  *
  * The runtime only ever constructs `EventSourcedConversationStore`, so a store
- * that dropped the option would fail silently and invisibly. Both other stores
- * are exported from the package index, and both already honor `workspaceId`
+ * that dropped the option would fail silently and invisibly. The in-memory
+ * store is exported from the package index and already honors `workspaceId`
  * through the identical spread; this keeps the two options symmetric.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, test } from "bun:test";
 
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
-import { JsonlConversationStore } from "../../../src/conversation/jsonl-store.ts";
 import { InMemoryConversationStore } from "../../../src/conversation/memory-store.ts";
 import type { ConversationStore } from "../../../src/conversation/types.ts";
+import { ConversationCorruptedError } from "../../../src/runtime/errors.ts";
 
 const MODEL = "nebius:moonshotai/Kimi-K2.6";
 const dirs: string[] = [];
@@ -34,7 +34,6 @@ afterAll(() => {
 
 const stores: Array<[string, () => ConversationStore]> = [
   ["EventSourcedConversationStore", () => new EventSourcedConversationStore({ dir: tempDir() })],
-  ["JsonlConversationStore", () => new JsonlConversationStore(tempDir())],
   ["InMemoryConversationStore", () => new InMemoryConversationStore()],
 ];
 
@@ -50,11 +49,28 @@ describe.each(stores)("%s", (_name, make) => {
     expect(loaded?.model).toBe(MODEL);
   });
 
-  test("create without a model leaves the conversation unpinned", async () => {
+  test("a fork inherits the binding", async () => {
+    // A fork continues the source conversation; re-resolving would replay its
+    // history to whatever the default is now.
     const store = make();
-    const conversation = await store.create({ ownerId: "usr_test" });
-    // Absent, not null: absence is what marks a record as pre-binding, and
-    // those resolve from current config.
-    expect(conversation.model).toBeUndefined();
+    const source = await store.create({ ownerId: "usr_test", model: MODEL });
+    const fork = await store.fork(source.id);
+    expect(fork?.model).toBe(MODEL);
+  });
+});
+
+describe("EventSourcedConversationStore — a header without a model", () => {
+  test("is refused as conversation_corrupted, not run unbound", async () => {
+    const dir = tempDir();
+    const store = new EventSourcedConversationStore({ dir });
+    const conversation = await store.create({ ownerId: "usr_test", model: MODEL });
+    const path = join(dir, `${conversation.id}.jsonl`);
+    const [header, ...rest] = readFileSync(path, "utf8").split("\n");
+    const { model: _model, ...unbound } = JSON.parse(header as string);
+    writeFileSync(path, [JSON.stringify(unbound), ...rest].join("\n"));
+
+    const error = await store.load(conversation.id).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConversationCorruptedError);
+    expect((error as ConversationCorruptedError).reason).toBe("missing_model");
   });
 });

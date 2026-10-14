@@ -20,20 +20,11 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom builds its selector-parse errors from `window.SyntaxError`, which
-// its Window does not define — so a rejected selector throws a constructor
-// TypeError instead of the parse error naming it. Same shim as
-// workspace-secrets-section.test.tsx.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
@@ -95,8 +86,7 @@ function popup(): HTMLElement | null {
 }
 
 async function click(el: Element | null): Promise<void> {
-  const MouseEventCtor = (globalThis as unknown as { window: { MouseEvent: typeof MouseEvent } })
-    .window.MouseEvent;
+  const MouseEventCtor = window.MouseEvent;
   await act(async () => {
     el?.dispatchEvent(new MouseEventCtor("click", { bubbles: true }));
   });
@@ -104,9 +94,7 @@ async function click(el: Element | null): Promise<void> {
 }
 
 async function pressEscape(): Promise<void> {
-  const KeyboardEventCtor = (
-    globalThis as unknown as { window: { KeyboardEvent: typeof KeyboardEvent } }
-  ).window.KeyboardEvent;
+  const KeyboardEventCtor = window.KeyboardEvent;
   await act(async () => {
     (popup() ?? document.body).dispatchEvent(
       new KeyboardEventCtor("keydown", { key: "Escape", bubbles: true }),
@@ -202,8 +190,7 @@ describe("ConfirmDialog — denial", () => {
       '[data-base-ui-portal] > div[role="presentation"][data-open]',
     );
     expect(backdrop).not.toBeNull();
-    const MouseEventCtor = (globalThis as unknown as { window: { MouseEvent: typeof MouseEvent } })
-      .window.MouseEvent;
+    const MouseEventCtor = window.MouseEvent;
     await act(async () => {
       for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
         backdrop?.dispatchEvent(new MouseEventCtor(type, { bubbles: true }));

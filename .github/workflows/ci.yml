@@ -1,23 +1,47 @@
 name: CI
 
+# Where each check runs. A merge reaches main through the merge queue, so the full suite
+# runs once, on the exact tree that lands:
+#   - draft PR: nothing. Review happens on the draft and is verified locally.
+#   - ready PR: Lint & Typecheck only, for early warning. The test jobs skip, and a
+#     skipped job satisfies a required check, so the PR can enter the queue.
+#   - merge_group: every check.
+#   - push to main: only builds, when the queue's run on this commit passed
+#     (verified-on-pr). Any other route onto main runs every check before the build.
+# Skipping on a PR is safe because the queue is the only route onto main that skips
+# the checks there: a push the queue did not test re-runs them.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  # The merge queue tests each queued PR on top of main plus the entries ahead of
+  # it; the required checks below must report on that commit or the queue stalls.
+  merge_group:
+    types: [checks_requested]
 
-# Cancel superseded runs on a PR branch (new push kills the old run), but never
-# cancel a push to main: each main commit must complete so its SHA-tagged image
-# lands in ECR (see build-and-push). On push events head_ref is empty, so the
-# group falls back to the unique run_id — making every main run its own group.
+# Cancel superseded runs on a PR (new push kills the old run), but never cancel a
+# push to main or a merge-queue run: each main commit must complete so its
+# SHA-tagged image lands in ECR (see build-and-push), and the queue decides for
+# itself when a group is obsolete. On push and merge_group events there is no pull
+# request, so the group falls back to the unique run_id: every such run is its own
+# group.
+#
+# The group is keyed on the PR number, not the branch name, because forks share
+# branch names. It also carries the PR's draft state from the triggering event: a
+# draft run skips every job, so it must never cancel a ready run. Approving a fork
+# PR's workflows releases its pending draft and ready runs together, in no fixed
+# order, and in one group the draft run could start second and cancel the checks.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: true
 
 # Single source of truth for the bun toolchain version across every job.
 # Pinned (not `latest`) for deterministic CI; bump here to upgrade.
 env:
-  BUN_VERSION: "1.3.14"
+  # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
+  BUN_VERSION: "1.4.2"
 
 # Each job runs a single `bun run verify:*` (or underlying) script. Do not
 # inline individual check steps here — package.json is the source of truth
@@ -54,8 +78,43 @@ env:
 # `test-unit-bare-deps` — its isolation is about which packages get LINKED, and
 # widening `path:` to cover a `node_modules` tree would be what breaks it.
 jobs:
+  # On a push to main, the four check jobs below skip when main advanced to the exact
+  # commit the merge queue tested: the latest merge_group run of this workflow on this
+  # SHA succeeded. Otherwise, including on an API error, they run. A pull_request run
+  # is no proof, since it skips the tests (see the top of this file).
+  # On a pull_request or merge_group this job is skipped.
+  verified-on-pr:
+    name: Already verified in the merge queue?
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      verified: ${{ steps.prior.outputs.verified }}
+    steps:
+      - name: Match this commit to a passed merge-queue run
+        id: prior
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          verified=false
+          queued=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=merge_group&per_page=1" \
+            --jq '.workflow_runs[0].conclusion // empty') || queued=""
+          if [ "$queued" = "success" ]; then
+            echo "merge queue run on $SHA succeeded"
+            verified=true
+          else
+            echo "no passed merge queue run on $SHA (${queued:-none}): running every check"
+          fi
+          echo "verified=$verified" | tee -a "$GITHUB_OUTPUT"
+
   lint-and-check:
     name: Lint & Typecheck
+    needs: verified-on-pr
+    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' && !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -76,11 +135,17 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Install web dependencies
         run: cd web && bun install --frozen-lockfile
+      # `check:platform-apps` runs each platform app UI's own TypeScript against
+      # its own node_modules.
+      - name: Install platform app UI dependencies
+        run: bun run install:platform-apps
       - name: Verify (static)
         run: bun run verify:static
 
   test-unit:
     name: Unit Tests
+    needs: verified-on-pr
+    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -102,15 +167,18 @@ jobs:
       - name: Install web dependencies
         run: cd web && bun install --frozen-lockfile
       # Platform app UI deps must be installed so each app's co-located tests
-      # (e.g. the automations markdown sanitizer contract) can resolve their
+      # (e.g. the tasks markdown sanitizer contract) can resolve their
       # own npm dependencies (marked, dompurify, happy-dom). `test:platform-apps`
       # runs `bun test` inside each src/platform/*/ui package. Mirrors the
       # install loop inside build:platform-apps; CI doesn't build the app UIs for
       # the unit job, so the install must be explicit.
       - name: Install platform app UI dependencies
         run: bun run install:platform-apps
-      - name: Verify (unit + web tests)
-        run: bun run verify:test-unit
+      # The root unit suite (`test:unit`, the other half of `verify:test-unit`)
+      # runs once, in test-unit-bare-deps below: root deps alone are the stricter
+      # environment for it, and the web/app-UI installs here only serve `test:ui`.
+      - name: Web and platform app UI tests
+        run: bun run test:ui
 
   # The root unit suite must run on a fresh checkout with ONLY root deps — no
   # `web/` or `src/platform/*/ui` install. `test-unit` above installs both, so it
@@ -122,6 +190,8 @@ jobs:
   # install` here; that is exactly the coverage gap it exists to close.
   test-unit-bare-deps:
     name: Unit Tests (root deps only)
+    needs: verified-on-pr
+    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -145,6 +215,8 @@ jobs:
 
   test-integration:
     name: Integration Tests
+    needs: verified-on-pr
+    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -180,9 +252,9 @@ jobs:
   #     matches root-level *.md only and nested markdown still bumps.
   #   - A build-pipeline change under .github/ (the build-push-image action,
   #     ci.yml build-args) can alter the image yet classifies as skip. The image
-  #     is still built (build-and-push is ungated); only the edge roll waits for
-  #     the next shipping merge. Force it now via the bump-edge-image
-  #     workflow_dispatch in the deploy repo if a build change must hit staging.
+  #     is still built (build-and-push is ungated), and the deploy-config repo's
+  #     staging reconciler rolls the newest built commit on its next run (any
+  #     merge, or its schedule). Run it by hand there to make it hit staging now.
   #
   # Fails safe: a first push / force-reset (no prior SHA), a compare-API error,
   # or a result at the API's 300-file cap all count as image-relevant — the only
@@ -242,8 +314,14 @@ jobs:
   # This is the everyday counterpart to release.yml (which builds on `v*`
   # tags): same ECR repos, same `:<short-sha>` tag — a `v*` release just adds
   # the version tag and GHCR/`:latest` on top. Gating on every check above
-  # means an image only exists in ECR if it built green, which closes the
-  # "deployed a tag that was never pushed" hole.
+  # means an image only exists in ECR if its tree passed them (here, or on the
+  # merge-queue run verified-on-pr matched), which closes the "deployed a tag that was
+  # never pushed" hole.
+  #
+  # The ECR repos are immutable: a `<sha>` tag is written once. Both steps pass
+  # `skip-existing`, so a tag already pushed for this commit skips its build.
+  # A second push run of the same commit, or "Re-run failed jobs" after a
+  # partial push, then completes instead of failing on the immutable tag.
   #
   # `if` restricts this to direct pushes to main (post-merge), never PRs — so
   # the OIDC/ECR credentials are never exposed to fork PRs, and only verified
@@ -251,7 +329,19 @@ jobs:
   build-and-push:
     name: Build & Push Images
     needs: [lint-and-check, test-unit, test-unit-bare-deps, test-integration]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # `!failure() && !cancelled()` rather than the default success(): the checks
+    # are skipped, not failed, when verified-on-pr found this tree already passed,
+    # and a skipped need would otherwise skip this job too.
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && !failure() && !cancelled()
+    # Two push runs of one commit (a duplicate push delivery) would otherwise build
+    # side by side, both find no `<sha>` tag, and the second push fails on the
+    # immutable tag. Queued per commit, the second starts after the first has
+    # pushed, and skip-existing then skips its builds.
+    concurrency:
+      group: build-and-push-${{ github.sha }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -280,6 +370,7 @@ jobs:
           context: .
           file: Dockerfile
           cache-scope: platform
+          skip-existing: "true"
           build-args: BUILD_SHA=${{ steps.tag.outputs.sha }}
           tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-runtime:${{ steps.tag.outputs.sha }}
       - name: Build and push web image
@@ -288,11 +379,12 @@ jobs:
           context: web
           file: web/Dockerfile
           cache-scope: web
+          skip-existing: "true"
           tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-web:${{ steps.tag.outputs.sha }}
 
   # Roll the staging "edge" channel onto this build. Fires a single
-  # repository_dispatch into the private deploy-config repo, whose bump workflow
-  # rewrites the edge image tag in git; Argo then auto-syncs every staging tenant.
+  # repository_dispatch into the private deploy-config repo, whose staging
+  # reconciler writes the edge image tag in git; Argo then auto-syncs every staging tenant.
   # GitOps stays intact — the image ref is recorded in git, not pushed to the
   # cluster from here. Production is NOT touched (it promotes deliberately by tag).
   #
@@ -300,15 +392,22 @@ jobs:
   # no-ops, so forks and pre-setup CI stay green. Config:
   #   vars.DEPLOY_CONFIG_REPO       — deploy-config repo name (same org)
   #   vars.EDGE_BUMP_APP_ID          — GitHub App id (Contents: write on that repo)
-  #   secrets.EDGE_BUMP_APP_KEY      — that App's private key
+  #   secrets.EDGE_BUMP_APP_KEY      — that App's private key, held only in the
+  #                                    `deploy-config-edge` environment, which admits
+  #                                    `main` alone, so no pull_request run can read it
   roll-staging-edge:
     name: Roll staging edge channel
     needs: [build-and-push, changes]
+    # `!cancelled()` is load-bearing: without a status function GitHub adds an
+    # implicit success() over every ancestor, and the checks build-and-push needs
+    # are skipped on a commit verified-on-pr matched, which would skip this roll
+    # for every such merge. build-and-push's own `if` already implies push-to-main.
     if: >-
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
+      !cancelled() &&
+      needs.build-and-push.result == 'success' &&
       needs.changes.outputs.image_relevant == 'true'
     runs-on: ubuntu-latest
+    environment: deploy-config-edge
     # Authenticates with a minted App token, never GITHUB_TOKEN — needs no grants.
     permissions: {}
     steps:

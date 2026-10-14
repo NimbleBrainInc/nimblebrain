@@ -33,6 +33,18 @@ interface PendingFlow {
   owner: FlowOwner;
   serverName: string;
   timeout: ReturnType<typeof setTimeout>;
+  scopeFallback?: ScopeFallback;
+}
+
+/**
+ * A second authorize request for a flow whose first one asked for scopes the
+ * server may refuse. `url` is the same request (state, PKCE challenge, client)
+ * with only the connector's own scope; `onUse` tells the initiator the flow now
+ * runs on it. Taken at most once, so a refusal of the fallback ends the flow.
+ */
+export interface ScopeFallback {
+  url: string;
+  onUse: () => void;
 }
 
 /** Leading `state` characters used as a flow's id in errors and logs. */
@@ -67,6 +79,42 @@ export class OAuthFlowExpiredError extends Error {
   }
 }
 
+/**
+ * The authorization server answered a pending flow with an `error` instead of
+ * a code — the person declined consent, or the server refused the request.
+ *
+ * {@link userMessage} is chosen from the standard code and never carries the
+ * server's own text: it lands in the connection's `lastError`, which the
+ * connector card renders and `manage_connectors` hands to the agent, and the
+ * authorization server of a remote connector is not a trusted author.
+ */
+export class OAuthFlowRefusedError extends Error {
+  readonly userMessage: string;
+
+  constructor(flowId: string, providerError: string) {
+    // Truncated: the code is the server's, and this message is logged.
+    super(`[oauth-flow-registry] flow ${flowId}… refused: ${providerError.slice(0, 64)}`);
+    this.name = "OAuthFlowRefusedError";
+    this.userMessage =
+      providerError === "access_denied"
+        ? "Sign-in was declined, so nothing was connected. Connect again to retry."
+        : "The service refused the sign-in, so nothing was connected. Connect again to retry.";
+  }
+}
+
+/**
+ * The source that began a pending flow was stopped before the flow finished —
+ * the connector was disconnected or removed while its sign-in was open. Not a
+ * failure of the connection: whoever stopped the source records what the
+ * connection is now.
+ */
+export class OAuthFlowAbandonedError extends Error {
+  constructor(flowId: string) {
+    super(`[oauth-flow-registry] flow ${flowId}… abandoned: its source was stopped`);
+    this.name = "OAuthFlowAbandonedError";
+  }
+}
+
 const flows = new Map<string, PendingFlow>();
 
 /**
@@ -80,6 +128,7 @@ export function register(
   owner: FlowOwner,
   serverName: string,
   ttlMs: number = DEFAULT_FLOW_TTL_MS,
+  scopeFallback?: ScopeFallback,
 ): Promise<string> {
   const promise = new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -96,7 +145,14 @@ export function register(
     // in short-lived CLI invocations. In the HTTP server process this is
     // a no-op — the server keeps the loop alive independently.
     timeout.unref?.();
-    flows.set(state, { resolve, reject, owner, serverName, timeout });
+    flows.set(state, {
+      resolve,
+      reject,
+      owner,
+      serverName,
+      timeout,
+      ...(scopeFallback ? { scopeFallback } : {}),
+    });
   });
   // Defensive no-op rejection handler. A caller that awaits / .catches
   // their own handle still observes rejections normally — multiple Promise
@@ -121,6 +177,21 @@ export function peekFlowOwner(state: string): FlowOwner | null {
   return flows.get(state)?.owner ?? null;
 }
 
+/**
+ * Take a pending flow's scope fallback: the authorize URL to send the browser
+ * to after the server answered `invalid_scope`. Returns it once and never
+ * again, so a server that refuses the fallback too gets no further retry.
+ * Returns null when the flow is unknown or has no fallback left.
+ */
+export function takeScopeFallback(state: string): string | null {
+  const flow = flows.get(state);
+  const fallback = flow?.scopeFallback;
+  if (!flow || !fallback) return null;
+  delete flow.scopeFallback;
+  fallback.onUse();
+  return fallback.url;
+}
+
 /** Resolve a pending flow by state. Returns true if found. */
 export function resolveWithCode(state: string, code: string): boolean {
   const flow = flows.get(state);
@@ -139,6 +210,20 @@ export function rejectFlow(state: string, err: Error): boolean {
   clearTimeout(flow.timeout);
   flow.reject(err);
   return true;
+}
+
+/**
+ * End a pending flow the authorization server answered with `providerError`.
+ * Returns true if found. The callback route calls this only for the session
+ * that began the flow, as it does before resolving one.
+ */
+export function refuseFlow(state: string, providerError: string): boolean {
+  return rejectFlow(state, new OAuthFlowRefusedError(state.slice(0, FLOW_ID_CHARS), providerError));
+}
+
+/** End a pending flow whose source was stopped. Returns true if found. */
+export function abandonFlow(state: string): boolean {
+  return rejectFlow(state, new OAuthFlowAbandonedError(state.slice(0, FLOW_ID_CHARS)));
 }
 
 /** For tests: drop all pending flows. */

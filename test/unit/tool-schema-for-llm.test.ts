@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { log } from "../../src/observability/log.ts";
 import { toolSchemaForLlm } from "../../src/engine/tool-schema-for-llm.ts";
+import { log } from "../../src/observability/log.ts";
 
 /**
  * `toolSchemaForLlm` is the single boundary that translates MCP-spec

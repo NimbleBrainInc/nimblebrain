@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
+import { stub } from "../../helpers/stub.ts";
 
 /**
  * `adoptSource` is the canonical "register a freshly-built source" path. It
@@ -9,18 +11,20 @@ import type { Tool, ToolSource } from "../../../src/tools/types.ts";
  * obvious `if (!hasSource) addSource` silently drop the fresh source and leave
  * the corpse routing every call.
  */
-function fakeSource(name: string, alive: boolean): ToolSource & { stopped: boolean } {
-  const s = {
-    name,
-    stopped: false,
-    isAlive: () => alive,
-    tools: async (): Promise<Tool[]> => [],
-    execute: async () => ({ content: [], isError: false }),
-    stop: async () => {
-      s.stopped = true;
-    },
-  };
-  return s as unknown as ToolSource & { stopped: boolean };
+function fakeSource(name: string, alive: boolean): McpSource & { wasStopped: boolean } {
+  const source = Object.assign(
+    stub<McpSource>({
+      name,
+      isAlive: () => alive,
+      tools: async (): Promise<Tool[]> => [],
+      execute: async () => ({ content: [], isError: false }),
+      stop: async () => {
+        source.wasStopped = true;
+      },
+    }),
+    { wasStopped: false },
+  );
+  return source;
 }
 
 describe("ToolRegistry.adoptSource", () => {
@@ -37,7 +41,7 @@ describe("ToolRegistry.adoptSource", () => {
     expect(registry.getSource("people")).toBe(fresh);
     // Evicted via removeSource → stop(), which is what marks the orphan terminal
     // to HealthMonitor so it can't revive it with a stale provider.
-    expect(dead.stopped).toBe(true);
+    expect(dead.wasStopped).toBe(true);
   });
 
   it("does not tear down a LIVE source under the same name", async () => {
@@ -49,7 +53,7 @@ describe("ToolRegistry.adoptSource", () => {
 
     expect(await registry.adoptSource(other)).toBe(false);
     expect(registry.getSource("people")).toBe(live);
-    expect(live.stopped).toBe(false);
+    expect(live.wasStopped).toBe(false);
   });
 
   it("registers when the name is free", async () => {
@@ -65,7 +69,7 @@ describe("ToolRegistry.adoptSource", () => {
     registry.addSource(live);
     expect(await registry.adoptSource(live)).toBe(true);
     expect(registry.getSource("people")).toBe(live);
-    expect(live.stopped).toBe(false);
+    expect(live.wasStopped).toBe(false);
   });
 });
 
@@ -75,13 +79,14 @@ describe("ToolRegistry.adoptSource", () => {
  * to document the CONTRAST that justifies `hasEstablishedSource` existing at all.
  */
 function liveness(registry: ToolRegistry, name: string): boolean {
-  return (registry as unknown as { hasLiveSource: (n: string) => boolean }).hasLiveSource(name);
+  // biome-ignore lint/complexity/useLiteralKeys: `hasLiveSource` is private; bracket access is TypeScript's typed path to it
+  return registry["hasLiveSource"](name);
 }
 
 describe("ToolRegistry.hasEstablishedSource", () => {
   /** A source that is down, distinguished by whether it ever connected. */
   function downSource(name: string, everConnected: boolean): ToolSource {
-    return {
+    return stub<McpSource>({
       name,
       isAlive: () => false,
       // `startedAt` is set only on a successful connect and never reset, so
@@ -90,7 +95,7 @@ describe("ToolRegistry.hasEstablishedSource", () => {
       tools: async (): Promise<Tool[]> => [],
       execute: async () => ({ content: [], isError: false }),
       stop: async () => {},
-    } as unknown as ToolSource;
+    });
   }
 
   it("is false for a source that never connected (a boot start that failed)", () => {
@@ -106,9 +111,8 @@ describe("ToolRegistry.hasEstablishedSource", () => {
     // The regression this exists to prevent. An idle close / network blip sets
     // `dead`, so `isAlive()` reads exactly like a boot failure — but this one
     // heals in place via reconnectOnDemand and the next sweep. Treating it as
-    // absent runs a destructive re-spawn: it stop()s a working source, and the
-    // replacement object is missing from HealthMonitor's boot snapshot, so the
-    // connector loses monitoring for the life of the process.
+    // absent runs a destructive re-spawn: it stop()s a working source to build a
+    // replacement that has to connect from scratch.
     const registry = new ToolRegistry();
     registry.addSource(downSource("people", true));
     expect(registry.hasEstablishedSource("people")).toBe(true);
@@ -119,12 +123,14 @@ describe("ToolRegistry.hasEstablishedSource", () => {
   it("is true for a live source and for an in-process source", () => {
     const registry = new ToolRegistry();
     registry.addSource(fakeSource("live", true));
-    registry.addSource({
-      name: "inprocess",
-      tools: async (): Promise<Tool[]> => [],
-      execute: async () => ({ content: [], isError: false }),
-      stop: async () => {},
-    } as unknown as ToolSource);
+    registry.addSource(
+      stub<ToolSource>({
+        name: "inprocess",
+        tools: async (): Promise<Tool[]> => [],
+        execute: async () => ({ content: [], isError: false }),
+        stop: async () => {},
+      }),
+    );
     expect(registry.hasEstablishedSource("live")).toBe(true);
     expect(registry.hasEstablishedSource("inprocess")).toBe(true);
   });

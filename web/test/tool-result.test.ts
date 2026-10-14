@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { parseToolResult } from "../src/api/tool-result";
-import type { ToolCallResult } from "../src/types";
+import type { ToolCallResponse } from "../src/types";
 
 describe("parseToolResult", () => {
   it("throws with the human-readable text when isError is true", () => {
-    const res: ToolCallResult = {
+    const res: ToolCallResponse = {
       isError: true,
       content: [{ type: "text", text: "tool_not_found" }],
     };
@@ -12,7 +12,7 @@ describe("parseToolResult", () => {
   });
 
   it("falls back to a generic message when isError is true with no text", () => {
-    const res: ToolCallResult = {
+    const res: ToolCallResponse = {
       isError: true,
       content: [],
     };
@@ -20,7 +20,7 @@ describe("parseToolResult", () => {
   });
 
   it("prefers structuredContent over text when both are present", () => {
-    const res: ToolCallResult = {
+    const res: ToolCallResponse = {
       isError: false,
       structuredContent: { foo: "bar", n: 7 },
       content: [{ type: "text", text: '{"different": "payload"}' }],
@@ -32,7 +32,7 @@ describe("parseToolResult", () => {
   });
 
   it("JSON-parses content[0].text when structuredContent is absent", () => {
-    const res: ToolCallResult = {
+    const res: ToolCallResponse = {
       isError: false,
       content: [{ type: "text", text: '{"users":[{"id":"u1"}]}' }],
     };
@@ -42,7 +42,7 @@ describe("parseToolResult", () => {
   });
 
   it("throws with the raw text when content text is not JSON", () => {
-    const res: ToolCallResult = {
+    const res: ToolCallResponse = {
       isError: false,
       content: [{ type: "text", text: "definitely not json" }],
     };
@@ -50,7 +50,7 @@ describe("parseToolResult", () => {
   });
 
   it("throws when the response is empty", () => {
-    const res: ToolCallResult = {
+    const res: ToolCallResponse = {
       isError: false,
       content: [],
     };

@@ -51,6 +51,7 @@ const LOADED_WITH_SKILLS: ChatMessage[] = [
       skills: [
         {
           id: "skills/docs-guide.md",
+          name: "docs-guide",
           scope: "workspace",
           tokens: 1200,
           loadedBy: "tool_affinity",
@@ -121,7 +122,11 @@ mock.module("../src/api/client", () => ({
   },
   callTool: (_server: string, _action: string, args?: Record<string, unknown>) => {
     const id = args?.id as string | undefined;
-    const nth = id ? (getCalls[id] = (getCalls[id] ?? 0) + 1) : 0;
+    let nth = 0;
+    if (id) {
+      nth = (getCalls[id] ?? 0) + 1;
+      getCalls[id] = nth;
+    }
     // `conv_settling` models a turn that terminated AFTER our transcript
     // snapshot was taken: the first read is partial, a later read is complete.
     const messages =
@@ -130,7 +135,9 @@ mock.module("../src/api/client", () => ({
         : id === "conv_stranded"
           ? STRANDED_LOADED
           : id === "conv_settling"
-            ? (nth === 1 ? PENDING_LOADED : LOADED)
+            ? nth === 1
+              ? PENDING_LOADED
+              : LOADED
             : id === "conv_skills"
               ? LOADED_WITH_SKILLS
               : LOADED;
@@ -182,6 +189,32 @@ describe("chat-store viewer", () => {
     expect(users).toHaveLength(1); // not duplicated
     expect(users[0].content).toBe("hello");
     expect(lastAssistant(snap.messages)?.content).toBe("hi there");
+  });
+
+  it("keeps the analyzing state through a textless reasoning delta", async () => {
+    // Anthropic sends a reasoning block's signature as a delta with no text.
+    // Taking it as "streaming" hides the live cursor behind a block that
+    // renders nothing, so a long think shows no indicator at all.
+    const store = createChatStore();
+    await store.sendTurn("draft-sig", { text: "hello" });
+    const s = latestStream();
+
+    s.onEvent("user.message", { content: "hello" }, 1);
+    s.onEvent("tool.start", { id: "t1", name: "web_search" }, 2);
+    s.onEvent("tool.done", { id: "t1", name: "web_search", ok: true, ms: 5 }, 3);
+    expect(store.getSnapshot("draft-sig").streamingState).toBe("analyzing");
+
+    s.onEvent("reasoning.delta", { text: "" }, 4);
+    expect(store.getSnapshot("draft-sig").streamingState).toBe("analyzing");
+    expect(lastAssistant(store.getSnapshot("draft-sig").messages)?.blocks ?? []).not.toContainEqual(
+      {
+        type: "reasoning",
+        text: "",
+      },
+    );
+
+    s.onEvent("reasoning.delta", { text: "weighing the results" }, 5);
+    expect(store.getSnapshot("draft-sig").streamingState).toBe("streaming");
   });
 
   it("isolates concurrent turns into their own slices", async () => {
@@ -285,9 +318,9 @@ describe("chat-store viewer", () => {
     s.onEvent("user.message", { content: "loaded-q" }, 1);
     s.onEvent("text.delta", { text: "fresh" }, 2);
     expect(lastAssistant(store.getSnapshot("conv_pending").messages)?.content).toBe("fresh");
-    expect(store.getSnapshot("conv_pending").messages.filter((m) => m.role === "user")).toHaveLength(
-      1,
-    );
+    expect(
+      store.getSnapshot("conv_pending").messages.filter((m) => m.role === "user"),
+    ).toHaveLength(1);
   });
 
   it("refetches at most once when a pending tail outlives its run (no unbounded resume loop)", async () => {
@@ -819,5 +852,78 @@ describe("composer drafts", () => {
     store.setDraft("kA", { text: "gone" });
     store.reset();
     expect(store.getDraft("kA").text).toBe("");
+  });
+});
+
+describe("onToolDone — a finished tool call in a turn this tab sent", () => {
+  beforeEach(() => {
+    streams = [];
+    convCounter = 0;
+    getCalls = {};
+    startCalls = [];
+    deferStart = false;
+    pendingStartResolvers = [];
+  });
+
+  it("announces each call of a sent turn once, with the input it was called with", async () => {
+    const store = createChatStore();
+    const heard: unknown[] = [];
+    store.onToolDone((call) => heard.push(call));
+    store.markActive("draft-open");
+    await store.sendTurn("draft-open", { text: "open people" });
+    const s = latestStream();
+
+    s.onEvent("user.message", { content: "open people" }, 1);
+    const input = { app: "People", target: "people://contacts/123" };
+    s.onEvent("tool.start", { id: "t1", name: "nb__open_app", input }, 2);
+    s.onEvent("tool.done", { id: "t1", name: "nb__open_app", ok: true, ms: 3, output: "" }, 3);
+    // A replayed frame for the same call announces nothing new.
+    s.onEvent("tool.done", { id: "t1", name: "nb__open_app", ok: true, ms: 3, output: "" }, 3);
+
+    expect(heard).toEqual([{ id: "t1", name: "nb__open_app", ok: true, input }]);
+  });
+
+  it("never announces a call from a conversation re-attached to its running turn", async () => {
+    const store = createChatStore();
+    const heard: unknown[] = [];
+    store.onToolDone((call) => heard.push(call));
+    await store.loadConversation("conv_resume");
+    const s = latestStream();
+
+    s.onSubscribed?.({ isActive: true, activeSeq: 1 });
+    s.onEvent("tool.start", { id: "t9", name: "nb__open_app", input: { app: "People" } }, 2);
+    s.onEvent("tool.done", { id: "t9", name: "nb__open_app", ok: true, ms: 3, output: "" }, 3);
+
+    expect(heard).toEqual([]);
+  });
+
+  it("never announces a call from a turn left streaming after the person moved away", async () => {
+    const store = createChatStore();
+    const heard: unknown[] = [];
+    store.onToolDone((call) => heard.push(call));
+    store.markActive("draft-away");
+    await store.sendTurn("draft-away", { text: "open people" });
+    const s = latestStream();
+    // A new conversation or a workspace switch: the chat renders another key now,
+    // and this turn keeps streaming in the background.
+    store.markInactive("draft-away");
+
+    s.onEvent("tool.start", { id: "t3", name: "nb__open_app", input: { app: "People" } }, 1);
+    s.onEvent("tool.done", { id: "t3", name: "nb__open_app", ok: true, ms: 1, output: "" }, 2);
+
+    expect(heard).toEqual([]);
+  });
+
+  it("stops announcing once the listener unsubscribes", async () => {
+    const store = createChatStore();
+    const heard: unknown[] = [];
+    const off = store.onToolDone((call) => heard.push(call));
+    off();
+    await store.sendTurn("draft-off", { text: "x" });
+    const s = latestStream();
+    s.onEvent("tool.start", { id: "t2", name: "nb__open_app", input: {} }, 1);
+    s.onEvent("tool.done", { id: "t2", name: "nb__open_app", ok: true, ms: 1, output: "" }, 2);
+
+    expect(heard).toEqual([]);
   });
 });

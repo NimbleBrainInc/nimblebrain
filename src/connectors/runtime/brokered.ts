@@ -10,8 +10,7 @@
  * rules keep it that way:
  *
  *   1. **One accessor.** Nothing reads `ref.brokered` directly; every consumer
- *      calls {@link brokeredRef}, which is also where the legacy per-vendor
- *      blocks are mapped forward.
+ *      calls {@link brokeredRef}.
  *   2. **One directory rule.** A provider's per-connector local state lives at
  *      `credentials/<provider>/<connectorId>/`, under the owner's credential
  *      root — {@link brokeredConnectorDir} is the single site that builds it.
@@ -27,25 +26,6 @@ import { WorkspaceContext } from "../../workspace/context.ts";
 import type { BrokeredRef, ConnectorRef } from "./types.ts";
 
 /**
- * The per-vendor ref blocks written before brokered installs shared one shape.
- *
- * READ-SIDE SHIM. Refs persisted by an older runtime carry `composio` or
- * `smithery` instead of `brokered`; {@link brokeredRef} maps them forward so an
- * existing install survives a restart with no config edit. Nothing writes these
- * any more. Delete this — and the branch in `brokeredRef` — one release after
- * the shape landed, when no persisted ref can still carry them.
- */
-interface LegacyBrokeredRefBlocks {
-  composio?: { connectorId: string };
-  smithery?: {
-    connectorId: string;
-    connectionId: string;
-    namespace: string;
-    baseUrl: string;
-  };
-}
-
-/**
  * The brokered coordinates on a connector ref, or `undefined` for a
  * runtime-native one (plain OAuth — those resolve their catalog entry by URL
  * and detect a lapsed credential through the transport's `UnauthorizedError`
@@ -58,19 +38,7 @@ interface LegacyBrokeredRefBlocks {
  * the previous shape grew a hand-mirrored vendor list in a dozen files.
  */
 export function brokeredRef(ref: ConnectorRef | undefined): BrokeredRef | undefined {
-  if (!ref) return undefined;
-  if (ref.brokered) return ref.brokered;
-
-  // Legacy shim — see `LegacyBrokeredRefBlocks`.
-  const legacy = ref as ConnectorRef & LegacyBrokeredRefBlocks;
-  if (legacy.composio) {
-    return { provider: "composio", connectorId: legacy.composio.connectorId };
-  }
-  if (legacy.smithery) {
-    const { connectorId, connectionId, namespace, baseUrl } = legacy.smithery;
-    return { provider: "smithery", connectorId, providerRef: { connectionId, namespace, baseUrl } };
-  }
-  return undefined;
+  return ref?.brokered;
 }
 
 /**

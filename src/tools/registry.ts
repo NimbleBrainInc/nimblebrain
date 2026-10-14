@@ -1,6 +1,6 @@
 import { textContent } from "../engine/content-helpers.ts";
 import {
-  isInternalTool,
+  isModelVisible,
   type ToolCall,
   type ToolResult,
   type ToolRouter,
@@ -13,15 +13,15 @@ import { splitInnerToolName } from "../util/tool-name.ts";
 import type { McpSource } from "./mcp-source.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
 import type { ServerNotification } from "./server-notifications.ts";
-import type { Tool, ToolSource } from "./types.ts";
+import type { Tool, ToolExecuteOptions, ToolSource } from "./types.ts";
 import { toToolSchema } from "./types.ts";
 
 /**
  * Structural check for "looks like an McpSource task-aware surface".
  *
- * The `/mcp` task handlers (Task 002) need a source that exposes the
- * per-phase task methods so they can route `tasks/get`, `tasks/result`,
- * and `tasks/cancel` back to the originating McpSource. We probe by shape
+ * The `/mcp` door needs a source that exposes the per-phase task methods so
+ * it can route `tasks/get` and `tasks/cancel` back to the originating
+ * McpSource (`mcp-modern-tasks.ts`). We probe by shape
  * rather than `instanceof` to stay friendly to `SharedSourceRef`-wrapped
  * sources and to test doubles.
  */
@@ -62,8 +62,9 @@ export class SharedSourceRef implements ToolSource {
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
+    options?: ToolExecuteOptions,
   ): Promise<ToolResult> {
-    return this.inner.execute(toolName, input, signal);
+    return this.inner.execute(toolName, input, signal, options);
   }
   /** Forward readiness subscriptions to the shared underlying source so a
    *  per-workspace registry wrapping it still learns when its tools change. */
@@ -80,6 +81,17 @@ export class SharedSourceRef implements ToolSource {
  * Aggregates multiple ToolSources into a single ToolRouter.
  * Routes execute() calls by prefix: "sourceName__toolName".
  */
+/**
+ * The connector gate for one call, bound by the Runtime to a workspace and the
+ * ambient caller: the `host_only_tool` or `workspace_admin_required` refusal,
+ * or `null`.
+ */
+export type ConnectorAdminDenial = (
+  serverName: string,
+  toolName: string,
+  input: Record<string, unknown>,
+) => Promise<ToolResult | null>;
+
 export class ToolRegistry implements ToolRouter {
   private sources = new Map<string, ToolSource>();
   /** Workspace this registry serves (set by Runtime when constructing per-workspace). */
@@ -95,6 +107,13 @@ export class ToolRegistry implements ToolRouter {
    * registries with no consumer (tests, CLI flows).
    */
   private invalidationListener: (() => void) | null = null;
+  /**
+   * The connector gate (`lifecycle` handlers, `admin_tools`), run beside
+   * `assertToolAllowed`.
+   * The Runtime binds it to this workspace and the ambient caller; null for
+   * registries built outside it.
+   */
+  private adminDenial: ConnectorAdminDenial | null = null;
   /** Per-source unsubscribe handles for readiness subscriptions, so
    *  `removeSource` can detach the listener it attached in `addSource`. */
   private toolsChangedUnsubs = new Map<string, () => void>();
@@ -116,9 +135,14 @@ export class ToolRegistry implements ToolRouter {
    * checks short-circuit to "allow" — for tests / CLI flows that don't
    * route through the platform's per-workspace registries.
    */
-  setPermissionContext(wsId: string, permissionStore: PermissionStore): void {
+  setPermissionContext(
+    wsId: string,
+    permissionStore: PermissionStore,
+    adminDenial?: ConnectorAdminDenial,
+  ): void {
     this.wsId = wsId;
     this.permissionStore = permissionStore;
+    this.adminDenial = adminDenial ?? null;
   }
 
   /**
@@ -189,34 +213,34 @@ export class ToolRegistry implements ToolRouter {
   }
 
   async availableTools(): Promise<ToolSchema[]> {
-    const all: ToolSchema[] = [];
-    for (const source of this.sources.values()) {
-      // Per-source error containment. A connector in `starting` /
-      // `pending_auth` / `dead` state has `this.client === null` and
-      // throws `"<name>" not started` from McpSource.tools(). Without
-      // this guard, ONE stuck connector's enumeration error rejects
-      // the whole call and every chat turn fails — exactly the
-      // platform-level outage shape we don't want from one bad
-      // workspace source. Surface the failure in the source's own
-      // status (Configure page renders it from ConnectorInstance.state)
-      // and leave the chat usable.
-      let tools: Tool[];
-      try {
-        tools = await source.tools();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(
-          `[registry] availableTools: skipping source "${source.name}" — ${msg}. ` +
-            `The connector's own state surface (Connectors page) reflects this; the chat list ` +
-            `omits its tools until the source recovers.`,
-        );
-        continue;
-      }
-      for (const tool of tools) {
-        all.push(toToolSchema(tool));
-      }
-    }
-    return all;
+    // Sources are listed concurrently: a stale remote source's listing may
+    // wait on a re-fetch (McpSource.tools), and those waits overlap rather than
+    // add up. Output keeps source order.
+    const perSource = await Promise.all(
+      [...this.sources.values()].map(async (source) => {
+        // Per-source error containment. A connector in `starting` /
+        // `pending_auth` / `dead` state has no connected client and
+        // throws `"<name>" not started` from McpSource.tools(). Without
+        // this guard, ONE stuck connector's enumeration error rejects
+        // the whole call and every chat turn fails — exactly the
+        // platform-level outage shape we don't want from one bad
+        // workspace source. Surface the failure in the source's own
+        // status (Configure page renders it from ConnectorInstance.state)
+        // and leave the chat usable.
+        try {
+          return (await source.tools()).map(toToolSchema);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn(
+            `[registry] availableTools: skipping source "${source.name}" — ${msg}. ` +
+              `The connector's own state surface (Connectors page) reflects this; the chat list ` +
+              `omits its tools until the source recovers.`,
+          );
+          return [];
+        }
+      }),
+    );
+    return perSource.flat();
   }
 
   async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
@@ -263,6 +287,10 @@ export class ToolRegistry implements ToolRouter {
       );
       if (denied) return denied;
     }
+    if (this.adminDenial) {
+      const denied = await this.adminDenial(prefix, localName, call.input);
+      if (denied) return denied;
+    }
 
     return source.execute(localName, call.input, signal);
   }
@@ -270,14 +298,14 @@ export class ToolRegistry implements ToolRouter {
   /**
    * Search all tools by natural-language terms over name + description.
    *
-   * Internal tools are excluded. This feeds the invalid-name recovery hint,
-   * which writes matched names and descriptions straight into the model's
-   * context — and an `ai.nimblebrain/internal` tool is a UI-driven affordance
-   * the model must never be handed, on any surface. Same exclusion `nb__search`
-   * applies to its own results.
+   * Tools not visible to the model are excluded. This feeds the invalid-name
+   * recovery hint, which writes matched names and descriptions straight into
+   * the model's context, and a tool without `"model"` in its `ui.visibility`
+   * must never be handed to the model, on any surface. Same exclusion
+   * `nb__search` applies to its own results.
    */
   private async searchTools(query: string): Promise<Array<{ name: string; description: string }>> {
-    const all = (await this.availableTools()).filter((t) => !isInternalTool(t));
+    const all = (await this.availableTools()).filter(isModelVisible);
     return rankToolSearchResults(all, query)
       .slice(0, 5)
       .map((t) => ({ name: t.name, description: t.description }));
@@ -333,9 +361,8 @@ export class ToolRegistry implements ToolRouter {
    *     a server rolling. The codebase treats this as routine (see
    *     `HealthMonitor.resetBackoffIfRecovered`): `reconnectOnDemand` and the
    *     next sweep heal it IN PLACE. Tearing it down and re-spawning instead is
-   *     destructive — it `stop()`s a working source and the replacement object
-   *     is absent from HealthMonitor's boot snapshot, so the connector silently
-   *     loses monitoring for the life of the process.
+   *     destructive — it `stop()`s a working source to build a replacement
+   *     that has to connect from scratch.
    *
    * `uptime()` separates them: `startedAt` is set only on a successful connect
    * and never reset, so `uptime() === null` is exactly "never connected".

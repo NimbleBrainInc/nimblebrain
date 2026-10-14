@@ -16,17 +16,12 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 // One ordered log of every server call the flow makes, so the test can assert
 // the sequence rather than each call in isolation — the sequence is the fix.
@@ -59,7 +54,7 @@ const installConnector = mock(async () => {
     alreadyInstalled: false,
     serverName: "com-acme-db-query",
     scope: "workspace" as const,
-    wsId: "ws_test",
+    wsId: "ws_0076759dbbe19fcc",
   };
 });
 
@@ -71,17 +66,12 @@ mock.module("../api/client", () => ({
   installConnector,
 }));
 
-// The page is admin-gated; the flow under test is only reachable for an admin.
-mock.module("../hooks/useScopedRole", () => ({
-  useCanWriteActiveWorkspace: () => true,
-}));
-
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
 
 const { ConnectorBrowsePage } = await import("../pages/settings/ConnectorBrowsePage");
+const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 
 // The real router, not a mock of it: a whole-module `react-router-dom` stub is
 // registered process-wide by bun and breaks every other suite that renders one.
@@ -94,15 +84,28 @@ function LocationProbe() {
   return null;
 }
 
+// The page is admin-gated; the flow under test is only reachable for an admin.
+// The real provider, not a mock of `useScopedRole`: a module mock is
+// process-wide, and a partial one hands every later suite its stubbed answer.
+const ADMIN_WORKSPACE = {
+  id: "ws_000f7ed6658f9d30",
+  name: "Acme",
+  memberCount: 1,
+  connectorCount: 0,
+  userRole: "admin" as const,
+};
+
 function Page() {
   return (
-    <MemoryRouter initialEntries={["/w/acme/settings/connectors/browse"]}>
-      <LocationProbe />
-      <Routes>
-        <Route path="/w/:slug/settings/connectors/browse" element={<ConnectorBrowsePage />} />
-        <Route path="*" element={null} />
-      </Routes>
-    </MemoryRouter>
+    <WorkspaceProvider initialWorkspaces={[ADMIN_WORKSPACE]} initialActiveId="ws_000f7ed6658f9d30">
+      <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/settings/connectors/browse"]}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/w/:slug/settings/connectors/browse" element={<ConnectorBrowsePage />} />
+          <Route path="*" element={null} />
+        </Routes>
+      </MemoryRouter>
+    </WorkspaceProvider>
   );
 }
 
@@ -152,7 +155,7 @@ function findButton(container: HTMLElement, text: string): HTMLButtonElement | n
 }
 
 function setInputValue(input: HTMLInputElement, value: string): void {
-  const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+  const WindowEvent = window.Event;
   const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   setVal?.call(input, value);
   input.dispatchEvent(new WindowEvent("input", { bubbles: true }));
@@ -200,7 +203,7 @@ describe("a Browse entry that declares secretHeaders", () => {
       setInputValue(input, "postgres://a.acme.test/db");
     });
     await act(async () => {
-      findButton(document.body as unknown as HTMLElement, "Save and install")?.click();
+      findButton(document.body, "Save and install")?.click();
     });
     await act(async () => {
       await Promise.resolve();
@@ -210,15 +213,15 @@ describe("a Browse entry that declares secretHeaders", () => {
 
     expect(calls).toEqual(["set_secret:acme.db_url", "install"]);
     expect(setWorkspaceSecret.mock.calls[0]).toEqual(["acme.db_url", "postgres://a.acme.test/db"]);
-    // provider-auth completes without a sign-in, so the install routes straight
-    // to Configure — the credential is already in place when it starts.
-    expect(lastPath).toBe("/w/acme/settings/connectors/com-acme-db-query");
+    // provider-auth completes without a sign-in, so the install finishes on
+    // Browse — the credential is already in place when it starts.
+    expect(lastPath).toBe("/w/000f7ed6658f9d30/settings/connectors/browse");
   });
 
   test("cancelling installs nothing and stores nothing", async () => {
     mounted = await openDialog();
     await act(async () => {
-      findButton(document.body as unknown as HTMLElement, "Cancel")?.click();
+      findButton(document.body, "Cancel")?.click();
     });
     await act(async () => {
       await Promise.resolve();
@@ -230,7 +233,7 @@ describe("a Browse entry that declares secretHeaders", () => {
 
   test("a blank required value leaves submit disabled, so nothing runs", async () => {
     mounted = await openDialog();
-    const submit = findButton(document.body as unknown as HTMLElement, "Save and install");
+    const submit = findButton(document.body, "Save and install");
     expect(submit?.disabled).toBe(true);
 
     // Clicking a disabled control is a no-op; assert the flow stayed put rather
@@ -246,15 +249,11 @@ describe("a Browse entry that declares secretHeaders", () => {
 
   test("filling the required value enables submit", async () => {
     mounted = await openDialog();
-    expect(findButton(document.body as unknown as HTMLElement, "Save and install")?.disabled).toBe(
-      true,
-    );
+    expect(findButton(document.body, "Save and install")?.disabled).toBe(true);
     const input = document.body.getElementsByTagName("input")[1] as HTMLInputElement;
     await act(async () => {
       setInputValue(input, "postgres://a.acme.test/db");
     });
-    expect(findButton(document.body as unknown as HTMLElement, "Save and install")?.disabled).toBe(
-      false,
-    );
+    expect(findButton(document.body, "Save and install")?.disabled).toBe(false);
   });
 });

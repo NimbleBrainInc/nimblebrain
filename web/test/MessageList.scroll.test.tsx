@@ -1,18 +1,10 @@
 import { describe, expect, it, mock } from "bun:test";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { MessageList } from "../src/components/MessageList.tsx";
-import type { ChatMessage } from "../src/hooks/useChat.ts";
+import type { ChatMessage } from "../src/hooks/chat-store.ts";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 
-// happy-dom's Window stub doesn't expose SyntaxError/TypeError; querySelector's
-// selector parser constructs one and trips on the gap. Same patch the
-// SkillsBrowser suite uses.
-{
-  const win = (globalThis as unknown as { window?: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 /**
  * useSmartScroll drives the jump-to-bottom chevron. happy-dom computes no
@@ -58,7 +50,7 @@ function renderList() {
     <MessageList
       messages={messages}
       isStreaming={false}
-      streamingState="idle"
+      streamingState={null}
       displayDetail="balanced"
     />,
   );
@@ -89,8 +81,8 @@ describe("MessageList jump-to-bottom (useSmartScroll)", () => {
     const { container } = renderList();
     const { scrollEl, lastMsg } = parts(container);
 
-    const scrollSpy = mock((_opts?: ScrollIntoViewOptions) => {});
-    lastMsg.scrollIntoView = scrollSpy as unknown as HTMLElement["scrollIntoView"];
+    const scrollSpy = mock<HTMLElement["scrollIntoView"]>(() => {});
+    lastMsg.scrollIntoView = scrollSpy;
 
     scrollEl.getBoundingClientRect = () => rect(500);
     lastMsg.getBoundingClientRect = () => rect(900);

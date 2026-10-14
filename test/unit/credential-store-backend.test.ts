@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { EngineEvent } from "../../src/engine/types.ts";
 import { DEFAULT_CREDENTIAL_STORE_BACKEND } from "../../src/config/secrets.ts";
+import type { EngineEvent } from "../../src/engine/types.ts";
+import type { CredentialStore } from "../../src/tools/credential-store.ts";
 import {
   _resetCredentialStoreBackendsForTest,
   type CredentialStoreBackend,
@@ -13,11 +14,7 @@ import {
   registerCredentialStoreBackend,
   registeredCredentialStoreBackends,
 } from "../../src/tools/credential-store-backend.ts";
-import type { CredentialStore } from "../../src/tools/credential-store.ts";
-import {
-  describeCredentialStoreConformance,
-  WS,
-} from "../helpers/credential-store-conformance.ts";
+import { describeCredentialStoreConformance, WS } from "../helpers/credential-store-conformance.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 // The default path is what a deployment with no `secrets` block gets, so the
@@ -30,7 +27,7 @@ function freshDefaultStore(): {
   cleanup: () => void;
 } {
   const dir = mkdtempSync(join(tmpdir(), "nb-credbackend-"));
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
   const events: EngineEvent[] = [];
   registerBuiltinCredentialStoreBackends();
   const store = createCredentialStore({
@@ -57,7 +54,7 @@ function freshSealedStore(): {
   cleanup: () => void;
 } {
   const dir = mkdtempSync(join(tmpdir(), "nb-credbackend-sealed-"));
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
   const events: EngineEvent[] = [];
   registerBuiltinCredentialStoreBackends();
   const store = createCredentialStore({
@@ -104,13 +101,13 @@ describe("createCredentialStore", () => {
   test("no secrets block and an explicit `file` reach the same backend", async () => {
     registerBuiltinCredentialStoreBackends();
     const dir = mkdtempSync(join(tmpdir(), "nb-credbackend-"));
-    seedWorkspaceRoot(dir, "ws_test");
+    seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
     try {
       const implicit = createCredentialStore({ workDir: dir });
       await implicit.put(WS, "k", "v");
       // The file lands exactly where the plaintext file store has always put
       // it — the byte-identical-default claim, asserted on disk.
-      const path = join(dir, "workspaces", "ws_test", "credentials", "secrets", "k");
+      const path = join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets", "k");
       expect(statSync(path).mode & 0o777).toBe(0o600);
 
       const explicit = createCredentialStore({ workDir: dir, secrets: { backend: "file" } });

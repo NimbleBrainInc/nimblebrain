@@ -37,13 +37,9 @@ export function validateConversationId(id: string, dir: string): void {
 /**
  * Access context for filtering conversations by user identity.
  *
- * Stage 1: single-owner only. A conversation is accessible iff the
- * caller's `userId` matches the conversation's `ownerId`.
- *
- * Stage 4 reintroduces sharing primitives with policy gating and will
- * extend this context (workspace-admin override, sharing claims, etc.).
- * Defining them now would be a no-op slot — the type tracks what
- * Stage 1 actually uses.
+ * Conversations are single-owner. A conversation is accessible iff the
+ * caller's `userId` matches the conversation's `ownerId`, so the context
+ * carries only the caller's id.
  */
 export interface ConversationAccessContext {
   userId: string;
@@ -84,7 +80,7 @@ export interface CreateConversationOptions {
   ownerId: string;
   /** The model to bind the conversation to. Must already be resolved and
    *  provider-qualified — see `Conversation.model`. */
-  model?: string;
+  model: string;
   metadata?: Record<string, unknown>;
   /** Create with a specific id instead of a generated one. Used by the
    *  detached-turn path so the conversation id is known to the caller before
@@ -114,8 +110,8 @@ export interface ConversationSummary {
   totalOutputTokens: number;
   totalCostUsd: number;
   /**
-   * Owner of the conversation. Required: Stage 1 invariant says every
-   * conversation has an owner. Files lacking `ownerId` are excluded
+   * Owner of the conversation. Required: every conversation has
+   * an owner. Files lacking `ownerId` are excluded
    * from the index entirely (see `parseFileHeader`), and direct
    * `load()` calls on such files throw.
    */
@@ -130,7 +126,7 @@ export interface ConversationStore {
   history(conversation: Conversation, limit?: number): Promise<StoredMessage[]>;
   /**
    * Append a raw conversation event to the stream. Event-sourced stores only —
-   * absent on message-based stores (legacy JSONL, in-memory), so callers must
+   * absent on the in-memory store, so callers must
    * feature-detect. Used for events the engine-event sink doesn't produce, e.g.
    * `history.compacted` written by the compaction path.
    */
@@ -195,20 +191,16 @@ export interface Conversation {
    *  - **Resolved, never an alias.** `alias:fast` is a legal model string; a
    *    pin holding one would be retargeted by a slot change, which is exactly
    *    what this binding prevents.
-   *  - **Provider-qualified** (`provider:model-id`), never bare. A bare id
-   *    falls back to `anthropic:<id>`, and the pin is immutable, so a bare
-   *    pin cannot be repaired.
+   *  - **Provider-qualified** (`provider:model-id`), never bare. The pin is
+   *    immutable, so a pin that named no provider could never be repaired.
    *
    * `resolveRequestModelString` satisfies both, and is the only writer.
    *
    * Distinct from `lastModel`, which is derived from `llm.response` events and
    * describes what the last turn *did* run on. This field is the decision;
    * that one is the observation.
-   *
-   * Optional only for legacy records predating the binding — absent means
-   * "unpinned", and those resolve from current config exactly as before.
    */
-  model?: string;
+  model: string;
   lastModel: string | null;
   /** User who owns this conversation. The single authorization principal. */
   ownerId: string;
@@ -231,7 +223,7 @@ export interface Conversation {
   visibility?: "private" | "shared";
   /** Arbitrary caller-provided metadata. Stored in JSONL first line, never validated. */
   metadata?: Record<string, unknown>;
-  /** File format discriminator. "events" for event-sourced files. Absent for legacy message format. */
+  /** File format marker the event-sourced store writes on line 1. */
   format?: "events";
 }
 
@@ -388,12 +380,16 @@ export interface LlmResponseEvent {
   /** Token usage for this single LLM call (canonical AI SDK V4 shape). */
   usage: TokenUsage;
   llmMs: number;
+  /** Per-call finish reason from the provider (AI SDK V4 unified value). */
+  finishReason: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
   /**
-   * Per-call finish reason from the provider (AI SDK V4 unified value).
-   * Optional for backward-compat with conversations recorded before this
-   * field existed.
+   * The provider's own stop reason for this call (AI SDK V4
+   * `finishReason.raw`, e.g. Anthropic `end_turn`), or `NO_FINISH_PART_RAW`
+   * when the stream ended without a finish part. Several raw values map to
+   * the unified `"other"`, so this names the actual cause. Absent when the
+   * provider reported none.
    */
-  finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
+  finishReasonRaw?: string;
 }
 
 export interface ToolStartEvent {
@@ -418,7 +414,7 @@ export interface ToolDoneEvent {
    * Full tool output text (audience-filtered). Always persisted — it drives
    * the UI/display and the conversation record.
    */
-  output?: string;
+  output: string;
   /**
    * Bounded text the MODEL saw on the live turn, present only when it differs
    * from `output` (i.e. the result exceeded the model-context bound). History
@@ -593,6 +589,7 @@ export interface AuxUsageEvent {
   ts: string;
   type: "aux.usage";
   /** Which forked call produced this usage. */
+  // `briefing` is read-only: historical lines carry it, nothing writes it now.
   source: "compaction" | "title" | "briefing";
   model: string;
   usage: TokenUsage;

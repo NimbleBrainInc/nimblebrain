@@ -18,7 +18,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const readResourceMock = mock(
   async (_server: string, _uri: string): Promise<{ contents: unknown[] }> => ({ contents: [] }),
@@ -161,8 +161,9 @@ describe("ArtifactPanel (document surface)", () => {
     }));
 
     mounted = await mountSurface();
+    const open = findOpenButton(mounted.container);
     await act(async () => {
-      findOpenButton(mounted.container).click();
+      open.click();
     });
     await settle();
 
@@ -180,8 +181,9 @@ describe("ArtifactPanel (document surface)", () => {
     });
 
     mounted = await mountSurface();
+    const open = findOpenButton(mounted.container);
     await act(async () => {
-      findOpenButton(mounted.container).click();
+      open.click();
     });
     await settle();
 

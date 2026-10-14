@@ -9,8 +9,8 @@ import { join } from "node:path";
  * would leave an empty dir in every workspace that never uses the feature:
  * `conversations/` (resolves under `<wsId>/conversations/<ownerId>/`, one log
  * per conversation), `notifications/` (one JSONL per day, written when a
- * connector first emits) and `automations/` (under `<ownerId>/`, one file per
- * automation) are all that shape, as is the per-owner partition beneath the
+ * connector first emits) and `tasks/` (under `<ownerId>/`, one file per
+ * task) are all that shape, as is the per-owner partition beneath the
  * `files/` dir this DOES create. No live code writes a flat top-level
  * `{workDir}/conversations/` dir.
  *

@@ -2,11 +2,16 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiErrorBody, UploadResourceResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { readJson } from "../helpers/http.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+
+/** The upload route's body: the stored entries, plus the per-file rejections when some failed. */
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -18,7 +23,8 @@ const TOTAL_LIMIT = 1 * 1024 * 1024;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
     files: {
@@ -38,19 +44,18 @@ afterAll(async () => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
-describe("POST /v1/resources", () => {
+describe("POST /v1/workspaces/:wsId/resources", () => {
   it("stores an uploaded file and returns its FileEntry", async () => {
     const form = new FormData();
     form.append("file", new Blob(["hello world"], { type: "text/plain" }), "hello.txt");
 
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadResourceResponse>(res);
     expect(body.files).toHaveLength(1);
     const entry = body.files[0];
     expect(entry.id).toMatch(/^fl_[0-9a-f]{24}$/);
@@ -61,7 +66,7 @@ describe("POST /v1/resources", () => {
     expect(entry.size).toBe(11);
 
     // Bytes land under the workspace store (files are workspace-owned) — keyed by the
-    // focused workspace (the X-Workspace-Id sent above) with the uploader as
+    // workspace in the request path with the uploader as
     // the owner sub-partition: `workspaces/{wsId}/files/{ownerId}/`. The dev
     // server authenticates as DEV_IDENTITY.
     const filesDir = join(testDir, "workspaces", TEST_WORKSPACE_ID, "files", DEV_IDENTITY.id);
@@ -74,13 +79,12 @@ describe("POST /v1/resources", () => {
     form.append("file", new Blob(["a"], { type: "text/plain" }), "a.txt");
     form.append("file", new Blob(["bb"], { type: "text/plain" }), "b.txt");
 
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadResourceResponse>(res);
     expect(body.files).toHaveLength(2);
     expect(body.files.map((f: { filename: string }) => f.filename).sort()).toEqual([
       "a.txt",
@@ -88,23 +92,52 @@ describe("POST /v1/resources", () => {
     ]);
   });
 
+  it("stores more files than a chat message may carry: an upload is not a message", async () => {
+    const form = new FormData();
+    for (let i = 0; i < 12; i++) {
+      form.append("files", new Blob([`file ${i}`], { type: "text/plain" }), `f${i}.txt`);
+    }
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
+      method: "POST",
+      body: form,
+    });
+    expect(res.status).toBe(200);
+    const body = await readJson<UploadResourceResponse>(res);
+    expect(body.files).toHaveLength(12);
+  });
+
+  it("refuses an upload past the per-upload file cap, naming the count and the limit", async () => {
+    const form = new FormData();
+    for (let i = 0; i < 101; i++) {
+      form.append("files", new Blob(["x"], { type: "text/plain" }), `f${i}.txt`);
+    }
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
+      method: "POST",
+      body: form,
+    });
+    expect(res.status).toBe(413);
+    const body = await readJson<ApiErrorBody>(res);
+    expect(body.error).toBe("payload_too_large");
+    expect(body.message).toBe("Too many files: 101 in one upload; the limit is 100.");
+    expect(body.details).toEqual({ count: 101, limit: 100 });
+  });
+
   it("rejects an over-per-file-cap upload with structured details", async () => {
     const big = new Blob([new Uint8Array(PER_FILE_LIMIT + 1)], { type: "text/plain" });
     const form = new FormData();
     form.append("file", big, "too-big.txt");
 
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     // Per-file enforcement happens after middleware: middleware passes
     // (single file is under the multipart total cap), then the handler
     // catches and replies 400 with file_upload_error.
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("file_upload_error");
-    expect(body.details?.errors?.[0]).toContain("exceeds per-file limit");
+    expect((body.details?.errors as string[] | undefined)?.[0]).toContain("exceeds per-file limit");
   });
 
   it("rejects an upload over the multipart total cap at the middleware (413)", async () => {
@@ -112,65 +145,62 @@ describe("POST /v1/resources", () => {
     const form = new FormData();
     form.append("file", big, "too-big.txt");
 
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("payload_too_large");
     expect(body.details?.contentType).toContain("multipart/form-data");
   });
 
   it("rejects a disallowed MIME type with 400 file_upload_error", async () => {
     const form = new FormData();
-    form.append(
-      "file",
-      new Blob(["MZ\x90\x00"], { type: "application/x-msdownload" }),
-      "evil.exe",
-    );
+    form.append("file", new Blob(["MZ\x90\x00"], { type: "application/x-msdownload" }), "evil.exe");
 
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("file_upload_error");
-    expect(body.details?.errors?.[0]).toContain("disallowed type");
+    expect((body.details?.errors as string[] | undefined)?.[0]).toContain("disallowed type");
   });
 
   it("rejects a multipart request with no files", async () => {
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: new FormData(),
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
   it("persists tags / description / conversationId metadata onto the FileEntry", async () => {
+    const { conversationId } = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "a conversation to attach to",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
     const form = new FormData();
     form.append("file", new Blob(["x"], { type: "text/plain" }), "x.txt");
     form.append("tags", JSON.stringify(["report", "q2"]));
     form.append("description", "Quarterly numbers");
-    form.append("conversationId", "conv_test_42");
+    form.append("conversationId", conversationId);
 
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadResourceResponse>(res);
     const entry = body.files[0];
     expect(entry.tags).toEqual(["report", "q2"]);
     expect(entry.description).toBe("Quarterly numbers");
-    expect(entry.conversationId).toBe("conv_test_42");
+    expect(entry.conversationId).toBe(conversationId);
     expect(entry.source).toBe("app");
   });
 
@@ -179,13 +209,12 @@ describe("POST /v1/resources", () => {
     form.append("file", new Blob(["x"], { type: "text/plain" }), "x.txt");
     form.append("tags", "{not json"); // unterminated brace
 
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
     expect(body.message).toContain("tags");
   });
@@ -195,13 +224,12 @@ describe("POST /v1/resources", () => {
     form.append("file", new Blob(["x"], { type: "text/plain" }), "x.txt");
     form.append("tags", JSON.stringify(["ok", 42])); // number in array
 
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -213,13 +241,12 @@ describe("POST /v1/resources", () => {
     form.append("file", new Blob(["legit"], { type: "text/plain" }), "legit.txt");
     form.append("tags", new Blob(["impostor"], { type: "text/plain" }), "impostor.txt");
 
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadResourceResponse>(res);
     expect(body.files).toHaveLength(1);
     expect(body.files[0].filename).toBe("legit.txt");
   });
@@ -231,32 +258,31 @@ describe("POST /v1/resources", () => {
     const form = new FormData();
     form.append("files", new Blob(["plural"], { type: "text/plain" }), "p.txt");
 
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": TEST_WORKSPACE_ID },
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadResourceResponse>(res);
     expect(body.files).toHaveLength(1);
     expect(body.files[0].filename).toBe("p.txt");
   });
 
-  it("rejects upload to a workspace the caller is not a member of (403)", async () => {
+  it("rejects upload to a workspace the caller is not a member of (404)", async () => {
     // Provision a second workspace with no member added — DEV_IDENTITY is
-    // not in its member list, so resolveWorkspace must reject.
+    // not in its member list, so the workspace gate answers as if it did not exist.
     const wsStore = runtime.getWorkspaceStore();
-    const other = await wsStore.create("Other Workspace", "other");
+    const other = await wsStore.create("Other Workspace");
 
     const form = new FormData();
     form.append("file", new Blob(["nope"], { type: "text/plain" }), "nope.txt");
 
-    const res = await fetch(`${baseUrl}/v1/resources`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${other.id}/resources`, {
       method: "POST",
-      headers: { "X-Workspace-Id": other.id },
       body: form,
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "workspace_error", message: "Workspace not found" });
 
     // And no `fl_*` file landed in the foreign workspace's files dir.
     // The dir itself exists (scaffoldWorkspace creates it with a .gitkeep)

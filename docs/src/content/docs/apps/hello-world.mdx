@@ -3,7 +3,7 @@ title: "Example: Hello World App"
 description: Build a complete MCP app with a React UI, Synapse SDK, and hot-reload development.
 ---
 
-import { Aside, Steps, Tabs, TabItem, FileTree } from '@astrojs/starlight/components';
+import { Aside, Steps, FileTree } from '@astrojs/starlight/components';
 
 This guide walks through building a complete MCP app with:
 - A Python MCP server with tools
@@ -148,14 +148,11 @@ createRoot(document.getElementById("root")!).render(<App />);
 
 This is where the developer experience pays off — real React components with full IDE support, TypeScript, autocomplete:
 
-<Tabs>
-<TabItem label="SynapseProvider (stable)">
-
 ```tsx
 // ui/src/App.tsx
 import { useState } from "react";
 import {
-  SynapseProvider,
+  AppProvider,
   useCallTool,
   useDataSync,
   useTheme,
@@ -206,79 +203,12 @@ function HelloApp() {
 
 export function App() {
   return (
-    <SynapseProvider name="hello" version="0.1.0">
-      <HelloApp />
-    </SynapseProvider>
-  );
-}
-```
-
-</TabItem>
-<TabItem label="AppProvider + connect() (recommended for new apps)">
-
-```tsx
-// ui/src/App.tsx
-import { useState, useEffect } from "react";
-import {
-  AppProvider,
-  useApp,
-  useToolResult,
-  useConnectTheme,
-} from "@nimblebrain/synapse/react";
-
-function HelloApp() {
-  const [name, setName] = useState("");
-  const [greeting, setGreeting] = useState("Type a name and click Greet.");
-  const [count, setCount] = useState<number | null>(null);
-
-  const app = useApp();
-  const theme = useConnectTheme();
-
-  // The latest tool result delivered by the host (agent-initiated calls).
-  // `useToolResult()` takes no arguments and returns the most recent result.
-  const lastResult = useToolResult();
-  useEffect(() => {
-    if (lastResult) setGreeting(String(lastResult.content));
-  }, [lastResult]);
-
-  async function greet() {
-    const result = await app.callTool("get_greeting", { name: name.trim() });
-    setGreeting(String(result.data));
-    const countResult = await app.callTool("get_greet_count", {});
-    setCount(Number(countResult.data));
-  }
-
-  return (
-    <div style={{ maxWidth: 420, margin: "0 auto", padding: "2rem" }}>
-      <h1>Hello 👋</h1>
-      <div style={{ display: "flex", gap: "0.5rem" }}>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && greet()}
-          placeholder="Enter a name…"
-        />
-        <button onClick={greet}>
-          Greet
-        </button>
-      </div>
-      <div style={{ marginTop: "1rem" }}>{greeting}</div>
-      {count !== null && <div>Greetings sent: {count}</div>}
-    </div>
-  );
-}
-
-export function App() {
-  return (
     <AppProvider name="hello" version="0.1.0">
       <HelloApp />
     </AppProvider>
   );
 }
 ```
-
-</TabItem>
-</Tabs>
 
 Synapse hooks used:
 
@@ -288,9 +218,7 @@ Synapse hooks used:
 | `useDataSync(callback)` | Fires when your server announces a write with `notifications/resources/list_changed` |
 | `useTheme()` | Reactive theme tokens — re-renders on dark mode toggle |
 
-<Aside type="note">
-For new apps, prefer `AppProvider` + `useToolResult` over `SynapseProvider` + `useDataSync`. The `connect()` API handles the handshake automatically and provides a simpler event-driven model. Both approaches work — `SynapseProvider` is not going away.
-</Aside>
+Every hook needs an `<AppProvider>` ancestor, which runs the handshake and renders its children once the app is connected.
 
 ### Build
 
@@ -360,6 +288,6 @@ Your `useCallTool` calls become fully typed — autocomplete for inputs, typed r
 ## Next steps
 
 - Use `connect()` for new apps — it handles the handshake and gives you a ready-to-use `App` object
-- Use `App.updateModelContext()` (or `setVisibleState()` in the classic API) to make the agent aware of what the user sees
+- Use `app.updateModelContext()` (or the `useModelContext()` hook) to make the agent aware of what the user sees
 - See the [Synapse SDK reference](/apps/synapse) for the full API
 - See the [MCP App Bridge](/apps/bridge) for the underlying protocol

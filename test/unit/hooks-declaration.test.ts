@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { HostManifestMeta } from "../../src/connectors/runtime/types.ts";
 import {
+  HookRouteRefusedError,
   isForwardablePath,
   isStrippedRequestHeader,
   parseHookDeclarations,
   resolveForwardUrl,
+  routeNamesMcpEndpoint,
 } from "../../src/hooks/declaration.ts";
 
 function meta(hooks: unknown): HostManifestMeta {
+  // biome-ignore lint/plugin/double-cast: a manifest `hooks` value of any shape, non-arrays and malformed entries included, where the type promises HookDeclaration[]
   return { host_version: "1.2", hooks } as unknown as HostManifestMeta;
 }
 
@@ -62,6 +65,15 @@ describe("parseHookDeclarations", () => {
     expect(decl?.header_renames).toBeUndefined();
   });
 
+  test("refuses a rename FROM the browser's cookie", () => {
+    // A rename out of the stripped class exists for vendor signatures; no vendor
+    // signs with the cookie, and the connector must not be able to ask for it.
+    const decl = parseHookDeclarations(
+      meta([{ ...GOOD, header_renames: { Cookie: "x-acme-cookie" } }]),
+    )[0];
+    expect(decl?.header_renames).toBeUndefined();
+  });
+
   test("refuses a rename whose name is not an HTTP token", () => {
     const decl = parseHookDeclarations(
       meta([{ ...GOOD, header_renames: { "bad header": "x-ok", "x-ok": "also bad" } }]),
@@ -71,11 +83,7 @@ describe("parseHookDeclarations", () => {
 });
 
 describe("isForwardablePath", () => {
-  test.each([
-    "/ingest/acme",
-    "/ingest/acme?v=2",
-    "/a",
-  ])("accepts %s", (route) => {
+  test.each(["/ingest/acme", "/ingest/acme?v=2", "/a"])("accepts %s", (route) => {
     expect(isForwardablePath(route)).toBe(true);
   });
 
@@ -92,6 +100,56 @@ describe("isForwardablePath", () => {
     ["embedded null", "/a\u0000b"],
   ])("refuses %s", (_label, route) => {
     expect(isForwardablePath(route)).toBe(false);
+  });
+});
+
+describe("routeNamesMcpEndpoint", () => {
+  const MCP = "https://connector.internal/mcp";
+
+  // Each of these is a path the server would route to its MCP endpoint, and the
+  // forward would carry the workspace's credential there.
+  test.each([
+    ["the endpoint itself", "/mcp"],
+    ["a path under it", "/mcp/messages"],
+    ["a trailing slash", "/mcp/"],
+    ["a query on the endpoint", "/mcp?session=1"],
+    ["a percent-encoded endpoint", "/%6Dcp"],
+    ["a percent-encoded separator", "/mcp%2Fx"],
+    ["an encoded dot-dot segment", "/ingest/%2e%2e/mcp"],
+    ["a mixed dot-dot segment", "/ingest/.%2E/mcp"],
+    ["a dot segment", "/./mcp"],
+    ["an undecodable escape", "/ingest/%zz"],
+    ["a case variant of the endpoint", "/MCP"],
+    ["a case variant under the endpoint", "/Mcp/x"],
+    ["a dot-dot segment that appears only once decoded", "/x/%2e%2e%2fmcp"],
+  ])("refuses %s", (_label, route) => {
+    expect(routeNamesMcpEndpoint(route, MCP)).toBe(true);
+  });
+
+  test.each([
+    ["the fleet convention", "/ingest/acme"],
+    ["a sibling that only shares a prefix", "/mcpx"],
+    ["a sibling path", "/webhooks/mcp"],
+  ])("allows %s", (_label, route) => {
+    expect(routeNamesMcpEndpoint(route, MCP)).toBe(false);
+  });
+
+  test("ignores a trailing slash on the endpoint", () => {
+    expect(routeNamesMcpEndpoint("/mcp", "https://connector.internal/mcp/")).toBe(true);
+    expect(routeNamesMcpEndpoint("/ingest/acme", "https://connector.internal/mcp/")).toBe(false);
+  });
+
+  test("refuses only the root itself when the endpoint is mounted at the root", () => {
+    // Every path lies under `/`, so the prefix rule would refuse every hook on
+    // a server whose MCP endpoint is its root.
+    expect(routeNamesMcpEndpoint("/", "https://connector.internal/")).toBe(true);
+    expect(routeNamesMcpEndpoint("/ingest/acme", "https://connector.internal/")).toBe(false);
+  });
+
+  test("a literal dot-dot route never reaches the comparison", () => {
+    // `isForwardablePath` refuses it first; the encoded forms above are what
+    // get past that check, and the resolved path is what catches them.
+    expect(isForwardablePath("/ingest/../mcp")).toBe(false);
   });
 });
 
@@ -116,12 +174,20 @@ describe("resolveForwardUrl", () => {
   ])("refuses %s — the forward carries a platform token", (_label, route) => {
     expect(() => resolveForwardUrl(BASE, route)).toThrow(/forwardable|origin/);
   });
+
+  test.each(["/mcp", "/mcp/", "/%6dcp", "/ingest/%2e%2e/mcp"])(
+    "refuses %s, which names the connector's MCP endpoint",
+    (route) => {
+      expect(() => resolveForwardUrl(BASE, route)).toThrow(HookRouteRefusedError);
+    },
+  );
 });
 
 describe("the stripped header class", () => {
   test("covers every identity header a caller could try to assert", () => {
     for (const name of [
       "authorization",
+      "cookie",
       "x-api-key",
       "x-tenant-id",
       "x-workspace-id",

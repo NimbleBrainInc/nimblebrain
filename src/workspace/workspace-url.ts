@@ -20,7 +20,7 @@
 
 import { webOrigin } from "../oauth/public-origin.ts";
 
-/** Workspace id → URL slug: `ws_a1b2c3d4` → `a1b2c3d4`. */
+/** Workspace id → URL slug: `ws_0008dee6ad8a6142` → `0008dee6ad8a6142`. */
 export function workspaceSlug(wsId: string): string {
   return wsId.replace(/^ws_/, "");
 }

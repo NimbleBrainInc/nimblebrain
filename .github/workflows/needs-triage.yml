@@ -1,0 +1,17 @@
+name: needs-triage
+on:
+  issues:
+    types: [opened, reopened]
+permissions:
+  issues: write
+jobs:
+  stamp:
+    # A bot's issue (Renovate's Dependency Dashboard) is a status surface, not a request.
+    if: github.event.issue.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh issue edit "$NUMBER" --repo "$REPO" --add-label needs-triage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}

@@ -1,0 +1,29 @@
+---
+title: NimbleBrain and MCP
+description: How NimbleBrain uses the Model Context Protocol as a client, a server, and an MCP Apps host.
+---
+
+NimbleBrain is built on the [Model Context Protocol](https://modelcontextprotocol.io). Every tool the agent calls, every app it renders, and every external client that reaches a workspace does so over MCP. A server written to the specification works here without modification.
+
+## Three roles
+
+NimbleBrain plays three MCP roles at once, and each one is a different contract for you:
+
+| Role | Who is on the other side | What you build against |
+|---|---|---|
+| **MCP client** | The MCP servers installed in a workspace (connectors) | [Protocol support](/mcp/protocol-support/): the capabilities the host advertises, and the [extensions](/extensions/overview/) it offers a server |
+| **MCP Apps host** | An app's `ui://` view, running in a sandboxed iframe | The [MCP App Bridge](/apps/bridge/): the ext-apps specification plus three bridge extensions |
+| **MCP server** | External clients (Claude, Cursor, another agent) connecting to a workspace | The [MCP endpoint](/connect/mcp-endpoint/): one Streamable HTTP server per workspace |
+
+Most server developers only need the first row. Build a spec-compliant server, and then use the extensions that fit.
+
+## Extensions
+
+Where the specification has no answer yet, for things a long-running, multi-workspace host needs from a server, NimbleBrain adds an extension under the `ai.nimblebrain/` namespace. Each one is negotiated, has a named consumer on the other side, and is safe to ignore. The [Extensions](/extensions/overview/) section lists what each one gives your server, the rules they all follow, and the full registry.
+
+## Related
+
+- [Extensions](/extensions/overview/): what a server can do on NimbleBrain that plain MCP cannot
+- [Protocol support](/mcp/protocol-support/): specification revisions, transports, and advertised capabilities
+- [MCP Apps](/concepts/mcp-apps/): what an app is and how it renders
+- [The MCP endpoint](/connect/mcp-endpoint/): connecting an external client to a workspace

@@ -1,5 +1,5 @@
 /**
- * Phase 2 — `skills.loaded` and `context.assembled` event tests.
+ * `skills.loaded` and `context.assembled` event tests.
  *
  * Two scopes:
  *   1. Engine-level: when `EngineConfig.runMetadata` carries skills/context
@@ -15,10 +15,10 @@
  *   - Resource integration — covered by skills-source.test.ts.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
@@ -27,8 +27,8 @@ import type {
   ConversationEvent,
   SkillsLoadedEvent,
 } from "../../../src/conversation/types.ts";
-import { AgentEngine } from "../../../src/engine/engine.ts";
 import { textContent } from "../../../src/engine/content-helpers.ts";
+import { AgentEngine } from "../../../src/engine/engine.ts";
 import type {
   EngineConfig,
   EngineEvent,
@@ -37,6 +37,7 @@ import type {
   ToolResult,
 } from "../../../src/engine/types.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { firstPayloadOf } from "../../helpers/engine-events.ts";
 
 class CollectingSink implements EventSink {
   events: EngineEvent[] = [];
@@ -62,6 +63,7 @@ function makeConfigWithMetadata(): EngineConfig {
         skills: [
           {
             id: "/work/skills/voice-rules.md",
+            name: "voice-rules",
             layer: 3,
             scope: "org",
             version: "2026-04-27T00:00:00.000Z",
@@ -71,7 +73,8 @@ function makeConfigWithMetadata(): EngineConfig {
             reason: "loading_strategy: always",
           },
           {
-            id: "/work/workspaces/ws_demo/skills/proposal-followup.md",
+            id: "/work/workspaces/ws_002afe1142297ff4/skills/proposal-followup.md",
+            name: "proposal-followup",
             layer: 3,
             scope: "workspace",
             version: "2026-04-26T00:00:00.000Z",
@@ -100,10 +103,13 @@ function makeConfigWithMetadata(): EngineConfig {
 function makeEngine(events: EventSink): AgentEngine {
   return new AgentEngine(
     createEchoModel(),
-    new StaticToolRouter([], (_call: ToolCall): ToolResult => ({
-      content: textContent(""),
-      isError: false,
-    })),
+    new StaticToolRouter(
+      [],
+      (_call: ToolCall): ToolResult => ({
+        content: textContent(""),
+        isError: false,
+      }),
+    ),
     events,
   );
 }
@@ -148,7 +154,7 @@ describe("engine.runMetadata — skills.loaded + context.assembled emission", ()
       );
     // run.start must come before skills.loaded; skills.loaded before context.assembled;
     // both must come before any llm.done.
-    const idx = (t: string) => types.indexOf(t);
+    const idx = (t: (typeof types)[number]) => types.indexOf(t);
     expect(idx("run.start")).toBeLessThan(idx("skills.loaded"));
     expect(idx("skills.loaded")).toBeLessThan(idx("context.assembled"));
     expect(idx("context.assembled")).toBeLessThan(idx("llm.done"));
@@ -165,8 +171,7 @@ describe("engine.runMetadata — skills.loaded + context.assembled emission", ()
       [],
     );
 
-    const event = sink.events.find((e) => e.type === "skills.loaded")!;
-    const payload = event.data as unknown as SkillsLoadedEvent;
+    const payload = firstPayloadOf(sink.events, "skills.loaded")!;
     expect(payload.skills).toHaveLength(2);
     expect(payload.skills[0]!.loadedBy).toBe("always");
     expect(payload.skills[0]!.scope).toBe("org");
@@ -185,8 +190,7 @@ describe("engine.runMetadata — skills.loaded + context.assembled emission", ()
       [],
     );
 
-    const event = sink.events.find((e) => e.type === "context.assembled")!;
-    const payload = event.data as unknown as ContextAssembledEvent;
+    const payload = firstPayloadOf(sink.events, "context.assembled")!;
     const skillsSource = payload.sources.find((s) => s.kind === "skills");
     expect(skillsSource).toBeDefined();
     expect(skillsSource!.count).toBe(2);
@@ -234,8 +238,7 @@ describe("engine.runMetadata — skills.loaded + context.assembled emission", ()
       [],
     );
 
-    const ev = sink.events.find((e) => e.type === "skills.loaded")!;
-    const payload = ev.data as unknown as SkillsLoadedEvent;
+    const payload = firstPayloadOf(sink.events, "skills.loaded")!;
     expect(payload.skills).toEqual([]);
     expect(payload.totalTokens).toBe(0);
   });
@@ -269,7 +272,7 @@ async function readEvents(id: string): Promise<ConversationEvent[]> {
 
 describe("EventSourcedConversationStore — persistence", () => {
   test("skills.loaded emit is mapped to a ConversationEvent in the conv jsonl", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
@@ -279,6 +282,7 @@ describe("EventSourcedConversationStore — persistence", () => {
         skills: [
           {
             id: "/skills/x.md",
+            name: "x",
             layer: 3,
             scope: "org",
             version: "2026-01-01T00:00:00.000Z",
@@ -304,7 +308,7 @@ describe("EventSourcedConversationStore — persistence", () => {
   });
 
   test("context.assembled persists with sources + total intact", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
@@ -331,7 +335,7 @@ describe("EventSourcedConversationStore — persistence", () => {
   });
 
   test("end-to-end: engine emit → store persist preserves shape", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     const sink: EventSink = {

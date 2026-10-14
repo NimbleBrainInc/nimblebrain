@@ -20,24 +20,38 @@ into an agent run is a **route**, and a workspace admin writes it.
 
 ## The inbox
 
-Open **Inbox** under the workspace in the left navigation. The count beside it is
-how many items nobody has read yet.
+The bell in the top bar, beside **Chat**, carries a dot while something is unread;
+its tooltip says how many. Click it for the five most pressing unread items,
+urgent first, without leaving the page you are on. Opening the list marks
+nothing read; choose an item to open it in the inbox, or **Open the inbox** for
+all of it. The inbox header shows the same unread count, for the whole inbox
+rather than the rows on screen, and how many of those need attention: select
+that to list them.
 
 ![The workspace inbox, with one item expanded to show its body, event name and raw connector data](../../../assets/guide/notifications-inbox.png)
 
-Items are grouped by urgency and then by arrival: `urgent` and `attention` sort
-above `info`, and within a level the newest is first. Each row carries:
+Items are newest first, 25 at a time; **Load older** at the end of the list adds
+the next 25. Each row carries:
 
 | | |
 |---|---|
-| **Title** | One line the connector wrote. Bold while unread. |
-| **Source** | The connector that emitted it — the same name its tools carry. |
+| **Unread dot** | At the end of the row, on an item nobody has read. Read items are dimmed. |
+| **Title** | One line the connector wrote. |
+| **App** | The connector that emitted it: its icon leads the row, and its name is under the title. |
 | **Timestamp** | When the connector says the fact happened. The expanded row also shows when this runtime received it. |
-| **Subject** | What the item is about, when the connector says. Free text, used for grouping. |
-| **Level** | `info`, `attention` or `urgent`. Advisory — the connector chose it. |
+| **Subject** | What the item is about, when the connector says and the title does not already name it. Free text, used for grouping. |
+| **Level** | Only `urgent` is marked, by a red edge and an **Urgent** label. `info` and `attention` rows look alike, because a level is urgency, not good or bad news ([levels](/using/notification-reference#levels)). Advisory — the connector chose it. |
 
 Open a row to see the **body** and the event name. Opening an item marks it read;
-**Mark all read** clears the rest.
+**Mark all read** clears the rest, or **Mark shown read** when filters are on.
+
+### Filtering
+
+The bar above the list narrows it: **All** or **Unread**, a minimum level, one
+app, a time window (24 hours, 7 days or 30 days, by when the fact happened), and
+a search over the title and event name. Filters run against the whole inbox, not
+the rows already on screen, and live in the page's address, so a filtered view
+can be shared as a link.
 
 **Read state is shared across the workspace.** A notification is something a
 connector recorded, not a message addressed to a person, so the inbox is one
@@ -58,9 +72,9 @@ Under **Show details** is the connector's own structured payload, as raw JSON.
 The runtime never reads a field of it; it is passed through untouched, and shown
 here so you can see what the connector actually sent.
 
-The inbox holds 90 days. The view shows the most recent 100 items; ask the agent
-for older ones ("what notifications came in last month from acme?") and it walks
-the backlog forward.
+The inbox holds 90 days, and **Load older** reaches all of it. A link to one item
+(the one a route puts in Slack or mail) opens that item, however far down it is.
+You can also ask the agent ("what notifications came in last month from acme?").
 
 ### Live updates
 
@@ -83,6 +97,10 @@ that declares an outbox costs you a poll and some inbox rows, and it should not
 also be a decision to let that connector reach your phone. Raising the ceiling is
 the second, separate decision.
 
+A ceiling saves as soon as you pick it, and the notice that confirms it offers
+**Undo**. Routes save together, with **Save routes**: a route is often half-built
+while you edit it.
+
 Lowering a ceiling does not hide anything — every item still lands in the inbox
 at the level the connector chose. The ceiling decides only how high an item may
 reach a **route**.
@@ -95,7 +113,7 @@ on it.
 
 A route says: when a notification matches, deliver it there.
 
-Both kinds of target run: a **tool** target calls the tool, and an **automation**
+Both kinds of target run: a **tool** target calls the tool, and an **task**
 target starts an agent run carrying the matched notifications.
 
 ### Match
@@ -173,25 +191,25 @@ write the route knowing that. Retries are bounded (below), which limits the
 damage but does not remove it.
 </Aside>
 
-### Deliver to an automation
+### Deliver to a task
 
-Pick one of your [automations](/using/automations) and the route wakes it,
+Pick one of your [tasks](/using/tasks) and the route wakes it,
 handing it the matched notifications as its input.
 
-The automation has to be expecting them. An **event** automation — one whose
+The task has to be expecting them. An **event** task — one whose
 schedule is a set of notifications rather than a time — carries its own match,
-and runs only for items that satisfy both it and the route. Name an automation
+and runs only for items that satisfy both it and the route. Name a task
 that runs on a clock instead and the route will match, record a *refused* row,
-and start nothing; the editor marks which of your automations can be woken.
+and start nothing; the editor marks which of your tasks can be woken.
 
-Matching items are **batched**: everything arriving inside the automation's
+Matching items are **batched**: everything arriving inside the task's
 debounce window (30 seconds by default) starts one run, not one run each. That
 run's ledger row carries the run id once it starts, so you can go from a
 notification to the run it caused.
 
-An event automation also carries a **fire ceiling** — by default twelve runs an
-hour — and exceeding it disables the automation rather than throttling it. See
-[Automations](/using/automations#the-fire-ceiling) for why that is the shape.
+An event task also carries a **fire ceiling** — by default twelve runs an
+hour — and exceeding it disables the task rather than throttling it. See
+[Tasks](/using/tasks#the-fire-ceiling) for why that is the shape.
 
 ### Check it works, before you need it
 
@@ -251,9 +269,9 @@ short enough that you learn the answer while you are still looking. The
 platform never retries a *refused* or *skipped* target: nothing about those
 changes until the configuration does.
 
-**An automation target gets one offer, not three.** A batch that never reaches
+**A task target gets one offer, not three.** A batch that never reaches
 its run — because the runtime restarted while the debounce window was open, or
-the automation was already running — reads *failed* or *skipped* and is not
+the task was already running — reads *failed* or *skipped* and is not
 re-formed. Batches live only in the memory of the process that opened them, and
 re-firing hours later for events you have since dealt with is worse than saying
 plainly that the run did not happen.
@@ -293,10 +311,10 @@ them: it cannot raise a ceiling and it cannot author a route.
   Send test, the delivery ledger, and where a notification stops.
 - [Route reference](/using/notification-reference) — every field, match rule,
   placeholder and outcome, precisely.
-- [Notifications for app authors](/apps/notifications) — declaring an outbox,
+- [Notifications for app authors](/extensions/notifications/) — declaring an outbox,
   the event envelope, and the levels, from the connector's side.
 - [Connectors](/using/connectors) — installing the connector a route delivers through.
 - [Personal connectors](/using/personal-connectors) — what a `my_` tool in a route needs.
 - [Workspaces](/using/workspaces) — who can see and configure what.
-- [Automations](/using/automations) — what a route can wake.
+- [Tasks](/using/tasks) — what a route can wake.
 - [workspace.json](/config/workspace-json) — where the ceilings and routes are stored.

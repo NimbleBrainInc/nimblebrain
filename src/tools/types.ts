@@ -1,4 +1,4 @@
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import type { ClientCapabilities, ToolAnnotations } from "@modelcontextprotocol/server";
 import type { ToolResult, ToolSchema } from "../engine/types.ts";
 import type { ServerNotification } from "./server-notifications.ts";
 
@@ -10,8 +10,8 @@ export interface Tool {
   source: string; // which source produced it, e.g. "mcp:slack"
   /**
    * The tool's `_meta` — MCP's free-form, reverse-DNS-keyed namespace. Carries
-   * host conventions like `ai.nimblebrain/internal` and the UI metadata
-   * (`resourceUri`) the engine reads to mount an inline panel.
+   * host conventions and the MCP Apps UI metadata (`ui.resourceUri`, which the
+   * engine reads to mount an inline panel, and `ui.visibility`).
    *
    * Distinct from {@link Tool.annotations}, which is the spec's own closed set
    * of behavioural hints. Both travel; neither is the other.
@@ -41,10 +41,10 @@ export interface Tool {
    *   - `"forbidden"` — tool MUST NOT be invoked as a task
    *   - (absent / undefined) — same as `"forbidden"` (default)
    *
-   * When a tool declares `"optional"` or `"required"`, the client (this engine)
-   * attaches `params.task: { ttl }` to outbound `tools/call` so the server
-   * returns a CreateTaskResult immediately instead of blocking. The engine
-   * then polls via `tasks/get` and retrieves via `tasks/result`.
+   * Only a 2025-era server lists it; the 2026-07-28 tasks extension carries no
+   * per-tool marker. The engine never attaches a task on a 2025-era connection
+   * (ADR-0046): an `"optional"` tool is called inline, and a `"required"` one
+   * is refused before dispatch.
    */
   execution?: {
     taskSupport?: "optional" | "required" | "forbidden";
@@ -72,6 +72,42 @@ export function toToolSchema(t: ToolSchema): ToolSchema {
   };
 }
 
+/** How a source dispatches one call. */
+export interface ToolExecuteOptions {
+  /**
+   * Make a plain inline `tools/call`, never a task-augmented one, whatever the
+   * tool or the connection advertises. The host's lifecycle calls ask for this:
+   * the `ai.nimblebrain/lifecycle` extension forbids task augmentation, and an
+   * uninstall waits behind the call. A source with no task path ignores it.
+   */
+  inline?: boolean;
+  /**
+   * The outside client's side of the protocol, for a call `/mcp/<wsId>` makes
+   * on that client's behalf (`McpCaller`). A source with no MCP connection
+   * ignores it.
+   */
+  caller?: McpCaller;
+}
+
+/**
+ * What the `/mcp/<wsId>` door forwards from the client it serves to the
+ * connector, so the connector treats the call as that client's. A connector
+ * decides what to ask of the client by the client's capabilities, so the call
+ * carries them, and an `input_required` answer comes back to the door as it
+ * is (`ToolResult.inputRequired`) for the client to answer, with no state kept
+ * between rounds.
+ */
+export interface McpCaller {
+  /** The client's capabilities, sent in this call's `_meta` envelope in place of the runtime's. */
+  capabilities: ClientCapabilities;
+  /** The client's answers to the connector's last `inputRequests`, on a retry. */
+  inputResponses?: Record<string, unknown>;
+  /** The connector's own `requestState` from the last round, echoed back unchanged. */
+  requestState?: string;
+  /** Called with each progress notification the connector sends for this call. */
+  onProgress?: (progress: { progress: number; total?: number; message?: string }) => void;
+}
+
 /** Pluggable tool provider. Each source manages its own lifecycle. */
 export interface ToolSource {
   readonly name: string;
@@ -93,6 +129,7 @@ export interface ToolSource {
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
+    options?: ToolExecuteOptions,
   ): Promise<ToolResult>;
   /**
    * Subscribe to "my tool list may have changed" signals — fired when the
@@ -155,7 +192,7 @@ export interface ResourceData {
  * (the app the task belongs to, which is the name of the source that runs it —
  * an app is its server). `/mcp` stamps `originApp` on every task it starts, and
  * a request an iframe scopes to one source reaches only a task stamped with
- * that source (`mcp-task-store.ts`). When set on the stamped context,
+ * that source (`mcp-modern-tasks.ts`). When set on the stamped context,
  * subsequent lookups MUST supply matching values.
  */
 export interface TaskOwnerContext {
@@ -169,8 +206,8 @@ export interface TaskOwnerContext {
  * caller's `TaskOwnerContext` doesn't match the one stamped at creation.
  *
  * Unified on purpose: we don't want to leak task existence to callers who
- * don't own the task. The `/mcp` layer maps this to JSON-RPC `-32602` per
- * MCP tasks spec (draft 2025-11-25).
+ * don't own the task. The `/mcp` layer maps this to JSON-RPC `-32602`, as the
+ * tasks extension (SEP-2663) asks.
  */
 export class TaskNotFoundError extends Error {
   readonly taskId: string;

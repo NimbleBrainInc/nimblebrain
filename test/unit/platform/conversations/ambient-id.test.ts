@@ -17,13 +17,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
+import { createConversationsSource } from "../../../../src/platform/conversations/source.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createConversationsSource } from "../../../../src/platform/conversations/source.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { conversationEventLines } from "../../../helpers/conversation-events.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 const OWNER_ID = "usr_test";
-const WS_ID = "ws_ambient00000000";
+const WS_ID = "ws_0017179cea048c8e";
 /** The conversation the agent is running inside. */
 const CURRENT_ID = "conv_aaaaaaaaaaaaaaaa";
 /** Another of the caller's conversations, named explicitly. */
@@ -31,7 +35,7 @@ const OTHER_ID = "conv_bbbbbbbbbbbbbbbb";
 /** The current conversation's only message — what identifies it in a payload. */
 const CURRENT_MESSAGE = "save this into your memory";
 /**
- * An automation run's correlation id, in the shape `executeTask` mints —
+ * A task run's correlation id, in the shape `executeTask` mints —
  * `run_` plus the first 12 characters of a UUID, so it carries a hyphen.
  */
 const RUN_ID = "run_a8f15601-0dd";
@@ -45,6 +49,7 @@ function writeConversation(id: string, title: string, message: string): void {
   const dir = join(workDir, "workspaces", WS_ID, "conversations", OWNER_ID);
   mkdirSync(dir, { recursive: true });
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -58,11 +63,9 @@ function writeConversation(id: string, title: string, message: string): void {
   };
   const lines = [
     JSON.stringify(meta),
-    JSON.stringify({
-      role: "user",
-      content: message,
-      timestamp: "2026-01-01T00:01:00.000Z",
-    }),
+    ...conversationEventLines([
+      { role: "user", content: message, timestamp: "2026-01-01T00:01:00.000Z" },
+    ]),
   ];
   writeFileSync(join(dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 }
@@ -76,6 +79,7 @@ function writeAutoTitledConversation(id: string, autoTitle: string, message: str
   const dir = join(workDir, "workspaces", WS_ID, "conversations", OWNER_ID);
   mkdirSync(dir, { recursive: true });
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -107,40 +111,46 @@ function writeAutoTitledConversation(id: string, autoTitle: string, message: str
   writeFileSync(join(dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 }
 
-/**
- * The title a READER projects, which is the only one that reaches a user.
- * `storedTitle` reads line 1 — the one place a shadowed write does land — so
- * it cannot tell a real rename from one every reader ignores.
- */
+/** The title a READER projects, which is the only one that reaches a user. */
 async function projectedTitle(id: string): Promise<string | null> {
   const result = await inChat("get", { id, expand: "metadata" });
   const { metadata } = parseFirst(result) as { metadata: { title: string | null } };
   return metadata.title;
 }
 
-function storedTitle(id: string): string {
+/**
+ * The title on disk as every reader resolves it: the last `metadata.title`
+ * event, falling back to line 1 when there is none.
+ */
+function storedTitle(id: string): string | null {
   const path = join(workDir, "workspaces", WS_ID, "conversations", OWNER_ID, `${id}.jsonl`);
-  const line = readFileSync(path, "utf-8").split("\n")[0]!;
-  return (JSON.parse(line) as { title: string }).title;
+  const lines = readFileSync(path, "utf-8").split("\n").filter(Boolean);
+  let title = (JSON.parse(lines[0]!) as { title: string | null }).title;
+  for (const line of lines.slice(1)) {
+    const e = JSON.parse(line) as { type?: string; title?: string | null };
+    if (e.type === "metadata.title") title = e.title ?? null;
+  }
+  return title;
 }
 
 function makeRuntime(): Runtime {
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: () => OWNER_ID,
-    getWorkspaceStore: () => ({ getWorkspacesDir: () => join(workDir, "workspaces") }),
-    onConversationsChanged: () => {},
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({ getWorkspacesDir: () => join(workDir, "workspaces") }),
+    onConversationsChanged: () => () => {},
     announceIdentitySourceChange: (name: string, userId: string) => {
       announced.push(`${name}:${userId}`);
     },
     isTurnActive: () => false,
-  } as unknown as Runtime;
+  });
 }
 
 /** Run a tool the way a chat does — with an ambient conversation in scope. */
 function inChat(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(
-    { identity: { id: OWNER_ID } as never, workspaceId: WS_ID, conversationId: CURRENT_ID },
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID, conversationId: CURRENT_ID },
     () => source.execute(tool, args),
   );
 }
@@ -148,20 +158,20 @@ function inChat(tool: string, args: Record<string, unknown>): Promise<ToolResult
 /** Run a tool the way a REST or `/mcp` caller does — no conversation in scope. */
 function outsideChat(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(
-    { identity: { id: OWNER_ID } as never, workspaceId: WS_ID },
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID },
     () => source.execute(tool, args),
   );
 }
 
 /**
- * Run a tool the way an unattended automation does: `executeTask` stamps
+ * Run a tool the way an unattended task does: `executeTask` stamps
  * `runId` and no `conversationId`, because a run persists a run result rather
  * than a conversation.
  */
-function inAutomationRun(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
+function inTaskRun(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(
     {
-      identity: { id: OWNER_ID } as never,
+      identity: makeIdentity({ id: OWNER_ID }),
       workspaceId: WS_ID,
       runId: RUN_ID,
       unattended: true,
@@ -182,7 +192,7 @@ function withRunIdInConversationField(
 ): Promise<ToolResult> {
   return runWithRequestContext(
     {
-      identity: { id: OWNER_ID } as never,
+      identity: makeIdentity({ id: OWNER_ID }),
       workspaceId: WS_ID,
       conversationId: RUN_ID,
       unattended: true,
@@ -193,7 +203,7 @@ function withRunIdInConversationField(
 
 function parseFirst(result: ToolResult): Record<string, unknown> {
   const first = result.content[0];
-  if (!first || first.type !== "text") throw new Error("expected a text block");
+  if (first?.type !== "text") throw new Error("expected a text block");
   return JSON.parse(first.text) as Record<string, unknown>;
 }
 
@@ -204,6 +214,9 @@ beforeEach(async () => {
   writeConversation(OTHER_ID, "Other", "something else entirely");
   source = await createConversationsSource(makeRuntime(), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {
@@ -325,25 +338,9 @@ describe("a rename reaches the channel readers project from", () => {
     };
     expect(echoed.title).toBe(await projectedTitle(AUTO_ID));
   });
-
-  test("renaming a legacy conversation keeps its messages", async () => {
-    // A legacy file has no events, and the reader picks its parser by asking
-    // whether any line looks like one. Appending a `metadata.title` event to
-    // one flips it onto the event reducer, which finds no messages — so the
-    // rename would empty the conversation. Line 1 is its only title channel.
-    const result = await inChat("update", { id: OTHER_ID, title: "Renamed Legacy" });
-    expect(result.isError).toBe(false);
-
-    expect(await projectedTitle(OTHER_ID)).toBe("Renamed Legacy");
-
-    const full = parseFirst(await inChat("get", { id: OTHER_ID, expand: "full" })) as {
-      messages: unknown[];
-    };
-    expect(full.messages.length).toBeGreaterThan(0);
-  });
 });
 
-describe("an automation run has no conversation", () => {
+describe("a task run has no conversation", () => {
   // A run carries its correlation id in `runId`, so `conversationId` is simply
   // absent and the ambient fallback finds nothing to resolve. The last test
   // here covers the reader-side guard for the retired shape, where the run id
@@ -358,7 +355,7 @@ describe("an automation run has no conversation", () => {
     ["fork", {}],
   ] as const) {
     test(`${tool} with no id errors, and does not name the run id`, async () => {
-      const result = await inAutomationRun(tool, args);
+      const result = await inTaskRun(tool, args);
 
       expect(result.isError).toBe(true);
       const { error } = parseFirst(result) as { error: string };
@@ -369,7 +366,7 @@ describe("an automation run has no conversation", () => {
   }
 
   test("a run id arriving in the conversation field is still refused", async () => {
-    // The reader-side forward guard. `executeTask` no longer produces this
+    // The reader-side forward guard. `executeTask` does not produce this
     // shape, so nothing else on this branch exercises the shape-check.
     const result = await withRunIdInConversationField("update", { title: "Doctrine" });
 
@@ -383,7 +380,7 @@ describe("an automation run has no conversation", () => {
   test("an explicit id still works inside a run", async () => {
     // The guard rejects the ambient value, not the caller's — a run that names
     // a real conversation still reaches it.
-    const result = await inAutomationRun("update", { id: OTHER_ID, title: "Named" });
+    const result = await inTaskRun("update", { id: OTHER_ID, title: "Named" });
 
     expect(result.isError).toBe(false);
     expect(storedTitle(OTHER_ID)).toBe("Named");

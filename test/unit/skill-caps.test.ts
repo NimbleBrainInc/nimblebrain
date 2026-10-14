@@ -1,13 +1,13 @@
-import { describe, expect, it, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import matter from "gray-matter";
+import { log } from "../../src/observability/log.ts";
 import { loadScopedSkills, parseSkillContent } from "../../src/skills/loader.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../src/skills/truncate.ts";
-import { readSkill, updateSkill, writeSkill } from "../../src/skills/writer.ts";
 import type { SkillManifest } from "../../src/skills/types.ts";
+import { readSkill, updateSkill, writeSkill } from "../../src/skills/writer.ts";
 
 const dirs: string[] = [];
 function tmp(): string {
@@ -83,5 +83,24 @@ describe("authoring round-trip preserves the full stored body", () => {
     updateSkill(dir, "big", { description: "edited" });
     const onDisk = matter(readFileSync(join(dir, "big.md"), "utf-8")).content.trim();
     expect(onDisk.length).toBe(body.length);
+  });
+});
+
+describe("invalid frontmatter warning", () => {
+  it("warns once per file and error, not on every re-parse", () => {
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const path = join(tmp(), "empty-desc.md");
+      const emptyDesc = "---\nname: empty-desc\ndescription: ''\n---\nbody";
+      expect(parseSkillContent(emptyDesc, path)).toBeNull();
+      expect(parseSkillContent(emptyDesc, path)).toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
+
+      // Broken a different way: a new error, so a new warning.
+      expect(parseSkillContent("---\ndescription: d\n---\nbody", path)).toBeNull();
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

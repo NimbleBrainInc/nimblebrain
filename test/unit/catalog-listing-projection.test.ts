@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
 import {
   projectServerDetailToCatalogListing,
   serverDetailToCatalogEntry,
 } from "../../src/connectors/catalog/projection.ts";
+import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
 
 function detail(over: Partial<ServerDetail> = {}): ServerDetail {
   return {
@@ -119,7 +119,10 @@ describe("projectServerDetailToCatalogListing", () => {
         _meta: {
           "ai.nimblebrain/connector": {
             auth: "provider",
-            providerAuth: { provider: "minted", config: { audience: "mcp-fleet", scope: "mcp:invoke" } },
+            providerAuth: {
+              provider: "minted",
+              config: { audience: "mcp-fleet", scope: "mcp:invoke" },
+            },
           },
         },
       }),
@@ -163,7 +166,6 @@ describe("projectServerDetailToCatalogListing", () => {
       expect(e.install.transportType).toBe("sse");
     }
   });
-
 
   test("defaults remote auth to 'dcr' when meta is absent", () => {
     const e = projectServerDetailToCatalogListing(

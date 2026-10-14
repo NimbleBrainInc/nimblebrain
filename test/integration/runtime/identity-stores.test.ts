@@ -2,9 +2,13 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { InstanceConfig } from "../../../src/identity/instance.ts";
+import { DevIdentityProvider } from "../../../src/identity/providers/dev.ts";
+import { OidcIdentityProvider } from "../../../src/identity/providers/oidc.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -28,16 +32,17 @@ afterAll(() => {
 // ---------------------------------------------------------------------------
 
 describe("Runtime identity stores wiring", () => {
-  it("dev mode: no instance.json → getIdentityProvider() returns null, stores exist", async () => {
+  it("a provider passed in, no instance.json → that provider, and the stores exist", async () => {
     const workDir = makeTempDir("dev");
     dirs.push(workDir);
 
     const rt = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
-    expect(rt.getIdentityProvider()).toBeNull();
+    expect(rt.getIdentityProvider()).toBeInstanceOf(DevIdentityProvider);
     expect(rt.getInstanceConfig()).toBeNull();
 
     // Verify stores are not just defined but are functional objects with expected methods
@@ -60,7 +65,7 @@ describe("Runtime identity stores wiring", () => {
     dirs.push(workDir);
 
     // Write a valid instance.json with oidc auth
-    const instanceConfig = {
+    const instanceConfig: InstanceConfig = {
       auth: {
         adapter: "oidc",
         issuer: "https://auth.example.com",
@@ -72,10 +77,10 @@ describe("Runtime identity stores wiring", () => {
 
     const rt = await Runtime.start({
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
-    expect(rt.getIdentityProvider()).not.toBeNull();
+    expect(rt.getIdentityProvider()).toBeInstanceOf(OidcIdentityProvider);
     expect(rt.getInstanceConfig()).toEqual(instanceConfig);
   });
 
@@ -84,8 +89,9 @@ describe("Runtime identity stores wiring", () => {
     dirs.push(workDir);
 
     const rt = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     const userStore = rt.getUserStore();
@@ -109,8 +115,9 @@ describe("Runtime identity stores wiring", () => {
     dirs.push(workDir);
 
     const rt = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     const workspaceStore = rt.getWorkspaceStore();
@@ -132,8 +139,9 @@ describe("Runtime identity stores wiring", () => {
     dirs.push(workDir);
 
     const rt = await Runtime.start({
+      identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     await provisionTestWorkspace(rt);
@@ -143,6 +151,7 @@ describe("Runtime identity stores wiring", () => {
     // `findConversation`, which routes through that same locator.
     const store = rt.workspaceConversationStore(TEST_WORKSPACE_ID, "user_test");
     const conv = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
       workspaceId: TEST_WORKSPACE_ID,
       ownerId: "user_test",
     });

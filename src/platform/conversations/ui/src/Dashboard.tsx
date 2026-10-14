@@ -1,3 +1,4 @@
+import { hostSupports } from "@nimblebrain/synapse";
 import { useAction, useApp, useDataSync, useHostContext } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationList } from "./ConversationList";
@@ -15,13 +16,17 @@ function errorMessage(err: unknown, fallback: string): string {
 
 export function Dashboard() {
   const app = useApp();
+  // The host draws this view's title in its own chrome when it declares
+  // `ai.nimblebrain/location`, so the view leaves its own out rather than say it
+  // twice. A host without it (any other MCP Apps host) gets the view's title.
+  const hostShowsTitle = hostSupports(app, "location");
   const action = useAction();
   // Pushed by the host via hostContext: the workspace the shell is focused on —
   // used here ONLY as a change signal (refetch when the user switches
   // workspace), never as a filter value: the server derives the workspace from
   // the request itself, so this app sends no workspace argument.
   const { workspace } = useHostContext<{
-    workspace?: { id: string; name: string; isPersonal?: boolean };
+    workspace?: { id: string; name: string };
   }>();
   // A primitive (not the workspace object, whose identity churns per push) so a
   // refetch fires when the workspace actually changes and not on every push.
@@ -47,7 +52,7 @@ export function Dashboard() {
       setError(null);
       try {
         // No workspace argument. The list is walled to the workspace the REQUEST
-        // resolves to (the host sends `X-Workspace-Id` on every call), so the
+        // resolves to (the host's session is at the workspace's `/mcp/<wsId>`), so the
         // scope can't be wrong here and can't be omitted into a cross-workspace
         // read — which is what happened while the host-context handshake was
         // still in flight and this app had no workspace to send.
@@ -99,7 +104,6 @@ export function Dashboard() {
   // `workspaceId` is a CHANGE SIGNAL only; it is never sent to the server (see
   // `loadList`), so the first load is correctly scoped even on the render
   // before the host-context handshake resolves and this is still `undefined`.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceId is a refetch trigger, not an input to loadList; view/searchQuery are read at fire time
   useEffect(() => {
     // A switch to a different workspace also drops any open search: results are
     // snippets from the workspace we just left, and leaving them on screen is
@@ -189,6 +193,7 @@ export function Dashboard() {
         isSearching={isSearching}
         searchQuery={searchQuery}
         workspaceName={workspace?.name}
+        showTitle={!hostShowsTitle}
         onSelectFilter={handleSelectFilter}
         onSearchInput={handleSearchInput}
         onSearchSubmit={handleSearchSubmit}

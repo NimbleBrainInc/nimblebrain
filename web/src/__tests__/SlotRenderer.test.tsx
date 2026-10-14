@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 import type { PlacementEntry } from "../types";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const getResources = mock(
   async (_appName: string, _path: string): Promise<{ html: string }> => ({ html: "<p>ok</p>" }),
@@ -31,6 +31,8 @@ const getResources = mock(
 mock.module("../api/client", () => ({ ...realClient, getResources }));
 
 const React = await import("react");
+const { NoticeProvider } = await import("../components/notices");
+const withNotices = (el: React.ReactNode) => React.createElement(NoticeProvider, null, el);
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { ThemeProvider } = await import("../context/ThemeContext");
@@ -43,7 +45,7 @@ function placement(serverName: string, label?: string): PlacementEntry {
     resourceUri: `ui://${serverName}/main`,
     priority: 0,
     ...(label ? { label } : {}),
-  } as unknown as PlacementEntry;
+  };
 }
 
 interface Mounted {
@@ -66,7 +68,9 @@ async function mount(placements: PlacementEntry[]): Promise<Mounted> {
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(ThemeProvider, null, React.createElement(SlotRenderer, { placements })),
+      withNotices(
+        React.createElement(ThemeProvider, null, React.createElement(SlotRenderer, { placements })),
+      ),
     );
   });
   // Let the async render loop settle (fetch → mount / error).
@@ -144,5 +148,69 @@ describe("SlotRenderer — failed placement", () => {
 
     expect(container.textContent).toContain("Broken");
     expect(container.getElementsByTagName("iframe").length).toBe(1);
+  });
+});
+
+// happy-dom's selector parser rejects attribute selectors; find by attribute instead.
+function loadingStatus(container: HTMLElement): Element | undefined {
+  return Array.from(container.getElementsByTagName("div")).find(
+    (d) => d.getAttribute("role") === "status",
+  );
+}
+
+describe("SlotRenderer — while the resource loads", () => {
+  test("pendingFetch_showsALoadingStatusInTheAppsPlace", async () => {
+    let release: (v: { html: string }) => void = () => {};
+    getResources.mockImplementation(
+      () => new Promise<{ html: string }>((resolve) => (release = resolve)),
+    );
+
+    const { container } = await mount([placement("memory", "Memory")]);
+
+    const status = loadingStatus(container);
+    expect(status?.textContent).toBe("Loading Memory…");
+    expect(container.getElementsByTagName("iframe").length).toBe(0);
+
+    await act(async () => {
+      release({ html: "<p>ok</p>" });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(loadingStatus(container)).toBeUndefined();
+    expect(container.getElementsByTagName("iframe").length).toBe(1);
+  });
+
+  test("unmountMidFetch_leavesNoLoadingStatusAndMountsNothingLate", async () => {
+    let release: (v: { html: string }) => void = () => {};
+    getResources.mockImplementation(
+      () => new Promise<{ html: string }>((resolve) => (release = resolve)),
+    );
+
+    const { container, unmount } = await mount([placement("memory", "Memory")]);
+    // The slot's own container: React detaches it on unmount, so anything a late
+    // fetch appends lands here and not under the test's root.
+    const slot = loadingStatus(container)?.parentElement;
+    expect(slot).toBeDefined();
+
+    unmount();
+    mounted = null;
+    await act(async () => {
+      release({ html: "<p>ok</p>" });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(slot && loadingStatus(slot)).toBeUndefined();
+    expect(slot?.getElementsByTagName("iframe").length).toBe(0);
+  });
+
+  test("failedFetch_replacesTheLoadingStatusWithTheError", async () => {
+    getResources.mockImplementation(async () => {
+      throw new Error("boom");
+    });
+
+    const { container } = await mount([placement("memory", "Memory")]);
+
+    expect(loadingStatus(container)).toBeUndefined();
+    expect(container.textContent).toContain("couldn’t be loaded");
   });
 });

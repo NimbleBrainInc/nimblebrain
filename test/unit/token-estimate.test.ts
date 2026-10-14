@@ -9,8 +9,8 @@
  * spurious compaction and corrupted cost dashboards.
  */
 
-import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { describe, expect, test } from "bun:test";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import {
   estimateMessageTokens,
   estimateToolDescriptionTokens,
@@ -112,7 +112,7 @@ describe("estimateMessageTokens — image regression", () => {
     expect(tokens).toBe(1600);
   });
 
-  test("REGRESSION: two large PNG attachments combined < 10K tokens (was 2.8M pre-fix)", () => {
+  test("two large PNG attachments combined < 10K tokens (binary bytes are not counted as text)", () => {
     // The exact prod scenario: two attached PNGs in one user turn. Prod
     // reported `totalTokens: 2,853,357` for this case.
     const a = new Uint8Array(207_007);
@@ -123,8 +123,18 @@ describe("estimateMessageTokens — image regression", () => {
       role: "user",
       content: [
         { type: "text", text: "Look at these screenshots" },
-        { type: "file", mediaType: "image/png", data: { type: "data", data: a }, filename: "a.png" },
-        { type: "file", mediaType: "image/png", data: { type: "data", data: b }, filename: "b.png" },
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: a },
+          filename: "a.png",
+        },
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: b },
+          filename: "b.png",
+        },
       ],
     };
     expect(estimateMessageTokens(msg)).toBeLessThan(10_000);
@@ -296,7 +306,9 @@ describe("estimateMessageTokens — tiny PNG dimension decoding", () => {
   test("decodes 1×1 PNG header and applies the clamp", () => {
     const msg: LanguageModelV4Message = {
       role: "user",
-      content: [{ type: "file", mediaType: "image/png", data: { type: "data", data: makeTinyPng() } }],
+      content: [
+        { type: "file", mediaType: "image/png", data: { type: "data", data: makeTinyPng() } },
+      ],
     };
     // 1×1 pixels → ceil(1/750) = 1 → clamped up to 800.
     expect(estimateMessageTokens(msg)).toBe(800);

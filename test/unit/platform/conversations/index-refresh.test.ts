@@ -18,13 +18,13 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { workspaceConversationsDir } from "../../../../src/conversation/paths.ts";
 import { ConversationIndex } from "../../../../src/platform/conversations/index-cache.ts";
 import { handleFork } from "../../../../src/platform/conversations/tools/fork.ts";
 import { handleUpdate } from "../../../../src/platform/conversations/tools/update.ts";
-import { workspaceConversationsDir } from "../../../../src/conversation/paths.ts";
 
 let workDir: string;
-const WS = "ws_helix";
+const WS = "ws_003eba8844413cd9";
 const OWNER = "usr_alice";
 const CONV = "conv_00000000000000a1";
 
@@ -44,6 +44,7 @@ function convFile(): string {
 
 function seed(file: string): void {
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id: CONV,
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
@@ -147,7 +148,7 @@ test("handleFork's new conversation is announced, so it appears on a targeted re
   await index.build(workspacesRoot());
   expect(index.list().totalCount).toBe(1);
 
-  const forked = (await handleFork({ id: CONV }, index)) as { id: string };
+  const forked = await handleFork({ id: CONV }, index);
   await index.refresh();
 
   // Absent, not merely stale: the index has never seen this conversation, so

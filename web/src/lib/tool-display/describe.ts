@@ -10,7 +10,7 @@
  * upgrade.
  */
 
-import type { ToolCallDisplay, ToolResultForUI } from "../../hooks/useChat.ts";
+import type { ToolCallDisplay, ToolResultForUI } from "../../hooks/chat-store.ts";
 import { stripServerPrefix } from "../format.ts";
 import { findRenderer } from "./registry.ts";
 import type { InputField, Tone, ToolDescription } from "./types.ts";

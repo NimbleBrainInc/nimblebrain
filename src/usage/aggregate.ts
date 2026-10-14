@@ -2,14 +2,13 @@
  * Usage aggregation — the ONE reader of tenant-level spend.
  *
  * Source of truth: the durable usage ledger (`src/usage/ledger.ts`), one line
- * per priced LLM call. It used to be `llm.response` events scanned out of
- * conversation JSONL files, which made usage a function of whether a
- * conversation file happened to exist — so task runs, sub-agent runs, the
- * background briefing and archived workspaces all spent money this never saw.
+ * per priced LLM call. Scanning `llm.response` events out of conversation
+ * JSONL files would make usage a function of whether a conversation file
+ * happened to exist — so task runs, sub-agent runs, the background briefing
+ * and archived workspaces would all spend money it never saw.
  *
- * **There is exactly one reader, deliberately.** The codebase previously had
- * two that disagreed, which is how the undercount survived; a third would
- * repeat it. Per-conversation display still reads `llm.response` from the
+ * **There is exactly one reader, deliberately.** Two readers can disagree,
+ * and the disagreement hides an undercount. Per-conversation display still reads `llm.response` from the
  * conversation log, because "what happened in this conversation" is a different
  * question from "what did this tenant spend" — but neither side may sum the
  * other's source.
@@ -19,10 +18,16 @@
  * cannot price is reported as unpriced rather than as zero.
  */
 
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { USAGE_GROUP_BYS, type UsageGroupBy } from "../platform/schemas/usage.ts";
+import { getProviderFromModel } from "../model/catalog.ts";
+import {
+  USAGE_GROUP_BYS,
+  type UsageGroupBy,
+  type UsageOrigin,
+  type UsageStackBy,
+} from "../platform/schemas/usage.ts";
 import { costBreakdown } from "./cost.ts";
 import { isBackfillShard, usageMonthDir, usageMonthsInRange } from "./paths.ts";
 import type { UsageLedgerEntry } from "./types.ts";
@@ -63,7 +68,7 @@ export interface UsageTotals {
   llmMs: number;
   /** Distinct chat conversations. Task runs are counted by `runs`, not here. */
   conversations: number;
-  /** Distinct task runs — automations, which have no conversation to count. */
+  /** Distinct task runs — tasks, which have no conversation to count. */
   runs?: number;
   /**
    * Calls whose model no price could be found for, at write time or now.
@@ -72,7 +77,7 @@ export interface UsageTotals {
    * is not, so a report carrying this is saying its dollar figure is
    * incomplete — as distinct from a spend of zero, which is what a bare
    * `$0.00` beside a large token count would otherwise imply. Backfilled
-   * automation history is the common case.
+   * task history is the common case.
    */
   unpricedCalls?: number;
   /** Input-side cache-hit rate (0–1). See `computeCacheHitRate`. */
@@ -110,7 +115,7 @@ export interface BreakdownEntry {
   llmCalls: number;
   /** Distinct chat conversations. Task runs are counted by `runs`, not here. */
   conversations: number;
-  /** Distinct task runs — automations, which have no conversation to count. */
+  /** Distinct task runs — tasks, which have no conversation to count. */
   runs?: number;
   /**
    * Calls whose model no price could be found for, at write time or now.
@@ -119,11 +124,16 @@ export interface BreakdownEntry {
    * is not, so a report carrying this is saying its dollar figure is
    * incomplete — as distinct from a spend of zero, which is what a bare
    * `$0.00` beside a large token count would otherwise imply. Backfilled
-   * automation history is the common case.
+   * task history is the common case.
    */
   unpricedCalls?: number;
   /** Input-side cache-hit rate (0–1). See `computeCacheHitRate`. */
   cacheHitRate?: number;
+  /**
+   * Cost total per key of the `stackBy` dimension, on `day` rows when it was
+   * requested. Keys with no spend that day are absent.
+   */
+  stack?: Record<string, number>;
 }
 
 /**
@@ -168,6 +178,8 @@ interface BreakdownAccumulator {
   sids: Set<string>;
   runIds: Set<string>;
   unpricedCalls: number;
+  /** Cost per `stackBy` key. Created only on `day` rows when `stackBy` is set. */
+  stack?: Map<string, number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,34 +240,24 @@ function addCost(target: CostBreakdown, cost: CostBreakdown): void {
 }
 
 /**
- * Normalize model ID by stripping any `provider:` prefix and date suffix for
- * grouping/display. The prefix match is generic (`^[a-z0-9-]+:`) so a new
- * provider like `nebius:` is handled without editing this (and the sibling
- * copies in the usage UIs). Exported for the drift-pinning test.
- */
-/**
- * The provider a qualified model string names — the segment before the first
- * colon. Unqualified strings are Anthropic, matching `getModelByString`.
- */
-export function providerOf(model: string): string {
-  const i = model.indexOf(":");
-  return i < 0 ? "anthropic" : model.slice(0, i);
-}
-
-/**
  * Whether this line's cost is a real number rather than an absence.
  *
  * True when the line carries stored rates, or when the catalog can still price
- * its model. False for a backfilled automation line (`model: "unknown"`) and
- * for anything else the catalog has never known — those contribute tokens and
- * no dollars, and are counted separately so the total reads as incomplete
- * rather than as zero.
+ * its model. False for a model the catalog has never known: those lines
+ * contribute tokens and no dollars, and are counted separately so the total
+ * reads as incomplete rather than as zero.
  */
 function isPriced(record: LlmCallRecord): boolean {
   if (record.rates) return true;
   return costBreakdown(record.model, { inputTokens: 1, outputTokens: 0 }).total > 0;
 }
 
+/**
+ * Normalize model ID by stripping any `provider:` prefix and date suffix for
+ * grouping/display. The prefix match is generic (`^[a-z0-9-]+:`) so a new
+ * provider like `nebius:` is handled without editing this (and the sibling
+ * copies in the usage UIs). Exported for the drift-pinning test.
+ */
 export function normalizeModel(model: string): string {
   return model.replace(/^[a-z0-9-]+:/, "").replace(/-\d{8}$/, "");
 }
@@ -275,60 +277,29 @@ function normalizeGroupBys(groupBy: string | string[]): UsageGroupBy[] {
   return [...new Set(valid.length > 0 ? valid : fallback)];
 }
 
-// ── Legacy `sessionId` normalization ─────────────────────────────────────
-//
-// Records written before the id split carry one `sessionId` holding either a
-// conversation or an automation run, told apart by `origin`. Records written
-// since carry `conversationId` / `taskRunId` under their own names. Both shapes
-// are in the retention window at once, so every read goes through these two
-// helpers rather than touching either field directly.
-//
-// These are the whole compatibility surface, and they expire: when the oldest
-// retained month postdates the split (see `retentionMonths`, default 24), no
-// record on disk has `sessionId` and both `?? legacy` arms become dead code.
-
-/** The chat conversation a record belongs to, new shape or old. */
-function conversationOf(record: LlmCallRecord): string | undefined {
-  if (record.conversationId) return record.conversationId;
-  // Legacy: `sessionId` was a conversation only when the call was not a task.
-  return record.origin === "task" ? undefined : record.sessionId;
-}
-
-/** The automation run a record belongs to, new shape or old. */
-function taskRunOf(record: LlmCallRecord): string | undefined {
-  if (record.taskRunId) return record.taskRunId;
-  // Legacy: `sessionId` was an automation run only when the call was a task.
-  return record.origin === "task" ? record.sessionId : undefined;
-}
-
 function groupKeyFor(record: LlmCallRecord, groupBy: UsageGroupBy, modelKey: string): string {
   switch (groupBy) {
     case "model":
       return modelKey;
     case "conversation":
-      // A task run has no conversation, so it groups under "none" rather than
-      // contributing its run id to a conversation breakdown — which is what the
-      // undiscriminated `sessionId` read did, putting `run_…` rows in a
-      // dimension the schema calls "conversation".
-      return conversationOf(record) ?? "none";
+      // A task run has no conversation, so it groups under "none".
+      return record.conversationId ?? "none";
     case "turn":
-      // One assistant turn, which is one engine run.
-      //
-      // Legacy: a record written while a turn could spawn a sub-agent carries
-      // the spawning turn's id in `parentRunId` and the sub-agent's own in
-      // `runId`. Preferring `parentRunId` rolls those rows onto the turn that
-      // spawned them rather than billing one turn as several.
-      //
-      // The forked fast-slot calls (title, compaction, briefing) carry no
-      // engine run at all, and neither do records predating `runId`; both
-      // group under "none".
-      return record.parentRunId ?? record.runId ?? "none";
+      // One assistant turn, which is one engine run. The forked fast-slot calls
+      // (title, compaction) carry no engine run at all, and neither do records
+      // predating `runId`; both group under "none".
+      return record.runId ?? "none";
     case "user":
       return record.userId ?? "unknown";
     case "origin":
       return record.origin;
     case "provider":
-      return providerOf(record.model);
+      return getProviderFromModel(record.model);
+    case "workspace":
+      // A call made outside any workspace (a detached background call) has no
+      // binding, and groups under "none" — the same word the id-keyed
+      // dimensions use for an absent id.
+      return record.workspaceId ?? "none";
     case "day":
       return record.ts.slice(0, 10);
   }
@@ -420,6 +391,7 @@ function finalizeBreakdown(
       ...(data.runIds.size > 0 ? { runs: data.runIds.size } : {}),
       ...(data.unpricedCalls > 0 ? { unpricedCalls: data.unpricedCalls } : {}),
       cacheHitRate: computeCacheHitRate(data.tokens),
+      ...(data.stack ? { stack: Object.fromEntries(data.stack) } : {}),
     }))
     .sort((a, b) => a.key.localeCompare(b.key));
 
@@ -496,8 +468,9 @@ export function resolveDateRange(
     case "day":
       return { from: toDate, to: toDate };
     case "week": {
+      // Seven UTC days counting `to` itself, so the range is `to - 6 .. to`.
       const d = new Date(`${toDate}T00:00:00Z`);
-      d.setUTCDate(d.getUTCDate() - 7);
+      d.setUTCDate(d.getUTCDate() - 6);
       return { from: d.toISOString().slice(0, 10), to: toDate };
     }
     case "all":
@@ -535,6 +508,47 @@ export interface AggregateUsageOptions {
    * spend into another's view on exactly the lines whose owner is unknown.
    */
   ownerFilter?: string;
+  /**
+   * Narrow the records before aggregation, so totals, rows and models all
+   * describe the same subset. Each is ANDed with the others and with
+   * `ownerFilter`, so none of them can widen an owner-filtered read.
+   */
+  filters?: UsageFilters;
+  /** Split each `day` row's cost by this dimension. See `BreakdownEntry.stack`. */
+  stackBy?: UsageStackBy;
+}
+
+export interface UsageFilters {
+  /** Only calls bound to this workspace; `"none"` selects calls bound to none. */
+  workspaceId?: string;
+  /** Only calls made by this user. Fails closed like `ownerFilter`. */
+  userId?: string;
+  /** Only calls to this model, matched as the qualified string or its short name. */
+  model?: string;
+  origin?: UsageOrigin;
+}
+
+/**
+ * Whether a record passes every set filter.
+ *
+ * Each filter reads the field through the same derivation its `groupBy`
+ * dimension uses, so selecting a row's key as a filter returns exactly that
+ * row's records: a call with no workspace is `"none"` to both, and a model
+ * matches by the short name the `models` rows carry.
+ */
+function matchesFilters(record: LlmCallRecord, filters: UsageFilters): boolean {
+  if (filters.workspaceId !== undefined) {
+    if ((record.workspaceId ?? "none") !== filters.workspaceId) return false;
+  }
+  // Fails closed, like `ownerFilter`: a line with no `userId` never matches.
+  if (filters.userId !== undefined && record.userId !== filters.userId) return false;
+  if (filters.model !== undefined) {
+    if (record.model !== filters.model && normalizeModel(record.model) !== filters.model) {
+      return false;
+    }
+  }
+  if (filters.origin !== undefined && record.origin !== filters.origin) return false;
+  return true;
 }
 
 /** Parse one shard's lines into the records in range the caller may see. */
@@ -542,6 +556,7 @@ function parseShard(
   text: string,
   range: { from: string; to: string },
   ownerFilter?: string,
+  filters: UsageFilters = {},
 ): LlmCallRecord[] {
   const out: LlmCallRecord[] = [];
   for (const line of text.split("\n")) {
@@ -557,6 +572,7 @@ function parseShard(
     // Fails closed: a line with no `userId` is excluded from a filtered read,
     // never included. See `AggregateUsageOptions.ownerFilter`.
     if (ownerFilter !== undefined && entry.userId !== ownerFilter) continue;
+    if (!matchesFilters(entry, filters)) continue;
     out.push(entry);
   }
   return out;
@@ -578,22 +594,25 @@ function shardsForMonth(dir: string): string[] {
 /**
  * Read the ledger lines in range, oldest month first.
  *
- * A month's directory holds one shard per writer plus, after a migration,
- * `backfill.jsonl`. All are read: the backfill shard covers the period before
- * the live writer existed, and its cutoff is what keeps the two from
- * overlapping (see `scripts/backfill-usage-ledger.ts`).
+ * A month's directory holds one shard per writer plus, on a deployment that
+ * predates the live writer, `backfill.jsonl`. All are read: the backfill shard
+ * covers the period before the live writer existed and stops at the writer's
+ * first line, so the two do not overlap.
  */
 async function readLedger(
   workDir: string,
   range: { from: string; to: string },
   ownerFilter?: string,
+  filters?: UsageFilters,
 ): Promise<LlmCallRecord[]> {
   const records: LlmCallRecord[] = [];
   for (const month of usageMonthsInRange(range.from, range.to)) {
     const dir = usageMonthDir(workDir, month);
     for (const shard of shardsForMonth(dir)) {
       try {
-        records.push(...parseShard(await readFile(join(dir, shard), "utf-8"), range, ownerFilter));
+        records.push(
+          ...parseShard(await readFile(join(dir, shard), "utf-8"), range, ownerFilter, filters),
+        );
       } catch {
         // Shard vanished between listing and read (retention sweep); skip it.
       }
@@ -611,6 +630,7 @@ interface AggregationSink {
   modelMap: Map<string, ModelUsage>;
   breakdownMaps: Map<UsageGroupBy, Map<string, BreakdownAccumulator>>;
   groupBys: UsageGroupBy[];
+  stackBy?: UsageStackBy;
 }
 
 /** Get or create the per-model accumulator for `modelKey`. */
@@ -635,12 +655,9 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
   addTokens(sink.totals.tokens, tokens);
   addCost(sink.totals.cost, cost);
   sink.totals.llmMs += record.llmMs;
-  // `conversationOf` / `taskRunOf` decide which of the two a record belongs to,
-  // so an automation is never counted as a conversation.
-  const conversationId = conversationOf(record);
-  const taskRunId = taskRunOf(record);
-  if (conversationId) sink.conversationIds.add(conversationId);
-  if (taskRunId) sink.runIds.add(taskRunId);
+  // Each id under its own name, so a task is never counted as a conversation.
+  if (record.conversationId) sink.conversationIds.add(record.conversationId);
+  if (record.taskRunId) sink.runIds.add(record.taskRunId);
   // Unpriced is not free. A line the catalog cannot price contributes tokens
   // and zero dollars, and this is the count that says the dollar figure is
   // incomplete rather than the spend being zero.
@@ -661,19 +678,29 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
     addTokens(bucket.tokens, tokens);
     addCost(bucket.cost, cost);
     bucket.llmCalls++;
-    // Same split as `totals`, through the same two helpers, so a breakdown row
-    // cannot report an automation as a conversation while the totals disagree.
-    if (conversationId) bucket.sids.add(conversationId);
-    if (taskRunId) bucket.runIds.add(taskRunId);
+    // Same split as `totals`, so a breakdown row cannot report a task as a
+    // conversation while the totals disagree.
+    if (record.conversationId) bucket.sids.add(record.conversationId);
+    if (record.taskRunId) bucket.runIds.add(record.taskRunId);
     if (!priced) bucket.unpricedCalls++;
+    if (dimension === "day" && sink.stackBy) {
+      addToStack(bucket, groupKeyFor(record, sink.stackBy, modelKey), cost.total);
+    }
   }
+}
+
+/** Add one record's cost to a day row's `stackBy` split. */
+function addToStack(bucket: BreakdownAccumulator, key: string, cost: number): void {
+  bucket.stack ??= new Map();
+  bucket.stack.set(key, (bucket.stack.get(key) ?? 0) + cost);
 }
 
 /**
  * Aggregate tenant spend from the durable usage ledger under `workDir`.
  *
  * 1. Read the shards for every month the range spans, dropping out-of-range
- *    lines and — when `ownerFilter` is set — anyone else's
+ *    lines, lines failing `filters`, and — when `ownerFilter` is set — anyone
+ *    else's
  * 2. Derive totals, splitting chat conversations from task runs and counting
  *    the calls no price could be found for
  * 3. Derive per-model and per-dimension breakdowns, which make the same split
@@ -684,11 +711,11 @@ export async function aggregateUsage(
   groupBy: string | string[],
   options: AggregateUsageOptions = {},
 ): Promise<UsageReport> {
-  const { from, to, ownerFilter } = options;
+  const { from, to, ownerFilter, filters, stackBy } = options;
   const range = resolveDateRange(period, from, to);
   const groupBys = normalizeGroupBys(groupBy);
 
-  const records = await readLedger(workDir, range, ownerFilter);
+  const records = await readLedger(workDir, range, ownerFilter, filters);
   // Derive totals
   const totals: UsageTotals = {
     tokens: createTokenBreakdown(),
@@ -705,6 +732,7 @@ export async function aggregateUsage(
     modelMap: new Map<string, ModelUsage>(),
     breakdownMaps: new Map<UsageGroupBy, Map<string, BreakdownAccumulator>>(),
     groupBys,
+    stackBy,
   };
   for (const dimension of groupBys) sink.breakdownMaps.set(dimension, new Map());
 
@@ -749,4 +777,50 @@ export async function aggregateUsage(
     breakdown,
     breakdowns,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Spend of named task runs
+// ---------------------------------------------------------------------------
+
+/**
+ * What the ledger says each of a set of task runs cost, in USD, by run id:
+ * every line from `range.from` onward whose task run is one of `taskRunIds`
+ * (and, when given, bound to `workspaceId`), priced the way the report prices
+ * it (stored rates first, then the catalog; an unpriced line adds nothing). A
+ * line is written as each model call completes, so a run that never reached
+ * its record (lost in a crash) is counted too. Synchronous, and reads only the
+ * month shards the range spans.
+ */
+export function ledgerCostByTaskRun(
+  workDir: string,
+  taskRunIds: ReadonlySet<string>,
+  range: { from: string; to: string },
+  workspaceId?: string,
+): Map<string, number> {
+  const costs = new Map<string, number>();
+  if (taskRunIds.size === 0) return costs;
+  const filters = workspaceId !== undefined ? { workspaceId } : {};
+  for (const month of usageMonthsInRange(range.from, range.to)) {
+    const dir = usageMonthDir(workDir, month);
+    for (const shard of shardsForMonth(dir)) {
+      for (const record of parseShard(readShardSync(join(dir, shard)), range, undefined, filters)) {
+        const runId = record.taskRunId;
+        if (runId && taskRunIds.has(runId)) {
+          const cost = costBreakdown(record.model, record.usage, record.rates).total;
+          costs.set(runId, (costs.get(runId) ?? 0) + cost);
+        }
+      }
+    }
+  }
+  return costs;
+}
+
+/** A shard's text, or empty when it vanished between listing and read (retention sweep). */
+function readShardSync(path: string): string {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    return "";
+  }
 }

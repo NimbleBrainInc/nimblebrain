@@ -8,21 +8,14 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom's Window stub doesn't expose SyntaxError/TypeError; querySelector's
-// selector parser constructs one and trips on the gap.
-{
-  const win = (globalThis as unknown as { window?: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
-/** Makes `/v1/chat/start` fail, as a network error on the first send would. */
+/** Makes the workspace's `/chat/start` fail, as a network error on the first send would. */
 let failStart = false;
 
 mock.module("../api/client", () => ({
@@ -32,7 +25,11 @@ mock.module("../api/client", () => ({
       return {
         isError: false,
         structuredContent: {
-          metadata: { id: args?.id ?? "conv_other", ownerId: "u1", workspaceId: "ws_a" },
+          metadata: {
+            id: args?.id ?? "conv_other",
+            ownerId: "u1",
+            workspaceId: "ws_00079598e311c160",
+          },
           messages: [],
         },
         content: [],
@@ -63,11 +60,10 @@ import type { ChatContextValue } from "../context/ChatContext";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
 const WS_A: WorkspaceInfo = {
-  id: "ws_a",
+  id: "ws_00079598e311c160",
   name: "Alpha",
-  connectors: [],
+  connectorCount: 0,
   memberCount: 1,
-  isPersonal: false,
   userRole: "admin",
 };
 
@@ -87,28 +83,29 @@ async function render(isStreaming: boolean): Promise<void> {
     root.render(
       React.createElement(
         MemoryRouter,
-        { initialEntries: ["/w/a/overview"] },
-        React.createElement(
-          WorkspaceProvider,
-          { initialWorkspaces: [WS_A], initialActiveId: "ws_a" },
-          React.createElement(
-            ChatProvider,
-            {
-              currentUserId: "u1",
-              initialConfig: { configuredProviders: ["anthropic"] },
-            },
-            React.createElement(ChatProbe),
-            React.createElement(ChatPanel, {
-              messages: [],
-              isStreaming,
-              error: null,
-              sendMessage: async (text: string) => {
-                sent.push({ text });
-              },
-              newConversation: () => {},
-            }),
-          ),
-        ),
+        { initialEntries: ["/w/00079598e311c160/overview"] },
+        React.createElement(WorkspaceProvider, {
+          initialWorkspaces: [WS_A],
+          initialActiveId: "ws_00079598e311c160",
+          children: React.createElement(ChatProvider, {
+            currentUserId: "u1",
+            initialConfig: { configuredProviders: ["anthropic"] },
+            children: React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(ChatProbe),
+              React.createElement(ChatPanel, {
+                messages: [],
+                isStreaming,
+                error: null,
+                sendMessage: async (text: string) => {
+                  sent.push({ text });
+                },
+                newConversation: () => {},
+              }),
+            ),
+          }),
+        }),
       ),
     );
   });
@@ -129,7 +126,7 @@ function textarea(): HTMLTextAreaElement {
 
 // happy-dom's `dispatchEvent` accepts only its own window's event classes, not
 // the runtime's globals.
-const win = window as unknown as { Event: typeof Event; KeyboardEvent: typeof KeyboardEvent };
+const win = window;
 
 /** Type the way a person does: set the value natively, then fire `input`. */
 async function type(value: string): Promise<void> {

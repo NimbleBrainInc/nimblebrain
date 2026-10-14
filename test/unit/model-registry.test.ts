@@ -1,61 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import {
-  resolveModelString,
-  buildRegistry,
-  buildModelResolver,
-} from "../../src/model/registry.ts";
-
-describe("resolveModelString", () => {
-  it("looks up bare anthropic model id in the catalog", () => {
-    expect(resolveModelString("claude-sonnet-4-6")).toBe(
-      "anthropic:claude-sonnet-4-6",
-    );
-  });
-
-  it("looks up bare google model id in the catalog (fixes UI sending bare gemini ids to anthropic)", () => {
-    // Regression: the settings UI used to write `gemini-3.1-pro-preview`
-    // as the saved value (no `google:` prefix). Without the catalog
-    // fallback, that id defaulted to `anthropic:` and 404'd against
-    // the Anthropic API.
-    expect(resolveModelString("gemini-3.1-pro-preview")).toBe(
-      "google:gemini-3.1-pro-preview",
-    );
-  });
-
-  it("looks up bare openai model id in the catalog", () => {
-    expect(resolveModelString("gpt-4o")).toBe("openai:gpt-4o");
-  });
-
-  it("falls back to anthropic for bare ids not in the catalog (backward compat)", () => {
-    // Bespoke / pinned model ids that pre-date the catalog still default
-    // to anthropic — preserves the historical behavior for tenants who
-    // configured custom model strings.
-    expect(resolveModelString("custom-fine-tune-not-in-catalog")).toBe(
-      "anthropic:custom-fine-tune-not-in-catalog",
-    );
-  });
-
-  it("leaves already-qualified openai string unchanged", () => {
-    expect(resolveModelString("openai:gpt-4o")).toBe("openai:gpt-4o");
-  });
-
-  it("leaves already-qualified google string unchanged", () => {
-    expect(resolveModelString("google:gemini-2.5-flash")).toBe(
-      "google:gemini-2.5-flash",
-    );
-  });
-
-  it("keeps strings with multiple colons unchanged", () => {
-    expect(resolveModelString("openai:ft:gpt-4o:my-org")).toBe(
-      "openai:ft:gpt-4o:my-org",
-    );
-  });
-});
+import type { LanguageModelV4, SharedV4ProviderOptions } from "@ai-sdk/provider";
+import { ModelNotQualifiedError } from "../../src/model/model-id.ts";
+import { buildModelResolver, buildRegistry } from "../../src/model/registry.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 describe("buildRegistry", () => {
   it("creates a provider that resolves anthropic models with correct spec version", () => {
     const registry = buildRegistry({ providers: { anthropic: {} } });
-    const model = registry.languageModel("anthropic:claude-sonnet-4-6");
+    const model = registry.languageModel("anthropic:claude-sonnet-4-6") as LanguageModelV4;
     expect(model).toBeDefined();
     expect(model.specificationVersion).toBe("v4");
     expect(model.provider).toContain("anthropic");
@@ -64,7 +16,7 @@ describe("buildRegistry", () => {
 
   it("defaults to anthropic when no providers configured", () => {
     const registry = buildRegistry({});
-    const model = registry.languageModel("anthropic:claude-sonnet-4-6");
+    const model = registry.languageModel("anthropic:claude-sonnet-4-6") as LanguageModelV4;
     expect(model).toBeDefined();
     expect(model.provider).toContain("anthropic");
     // Verify it has the same spec version as explicit config
@@ -78,7 +30,7 @@ describe("buildRegistry", () => {
 
   it("resolves nebius models through the OpenAI-compatible Chat Completions API", () => {
     const registry = buildRegistry({ providers: { nebius: { apiKey: "nb-test-key" } } });
-    const model = registry.languageModel("nebius:deepseek-ai/DeepSeek-V4-Pro");
+    const model = registry.languageModel("nebius:deepseek-ai/DeepSeek-V4-Pro") as LanguageModelV4;
     expect(model).toBeDefined();
     expect(model.specificationVersion).toBe("v4");
     // Chat Completions, which this adapter binds natively — Nebius serves no
@@ -104,7 +56,7 @@ describe("buildRegistry", () => {
 
   it("resolves xai models through Chat Completions", () => {
     const registry = buildRegistry({ providers: { xai: { apiKey: "xai-test-key" } } });
-    const model = registry.languageModel("xai:grok-4.5");
+    const model = registry.languageModel("xai:grok-4.5") as LanguageModelV4;
     expect(model).toBeDefined();
     expect(model.specificationVersion).toBe("v4");
     // `.languageModel()` binds Chat Completions on this adapter version; the
@@ -138,11 +90,10 @@ describe("buildModelResolver", () => {
     expect(typeof resolver).toBe("function");
   });
 
-  it("resolves bare strings with anthropic prefix", () => {
+  it("refuses a bare id, naming the qualified form", () => {
     const resolver = buildModelResolver({ providers: { anthropic: {} } });
-    const model = resolver("claude-sonnet-4-6");
-    expect(model).toBeDefined();
-    expect(model.provider).toContain("anthropic");
+    expect(() => resolver("claude-sonnet-4-6")).toThrow(ModelNotQualifiedError);
+    expect(() => resolver("claude-sonnet-4-6")).toThrow('"anthropic:claude-sonnet-4-6"');
   });
 
   it("resolves qualified strings directly", () => {
@@ -167,17 +118,17 @@ describe("nebius request shape", () => {
    * removal.
    */
   async function captureNebiusRequest(
-    call: (model: ReturnType<typeof buildModelResolver>) => Promise<unknown>,
+    call: (model: ReturnType<typeof buildModelResolver>) => PromiseLike<unknown>,
   ): Promise<Record<string, unknown>> {
     const realFetch = globalThis.fetch;
     let body: Record<string, unknown> = {};
-    globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
+    globalThis.fetch = fakeFetch(async (_url, init) => {
       body = JSON.parse(String(init?.body));
       return new Response(
         'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
         { status: 200, headers: { "content-type": "text/event-stream" } },
       );
-    }) as unknown as typeof fetch;
+    });
     try {
       await call(buildModelResolver({ providers: { nebius: { apiKey: "nb-test-key" } } }));
     } finally {
@@ -199,15 +150,14 @@ describe("nebius request shape", () => {
   });
 
   it("sends a schema-bearing response_format as json_schema, not json_object", async () => {
-    // The home briefing sends a schema on every generation. Without
-    // `supportsStructuredOutputs` the adapter drops it to `{type:"json_object"}`
-    // — no schema, no strict decoding.
+    // Without `supportsStructuredOutputs` the adapter drops a schema to
+    // `{type:"json_object"}` — no schema, no strict decoding.
     const body = await captureNebiusRequest((resolve) =>
       resolve("nebius:Qwen/Qwen3-32B").doStream({
         prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
         responseFormat: {
           type: "json",
-          name: "briefing",
+          name: "summary",
           schema: { type: "object", properties: { lede: { type: "string" } } },
         },
       }),
@@ -225,5 +175,60 @@ describe("nebius request shape", () => {
       }),
     );
     expect(body.reasoning_effort).toBe("low");
+  });
+});
+
+describe("anthropic request shape", () => {
+  async function captureAnthropicRequest(
+    providerOptions?: SharedV4ProviderOptions,
+  ): Promise<Record<string, unknown>> {
+    const realFetch = globalThis.fetch;
+    let body: Record<string, unknown> = {};
+    globalThis.fetch = fakeFetch(async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return new Response('event: message_stop\ndata: {"type":"message_stop"}\n\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    try {
+      await buildModelResolver({ providers: { anthropic: { apiKey: "sk-test" } } })(
+        "anthropic:claude-sonnet-4-6",
+      ).doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        tools: [
+          {
+            type: "function",
+            name: "update_contact",
+            inputSchema: { type: "object", properties: { email: { type: "string" } } },
+          },
+        ],
+        ...(providerOptions ? { providerOptions } : {}),
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    return body;
+  }
+
+  it("sends tools without eager input streaming, so the API validates their arguments", async () => {
+    // Eager streaming skips the API's JSON validation of tool arguments; a
+    // malformed string then fails the call as "arguments were not valid JSON".
+    const body = await captureAnthropicRequest();
+    const tools = body.tools as Array<Record<string, unknown>>;
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.eager_input_streaming).toBeUndefined();
+  });
+
+  it("keeps the call's own anthropic options alongside the default", async () => {
+    // The engine sends thinking under the same `anthropic` key; the default
+    // must merge with it, not replace it.
+    const body = await captureAnthropicRequest({
+      anthropic: { thinking: { type: "enabled", budgetTokens: 2048 } },
+    });
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
+    expect(
+      (body.tools as Array<Record<string, unknown>>)[0]?.eager_input_streaming,
+    ).toBeUndefined();
   });
 });

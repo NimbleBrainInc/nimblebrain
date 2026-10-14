@@ -1,16 +1,23 @@
-import { SpanStatusCode } from "@opentelemetry/api";
 import { beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import type { LanguageModelV4, LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { SpanStatusCode } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-import { log } from "../../src/observability/log.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import { callModel, NO_FINISH_PART_RAW } from "../../src/model/stream.ts";
 import {
   currentTraceId,
   injectTraceparent,
   requestIdentityAttrs,
   withSpan,
 } from "../../src/observability/index.ts";
-import { type RequestContext, runWithRequestContext } from "../../src/runtime/request-context.ts";
+import { log } from "../../src/observability/log.ts";
+import {
+  getRequestContext,
+  type RequestContext,
+  runDetached,
+  runWithRequestContext,
+} from "../../src/runtime/request-context.ts";
 
 const exporter = new InMemorySpanExporter();
 
@@ -40,7 +47,7 @@ function identityCtx(): RequestContext {
   };
   return {
     identity,
-    workspaceId: "ws_abc123",
+    workspaceId: "ws_000d299235755008",
     conversationId: "conv_9",
   };
 }
@@ -95,6 +102,65 @@ describe("withSpan", () => {
   });
 });
 
+describe("llm.call span", () => {
+  function finishOnlyModel(finish: LanguageModelV4StreamPart | null): LanguageModelV4 {
+    return {
+      specificationVersion: "v4",
+      provider: "test",
+      modelId: "test-1",
+      supportedUrls: {},
+      async doGenerate() {
+        throw new Error("doGenerate not used");
+      },
+      async doStream() {
+        return {
+          stream: new ReadableStream<LanguageModelV4StreamPart>({
+            start(controller) {
+              controller.enqueue({ type: "stream-start", warnings: [] });
+              if (finish) controller.enqueue(finish);
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+  }
+  const usage = {
+    inputTokens: { total: 1, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+    outputTokens: { total: 1, text: undefined, reasoning: undefined },
+  };
+  const prompt = { prompt: [] };
+
+  it("stamps the provider's raw finish reason next to the unified one", async () => {
+    await callModel(
+      finishOnlyModel({
+        type: "finish",
+        usage,
+        finishReason: { unified: "other", raw: "compaction" },
+      }),
+      prompt,
+      () => {},
+    );
+    const attrs = spanNamed("llm.call").attributes;
+    expect(attrs["llm.finish_reason"]).toBe("other");
+    expect(attrs["llm.finish_reason_raw"]).toBe("compaction");
+  });
+
+  it("stamps the no-finish-part marker when the stream ends without a finish", async () => {
+    await callModel(finishOnlyModel(null), prompt, () => {});
+    expect(spanNamed("llm.call").attributes["llm.finish_reason_raw"]).toBe(NO_FINISH_PART_RAW);
+  });
+
+  it("omits the raw attribute when the provider reports none", async () => {
+    await callModel(
+      finishOnlyModel({ type: "finish", usage, finishReason: { unified: "stop", raw: undefined } }),
+      prompt,
+      () => {},
+    );
+    expect(spanNamed("llm.call").attributes["llm.finish_reason_raw"]).toBeUndefined();
+  });
+});
+
 describe("currentTraceId / injectTraceparent", () => {
   it("has no trace id and injects no traceparent outside a span", () => {
     expect(currentTraceId()).toBeUndefined();
@@ -111,6 +177,40 @@ describe("currentTraceId / injectTraceparent", () => {
   });
 });
 
+describe("runDetached", () => {
+  // A timer captures the context it is created in, so what matters is the
+  // context each timer's callback sees, not the context at the call site.
+  function fireLater<T>(read: () => T): Promise<T> {
+    return new Promise((resolve) => setTimeout(() => resolve(read()), 0));
+  }
+  const read = () => ({ traceId: currentTraceId(), ctx: getRequestContext() });
+
+  it("arms a timer that fires outside the caller's trace and request", async () => {
+    await runWithRequestContext(identityCtx(), () =>
+      withSpan("agent.turn", {}, async () => {
+        const callerTrace = currentTraceId();
+        const inherited = await fireLater(read);
+        const detached = await runDetached(() => fireLater(read));
+
+        expect(inherited.traceId).toBe(callerTrace);
+        expect(inherited.ctx?.workspaceId).toBe("ws_000d299235755008");
+        expect(detached.traceId).toBeUndefined();
+        expect(detached.ctx).toBeUndefined();
+      }),
+    );
+  });
+
+  it("opens a new root trace for a span started inside it", async () => {
+    await withSpan("agent.turn", {}, async () => {
+      await runDetached(() => withSpan("llm.call", {}, async () => {}));
+    });
+    const outer = spanNamed("agent.turn");
+    const detached = spanNamed("llm.call");
+    expect(detached.spanContext().traceId).not.toBe(outer.spanContext().traceId);
+    expect(detached.parentSpanContext).toBeUndefined();
+  });
+});
+
 describe("requestIdentityAttrs — trust + PII boundary", () => {
   it("returns nothing outside a request context", () => {
     expect(requestIdentityAttrs()).toEqual({});
@@ -120,7 +220,7 @@ describe("requestIdentityAttrs — trust + PII boundary", () => {
     runWithRequestContext(identityCtx(), () => {
       const attrs = requestIdentityAttrs();
       expect(attrs.user_id).toBe("user_123");
-      expect(attrs.workspace_id).toBe("ws_abc123");
+      expect(attrs.workspace_id).toBe("ws_000d299235755008");
       expect(attrs.conversation_id).toBe("conv_9");
       const serialized = JSON.stringify(attrs);
       expect(serialized).not.toContain(PII_EMAIL);
@@ -132,7 +232,12 @@ describe("requestIdentityAttrs — trust + PII boundary", () => {
     // A run has no conversation. Emitting its run id as `conversation_id` put a
     // value in that attribute that no conversation query can join against.
     runWithRequestContext(
-      { identity: null, workspaceId: "ws_abc123", runId: "run_a8f15601-0dd", unattended: true },
+      {
+        identity: null,
+        workspaceId: "ws_000d299235755008",
+        runId: "run_a8f15601-0dd",
+        unattended: true,
+      },
       () => {
         const attrs = requestIdentityAttrs();
         expect(attrs.run_id).toBe("run_a8f15601-0dd");
@@ -165,11 +270,10 @@ describe("structured logger (JSON mode)", () => {
     process.env.NB_LOG_FORMAT = "json";
     const lines: string[] = [];
     const orig = process.stderr.write.bind(process.stderr);
-    // @ts-expect-error narrow override for capture
-    process.stderr.write = (chunk: string) => {
+    process.stderr.write = ((chunk: string) => {
       lines.push(String(chunk));
       return true;
-    };
+    }) as typeof process.stderr.write;
     try {
       // Inside a span so the line carries the active trace id.
       await runWithRequestContext(identityCtx(), () =>
@@ -179,14 +283,14 @@ describe("structured logger (JSON mode)", () => {
       );
     } finally {
       process.stderr.write = orig;
-      process.env.NB_LOG_FORMAT = undefined;
+      delete process.env.NB_LOG_FORMAT;
     }
     const rec = JSON.parse(lines.join("").trim());
     expect(rec.level).toBe("info");
     expect(rec.service).toBe("nimblebrain-runtime");
     expect(rec.message).toBe("turn.start");
     expect(rec.user_id).toBe("user_123");
-    expect(rec.workspace_id).toBe("ws_abc123");
+    expect(rec.workspace_id).toBe("ws_000d299235755008");
     expect(rec.iteration).toBe(1);
     // Trace correlation uses the OTel-standard `trace_id` field.
     expect(rec.trace_id).toMatch(/^[0-9a-f]{32}$/);
@@ -202,11 +306,10 @@ describe("structured logger (JSON mode)", () => {
     process.env.NB_LOG_FORMAT = "json";
     const lines: string[] = [];
     const orig = process.stderr.write.bind(process.stderr);
-    // @ts-expect-error narrow override for capture
-    process.stderr.write = (chunk: string) => {
+    process.stderr.write = ((chunk: string) => {
       lines.push(String(chunk));
       return true;
-    };
+    }) as typeof process.stderr.write;
     try {
       log.info("connector.auth", {
         token: "sk-bare",
@@ -215,7 +318,7 @@ describe("structured logger (JSON mode)", () => {
         api_key: "sk-supersecret",
         authorization: "Bearer abc.def",
         nested: { password: "hunter2", safe: "ok" },
-        workspace_id: "ws_keep",
+        workspace_id: "ws_0041e7a597d6c5c6",
         // LLM usage telemetry — MUST survive (contains the substring "token").
         inputTokens: 1234,
         outputTokens: 56,
@@ -224,7 +327,7 @@ describe("structured logger (JSON mode)", () => {
       });
     } finally {
       process.stderr.write = orig;
-      process.env.NB_LOG_FORMAT = undefined;
+      delete process.env.NB_LOG_FORMAT;
     }
     const rec = JSON.parse(lines.join("").trim());
     expect(rec.token).toBe("[redacted]");
@@ -234,7 +337,7 @@ describe("structured logger (JSON mode)", () => {
     expect(rec.authorization).toBe("[redacted]");
     expect(rec.nested.password).toBe("[redacted]");
     expect(rec.nested.safe).toBe("ok");
-    expect(rec.workspace_id).toBe("ws_keep"); // non-secret key untouched
+    expect(rec.workspace_id).toBe("ws_0041e7a597d6c5c6"); // non-secret key untouched
     // Regression guard: LLM usage telemetry is NOT redacted by a `token`
     // substring rule. The next person who "simplifies" the regex trips this.
     expect(rec.inputTokens).toBe(1234);
@@ -254,19 +357,18 @@ describe("structured logger (JSON mode)", () => {
     process.env.NB_LOG_LEVEL = "warn";
     const lines: string[] = [];
     const orig = process.stderr.write.bind(process.stderr);
-    // @ts-expect-error narrow override for capture
-    process.stderr.write = (chunk: string) => {
+    process.stderr.write = ((chunk: string) => {
       lines.push(String(chunk));
       return true;
-    };
+    }) as typeof process.stderr.write;
     try {
       log.info("should.drop");
       log.warn("should.keep");
       log.error("should.keep.too");
     } finally {
       process.stderr.write = orig;
-      process.env.NB_LOG_LEVEL = undefined;
-      process.env.NB_LOG_FORMAT = undefined;
+      delete process.env.NB_LOG_LEVEL;
+      delete process.env.NB_LOG_FORMAT;
     }
     const out = lines.join("");
     expect(out).not.toContain("should.drop");
@@ -276,16 +378,38 @@ describe("structured logger (JSON mode)", () => {
 });
 
 describe("OTel dependency coherence", () => {
+  // The stable SDK packages must share one version, and the exporter must be
+  // the experimental 0.x release built against it. Bump them together or
+  // export serialization fails (instrumentationLibrary vs instrumentationScope).
+  // The exporter's own manifest names the stable release it was built for, so
+  // the pins are checked against it rather than against literal versions.
   it("pins the stable + experimental packages to one release train", async () => {
-    const pkg = await Bun.file(`${import.meta.dir}/../../package.json`).json();
+    const root = `${import.meta.dir}/../..`;
+    const pkg = await Bun.file(`${root}/package.json`).json();
     const d = pkg.dependencies as Record<string, string>;
-    expect(d["@opentelemetry/api"]).toBe("1.9.1");
-    expect(d["@opentelemetry/exporter-trace-otlp-http"]).toBe("0.219.0");
-    // The stable SDK packages must share one version; the exporter is the
-    // matching 0.2xx experimental line. Bump them together or export
-    // serialization fails (instrumentationLibrary vs instrumentationScope).
-    expect(d["@opentelemetry/sdk-trace-base"]).toBe("2.8.0");
-    expect(d["@opentelemetry/sdk-trace-node"]).toBe(d["@opentelemetry/sdk-trace-base"]);
-    expect(d["@opentelemetry/resources"]).toBe(d["@opentelemetry/sdk-trace-base"]);
+    const stable = d["@opentelemetry/sdk-trace-base"];
+    expect(d["@opentelemetry/sdk-trace-node"]).toBe(stable);
+    expect(d["@opentelemetry/resources"]).toBe(stable);
+
+    const exporter = await Bun.file(
+      `${root}/node_modules/@opentelemetry/exporter-trace-otlp-http/package.json`,
+    ).json();
+    expect(exporter.version).toBe(d["@opentelemetry/exporter-trace-otlp-http"]);
+    const wanted = Object.entries(exporter.dependencies as Record<string, string>).filter(
+      ([name]) => name.startsWith("@opentelemetry/"),
+    );
+    expect(wanted.length).toBeGreaterThan(0);
+    for (const [name, version] of wanted) {
+      // 0.x packages ride the exporter's experimental line; the rest are stable.
+      expect(`${name}@${version}`).toBe(
+        `${name}@${version.startsWith("0.") ? exporter.version : stable}`,
+      );
+    }
+    expect(
+      Bun.semver.satisfies(
+        d["@opentelemetry/api"],
+        exporter.peerDependencies["@opentelemetry/api"],
+      ),
+    ).toBe(true);
   });
 });

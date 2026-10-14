@@ -1,16 +1,15 @@
 /**
  * Unit tests for `src/tools/namespace.ts`.
  *
- * Pins the primitive's contract for Stage 2 of the cross-workspace
- * refactor. Failure modes covered (in order of likelihood we'd silently
- * regress):
+ * Pins the primitive's contract. Failure modes covered (in order of
+ * likelihood we'd silently regress):
  *
  *  - `parseNamespacedToolName` silently falling back to "current
- *    workspace" on a non-namespaced input (the Stage 1 lesson 3
- *    failure mode).
+ *    workspace" on a non-namespaced input (a silent default instead
+ *    of a loud failure).
  *  - `namespacedToolName` accepting a wsId carrying path traversal
- *    or whitespace — the Stage 2 invariant lift that motivates the
- *    `WORKSPACE_ID_RE` import.
+ *    or whitespace — the reason the primitive imports
+ *    `WORKSPACE_ID_RE`.
  *  - Embedded `-` in tool name being mis-split (we take the FIRST `-`
  *    as the separator; this contract is asserted explicitly).
  *  - Round-trip property: anything `namespacedToolName` produces must
@@ -20,22 +19,26 @@
 
 import { describe, expect, test } from "bun:test";
 import {
-  InvalidNamespacedToolNameInput,
-  namespacedToolName,
-} from "../../helpers/namespaced-tool-name.ts";
-import {
   parseNamespacedSourceName,
   parseNamespacedToolName,
   UnknownNamespacedToolName,
 } from "../../../src/tools/namespace.ts";
+import {
+  InvalidNamespacedToolNameInput,
+  namespacedToolName,
+} from "../../helpers/namespaced-tool-name.ts";
 
 describe("namespacedToolName — construction", () => {
   test("builds `ws_<id>-<name>` for valid inputs", () => {
-    expect(namespacedToolName("ws_helix", "crm__search")).toBe("ws_helix-crm__search");
-    expect(namespacedToolName("ws_user_alice", "gmail__send")).toBe("ws_user_alice-gmail__send");
+    expect(namespacedToolName("ws_003eba8844413cd9", "crm__search")).toBe(
+      "ws_003eba8844413cd9-crm__search",
+    );
+    expect(namespacedToolName("ws_007baec42fde4587", "gmail__send")).toBe(
+      "ws_007baec42fde4587-gmail__send",
+    );
   });
 
-  test("throws on empty wsId — fail-loud, no silent default (Stage 1 lesson 3)", () => {
+  test("throws on empty wsId — fail-loud, no silent default", () => {
     expect(() => namespacedToolName("", "foo")).toThrow(InvalidNamespacedToolNameInput);
   });
 
@@ -59,7 +62,9 @@ describe("namespacedToolName — construction", () => {
   });
 
   test("throws on empty tool name", () => {
-    expect(() => namespacedToolName("ws_helix", "")).toThrow(InvalidNamespacedToolNameInput);
+    expect(() => namespacedToolName("ws_003eba8844413cd9", "")).toThrow(
+      InvalidNamespacedToolNameInput,
+    );
   });
 
   test("error carries structured reason and input fields", () => {
@@ -78,8 +83,8 @@ describe("namespacedToolName — construction", () => {
 
 describe("parseNamespacedToolName — parsing", () => {
   test("parses a valid workspace-scoped name", () => {
-    expect(parseNamespacedToolName("ws_helix-crm__search")).toEqual({
-      scope: { kind: "workspace", wsId: "ws_helix" },
+    expect(parseNamespacedToolName("ws_003eba8844413cd9-crm__search")).toEqual({
+      scope: { kind: "workspace", wsId: "ws_003eba8844413cd9" },
       toolName: "crm__search",
     });
   });
@@ -89,8 +94,8 @@ describe("parseNamespacedToolName — parsing", () => {
     // `crm-tool__search`). Workspace ids can't contain `-` per
     // WORKSPACE_ID_PATTERN, so the first `-` is unambiguously the
     // scope/tool boundary.
-    expect(parseNamespacedToolName("ws_helix-foo-bar")).toEqual({
-      scope: { kind: "workspace", wsId: "ws_helix" },
+    expect(parseNamespacedToolName("ws_003eba8844413cd9-foo-bar")).toEqual({
+      scope: { kind: "workspace", wsId: "ws_003eba8844413cd9" },
       toolName: "foo-bar",
     });
   });
@@ -99,8 +104,10 @@ describe("parseNamespacedToolName — parsing", () => {
     expect(() => parseNamespacedToolName("")).toThrow(UnknownNamespacedToolName);
   });
 
-  test("throws on empty tool name after a workspace prefix (`ws_helix-`)", () => {
-    expect(() => parseNamespacedToolName("ws_helix-")).toThrow(UnknownNamespacedToolName);
+  test("throws on empty tool name after a workspace prefix (`ws_003eba8844413cd9-`)", () => {
+    expect(() => parseNamespacedToolName("ws_003eba8844413cd9-")).toThrow(
+      UnknownNamespacedToolName,
+    );
   });
 
   test("throws on a malformed ws_ prefix — a workspace attempt, not a bare name", () => {
@@ -127,15 +134,14 @@ describe("round-trip property", () => {
     // produce. Produced strings must also be LLM-provider compatible
     // (`[a-zA-Z0-9_-]{1,128}`) — that's why `-` is the separator.
     const cases: Array<{ wsId: string; toolName: string }> = [
-      { wsId: "ws_helix", toolName: "crm__search" },
-      { wsId: "ws_user_alice", toolName: "gmail__send" },
-      { wsId: "ws_a", toolName: "x" },
-      { wsId: "ws_ABC_123", toolName: "search_records" },
-      { wsId: "ws_workspace_with_underscores", toolName: "tool_name" },
+      { wsId: "ws_003eba8844413cd9", toolName: "crm__search" },
+      { wsId: "ws_007baec42fde4587", toolName: "gmail__send" },
+      { wsId: "ws_00079598e311c160", toolName: "x" },
+      { wsId: "ws_3f9a1c7e0b2d4856", toolName: "search_records" },
       // First-`-` semantics: a tool name with embedded `-` must
       // round-trip through the primitive without being re-split.
-      { wsId: "ws_helix", toolName: "foo-bar" },
-      { wsId: "ws_helix", toolName: "a-b-c-d" },
+      { wsId: "ws_003eba8844413cd9", toolName: "foo-bar" },
+      { wsId: "ws_003eba8844413cd9", toolName: "a-b-c-d" },
     ];
     // Shape regex matches the canonical form. Tool names can contain
     // any of `[a-zA-Z0-9_-]` (LLM-compatible chars).
@@ -156,9 +162,9 @@ describe("round-trip property", () => {
     // validator. Regressing this would block tool registration with
     // OpenAI/Anthropic/etc. at the API boundary.
     const cases: Array<[string, string]> = [
-      ["ws_helix", "crm__search"],
-      ["ws_user_alice", "gmail__send"],
-      ["ws_a", "x"],
+      ["ws_003eba8844413cd9", "crm__search"],
+      ["ws_007baec42fde4587", "gmail__send"],
+      ["ws_00079598e311c160", "x"],
     ];
     const PROVIDER_RE = /^[a-zA-Z0-9_-]{1,128}$/;
     for (const [wsId, toolName] of cases) {
@@ -206,8 +212,8 @@ describe("identity scope (bare names)", () => {
   });
 
   test("a workspace prefix still wins over identity — ws_ takes the route", () => {
-    expect(parseNamespacedToolName("ws_helix-nb__search")).toEqual({
-      scope: { kind: "workspace", wsId: "ws_helix" },
+    expect(parseNamespacedToolName("ws_003eba8844413cd9-nb__search")).toEqual({
+      scope: { kind: "workspace", wsId: "ws_003eba8844413cd9" },
       toolName: "nb__search",
     });
   });
@@ -218,15 +224,15 @@ describe("parseNamespacedSourceName — server (source) names", () => {
     // A cross-workspace tool `ws_<id>-synapse-collateral__preview` surfaces a
     // server `ws_<id>-synapse-collateral` (no `__tool`). The bare source is
     // what the registry is keyed on.
-    expect(parseNamespacedSourceName("ws_nimblebrain_shared-synapse-collateral")).toEqual({
-      wsId: "ws_nimblebrain_shared",
+    expect(parseNamespacedSourceName("ws_004eae9586108d8c-synapse-collateral")).toEqual({
+      wsId: "ws_004eae9586108d8c",
       sourceName: "synapse-collateral",
     });
   });
 
   test("keeps hyphenated source names intact (first hyphen is the ws boundary)", () => {
-    expect(parseNamespacedSourceName("ws_helix-crm-plus")).toEqual({
-      wsId: "ws_helix",
+    expect(parseNamespacedSourceName("ws_003eba8844413cd9-crm-plus")).toEqual({
+      wsId: "ws_003eba8844413cd9",
       sourceName: "crm-plus",
     });
   });

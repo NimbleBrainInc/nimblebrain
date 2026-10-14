@@ -24,8 +24,7 @@
  * connection is live fails that request naming the key rather than 401-ing
  * opaquely.
  */
-
-import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { FetchLike } from "@modelcontextprotocol/server";
 import { injectTraceparent } from "../observability/index.ts";
 import {
   registerCredentialProvider,

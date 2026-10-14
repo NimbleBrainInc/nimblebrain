@@ -48,7 +48,7 @@ import {
  *
  *  - NON-ADVANCING BUDGET: a per-tool count of non-advancing results in the
  *    run, tripping at `maxNonAdvancingCalls` (default 6) however much the
- *    input varied. This bounds the flail the streak no longer catches: room to
+ *    input varied. This bounds the flail the streak does not catch: room to
  *    ask a handful of genuinely different questions, and a ceiling once the
  *    answer is consistently nothing. Any advancing result clears it — a tool
  *    that found something is not the tool this guard is about.
@@ -112,12 +112,34 @@ import {
  * verdict and decides what to surface. While a tool is tripped the
  * engine drops it from `modelTools`, rebuilding that set from
  * `snapshot()` every iteration — so a recovery restores it on the next
- * turn with no further coordination. Note the drop makes the tool
- * UNADVERTISED, not unreachable: dispatch reads `toolSchemaMap` only to
- * validate input, and a miss skips validation and still executes. A
- * model that names a dropped tool anyway therefore still runs it, which
- * is the path by which a tripped tool can reach this code at all. The
- * directive below deliberately does not advertise that path.
+ * turn with no further coordination.
+ *
+ * A TRIP WITHDRAWS THE OFFER, NOT THE PERMISSION. The trip is a loop guard,
+ * not an access decision, so dispatch does not refuse a tripped tool: a
+ * model that names one from context gets the same visibility check, input
+ * validation, and `beforeToolCall` gate as any call, and a call that passes
+ * them runs. That call is the tool's probation, and the only route to RECOVERY
+ * above: an advancing success clears the trip, and anything else is replaced
+ * at once (no fresh streak) by the probation directive, which quotes the
+ * call's own output.
+ * Refusing at dispatch would make every trip permanent for the run, and the
+ * trip evidence is often about the caller. Neither directive invites a retry
+ * — see `synthReplacement`.
+ *
+ * One call is refused: the exact call a SUCCESS trip was made of. That trip
+ * means the same input returned the same success N times, so running that
+ * input again repeats its effect, a second write for a tool that writes. The
+ * refusal costs recovery at that input: a tool whose answer for one input
+ * changes over time (a status check that read "running" N times and would
+ * now read "done") cannot recover through it, and stays tripped for the run
+ * unless a different input succeeds. That is the trade taken: a repeated
+ * write cannot be undone, and a check the supervisor had already judged a
+ * loop is the cheaper thing to lose. `repeatRefusal` answers for the engine's
+ * gate, comparing inputs with the same canonical encoding the fingerprint
+ * uses. An ERROR trip refuses nothing, because its fingerprint ignores input
+ * and a corrected call is how it recovers; a non-advancing trip refuses
+ * nothing either, since the tool itself reported the call changed nothing.
+ * Any other input to the tool still runs.
  */
 
 export interface SupervisorConfig {
@@ -164,6 +186,12 @@ export interface RunSupervisor {
   observe(call: ToolCall, result: ToolResult): SupervisorVerdict;
   /** Telemetry snapshot. */
   snapshot(): SupervisorSnapshot;
+  /**
+   * The result to return INSTEAD of running `call`, when `call` repeats the
+   * exact call its tool is tripped on (a SUCCESS trip, same canonical input);
+   * otherwise null and the call proceeds. Read-only: it records nothing.
+   */
+  repeatRefusal(call: ToolCall): ToolResult | null;
 }
 
 interface ToolState {
@@ -185,6 +213,10 @@ interface ToolState {
    *  the model a number its own history contradicts. Null whenever `tripped`
    *  is false. */
   trippedRepeats: number | null;
+  /** Canonical input of the call a SUCCESS trip was made of: the one call
+   *  `repeatRefusal` refuses. Null for an error or non-advancing trip, and
+   *  whenever `tripped` is false. */
+  trippedInput: string | null;
 }
 
 const DEFAULT_MAX_REPEATS = 3;
@@ -266,6 +298,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
         tripped: false,
         trippedContent: null,
         trippedRepeats: null,
+        trippedInput: null,
       };
       states.set(toolName, s);
     }
@@ -357,6 +390,37 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     };
   }
 
+  /**
+   * The replacement for a call to a tool that was ALREADY tripped (its
+   * probation — see the file header). Separate from `synthReplacement` because
+   * that one reports the trip itself. The call may have run or been stopped
+   * before reaching the tool (rejected input, a throw, a dropped transport),
+   * so the text claims neither: it quotes the call's own output, and `isError`
+   * follows that result. A write that landed with the same text the tool
+   * tripped on must not be reported as a refusal, or the model acts on a false
+   * picture of what now exists. The text is a record of this call, since it is
+   * replayed in later runs where the tool may be offered again. Same wording
+   * rules as the trip directive: scoped to this tool, and no invitation to
+   * call it again.
+   */
+  function probationReplacement(
+    toolName: string,
+    result: ToolResult,
+    originalText: string,
+    repeats: number,
+  ): ToolResult {
+    const directive =
+      `[NB supervisor] This call to \`${toolName}\` made no progress, so the tool was still withheld ` +
+      `after it (it had made no progress ${repeats} times in a row earlier in this run).\n\n` +
+      `Underlying output (this call):\n${originalText}\n\n` +
+      `Other tools remain available. Consider an alternative approach or summarize current findings ` +
+      `if no path forward exists.`;
+    return {
+      content: textContent(directive),
+      isError: result.isError === true,
+    };
+  }
+
   function observe(call: ToolCall, result: ToolResult): SupervisorVerdict {
     const state = getState(call.name);
     state.totalCalls += 1;
@@ -377,20 +441,21 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
         state.tripped = false;
         state.trippedContent = null;
         state.trippedRepeats = null;
+        state.trippedInput = null;
         state.consecutiveRepeats = 1;
         state.nonAdvancingCalls = 0;
         state.lastFingerprint = fingerprint(call, result);
         return { type: "pass" };
       }
-      // Still stuck: every subsequent call keeps getting the synthetic
-      // directive. The engine drops tripped tools from modelTools, so the model
-      // is no longer offered this one — but dispatch does not check that list,
-      // so a model that names it anyway still reaches here.
+      // Still stuck: dispatch does not refuse a tripped tool (see the file
+      // header), and this call did not advance, whether it ran or was stopped
+      // before reaching the tool. It gets the probation directive and the tool
+      // stays withheld.
       const originalText = extractTextForModel(result.content).trim();
       const repeats = state.trippedRepeats ?? state.consecutiveRepeats;
       return {
         type: "synth",
-        replacement: synthReplacement(call.name, originalText, repeats),
+        replacement: probationReplacement(call.name, result, originalText, repeats),
         trippedTool: call.name,
         consecutiveRepeats: repeats,
       };
@@ -421,6 +486,10 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     state.tripped = true;
     state.trippedContent = contentHash(result);
     state.trippedRepeats = repeats;
+    // An advancing success can only trip the identical-call streak (it clears
+    // the non-advancing budget), so this is the input every call in the streak
+    // carried.
+    state.trippedInput = isAdvancingSuccess(result) ? canonicalJson(call.input) : null;
     const originalText = extractTextForModel(result.content).trim();
     return {
       type: "synth",
@@ -428,6 +497,23 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       trippedTool: call.name,
       consecutiveRepeats: repeats,
     };
+  }
+
+  function repeatRefusal(call: ToolCall): ToolResult | null {
+    const state = states.get(call.name);
+    if (!state?.tripped || state.trippedInput === null) return null;
+    if (canonicalJson(call.input) !== state.trippedInput) return null;
+    // Same wording rules as the other directives: a record of this call,
+    // scoped to this tool. It states what is still allowed because that is
+    // what the refusal is narrow to, not as an invitation to call again.
+    const directive =
+      `[NB supervisor] This call to \`${call.name}\` was not run. The identical call (same tool, ` +
+      `same input) already ran and returned the same result ${state.trippedRepeats} times in a ` +
+      `row in this run, so it is not run again in this run, even if its answer could have ` +
+      `changed since. A call with different input is not refused.\n\n` +
+      `Other tools remain available. Consider an alternative approach or summarize current findings ` +
+      `if no path forward exists.`;
+    return { content: textContent(directive), isError: true };
   }
 
   /**
@@ -475,6 +561,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
   return {
     observe,
+    repeatRefusal,
     snapshot: () => ({
       trippedTools: [...states.entries()].filter(([, s]) => s.tripped).map(([name]) => name),
       callCounts: Object.fromEntries(

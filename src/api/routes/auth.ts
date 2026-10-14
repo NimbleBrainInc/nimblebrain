@@ -20,25 +20,22 @@ export function authRoutes(ctx: AppContext) {
   // unauthenticated-by-design OAuth callbacks. Same footgun called out in
   // mcp-auth.ts and conversation-events.ts.
   app.get("/v1/auth/authorize", (_c) => {
-    if (!ctx.provider) return apiError(400, "not_configured", "Auth provider not configured");
     return handleOidcAuthorize(ctx.provider);
   });
 
   app.get("/v1/auth/callback", (c) => {
-    if (!ctx.provider) return apiError(400, "not_configured", "Auth provider not configured");
     return handleOidcCallback(c.req.raw, ctx.provider, ctx.secureCookies, ctx.appOrigin);
   });
 
   app.post("/v1/auth/refresh", limit, (c) => {
-    if (!ctx.provider) return apiError(400, "not_configured", "Auth provider not configured");
     return handleOidcRefresh(c.req.raw, ctx.provider, ctx.secureCookies);
   });
 
-  // Logout needs no identity: clearing the session cookies is the whole act.
-  // The case it must handle is a lapsed access token, where `nb_refresh` is the
-  // only live credential left in the browser. Requiring JSON forces a CORS
-  // preflight, which a foreign origin fails, so a cross-site form cannot sign
-  // the user out.
+  // Logout needs no valid identity: it must work with a lapsed access token,
+  // where `nb_refresh` is the only live credential left in the browser. It ends
+  // the identity provider's session too, or the next sign-in resumes it.
+  // Requiring JSON forces a CORS preflight, which a foreign origin fails, so a
+  // cross-site form cannot sign the user out.
   app.post("/v1/auth/logout", limit, (c) => {
     const contentType = c.req.header("content-type")?.toLowerCase() ?? "";
     if (!contentType.startsWith("application/json")) {
@@ -48,7 +45,7 @@ export function authRoutes(ctx: AppContext) {
         "Logout requires Content-Type: application/json",
       );
     }
-    return handleLogout();
+    return handleLogout(c.req.raw, ctx.provider);
   });
 
   return app;

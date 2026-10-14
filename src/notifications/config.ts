@@ -141,8 +141,8 @@ export function sourceMaxLevel(
 export interface RouteValidationContext {
   /** Tool names installed in this workspace, bare `<connector>__<tool>`. */
   toolNames: ReadonlySet<string>;
-  /** Automation ids the writing identity owns in this workspace. */
-  automationIds: ReadonlySet<string>;
+  /** Task ids the writing identity owns in this workspace. */
+  taskIds: ReadonlySet<string>;
   /** The identity stamped as every route's `createdBy`. */
   createdBy: string;
 }
@@ -152,7 +152,7 @@ export interface RouteValidationContext {
  *
  * The schema has already enforced shape; what is left is the part a schema
  * cannot express — that a named tool is one this workspace actually installed,
- * that a named automation exists, that a template names a placeholder the
+ * that a named task exists, that a template names a placeholder the
  * runtime resolves, and that two routes do not share an id.
  *
  * `match.source` is deliberately NOT checked against the installed set. It is a
@@ -261,10 +261,10 @@ function checkTarget(
   ctx: RouteValidationContext,
 ): string | null {
   if (target.kind === "agent") {
-    return ctx.automationIds.has(target.automation)
+    return ctx.taskIds.has(target.task)
       ? null
-      : `no automation "${target.automation}" in this workspace. A route wakes one of your ` +
-          "own automations, and it has to exist when the route is written.";
+      : `no task "${target.task}" in this workspace. A route wakes one of your ` +
+          "own tasks, and it has to exist when the route is written.";
   }
 
   if (!ctx.toolNames.has(target.tool)) {

@@ -1,9 +1,11 @@
 import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { callTool } from "../../api/client";
+import { Link, useNavigate } from "react-router-dom";
+import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
+import { useNotice } from "../../components/notices";
 import { Button } from "../../components/ui/button";
+import { ConfirmDialog } from "../../components/ui/confirm-dialog";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import {
@@ -14,18 +16,25 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
+import { Tooltip } from "../../components/ui/tooltip";
 import { useSession } from "../../context/SessionContext";
+import { useWorkspaceContext } from "../../context/WorkspaceContext";
+import { MAX_WORKSPACE_NAME_LENGTH } from "../../lib/workspace-name";
+import { toSlug } from "../../lib/workspace-slug";
 import { EmptyState, InlineError, SettingsListPage } from "./components";
 
 interface Workspace {
   id: string;
   name: string;
   memberCount: number;
-  connectors?: Array<{ name?: string; path?: string }>;
+  connectors?: Array<{ serverName: string; name: string }>;
   createdAt?: string;
 }
 
-const ADMIN_ROLES = new Set(["admin", "owner"]);
+/** The org-admin page for one workspace. */
+function workspaceDetailPath(workspaceId: string): string {
+  return `/org/workspaces/${toSlug(workspaceId)}`;
+}
 
 function formatDate(iso?: string): string {
   if (!iso) return "—";
@@ -57,12 +66,13 @@ function CreateWorkspaceForm({
   return (
     <>
       <div className="space-y-1.5 max-w-sm">
-        <Label htmlFor="create-ws-name">Workspace Name</Label>
+        <Label htmlFor="create-ws-name">Name</Label>
         <Input
           id="create-ws-name"
           value={name}
+          maxLength={MAX_WORKSPACE_NAME_LENGTH}
           onChange={(e) => onNameChange(e.target.value)}
-          placeholder="My Workspace"
+          placeholder="e.g. Sales team"
           onKeyDown={(e) => {
             if (e.key === "Enter" && name.trim()) onSubmit();
           }}
@@ -70,7 +80,7 @@ function CreateWorkspaceForm({
       </div>
       {error ? <InlineError message={error} /> : null}
       <Button size="sm" onClick={onSubmit} disabled={creating || !name.trim()}>
-        {creating ? "Creating..." : "Create Workspace"}
+        {creating ? "Creating..." : "Create workspace"}
       </Button>
     </>
   );
@@ -111,41 +121,56 @@ function WorkspacesRetry({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-/** Single workspace table row; opens on click and (for admins) exposes a delete action. */
+/**
+ * Single workspace table row; (for admins) exposes a delete action.
+ *
+ * The name is a link, so the row is reachable and opens from the keyboard; the
+ * row's click is a larger target for the pointer, and the link's own click
+ * stops there so the page is not navigated twice.
+ */
 function WorkspaceRow({
   workspace,
+  href,
   isAdmin,
-  isDeleting,
   onOpen,
   onDelete,
 }: {
   workspace: Workspace;
+  href: string;
   isAdmin: boolean;
-  isDeleting: boolean;
   onOpen: () => void;
   onDelete: () => void;
 }) {
   return (
     <TableRow className="cursor-pointer" onClick={onOpen}>
-      <TableCell className="font-medium">{workspace.name}</TableCell>
+      <TableCell className="font-medium">
+        <Link
+          to={href}
+          onClick={(e) => e.stopPropagation()}
+          className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {workspace.name}
+        </Link>
+      </TableCell>
       <TableCell>{workspace.memberCount}</TableCell>
       <TableCell>{workspace.connectors?.length ?? 0}</TableCell>
       <TableCell className="text-muted-foreground">{formatDate(workspace.createdAt)}</TableCell>
       {isAdmin && (
         <TableCell>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={isDeleting}
-            title={`Delete ${workspace.name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          <Tooltip label="Delete">
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`Delete ${workspace.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </Tooltip>
         </TableCell>
       )}
     </TableRow>
@@ -156,15 +181,13 @@ function WorkspaceRow({
 function WorkspacesTable({
   workspaces,
   isAdmin,
-  deletingId,
   onOpen,
   onDelete,
 }: {
   workspaces: Workspace[];
   isAdmin: boolean;
-  deletingId: string | null;
   onOpen: (workspaceId: string) => void;
-  onDelete: (workspaceId: string, name: string) => void;
+  onDelete: (workspace: Workspace) => void;
 }) {
   return (
     <Table>
@@ -182,10 +205,10 @@ function WorkspacesTable({
           <WorkspaceRow
             key={ws.id}
             workspace={ws}
+            href={workspaceDetailPath(ws.id)}
             isAdmin={isAdmin}
-            isDeleting={deletingId === ws.id}
             onOpen={() => onOpen(ws.id)}
-            onDelete={() => onDelete(ws.id, ws.name)}
+            onDelete={() => onDelete(ws)}
           />
         ))}
       </TableBody>
@@ -199,7 +222,6 @@ function WorkspacesContent({
   error,
   isAdmin,
   showCreate,
-  deletingId,
   onStartCreate,
   onRetry,
   onOpen,
@@ -209,11 +231,10 @@ function WorkspacesContent({
   error: string | null;
   isAdmin: boolean;
   showCreate: boolean;
-  deletingId: string | null;
   onStartCreate: () => void;
   onRetry: () => void;
   onOpen: (workspaceId: string) => void;
-  onDelete: (workspaceId: string, name: string) => void;
+  onDelete: (workspace: Workspace) => void;
 }) {
   if (workspaces.length === 0) {
     if (error) return <WorkspacesRetry onRetry={onRetry} />;
@@ -225,7 +246,6 @@ function WorkspacesContent({
     <WorkspacesTable
       workspaces={workspaces}
       isAdmin={isAdmin}
-      deletingId={deletingId}
       onOpen={onOpen}
       onDelete={onDelete}
     />
@@ -235,7 +255,9 @@ function WorkspacesContent({
 export function WorkspacesTab() {
   const session = useSession();
   const navigate = useNavigate();
-  const isAdmin = ADMIN_ROLES.has(session?.user?.orgRole ?? "");
+  const { refreshWorkspaces } = useWorkspaceContext();
+  const notify = useNotice();
+  const isAdmin = session?.user?.orgRole === "admin";
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
@@ -246,12 +268,12 @@ export function WorkspacesTab() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<Workspace | null>(null);
 
   const fetchWorkspaces = useCallback(async () => {
     try {
       setError(null);
-      const res = await callTool("nb", "manage_workspaces", { action: "list" });
+      const res = await callToolWithoutWorkspace("nb", "manage_workspaces", { action: "list" });
       const data = parseToolResult<{ workspaces: Workspace[] }>(res);
       setWorkspaces(data.workspaces ?? []);
     } catch (err) {
@@ -270,35 +292,40 @@ export function WorkspacesTab() {
     setCreating(true);
     setCreateError(null);
     try {
-      await callTool("nb", "manage_workspaces", {
+      // A refusal (a name over the limit, a missing permission) comes back as a
+      // result, not a throw; parseToolResult throws on it, so the form keeps the
+      // name and shows the reason instead of closing as if it had worked.
+      const res = await callToolWithoutWorkspace("nb", "manage_workspaces", {
         action: "create",
         name: createName.trim(),
       });
+      parseToolResult(res);
       setCreateName("");
       setShowCreate(false);
-      await fetchWorkspaces();
+      await Promise.all([fetchWorkspaces(), refreshWorkspaces()]);
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create workspace");
     } finally {
       setCreating(false);
     }
-  }, [createName, fetchWorkspaces]);
+  }, [createName, fetchWorkspaces, refreshWorkspaces]);
 
-  const handleDelete = useCallback(
-    async (workspaceId: string, name: string) => {
-      const confirmed = window.confirm(`Delete workspace "${name}"? This action cannot be undone.`);
-      if (!confirmed) return;
-      setDeletingId(workspaceId);
-      try {
-        await callTool("nb", "manage_workspaces", { action: "delete", workspaceId });
-        await fetchWorkspaces();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to delete workspace");
-      } finally {
-        setDeletingId(null);
-      }
+  // Throwing keeps the dialog open with the refusal shown (ConfirmDialog), and
+  // parseToolResult throws on a refusal, which `callTool` returns as a result.
+  // On success the dialog is ours to close, and it closes before the re-read, so
+  // a failed refresh never reports inside a dialog whose delete already landed.
+  const deleteWorkspace = useCallback(
+    async (workspace: Workspace) => {
+      const res = await callToolWithoutWorkspace("nb", "manage_workspaces", {
+        action: "delete",
+        workspaceId: workspace.id,
+      });
+      parseToolResult(res);
+      notify({ level: "success", title: `${workspace.name} was deleted` });
+      setDeleting(null);
+      await Promise.all([fetchWorkspaces(), refreshWorkspaces()]);
     },
-    [fetchWorkspaces],
+    [notify, fetchWorkspaces, refreshWorkspaces],
   );
 
   return (
@@ -311,7 +338,7 @@ export function WorkspacesTab() {
       create={
         isAdmin
           ? {
-              label: "Create Workspace",
+              label: "New workspace",
               showing: showCreate,
               canCreate: true,
               onToggle: () => {
@@ -336,15 +363,34 @@ export function WorkspacesTab() {
         error={error}
         isAdmin={isAdmin}
         showCreate={showCreate}
-        deletingId={deletingId}
         onStartCreate={() => setShowCreate(true)}
         onRetry={() => {
           setLoading(true);
           fetchWorkspaces();
         }}
-        onOpen={(id) => navigate(`/org/workspaces/${id.replace(/^ws_/, "")}`)}
-        onDelete={handleDelete}
+        onOpen={(id) => navigate(workspaceDetailPath(id))}
+        onDelete={setDeleting}
       />
+
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null);
+        }}
+        title={`Delete ${deleting?.name ?? ""}?`}
+        description="It disappears for everyone in it, and its connectors are disconnected. That can't be undone."
+        confirmLabel="Delete workspace"
+        pendingLabel="Deleting…"
+        destructive
+        onConfirm={async () => {
+          if (deleting) await deleteWorkspace(deleting);
+        }}
+      >
+        <p className="text-sm text-muted-foreground">
+          Its conversations and files are kept in Organization → Archives until an admin purges
+          them.
+        </p>
+      </ConfirmDialog>
     </SettingsListPage>
   );
 }

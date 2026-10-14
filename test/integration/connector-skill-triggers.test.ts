@@ -26,24 +26,23 @@
  * body off the prompt the model actually received.
  */
 
-import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import type { SkillsLoadedEntry } from "../../src/conversation/types.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
+import { firstStoredEvent } from "../helpers/stored-events.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** Reverse-DNS slug, like a real fleet connector — never the skill's own name. */
 const SERVER_NAME = "ai-nimblebrain-capture-mcp";
@@ -93,10 +92,10 @@ function createFixtureServer(): Server {
 
   const server = new Server(
     { name: "capture", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
       {
         name: "record",
@@ -106,18 +105,19 @@ function createFixtureServer(): Server {
     ],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "recorded" }],
   }));
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [
       { uri: "skill://capture/SKILL.md", name: "capture", mimeType: "text/markdown" },
       { uri: "skill://quiet/SKILL.md", name: "quiet", mimeType: "text/markdown" },
     ],
   }));
 
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  serveSkills(server, () => bodies);
+  server.setRequestHandler("resources/read", async (request) => {
     const text = bodies[request.params.uri];
     if (!text) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
@@ -159,18 +159,12 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 /** The `skills.loaded` entries persisted for a conversation's latest turn. */
-async function loadedSkills(
-  conversationId: string,
-): Promise<Array<{ id: string; loadedBy: string; reason: string; layer: number }>> {
+async function loadedSkills(conversationId: string): Promise<SkillsLoadedEntry[]> {
   const store = await runtime.resolveConversationStore(conversationId);
   const events = await store!.readEvents(conversationId);
-  const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+  const skillsLoaded = firstStoredEvent(events, "skills.loaded");
   expect(skillsLoaded).toBeDefined();
-  return (
-    skillsLoaded as unknown as {
-      skills: Array<{ id: string; loadedBy: string; reason: string; layer: number }>;
-    }
-  ).skills;
+  return skillsLoaded.skills;
 }
 
 const testDir = join(tmpdir(), `nimblebrain-connector-skill-triggers-${Date.now()}`);
@@ -182,7 +176,8 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
 
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createCapturingModel() },
+    identityProvider: devProvider,
+    languageModel: createCapturingModel(),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },
@@ -238,6 +233,7 @@ describe("server-published skill triggers", () => {
     // cannot select this skill. A hit is the trigger channel or nothing.
     lastPrompt = undefined;
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: `Actually ${CAPTURE_TRIGGER} — we stopped doing that last year.`,
       allowedTools: [],
@@ -258,6 +254,7 @@ describe("server-published skill triggers", () => {
 
   it("does not fire on a message naming no declared phrase", async () => {
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "just a plain unrelated greeting",
       allowedTools: [],
@@ -269,6 +266,7 @@ describe("server-published skill triggers", () => {
     // `quiet` is discovered and synthesized from the same server; it just has no
     // phrases. Nothing about being server-published should make it matchable.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "Nothing here should ever trigger-match, quiet skill.",
       allowedTools: [],
@@ -282,6 +280,7 @@ describe("server-published skill triggers", () => {
     // order is load-bearing: the conversation pool goes first, and the tenant's
     // own authoring beats a vendor's.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: `Help me ${CONTESTED_TRIGGER} today.`,
       allowedTools: [],
@@ -296,6 +295,7 @@ describe("server-published skill triggers", () => {
     // is the ordinary case, not a corner. The body must not be paid for twice.
     lastPrompt = undefined;
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: `Hold on, ${CAPTURE_TRIGGER}.`,
       allowedTools: [TOOL_NAME],

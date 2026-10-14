@@ -1,46 +1,28 @@
+import type { EngineEventPayloads } from "../engine/schemas/events.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import type { HeartbeatEvent, WorkspaceStreamEvents } from "./schemas/events.ts";
+import { CONNECTED_FRAME } from "./sse-heartbeat.ts";
 
 /**
  * SSE client connection tracked by the event manager.
  *
- * Workspace-scoped fan-out is filtered through `workspaceMemberships`:
- *
- *   - `undefined` — receive every event regardless of `wsId`. This is the
- *     legacy `addClient()` no-arg semantic, kept for internal consumers
- *     (activity dashboards, tests) that need the unfiltered firehose.
- *   - `Set<string>` — receive only events whose `wsId` is in the set.
- *
- * Identity-scoped clients (the `/v1/events` route) carry both an
- * `identityId` and a memberships set computed from the workspaces the
- * identity belongs to. The set is refreshed when the injected
- * `WorkspaceStore` fires a `membershipChanged` for that identity, so a
- * mid-stream `addMember` / `removeMember` is reflected without a
- * reconnect.
- *
- * Legacy single-workspace clients (`addClient(wsId)`) store a one-element
- * set. The unified filter delivers identical behavior to the prior
- * `client.workspaceId === wsId` check, so all existing tests pass.
+ * Every client is bound to an identity (the `/v1/events` route) and carries
+ * the set of workspaces that identity belongs to. A workspace-scoped event
+ * reaches the client only when its `wsId` is in the set. The set is refreshed
+ * when the injected `WorkspaceStore` fires a `membershipChanged` for that
+ * identity, so a mid-stream `addMember` / `removeMember` is reflected without
+ * a reconnect.
  */
 interface SseClient {
   id: string;
   controller: ReadableStreamDefaultController<Uint8Array>;
   closed: boolean;
-  /** Identity the connection is bound to. Only set for `addIdentityClient`. */
-  identityId?: string;
-  /**
-   * Workspaces this client should receive events for. `undefined` = no
-   * filter (legacy firehose); a `Set` is the explicit allowlist.
-   */
-  workspaceMemberships?: Set<string>;
-}
-
-/** A buffered event retained in the in-memory event buffer. */
-export interface BufferedEvent {
-  event: string;
-  data: Record<string, unknown>;
-  timestamp: string;
+  /** Identity the connection is bound to. */
+  identityId: string;
+  /** Workspaces this client receives workspace-scoped events for. */
+  workspaceMemberships: Set<string>;
 }
 
 const encoder = new TextEncoder();
@@ -67,17 +49,27 @@ const encoder = new TextEncoder();
  * Events with no entry are NOT forwarded — operational events like
  * `tool.progress` / `tool.done` / `run.error` stay internal to the runtime.
  *
- * Adding a new SSE-bound event type is a one-line edit here. The
- * `Partial<Record<EngineEventType, SseRoute>>` shape makes the key a
- * compile-time check against `EngineEventType`, so a typo or a renamed
- * event surfaces as a build error rather than silently no-routing.
+ * Adding a new SSE-bound event type is a one-line edit here. The table is
+ * keyed by `EngineEventType` and each route's field names by that event's
+ * payload keys, so a typo, a renamed event or a renamed field is a build
+ * error rather than an event that silently stops routing.
  */
-type SseRoute =
-  | { scope: "global" }
-  | { scope: "workspace"; wsIdField: string }
-  | { scope: "owner"; wsIdField: string; userIdField: string };
+/** Every key of a payload, across the members of a union payload. */
+type PayloadKey<K extends EngineEventType> = EngineEventPayloads[K] extends infer P
+  ? P extends unknown
+    ? keyof P & string
+    : never
+  : never;
 
-const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
+type SseRoute<K extends EngineEventType> =
+  | { scope: "global" }
+  | { scope: "workspace"; wsIdField: PayloadKey<K> }
+  | { scope: "owner"; wsIdField?: PayloadKey<K>; userIdField: PayloadKey<K> };
+
+/** The engine events `GET /v1/events` may send: those `WorkspaceStreamEvents` declares. */
+type WorkspaceStreamEngineEvent = EngineEventType & keyof WorkspaceStreamEvents;
+
+const SSE_ROUTES: { [K in WorkspaceStreamEngineEvent]?: SseRoute<K> } = {
   // Connector lifecycle — workspace-scoped. `wsId` is on every payload (added
   // in lifecycle.ts when emitting); without it we can't safely scope, so the
   // event drops at the boundary below.
@@ -91,43 +83,42 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // (`src/tools/server-notifications.ts`). Each is stamped with its one owner.
   // A workspace's source is stamped with the workspace whose registry received
   // it, and never reaches a member of another workspace. A person's own app
-  // (`conversations`, `files`, `automations`) belongs to no workspace, so it is
+  // (`conversations`, `files`, `tasks`) belongs to no workspace, so it is
   // stamped with the user who owns the changed data and reaches that user alone —
   // never every member of a workspace they happen to share.
   "server.notification": { scope: "owner", wsIdField: "workspaceId", userIdField: "userId" },
   // Live conversation-title update (auto-title generation completes after the
-  // turn). Scoped by the event's `wsId`, which the runtime sets to the OWNER'S
-  // PERSONAL workspace (NOT the conversation's workspaceId) — conversations are
-  // owner-scoped, so this reaches exactly the owner's tabs. Scoping by the
-  // conversation's workspaceId would leak the title to every member of a team
-  // workspace; see the rationale at runtime.ts (generateTitle emit). The shell
-  // routes it to the matching conversation slice by `conversationId`.
-  "conversation.title": { scope: "workspace", wsIdField: "wsId" },
+  // turn). A conversation is private to its owner, so the event is stamped with
+  // the owner (`ownerId`) and reaches that identity's tabs alone. Scoping by the
+  // conversation's workspace would leak the title to every member of it. The
+  // shell routes it to the matching conversation slice by `conversationId`.
+  "conversation.title": { scope: "owner", userIdField: "ownerId" },
   // Org-level config (model preferences, feature flags). Affects every
   // workspace; broadcast to all.
   "config.changed": { scope: "global" },
-  // Skills library — global state shared across workspaces.
-  "skill.created": { scope: "global" },
-  "skill.updated": { scope: "global" },
-  "skill.deleted": { scope: "global" },
-  // Bridge tool call/done — a tool call an iframe made, as opposed to one the
-  // agent's run loop made (`tool.done`). Audit only: no view refreshes on it.
-  // A UI door's traffic is mostly READS, and a read that triggers a refresh
-  // triggers a read. A write made from an iframe reaches the app's views when
-  // its server announces it, through `server.notification` above — the server
-  // says so only for a real change, so a read cannot start one.
-  // Field name is `workspaceId` (not `wsId`) — see handlers.ts emit sites.
-  "bridge.tool.call": { scope: "workspace", wsIdField: "workspaceId" },
-  "bridge.tool.done": { scope: "workspace", wsIdField: "workspaceId" },
   // Inbox — workspace-scoped on `workspaceId`, the field the notification
   // store stamps. A connector's notification is readable by whoever can reach
   // that connector's tools, so fanning one out without its workspace would
   // hand one workspace's business to its neighbours. Missing the field drops
   // the event at the boundary below, which is the fail-closed answer.
   "notification.created": { scope: "workspace", wsIdField: "workspaceId" },
+  "notification.read": { scope: "workspace", wsIdField: "workspaceId" },
   "notification.delivered": { scope: "workspace", wsIdField: "workspaceId" },
   "notification.delivery_failed": { scope: "workspace", wsIdField: "workspaceId" },
 };
+
+/** Whether `type` is an engine event the route table may carry. */
+function isWorkspaceStreamEvent(type: EngineEventType): type is WorkspaceStreamEngineEvent {
+  return type in SSE_ROUTES;
+}
+
+/**
+ * A payload field named by a route. The route table checks each name against
+ * its event's payload; this read is by that name, so it is untyped.
+ */
+function payloadField(event: EngineEvent, field: string): unknown {
+  return (event.data as Record<string, unknown>)[field];
+}
 
 /** The value when it is a non-empty string, else undefined. */
 function nonEmptyString(value: unknown): string | undefined {
@@ -147,19 +138,9 @@ type SseAudience = { wsId: string | undefined } | { identityId: string };
 
 /** Whether a client is in a broadcast's audience. */
 function clientReceives(client: SseClient, audience: SseAudience): boolean {
-  if ("identityId" in audience) {
-    // A client bound to no identity is either the legacy firehose (no
-    // memberships), which receives everything, or a legacy single-workspace
-    // client, which has no identity to match.
-    if (client.identityId === undefined) return client.workspaceMemberships === undefined;
-    return client.identityId === audience.identityId;
-  }
+  if ("identityId" in audience) return client.identityId === audience.identityId;
   const { wsId } = audience;
-  if (wsId === undefined) return true;
-  // `undefined` memberships is the legacy firehose (all events); an explicit
-  // set requires the wsId to be a member.
-  const memberships = client.workspaceMemberships;
-  return memberships === undefined || memberships.has(wsId);
+  return wsId === undefined || client.workspaceMemberships.has(wsId);
 }
 
 /**
@@ -167,9 +148,6 @@ function clientReceives(client: SseClient, audience: SseAudience): boolean {
  *
  * Tracks connected SSE clients, broadcasts events per the `SSE_ROUTES`
  * table, and sends heartbeats at a configurable interval (default 30s).
- *
- * Maintains a bounded in-memory event buffer so that consumers (e.g.
- * ActivityCollector) can query recent events without being SSE clients.
  *
  * **Identity-scoped clients.** The `/v1/events` route uses
  * `addIdentityClient`, which binds a connection to an identity and caches
@@ -183,18 +161,15 @@ export class SseEventManager implements EventSink {
   private clients = new Map<string, SseClient>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatIntervalMs: number;
-  private eventBuffer: BufferedEvent[] = [];
-  private readonly MAX_BUFFER_SIZE = 500;
   private localListeners = new Set<(event: string, data: Record<string, unknown>) => void>();
   private workspaceStore?: WorkspaceStore;
   private unsubscribeMembership: (() => void) | null = null;
 
   /**
    * @param heartbeatIntervalMs - heartbeat cadence in ms. Default 30s.
-   * @param workspaceStore - optional. When supplied, `addIdentityClient`
-   *   queries it for memberships and the manager refreshes a client's
-   *   cached set on membership-change events. Tests and internal
-   *   consumers that only use `addClient()` may omit it.
+   * @param workspaceStore - optional. When supplied, the manager refreshes a
+   *   client's cached memberships on membership-change events. Tests that
+   *   fix a client's memberships for its lifetime may omit it.
    */
   constructor(heartbeatIntervalMs = 30_000, workspaceStore?: WorkspaceStore) {
     this.heartbeatIntervalMs = heartbeatIntervalMs;
@@ -207,7 +182,7 @@ export class SseEventManager implements EventSink {
     this.heartbeatTimer = setInterval(() => {
       this.broadcast("heartbeat", {
         timestamp: new Date().toISOString(),
-      });
+      } satisfies HeartbeatEvent);
     }, this.heartbeatIntervalMs);
 
     if (this.workspaceStore && !this.unsubscribeMembership) {
@@ -246,30 +221,6 @@ export class SseEventManager implements EventSink {
   }
 
   /**
-   * Create an SSE stream for a legacy workspace-scoped or unfiltered
-   * client.
-   *
-   *   - `addClient()` — no filter; receives every event.
-   *   - `addClient(wsId)` — single-workspace filter; receives events
-   *     where `event.wsId === wsId` plus all global events.
-   *
-   * **No production caller today.** Both forms are kept solely as the
-   * surface that the V5 workspace-isolation security regression tests
-   * (`test/integration/security/workspace-isolation.test.ts`) and the
-   * `SseEventManager` routing-table unit tests
-   * (`test/unit/sse-event-manager.test.ts`) were written against. Those
-   * suites lock in the workspace-isolation contract under the legacy
-   * frozen-workspace model; migrating them to `addIdentityClient` would
-   * subtly change what they assert. Production code uses
-   * `addIdentityClient` via the `/v1/events` route.
-   */
-  addClient(workspaceId?: string): ReadableStream<Uint8Array> {
-    return this.attachClient({
-      workspaceMemberships: workspaceId ? new Set([workspaceId]) : undefined,
-    });
-  }
-
-  /**
    * Create an SSE stream bound to an identity. The connection receives
    * events for any workspace currently in the identity's membership set,
    * plus all global events. The set is refreshed automatically when the
@@ -277,21 +228,9 @@ export class SseEventManager implements EventSink {
    *
    * `memberships` is the initial set, typically computed by the caller
    * via `workspaceStore.getWorkspacesForUser(identityId)`. An empty set
-   * means "global events only" — distinct from legacy `addClient()`
-   * which receives the workspace firehose unfiltered.
+   * means global events and this identity's own events only.
    */
   addIdentityClient(identityId: string, memberships: Set<string>): ReadableStream<Uint8Array> {
-    return this.attachClient({
-      identityId,
-      workspaceMemberships: memberships,
-    });
-  }
-
-  /** Shared client-attachment path. */
-  private attachClient(opts: {
-    identityId?: string;
-    workspaceMemberships?: Set<string>;
-  }): ReadableStream<Uint8Array> {
     const id = crypto.randomUUID();
 
     return new ReadableStream<Uint8Array>({
@@ -300,10 +239,11 @@ export class SseEventManager implements EventSink {
           id,
           controller,
           closed: false,
-          identityId: opts.identityId,
-          workspaceMemberships: opts.workspaceMemberships,
+          identityId,
+          workspaceMemberships: memberships,
         };
         this.clients.set(id, client);
+        controller.enqueue(CONNECTED_FRAME);
       },
       cancel: () => {
         this.removeClient(id);
@@ -319,15 +259,18 @@ export class SseEventManager implements EventSink {
    * workspace id.
    */
   emit(event: EngineEvent): void {
-    const route = SSE_ROUTES[event.type];
+    if (!isWorkspaceStreamEvent(event.type)) return;
+    const route: SseRoute<EngineEventType> | undefined = SSE_ROUTES[event.type];
     if (!route) return;
     if (route.scope === "global") {
       this.broadcast(event.type, event.data);
       return;
     }
     if (route.scope === "owner") {
-      const wsId = nonEmptyString(event.data[route.wsIdField]);
-      const userId = nonEmptyString(event.data[route.userIdField]);
+      const wsId = route.wsIdField
+        ? nonEmptyString(payloadField(event, route.wsIdField))
+        : undefined;
+      const userId = nonEmptyString(payloadField(event, route.userIdField));
       // Exactly one owner. Neither is a payload bug; both is ambiguous, and
       // either answer would hand one owner's signal to the other's audience.
       if (wsId !== undefined && userId === undefined) {
@@ -340,8 +283,8 @@ export class SseEventManager implements EventSink {
     // Workspace-scoped: extract the wsId from the declared field. A
     // missing wsId is a payload bug — drop rather than fan out to every
     // workspace, since that would leak one workspace's signals to others.
-    const wsId = event.data[route.wsIdField];
-    if (typeof wsId !== "string" || wsId.length === 0) return;
+    const wsId = nonEmptyString(payloadField(event, route.wsIdField));
+    if (wsId === undefined) return;
     this.broadcast(event.type, event.data, wsId);
   }
 
@@ -351,28 +294,21 @@ export class SseEventManager implements EventSink {
    *
    * Filter rules per client:
    *   - No `wsId` passed (global / heartbeat) → enqueue unconditionally.
-   *   - `client.workspaceMemberships === undefined` → legacy firehose;
-   *     enqueue. Internal consumers only — the public `/v1/events` route
-   *     never produces this shape.
    *   - `client.workspaceMemberships.has(wsId)` → enqueue.
    *   - Otherwise → skip.
    */
   broadcast(eventType: string, data: Record<string, unknown>, wsId?: string): void {
     this.fanOut(frameSseEvent(eventType, data), { wsId });
-    this.bufferEvent(eventType, data);
     this.notifyLocal(eventType, data);
   }
 
   /**
    * Broadcast an SSE event to one identity's connections only — every tab that
    * identity has open, whatever workspace each is showing. For a change that
-   * belongs to a person rather than a workspace. A legacy firehose client
-   * (`addClient()`) receives it too; a legacy single-workspace client, bound to
-   * no identity, does not.
+   * belongs to a person rather than a workspace.
    */
   broadcastToIdentity(eventType: string, data: Record<string, unknown>, identityId: string): void {
     this.fanOut(frameSseEvent(eventType, data), { identityId });
-    this.bufferEvent(eventType, data);
     this.notifyLocal(eventType, data);
   }
 
@@ -402,31 +338,11 @@ export class SseEventManager implements EventSink {
     }
   }
 
-  /** Append an event to the bounded buffer, evicting the oldest at capacity. */
-  private bufferEvent(eventType: string, data: Record<string, unknown>): void {
-    if (this.eventBuffer.length >= this.MAX_BUFFER_SIZE) {
-      this.eventBuffer.shift();
-    }
-    this.eventBuffer.push({
-      event: eventType,
-      data,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
   /** Notify in-process listeners registered via `onEvent`. */
   private notifyLocal(eventType: string, data: Record<string, unknown>): void {
     for (const cb of this.localListeners) {
       cb(eventType, data);
     }
-  }
-
-  /**
-   * Return buffered events with timestamp >= the given ISO string.
-   * Uses lexicographic comparison on ISO-8601 timestamps.
-   */
-  getEventsSince(since: string): BufferedEvent[] {
-    return this.eventBuffer.filter((e) => e.timestamp >= since);
   }
 
   /**

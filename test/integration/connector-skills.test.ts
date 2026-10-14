@@ -5,12 +5,12 @@
  * is a reverse-DNS SLUG (`ai-nimblebrain-test-mcp`, like a fleet connector) that
  * exposes:
  *   - one tool (`ai-nimblebrain-test-mcp__doit`) so its tools land in the toolset
- *   - one SEP-2640 skill resource at the SHORT-name `skill://test/SKILL.md`,
- *     discovered via `resources/list` (NOT a guessed URI)
+ *   - one SEP-2640 skill at the SHORT-name `skill://test/SKILL.md`, discovered
+ *     from the server's `skills/list` (NOT a guessed URI)
  *
- * The slug-vs-short-name split is the exact production bug: discovery must find
- * the skill by listing resources, since the old guess (`skill://<sourceName>/…`)
- * looked under the slug and missed the short-name path.
+ * The slug-vs-short-name split is why discovery reads the server's listing: a
+ * URI guessed from the source name (`skill://<sourceName>/…`) looks under the
+ * slug and misses the short-name path.
  *
  * Then runs a chat with NO `appContext` — the failing production case — and
  * verifies the synthesized skill flows through `selectLayer3Skills` and appears
@@ -18,25 +18,28 @@
  * `loadedBy: "tool_affinity"`.
  */
 
-import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import {
+  CONNECTOR_SKILLS_SUBDIR,
+  materializeConnectorSkill,
+} from "../../src/skills/connector-skill-store.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
+import { firstStoredEvent } from "../helpers/stored-events.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** The synthesized name for the fixture connector's skill. */
 const CONNECTOR_SKILL_NAME = "connector:ai-nimblebrain-test-mcp:test";
@@ -53,20 +56,24 @@ Always call test__doit before anything else.`;
 function createSkillFixtureServer(): Server {
   const server = new Server(
     { name: "test", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
-      { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "doit",
+        description: "Do the thing",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [
       { uri: "skill://test/SKILL.md", name: "test", mimeType: "text/markdown" },
       { uri: "skill://test/reference", name: "test-reference", mimeType: "text/markdown" },
@@ -77,7 +84,8 @@ function createSkillFixtureServer(): Server {
     "skill://test/SKILL.md": SKILL_BODY,
     "skill://test/reference": "# Reference. Detailed tool catalog and error recovery.",
   };
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  serveSkills(server, () => bodies);
+  server.setRequestHandler("resources/read", async (request) => {
     const text = bodies[request.params.uri];
     if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
@@ -96,15 +104,19 @@ function createSkilllessFixtureServer(): Server {
     { name: "test", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
-      { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "doit",
+        description: "Do the thing",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [] }));
+  server.setRequestHandler("resources/list", async () => ({ resources: [] }));
   return server;
 }
 
@@ -144,7 +156,8 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
 
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createCapturingModel() },
+    identityProvider: devProvider,
+    languageModel: createCapturingModel(),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },
@@ -176,6 +189,7 @@ describe("connector-skill adapter — end-to-end", () => {
   it("loads connector skill via Layer 3 tool_affined selection when tools are active (no appContext)", async () => {
     // Run a chat WITHOUT appContext, with the slug-prefixed tool visible.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "hello",
       // Critical: NO appContext. This is the failing-prod case.
@@ -185,22 +199,11 @@ describe("connector-skill adapter — end-to-end", () => {
     // Pull the conversation store and read the skills.loaded event.
     const store = await runtime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
+    expect(skillsLoaded.skills.length).toBeGreaterThan(0);
 
-    const payload = skillsLoaded as unknown as {
-      skills: Array<{
-        id: string;
-        scope: string;
-        loadedBy: string;
-        reason: string;
-      }>;
-    };
-    expect(payload.skills.length).toBeGreaterThan(0);
-
-    const connectorEntry = payload.skills.find(
-      (s) => s.id === "skill://test/SKILL.md",
-    );
+    const connectorEntry = skillsLoaded.skills.find((s) => s.id === "skill://test/SKILL.md");
     expect(connectorEntry).toBeDefined();
     expect(connectorEntry?.scope).toBe("provided");
     expect(connectorEntry?.loadedBy).toBe("tool_affinity");
@@ -213,6 +216,7 @@ describe("connector-skill adapter — end-to-end", () => {
     // the focused-app path. The Layer 3 adapter must skip that source or the
     // same content lands in the prompt twice under two different framings.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "scoped chat",
       appContext: { appName: "test", serverName: "ai-nimblebrain-test-mcp" },
@@ -221,13 +225,9 @@ describe("connector-skill adapter — end-to-end", () => {
 
     const store = await runtime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
-
-    const payload = skillsLoaded as unknown as {
-      skills: Array<{ id: string }>;
-    };
-    const connectorEntry = payload.skills.find((s) => s.id === "skill://test/SKILL.md");
+    const connectorEntry = skillsLoaded.skills.find((s) => s.id === "skill://test/SKILL.md");
     // The skill is gone from Layer 3 — `<app-guide>` is now its only home.
     expect(connectorEntry).toBeUndefined();
   });
@@ -239,6 +239,7 @@ describe("connector-skill adapter — end-to-end", () => {
     // never from the source slug.
     lastPrompt = undefined;
     await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "scoped chat with reference",
       appContext: { appName: "test", serverName: "ai-nimblebrain-test-mcp" },
@@ -255,6 +256,7 @@ describe("connector-skill adapter — end-to-end", () => {
     // No tools allowed → activeTools is empty after surfaceTools filters.
     // Connector skill is `tool_affined` to ai-nimblebrain-test-mcp__* and must NOT load.
     const chat = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "hi without tools",
       allowedTools: [],
@@ -262,31 +264,25 @@ describe("connector-skill adapter — end-to-end", () => {
 
     const store = await runtime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
-
-    const payload = skillsLoaded as unknown as {
-      skills: Array<{ id: string }>;
-    };
-    const connectorEntry = payload.skills.find(
-      (s) => s.id === "skill://test/SKILL.md",
-    );
+    const connectorEntry = skillsLoaded.skills.find((s) => s.id === "skill://test/SKILL.md");
     expect(connectorEntry).toBeUndefined();
   });
 
   it("does not let one workspace's discovery answer for another", async () => {
-    // Discovery used to resolve a server name against whichever workspace
-    // registry iterated first, and cache the result under the bare name. So a
-    // connector installed in several workspaces had ONE shared answer: whichever
-    // instance won the race spoke for all of them, and an instance that
-    // published nothing (or was transiently unreachable) decided the skill for
+    // Discovery that resolves a server name against whichever workspace
+    // registry iterates first, and caches the result under the bare name, gives
+    // a connector installed in several workspaces ONE shared answer: whichever
+    // instance wins the race speaks for all of them, and an instance that
+    // publishes nothing (or is transiently unreachable) decides the skill for
     // everyone. That moves the catalog and the surface-once candidates
     // together, since both read this.
     //
     // Both workspaces must hold a source of the SAME name for the leak to
     // exist — a workspace with no such source never reaches discovery at all,
     // so it cannot observe the shared cache.
-    const otherWsId = "ws_other_tenant";
+    const otherWsId = "ws_00593c3b06bb6694";
     await provisionTestWorkspace(runtime, otherWsId);
 
     const barrenServer = startRemoteMcpServer(createSkilllessFixtureServer);
@@ -325,19 +321,22 @@ describe("connector-skill adapter — end-to-end", () => {
     // `skillResourceCache` absorbs the second discovery's `resources/list`, so
     // the waste is registry-walk and synthesis, invisible on the wire. The call
     // itself is the only honest probe.
-    const spy = spyOn(
-      runtime as unknown as { loadConnectorSkills: (...a: unknown[]) => unknown },
-      "loadConnectorSkills",
-    );
+    // biome-ignore lint/complexity/useLiteralKeys: loadConnectorSkills is private; bracket access is TypeScript's typed path to it
+    const discover = runtime["loadConnectorSkills"];
+    const spy = mock(discover.bind(runtime));
+    // biome-ignore lint/complexity/useLiteralKeys: loadConnectorSkills is private; bracket access is TypeScript's typed path to it
+    runtime["loadConnectorSkills"] = spy;
     try {
       await runtime.chat({
+        identity: DEV_IDENTITY,
         workspaceId: TEST_WORKSPACE_ID,
         message: "one discovery please",
         allowedTools: ["ai-nimblebrain-test-mcp__doit"],
       });
       expect(spy).toHaveBeenCalledTimes(1);
     } finally {
-      spy.mockRestore();
+      // biome-ignore lint/complexity/useLiteralKeys: loadConnectorSkills is private; bracket access is TypeScript's typed path to it
+      runtime["loadConnectorSkills"] = discover;
     }
   });
 });
@@ -390,7 +389,8 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
     });
 
     promoRuntime = await Runtime.start({
-      model: { provider: "custom", adapter: model },
+      identityProvider: devProvider,
+      languageModel: model,
       logging: { disabled: true },
       workDir: promoDir,
       telemetry: { enabled: false },
@@ -420,6 +420,7 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
 
   it("surfaces the connector skill when its tool is promoted mid-turn (not in the turn-start set)", async () => {
     const chat = await promoRuntime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "do the thing",
       // Pre-filter the turn-start active set down to system tools only: the
@@ -433,25 +434,19 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
 
     // Regression precondition: the connector skill did NOT load at turn start — its
     // tool wasn't active, so turn-start Layer-3 selection couldn't match it.
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded") as unknown as
-      | { skills: Array<{ id: string }> }
-      | undefined;
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     const turnStartConnector = skillsLoaded?.skills.find((s) => s.id === "skill://test/SKILL.md");
     expect(turnStartConnector).toBeUndefined();
 
     // The fixture tool was promoted mid-turn via nb__manage_tools (tool.promoted
     // itself is transient telemetry the store doesn't persist; the manage_tools
     // result is the persisted proof it went live).
-    const manageDone = events.find(
-      (e) => e.type === "tool.done" && (e as unknown as { name?: string }).name === MANAGE_TOOLS,
-    ) as unknown as { output?: string } | undefined;
+    const manageDone = firstStoredEvent(events, "tool.done", (e) => e.name === MANAGE_TOOLS);
     expect(manageDone?.output).toContain("Promoted 1/1");
 
     // The connector skill surfaced via the connector-skill channel ON PROMOTION —
     // this is the exact regression the fix closes.
-    const injected = events.find((e) => e.type === "connector.skill.injected") as unknown as
-      | { skillName: string; skillBody: string; scope: string; toolName: string }
-      | undefined;
+    const injected = firstStoredEvent(events, "connector.skill.injected");
     expect(injected).toBeDefined();
     expect(injected?.skillName).toBe("connector:ai-nimblebrain-test-mcp:test");
     expect(injected?.skillBody).toContain("How to use the test server");
@@ -459,8 +454,11 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
     // And it rides the conversation history as a `<connector-skill>` block —
     // the surface-once channel, never the cached system prefix.
     const historyText = reconstructMessages(events)
-      .flatMap((m) => m.content)
-      .map((p) => ("text" in p ? p.text : ""))
+      .map((m) =>
+        typeof m.content === "string"
+          ? m.content
+          : (m.content as ReadonlyArray<{ text?: string }>).map((p) => p.text ?? "").join("\n"),
+      )
       .join("\n");
     expect(historyText).toContain("<connector-skill");
   });
@@ -503,20 +501,24 @@ DYNAMIC_USAGE_MARKER — call multi__doit correctly.`;
 function createMultiSkillFixtureServer(): Server {
   const server = new Server(
     { name: "multi", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
-      { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "doit",
+        description: "Do the thing",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
 
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [
       { uri: "skill://always-guide/SKILL.md", name: "always-guide", mimeType: "text/markdown" },
       { uri: "skill://dynamic-usage/SKILL.md", name: "dynamic-usage", mimeType: "text/markdown" },
@@ -527,7 +529,8 @@ function createMultiSkillFixtureServer(): Server {
     "skill://always-guide/SKILL.md": ALWAYS_SKILL_BODY,
     "skill://dynamic-usage/SKILL.md": DYNAMIC_SKILL_BODY,
   };
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  serveSkills(server, () => bodies);
+  server.setRequestHandler("resources/read", async (request) => {
     const text = bodies[request.params.uri];
     if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
@@ -567,7 +570,8 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     };
 
     multiRuntime = await Runtime.start({
-      model: { provider: "custom", adapter: capturing },
+      identityProvider: devProvider,
+      languageModel: capturing,
       logging: { disabled: true },
       workDir: multiDir,
       telemetry: { enabled: false },
@@ -599,6 +603,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     multiPrompt = undefined;
     // No server tools active — the case turn-start Layer-3 selection can't cover.
     const chat = await multiRuntime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "hello",
       allowedTools: [],
@@ -616,9 +621,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     // context the user configured.
     const store = await multiRuntime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded") as unknown as
-      | { skills: Array<{ id: string; loadedBy: string; layer: number }> }
-      | undefined;
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     const always = skillsLoaded?.skills.find((s) => s.id === "skill://always-guide/SKILL.md");
     expect(always?.loadedBy).toBe("always");
     expect(always?.layer).toBe(0);
@@ -627,6 +630,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
   it("loads the `dynamic` skill via Layer 3 when its tool is active, alongside the always skill in context", async () => {
     multiPrompt = undefined;
     const chat = await multiRuntime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "do it",
       allowedTools: ["ai-nimblebrain-multi-mcp__doit"],
@@ -640,9 +644,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
 
     const store = await multiRuntime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded") as unknown as
-      | { skills: Array<{ id: string; scope: string; loadedBy: string }> }
-      | undefined;
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     // The dynamic skill loads via Layer-3 tool-affinity; the always skill via the
     // always-on channel — both now reported, distinguished by `loadedBy`.
     const dynamicEntry = skillsLoaded?.skills.find(
@@ -661,6 +663,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     // no server tools active — the exact case turn-start Layer-3 can't cover.
     multiPrompt = undefined;
     const result = await multiRuntime.executeTask({
+      identity: DEV_IDENTITY,
       prompt: "run the workflow",
       workspaceId: TEST_WORKSPACE_ID,
       allowedTools: [],
@@ -671,5 +674,183 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     expect(prompt).toContain("ALWAYS_ON_WORKFLOW_MARKER");
     // The `dynamic` skill stays tool-gated on the task path too.
     expect(prompt).not.toContain("DYNAMIC_USAGE_MARKER");
+  });
+});
+
+// ── A declared tool-affinity that names no tool of its connector ────────────
+
+const AFFINITY_SERVER = "ai-nimblebrain-affinity-mcp";
+const OVERLAY_SERVER = "ai-nimblebrain-overlaid-mcp";
+
+/** A server with one tool set and the given `skill://<name>/SKILL.md` skills. */
+function createAffinityFixtureServer(tools: string[], skills: Record<string, string>): Server {
+  const server = new Server(
+    { name: "affinity", version: "0.1.0" },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
+  );
+  server.setRequestHandler("tools/list", async () => ({
+    tools: tools.map((name) => ({
+      name,
+      description: `Do ${name}`,
+      inputSchema: { type: "object", properties: {} },
+    })),
+  }));
+  server.setRequestHandler("tools/call", async () => ({
+    content: [{ type: "text", text: "done" }],
+  }));
+  const bodies = Object.fromEntries(
+    Object.entries(skills).map(([name, body]) => [`skill://${name}/SKILL.md`, body]),
+  );
+  server.setRequestHandler("resources/list", async () => ({
+    resources: Object.keys(skills).map((name) => ({
+      uri: `skill://${name}/SKILL.md`,
+      name,
+      mimeType: "text/markdown",
+    })),
+  }));
+  serveSkills(server, () => bodies);
+  server.setRequestHandler("resources/read", async (request) => {
+    const text = bodies[request.params.uri];
+    if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
+    return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
+  });
+  return server;
+}
+
+function affinitySkill(name: string, affinity: string[]): string {
+  return `---
+name: ${name}
+description: Guidance for ${name}.
+metadata:
+  nimblebrain:
+    tool-affinity:
+${affinity.map((a) => `      - ${a}`).join("\n")}
+---
+
+# ${name}`;
+}
+
+describe("connector-skill adapter — unmatched tool-affinity", () => {
+  const dir = join(tmpdir(), `nimblebrain-connector-skills-affinity-${Date.now()}`);
+  let affinityRuntime: Runtime;
+  const servers: RemoteMcpFixture[] = [];
+  const sources: McpSource[] = [];
+
+  async function addSource(name: string, server: () => Server): Promise<void> {
+    const fixture = startRemoteMcpServer(server);
+    servers.push(fixture);
+    const source = new McpSource(
+      name,
+      { type: "remote", url: new URL(fixture.url), allowInsecure: true },
+      new NoopEventSink(),
+    );
+    await source.start();
+    sources.push(source);
+    affinityRuntime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
+  }
+
+  beforeAll(async () => {
+    mkdirSync(dir, { recursive: true });
+    affinityRuntime = await Runtime.start({
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
+      logging: { disabled: true },
+      workDir: dir,
+      telemetry: { enabled: false },
+    });
+    await provisionTestWorkspace(affinityRuntime);
+
+    await addSource(AFFINITY_SERVER, () =>
+      createAffinityFixtureServer(["draft_email", "send_email"], {
+        writing: affinitySkill("writing", ["draft_email"]),
+        outreach: affinitySkill("outreach", ["draft_emial", "send_*"]),
+      }),
+    );
+
+    // A connector with a curated overlay whose affinity names a tool it lacks.
+    await addSource(OVERLAY_SERVER, () => createAffinityFixtureServer(["list_pages"], {}));
+    materializeConnectorSkill({
+      connectorSkillsDir: affinityRuntime
+        .getWorkspaceContext(TEST_WORKSPACE_ID)
+        .getDataPath(CONNECTOR_SKILLS_SUBDIR),
+      serverName: OVERLAY_SERVER,
+      overlayBody: `${affinitySkill("pages-usage", ["create_page"])}\n\nConfirm the parent page.`,
+      source: "connector:pages@v0.1.0",
+      now: "2026-01-01T00:00:00.000Z",
+    });
+    await affinityRuntime.getLifecycle().seedInstance(
+      OVERLAY_SERVER,
+      OVERLAY_SERVER,
+      {
+        url: servers[1]!.url,
+        serverName: OVERLAY_SERVER,
+        skillsLock: [{ identity: "pages", version: "v0.1.0", sha: "a1", path: "pages-usage.md" }],
+      },
+      undefined,
+      TEST_WORKSPACE_ID,
+    );
+  });
+
+  afterAll(async () => {
+    for (const s of sources) {
+      try {
+        await s.stop();
+      } catch {
+        // already stopped
+      }
+    }
+    for (const f of servers) f.close();
+    await affinityRuntime.shutdown();
+    if (existsSync(dir)) rmSync(dir, { recursive: true });
+  });
+
+  it("warns once per skill whose declared patterns name no advertised tool", async () => {
+    const warn = spyOn(log, "warn");
+    try {
+      // Two discoveries: the second is served from the discovery cache and the
+      // overlay's check is recorded for its version, so neither warns again.
+      await affinityRuntime.listActivatableSkills(TEST_WORKSPACE_ID, null);
+      await affinityRuntime.listActivatableSkills(TEST_WORKSPACE_ID, null);
+      const unmatched = warn.mock.calls
+        .map((c) => c[1] as Record<string, unknown> | undefined)
+        .filter((f) => f?.event === "skills.tool_affinity.unmatched");
+      expect(unmatched).toHaveLength(2);
+      expect(unmatched).toContainEqual({
+        event: "skills.tool_affinity.unmatched",
+        workspace_id: TEST_WORKSPACE_ID,
+        server: AFFINITY_SERVER,
+        skill: "outreach",
+        patterns: [`${AFFINITY_SERVER}__draft_emial`],
+      });
+      expect(unmatched).toContainEqual({
+        event: "skills.tool_affinity.unmatched",
+        workspace_id: TEST_WORKSPACE_ID,
+        server: OVERLAY_SERVER,
+        skill: "pages-usage",
+        patterns: [`${OVERLAY_SERVER}__create_page`],
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("loads a published skill only for the tools it declares", async () => {
+    const loadedFor = async (tool: string): Promise<string[]> => {
+      const chat = await affinityRuntime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "go",
+        allowedTools: [`${AFFINITY_SERVER}__${tool}`],
+      });
+      const store = await affinityRuntime.resolveConversationStore(chat.conversationId);
+      const events = await store!.readEvents(chat.conversationId);
+      const loaded = firstStoredEvent(events, "skills.loaded");
+      return loaded?.skills.map((s) => s.id) ?? [];
+    };
+
+    // `writing` declares `draft_email`; without its declared affinity it would
+    // be bound to every tool of the server and load for `send_email` too.
+    expect(await loadedFor("draft_email")).toContain("skill://writing/SKILL.md");
+    expect(await loadedFor("send_email")).not.toContain("skill://writing/SKILL.md");
   });
 });

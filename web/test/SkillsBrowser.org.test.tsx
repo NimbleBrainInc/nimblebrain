@@ -10,24 +10,26 @@
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 import { realClient } from "./setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 type CallToolArgs = { server: string; tool: string; args: Record<string, unknown> };
 const callToolCalls: CallToolArgs[] = [];
+// Calls that went through the workspace-scoped `callTool`. The org vantage is
+// in no workspace, so this must stay empty.
+const workspaceCalls: CallToolArgs[] = [];
 
 mock.module("../src/api/client", () => ({
   ...realClient,
   callTool: async (server: string, tool: string, args: Record<string, unknown>) => {
+    workspaceCalls.push({ server, tool, args });
+    return { structuredContent: {}, isError: false };
+  },
+  callToolWithoutWorkspace: async (server: string, tool: string, args: Record<string, unknown>) => {
     callToolCalls.push({ server, tool, args });
     if (server === "skills" && tool === "list") {
       return {
@@ -65,6 +67,19 @@ mock.module("../src/api/client", () => ({
     if (server === "skills" && tool === "create") {
       return { structuredContent: { id: "/tmp/org/test.md" }, isError: false };
     }
+    if (server === "skills" && tool === "read") {
+      return {
+        structuredContent: {
+          id: args.id,
+          content: "Org rule A body.",
+          layer: 3,
+          scope: "org",
+          source: { path: args.id },
+          metadata: { name: "org-a", description: "Org rule A.", priority: 50, status: "active" },
+        },
+        isError: false,
+      };
+    }
     return { structuredContent: {}, isError: false };
   },
 }));
@@ -74,6 +89,7 @@ const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter } = await import("react-router-dom");
 const { SkillsBrowser } = await import("../src/pages/settings/SkillsTab");
+const { NoticeProvider } = await import("../src/components/notices");
 
 interface Mounted {
   container: HTMLDivElement;
@@ -85,6 +101,7 @@ afterEach(() => {
   mounted?.unmount();
   mounted = null;
   callToolCalls.length = 0;
+  workspaceCalls.length = 0;
 });
 
 async function mount(element: React.ReactElement): Promise<Mounted> {
@@ -92,7 +109,9 @@ async function mount(element: React.ReactElement): Promise<Mounted> {
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
-    root.render(React.createElement(MemoryRouter, null, element));
+    root.render(
+      React.createElement(MemoryRouter, null, React.createElement(NoticeProvider, null, element)),
+    );
   });
   await act(async () => {
     await Promise.resolve();
@@ -136,8 +155,7 @@ describe("SkillsBrowser with lockedScope='org' (org-admin /org/skills surface)",
     expect(nameInput).not.toBeNull();
     expect(bodyInput).not.toBeNull();
 
-    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window
-      .Event;
+    const WindowEvent = window.Event;
     await act(async () => {
       const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       setVal?.call(nameInput, "voice-rule");
@@ -147,7 +165,7 @@ describe("SkillsBrowser with lockedScope='org' (org-admin /org/skills surface)",
       bodyInput!.dispatchEvent(new WindowEvent("input", { bubbles: true }));
     });
     await act(async () => {
-      clickByText(mounted!.container, "Save");
+      clickByText(mounted!.container, "Create");
     });
     await act(async () => {
       await Promise.resolve();
@@ -181,5 +199,46 @@ describe("SkillsBrowser with lockedScope='org' (org-admin /org/skills surface)",
     expect(text).toContain("2 skills · 1 on");
     // One tier → nothing to slice → no segment chips.
     expect(mounted.container.querySelector("button[aria-pressed]")).toBeNull();
+  });
+
+  test("an edit saves with no workspace, as the org vantage reads", async () => {
+    mounted = await mount(React.createElement(SkillsBrowser, { lockedScope: "org" }));
+    const flush = async () => {
+      for (let i = 0; i < 4; i++) {
+        await act(async () => {
+          await Promise.resolve();
+        });
+      }
+    };
+    await act(async () => {
+      clickByText(mounted!.container, "Org rule A.");
+    });
+    await flush();
+    await act(async () => {
+      clickByText(mounted!.container, "Edit");
+    });
+    await flush();
+
+    const body = mounted.container.querySelector("#rule-body") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+        body,
+        "Edited org body.",
+      );
+      body.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      body.dispatchEvent(new window.FocusEvent("focusout", { bubbles: true }));
+    });
+    await flush();
+
+    const update = callToolCalls.find((c) => c.tool === "update");
+    expect(update?.args).toEqual({
+      id: "/tmp/org/a.md",
+      body: "Edited org body.",
+      body_mode: "replace",
+      frontmatter: "ignore",
+    });
+    expect(workspaceCalls).toEqual([]);
   });
 });

@@ -23,11 +23,14 @@ export const NOTIFICATION_LEVELS: NotificationLevel[] = (
   Object.keys(LEVEL_RANK) as NotificationLevel[]
 ).sort((a, b) => LEVEL_RANK[a] - LEVEL_RANK[b]);
 
+/** How many items one page of the inbox holds. "Load older" reads the next. */
+export const INBOX_PAGE_SIZE = 25;
+
 /**
- * How many items the inbox reads at once — the tool's documented maximum.
- *
- * Sent as a request, not asserted as a fact: the tool clamps `limit` to its own
- * maximum, so a server that lowered it returns a shorter page and the inbox
- * says so ("showing the most recent N") rather than erroring.
+ * The most one read asks for — the tool's documented maximum, for reads that
+ * want everything rather than a page: the bell's unread set, the
+ * needs-attention count, a walk down to a linked item. Sent as a request, not
+ * asserted as a fact: the tool clamps `limit` to its own maximum, and each of
+ * those reads says "at least" from `hasMore` rather than assuming it got all.
  */
-export const INBOX_PAGE_SIZE = 100;
+export const INBOX_READ_MAX = 100;

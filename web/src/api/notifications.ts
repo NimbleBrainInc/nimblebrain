@@ -3,10 +3,9 @@
 //
 // There is no REST route for notifications and there is not meant to be: a
 // paginated JSON read meets none of the four conditions the runtime requires of
-// a new `/v1/...` endpoint, and the shell already sends `X-Workspace-Id` on
-// every request, so a path-segment workspace would name nothing the header had
-// not. Everything here is a `tools/call` through the same door the agent and
-// any external MCP client use.
+// a new `/v1/...` endpoint, and the workspace-scoped `tools/call` route already
+// names the workspace in its path. Everything here is a `tools/call` through
+// the same door the agent and any external MCP client use.
 //
 // The wrappers exist so the response types are imported once, from the
 // generated schema tree, rather than re-declared at each call site.
@@ -38,6 +37,7 @@ export type {
   NotificationRouteMatch,
   NotificationRouteView,
   NotificationSourceView,
+  NotificationsListInput,
   NotificationsSendTestOutput,
   NotificationsSettingsOutput,
   NotificationView,
@@ -45,19 +45,27 @@ export type {
 
 export async function listNotifications(
   args: NotificationsListInput = {},
+  workspaceId?: string,
 ): Promise<NotificationsListOutput> {
-  return parseToolResult<NotificationsListOutput>(await callTool("notifications", "list", args));
-}
-
-export async function markNotificationsRead(ids: string[]): Promise<NotificationsMarkReadOutput> {
-  return parseToolResult<NotificationsMarkReadOutput>(
-    await callTool("notifications", "mark_read", { ids }),
+  return parseToolResult<NotificationsListOutput>(
+    await callTool("notifications", "list", args, { workspaceId }),
   );
 }
 
-export async function readNotificationSettings(): Promise<NotificationsSettingsOutput> {
+export async function markNotificationsRead(
+  ids: string[],
+  workspaceId?: string,
+): Promise<NotificationsMarkReadOutput> {
+  return parseToolResult<NotificationsMarkReadOutput>(
+    await callTool("notifications", "mark_read", { ids }, { workspaceId }),
+  );
+}
+
+export async function readNotificationSettings(
+  workspaceId?: string,
+): Promise<NotificationsSettingsOutput> {
   return parseToolResult<NotificationsSettingsOutput>(
-    await callTool("notifications", "settings", {}),
+    await callTool("notifications", "settings", {}, { workspaceId }),
   );
 }
 
@@ -69,18 +77,20 @@ export async function readNotificationSettings(): Promise<NotificationsSettingsO
  */
 export async function setNotificationSourceLevel(
   args: NotificationsSetSourceLevelInput,
+  workspaceId?: string,
 ): Promise<NotificationsSettingsOutput> {
   return parseToolResult<NotificationsSettingsOutput>(
-    await callTool("notifications", "set_source_level", args),
+    await callTool("notifications", "set_source_level", args, { workspaceId }),
   );
 }
 
 /** Replace the workspace's routes. `createdBy` is stamped server-side. */
 export async function setNotificationRoutes(
   args: NotificationsSetRoutesInput,
+  workspaceId?: string,
 ): Promise<NotificationsSettingsOutput> {
   return parseToolResult<NotificationsSettingsOutput>(
-    await callTool("notifications", "set_routes", args),
+    await callTool("notifications", "set_routes", args, { workspaceId }),
   );
 }
 

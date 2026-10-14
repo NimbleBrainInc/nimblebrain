@@ -16,19 +16,24 @@
 //   - publishing the focused app to `FocusedAppContext`, so the globally
 //     mounted chat panel can stamp the same `AppContext` on messages
 //     typed into the main composer (not just the in-app channel).
+//   - publishing the app's trail (`ai.nimblebrain/location`) to
+//     `AppLocationContext`, so the top bar shows its title and back control.
 //   - First-page-load chat-store restoration. `getSavedConversationId`
 //     fires once per module evaluation (= per page load) and re-attaches
 //     to the last in-flight conversation so the SSE viewer reconnects.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
-import type { UiChatContext } from "../bridge/types";
+import type { AppTrailEntry } from "../bridge/schemas";
+import { useAppLocation } from "../context/AppLocationContext";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
 import { getSavedConversationId, setSavedConversationId } from "../lib/active-conversation-storage";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
+import { appTargetFrom } from "../lib/open-app";
+import { cn } from "../lib/utils";
 import type { AppContext, PlacementEntry } from "../types";
 import { SlotRenderer } from "./SlotRenderer";
 
@@ -50,29 +55,29 @@ function restoreSavedConversation(chat: ReturnType<typeof useChatContext>) {
 
 interface AppWithChatProps {
   placement: PlacementEntry;
-  onNavigate: (route: string) => void;
 }
 
 const TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const TRANSITION_FULLSCREEN = "350ms cubic-bezier(0.4, 0, 0.2, 1)";
 
-export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
+export function AppWithChat({ placement }: AppWithChatProps) {
   const { panelState, openPanel, toggleFullscreen } = useChatPanelContext();
 
   const chat = useChatContext();
   const isMobile = useIsMobile();
   const { setFocusedApp } = useFocusedApp();
+  const { setAppLocation } = useAppLocation();
   const location = useLocation();
 
   // Collapse fullscreen when navigating to a different route
   const prevPathnameRef = useRef(location.pathname);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only react to pathname changes, panelState/toggleFullscreen are intentionally excluded
+  const collapseFullscreen = useEffectEvent(() => {
+    if (panelState === "fullscreen") toggleFullscreen();
+  });
   useEffect(() => {
     if (location.pathname !== prevPathnameRef.current) {
       prevPathnameRef.current = location.pathname;
-      if (panelState === "fullscreen") {
-        toggleFullscreen();
-      }
+      collapseFullscreen();
     }
   }, [location.pathname]);
 
@@ -82,8 +87,7 @@ export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
   // loadConversation re-subscribes and the server's `isActive` drives the
   // bubble. Module-once so app-to-app navigation doesn't re-trigger it.
   const deepLinkHandled = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally runs only on mount
-  useEffect(() => {
+  const openFromUrl = useEffectEvent(() => {
     if (deepLinkHandled.current) return;
     deepLinkHandled.current = true;
     const chatId = new URLSearchParams(window.location.search).get("chat");
@@ -94,6 +98,9 @@ export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
     if (restoredLastConversation) return;
     restoredLastConversation = true;
     restoreSavedConversation(chat);
+  });
+  useEffect(() => {
+    openFromUrl();
   }, []);
 
   // Persist the active conversation id (per-tab) so a reload can reopen it.
@@ -119,55 +126,74 @@ export function AppWithChat({ placement, onNavigate }: AppWithChatProps) {
     return () => setFocusedApp(null);
   }, [appContext, setFocusedApp]);
 
+  // A view to open inside the app, carried by `openApp` in the router state.
+  // Keyed by the navigation, so asking for the same view again re-sends it.
+  const targetId = appTargetFrom(location.state);
+  const target = useMemo(
+    () => (targetId ? { id: targetId, key: location.key } : undefined),
+    [targetId, location.key],
+  );
+
+  // The routed app's trail, cleared whenever the app on screen changes so the
+  // bar never shows a trail that app did not send. That is a new placement as
+  // well as an unmount: sibling app routes render this same element, so React
+  // Router reuses the instance across app-to-app navigation.
+  const handleLocation = useCallback(
+    (trail: AppTrailEntry[], navigate: (id: string) => void) => setAppLocation({ trail, navigate }),
+    [setAppLocation],
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sibling app routes reuse this instance, so a new `placement.resourceUri` is the app leaving and its trail must clear as on unmount
+  useEffect(() => () => setAppLocation(null), [setAppLocation, placement.resourceUri]);
+
   const handleChat = useCallback(
-    (message: string, context?: UiChatContext) => {
+    (message: string) => {
       if (panelState === "closed") {
         openPanel();
       }
-      let formatted = message;
-      if (context) {
-        const parts: string[] = [appContext.appName];
-        if (context.action) parts.push(`action: ${context.action}`);
-        if (context.entity) parts.push(`entity: ${context.entity.type}/${context.entity.id}`);
-        formatted = `[App Context: ${parts.join(" | ")}]\n${message}`;
-      }
-      chat.sendMessage(formatted, appContext);
+      chat.sendMessage(message, appContext);
     },
     [panelState, openPanel, chat, appContext],
   );
 
   const isSidebar = panelState === "sidebar";
   const isFullscreen = panelState === "fullscreen";
-  const hideMobileApp = isMobile && isSidebar;
+  // On a phone the sidebar is a full-width overlay that covers the app.
+  // Covering is presentation, not lifetime: the app area stays mounted in
+  // every panel state, so the iframe, its bridge, and the view's pushed
+  // state survive. Only unmounting this component (or a new placement)
+  // tears the view down. Hidden with `visibility`, not `display: none`, so
+  // the iframe keeps its size and the app sees no resize while covered.
+  const coveredOnMobile = isMobile && isSidebar;
 
   return (
-    <div className="relative flex h-dvh w-full overflow-hidden">
-      {/* App area — hidden on mobile when chat sidebar is open.
-          marginRight (chat panel push-over) is handled at the shell
-          level on <main> now; AppWithChat keeps only the iframe-
-          specific fullscreen styling (opacity/blur when chat
-          fullscreen covers the iframe). */}
-      {!hideMobileApp && (
-        <div
-          className={
-            isFullscreen
-              ? "flex-1 h-full min-w-0 opacity-30 scale-[0.98] blur-sm pointer-events-none transition-all duration-350 ease-out"
-              : "flex-1 h-full min-w-0"
-          }
-          style={{
-            transition: isFullscreen
-              ? `opacity ${TRANSITION_FULLSCREEN}, transform ${TRANSITION_FULLSCREEN}, filter ${TRANSITION_FULLSCREEN}`
-              : `opacity ${TRANSITION_STANDARD}, transform ${TRANSITION_STANDARD}, filter ${TRANSITION_STANDARD}`,
-          }}
-        >
-          <SlotRenderer
-            placements={[placement]}
-            className="w-full h-full"
-            onChat={handleChat}
-            onNavigate={onNavigate}
-          />
-        </div>
-      )}
+    <div className="relative flex h-full w-full overflow-hidden">
+      {/* App area. marginRight (chat panel push-over) is handled at the
+          shell level on <main>; AppWithChat keeps only the iframe-specific
+          styling: opacity/blur when fullscreen chat covers the iframe, and
+          invisible + inert while the mobile sidebar covers it. */}
+      <div
+        data-testid="app-with-chat-area"
+        className={cn(
+          "flex-1 h-full min-w-0",
+          isFullscreen &&
+            "opacity-30 scale-[0.98] blur-sm pointer-events-none transition-all duration-350 ease-out",
+          coveredOnMobile && "invisible",
+        )}
+        {...(coveredOnMobile ? { inert: true, "aria-hidden": true } : {})}
+        style={{
+          transition: isFullscreen
+            ? `opacity ${TRANSITION_FULLSCREEN}, transform ${TRANSITION_FULLSCREEN}, filter ${TRANSITION_FULLSCREEN}`
+            : `opacity ${TRANSITION_STANDARD}, transform ${TRANSITION_STANDARD}, filter ${TRANSITION_STANDARD}`,
+        }}
+      >
+        <SlotRenderer
+          placements={[placement]}
+          className="w-full h-full"
+          onChat={handleChat}
+          onLocation={handleLocation}
+          target={target}
+        />
+      </div>
     </div>
   );
 }

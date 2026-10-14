@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { useChatContext } from "./ChatContext";
 
@@ -7,7 +7,7 @@ type PanelState = "closed" | "sidebar" | "fullscreen";
 export interface ChatPanelContextValue {
   panelState: PanelState;
   panelWidth: number;
-  /** Open the panel. If conversationId provided, load that conversation. */
+  /** Open the panel. If conversationId provided, open that conversation (see `openConversation`). */
   openPanel: (conversationId?: string) => void;
   /** Close the panel. */
   closePanel: () => void;
@@ -17,6 +17,14 @@ export interface ChatPanelContextValue {
   toggleFullscreen: () => void;
   /** Set panel width (for resize handle). */
   setPanelWidth: (width: number) => void;
+  /** Assistant replies that arrived while the panel was closed. Kept by `ChatChrome`. */
+  unreadCount: number;
+  setUnreadCount: (count: number) => void;
+  /**
+   * The control that opens the panel (the top bar's Chat button). Focus left
+   * inside the panel when it closes returns here.
+   */
+  toggleButtonRef: RefObject<HTMLButtonElement | null>;
 }
 
 const LS_STATE_KEY = "nb:chatPanelState";
@@ -51,11 +59,13 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
   const chat = useChatContext();
   const [panelState, setPanelStateRaw] = useState<PanelState>(readState);
   const [panelWidth, setPanelWidthRaw] = useState<number>(readWidth);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const toggleButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  // Use a ref for loadConversation so openPanel's identity doesn't change
+  // Use a ref for openConversation so openPanel's identity doesn't change
   // when the chat context value changes during streaming.
-  const loadConversationRef = useRef(chat.loadConversation);
-  loadConversationRef.current = chat.loadConversation;
+  const openConversationRef = useRef(chat.openConversation);
+  openConversationRef.current = chat.openConversation;
 
   const setPanelState = useCallback((state: PanelState) => {
     setPanelStateRaw(state);
@@ -71,7 +81,7 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
     (conversationId?: string) => {
       setPanelState("sidebar");
       if (conversationId) {
-        loadConversationRef.current(conversationId);
+        void openConversationRef.current(conversationId);
       }
     },
     [setPanelState],
@@ -98,8 +108,20 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
       togglePanel,
       toggleFullscreen,
       setPanelWidth,
+      unreadCount,
+      setUnreadCount,
+      toggleButtonRef,
     }),
-    [panelState, panelWidth, openPanel, closePanel, togglePanel, toggleFullscreen, setPanelWidth],
+    [
+      panelState,
+      panelWidth,
+      openPanel,
+      closePanel,
+      togglePanel,
+      toggleFullscreen,
+      setPanelWidth,
+      unreadCount,
+    ],
   );
 
   return <ChatPanelContext value={value}>{children}</ChatPanelContext>;

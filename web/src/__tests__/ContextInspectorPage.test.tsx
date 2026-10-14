@@ -21,7 +21,7 @@ import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { realClient } from "../../test/setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const CONV_ID = "conv_00000000000000aa";
 
@@ -166,7 +166,7 @@ const { ContextInspectorPage } = await import("../pages/ContextInspectorPage");
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_ID}`]}>
+    <MemoryRouter initialEntries={[`/w/000d299235755008/context/${CONV_ID}`]}>
       <Routes>
         <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />
       </Routes>
@@ -183,6 +183,13 @@ describe("ContextInspectorPage", () => {
     const { container } = renderPage();
     await waitFor(() => expect(container.textContent).toContain("System prompt"));
     await waitFor(() => expect(container.textContent).toContain("Identity (default)"));
+    // The first layer opens in an effect after the layers render, so wait for
+    // its body rather than reading the commit that first shows the rows.
+    await waitFor(() =>
+      expect(container.textContent).toContain(
+        "You are a helpful assistant powered by NimbleBrain.",
+      ),
+    );
     const text = container.textContent ?? "";
 
     // Budget breakdown + the window total, stated once (in the header).
@@ -257,13 +264,13 @@ describe("ContextInspectorPage", () => {
     function Nav() {
       const navigate = useNavigate();
       return (
-        <button type="button" onClick={() => navigate(`/w/abc123/context/${CONV_B}`)}>
+        <button type="button" onClick={() => navigate(`/w/000d299235755008/context/${CONV_B}`)}>
           go-to-b
         </button>
       );
     }
     const { container } = render(
-      <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_ID}`]}>
+      <MemoryRouter initialEntries={[`/w/000d299235755008/context/${CONV_ID}`]}>
         <Nav />
         <Routes>
           <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />
@@ -305,13 +312,16 @@ describe("ContextInspectorPage", () => {
     function Nav() {
       const navigate = useNavigate();
       return (
-        <button type="button" onClick={() => navigate(`/w/abc123/context/${CONV_BUDGET_FAIL}`)}>
+        <button
+          type="button"
+          onClick={() => navigate(`/w/000d299235755008/context/${CONV_BUDGET_FAIL}`)}
+        >
           go-fail
         </button>
       );
     }
     const { container } = render(
-      <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_ID}`]}>
+      <MemoryRouter initialEntries={[`/w/000d299235755008/context/${CONV_ID}`]}>
         <Nav />
         <Routes>
           <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />
@@ -338,13 +348,13 @@ describe("ContextInspectorPage", () => {
     function Nav() {
       const navigate = useNavigate();
       return (
-        <button type="button" onClick={() => navigate(`/w/abc123/context/${CONV_FRESH}`)}>
+        <button type="button" onClick={() => navigate(`/w/000d299235755008/context/${CONV_FRESH}`)}>
           go-fresh
         </button>
       );
     }
     const { container } = render(
-      <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_STALE}`]}>
+      <MemoryRouter initialEntries={[`/w/000d299235755008/context/${CONV_STALE}`]}>
         <Nav />
         <Routes>
           <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />
@@ -394,5 +404,29 @@ describe("ContextInspectorPage", () => {
     expect(container.textContent).toContain("Layer-3 skills");
     // The drilled layer is expanded — its composed section is on screen.
     expect(container.textContent).toContain("## Skills");
+  });
+
+  test("a drill-in made before the first layer auto-opens stays open", async () => {
+    // Poll the DOM outside act (which would drain pending effects) so the click
+    // lands in the window after the layers render and before the auto-open
+    // effect runs. That effect must not close the layer the click opened.
+    const g = globalThis;
+    g.IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      const { container } = renderPage();
+      for (let i = 0; i < 500 && !container.textContent?.includes("Identity (default)"); i++) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      const skillsBucket = buttons(container).find((b) =>
+        b.textContent?.trim().startsWith("Skills"),
+      );
+      if (!skillsBucket) throw new Error("skills bucket not found");
+      fireEvent.click(skillsBucket);
+
+      await waitFor(() => expect(container.textContent).not.toContain("Identity (default)"));
+      await waitFor(() => expect(container.textContent).toContain("## Skills"));
+    } finally {
+      g.IS_REACT_ACT_ENVIRONMENT = true;
+    }
   });
 });

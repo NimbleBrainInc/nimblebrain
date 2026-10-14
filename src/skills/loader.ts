@@ -21,6 +21,12 @@ export function loadCoreSkills(): Skill[] {
   return loadSkillDir(CORE_DIR, "core").map(markVendored);
 }
 
+/** One core skill's body by its file name (`task-authoring`), or `""` when it is absent. */
+export function coreSkillBody(name: string): string {
+  const path = join(CORE_DIR, `${name}.md`);
+  return existsSync(path) ? (parseSkillFile(path)?.body.trim() ?? "") : "";
+}
+
 /**
  * Stamp `provenance.origin = "vendored"` on a platform-shipped skill (core /
  * builtin). This is the one durable marker that these skills are the platform's
@@ -166,7 +172,7 @@ export function parseSkillFile(path: string, opts?: { cap?: boolean }): Skill | 
 
 /**
  * Read the file's mtime as ISO 8601. Returns the empty string if the file
- * cannot be statted (in-memory or non-existent paths). Used by Phase 2
+ * cannot be statted (in-memory or non-existent paths). Used by
  * `skills.loaded` events as a cheap version stamp.
  */
 export function readSkillMtime(path: string): string {
@@ -184,6 +190,26 @@ export function readSkillMtime(path: string): string {
  */
 const warnedTruncatedPaths = new Set<string>();
 
+/**
+ * Invalid-frontmatter warnings already emitted, keyed by path and error text —
+ * the same per-turn re-parse would otherwise repeat one skip on every turn of
+ * every conversation. Keying on the errors too means an edit that breaks the
+ * file a different way warns again.
+ */
+const warnedInvalidFrontmatter = new Set<string>();
+
+/**
+ * Warn that a skill was skipped for invalid frontmatter, once per path and
+ * error text (see `warnedInvalidFrontmatter`).
+ */
+function warnInvalidFrontmatterOnce(sourcePath: string, errorList: string[]): void {
+  const errors = errorList.join("; ");
+  const warnKey = `${sourcePath}\0${errors}`;
+  if (warnedInvalidFrontmatter.has(warnKey)) return;
+  warnedInvalidFrontmatter.add(warnKey);
+  log.warn(`[skill] invalid frontmatter in ${sourcePath} — skipped: ${errors}`);
+}
+
 /** Parse SKILL.md content string. Exported for testing. */
 export function parseSkillContent(
   raw: string,
@@ -191,29 +217,27 @@ export function parseSkillContent(
   opts?: { cap?: boolean },
 ): Skill | null {
   const { data, content } = matter(raw);
+  return parseSkillParts(data, content, sourcePath, opts);
+}
 
+/**
+ * Parse a skill from frontmatter already split from its body. For a caller
+ * that applies its own defaults to the frontmatter before validation (a
+ * connector overlay); everything else goes through {@link parseSkillContent}.
+ */
+export function parseSkillParts(
+  data: Record<string, unknown>,
+  content: string,
+  sourcePath: string,
+  opts?: { cap?: boolean },
+): Skill | null {
   // Strict-validate the frontmatter against the canonical schema; fail-soft per
   // skill (skip + warn, never throw — mirrors `parseSkillFileGuarded`). The
   // mapper is the ONE place the on-disk (nested/kebab) → runtime (flat/camel)
   // transform lives; `scope` is stamped afterwards by `collectScopedSkills`.
   const result = validateFrontmatter(data);
   if (!result.ok) {
-    // Turn a silent skip into an actionable instruction when the file is still
-    // in the pre-cutover format (legacy top-level fields) — the operator likely
-    // deployed without running the one-time migration.
-    const looksLegacy = [
-      "type",
-      "requires-bundles",
-      "applies-to-tools",
-      "loading-strategy",
-      "loading_strategy",
-    ].some((k) => k in data);
-    const hint = looksLegacy
-      ? " — legacy format detected; run `bun run migrate:skill-frontmatter`"
-      : "";
-    log.warn(
-      `[skill] invalid frontmatter in ${sourcePath} — skipped: ${result.errors.join("; ")}${hint}`,
-    );
+    warnInvalidFrontmatterOnce(sourcePath, result.errors);
     return null;
   }
   const manifest = mapFrontmatterToManifest(result.value);
@@ -235,7 +259,7 @@ export function parseSkillContent(
           ? ` (${capped.sectionsOmitted} section${capped.sectionsOmitted === 1 ? "" : "s"} omitted)`
           : "";
       log.warn(
-        `[skill] body capped to ${MAX_SKILL_BODY_CHARS} chars${omitted} in ${sourcePath} — trim the skill or move depth into references/`,
+        `[skill] body capped to ${MAX_SKILL_BODY_CHARS} chars${omitted} in ${sourcePath} — fold its rules into existing sections, or split it into two skills`,
       );
     }
   }

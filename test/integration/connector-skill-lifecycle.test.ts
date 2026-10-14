@@ -1,11 +1,14 @@
-import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { extractText, textContent } from "../../src/engine/content-helpers.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -46,12 +49,12 @@ function fixtureModel(): LanguageModelV4 {
 function fixtureFetch(): typeof fetch {
   // Serve the fixture overlay for any curated `<identity>/SKILL.md` lookup; 404
   // otherwise. Hermetic — never touches the network.
-  return (async (url: string | URL | Request) => {
+  return fakeFetch(async (url) => {
     const u = typeof url === "string" ? url : url.toString();
     return u.endsWith("/SKILL.md")
       ? new Response(OVERLAY, { status: 200 })
       : new Response("", { status: 404 });
-  }) as unknown as typeof fetch;
+  });
 }
 
 async function callTool(
@@ -70,12 +73,12 @@ async function callTool(
   return { content: extractText(result.content), isError: result.isError ?? false };
 }
 
-
 describe("connector-skill binding lifecycle (runtime wiring)", () => {
   it("binds at install, loads as a candidate, lists, hides from skills__list, removes on uninstall", async () => {
     const workDir = join(testDir, "bind-cycle");
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: fixtureModel() },
+      identityProvider: devProvider,
+      languageModel: fixtureModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -106,7 +109,7 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     const overlays = runtime.listConnectorOverlays(TEST_WORKSPACE_ID);
     expect(overlays).toHaveLength(1);
     expect(overlays[0]!.server).toBe("gmail");
-    expect(overlays[0]!.source).toBe("connector:gmail@v0.3.0");
+    expect(overlays[0]!.source).toBe("connector:gmail@v0.4.0");
 
     // Absent from the authored-skill listing — a separate store, filtered out.
     const list = await callTool(runtime, "skills__list", {});
@@ -145,12 +148,15 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
       if (!tool) return { content: [{ type: "text", text: "no tool" }] };
       counter += 1;
       return {
-        content: [{ type: "tool-call", toolCallId: `c${counter}`, toolName: tool.name, input: "{}" }],
+        content: [
+          { type: "tool-call", toolCallId: `c${counter}`, toolName: tool.name, input: "{}" },
+        ],
       };
     });
 
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: model },
+      identityProvider: devProvider,
+      languageModel: model,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -177,11 +183,13 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     expect(lock).toHaveLength(1);
 
     const t1 = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       message: "go",
       allowedTools: ["mytool__ping"],
     });
     const t2 = await runtime.chat({
+      identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
       conversationId: t1.conversationId,
       message: "again",

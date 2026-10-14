@@ -3,9 +3,9 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  MAX_BREAKDOWN_ROWS,
   aggregateUsage,
   computeCacheHitRate,
+  MAX_BREAKDOWN_ROWS,
   resolveDateRange,
 } from "../../../src/usage/aggregate.ts";
 import { estimateCost, resolveRates } from "../../../src/usage/cost.ts";
@@ -45,16 +45,24 @@ function writeCalls(
 ): void {
   const byMonth = new Map<string, string[]>();
   for (const e of events) {
-    const ev = e as { ts: string; model: string; usage: Record<string, number>; llmMs?: number };
+    const ev = e as {
+      ts: string;
+      model: string;
+      source?: string;
+      usage: UsageLedgerEntry["usage"];
+      llmMs?: number;
+    };
     const rates = resolveRates(ev.model);
     const entry: UsageLedgerEntry = {
       ts: ev.ts,
-      source: "main",
+      source: ev.source ?? "main",
       origin: meta.origin ?? "chat",
       model: ev.model,
-      usage: ev.usage as UsageLedgerEntry["usage"],
+      usage: ev.usage,
       llmMs: ev.llmMs ?? 0,
-      sessionId: meta.id,
+      ...((meta.origin ?? "chat") === "task"
+        ? { taskRunId: meta.id }
+        : { conversationId: meta.id }),
       ...(meta.ownerId !== undefined ? { userId: meta.ownerId } : {}),
       ...(rates ? { rates } : {}),
     };
@@ -71,19 +79,21 @@ function writeCalls(
   }
 }
 
-function llmEvent(overrides: Partial<{
-  ts: string;
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  llmMs: number;
-}> = {}): Record<string, unknown> {
+function llmEvent(
+  overrides: Partial<{
+    ts: string;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    llmMs: number;
+  }> = {},
+): Record<string, unknown> {
   return {
     type: "llm.response",
     ts: overrides.ts ?? "2026-04-10T12:00:00Z",
-    model: overrides.model ?? "claude-sonnet-4-5-20250929",
+    model: overrides.model ?? "anthropic:claude-sonnet-4-5-20250929",
     usage: {
       inputTokens: overrides.inputTokens ?? 1000,
       outputTokens: overrides.outputTokens ?? 500,
@@ -99,16 +109,12 @@ function llmEvent(overrides: Partial<{
 // ---------------------------------------------------------------------------
 
 describe("aggregateUsage", () => {
-  it("aggregates tokens from llm.response events even when metadata has zero tokens", async () => {
+  it("sums tokens across a session's ledger entries", async () => {
     const dir = makeTmpDir();
-    // Metadata has zero tokens (the old bug: event-sourced store never rewrites line 1)
-    writeCalls(dir, 
-      { id: "conv-1", updatedAt: "2026-04-10T14:00:00Z", totalInputTokens: 0, totalOutputTokens: 0 },
-      [
-        llmEvent({ inputTokens: 500, outputTokens: 200 }),
-        llmEvent({ inputTokens: 300, outputTokens: 100 }),
-      ],
-    );
+    writeCalls(dir, { id: "conv-1" }, [
+      llmEvent({ inputTokens: 500, outputTokens: 200 }),
+      llmEvent({ inputTokens: 300, outputTokens: 100 }),
+    ]);
 
     const report = await aggregateUsage(dir, "all", "day");
 
@@ -118,36 +124,42 @@ describe("aggregateUsage", () => {
     expect(report.totals.conversations).toBe(1);
   });
 
-  it("counts aux.usage events (forked compaction/title calls) toward totals", async () => {
+  it("counts forked calls (ledger source compaction, title) toward totals", async () => {
     const dir = makeTmpDir();
-    writeCalls(dir, { id: "conv-aux", updatedAt: "2026-04-10T14:00:00Z" }, [
+    // The runtime records a history fold as `source: "compaction"` and an
+    // auto-title as `source: "title"`, beside the turn's own `main` calls.
+    writeCalls(dir, { id: "conv-aux" }, [
       llmEvent({ inputTokens: 1000, outputTokens: 500 }),
       {
-        type: "aux.usage",
         ts: "2026-04-10T12:05:00Z",
         source: "compaction",
-        model: "claude-haiku-4-5-20251001",
+        model: "anthropic:claude-haiku-4-5-20251001",
         usage: { inputTokens: 400, outputTokens: 60, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 120,
+      },
+      {
+        ts: "2026-04-10T12:06:00Z",
+        source: "title",
+        model: "anthropic:claude-haiku-4-5-20251001",
+        usage: { inputTokens: 50, outputTokens: 8, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 40,
       },
     ]);
 
     const report = await aggregateUsage(dir, "all", "day");
 
-    // Both the main turn and the forked summarizer call are counted.
-    expect(report.totals.tokens.input).toBe(1400);
-    expect(report.totals.tokens.output).toBe(560);
-    expect(report.totals.llmCalls).toBe(2);
+    // The main turn and both forked calls are counted.
+    expect(report.totals.tokens.input).toBe(1450);
+    expect(report.totals.tokens.output).toBe(568);
+    expect(report.totals.llmCalls).toBe(3);
   });
 
-  it("filters usage by llm.response timestamp, not conversation updatedAt", async () => {
+  it("excludes an entry timestamped before the report window", async () => {
     const dir = makeTmpDir();
 
-    // Conversation updated inside range, but its only LLM usage happened before
-    // the report window. It should not make today's usage non-zero.
-    writeCalls(dir, { id: "updated-today", updatedAt: "2026-04-12T10:00:00Z" }, [
-        llmEvent({ ts: "2026-04-11T23:00:00Z", inputTokens: 9999, outputTokens: 9999 }),
-      ]);
+    writeCalls(dir, { id: "updated-today" }, [
+      llmEvent({ ts: "2026-04-11T23:00:00Z", inputTokens: 9999, outputTokens: 9999 }),
+    ]);
 
     const report = await aggregateUsage(dir, "day", "day", {
       from: "2026-04-12",
@@ -164,12 +176,12 @@ describe("aggregateUsage", () => {
     expect(report.breakdown[0].llmCalls).toBe(0);
   });
 
-  it("counts in-range llm.response events even when conversation updatedAt is outside range", async () => {
+  it("counts an entry timestamped inside the report window", async () => {
     const dir = makeTmpDir();
 
-    writeCalls(dir, { id: "updated-later", updatedAt: "2026-05-01T10:00:00Z" }, [
-        llmEvent({ ts: "2026-04-10T12:00:00Z", inputTokens: 100, outputTokens: 50 }),
-      ]);
+    writeCalls(dir, { id: "updated-later" }, [
+      llmEvent({ ts: "2026-04-10T12:00:00Z", inputTokens: 100, outputTokens: 50 }),
+    ]);
 
     const report = await aggregateUsage(dir, "month", "day", {
       from: "2026-04-01",
@@ -188,15 +200,15 @@ describe("aggregateUsage", () => {
     // Cache writes bill at the 1-hour TTL rate the engine uses: 2x input = $6/M.
     // AI SDK V3 contract: inputTokens is grand total = noCache + cacheRead + cacheWrite.
     // So 2_000_000 total = 500K noCache + 500K cacheRead + 1M cacheWrite.
-    writeCalls(dir, { id: "cost-conv", updatedAt: "2026-04-10T10:00:00Z" }, [
-        llmEvent({
-          model: "claude-sonnet-4-5-20250929",
-          inputTokens: 2_000_000,
-          outputTokens: 1_000_000,
-          cacheReadTokens: 500_000,
-          cacheWriteTokens: 1_000_000,
-        }),
-      ]);
+    writeCalls(dir, { id: "cost-conv" }, [
+      llmEvent({
+        model: "anthropic:claude-sonnet-4-5-20250929",
+        inputTokens: 2_000_000,
+        outputTokens: 1_000_000,
+        cacheReadTokens: 500_000,
+        cacheWriteTokens: 1_000_000,
+      }),
+    ]);
 
     const report = await aggregateUsage(dir, "all", "day");
 
@@ -218,11 +230,11 @@ describe("aggregateUsage", () => {
   it("groups by day correctly using event timestamp", async () => {
     const dir = makeTmpDir();
 
-    writeCalls(dir, { id: "md", updatedAt: "2026-04-12T10:00:00Z" }, [
-        llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
-        llmEvent({ ts: "2026-04-10T09:00:00Z", inputTokens: 200, outputTokens: 100 }),
-        llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 400, outputTokens: 200 }),
-      ]);
+    writeCalls(dir, { id: "md" }, [
+      llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
+      llmEvent({ ts: "2026-04-10T09:00:00Z", inputTokens: 200, outputTokens: 100 }),
+      llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 400, outputTokens: 200 }),
+    ]);
 
     const report = await aggregateUsage(dir, "all", "day");
 
@@ -256,7 +268,7 @@ describe("aggregateUsage", () => {
   });
 
   it("returns empty report for non-existent directory", async () => {
-    const report = await aggregateUsage("/tmp/does-not-exist-" + Date.now(), "all", "day");
+    const report = await aggregateUsage(`/tmp/does-not-exist-${Date.now()}`, "all", "day");
 
     expect(report.totals.llmCalls).toBe(0);
     expect(report.totals.conversations).toBe(0);
@@ -264,12 +276,15 @@ describe("aggregateUsage", () => {
 
   it("zero-fills missing days in bounded period", async () => {
     const dir = makeTmpDir();
-    writeCalls(dir, { id: "sp", updatedAt: "2026-04-12T10:00:00Z" }, [
-        llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
-        llmEvent({ ts: "2026-04-12T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
-      ]);
+    writeCalls(dir, { id: "sp" }, [
+      llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
+      llmEvent({ ts: "2026-04-12T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
+    ]);
 
-    const report = await aggregateUsage(dir, "week", "day", { from: "2026-04-10", to: "2026-04-12" });
+    const report = await aggregateUsage(dir, "week", "day", {
+      from: "2026-04-10",
+      to: "2026-04-12",
+    });
 
     expect(report.breakdown).toHaveLength(3);
     expect(report.breakdown[0].key).toBe("2026-04-10");
@@ -280,13 +295,13 @@ describe("aggregateUsage", () => {
 
   it("returns multiple breakdown dimensions from one aggregation", async () => {
     const dir = makeTmpDir();
-    writeCalls(dir, { id: "alice", updatedAt: "2026-04-12T10:00:00Z", ownerId: "usr_alice" }, [
-        llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
-        llmEvent({ ts: "2026-04-12T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
-      ]);
-    writeCalls(dir, { id: "bob", updatedAt: "2026-04-11T10:00:00Z", ownerId: "usr_bob" }, [
-        llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 400, outputTokens: 200 }),
-      ]);
+    writeCalls(dir, { id: "alice", ownerId: "usr_alice" }, [
+      llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
+      llmEvent({ ts: "2026-04-12T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
+    ]);
+    writeCalls(dir, { id: "bob", ownerId: "usr_bob" }, [
+      llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 400, outputTokens: 200 }),
+    ]);
 
     const report = await aggregateUsage(dir, "week", ["user", "day"], {
       from: "2026-04-10",
@@ -321,14 +336,14 @@ describe("aggregateUsage", () => {
       cacheWriteTokens: 1_000_000,
       reasoningTokens: 200_000,
     };
-    writeCalls(dir, { id: "drift", updatedAt: "2026-04-10T10:00:00Z" }, [
-        llmEvent({
-          model: "claude-sonnet-4-5-20250929",
-          ...usage,
-        }),
-      ]);
+    writeCalls(dir, { id: "drift" }, [
+      llmEvent({
+        model: "anthropic:claude-sonnet-4-5-20250929",
+        ...usage,
+      }),
+    ]);
     const report = await aggregateUsage(dir, "all", "day");
-    const expectedTotal = estimateCost("claude-sonnet-4-5-20250929", usage);
+    const expectedTotal = estimateCost("anthropic:claude-sonnet-4-5-20250929", usage);
     expect(report.totals.cost.total).toBeCloseTo(expectedTotal, 8);
   });
 
@@ -340,15 +355,15 @@ describe("aggregateUsage", () => {
     // set so any future rename fails this test instead of going
     // unnoticed until a UI panel throws on render.
     const dir = makeTmpDir();
-    writeCalls(dir, { id: "shape", updatedAt: "2026-04-10T10:00:00Z" }, [
-        llmEvent({
-          model: "claude-sonnet-4-5-20250929",
-          inputTokens: 1000,
-          outputTokens: 500,
-          cacheReadTokens: 100,
-          cacheWriteTokens: 200,
-        }),
-      ]);
+    writeCalls(dir, { id: "shape" }, [
+      llmEvent({
+        model: "anthropic:claude-sonnet-4-5-20250929",
+        inputTokens: 1000,
+        outputTokens: 500,
+        cacheReadTokens: 100,
+        cacheWriteTokens: 200,
+      }),
+    ]);
     const report = await aggregateUsage(dir, "all", "day");
 
     // Top-level
@@ -408,15 +423,15 @@ describe("aggregateUsage", () => {
     const dir = makeTmpDir();
     // One call: 1000 input total = 700 cacheRead + 200 cacheWrite + 100 non-cached.
     // hit rate = 700 / (100 + 700 + 200) = 0.7
-    writeCalls(dir, { id: "hit", updatedAt: "2026-04-10T10:00:00Z" }, [
-        llmEvent({
-          model: "claude-sonnet-4-5-20250929",
-          inputTokens: 1000,
-          outputTokens: 10,
-          cacheReadTokens: 700,
-          cacheWriteTokens: 200,
-        }),
-      ]);
+    writeCalls(dir, { id: "hit" }, [
+      llmEvent({
+        model: "anthropic:claude-sonnet-4-5-20250929",
+        inputTokens: 1000,
+        outputTokens: 10,
+        cacheReadTokens: 700,
+        cacheWriteTokens: 200,
+      }),
+    ]);
     const report = await aggregateUsage(dir, "all", "day");
     expect(report.totals.cacheHitRate).toBeCloseTo(0.7, 6);
     expect(report.models[0]!.cacheHitRate).toBeCloseTo(0.7, 6);
@@ -435,15 +450,15 @@ describe("aggregateUsage", () => {
 describe("aggregateUsage — by user", () => {
   /** Two owners, three conversations: alice has two, bob has one. */
   function seedTwoOwners(dir: string): void {
-    writeCalls(dir, { id: "alice-1", updatedAt: "2026-04-10T10:00:00Z", ownerId: "usr_alice" }, [
-        llmEvent({ ts: "2026-04-10T10:00:00Z", inputTokens: 100, outputTokens: 50 }),
-      ]);
-    writeCalls(dir, { id: "alice-2", updatedAt: "2026-04-11T10:00:00Z", ownerId: "usr_alice" }, [
-        llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
-      ]);
-    writeCalls(dir, { id: "bob-1", updatedAt: "2026-04-10T11:00:00Z", ownerId: "usr_bob" }, [
-        llmEvent({ ts: "2026-04-10T11:00:00Z", inputTokens: 400, outputTokens: 200 }),
-      ]);
+    writeCalls(dir, { id: "alice-1", ownerId: "usr_alice" }, [
+      llmEvent({ ts: "2026-04-10T10:00:00Z", inputTokens: 100, outputTokens: 50 }),
+    ]);
+    writeCalls(dir, { id: "alice-2", ownerId: "usr_alice" }, [
+      llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
+    ]);
+    writeCalls(dir, { id: "bob-1", ownerId: "usr_bob" }, [
+      llmEvent({ ts: "2026-04-10T11:00:00Z", inputTokens: 400, outputTokens: 200 }),
+    ]);
   }
 
   it("groupBy:user buckets the breakdown by conversation owner", async () => {
@@ -500,9 +515,9 @@ describe("aggregateUsage — by user", () => {
   it("conversations missing ownerId bucket under 'unknown' for groupBy:user", async () => {
     const dir = makeTmpDir();
     // No ownerId on line 1 (legacy/corrupt) — still counted, bucketed as unknown.
-    writeCalls(dir, { id: "legacy", updatedAt: "2026-04-10T10:00:00Z" }, [
-        llmEvent({ ts: "2026-04-10T10:00:00Z", inputTokens: 100, outputTokens: 50 }),
-      ]);
+    writeCalls(dir, { id: "legacy" }, [
+      llmEvent({ ts: "2026-04-10T10:00:00Z", inputTokens: 100, outputTokens: 50 }),
+    ]);
 
     const report = await aggregateUsage(dir, "all", "user");
 
@@ -532,16 +547,26 @@ describe("resolveDateRange", () => {
     expect(range.to).toBe("2026-01-15");
   });
 
-  it("'week' range subtracts exactly 7 days", () => {
+  it("'week' range is seven UTC days counting the end day", () => {
     const range = resolveDateRange("week", undefined, "2026-04-30");
-    expect(range.from).toBe("2026-04-23");
+    expect(range.from).toBe("2026-04-24");
     expect(range.to).toBe("2026-04-30");
   });
 
   it("'week' range across month boundary", () => {
     const range = resolveDateRange("week", undefined, "2026-05-03");
-    expect(range.from).toBe("2026-04-26");
+    expect(range.from).toBe("2026-04-27");
     expect(range.to).toBe("2026-05-03");
+  });
+
+  it("'week' zero-fills exactly seven day rows", async () => {
+    // The day count is what a "last 7 days" chart shows, so pin it through
+    // the aggregation rather than only through the range arithmetic.
+    const dir = makeTmpDir();
+    const report = await aggregateUsage(dir, "week", "day", { to: "2026-05-03" });
+    expect(report.breakdown).toHaveLength(7);
+    expect(report.breakdown[0]?.key).toBe("2026-04-27");
+    expect(report.breakdown[6]?.key).toBe("2026-05-03");
   });
 
   it("'day' range returns same date for from and to", () => {
@@ -601,7 +626,7 @@ describe("breakdown rows make the same split as totals", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The id split: new-shape records, legacy records, and the two mixed
+// The id split: a conversation and a task run, each under its own name
 // ---------------------------------------------------------------------------
 
 /** Write one record in whichever shape the caller spells out. */
@@ -610,7 +635,7 @@ function writeRecord(dir: string, fields: Partial<UsageLedgerEntry>): void {
     ts: "2026-04-10T12:00:00Z",
     source: "main",
     origin: "chat",
-    model: "claude-sonnet-4-5-20250929",
+    model: "anthropic:claude-sonnet-4-5-20250929",
     usage: { inputTokens: 1000, outputTokens: 500 },
     llmMs: 200,
     ...fields,
@@ -621,11 +646,6 @@ function writeRecord(dir: string, fields: Partial<UsageLedgerEntry>): void {
 }
 
 describe("the ledger's id split", () => {
-  // Every OTHER test in this file writes the legacy `sessionId` shape, so the
-  // back-compat read is already under test by the whole suite above. These
-  // cover the new shape, and the mixture that a retention window spanning the
-  // split actually contains.
-
   it("counts a new-shape chat record as a conversation", async () => {
     const dir = makeTmpDir();
     writeRecord(dir, { conversationId: "conv_new", runId: "turn-1" });
@@ -635,7 +655,7 @@ describe("the ledger's id split", () => {
     expect(report.totals.runs ?? 0).toBe(0);
   });
 
-  it("counts a new-shape automation record as a run, not a conversation", async () => {
+  it("counts a new-shape task record as a run, not a conversation", async () => {
     const dir = makeTmpDir();
     writeRecord(dir, { origin: "task", taskRunId: "run_new", runId: "turn-1" });
 
@@ -644,28 +664,7 @@ describe("the ledger's id split", () => {
     expect(report.totals.conversations).toBe(0);
   });
 
-  it("does not double-count one conversation written in both shapes", async () => {
-    // The mixture inside one retention window: the same conversation before
-    // and after the split. Both spellings must resolve to one id, or every
-    // conversation straddling the change reads as two.
-    const dir = makeTmpDir();
-    writeRecord(dir, { sessionId: "conv_same" });
-    writeRecord(dir, { conversationId: "conv_same", runId: "turn-2" });
-
-    const report = await aggregateUsage(dir, "all", "day");
-    expect(report.totals.conversations).toBe(1);
-  });
-
-  it("counts legacy and new automation records as one run", async () => {
-    const dir = makeTmpDir();
-    writeRecord(dir, { origin: "task", sessionId: "run_same" });
-    writeRecord(dir, { origin: "task", taskRunId: "run_same", runId: "turn-2" });
-
-    const report = await aggregateUsage(dir, "all", "day");
-    expect(report.totals.runs).toBe(1);
-  });
-
-  it("keeps an automation out of the conversation breakdown", async () => {
+  it("keeps a task out of the conversation breakdown", async () => {
     // The defect the undiscriminated read had: a task's run id keyed a row in
     // a dimension the schema calls "conversation", so a usage report listed
     // `run_…` among its conversations.
@@ -693,40 +692,11 @@ describe("the ledger's id split", () => {
     expect(report.totals.conversations).toBe(1);
   });
 
-  it("bills a legacy sub-agent record to the turn that spawned it", async () => {
-    // Records retained from when a turn could spawn a sub-agent carry the
-    // sub-agent's own `runId` and the spawning turn's `parentRunId`. Keying the
-    // dimension on `runId` alone would split one turn into a row per agent —
-    // the parent understating what the turn cost, and children sitting beside
-    // top-level turns with nothing to tell them apart.
+  it("groups a record with no engine run under `none` rather than inventing one", async () => {
+    // A forked fast-slot call (title, compaction) carries no engine run id. It
+    // must be legible as "not attributable to a turn", not folded into another's.
     const dir = makeTmpDir();
-    writeRecord(dir, { conversationId: "conv_d", runId: "turn-top" });
-    writeRecord(dir, {
-      conversationId: "conv_d",
-      runId: "child-1",
-      parentRunId: "turn-top",
-      delegated: true,
-    });
-    writeRecord(dir, {
-      conversationId: "conv_d",
-      runId: "grandchild-1",
-      parentRunId: "turn-top",
-      delegated: true,
-    });
-
-    const report = await aggregateUsage(dir, "all", "turn");
-    const rows = report.breakdowns.turn ?? [];
-    expect(rows.map((r) => r.key)).toEqual(["turn-top"]);
-    // The whole turn's spend, not the top-level agent's share of it.
-    expect(rows[0]!.llmCalls).toBe(3);
-    expect(rows[0]!.cost.total).toBeCloseTo(report.totals.cost.total, 10);
-  });
-
-  it("groups a legacy record's turn under `none` rather than inventing one", async () => {
-    // Records predating the split carry no engine run id. They must be legible
-    // as "not attributable to a turn", not silently folded into another's.
-    const dir = makeTmpDir();
-    writeRecord(dir, { sessionId: "conv_old" });
+    writeRecord(dir, { conversationId: "conv_old", source: "title" });
 
     const report = await aggregateUsage(dir, "all", "turn");
     expect((report.breakdowns.turn ?? []).map((r) => r.key)).toEqual(["none"]);
@@ -813,8 +783,7 @@ describe("the breakdown row cap", () => {
     const report = await aggregateUsage(dir, "all", "conversation");
     expect(report.totals.llmCalls).toBe(n);
     expect(report.totals.conversations).toBe(n);
-    const shown = report.breakdowns
-      .conversation!.reduce((sum, r) => sum + r.llmCalls, 0);
+    const shown = report.breakdowns.conversation!.reduce((sum, r) => sum + r.llmCalls, 0);
     expect(shown).toBeLessThan(report.totals.llmCalls);
   });
 
@@ -872,5 +841,147 @@ describe("the breakdown row cap", () => {
     const report = await aggregateUsage(dir, "all", "day");
     expect(report.breakdowns.day).toHaveLength(days);
     expect(report.truncatedBreakdowns?.day).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workspace grouping, filters, and the per-day stack
+// ---------------------------------------------------------------------------
+
+describe("workspace grouping and filters", () => {
+  /**
+   * Four calls across two users, two workspaces (plus one bound to none), two
+   * models, and both origins. Input tokens are distinct powers of ten so any
+   * subset's total names exactly which calls it holds.
+   */
+  function seed(dir: string): void {
+    writeRecord(dir, {
+      userId: "usr_a",
+      workspaceId: "ws_00164434d8dd7ffb",
+      conversationId: "conv_1",
+      model: "anthropic:claude-sonnet-4-5-20250929",
+      usage: { inputTokens: 1, outputTokens: 0 },
+      ts: "2026-04-10T12:00:00Z",
+    });
+    writeRecord(dir, {
+      userId: "usr_a",
+      workspaceId: "ws_002038aa71ea4b8a",
+      origin: "task",
+      taskRunId: "run_1",
+      model: "anthropic:claude-haiku-4-5-20251001",
+      usage: { inputTokens: 10, outputTokens: 0 },
+      ts: "2026-04-10T13:00:00Z",
+    });
+    writeRecord(dir, {
+      userId: "usr_b",
+      workspaceId: "ws_00164434d8dd7ffb",
+      conversationId: "conv_2",
+      model: "anthropic:claude-haiku-4-5-20251001",
+      usage: { inputTokens: 100, outputTokens: 0 },
+      ts: "2026-04-11T12:00:00Z",
+    });
+    writeRecord(dir, {
+      origin: "system",
+      model: "anthropic:claude-haiku-4-5-20251001",
+      usage: { inputTokens: 1000, outputTokens: 0 },
+      ts: "2026-04-11T13:00:00Z",
+    });
+  }
+
+  it("groupBy:workspace buckets by workspaceId, with unbound calls under none", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const report = await aggregateUsage(dir, "all", "workspace");
+    const byKey = Object.fromEntries(report.breakdown.map((r) => [r.key, r.tokens.input]));
+    expect(byKey).toEqual({ none: 1000, ws_00164434d8dd7ffb: 101, ws_002038aa71ea4b8a: 10 });
+  });
+
+  it("filters by workspace, and 'none' selects the unbound calls", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const alpha = await aggregateUsage(dir, "all", "day", {
+      filters: { workspaceId: "ws_00164434d8dd7ffb" },
+    });
+    expect(alpha.totals.tokens.input).toBe(101);
+    const none = await aggregateUsage(dir, "all", "day", { filters: { workspaceId: "none" } });
+    expect(none.totals.tokens.input).toBe(1000);
+  });
+
+  it("filters by user, excluding lines with no userId", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const report = await aggregateUsage(dir, "all", "day", { filters: { userId: "usr_a" } });
+    expect(report.totals.tokens.input).toBe(11);
+    expect(report.totals.llmCalls).toBe(2);
+  });
+
+  it("filters by model, by short name or qualified string", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const short = await aggregateUsage(dir, "all", "day", {
+      filters: { model: "claude-haiku-4-5" },
+    });
+    expect(short.totals.tokens.input).toBe(1110);
+    expect(short.models.map((m) => m.model)).toEqual(["claude-haiku-4-5"]);
+    const qualified = await aggregateUsage(dir, "all", "day", {
+      filters: { model: "anthropic:claude-sonnet-4-5-20250929" },
+    });
+    expect(qualified.totals.tokens.input).toBe(1);
+  });
+
+  it("filters by origin", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const task = await aggregateUsage(dir, "all", "day", { filters: { origin: "task" } });
+    expect(task.totals.tokens.input).toBe(10);
+    expect(task.totals.runs).toBe(1);
+    expect(task.totals.conversations).toBe(0);
+  });
+
+  it("ANDs filters with each other and with ownerFilter", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const both = await aggregateUsage(dir, "all", "day", {
+      filters: { workspaceId: "ws_00164434d8dd7ffb", model: "claude-haiku-4-5" },
+    });
+    expect(both.totals.tokens.input).toBe(100);
+    // A userId filter naming someone other than the owner cannot widen the read.
+    const crossed = await aggregateUsage(dir, "all", "day", {
+      ownerFilter: "usr_a",
+      filters: { userId: "usr_b" },
+    });
+    expect(crossed.totals.llmCalls).toBe(0);
+  });
+
+  it("stackBy splits each day row's cost by the dimension, and the split sums to the row", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const report = await aggregateUsage(dir, "all", ["day", "workspace"], {
+      from: "2026-04-10",
+      to: "2026-04-12",
+      stackBy: "workspace",
+    });
+    const days = report.breakdowns.day ?? [];
+    expect(days.map((d) => d.key)).toEqual(["2026-04-10", "2026-04-11", "2026-04-12"]);
+    expect(Object.keys(days[0]?.stack ?? {}).sort()).toEqual([
+      "ws_00164434d8dd7ffb",
+      "ws_002038aa71ea4b8a",
+    ]);
+    expect(Object.keys(days[1]?.stack ?? {}).sort()).toEqual(["none", "ws_00164434d8dd7ffb"]);
+    for (const day of days.slice(0, 2)) {
+      const sum = Object.values(day.stack ?? {}).reduce((a, b) => a + b, 0);
+      expect(sum).toBeCloseTo(day.cost.total, 12);
+    }
+    // A zero-filled day has no spend to split.
+    expect(days[2]?.stack).toBeUndefined();
+    // Only `day` rows carry it.
+    expect(report.breakdowns.workspace?.[0]?.stack).toBeUndefined();
+  });
+
+  it("omits stack when stackBy is not requested", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const report = await aggregateUsage(dir, "all", "day");
+    expect(report.breakdown.every((d) => d.stack === undefined)).toBe(true);
   });
 });

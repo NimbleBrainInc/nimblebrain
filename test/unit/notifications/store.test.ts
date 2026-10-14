@@ -7,13 +7,16 @@
  * one workspace cannot see or mark another's items.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "@sinclair/typebox/value";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import { NotificationCreatedPayload } from "../../../src/engine/schemas/events.ts";
+import {
+  NotificationCreatedPayload,
+  NotificationReadPayload,
+} from "../../../src/engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
 import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
 import { NotificationStore } from "../../../src/notifications/store.ts";
@@ -82,7 +85,9 @@ describe("the runtime stamps provenance; a server cannot", () => {
       seq: 999,
       receivedAt: "1999-01-01T00:00:00.000Z",
       readAt: "1999-01-01T00:00:00.000Z",
-      deliveries: [{ routeId: "rt", target: "slack__send_message", attempts: 1, outcome: "delivered" }],
+      deliveries: [
+        { routeId: "rt", target: "slack__send_message", attempts: 1, outcome: "delivered" },
+      ],
     });
     const { item } = storeFor(WS_A).append("acme", forged);
     expect(item.source).toBe("acme");
@@ -170,8 +175,16 @@ describe("the workspace is the boundary", () => {
   test("a store sees only its own workspace's items", () => {
     storeFor(WS_A).append("acme", envelope({ eventId: "a1" }));
     storeFor(WS_B).append("acme", envelope({ eventId: "b1" }));
-    expect(storeFor(WS_A).list().map((i) => i.envelope.eventId)).toEqual(["a1"]);
-    expect(storeFor(WS_B).list().map((i) => i.envelope.eventId)).toEqual(["b1"]);
+    expect(
+      storeFor(WS_A)
+        .list()
+        .map((i) => i.envelope.eventId),
+    ).toEqual(["a1"]);
+    expect(
+      storeFor(WS_B)
+        .list()
+        .map((i) => i.envelope.eventId),
+    ).toEqual(["b1"]);
   });
 
   test("markRead cannot reach another workspace's item", () => {
@@ -351,6 +364,48 @@ describe("list", () => {
     expect(store.list({ limit: 2 }).length).toBe(2);
     expect(store.list({ limit: 10_000 }).length).toBe(3);
   });
+
+  test("filters by when the fact happened, inclusive", () => {
+    const store = storeFor(WS_A);
+    store.append("acme", envelope({ eventId: "old", timestamp: "2026-09-01T00:00:00Z" }));
+    store.append("acme", envelope({ eventId: "edge", timestamp: "2026-09-02T00:00:00Z" }));
+    store.append("acme", envelope({ eventId: "new", timestamp: "2026-09-03T00:00:00Z" }));
+    expect(store.list({ since: "2026-09-02T00:00:00Z" }).map((i) => i.envelope.eventId)).toEqual([
+      "new",
+      "edge",
+    ]);
+  });
+
+  test("a query matches the title or the event name, ignoring case", () => {
+    const store = storeFor(WS_A);
+    seed(store);
+    // e2's title is "A reply"; e1 and e3 fall back to their event names.
+    expect(store.list({ query: "REPLY" }).map((i) => i.envelope.eventId)).toEqual(["e2"]);
+    expect(store.list({ query: "bounce" }).map((i) => i.envelope.eventId)).toEqual(["e3"]);
+    expect(store.list({ query: "nothing-like-it" })).toEqual([]);
+  });
+});
+
+describe("listWithUnread", () => {
+  test("pages like list and counts the whole inbox", () => {
+    const store = storeFor(WS_A);
+    for (let i = 0; i < 5; i++) store.append("acme", envelope({ eventId: `e${i}` }));
+    store.markRead([{ source: "acme", eventId: "e0" }]);
+    const { items, unread } = store.listWithUnread({ limit: 2, unreadOnly: true });
+    expect(items.map((i) => i.envelope.eventId)).toEqual(["e4", "e3"]);
+    expect(unread).toBe(4);
+    expect(store.list({ limit: 2, unreadOnly: true })).toEqual(items);
+  });
+});
+
+describe("unreadCount", () => {
+  test("counts the whole inbox, not one page", () => {
+    const store = storeFor(WS_A);
+    for (let i = 0; i < 5; i++) store.append("acme", envelope({ eventId: `e${i}` }));
+    store.markRead([{ source: "acme", eventId: "e0" }]);
+    expect(store.list({ limit: 2 }).length).toBe(2);
+    expect(store.unreadCount()).toBe(4);
+  });
 });
 
 describe("order", () => {
@@ -384,6 +439,42 @@ describe("order", () => {
     const newest = store.list({ limit: 2 });
     expect(newest.map((i) => i.seq)).toEqual([3, 2]);
     expect(store.list({ limit: 2, after: 3 })).toEqual([]);
+  });
+
+  test("descending pages back with `before`, and `hasMore` says when to stop", () => {
+    const store = storeFor(WS_A);
+    seedThree(store);
+    store.append("acme", envelope({ eventId: "e4" }));
+    store.append("acme", envelope({ eventId: "e5" }));
+    const first = store.listWithUnread({ limit: 2 });
+    expect(first.items.map((i) => i.seq)).toEqual([5, 4]);
+    expect(first.hasMore).toBe(true);
+    const second = store.listWithUnread({ limit: 2, before: 4 });
+    expect(second.items.map((i) => i.seq)).toEqual([3, 2]);
+    expect(second.hasMore).toBe(true);
+    const last = store.listWithUnread({ limit: 2, before: 2 });
+    expect(last.items.map((i) => i.seq)).toEqual([1]);
+    expect(last.hasMore).toBe(false);
+  });
+
+  test("`hasMore` counts only what matches the filters", () => {
+    const store = storeFor(WS_A);
+    seedThree(store);
+    store.markRead([
+      { source: "acme", eventId: "e1" },
+      { source: "acme", eventId: "e2" },
+    ]);
+    const page = store.listWithUnread({ limit: 1, unreadOnly: true });
+    expect(page.items.map((i) => i.seq)).toEqual([3]);
+    expect(page.hasMore).toBe(false);
+  });
+
+  test("`ids` finds items by id whatever their age", () => {
+    const store = storeFor(WS_A);
+    seedThree(store);
+    store.append("beta", envelope({ eventId: "e1" }));
+    expect(store.list({ ids: ["acme:e1"] }).map((i) => i.seq)).toEqual([1]);
+    expect(store.list({ ids: ["acme:gone"] })).toEqual([]);
   });
 
   test("filters apply in both directions", () => {
@@ -444,5 +535,60 @@ describe("notification.created", () => {
     storeFor(WS_A, sink).append("acme", envelope());
     const event = sink.events.find((e) => e.type === "notification.created");
     expect(Value.Check(NotificationCreatedPayload, event?.data)).toBe(true);
+  });
+  test("carries the inbox's unread count once the item landed", () => {
+    const sink = new CapturingSink();
+    const store = storeFor(WS_A, sink);
+    store.append("acme", envelope({ eventId: "e1" }));
+    store.append("acme", envelope({ eventId: "e2" }));
+    const counts = sink.events
+      .filter((e) => e.type === "notification.created")
+      .map((e) => (e.data as { unread: number }).unread);
+    expect(counts).toEqual([1, 2]);
+  });
+});
+
+describe("notification.read", () => {
+  test("names what changed and the count after, and matches its schema", () => {
+    const sink = new CapturingSink();
+    const store = storeFor(WS_A, sink);
+    store.append("acme", envelope({ eventId: "e1" }));
+    store.append("acme", envelope({ eventId: "e2" }));
+    store.markRead([{ source: "acme", eventId: "e1" }]);
+    const event = sink.events.find((e) => e.type === "notification.read");
+    expect(event?.data).toEqual({ workspaceId: WS_A, ids: ["acme:e1"], unread: 1 });
+    expect(Value.Check(NotificationReadPayload, event?.data)).toBe(true);
+  });
+
+  test("counts unread items in day files the mark does not rewrite", () => {
+    const sink = new CapturingSink();
+    const store = storeFor(WS_A, sink);
+    store.append("acme", envelope({ eventId: "e1" }));
+    // An unread item in yesterday's file, which marking e1 leaves untouched.
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    writeFileSync(
+      join(workDir, "workspaces", WS_A, "notifications", `${yesterday.slice(0, 10)}.jsonl`),
+      `${JSON.stringify({
+        envelope: envelope({ eventId: "old" }),
+        source: "acme",
+        workspaceId: WS_A,
+        receivedAt: yesterday,
+        seq: 0,
+        deliveries: [],
+      })}\n`,
+    );
+    store.markRead([{ source: "acme", eventId: "e1" }]);
+    const event = sink.events.find((e) => e.type === "notification.read");
+    expect(event?.data).toEqual({ workspaceId: WS_A, ids: ["acme:e1"], unread: 1 });
+  });
+
+  test("a mark that changes nothing emits nothing", () => {
+    const sink = new CapturingSink();
+    const store = storeFor(WS_A, sink);
+    store.append("acme", envelope({ eventId: "e1" }));
+    store.markRead([{ source: "acme", eventId: "e1" }]);
+    store.markRead([{ source: "acme", eventId: "e1" }]);
+    store.markRead([{ source: "acme", eventId: "nope" }]);
+    expect(sink.events.filter((e) => e.type === "notification.read").length).toBe(1);
   });
 });

@@ -4,7 +4,7 @@
  * A file is WORKSPACE-owned, but its id is globally unique, so the bare id
  * addresses it: the file locator resolves the id to its workspace within the
  * caller's own owner partitions, with NO workspace or conversation in the URL (a
- * browser `<img>` GET can't send `X-Workspace-Id`, and doesn't need to). This is
+ * browser `<img>` GET carries only the URL, and needs nothing else). This is
  * what makes a file attached to a conversation in workspace A resolve even when
  * the client is focused elsewhere — there is no client-supplied coordinate to
  * get wrong.
@@ -17,15 +17,20 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { UploadResourceResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
+
+/** What `POST …/resources` answers: the stored entries, plus per-file errors. */
 
 const testDir = join(tmpdir(), `nb-file-serve-by-id-${Date.now()}`);
 
-const WORKSPACE_A = "ws_workspace_a";
+const WORKSPACE_A = "ws_00883d7b29214d57";
 const OWNER = DEV_IDENTITY.id;
 
 let runtime: Runtime;
@@ -35,7 +40,8 @@ let baseUrl: string;
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -54,22 +60,27 @@ describe("GET /v1/files resolves the workspace from the file id", () => {
   it("serves a workspace-A attachment by bare id, no workspace in the URL", async () => {
     // A conversation born in workspace A; a file uploaded to it (the upload
     // resolves the conversation's workspace, A — the file lives under A).
-    const born = await runtime.chat({ message: "hi", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hi",
+      workspaceId: WORKSPACE_A,
+    });
     const convId = born.conversationId;
 
     const form = new FormData();
     form.append("file", new Blob(["served bytes"], { type: "text/plain" }), "served.txt");
     form.append("conversationId", convId);
-    const upload = await fetch(`${baseUrl}/v1/resources`, { method: "POST", body: form });
+    const upload = await fetch(`${baseUrl}/v1/workspaces/${WORKSPACE_A}/resources`, {
+      method: "POST",
+      body: form,
+    });
     expect(upload.status).toBe(200);
-    const uploadBody = await upload.json();
+    const uploadBody = await readJson<UploadResourceResponse>(upload);
     const fileId: string = uploadBody.files[0].id;
     expect(uploadBody.files[0].workspaceId).toBe(WORKSPACE_A);
 
-    // Download by bare id — no ?ws, no conversationId. The locator resolves the
-    // id to workspace A within the owner's partitions. The personal workspace
-    // (PERSONAL) is the "focused elsewhere" workspace the file does NOT live in;
-    // the bare id resolves regardless, which is the whole point.
+    // Download by bare id — no workspace, no conversationId. The locator
+    // resolves the id to workspace A within the owner's partitions.
     const byId = await fetch(`${baseUrl}/v1/files/${fileId}`);
     expect(byId.status).toBe(200);
     expect(await byId.text()).toBe("served bytes");
@@ -85,15 +96,22 @@ describe("GET /v1/files resolves the workspace from the file id", () => {
     // stale hit by poisoning the memo with a workspace the file is NOT in, then
     // assert the download still 200s — proving the memo read fails, the entry is
     // dropped, and the disk re-resolve recovers the real workspace (A).
-    const born = await runtime.chat({ message: "hi", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hi",
+      workspaceId: WORKSPACE_A,
+    });
     const form = new FormData();
     form.append("file", new Blob(["heal me"], { type: "text/plain" }), "heal.txt");
     form.append("conversationId", born.conversationId);
-    const upload = await fetch(`${baseUrl}/v1/resources`, { method: "POST", body: form });
-    const fileId: string = (await upload.json()).files[0].id;
+    const upload = await fetch(`${baseUrl}/v1/workspaces/${WORKSPACE_A}/resources`, {
+      method: "POST",
+      body: form,
+    });
+    const fileId: string = (await readJson<UploadResourceResponse>(upload)).files[0].id;
 
     // Poison the cache: claim the file lives somewhere it doesn't.
-    runtime.getFileLocator().remember(OWNER, fileId, "ws_does_not_exist");
+    runtime.getFileLocator().remember(OWNER, fileId, "ws_002cbcedbb32d4b3");
 
     const res = await fetch(`${baseUrl}/v1/files/${fileId}`);
     expect(res.status).toBe(200);

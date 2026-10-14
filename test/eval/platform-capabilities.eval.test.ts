@@ -2,7 +2,7 @@
  * Eval: Platform Capability Discovery
  *
  * Tests that the agent correctly discovers and uses built-in platform
- * capabilities (files, conversations, automations) via nb__search.
+ * capabilities (files, conversations, tasks) via nb__search.
  *
  * Run:
  *   ANTHROPIC_API_KEY=sk-ant-... bun test test/eval/platform-capabilities.eval.test.ts
@@ -11,13 +11,8 @@
  * in `bun run test` or `bun run verify`.
  */
 
-import { describe, it, expect, afterAll } from "bun:test";
-import {
-  runEval,
-  shutdownEvalRuntime,
-  assertSearchedFor,
-  assertToolCalled,
-} from "./helpers.ts";
+import { afterAll, describe, expect, it } from "bun:test";
+import { assertSearchedFor, runEval, shutdownEvalRuntime } from "./helpers.ts";
 
 afterAll(async () => {
   await shutdownEvalRuntime();
@@ -67,18 +62,18 @@ describe("platform capability discovery", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Automations
+  // Tasks
   // -----------------------------------------------------------------------
 
-  describe("automations", () => {
-    it("discovers automation tools when asked to schedule", async () => {
+  describe("tasks", () => {
+    it("discovers task tools when asked to schedule", async () => {
       const result = await runEval("schedule a daily summary at 9am");
-      assertSearchedFor(result, "automations");
+      assertSearchedFor(result, "tasks");
     }, 30_000);
 
-    it("discovers automation tools when asked about recurring tasks", async () => {
-      const result = await runEval("what automations are currently running?");
-      assertSearchedFor(result, "automations");
+    it("discovers task tools when asked about recurring tasks", async () => {
+      const result = await runEval("what tasks are currently running?");
+      assertSearchedFor(result, "tasks");
     }, 30_000);
   });
 
@@ -92,7 +87,9 @@ describe("platform capability discovery", () => {
       const searchedFiles = result.toolCalls.some(
         (tc) =>
           tc.name === "nb__search" &&
-          String(tc.input.query ?? "").toLowerCase().includes("files"),
+          String(tc.input.query ?? "")
+            .toLowerCase()
+            .includes("files"),
       );
       expect(searchedFiles).toBe(false);
     }, 30_000);

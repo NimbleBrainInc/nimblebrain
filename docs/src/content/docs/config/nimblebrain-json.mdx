@@ -3,12 +3,12 @@ title: nimblebrain.json
 description: Complete reference for the NimbleBrain instance configuration file.
 ---
 
-import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
 NimbleBrain splits configuration into two files:
 
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment. **This page.**
-- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model + identity overrides). See [`workspace.json`](/config/workspace-json).
+- **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model overrides). See [`workspace.json`](/config/workspace-json).
 
 Top-level `skillDirs`, `home`, and `preferences` entries in `nimblebrain.json` are stripped at load — they belong in `workspace.json` now. See [workspace configuration](/config/workspace-json) for where they live. A workspace's `connectors` array belongs there too; in this file the name `connectors` is the [provider and gateway block](#connectors).
 
@@ -50,7 +50,6 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 
   "maxIterations":      25,
   "maxInputTokens":     500000,
-  "maxOutputTokens":    16384,
   "maxToolResultSize":  1000000,
 
   "logging": { "dir": "~/.nimblebrain/logs", "disabled": false, "level": "normal", "retentionDays": 30 },
@@ -103,30 +102,27 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `models` | `object` | — | Role-based model slots. See [models](#models). |
 | `modelPolicy` | `object` | — | Which models this organization permits. See [modelPolicy](#modelpolicy). |
 | `providers` | `object` | — | Per-provider API keys. See [providers](#providers). |
-| `model` | `object` | `{ "provider": "anthropic" }` | **Legacy** single-provider config. Use `providers` instead. |
-| `defaultModel` | `string` | — | **Deprecated.** Use `models.default` instead. |
 | `maxIterations` | `integer` | `25` | Max agentic iterations per request. Range: 1--50. |
-| `maxInputTokens` | `integer` | `500000` | Max input tokens per request. Engine stops when this budget is exceeded. |
-| `maxOutputTokens` | `integer` | `16384` | Max output tokens per LLM call. |
+| `maxInputTokens` | `integer` | `500000` | Max input tokens in one model call's context. Older history is windowed or compacted to fit; it does not stop the run. |
+| `maxOutputTokens` | `integer` | the model's catalog output limit | Max output tokens per LLM call. Leave unset to use each model's own limit (`limits.output` in the synced catalog; 16,384 for a model the catalog lacks). A set value applies to every model, clamped to that model's limit, and thinking counts toward it, so a low cap can leave a reasoning model little room for its answer. |
 | `maxToolResultSize` | `integer` | `1000000` | Max characters for a single tool result. `0` disables the cap. |
 | `thinking` | `"off" \| "adaptive" \| "enabled"` | `enabled` on reasoning models | Extended-thinking mode, applied to every provider that supports reasoning. `off`: do not reason — **not enforceable on Anthropic's adaptive-only models** (Opus 4.7/4.8, Sonnet 5, Opus 5), which have no such state: the AI SDK validates `thinking.type=disabled` and then never sends it, so the model applies its own default ([#738](https://github.com/NimbleBrainInc/nimblebrain/issues/738)). `adaptive`: model decides per call, at no stated depth. `enabled`: reason every turn, at `thinkingEffort`. **Applies only to models the catalog carries and flags reasoning-capable** — an override can ask for reasoning but cannot make the parameter exist. A pinned model id, or one served by an OpenAI-compatible proxy under its own name, isn't in the catalog and so gets no reasoning options; the runtime logs a warning naming the model when it drops an override this way. Typically set via the admin `set_model_config` tool, which writes it to `nimblebrain.overrides.json`. |
 | `thinkingEffort` | `"low" \| "medium" \| "high" \| "xhigh" \| "max"` | `medium` | How hard to think when reasoning is on. **The portable control** — see [reasoning depth](#reasoning-depth) for how it reaches each provider. Ignored for `off` and `adaptive`. |
 | `thinkingBudgetTokens` | `integer` | — | Explicit token budget, for metering thinking in tokens instead of naming a depth. Only honored by providers that meter it that way (Anthropic up to 4.6, Gemini 2.5); elsewhere `thinkingEffort` applies — Gemini 3 takes a level, not a budget. Counts toward `maxOutputTokens`. Anthropic requires a minimum of 1,024. Prefer `thinkingEffort` unless you need a hard token cap. |
-| `sessionStore` | `object` | `{ "type": "memory", "ttlSeconds": 28800 }` | MCP session metadata store for `/mcp`. See [sessionStore](#sessionstore). |
 | `logging` | `object` | — | Structured logging config. See [logging](#logging). |
 | `http` | `object` | `{ "port": 27247, "host": "127.0.0.1" }` | HTTP server config. Omit for programmatic-only use. |
 | `features` | `object` | all `true` | Feature flags. See [Feature Flags](/config/features). |
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
+| `tasks` | `object` | — | Task run slots, queue, and per-run ceilings. See [tasks](#tasks). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote connector connections. Dev only. |
 | `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
+| `brand` | `object` | — | White-label name, logos, accent colour and fonts. See [Branding](/config/branding). |
 | `workDir` | `string` | `"~/.nimblebrain"` | Working directory for runtime state (conversations, logs, workspaces). |
 
 <Aside type="note">
-  **Workspace-owned fields** — `skillDirs`, `home`, `preferences` — are stripped if placed at the top level. They live in [`workspace.json`](/config/workspace-json). A top-level `skills` array is a **legacy** field and is stripped too; skill directories belong in `workspace.json` as `skillDirs`. A workspace-shaped `connectors` **array** is rejected outright, because in this file that name is the [provider and gateway block](#connectors) and takes an object.
-
-  **Deprecated fields** — `identity` and `contextFile` are ignored with a warning. Use a skill with `type: "context"` instead.
+  **Workspace-owned fields** — `skillDirs`, `home`, `preferences` — are stripped if placed at the top level. They live in [`workspace.json`](/config/workspace-json). A workspace-shaped `connectors` **array** is rejected outright, because in this file that name is the [provider and gateway block](#connectors) and takes an object.
 </Aside>
 
 ## Reasoning depth
@@ -159,7 +155,7 @@ usual. Setting one never voids the other.
 Google and OpenAI support is **per model, not per generation**, and is read
 from hand-maintained tables measured against the live APIs.
 
-On Google, `gemini-3-pro-preview` accepts only `low` and `high` where
+On Google, `gemini-3.1-flash-lite-image` accepts only `minimal` and `high` where
 `gemini-3.6-flash` accepts all four, and `gemini-2.5-pro` cannot stop thinking
 where the flash models can. **A Gemini model with no verified entry receives no
 thinking options at all** and runs at its own default, because guessing the
@@ -177,7 +173,12 @@ In both cases a requested depth a model doesn't offer steps **down** to the
 nearest one it does, never up. Where nothing at or below the request is
 offered, no depth is sent and the model runs at its own default — so an
 explicitly set `thinkingEffort` can end up not applied on a model that doesn't
-accept it, rather than the call failing.
+accept it, rather than the call failing. When a known tier ladder steps down or
+drops an operator's requested tier, the runtime logs a `[thinking]` warning
+naming the requested tier and the tier sent (or the provider default), once per
+model and requested tier. An xAI model measured to accept no effort parameter
+sends none without this warning; an xAI model with no measured ladder warns when
+the operator's tier cannot be applied.
 
 `off` is not universally enforceable, and where it isn't, nothing is sent
 rather than a flag that would be rejected or ignored:
@@ -195,7 +196,7 @@ rather than a flag that would be rejected or ignored:
 
 ## models
 
-The `models` object declares two role-based slots. Each value is a `provider:model-id` string (e.g. `"anthropic:claude-sonnet-4-6"`).
+The `models` object declares two role-based slots. Each value is a `provider:model-id` string (e.g. `"anthropic:claude-sonnet-4-6"`). The provider is part of the id: a value without one (`"claude-sonnet-4-6"`) is refused at startup, with an error naming the qualified form to write.
 
 ```json
 {
@@ -209,11 +210,13 @@ The `models` object declares two role-based slots. Each value is a `provider:mod
 | Slot | Used for |
 |------|----------|
 | `default` | Chat, general requests, most tool-using turns |
-| `fast` | Conversation titles, the home briefing, and both history folds — end-of-turn compaction and the mid-turn fold. Cheap/fast workloads, but still needs a large context window: see below |
+| `fast` | Conversation titles and both history folds — end-of-turn compaction and the mid-turn fold. Cheap/fast workloads, but still needs a large context window: see below |
+
+A slot left unset resolves to the built-in default model, `anthropic:claude-sonnet-4-6`. The slots are independent: an unset `fast` does not follow `default`.
 
 A workspace can override individual slots via `workspace.json → models`. When a per-request model specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots. `"alias:fast"` is the same reference written explicitly; both spellings resolve identically.
 
-A bare model string that is **neither** a slot name nor a model in the catalog is passed through to the provider unchanged, with `anthropic:` prepended — the deliberate fallback for pinned or bespoke ids served under their own name (for example through an OpenAI-compatible proxy). That means a typo here is not rejected at config load; it fails at the provider on the first call that uses the slot, reporting a model you did not configure.
+A model the catalog does not list is still accepted when it names its provider (`"openai:my-fine-tune"`, or a model served under its own name through an OpenAI-compatible proxy). It is passed to that provider unchanged, so a typo in the model half is not rejected at config load; it fails at the provider on the first call that uses the slot.
 
 ### Changing a slot affects new conversations only
 
@@ -259,7 +262,7 @@ an existing deployment changes nothing and an org opts *into* restriction.
 
 | Field | Type | Description |
 |---|---|---|
-| `allowed` | `string[]` | Qualified `provider:model-id` strings. |
+| `allowed` | `string[]` | Qualified `provider:model-id` strings. An entry without a provider is refused at startup. |
 
 Policy can only **subtract**. It narrows what the configured providers can
 already reach — naming a model whose provider has no key does not make it
@@ -282,7 +285,7 @@ list falls back to the configured default on their next turn.
 
 ## providers
 
-Per-provider API keys. Takes precedence over the legacy `model` object when both are present.
+Per-provider API keys. With no `providers` block, the runtime uses Anthropic, keyed from `ANTHROPIC_API_KEY`.
 
 ```json
 {
@@ -339,13 +342,15 @@ The exact model lineup is account- and tier-specific and changes over time. The 
 }
 ```
 
-The key falls back to `XAI_API_KEY`, and `baseURL` overrides the endpoint (default `https://api.x.ai/v1`). Five models ship in the catalog: `grok-4.5`, `grok-4.3`, `grok-4.20-0309-reasoning`, `grok-4.20-0309-non-reasoning`, and `grok-build-0.1`. All five support tool calling.
+The key falls back to `XAI_API_KEY`, and `baseURL` overrides the endpoint (default `https://api.x.ai/v1`). Seven models ship in the catalog: `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-4.3`, `grok-4.20-0309-reasoning`, `grok-4.20-0309-non-reasoning`, and `grok-build-0.1`. All seven support tool calling.
 
 Reasoning support is uneven in a way worth knowing before you point a slot at one:
 
 | Model | Effort tiers accepted |
 |---|---|
 | `grok-4.3` | `low`, `medium`, `high`, plus `none` to suppress reasoning entirely |
+| `grok-4.7` | `low`, `medium`, `high` |
+| `grok-4.6` | `low`, `medium`, `high` |
 | `grok-4.5` | `low`, `medium`, `high` |
 | `grok-4.20-0309-reasoning` | none — it reasons, but rejects the effort parameter |
 | `grok-build-0.1` | none — same |
@@ -353,99 +358,20 @@ Reasoning support is uneven in a way worth knowing before you point a slot at on
 
 Where a model takes no effort parameter, the runtime sends no reasoning options and the model applies its own default; asking for a tier would fail the call outright. `grok-4.3` is the only model in an effort dialect where `thinking: "off"` sends a suppressing value rather than nothing — `none` genuinely zeroes the reasoning trace. (Gemini 2.5 models that can disable thinking also honor `off`, via a zero `thinkingBudget`; that is the budget dialect, not a tier.)
 
-Two other notes. xAI publishes no per-model max-output cap and accepts `max_tokens` up to the full context window, so `grok-4.5` and `grok-build-0.1` are pinned to a 16,384-token output ceiling in the catalog — without it the message budget resolves to zero and every turn fails. And `grok-4.20-multi-agent-0309` is deliberately absent: the Chat Completions endpoint refuses it (`Multi Agent requests are not allowed on chat completions`).
+Two other notes. xAI publishes no per-model max-output cap and accepts `max_tokens` up to the full context window, so `grok-4.7`, `grok-4.6`, `grok-4.5` and `grok-build-0.1` are pinned to a 16,384-token output ceiling in the catalog — without it the message budget resolves to zero and every turn fails. And `grok-4.20-multi-agent-0309` is deliberately absent: the Chat Completions endpoint refuses it (`Multi Agent requests are not allowed on chat completions`).
 
 ## Conversation storage
 
-Conversations are **workspace-owned and persisted automatically** — there is nothing to configure. Every turn is written to a per-conversation JSONL file at `{workDir}/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl` in the **event-sourced** format (one append-only event log per conversation), which is what enables crash-resilient run replay and history [compaction](/config/features/). Legacy message-format JSONL files are still read.
+Conversations are **workspace-owned and persisted automatically** — there is nothing to configure. Every turn is written to a per-conversation JSONL file at `{workDir}/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl` in the **event-sourced** format (one append-only event log per conversation), which is what enables crash-resilient run replay and history [compaction](/config/features/).
 
-## sessionStore
+## Scaling to multiple replicas
 
-Pluggable metadata store for MCP HTTP sessions. Tracks each `Mcp-Session-Id` and its idle TTL across the cluster.
+Run `platform.replicas: 1`. More than one replica is **not supported**: the runtime assumes it is the only process on a tenant's data, and no combination of settings makes a second replica safe today. With two replicas:
 
-<Tabs>
-  <TabItem label="In-memory (default)">
-    ```json
-    {
-      "sessionStore": {
-        "type": "memory",
-        "ttlSeconds": 28800
-      }
-    }
-    ```
-
-    Process-local Map with periodic TTL sweep. No external dependencies. Default; fine for any single-replica deploy.
-  </TabItem>
-  <TabItem label="Redis">
-    ```json
-    {
-      "sessionStore": {
-        "type": "redis",
-        "ttlSeconds": 28800,
-        "redis": {
-          "url": "${REDIS_URL}",
-          "keyPrefix": "nb:mcp:session:"
-        }
-      }
-    }
-    ```
-
-    Hash-per-session with native `PEXPIRE` TTL. Required when `platform.replicas > 1`; also useful at single-replica if you want cluster-wide visibility into active sessions for ops/admin tooling. The `redis.url` field expands `${VAR}` placeholders from `process.env` at boot, so the deployment configmap can carry a literal `"${REDIS_URL}"` and have the actual URL injected from a secret via `envFrom`.
-  </TabItem>
-</Tabs>
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `type` | `"memory"` \| `"redis"` | `"memory"` | Provider. `redis` requires `redis.url`. |
-| `ttlSeconds` | `integer` (s) | `28800` (8 h) | Idle TTL. Each request resets the clock — actively-used sessions never expire. |
-| `redis.url` | `string` | — | Redis connection URL (`redis://` or `rediss://`). Required when `type` is `"redis"`. Supports `${VAR}` env expansion. |
-| `redis.keyPrefix` | `string` | `"nb:mcp:session:"` | Hash key prefix for session entries. |
-
-### Why a session store at all
-
-The MCP `/mcp` endpoint is stateful. Each session has two parts:
-
-- **Metadata** — `sessionId`, `identityId`, `workspaceId`, timestamps. Just data; lives in the session store.
-- **Live transport** — open HTTP response stream, SDK `Server` instance, registered request handlers, in-flight JSON-RPC state. Process-bound — holds open file descriptors and JS object references that cannot be serialized or moved.
-
-Metadata is shareable across processes; the live transport is not. Routing requests to the process that owns a session's transport is the **load balancer's** job (cookie stickiness, header-hash on `Mcp-Session-Id`), not the session store's. The session store is deliberately deployment-vocabulary-free — no notion of "which pod owns this" — so the same interface fits any deployment topology.
-
-When a request arrives at a process that doesn't have the live transport for the requested session, the 404 carries `error.data.reason`:
-
-| Reason | Meaning |
-|--------|---------|
-| `not_found` | Session store has no record. Idle-TTL eviction, or session never existed. |
-| `unavailable` | Session exists in the store, but the live transport isn't on this process. Possible causes: process restart, sticky-routing miss, transport closed locally. |
-
-Spec-compliant clients re-initialize on either reason. Operators distinguish `unavailable` causes via deploy timing, process uptime, and "session-store size vs local transport count" signals.
-
-### Configuration matrix
-
-| Replicas | Store | Use case |
-|----------|-------|----------|
-| 1 | `memory` | Default. Dev, programmatic use, simple production. Sessions die on process restart; clients re-initialize. |
-| 1 | `redis` | Single-process with cluster-shared metadata for ops visibility, audit trails, or future scale-out. |
-| N | `redis` | Horizontal scale. **Pair with sticky load-balancing** (e.g. ALB `lb_cookie`) — without it, every cross-process request returns `unavailable` and clients re-initialize constantly. |
-| N | `memory` | **Not supported.** Sessions partition across processes. |
-
-When `type: "redis"` is set without a `redis.url`, NimbleBrain refuses to fall back to in-memory and fails the boot — silently degrading would mask a misconfiguration.
-
-### Scaling to multiple replicas
-
-`platform.replicas > 1` requires all of:
-
-1. **Storage that supports concurrent multi-process mounts.** The default chart's PVC is `ReadWriteOnce` and blocks `RollingUpdate` rollouts. Move workspace data out of the PVC (Postgres/S3) or relocate to `ReadWriteMany` (EFS).
-2. **Routing strategy keyed on `Mcp-Session-Id`.** ALB `lb_cookie` stickiness is the simplest path on AWS; alternatives are NGINX/Envoy with header-hash routing, or application-level cross-process proxying.
-3. **Cluster-shared session store.** `sessionStore.type: "redis"`.
-4. **Deploy strategy that doesn't drop all replicas at once.** `platform.strategy.type: RollingUpdate` (with the storage from (1) in place).
-
-Drop any one of these and multi-replica is broken in a different way: PVC deadlock, re-init storms, partitioned session view, or deploy-time outages.
-
-### Tuning `ttlSeconds`
-
-The 8 h default is tuned for a connector left open during a working day. Tighten it (e.g. `1800` for 30 minutes) if you want sessions to evict faster on idle; loosen it if your typical usage pattern leaves connectors open across days.
-
-`MCP_SESSION_TTL_SECONDS` env var overrides this when set.
+- **Work runs twice.** Every pod's scheduler fires every due task, and every pod polls every notification outbox, so runs, posts and deliveries happen once per pod.
+- **Writes are lost.** Workspace records and notification files are rewritten whole, with locks that hold within one process only.
+- **State goes stale between pods.** A connector installed or removed on one pod, a deactivated user, a changed model config, and live events (including an in-flight chat turn) stay on the pod that saw them.
+- **Sticky routing does not fix this.** Load-balancer cookie affinity pins a browser, not an MCP client or a webhook sender.
 
 ## logging
 
@@ -534,7 +460,7 @@ Smithery contributes **no callback routes**: it brokers OAuth on its own hosted 
 
 `apiKey` is the platform-wide Composio API key and the gate on registering the provider at all — without it (here or in `COMPOSIO_API_KEY`) the integration stays dormant.
 
-It is declarable because nothing persisted points at where it lives. A connector installed through Composio records `auth: { type: "provider", provider: "composio" }` in `workspace.json` — it names the credential it needs, not a place to find it — so the key never sits at rest and resolution stays the provider's own business. Connectors installed before that change carry a `${COMPOSIO_API_KEY}` environment reference in their `auth` block and are mapped forward when they start, so both resolve identically with no operator action. The key itself may be a [credential reference](/config/secrets/) rather than a literal.
+It is declarable because nothing persisted points at where it lives. A connector installed through Composio records `auth: { type: "provider", provider: "composio" }` in `workspace.json` — it names the credential it needs, not a place to find it — so the key never sits at rest and resolution stays the provider's own business. The key itself may be a [credential reference](/config/secrets/) rather than a literal.
 
 <Aside type="note">
   **Which home to pick.** Both work; they suit different deployments.
@@ -624,6 +550,34 @@ the first few forever.
   [Observability](/deploy/observability/#background-loops).
 </Aside>
 
+## tasks
+
+Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight and waiting, across every workspace, and the most any one run may spend.
+
+```json
+{
+  "tasks": {
+    "maxConcurrentRuns": 2,
+    "maxQueuedRuns":     50,
+    "maxRunIterations":  50,
+    "maxRunInputTokens": 20000000,
+    "maxRunDurationMs":  600000
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxConcurrentRuns` | `integer` | `2` | Unattended runs in flight at once: scheduled, Run now, and event runs, and any other run started without a person in the loop. Chat turns do not take a slot. Range: 1--100. |
+| `maxQueuedRuns` | `integer` | `50` | Run now and event runs held waiting for a slot. A freed slot goes to the waiting run whose workspace holds the fewest slots, oldest first among equals. Beyond it a run is refused and recorded as skipped. `0` refuses at the limit. Range: 0--1000. |
+| `maxRunIterations` | `integer` | `50` | Ceiling on one run's agentic iterations. Range: 1--50. |
+| `maxRunInputTokens` | `integer` | none | Ceiling on one run's input tokens, summed over every model call. Unset, there is no ceiling. Range: 1,000--100,000,000. |
+| `maxRunDurationMs` | `integer` (ms) | `600000` | Ceiling on one run's wall-clock time. Range: 10,000--600,000. |
+
+The three per-run ceilings apply when a run starts, so they cover every stored task however it was written. A cap a task sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: a task with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not. The create and update tools report the caps that result.
+
+A scheduled run that finds every slot busy is deferred rather than queued: it keeps its next-run time and runs on the first scheduler tick with a free slot, so its place survives a restart. The queue is held in memory: runs still queued when the runtime stops are recorded as skipped.
+
 ## files
 
 File upload limits applied when `features.fileContext` is enabled.
@@ -646,6 +600,8 @@ File upload limits applied when `features.fileContext` is enabled.
 | `maxFilesPerMessage` | `integer` | 10 | Maximum number of files per chat message. |
 | `maxExtractedTextSize` | `integer` (bytes) | 200 KB | Maximum extracted text size per file. |
 
+An upload to the workspace file store (the Files app, or an app's file picker) is not a chat message: `maxFilesPerMessage` does not apply to it. It takes up to 100 files at a time, each within `maxFileSize` and all together within `maxTotalSize`. The chat composer shows the per-message limits before you send.
+
 ## telemetry
 
 NimbleBrain collects anonymized, aggregate usage data with no PII — no connector names, tool names, error messages, or file paths are sent.
@@ -656,34 +612,17 @@ NimbleBrain collects anonymized, aggregate usage data with no PII — no connect
 
 Disable with `NB_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1` env vars, or set `telemetry.enabled: false` as shown above.
 
-## Legacy `model` object
-
-The older single-provider `model` shape is still accepted for backward compatibility but deprecated. Prefer `providers` for mixing API keys and `models` for model selection.
-
-```json
-{
-  "model": { "provider": "anthropic", "apiKey": "sk-ant-..." },
-  "defaultModel": "claude-sonnet-4-6"
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `provider` | `"anthropic"` \| `"openai"` \| `"google"` | Default provider when `providers` isn't set. |
-| `apiKey` | `string` | Falls back to the provider's env var when omitted. |
-
 ## Validation
 
 NimbleBrain validates `nimblebrain.json` at startup against the [JSON Schema (draft-07)](https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json) using AJV.
 
 - **Unknown keys** produce a warning on stderr and are ignored.
 - **Structural errors** (wrong types, missing required fields) throw an error and prevent startup.
-- **Workspace-owned and legacy keys** (`skillDirs`, `home`, `preferences`, and the legacy `skills`) warn as unknown keys and are stripped before the runtime config is built.
+- **Workspace-owned keys** (`skillDirs`, `home`, `preferences`) warn as unknown keys and are stripped before the runtime config is built.
 - The **override file** (`nimblebrain.overrides.json`) is validated structurally, but unknown-key warnings are suppressed for it. Every key `set_model_config` writes is in the published schema; the suppression is for version drift, since the file is preserved across deploys and can outlive the schema of whichever image reads it.
-- **Deprecated keys** (`identity`, `contextFile`) produce a warning pointing at context skills.
 
 ```
-[config] Warning: unknown key "foo" in /home/user/.nimblebrain/nimblebrain.json (ignored)
+[config] Unknown key "foo" in /home/user/.nimblebrain/nimblebrain.json (ignored)
 ```
 
 ```
@@ -699,7 +638,6 @@ CLI flags take precedence over values in the config file:
 |------|-----------|
 | `--config <path>` | Config file location |
 | `--workdir <dir>` | Default location of the config file and `workDir` fallback |
-| `--model <id>` | `defaultModel` field (legacy) |
 | `--port <n>` | `http.port` field |
 | `--debug` | Enables verbose debug event logging |
 

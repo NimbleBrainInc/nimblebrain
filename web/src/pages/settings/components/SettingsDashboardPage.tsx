@@ -7,7 +7,6 @@ import { SettingsPageHeader, type SettingsPageHeaderProps } from "./SettingsPage
  * (Usage, About). Owns:
  *
  *   - page header (title, description)
- *   - column width (`max-w-5xl` — for stat-tile grids and breakdown tables)
  *   - an optional controls bar between header and body (period selector,
  *     filters)
  *
@@ -37,7 +36,7 @@ export function SettingsDashboardPage({
   children,
 }: SettingsDashboardPageProps) {
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SettingsPageHeader title={title} description={description} icon={icon} back={back} />
 
       {controls ? <div>{controls}</div> : null}

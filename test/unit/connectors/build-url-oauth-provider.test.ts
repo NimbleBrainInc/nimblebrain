@@ -25,10 +25,9 @@ afterEach(() => {
 
 const noop = (): void => {};
 
-function urlRef(extra: Partial<Extract<ConnectorRef, { url: string }>> = {}): Extract<
-  ConnectorRef,
-  { url: string }
-> {
+function urlRef(
+  extra: Partial<Extract<ConnectorRef, { url: string }>> = {},
+): Extract<ConnectorRef, { url: string }> {
   return { url: "https://mcp.example.com/granola", serverName: "granola", ui: null, ...extra };
 }
 
@@ -40,7 +39,7 @@ describe("buildUrlOAuthProvider — owner dimension", () => {
       urlRef(),
       "granola",
       undefined,
-      { identityOwner: { userId: "usr_alice" }, workDir },
+      { identityOwner: { userId: "usr_alice", workDir } },
       noop,
     );
     expect(provider).toBeDefined();
@@ -62,11 +61,11 @@ describe("buildUrlOAuthProvider — owner dimension", () => {
     const provider = await buildUrlOAuthProvider(
       urlRef(),
       "granola",
-      new WorkspaceContext({ wsId: "ws_test", workDir }),
+      new WorkspaceContext({ wsId: "ws_0076759dbbe19fcc", workDir }),
       { allowInsecureRemotes: true },
       noop,
     );
-    expect(provider?.getOwner()).toEqual({ type: "workspace", wsId: "ws_test" });
+    expect(provider?.getOwner()).toEqual({ type: "workspace", wsId: "ws_0076759dbbe19fcc" });
   });
 
   it("identityOwner takes precedence — a stray wsContext can't bind a personal connector to a workspace", async () => {
@@ -78,8 +77,8 @@ describe("buildUrlOAuthProvider — owner dimension", () => {
     const provider = await buildUrlOAuthProvider(
       urlRef(),
       "granola",
-      new WorkspaceContext({ wsId: "ws_test", workDir }),
-      { identityOwner: { userId: "usr_alice" }, workDir },
+      new WorkspaceContext({ wsId: "ws_0076759dbbe19fcc", workDir }),
+      { identityOwner: { userId: "usr_alice", workDir } },
       noop,
     );
     expect(provider?.getOwner()).toEqual({ type: "user", userId: "usr_alice" });

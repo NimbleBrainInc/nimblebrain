@@ -9,13 +9,13 @@
  *   - Post-callback connectors return URL (`connectors-redirect.ts`)
  *   - `appOrigin` (post-login landing)
  *
- * Why this module exists: "what is this tenant's public origin?" used to be
- * smeared across `NB_API_URL`, `NB_WEB_URL`, `WORKOS_REDIRECT_URI`, and
- * `ALLOWED_ORIGINS[0]` — four values in two layers that had to agree by hand.
- * For a custom-domain tenant they didn't: callbacks defaulted to the platform
- * subdomain while the user was signed in on the branded domain, so the OAuth
- * return leg landed cross-origin (no session cookie) and 401'd. Collapsing the
- * derivation to one policy here makes those URLs consistent by construction.
+ * Why this module exists: "what is this tenant's public origin?" must have one
+ * answer. Spread across `NB_API_URL`, `NB_WEB_URL`, `WORKOS_REDIRECT_URI`, and
+ * `ALLOWED_ORIGINS[0]` — four values in two layers — it has to agree by hand,
+ * and for a custom-domain tenant it does not: callbacks default to the platform
+ * subdomain while the user is signed in on the branded domain, so the OAuth
+ * return leg lands cross-origin (no session cookie) and 401s. One derivation
+ * policy here makes those URLs consistent by construction.
  *
  * **Policy.** The canonical origin is, in order:
  *   1. `NB_PUBLIC_ORIGIN` — explicit operator override. The rare escape hatch
@@ -28,9 +28,9 @@
  *      not in Helm templating.
  *   3. `http://localhost:27247` — dev default (no auth gate, `dev:worktree`).
  *
- * The former `NB_API_URL` legacy fallback has been removed: the chart always
- * forwards `NB_PLATFORM_HOST` (from `ingress.host`), so step 2 always resolves
- * for any deployed tenant. `scripts/check-public-origin.ts` keeps `NB_API_URL`
+ * There is no `NB_API_URL` fallback: the chart always forwards
+ * `NB_PLATFORM_HOST` (from `ingress.host`), so step 2 always resolves for any
+ * deployed tenant. `scripts/check-public-origin.ts` keeps `NB_API_URL`
  * (and `NB_WEB_URL`) from creeping back as ad-hoc origin reads elsewhere.
  *
  * **Why config-derived, never request-derived.** The origin must NOT come from
@@ -205,8 +205,7 @@ function assertOrigin(value: string, source: string): string {
     );
   }
   // A path of only slashes (`/`, `//`) is sloppy-but-harmless trailing-slash
-  // config that the legacy `NB_API_URL` consumers stripped with a regex — keep
-  // tolerating it. A *real* path (`/v1/auth/callback`) is a misconfiguration
+  // config — tolerate it. A *real* path (`/v1/auth/callback`) is a misconfiguration
   // (someone pasted a full callback URL) and is rejected.
   const hasRealPath = url.pathname.replace(/\/+$/, "") !== "";
   if (hasRealPath || url.search || url.hash) {

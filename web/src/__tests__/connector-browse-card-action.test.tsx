@@ -10,23 +10,16 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { CardAction } from "../pages/settings/ConnectorBrowsePage";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom doesn't expose SyntaxError/TypeError on its Window stub; any
-// querySelectorAll trips it. Same patch the other component tests carry.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
+const { MemoryRouter } = await import("react-router-dom");
 
 interface Mounted {
   container: HTMLDivElement;
@@ -105,5 +98,48 @@ describe("CardAction — static auth awaiting operator setup", () => {
     mounted = await render(false, { isStaticAuth: true, operatorReady: false });
     expect(findButton(mounted.container, "Set up")).toBeNull();
     expect(mounted.container.textContent).toContain("Operator setup required");
+  });
+});
+
+describe("CardAction — an installed entry", () => {
+  // The Configure link needs a router; the other states render none.
+  function renderInstalled(
+    canManage: boolean,
+    over: Partial<Parameters<typeof CardAction>[0]> = {},
+  ) {
+    return mount(
+      <MemoryRouter>
+        <CardAction
+          busy={false}
+          canManage={canManage}
+          configurePath="/w/000f7ed6658f9d30/settings/connectors/acme"
+          isStaticAuth={false}
+          operatorReady={true}
+          onInstall={() => {}}
+          onSetUp={() => {}}
+          {...over}
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  test("shows a disabled Installed and a link to Configure, not Install", async () => {
+    mounted = await renderInstalled(true);
+    expect(findButton(mounted.container, "Installed")?.disabled).toBe(true);
+    expect(findButton(mounted.container, "Install")?.textContent).toContain("Installed");
+    const link = mounted.container.querySelector("a");
+    expect(link?.getAttribute("href")).toBe("/w/000f7ed6658f9d30/settings/connectors/acme");
+  });
+
+  test("a member sees Installed too — it is a fact, not an action", async () => {
+    mounted = await renderInstalled(false);
+    expect(findButton(mounted.container, "Installed")).not.toBeNull();
+    expect(mounted.container.textContent).not.toContain("Workspace admin required");
+  });
+
+  test("outranks a pending operator setup", async () => {
+    mounted = await renderInstalled(true, { isStaticAuth: true, operatorReady: false });
+    expect(findButton(mounted.container, "Set up")).toBeNull();
+    expect(findButton(mounted.container, "Installed")).not.toBeNull();
   });
 });

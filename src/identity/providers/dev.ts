@@ -2,14 +2,14 @@ import { existsSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { log } from "../../observability/log.ts";
-import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
-import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
-import type {
-  CreateUserInput,
-  CreateUserResult,
-  IdentityProvider,
-  ProviderCapabilities,
-  UserIdentity,
+import {
+  type CreateUserInput,
+  type CreateUserResult,
+  FIRST_PARTY_GRANT,
+  type IdentityProvider,
+  type ProviderCapabilities,
+  type UserIdentity,
+  type VerifiedIdentity,
 } from "../provider.ts";
 import type { User, UserStore } from "../user.ts";
 
@@ -19,15 +19,16 @@ export const DEV_IDENTITY: UserIdentity = {
   id: "usr_default",
   email: "dev@localhost",
   displayName: "Developer",
-  orgRole: "owner",
+  orgRole: "admin",
   preferences: {},
 };
 
 // ── DevIdentityProvider ──────────────────────────────────────────
 
 /**
- * Identity provider for dev mode — always returns a default user identity.
- * Creates the default user profile and workspace on first access if missing.
+ * The `dev` adapter (`{"auth":{"adapter":"dev"}}` in `instance.json`): every
+ * request authenticates as `DEV_IDENTITY`, with no credential checked.
+ * Creates the default user profile on first access if missing.
  */
 export class DevIdentityProvider implements IdentityProvider {
   readonly capabilities: ProviderCapabilities = {
@@ -40,28 +41,20 @@ export class DevIdentityProvider implements IdentityProvider {
 
   private initialized = false;
   private usersDir: string;
-  private workspaceStore: WorkspaceStore;
 
   constructor(
     workDir: string,
     private userStore: UserStore,
-    workspaceStore: WorkspaceStore,
   ) {
     this.usersDir = join(workDir, "users");
-    this.workspaceStore = workspaceStore;
-    log.warn("Running in dev mode — no authentication configured");
+    log.warn(
+      "instance.json selects the dev identity provider: every request is the local developer, with no login",
+    );
   }
 
-  async verifyRequest(_req: Request): Promise<UserIdentity | null> {
+  async verifyRequest(_req: Request): Promise<VerifiedIdentity | null> {
     await this.ensureUserProfile();
-    // Run on every request (idempotent) so the "authenticated user has
-    // ≥1 workspace" invariant self-heals if the dev workspace is deleted
-    // out from under the process.
-    await ensureUserWorkspace(this.workspaceStore, {
-      id: DEV_IDENTITY.id,
-      displayName: DEV_IDENTITY.displayName,
-    });
-    return DEV_IDENTITY;
+    return { ...DEV_IDENTITY, grant: FIRST_PARTY_GRANT };
   }
 
   async listUsers(): Promise<User[]> {

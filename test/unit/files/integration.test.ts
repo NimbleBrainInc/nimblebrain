@@ -1,10 +1,9 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, readFile, writeFile, appendFile, mkdir } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { createFileStore } from "../../../src/files/store.ts";
+import { join } from "node:path";
 import { ingestFiles, type UploadedFile } from "../../../src/files/ingest.ts";
+import { createFileStore } from "../../../src/files/store.ts";
 import type { FileConfig, FileEntry } from "../../../src/files/types.ts";
 
 const DEFAULT_CONFIG: FileConfig = {
@@ -24,11 +23,7 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true });
 });
 
-function makeFile(
-  content: string | Buffer,
-  filename: string,
-  mimeType: string,
-): UploadedFile {
+function makeFile(content: string | Buffer, filename: string, mimeType: string): UploadedFile {
   return {
     data: typeof content === "string" ? Buffer.from(content) : content,
     filename,
@@ -55,9 +50,7 @@ describe("Integration: upload text file → ingest → verify extracted content"
 
     // Content parts contain the extracted text
     const textParts = result.contentParts.filter((p) => p.type === "text");
-    const extractedPart = textParts.find(
-      (p) => p.type === "text" && p.text.includes(textContent),
-    );
+    const extractedPart = textParts.find((p) => p.type === "text" && p.text.includes(textContent));
     expect(extractedPart).toBeDefined();
 
     // Registry has the entry
@@ -73,9 +66,7 @@ describe("Integration: upload PNG image → ingest → verify resource_link cont
   test("image file produces a resource_link content part referencing the file store", async () => {
     const store = createFileStore(join(workDir, "files"));
     // Minimal PNG header bytes
-    const pngHeader = Buffer.from([
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-    ]);
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const files = [makeFile(pngHeader, "screenshot.png", "image/png")];
 
     const result = await ingestFiles(files, "conv_int_2", store, DEFAULT_CONFIG);
@@ -197,7 +188,7 @@ describe("Integration: files app write → read round-trip (filesystem)", () => 
       createdAt: new Date().toISOString(),
       description: null,
     };
-    await appendFile(registryPath, JSON.stringify(entry) + "\n");
+    await appendFile(registryPath, `${JSON.stringify(entry)}\n`);
 
     // Read back via FileStore to verify interoperability
     const store = createFileStore(join(workDir, "files"));
@@ -257,9 +248,7 @@ describe("Integration: files app search by filename", () => {
 
     // Search by substring "report"
     const registry = await store.readRegistry();
-    const matches = registry.filter((e) =>
-      e.filename.toLowerCase().includes("report"),
-    );
+    const matches = registry.filter((e) => e.filename.toLowerCase().includes("report"));
 
     expect(matches).toHaveLength(2);
     expect(matches.map((m) => m.id).sort()).toEqual(["fl_alpha", "fl_gamma"]);
@@ -318,9 +307,7 @@ describe("Integration: validation — reject oversized file", () => {
 describe("Integration: validation — reject disallowed MIME type", () => {
   test("application/x-executable is rejected with error", async () => {
     const store = createFileStore(join(workDir, "files"));
-    const files = [
-      makeFile("#!/bin/bash\nrm -rf /", "malicious.exe", "application/x-executable"),
-    ];
+    const files = [makeFile("#!/bin/bash\nrm -rf /", "malicious.exe", "application/x-executable")];
 
     const result = await ingestFiles(files, "conv_int_v2", store, DEFAULT_CONFIG);
 

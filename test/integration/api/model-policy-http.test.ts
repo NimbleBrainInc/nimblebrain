@@ -2,10 +2,18 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../../src/api/server.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { readJson } from "../../helpers/http.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
+
+/** The `400 model_not_allowed` body: `ApiErrorBody` with the refused model and the configured providers. */
+type ModelNotAllowedBody = ApiErrorBody & {
+  details?: { model?: string; configuredProviders?: string[] };
+};
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -20,10 +28,10 @@ const DEV_OWNER = "usr_default";
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
-    // Carries the allowlist. It also displaces the echo adapter, so a turn that
-    // clears the gate then fails against a placeholder key — which is fine
-    // here: every assertion is about the response the gate produces.
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
+    // Carries the allowlist. The echo adapter serves every turn that clears
+    // the gate; every assertion is about the response the gate produces.
     providers: { anthropic: { apiKey: "test-key", models: ["claude-sonnet-4-6"] } },
     logging: { disabled: true },
     workDir: testDir,
@@ -39,25 +47,23 @@ afterAll(async () => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
-const post = (path: string, body: Record<string, unknown>) =>
-  fetch(`${baseUrl}${path}`, {
+/** POST to a chat route under the test workspace. */
+const post = (route: string, body: Record<string, unknown>) =>
+  fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/${route}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Workspace-Id": TEST_WORKSPACE_ID },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
-// Both chat doors reach the same gate, so both must report it the same way.
-// They did not: `/v1/chat/start` kept a private copy of the error mapping that
-// omitted this class and answered 500 — on the route the web client uses.
-describe.each([["/v1/chat"], ["/v1/chat/start"]])("%s refuses a disallowed model", (route) => {
+// The chat door reports the gate as a 400; a private copy of the error mapping
+// there would answer 500 for this class.
+describe("/v1/workspaces/:wsId/chat/start refuses a disallowed model", () => {
+  const route = "chat/start";
   it("answers 400 model_not_allowed, naming the model and the configured providers", async () => {
     const res = await post(route, { message: "hi", model: REFUSED });
     expect(res.status).toBe(400);
 
-    const body = (await res.json()) as {
-      error: string;
-      details?: { model?: string; configuredProviders?: string[] };
-    };
+    const body = await readJson<ModelNotAllowedBody>(res);
     expect(body.error).toBe("model_not_allowed");
     expect(body.details?.model).toBe(REFUSED);
     expect(body.details?.configuredProviders).toContain("anthropic");
@@ -69,30 +75,40 @@ describe.each([["/v1/chat"], ["/v1/chat/start"]])("%s refuses a disallowed model
   });
 });
 
+// A bare id names no provider. It is refused before the allowlist is
+// consulted, with the qualified form to send instead.
+describe("/v1/workspaces/:wsId/chat/start refuses a bare model id", () => {
+  it("answers 400 model_not_qualified, naming the qualified form", async () => {
+    const res = await post("chat/start", { message: "hi", model: "claude-sonnet-4-6" });
+    expect(res.status).toBe(400);
+
+    const body = await readJson<ApiErrorBody & { details?: { model?: string } }>(res);
+    expect(body.error).toBe("model_not_qualified");
+    expect(body.message).toContain('"anthropic:claude-sonnet-4-6"');
+    expect(body.details?.model).toBe("claude-sonnet-4-6");
+  });
+});
+
 // The gate skips a resume, because the pin wins and the request's model is
-// discarded. Both doors build their create options lazily to get that, and
-// both need holding: `/v1/chat` and `/v1/chat/start` reach it through
-// different methods, so a test on one leaves the other free to regress.
-describe.each([["/v1/chat"], ["/v1/chat/start"]])(
-  "%s resumes a pinned conversation without gating the request model",
-  (route) => {
-    it("does not answer model_not_allowed", async () => {
-      const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, DEV_OWNER);
-      const { id } = await store.create({
-        ownerId: DEV_OWNER,
-        workspaceId: TEST_WORKSPACE_ID,
-        model: ALLOWED,
-      });
-
-      const res = await post(route, { message: "again", conversationId: id, model: REFUSED });
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-
-      expect(body.error).not.toBe("model_not_allowed");
-      // Not a vacuous pass: the resume has to actually reach the turn, so an
-      // ownership or lookup refusal would be a different bug wearing the same
-      // green.
-      expect(res.status).not.toBe(403);
-      expect(res.status).not.toBe(404);
+// discarded. The door builds its create options lazily to get that.
+describe("/v1/workspaces/:wsId/chat/start resumes a pinned conversation without gating the request model", () => {
+  const route = "chat/start";
+  it("does not answer model_not_allowed", async () => {
+    const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, DEV_OWNER);
+    const { id } = await store.create({
+      ownerId: DEV_OWNER,
+      workspaceId: TEST_WORKSPACE_ID,
+      model: ALLOWED,
     });
-  },
-);
+
+    const res = await post(route, { message: "again", conversationId: id, model: REFUSED });
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+
+    expect(body.error).not.toBe("model_not_allowed");
+    // Not a vacuous pass: the resume has to actually reach the turn, so an
+    // ownership or lookup refusal would be a different bug wearing the same
+    // green.
+    expect(res.status).not.toBe(403);
+    expect(res.status).not.toBe(404);
+  });
+});

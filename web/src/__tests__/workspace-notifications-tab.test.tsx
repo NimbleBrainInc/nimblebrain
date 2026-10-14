@@ -14,24 +14,18 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom doesn't expose SyntaxError/TypeError on its Window stub; any
-// querySelectorAll trips it. Same patch the other component tests carry.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 interface ToolCall {
   tool: string;
   args: Record<string, unknown>;
+  workspaceId?: string;
 }
 
 let calls: ToolCall[] = [];
@@ -45,6 +39,8 @@ const DELIVERED_NOTHING: Record<string, unknown> = {
   deliveries: [],
 };
 let testSendResult: Record<string, unknown> | Error = DELIVERED_NOTHING;
+/** When set, `set_source_level` refuses with this text. */
+let levelRefusal: string | null = null;
 
 function settings(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -59,7 +55,7 @@ function settings(over: Record<string, unknown> = {}): Record<string, unknown> {
     ],
     routes: [],
     deliverableTools: ["slack__send_message"],
-    automations: [{ id: "auto_triage", name: "Triage" }],
+    tasks: [{ id: "auto_triage", name: "Triage" }],
     placeholders: ["title", "body", "subject", "link.resource"],
     routesExecuted: true,
     ...over,
@@ -68,14 +64,24 @@ function settings(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 mock.module("../api/client", () => ({
   ...realClient,
-  callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
-    calls.push({ tool, args });
-    if (tool === "send_test") {
-      if (testSendResult instanceof Error) throw testSendResult;
-      return { content: [{ type: "text", text: JSON.stringify(testSendResult) }] };
-    }
-    return { content: [{ type: "text", text: JSON.stringify(current) }] };
-  }),
+  callTool: mock(
+    async (
+      _source: string,
+      tool: string,
+      args: Record<string, unknown>,
+      opts?: { workspaceId?: string },
+    ) => {
+      calls.push({ tool, args, workspaceId: opts?.workspaceId });
+      if (tool === "set_source_level" && levelRefusal) {
+        return { content: [{ type: "text", text: levelRefusal }], isError: true };
+      }
+      if (tool === "send_test") {
+        if (testSendResult instanceof Error) throw testSendResult;
+        return { content: [{ type: "text", text: JSON.stringify(testSendResult) }] };
+      }
+      return { content: [{ type: "text", text: JSON.stringify(current) }] };
+    },
+  ),
 }));
 
 const React = await import("react");
@@ -83,13 +89,13 @@ const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { WorkspaceNotificationsTab } = await import("../pages/settings/WorkspaceNotificationsTab");
+const { NoticeProvider, NoticeViewport } = await import("../components/notices");
 
 const WS: WorkspaceInfo = {
-  id: "ws_outbound",
+  id: "ws_005b519ef7efc353",
   name: "Outbound",
-  connectors: [],
+  connectorCount: 0,
   memberCount: 1,
-  isPersonal: false,
   userRole: "admin",
 };
 
@@ -102,9 +108,14 @@ async function mount(): Promise<HTMLDivElement> {
   await act(async () => {
     root.render(
       React.createElement(
-        WorkspaceProvider,
-        { initialWorkspaces: [WS], initialActiveId: WS.id },
-        React.createElement(WorkspaceNotificationsTab),
+        NoticeProvider,
+        null,
+        React.createElement(NoticeViewport),
+        React.createElement(WorkspaceProvider, {
+          initialWorkspaces: [WS],
+          initialActiveId: WS.id,
+          children: React.createElement(WorkspaceNotificationsTab),
+        }),
       ),
     );
   });
@@ -138,7 +149,7 @@ async function click(el: HTMLElement): Promise<void> {
 }
 
 /** The shim's own Event constructor — a global `Event` is a different class to it. */
-const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+const WindowEvent = window.Event;
 
 /**
  * Set a form control's value the way React's onChange sees it.
@@ -161,12 +172,17 @@ async function setValue(el: HTMLSelectElement | HTMLTextAreaElement, value: stri
   });
 }
 
+async function flushAll(): Promise<void> {
+  for (let i = 0; i < 4; i++) await act(async () => await Promise.resolve());
+}
+
 afterEach(() => {
   unmount?.();
   unmount = null;
   calls = [];
   current = settings();
   testSendResult = DELIVERED_NOTHING;
+  levelRefusal = null;
 });
 
 describe("what the page tells an admin about routes", () => {
@@ -174,8 +190,8 @@ describe("what the page tells an admin about routes", () => {
     const container = await mount();
     const notice = container.querySelector('[data-testid="routes-executed"]') as HTMLElement | null;
     expect(notice?.textContent).toContain("tool");
-    expect(notice?.textContent).toContain("automation");
-    // The precondition an operator has to know: naming an automation is not
+    expect(notice?.textContent).toContain("task");
+    // The precondition an operator has to know: naming a task is not
     // enough, it has to be one that runs on events.
     expect(notice?.textContent).toContain("runs on events");
     // The blanket "nothing dispatches" notice is gone: it would be false now,
@@ -236,6 +252,34 @@ describe("the ceiling", () => {
 
     const write = calls.find((c) => c.tool === "set_source_level");
     expect(write?.args).toEqual({ source: "acme", maxLevel: "urgent" });
+    // Named, so a save that runs after a workspace switch lands where it was made.
+    expect(write?.workspaceId).toBe(WS.id);
+    await flushAll();
+    expect(document.body.querySelector("[data-testid='notice']")?.textContent).toContain(
+      "Acme ceiling updated",
+    );
+  });
+
+  test("a refused ceiling shows the reason on the field", async () => {
+    levelRefusal = "Only workspace admins can change a ceiling.";
+    const container = await mount();
+    await setValue(selectLabelled(container, "Level ceiling for Acme"), "urgent");
+    await flushAll();
+    expect(container.textContent).toContain("Only workspace admins can change a ceiling.");
+    expect(container.textContent).toContain("Not saved");
+  });
+
+  // A ceiling save takes only the sources from its answer: the route drafts
+  // are unsaved work, and the answer's routes are what is stored.
+  test("changing a ceiling keeps an unsaved route draft", async () => {
+    const container = await mount();
+    await click(buttonLabelled(container, "Add route"));
+    const before = container.querySelectorAll("[data-testid='route-editor']").length;
+    expect(before).toBe(1);
+
+    await setValue(selectLabelled(container, "Level ceiling for Acme"), "urgent");
+    await flushAll();
+    expect(container.querySelectorAll("[data-testid='route-editor']").length).toBe(before);
   });
 });
 
@@ -259,7 +303,13 @@ describe("saving routes", () => {
     await click(buttonLabelled(container, "Save routes"));
 
     const write = calls.find((c) => c.tool === "set_routes");
-    const sent = (write?.args.routes as Array<Record<string, unknown>>)[0];
+    if (!write) throw new Error("Save routes sent no set_routes call");
+    expect(write.workspaceId).toBe(WS.id);
+    await flushAll();
+    expect(document.body.querySelector("[data-testid='notice']")?.textContent).toContain(
+      "Routes saved",
+    );
+    const sent = (write.args.routes as Array<Record<string, unknown>>)[0];
     expect(sent).toEqual({
       id: "rt_1",
       match: { source: "acme" },

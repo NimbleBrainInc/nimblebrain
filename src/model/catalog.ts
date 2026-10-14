@@ -117,8 +117,8 @@ export function getModel(provider: string, modelId: string): CatalogModel | unde
 }
 
 /**
- * Look up a model by its full "provider:model-id" string.
- * Bare strings (no colon) are treated as anthropic.
+ * Look up a model by its full "provider:model-id" string. A string with no
+ * colon names no provider, so it finds nothing.
  */
 export function getModelByString(modelString: string): CatalogModel | undefined {
   const { provider, modelId } = parseModelString(modelString);
@@ -126,9 +126,8 @@ export function getModelByString(modelString: string): CatalogModel | undefined 
 }
 
 /**
- * Find which provider in the catalog owns the given bare model id.
- * Used by the resolver to rescue bare ids written to disk before the
- * settings UI started encoding `provider:` into option values.
+ * Find which provider in the catalog owns the given bare model id. Used to
+ * suggest the qualified form when an input names a model without its provider.
  *
  * Returns null when the id isn't in any provider's catalog. O(1) via
  * the precomputed `idToProvider` map; duplicates surface as warnings
@@ -183,7 +182,7 @@ export function isModelAllowed(
  * Get the list of available models for configured providers, respecting
  * allowlists. Deprecated models are excluded — this feeds the settings
  * model picker, and a model the upstream provider has shut down (e.g.
- * `google:gemini-3-pro-preview`, retired 2026-03-09) must not be
+ * `openai:gpt-5.3-chat-latest`, retired 2026-08-10) must not be
  * re-selectable. `listModels` stays honest as "all models for a provider";
  * the "available to pick" filter lives here. Note this does not retroactively
  * fix a slot already pointing at a deprecated model — that override must be
@@ -261,17 +260,17 @@ export function getAvailableModels(
 // Helpers
 // ============================================================================
 
+/**
+ * Split `provider:model`. A string with no colon has an empty provider, which
+ * no catalog entry or dialect matches.
+ */
 function parseModelString(modelString: string): { provider: string; modelId: string } {
   const idx = modelString.indexOf(":");
-  if (idx === -1) return { provider: "anthropic", modelId: modelString };
+  if (idx === -1) return { provider: "", modelId: modelString };
   return { provider: modelString.slice(0, idx), modelId: modelString.slice(idx + 1) };
 }
 
-/**
- * Extract the provider name from a model string. Bare strings (no `:`)
- * are treated as `"anthropic"` — same rule as `getModelByString`.
- * Single source of truth for that convention.
- */
+/** Extract the provider name from a model string: empty when it has no `:`. */
 export function getProviderFromModel(modelString: string): string {
   return parseModelString(modelString).provider;
 }
@@ -291,7 +290,9 @@ const ADAPTIVE_ONLY_THINKING_MODELS: ReadonlySet<string> = new Set([
   "claude-opus-4-7",
   "claude-opus-4-8",
   "claude-opus-5",
+  "claude-opus-5-5",
   "claude-sonnet-5",
+  "claude-sonnet-5-5",
 ]);
 
 /**
@@ -326,8 +327,8 @@ export type GoogleThinkingSupport =
 /**
  * Per-model reasoning support for Google, hand-maintained from Google's
  * thinking docs. models.dev doesn't carry it, and — unlike Anthropic's split —
- * it is not even uniform within a generation: `gemini-3-pro-preview` accepts
- * only `low` and `high`, while `gemini-3.6-flash` accepts all four, and
+ * it is not even uniform within a generation: `gemini-3.7-flash` has no
+ * `minimal`, while `gemini-3.6-flash` before it accepts all four, and
  * `gemini-2.5-pro` cannot disable thinking at all where the flash models can.
  *
  * Deriving this from the model id was tried and is wrong twice over: a version
@@ -353,12 +354,13 @@ export type GoogleThinkingSupport =
  * the guesswork this table replaced.
  */
 const GOOGLE_THINKING: Record<string, GoogleThinkingSupport> = {
+  "gemini-3.8-flash": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
+  "gemini-3.7-flash": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
   "gemini-3.6-flash": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3.5-flash": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3.5-flash-lite": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3-flash-preview": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3.1-pro-preview": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
-  "gemini-3-pro-preview": { dialect: "level", levels: new Set(["low", "high"]) },
   "gemini-3.1-flash-lite": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3.1-flash-lite-image": { dialect: "level", levels: new Set(["minimal", "high"]) },
   // The 2.5 rows are budget-shaped on purpose. Google's thinking page now
@@ -393,8 +395,7 @@ export type OpenAIEffort = (typeof OPENAI_EFFORTS)[number];
 /**
  * Every tier OpenAI accepts on the wire. `minimal` sits below the ladder and is
  * deliberately not in OPENAI_EFFORTS: it is reachable only by a caller that
- * asks for it by name (the home briefing), never by stepping down from a
- * requested depth.
+ * asks for it by name, never by stepping down from a requested depth.
  */
 export type OpenAIWireEffort = OpenAIEffort | "minimal";
 
@@ -429,7 +430,7 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIWireEffort>> = {
   // Drop this row once models.dev stops carrying the model (OpenAI shutdown 2026-08-10).
   "gpt-5.2-chat-latest": new Set(["medium"]),
 
-  // Measured and unrestricted — 20 of the 25 reachable models.
+  // Measured and unrestricted — 23 of the 28 reachable models.
   "gpt-5": FULL_PLUS_MINIMAL,
   "gpt-5-mini": FULL_PLUS_MINIMAL,
   "gpt-5-nano": FULL_PLUS_MINIMAL,
@@ -444,6 +445,9 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIWireEffort>> = {
   "gpt-5.6-luna": FULL_LADDER,
   "gpt-5.6-sol": FULL_LADDER,
   "gpt-5.6-terra": FULL_LADDER,
+  "gpt-6-astra": FULL_LADDER,
+  "gpt-6-luna": FULL_LADDER,
+  "gpt-6-sol": FULL_LADDER,
   o1: FULL_LADDER,
   "o1-pro": FULL_LADDER,
   o3: FULL_LADDER,
@@ -466,11 +470,6 @@ const OPENAI_UNAVAILABLE: ReadonlySet<string> = new Set([
   "gpt-5.3-codex-spark",
   "gpt-realtime-2.1",
 ]);
-
-/** Whether this model accepts the sub-`low` `minimal` tier. */
-export function openaiAcceptsMinimalEffort(modelString: string): boolean {
-  return openaiSupportedEfforts(modelString).has("minimal");
-}
 
 /**
  * Catalog reasoning models nobody has measured. Non-empty means `sync-models`
@@ -544,9 +543,10 @@ export type XAIWireEffort = XAIEffort | "none";
  * capability flag; that would misreport reasoning cost to say nothing of being
  * false.
  *
- * Absent vs. empty behave identically at the engine (send nothing) but differ
- * to `xaiUnmeasuredReasoningModels` below, which is what keeps a newly-synced
- * Grok from silently inheriting a guessed ladder.
+ * Absent vs. empty both send nothing at the engine, but an operator-requested
+ * tier on an absent row logs a warning. They also differ to
+ * `xaiUnmeasuredReasoningModels` below, which keeps a newly-synced Grok from
+ * silently inheriting a guessed ladder.
  *
  * Only reasoning-capable models belong here. A non-reasoning one needs no row:
  * `resolveThinking` drops the override on `capabilities.reasoning` before the
@@ -556,9 +556,11 @@ export type XAIWireEffort = XAIEffort | "none";
 const XAI_EFFORT_SUPPORT: Record<string, ReadonlySet<XAIWireEffort>> = {
   // Full ladder plus suppression.
   "grok-4.3": new Set([...XAI_EFFORTS, "none"]),
-  // Rejects `none` specifically ("This model does not support `reasoning_effort`
-  // value..."); takes the rest.
+  // Reject `none` specifically ("This model does not support `reasoning_effort`
+  // value..."); take the rest.
   "grok-4.5": new Set(XAI_EFFORTS),
+  "grok-4.6": new Set(XAI_EFFORTS),
+  "grok-4.7": new Set(XAI_EFFORTS),
   // Reasons, no knob — every tier 400s. See the header.
   "grok-4.20-0309-reasoning": new Set(),
   "grok-build-0.1": new Set(),

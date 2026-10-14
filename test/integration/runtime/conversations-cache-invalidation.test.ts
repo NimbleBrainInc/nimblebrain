@@ -11,9 +11,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
-const ALICE = { id: "usr_alice", email: "alice@example.com" };
+const ALICE = makeIdentity({ id: "usr_alice", email: "alice@example.com" });
 const workDir = join(tmpdir(), `nb-conv-cache-${Date.now()}`);
 
 let runtime: Runtime;
@@ -23,12 +25,13 @@ let convId: string;
 beforeAll(async () => {
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
   });
   const wsStore = runtime.getWorkspaceStore();
-  const ws = await wsStore.create("Helix", "helix");
+  const ws = await wsStore.create("Helix");
   wsId = ws.id;
   await wsStore.addMember(wsId, ALICE.id, "admin");
 });

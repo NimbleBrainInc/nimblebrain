@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { setAuthLifecycleHandler, setAuthToken } from "../api/client";
+import { setAuthToken } from "../api/client";
 import { __internal__, closeEventsClient, onReconnect, subscribe } from "../api/events-client";
 import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 
@@ -58,7 +58,6 @@ function resetCounters(): void {
 
 beforeEach(() => {
   resetCounters();
-  setAuthLifecycleHandler(null);
   setAuthToken("tok-initial");
   __internal__.resetForTest();
   __internal__.setConnectorForTest(fakeConnectEvents);
@@ -67,7 +66,6 @@ beforeEach(() => {
 afterEach(() => {
   __internal__.resetForTest();
   __internal__.setConnectorForTest(null);
-  setAuthLifecycleHandler(null);
   setAuthToken(null);
 });
 
@@ -111,7 +109,11 @@ describe("events-client — event routing", () => {
     subscribe("config.changed", c);
 
     // Drive an event through the fake's captured onEvent.
-    lastOptions!.onEvent("server.notification", { server: "x", method: "y" });
+    lastOptions!.onEvent("server.notification", {
+      server: "x",
+      method: "y",
+      workspaceId: "ws_00079598e311c160",
+    });
 
     expect(a).toHaveBeenCalledTimes(1);
     expect(b).toHaveBeenCalledTimes(1);
@@ -126,7 +128,11 @@ describe("events-client — event routing", () => {
     subscribe("server.notification", thrower);
     subscribe("server.notification", good);
 
-    lastOptions!.onEvent("server.notification", { server: "x" });
+    lastOptions!.onEvent("server.notification", {
+      server: "x",
+      method: "notifications/message",
+      workspaceId: "ws_00079598e311c160",
+    });
 
     expect(thrower).toHaveBeenCalledTimes(1);
     expect(good).toHaveBeenCalledTimes(1);
@@ -134,7 +140,13 @@ describe("events-client — event routing", () => {
 
   test("events for types with no subscribers are dropped without error", () => {
     subscribe("server.notification", () => {});
-    expect(() => lastOptions!.onEvent("skill.created", { id: "x" })).not.toThrow();
+    expect(() =>
+      lastOptions!.onEvent("conversation.title", {
+        conversationId: "c1",
+        title: "t",
+        ownerId: "usr_a",
+      }),
+    ).not.toThrow();
   });
 });
 

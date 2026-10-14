@@ -37,8 +37,10 @@ itself.
 and connects it to an `McpSource` over an in-memory linked-pair transport. The
 source is a genuine MCP client of a genuine MCP server that happens to live in
 this process. Every capability the SDK implements — resources, tools,
-instructions, tasks, prompts — works for a platform source for free, and works
-identically to how it works for a remote one.
+instructions, prompts — works for a platform source for free, and works
+identically to how it works for a remote one. Tasks are not among them: the SDK
+produces no task result (ADR-0046), so a kernel capability that runs as a task
+does so through its own task surface.
 
 The in-memory pair is built by a factory, invoked on every start and restart,
 because the pair is single-use once closed and the server end claims its

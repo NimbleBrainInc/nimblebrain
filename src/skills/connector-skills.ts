@@ -1,58 +1,52 @@
 /**
  * Server-skill adapter (SEP-2640 `io.modelcontextprotocol/skills`).
  *
- * Synthesizes Layer 3 `Skill` objects from the `skill://<name>/SKILL.md`
- * resources an MCP server exposes, discovered via `resources/list`. This makes a
- * server-side workflow guide discoverable through the same tool-affined loading
- * machinery that picks up filesystem skills — no need for the chat to be scoped
- * to a specific app via `appContext`.
+ * Synthesizes Layer 3 `Skill` objects from the `skills/list` entries of an MCP
+ * server that declares the Skills extension (`skills-extension.ts`). A server
+ * that does not declare it publishes no skills; its `skill://` resources are
+ * ordinary resources (ADR-0011).
  *
  * Why this exists:
  *
- *   An MCP server can publish its agent guidance as skill resources — markdown
- *   playbooks (Agent-Skills frontmatter + body) teaching the agent how to chain
- *   tools, recover from errors, etc. Per SEP-2640 the entrypoint is always
- *   `skill://<skill-path>/SKILL.md`, whose final path segment is the skill's
- *   frontmatter `name`. The runtime DISCOVERS these by listing the server's
- *   resources — it never guesses the URI from the source name. That guess
- *   (`skill://<serverName>/usage`) silently missed every fleet connector, whose
- *   `source.name` is the reverse-DNS slug (`ai-nimblebrain-<x>-mcp`) rather than
- *   the skill's short name. The earlier path also only fired when the request
- *   had `appContext` pinning the conversation to that server; in a
- *   workspace-level chat where the server's tools are visible but no app is
- *   "entered," the skill went unread — including the directive that tells the
- *   model which tool to use. Production case: a cobranding turn looped on
- *   `list_documents` until the supervisor halted because the model never read
- *   the rules.
+ *   An MCP server publishes its agent guidance as skills — markdown playbooks
+ *   (Agent-Skills frontmatter + body) teaching the agent how to chain tools,
+ *   recover from errors, etc. The runtime discovers them from the server's own
+ *   listing and never guesses a URI from the source name, which differs from
+ *   the skill's path on every connector named by a reverse-DNS slug. Discovery
+ *   runs for every MCP source in the workspace, not only an entered app, so a
+ *   workspace-level chat that can call a server's tools also gets the guidance
+ *   for using them.
  *
- *   This adapter closes both gaps. At chat-build time, for each MCP source in
- *   the active workspace registry, the runtime discovers its `skill://…/SKILL.md`
- *   resources and wraps each body in a synthetic `Skill`. The synthesized skill
- *   then flows through `partitionSkillsByRole`: a `dynamic` skill routes to the
- *   `selectLayer3Skills` capability channel with `toolAffinity: ["<serverName>__*"]`
- *   (loads when the server's tools are in the active toolset); an `always` skill
- *   routes to the always-on context channel (composed every turn, the same
- *   reliable path filesystem `always` skills use).
+ *   Each entry becomes a synthetic `Skill` built from the listing alone: the
+ *   entry's frontmatter carries the name, description, and loading
+ *   configuration. The body is not read until the skill is needed — the
+ *   extension forbids fetching a skill's files ahead of need — so the `Skill`
+ *   carries a `loadBody` the composer resolves through `hydrateSkill`. The
+ *   synthesized skill flows through `partitionSkillsByRole`: a `dynamic` skill
+ *   routes to the `selectLayer3Skills` capability channel, tool-affined to the
+ *   server's tools it declares, or to `<serverName>__*` when it declares none
+ *   (`connectorToolAffinity`), and loads when a matching tool is in the active
+ *   toolset; an `always` skill routes to the always-on context
+ *   channel (composed every turn, the same path filesystem `always` skills use).
  *
- *   Loading config is READ from the discovered skill's frontmatter, not
- *   invented: a server declares `metadata.nimblebrain.loading-strategy` (and an
- *   optional `priority` and `triggers`) exactly as a filesystem skill does, and
- *   the host honors it — identical frontmatter must not behave differently by
- *   origin. A skill that declares nothing defaults to `dynamic` — backward-compatible
- *   with servers that publish tool-affined usage guidance and never opt in. This
- *   lets a server route an always-present workflow guide to the reliable context
- *   channel, rather than the capability channel that only selects once at
- *   turn-start (so a workflow skill could silently never load once its tools were
- *   promoted after selection).
+ *   Loading config is READ from the skill's frontmatter, not invented: a server
+ *   declares `metadata.nimblebrain.loading-strategy` (and an optional
+ *   `priority`, `triggers`, and `tool-affinity`) exactly as a filesystem skill does, and the host
+ *   honors it — identical frontmatter must not behave differently by origin. A
+ *   skill that declares nothing defaults to `dynamic`.
  *
- *   This is strictly additive. The `appContext`-driven `<app-guide>` injection
- *   remains untouched — it has different semantics (per-app focus, trust-score
- *   gating, reference-resource hint) than role-based skill composition.
+ *   The `appContext`-driven `<app-guide>` injection is separate — it has
+ *   different semantics (per-app focus, trust-score gating, reference-resource
+ *   hint) than role-based skill composition.
  */
 
 import matter from "gray-matter";
 
-import type { Skill, SkillLoadingStrategy, SkillScope } from "./types.ts";
+import { log } from "../observability/log.ts";
+import { toolNameMatchesPattern } from "../tools/tool-pattern.ts";
+import { resolveLoadingMechanism, type SkillLoadingMechanism } from "./loading.ts";
+import type { SkillEntry } from "./skills-extension.ts";
+import type { Skill, SkillBodyLoad, SkillLoadingStrategy, SkillScope } from "./types.ts";
 
 /** Scope tag used on synthesized server skills. */
 export const PUBLISHED_SKILL_SCOPE: SkillScope = "provided";
@@ -102,27 +96,16 @@ export function parseConnectorSkillName(
 }
 
 /**
- * SEP-2640 skill entrypoint: `skill://<skill-path>/SKILL.md`. A skill is a
- * `skill://` resource whose URI ends in `/SKILL.md`; supporting files
- * (`skill://…/scripts/x.py`) share the prefix but are not entrypoints.
+ * A skill discovered on an MCP server, from its `skills/list` entry. It
+ * carries no body: the body is fetched when the skill is needed.
  */
-export const SKILL_ENTRYPOINT_RE = /^skill:\/\/.+\/SKILL\.md$/;
-
-/** True iff `uri` is a SEP-2640 skill entrypoint (`skill://…/SKILL.md`). */
-export function isSkillEntrypointUri(uri: string): boolean {
-  return SKILL_ENTRYPOINT_RE.test(uri);
-}
-
-/** A skill discovered on an MCP server: its entrypoint URI + parsed content. */
 export interface DiscoveredSkill {
-  /** The `skill://…/SKILL.md` entrypoint URI. */
+  /** The skill's `SKILL.md` URI. */
   uri: string;
-  /** Frontmatter `name` (falls back to the final skill-path segment). */
+  /** Frontmatter `name`, qualified by skill path when it collides on one server. */
   name: string;
-  /** Frontmatter `description` (empty string when absent). */
+  /** Frontmatter `description`. */
   description: string;
-  /** SKILL.md body, frontmatter stripped and truncated to budget. */
-  body: string;
   /**
    * Declared `metadata.nimblebrain.loading-strategy`, when the server set one.
    * `undefined` means the skill opted out — synthesis defaults it to `dynamic`.
@@ -135,15 +118,118 @@ export interface DiscoveredSkill {
    * `SkillMatcher` fires on. Absent when the server declared none.
    */
   triggers?: string[];
+  /**
+   * Declared `metadata.nimblebrain.tool-affinity` — bare tool names or globs
+   * within the publishing server. Absent when the server declared none.
+   */
+  toolAffinity?: string[];
+  /** The listing entry: what a fetched body is verified against. */
+  entry: SkillEntry;
+}
+
+/** A discovered skill built from a validated `skills/list` entry. */
+export function discoveredSkillFromEntry(entry: SkillEntry): DiscoveredSkill {
+  return {
+    uri: entry.uri,
+    name: entry.frontmatter.name,
+    description: entry.frontmatter.description,
+    ...readDeclaredLoading(entry.frontmatter),
+    entry,
+  };
 }
 
 /**
- * Read the declared loading configuration — strategy, priority, and trigger
- * phrases — from a discovered skill's parsed frontmatter, using the SAME
+ * Give every skill in one server's set a distinct `name`.
+ *
+ * A name is a label, not an identity: two skills at different paths on one
+ * server may share a final segment (`acme/billing/refunds`,
+ * `acme/support/refunds`). The manifest name built from it is the runtime's
+ * de-duplication key, so a shared name would silently drop one. Each skill in
+ * a colliding group is named by its full skill path instead; a name no other
+ * skill shares is left alone.
+ */
+export function disambiguateSkillNames(skills: DiscoveredSkill[]): DiscoveredSkill[] {
+  const counts = new Map<string, number>();
+  for (const skill of skills) counts.set(skill.name, (counts.get(skill.name) ?? 0) + 1);
+  return skills.map((skill) =>
+    (counts.get(skill.name) ?? 0) > 1 ? { ...skill, name: skillPath(skill.uri) } : skill,
+  );
+}
+
+/** The skill path of a `<scheme>://<skill-path>/SKILL.md` URI: `skill://acme/billing/refunds/SKILL.md` → `acme/billing/refunds`. */
+function skillPath(uri: string): string {
+  return uri.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/SKILL\.md$/, "");
+}
+
+/**
+ * Bind a connector skill's tool-affinity to the server it belongs to.
+ *
+ * A connector skill is authored without knowing the name its server is
+ * installed under, so it declares affinity as bare tool names or globs of its
+ * own tools (`draft_email`, `draft_*`), and the runtime prefixes each with
+ * `<serverName>__`. The prefix is also the containment: matching is anchored
+ * (`toolNameMatchesPattern`), so a prefixed pattern reaches only this server's
+ * tools — a declared `*` means every tool of this server, and no declared value
+ * can name another connector's tools or a personal (`my_`) one. Blank entries
+ * are dropped.
+ *
+ * With nothing declared, the skill is bound to the whole server (`<serverName>__*`).
+ */
+export function connectorToolAffinity(
+  serverName: string,
+  declared: readonly string[] | undefined,
+): string[] {
+  const patterns = (declared ?? [])
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => `${serverName}__${p}`);
+  return patterns.length > 0 ? [...new Set(patterns)] : [`${serverName}__*`];
+}
+
+/**
+ * The patterns of a bound tool-affinity that match none of `toolNames`.
+ */
+export function unmatchedToolAffinity(
+  affinity: readonly string[],
+  toolNames: readonly string[],
+): string[] {
+  return affinity.filter((p) => !toolNames.some((t) => toolNameMatchesPattern(t, p)));
+}
+
+/**
+ * Warn for each connector skill whose bound tool-affinity has a pattern that
+ * matches none of the tools its connector advertises. Such a pattern never
+ * selects the skill, so a misspelled or renamed tool would otherwise leave the
+ * guidance silently dark. A connector that advertises no tools says nothing
+ * about the patterns (it is not connected yet), so it is not checked.
+ */
+export function reportUnmatchedToolAffinity(input: {
+  wsId: string;
+  serverName: string;
+  skills: readonly { name: string; toolAffinity: readonly string[] }[];
+  toolNames: readonly string[];
+}): void {
+  if (input.toolNames.length === 0) return;
+  for (const skill of input.skills) {
+    const unmatched = unmatchedToolAffinity(skill.toolAffinity, input.toolNames);
+    if (unmatched.length === 0) continue;
+    log.warn("[skill] connector skill declares a tool-affinity no tool of its connector matches", {
+      event: "skills.tool_affinity.unmatched",
+      workspace_id: input.wsId,
+      server: input.serverName,
+      skill: skill.name,
+      patterns: unmatched,
+    });
+  }
+}
+
+/**
+ * Read the declared loading configuration — strategy, priority, trigger
+ * phrases, and tool-affinity — from a discovered skill's parsed frontmatter, using the SAME
  * `metadata.nimblebrain.*` fields the filesystem loader reads
  * (`mapFrontmatterToManifest`). Every field is READ, not invented, so identical
  * frontmatter means identical loading behavior whether the skill came off disk
- * or off an MCP server's `skill://…/SKILL.md` resource.
+ * or from an MCP server's `skills/list` entry.
  *
  * Lenient by design: a discovered skill is authored by an arbitrary MCP server,
  * so — unlike the strict on-disk loader — a non-conforming or absent block does
@@ -151,12 +237,15 @@ export interface DiscoveredSkill {
  * applies the defaults). Only recognized values are returned: strategy must be
  * `always` or `dynamic`; priority must be a number in [0, 100]; triggers must be
  * an array, from which non-string and blank entries are dropped (a trigger that
- * is empty after trimming would substring-match every message).
+ * is empty after trimming would substring-match every message). Tool-affinity
+ * is read the same way and stays bare here; synthesis binds it to the server
+ * ({@link connectorToolAffinity}).
  */
 function readDeclaredLoading(data: Record<string, unknown>): {
   loadingStrategy?: SkillLoadingStrategy;
   priority?: number;
   triggers?: string[];
+  toolAffinity?: string[];
 } {
   const metadata = data.metadata;
   const nb =
@@ -167,14 +256,21 @@ function readDeclaredLoading(data: Record<string, unknown>): {
   const block = nb as Record<string, unknown>;
   const strategy = block["loading-strategy"];
   const priority = block.priority;
-  const triggers = Array.isArray(block.triggers)
-    ? block.triggers.filter((t): t is string => typeof t === "string" && t.trim().length > 0)
-    : [];
+  const triggers = nonBlankStrings(block.triggers);
+  const toolAffinity = nonBlankStrings(block["tool-affinity"]);
   return {
     ...(strategy === "always" || strategy === "dynamic" ? { loadingStrategy: strategy } : {}),
     ...(typeof priority === "number" && priority >= 0 && priority <= 100 ? { priority } : {}),
     ...(triggers.length > 0 ? { triggers } : {}),
+    ...(toolAffinity.length > 0 ? { toolAffinity } : {}),
   };
+}
+
+/** The non-blank strings of `value` when it is an array, else none. */
+function nonBlankStrings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+    : [];
 }
 
 /**
@@ -227,9 +323,15 @@ export interface ConnectorSkillInput {
   skillName: string;
   /** Skill `description` from frontmatter (may be empty). */
   description: string;
-  /** SKILL.md body, already frontmatter-stripped and truncated to budget. */
-  body: string;
-  /** The `skill://…/SKILL.md` entrypoint URI the body was read from. */
+  /**
+   * Fetch the body when the skill is needed: frontmatter-stripped, truncated to
+   * budget, verified, or the reason it cannot be. The synthesized `Skill`
+   * carries it and an empty `body` until {@link hydrateSkill} resolves it.
+   */
+  loadBody?: () => Promise<SkillBodyLoad>;
+  /** A body already in hand, for a skill that needs no fetch. */
+  body?: string;
+  /** The skill's `SKILL.md` URI. */
   uri: string;
   /**
    * Declared loading strategy from the skill's frontmatter. Defaults to
@@ -246,14 +348,21 @@ export interface ConnectorSkillInput {
    * publishing server's tools happen to be in the active toolset.
    */
   triggers?: string[];
+  /**
+   * Declared tool-affinity from the skill's frontmatter: bare tool names or
+   * globs within this server, bound to it by {@link connectorToolAffinity}.
+   */
+  toolAffinity?: string[];
 }
 
 /**
- * Synthesize a `Skill` from a server-exposed `skill://<name>/SKILL.md` resource,
- * honoring the strategy the skill DECLARES:
- *  - `dynamic` (the default when none is declared): tool-affined to
- *    `<serverName>__*`, so it loads via `selectLayer3Skills` whenever the
- *    server's tools are in the active toolset.
+ * Synthesize a `Skill` from a server-published skill, honoring the strategy the
+ * skill DECLARES:
+ *  - `dynamic` (the default when none is declared): tool-affined to the tools
+ *    it declares, prefixed `<serverName>__` ({@link connectorToolAffinity}), or
+ *    to `<serverName>__*` when it declares none. It loads via
+ *    `selectLayer3Skills` when a matching tool is in the active toolset, and is
+ *    delivered mid-turn when a matching tool is promoted or called.
  *  - `always`: composed into the always-on context channel every turn (routed
  *    there by `partitionSkillsByRole`). `toolAffinity` is still stamped but
  *    unused on this path — the context channel is unconditional.
@@ -278,8 +387,8 @@ export interface ConnectorSkillInput {
  * skill's own name and who published it.
  */
 export function synthesizeConnectorSkill(input: ConnectorSkillInput): Skill {
-  const { serverName, skillName, description, body, uri, loadingStrategy, priority, triggers } =
-    input;
+  const { serverName, skillName, description, uri, loadingStrategy, priority, triggers } = input;
+  const toolAffinity = connectorToolAffinity(serverName, input.toolAffinity);
   return {
     manifest: {
       name: connectorSkillManifestName(serverName, skillName),
@@ -287,11 +396,68 @@ export function synthesizeConnectorSkill(input: ConnectorSkillInput): Skill {
       priority: priority ?? CONNECTOR_SKILL_PRIORITY,
       scope: PUBLISHED_SKILL_SCOPE,
       loadingStrategy: loadingStrategy ?? DEFAULT_CONNECTOR_LOADING_STRATEGY,
-      toolAffinity: [`${serverName}__*`],
+      toolAffinity,
       ...(triggers?.length ? { triggers } : {}),
       status: "active",
     },
-    body,
+    body: input.body ?? "",
     sourcePath: uri,
+    ...(input.loadBody ? { loadBody: input.loadBody } : {}),
+  };
+}
+
+/**
+ * Resolve a skill's body if it is fetched on demand, or `null` when the fetch
+ * fails. The result carries no `loadBody`, so it can be composed as is. Call
+ * this only where the body is about to reach the model.
+ */
+export async function hydrateSkill(skill: Skill): Promise<Skill | null> {
+  if (!skill.loadBody) return skill;
+  const loaded = await skill.loadBody();
+  if (!loaded.ok) return null;
+  const { loadBody: _loaded, ...rest } = skill;
+  return { ...rest, body: loaded.body };
+}
+
+/**
+ * One skill a connected server publishes, as the runtime loads it. Backs
+ * `manage_connectors list_bound_skills`, so a workspace admin can audit what a
+ * server puts into the model's context without the body being fetched.
+ */
+export interface PublishedSkillInfo {
+  /** The publishing server (the install's tool-namespace prefix). */
+  server: string;
+  /** The skill's own name on that server. */
+  name: string;
+  description: string;
+  /** The skill's `SKILL.md` URI on the server. */
+  uri: string;
+  loadingStrategy: SkillLoadingStrategy;
+  priority: number;
+  /** The tool patterns the skill is bound to, under the server's namespace. */
+  toolAffinity: string[];
+  triggers?: string[];
+  /** How the skill reaches the model ({@link resolveLoadingMechanism}). */
+  mechanism: SkillLoadingMechanism;
+}
+
+/**
+ * Project a synthesized server skill to its {@link PublishedSkillInfo}, or
+ * `null` for a skill this module did not synthesize.
+ */
+export function publishedSkillInfo(skill: Skill): PublishedSkillInfo | null {
+  const id = parseConnectorSkillName(skill.manifest.name);
+  if (!id) return null;
+  const { manifest } = skill;
+  return {
+    server: id.connector,
+    name: id.name,
+    description: manifest.description,
+    uri: skill.sourcePath,
+    loadingStrategy: manifest.loadingStrategy,
+    priority: manifest.priority,
+    toolAffinity: manifest.toolAffinity ?? [],
+    ...(manifest.triggers?.length ? { triggers: manifest.triggers } : {}),
+    mechanism: resolveLoadingMechanism(manifest),
   };
 }

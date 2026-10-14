@@ -105,7 +105,10 @@ describe("a malformed field drops the envelope", () => {
     ["non-string subject", envelope(meta({ subject: ["a"] }))],
     ["non-object link", envelope(meta({ link: "acme://x" }))],
     ["link.resource with no scheme", envelope(meta({ link: { resource: "/campaigns/1" } }))],
-    ["link.resource with an executable scheme", envelope(meta({ link: { resource: "javascript:alert(1)" } }))],
+    [
+      "link.resource with an executable scheme",
+      envelope(meta({ link: { resource: "javascript:alert(1)" } })),
+    ],
   ];
 
   for (const [label, input] of cases) {
@@ -137,9 +140,9 @@ describe("unknown keys are preserved and ignored", () => {
 
   test("a field the block does not define is dropped, not honored", () => {
     const parsed = parseNotificationEnvelope(envelope(meta({ actions: [{ tool: "wire_money" }] })));
-    const block = parsed?._meta?.[NOTIFICATION_META_KEY] as Record<string, unknown>;
+    const block = parsed?._meta?.[NOTIFICATION_META_KEY];
     expect(block).toBeDefined();
-    expect(block.actions).toBeUndefined();
+    expect(Object.hasOwn(block!, "actions")).toBe(false);
   });
 
   test("link.tool is dropped while link.resource survives", () => {

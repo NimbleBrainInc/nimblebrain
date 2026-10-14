@@ -1,28 +1,21 @@
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import {
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-  mkdirSync,
-} from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { StructuredLogSink } from "../../src/adapters/structured-log-sink.ts";
 import { WorkspaceLogSink } from "../../src/adapters/workspace-log-sink.ts";
-import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
-import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/privilege.ts";
+import { resolveFeatures } from "../../src/config/features.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
+import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/privilege.ts";
+import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { engineEvent, firstPayloadOf, runStartPayload } from "../helpers/engine-events.ts";
 
 function makeLogDir(): string {
   return mkdtempSync(join(tmpdir(), "audit-test-"));
 }
 
 function readLogRecords(dir: string, pattern?: RegExp): Record<string, unknown>[] {
-  const files = readdirSync(dir).filter((f) =>
-    pattern ? pattern.test(f) : f.endsWith(".jsonl"),
-  );
+  const files = readdirSync(dir).filter((f) => (pattern ? pattern.test(f) : f.endsWith(".jsonl")));
   if (files.length === 0) return [];
   const content = readFileSync(join(dir, files[0]!), "utf-8");
   return content
@@ -48,19 +41,19 @@ describe("StructuredLogSink identity context", () => {
     const sink = new StructuredLogSink({
       dir: logDir,
       userId: "user_abc",
-      workspaceId: "ws_test",
+      workspaceId: "ws_0076759dbbe19fcc",
     });
-    sink.emit({ type: "run.start", data: { runId: "r1" } });
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
     sink.close();
 
     const records = readLogRecords(logDir);
     expect(records[0]!.uid).toBe("user_abc");
-    expect(records[0]!.wsId).toBe("ws_test");
+    expect(records[0]!.wsId).toBe("ws_0076759dbbe19fcc");
   });
 
   it("omits uid and wsId when not set", () => {
     const sink = new StructuredLogSink({ dir: logDir });
-    sink.emit({ type: "run.start", data: { runId: "r1" } });
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
     sink.close();
 
     const records = readLogRecords(logDir);
@@ -70,16 +63,18 @@ describe("StructuredLogSink identity context", () => {
 
   it("setUserId and setWorkspaceId update subsequent records", () => {
     const sink = new StructuredLogSink({ dir: logDir });
-    sink.emit({ type: "run.start", data: { runId: "r1" } });
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
     sink.setUserId("user_xyz");
-    sink.setWorkspaceId("ws_prod");
-    sink.emit({ type: "run.done", data: { runId: "r1" } });
+    sink.setWorkspaceId("ws_0061a3cbd4f78051");
+    sink.emit(
+      engineEvent("run.done", { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 0 }),
+    );
     sink.close();
 
     const records = readLogRecords(logDir);
     expect(records[0]!.uid).toBeUndefined();
     expect(records[1]!.uid).toBe("user_xyz");
-    expect(records[1]!.wsId).toBe("ws_prod");
+    expect(records[1]!.wsId).toBe("ws_0061a3cbd4f78051");
   });
 });
 
@@ -150,7 +145,11 @@ describe("WorkspaceLogSink audit events", () => {
     const sink = new WorkspaceLogSink({ dir });
     sink.emit({
       type: "audit.auth_failure",
-      data: { ip: "192.168.1.1", method: "POST", path: "/v1/chat" },
+      data: {
+        ip: "192.168.1.1",
+        method: "POST",
+        path: "/v1/workspaces/ws_00079598e311c160/chat/start",
+      },
     });
 
     const records = readLogRecords(join(dir, "workspace"));
@@ -158,7 +157,7 @@ describe("WorkspaceLogSink audit events", () => {
     expect(records[0]!.event).toBe("audit.auth_failure");
     expect(records[0]!.ip).toBe("192.168.1.1");
     expect(records[0]!.method).toBe("POST");
-    expect(records[0]!.path).toBe("/v1/chat");
+    expect(records[0]!.path).toBe("/v1/workspaces/ws_00079598e311c160/chat/start");
   });
 
   it("persists audit.permission_denied events", () => {
@@ -184,7 +183,7 @@ describe("WorkspaceLogSink audit events", () => {
       type: "audit.unattended_dispatch",
       data: {
         principalId: "usr_route_author",
-        workspaceId: "ws_helix",
+        workspaceId: "ws_003eba8844413cd9",
         tool: "slack__send_message",
         reason: "route:rt_outbound_slack",
         outcome: "denied",
@@ -242,7 +241,7 @@ describe("createPrivilegeHook audit emission", () => {
       confirm: async () => false,
     };
 
-    const hook = createPrivilegeHook(denyGate, captureSink, { skillManagement: true, toolDiscovery: true, catalogSearch: true, fileContext: true, userManagement: true, workspaceManagement: true });
+    const hook = createPrivilegeHook(denyGate, captureSink, resolveFeatures());
 
     const result = await hook({
       id: "call_1",
@@ -252,10 +251,10 @@ describe("createPrivilegeHook audit emission", () => {
 
     expect(result).toBeNull();
     expect(events).toHaveLength(1);
-    expect(events[0]!.type).toBe("audit.permission_denied");
-    expect(events[0]!.data.tool).toBe("skills__create");
-    expect(events[0]!.data.action).toBe("create");
-    expect(events[0]!.data.target).toBe("my-skill");
+    const denied = firstPayloadOf(events, "audit.permission_denied");
+    expect(denied?.tool).toBe("skills__create");
+    expect(denied?.action).toBe("create");
+    expect(denied?.target).toBe("my-skill");
   });
 
   it("does not emit audit event when gate approves", async () => {

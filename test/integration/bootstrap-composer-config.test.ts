@@ -1,3 +1,5 @@
+import type { BootstrapResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * The chat surface reads its config by two routes, and they have to agree.
  *
@@ -12,20 +14,22 @@
  * this file.
  */
 
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import type { ServerHandle } from "../../src/api/server.ts";
+import { startServer } from "../../src/api/server.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
   IdentityProvider,
   ProviderCapabilities,
   UserIdentity,
+  VerifiedIdentity,
 } from "../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
-import type { ServerHandle } from "../../src/api/server.ts";
-import { startServer } from "../../src/api/server.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createCoreToolDefs } from "../../src/tools/core-source.ts";
@@ -50,10 +54,11 @@ class TokenAuthAdapter implements IdentityProvider {
     authorizationServer: false,
   };
   constructor(private readonly tokens: Record<string, UserIdentity>) {}
-  async verifyRequest(req: Request): Promise<UserIdentity | null> {
+  async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const authHeader = req.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) return null;
-    return this.tokens[authHeader.slice(7)] ?? null;
+    const who = this.tokens[authHeader.slice(7)];
+    return who ? { ...who, grant: FIRST_PARTY_GRANT } : null;
   }
   async listUsers(): Promise<User[]> {
     return [];
@@ -81,7 +86,8 @@ describe("the two config routes agree", () => {
   beforeAll(async () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: () => new TokenAuthAdapter({ [TOKEN]: PICKY }),
+      languageModel: createEchoModel(),
       models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-sonnet-5" },
       providers: { anthropic: { apiKey: "k" } },
       logging: { disabled: true },
@@ -97,13 +103,12 @@ describe("the two config routes agree", () => {
     );
 
     const wsStore = runtime.getWorkspaceStore();
-    const ws = await wsStore.create("Picky WS", "picky_ws");
+    const ws = await wsStore.create("Picky WS");
     await wsStore.addMember(ws.id, PICKY.id, "admin");
 
     handle = startServer({
       runtime,
       port: 0,
-      provider: new TokenAuthAdapter({ [TOKEN]: PICKY }),
     });
     baseUrl = `http://localhost:${handle.port}`;
   });
@@ -119,14 +124,14 @@ describe("the two config routes agree", () => {
       headers: { Authorization: `Bearer ${TOKEN}` },
     });
     expect(res.status).toBe(200);
-    return ((await res.json()) as { config: ComposerConfig }).config;
+    return (await readJson<BootstrapResponse>(res)).config;
   }
 
   async function fromGetConfig(): Promise<ComposerConfig> {
     const tool = createCoreToolDefs(runtime).find((d) => d.name === "get_config");
     if (!tool) throw new Error("get_config not found");
     return runWithRequestContext(
-      { identity: PICKY, workspaceId: null } as never,
+      { identity: PICKY },
       async () => (await tool.handler({})).structuredContent as ComposerConfig,
     );
   }

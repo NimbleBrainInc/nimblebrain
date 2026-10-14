@@ -17,11 +17,13 @@
 import { Check, Copy, Download, FileText, Loader2, X } from "lucide-react";
 import { type Ref, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
-import { ApiClientError, type ReadResourceContent, readResource } from "../api/client";
+import { ApiClientError, readResource } from "../api/client";
 import { useArtifactPanel } from "../context/ArtifactPanelContext";
 import { isMarkdownMime, normalizeMime } from "../lib/artifact-kind";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
+import type { ResourceContents } from "../types";
+import { Tooltip } from "./ui/tooltip";
 
 const TRANSITION = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const PANEL_WIDTH = 720; // px — comfortable reading measure on desktop.
@@ -50,7 +52,7 @@ function downloadFilename(
 }
 
 /** Readable text of a resource content item: inline text, or a base64 blob decoded to text; null if neither. */
-function readableBody(first: ReadResourceContent): string | null {
+function readableBody(first: ResourceContents): string | null {
   if (first.text !== undefined) return first.text;
   if (first.blob !== undefined) return decodeBlobText(first.blob);
   return null;
@@ -87,7 +89,7 @@ async function loadArtifactText(
   try {
     const result = await readResource(appName, uri);
     if (isCancelled()) return;
-    const first: ReadResourceContent | undefined = result.contents[0];
+    const first: ResourceContents | undefined = result.contents[0];
     if (!first) throw new Error("No content returned");
     const body = readableBody(first);
     if (body === null) throw new Error("Resource has no readable text content");
@@ -117,7 +119,7 @@ export function ArtifactPanel() {
 
   // artifact?.mimeType is captured only as a fallback at fetch time; the
   // (appName, uri) pair is the identity of the resource being fetched.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fetch keyed on resource identity
+  // biome-ignore lint/correctness/useExhaustiveDependencies: (appName, uri) names the resource; `artifact.mimeType` is only a fallback for a response that carries none, so a change to it alone must not reload the same text
   useEffect(() => {
     if (!appName || !uri) return;
     let cancelled = false;
@@ -325,15 +327,17 @@ function ArtifactHeader({
         <Download className="h-3.5 w-3.5" />
         Download
       </button>
-      <button
-        ref={closeButtonRef}
-        type="button"
-        onClick={onClose}
-        className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-        aria-label="Close document panel"
-      >
-        <X className="h-4 w-4" />
-      </button>
+      <Tooltip label="Close">
+        <button
+          ref={closeButtonRef}
+          type="button"
+          onClick={onClose}
+          className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          aria-label="Close document panel"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </Tooltip>
     </header>
   );
 }

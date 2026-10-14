@@ -3,9 +3,11 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-chat-start-${Date.now()}`);
 
@@ -19,7 +21,8 @@ describe("chat.start event", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -28,7 +31,7 @@ describe("chat.start event", () => {
     const sink: EventSink = { emit: (e) => events.push(e) };
 
     const result = await runtime.chat(
-      { message: "Hello", workspaceId: TEST_WORKSPACE_ID },
+      { identity: DEV_IDENTITY, message: "Hello", workspaceId: TEST_WORKSPACE_ID },
       sink,
     );
 
@@ -44,13 +47,15 @@ describe("chat.start event", () => {
     mkdirSync(workDir, { recursive: true });
 
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
 
     // First chat — creates a new conversation
     const first = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "First message",
       workspaceId: TEST_WORKSPACE_ID,
     });
@@ -61,6 +66,7 @@ describe("chat.start event", () => {
 
     await runtime.chat(
       {
+        identity: DEV_IDENTITY,
         message: "Second message",
         conversationId: first.conversationId,
         workspaceId: TEST_WORKSPACE_ID,

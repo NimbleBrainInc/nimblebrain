@@ -10,28 +10,21 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { getConfig } from "../src/config";
 
+/** The raw shape Caddy injects, as `src/config.ts` declares it on `Window`. */
+type RawConfig = NonNullable<Window["__NB_CONFIG__"]>;
+
 // Mutate only window.__NB_CONFIG__ — never the shared (happy-dom) window object,
 // or we'd tear down the DOM for every test that runs after this file.
-type Win = { __NB_CONFIG__?: unknown } | undefined;
-const getWin = (): Win => (globalThis as unknown as { window?: Win }).window as Win;
-const ensureWin = (): { __NB_CONFIG__?: unknown } => {
-  const g = globalThis as unknown as { window?: { __NB_CONFIG__?: unknown } };
-  g.window ??= {};
-  return g.window;
-};
-
-function setConfig(c: unknown): void {
-  ensureWin().__NB_CONFIG__ = c;
+function setConfig(c: RawConfig): void {
+  window.__NB_CONFIG__ = c;
 }
 
 beforeEach(() => {
-  const w = getWin();
-  if (w) w.__NB_CONFIG__ = undefined;
+  window.__NB_CONFIG__ = undefined;
 });
 
 afterEach(() => {
-  const w = getWin();
-  if (w) w.__NB_CONFIG__ = undefined;
+  window.__NB_CONFIG__ = undefined;
 });
 
 describe("getConfig", () => {

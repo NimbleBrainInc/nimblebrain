@@ -23,6 +23,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 const KEY_ENV = "NB_TEST_BOOT_CREDENTIAL_KEY";
@@ -50,7 +51,8 @@ beforeAll(async () => {
   process.env[KEY_ENV] = Buffer.alloc(32, 0x3c).toString("base64");
 
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
     secrets: { backend: "file", config: { seal: { keyEnv: KEY_ENV } } },
@@ -58,7 +60,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await runtime?.stop?.();
+  await runtime?.shutdown();
   if (previousKey === undefined) delete process.env[KEY_ENV];
   else process.env[KEY_ENV] = previousKey;
   rmSync(testDir, { recursive: true, force: true });

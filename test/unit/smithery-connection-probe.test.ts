@@ -9,9 +9,10 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
+import { SmitheryConnectionProbe } from "../../src/connectors/providers/smithery/connection-probe.ts";
 import type { ProbeTarget } from "../../src/connectors/runtime/connection-probe.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
-import { SmitheryConnectionProbe } from "../../src/connectors/providers/smithery/connection-probe.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 const OPTIONS = { apiKey: "sk_test", baseUrl: "https://api.smithery.ai", namespace: "test-ns" };
 const realFetch = globalThis.fetch;
@@ -37,41 +38,33 @@ function refWithMarker(): ConnectorRef {
   };
 }
 
-/** The pre-`brokered` shape still on disk for an install made by an older runtime. */
-function legacyRefWithMarker(): ConnectorRef {
-  return {
-    url: "https://api.smithery.ai/connect/test-ns/nb-x/mcp",
-    serverName: "ai-bassethound-mcp",
-    oauthScope: "workspace",
-    smithery: {
-      connectorId: "ai.bassethound/mcp",
-      connectionId: "nb-x",
-      namespace: "test-ns",
-      baseUrl: "https://api.smithery.ai",
-    },
-  } as unknown as ConnectorRef;
-}
-
 function targetOf(ref: ConnectorRef): ProbeTarget {
-  return { serverName: "ai-bassethound-mcp", wsId: "ws_01abc", principalId: "u_1", ref };
+  return { serverName: "ai-bassethound-mcp", wsId: "ws_0001f3ac8053ce11", principalId: "u_1", ref };
 }
 
 function stubFetch(status: number, body: unknown): void {
-  globalThis.fetch = (async () =>
-    new Response(status === 404 ? "" : JSON.stringify(body), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    })) as typeof fetch;
+  globalThis.fetch = fakeFetch(
+    async () =>
+      new Response(status === 404 ? "" : JSON.stringify(body), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
 }
 
 async function verdictFor(status: number, body: unknown) {
   stubFetch(status, body);
-  return new SmitheryConnectionProbe(OPTIONS).probe(targetOf(refWithMarker()), new AbortController().signal);
+  return new SmitheryConnectionProbe(OPTIONS).probe(
+    targetOf(refWithMarker()),
+    new AbortController().signal,
+  );
 }
 
 describe("SmitheryConnectionProbe — liveness mapping", () => {
   it("reports live for a connected connection", async () => {
-    expect(await verdictFor(200, { connectionId: "nb-x", status: { state: "connected" } })).toBe("live");
+    expect(await verdictFor(200, { connectionId: "nb-x", status: { state: "connected" } })).toBe(
+      "live",
+    );
   });
 
   it("reports live for a disconnected connection — the broker reconnects on demand", async () => {
@@ -110,7 +103,10 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
     // Smithery reports transient upstream failures here too — flipping a
     // working connector to reauth_required on this would be a false positive.
     expect(
-      await verdictFor(200, { connectionId: "nb-x", status: { state: "error", message: "timeout" } }),
+      await verdictFor(200, {
+        connectionId: "nb-x",
+        status: { state: "error", message: "timeout" },
+      }),
     ).toBe("indeterminate");
   });
 
@@ -119,9 +115,9 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
   });
 
   it("reports indeterminate when the transport throws, and never propagates", async () => {
-    globalThis.fetch = (async () => {
+    globalThis.fetch = fakeFetch(async () => {
       throw new Error("network down");
-    }) as typeof fetch;
+    });
 
     const probe = new SmitheryConnectionProbe(OPTIONS);
     expect(await probe.probe(targetOf(refWithMarker()), new AbortController().signal)).toBe(
@@ -136,10 +132,13 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
     let requested = "";
     globalThis.fetch = (async (input: string | URL | Request) => {
       requested = String(input);
-      return new Response(JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }) as typeof fetch;
 
     const probe = new SmitheryConnectionProbe({ ...OPTIONS, namespace: "repointed-ns" });
@@ -154,10 +153,13 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
     let requested = "";
     globalThis.fetch = (async (input: string | URL | Request) => {
       requested = String(input);
-      return new Response(JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }) as typeof fetch;
 
     const probe = new SmitheryConnectionProbe({ ...OPTIONS, baseUrl: "https://repointed.example" });
@@ -172,27 +174,5 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
     const probe = new SmitheryConnectionProbe(OPTIONS);
     const bare = { url: "https://x/mcp", serverName: "x" } as ConnectorRef;
     expect(await probe.probe(targetOf(bare), new AbortController().signal)).toBe("indeterminate");
-  });
-
-  // The read-side shim: an install made before refs shared one shape keeps
-  // probing, with no config edit and no rewrite of what is on disk.
-  it("probes a legacy per-vendor ref through the shim", async () => {
-    let requested = "";
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      requested = String(input);
-      return new Response(JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }) as typeof fetch;
-
-    const probe = new SmitheryConnectionProbe(OPTIONS);
-    const verdict = await probe.probe(
-      targetOf(legacyRefWithMarker()),
-      new AbortController().signal,
-    );
-
-    expect(verdict).toBe("live");
-    expect(requested).toContain("https://api.smithery.ai/connect/test-ns/nb-x");
   });
 });

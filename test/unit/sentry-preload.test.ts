@@ -1,5 +1,5 @@
-import type { Breadcrumb, ErrorEvent } from "@sentry/bun";
 import { describe, expect, it } from "bun:test";
+import type { Breadcrumb, ErrorEvent } from "@sentry/bun";
 import {
   resolveSentryConfig,
   scrubBreadcrumb,
@@ -93,30 +93,34 @@ describe("scrubBreadcrumb", () => {
   });
 
   it("strips query strings from breadcrumb URLs, keeping the path", () => {
-    const crumb = {
+    const crumb: Breadcrumb = {
       category: "http",
-      data: { url: "https://api.anthropic.com/v1/messages?token=sk-abc&id=ws_1" },
-    } as unknown as Breadcrumb;
+      data: { url: "https://api.anthropic.com/v1/messages?token=sk-abc&id=ws_0002ee92e8791c13" },
+    };
     expect(scrubBreadcrumb(crumb)?.data?.url).toBe("https://api.anthropic.com/v1/messages");
   });
 
   it("keeps non-console crumbs without a URL untouched", () => {
-    const crumb = { category: "navigation", data: { from: "/a", to: "/b" } } as unknown as Breadcrumb;
+    const crumb: Breadcrumb = {
+      category: "navigation",
+      data: { from: "/a", to: "/b" },
+    };
     expect(scrubBreadcrumb(crumb)).toEqual(crumb);
   });
 });
 
 describe("scrubEvent", () => {
   it("strips request headers, cookies, body, and query string", () => {
-    const event = {
+    const event: ErrorEvent = {
+      type: undefined,
       request: {
         url: "https://x/y",
         cookies: { session: "secret" },
         headers: { authorization: "Bearer t" },
         data: { prompt: "private" },
-        query_string: "wsId=ws_123",
+        query_string: "wsId=ws_00032b8b4d0438d3",
       },
-    } as unknown as ErrorEvent;
+    };
 
     const out = scrubEvent(event);
 
@@ -129,22 +133,24 @@ describe("scrubEvent", () => {
   });
 
   it("strips a query string embedded in request.url (symmetric with breadcrumbs)", () => {
-    const event = {
-      request: { url: "https://api/v1/x?token=sk-abc&id=ws_1" },
-    } as unknown as ErrorEvent;
+    const event: ErrorEvent = {
+      type: undefined,
+      request: { url: "https://api/v1/x?token=sk-abc&id=ws_0002ee92e8791c13" },
+    };
     expect(scrubEvent(event).request?.url).toBe("https://api/v1/x");
   });
 
   it("reduces user to the opaque id, dropping email/username/ip", () => {
-    const event = {
+    const event: ErrorEvent = {
+      type: undefined,
       user: { id: "u_1", email: "a@b.co", username: "alice", ip_address: "1.2.3.4" },
-    } as unknown as ErrorEvent;
+    };
 
     expect(scrubEvent(event).user).toEqual({ id: "u_1" });
   });
 
   it("leaves an empty user object when there is no id", () => {
-    const event = { user: { email: "a@b.co" } } as unknown as ErrorEvent;
+    const event: ErrorEvent = { type: undefined, user: { email: "a@b.co" } };
     expect(scrubEvent(event).user).toEqual({});
   });
 });

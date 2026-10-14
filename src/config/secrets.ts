@@ -4,7 +4,7 @@
  *
  * It lives in `src/config/` rather than beside the store because it is a
  * *config* shape — `RuntimeConfig` names it, and `src/runtime/` may not reach
- * into `src/tools/` (see `scripts/check-cycles.ts`). The registry that consumes
+ * into `src/tools/` (AGENTS.md, Layering). The registry that consumes
  * it is `src/tools/credential-store-backend.ts`.
  */
 
@@ -24,6 +24,11 @@ export interface SecretsConfig {
 
 /** The backend a deployment gets when its config says nothing. */
 export const DEFAULT_CREDENTIAL_STORE_BACKEND = "file";
+
+/** The backend a `secrets` block selects. The one place the default applies. */
+export function credentialStoreBackendName(secrets: SecretsConfig | undefined): string {
+  return secrets?.backend ?? DEFAULT_CREDENTIAL_STORE_BACKEND;
+}
 
 // ── Schema drift guard ───────────────────────────────────────────────
 //

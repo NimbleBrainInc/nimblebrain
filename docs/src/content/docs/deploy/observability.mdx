@@ -115,6 +115,14 @@ A few properties worth knowing:
 
 In Kubernetes, point a `ServiceMonitor` (or your scrape config) at the platform service's `/metrics` path. Do not expose it to the internet.
 
+### Task run metrics
+
+| Metric | Type | Labels | What it says |
+|---|---|---|---|
+| `nb_task_runs_total` | counter | `status` | Task runs recorded, by status: `success`, `degraded`, `failure`, `timeout`, `cancelled`, `skipped`. See [run history](/using/tasks/#run-history) for what each means. |
+
+`degraded` counts runs that finished with a tool call that failed and was never retried to success: an email that was not sent, or a record that was not written. Alert on the ratio of `failure` to all runs. Leave `degraded` out of a paging alert and read it in the run list: most degraded runs are a task acting on something its user deleted, such as a draft or message that no longer exists, which the user fixes and on-call cannot. There is no task or workspace label: both are unbounded, and the run record names the task.
+
 ### Notification poll metrics
 
 An app can declare an [outbox](/config/nimblebrain-json/#notifications) — a resource the runtime reads on a schedule for facts the app recorded that nobody asked for. That poll is a standing background cost, so it is metered by what it costs rather than by what it carried:
@@ -129,6 +137,20 @@ An app can declare an [outbox](/config/nimblebrain-json/#notifications) — a re
 
 `source` is the connector's MCP source name, bucketed to `other` for a name outside the label charset. There is no workspace label: one runtime serves one tenant, so the scrape already attributes it, and a workspace label would be unbounded.
 
+### Credential store metrics
+
+The states of [sealed secrets](/config/secrets/#sealing-the-files) that should page someone rather than sit in the workspace log:
+
+| Metric | Type | Labels | What it says |
+|---|---|---|---|
+| `nb_credential_seal_failures_total` | counter | `reason` | Stored secrets that failed to become a usable value, one per `audit.credential_seal_failure` line. `reason` is `malformed`, `unknown_kid`, `auth_failed`, `no_sealer`, `plaintext_refused` or `reseal_skipped`. |
+| `nb_credential_store_plaintext_accepted` | gauge | — | `1` when a sealing key is configured and the boot sweep could not prove every secret sealed, so plaintext files are still accepted. `0` after a clean sweep, and `0` with no sealing key, where plaintext is the configuration. Set once per boot. |
+| `nb_credential_store_sealed` | gauge | — | `1` when a sealing key is configured, `0` when secrets are plaintext files. Alert on `0` for a deployment that is meant to be sealed. Set once per boot. |
+
+`reason` is the only label. A key name would disclose which vendors a deployment uses, and a workspace or user id is unbounded; the audit line beside each increment names the scope, key and wanted key id.
+
+Alert on the counter's value (`nb_credential_seal_failures_total > 0`), not on `increase()` or `rate()`. The boot sweep runs before the first scrape, so a failure it finds is already in the first sample and never shows as an increase. A restart resets the counter and the next sweep counts the failure again.
+
 ## Background loops
 
 Two loops run on timers inside the runtime process: the **connection revalidator**, which re-checks connectors whose upstream credential can lapse without a transport error ([`NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS`](/config/environment/#runtime--server)), and the **notification poller**, which reads declared outboxes ([`notifications.poll`](/config/nimblebrain-json/#notifications)).
@@ -136,7 +158,7 @@ Two loops run on timers inside the runtime process: the **connection revalidator
 Both are per-process and hold their state in memory, so both carry the same prerequisite:
 
 <Aside type="caution">
-  `replicas: 1` is the supported topology for both loops. At `replicas > 1` each pod would run its own copy: the revalidator would re-probe connections whose state another pod owns, and the poller would read every outbox once per pod and race the same stored cursor. Making either safe needs per-tenant leader election, which is not built. Keep the platform at a single replica — the same conclusion the [session store](#multi-replica-session-storage) reaches for its own reasons.
+  `replicas: 1` is the supported topology for both loops. At `replicas > 1` each pod would run its own copy: the revalidator would re-probe connections whose state another pod owns, and the poller would read every outbox once per pod and race the same stored cursor. Making either safe needs per-tenant leader election, which is not built. Keep the platform at a single replica; see [Scaling to multiple replicas](/config/nimblebrain-json/#scaling-to-multiple-replicas).
 </Aside>
 
 To confirm the poller found anything after a restart, look for `[notifications] targets=N` — it is logged on the first sweep and again whenever the count changes, so `targets=0` on a pod where an app declaring an outbox is installed means the declaration is not reaching the poller, which is a different fault from an outbox that is being read and is empty.
@@ -163,40 +185,3 @@ To see more than liveness:
 |---|---|
 | Which build is live | `version` and `buildSha` on the authenticated `GET /v1/bootstrap`, also shown on the **About** page in organization settings |
 | Whether connectors are up | The `nb_connector_unhealthy` gauge on [`/metrics`](#prometheus-metrics): `1` for each connector that is currently down, and no series for a healthy one |
-
-## Multi-replica session storage
-
-The `/mcp` endpoint allocates a stateful session per client (`Mcp-Session-Id`). At a single replica these live in process memory. To run more than one platform replica, the session **metadata** must be shared across pods through a registry, and requests must be routed back to the pod holding a session's transport.
-
-### Session store
-
-Select the session store with the `sessionStore` config block (or the env knobs below):
-
-| Store | When |
-|---|---|
-| `memory` | Single replica (default). Sessions live in process memory only |
-| `redis` | Multiple replicas. Session metadata is shared via Redis so any pod can recognize a session id |
-
-```json title="nimblebrain.json"
-{
-  "sessionStore": {
-    "type": "redis",
-    "url": "redis://nb-redis:6379"
-  }
-}
-```
-
-The registry stores only session metadata (`sessionId`, identity, workspace, timestamps) — never the live transport, which is process-bound. Routing a request to the pod that owns a session's transport is the load balancer's job (sticky routing on `Mcp-Session-Id`), not the registry's.
-
-### Session limits
-
-These apply regardless of store and tune the per-process transport map:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `MCP_MAX_SESSIONS` | `100` | Maximum concurrent MCP sessions per process. At the cap, a new `initialize` evicts the least-recently-used session rather than returning an error |
-| `MCP_SESSION_TTL_SECONDS` | `28800` (8h) | Idle session TTL. Drives both the per-process idle sweep and the registry TTL |
-
-<Aside type="caution">
-`sessionStore: "redis"` is necessary but **not sufficient** for `replicas > 1`. You also need session-affinity routing on `Mcp-Session-Id` (ALB `lb_cookie` stickiness or header-hash routing) and shared (RWX) storage for workspace data. Until those are in place, keep the platform at a single replica.
-</Aside>

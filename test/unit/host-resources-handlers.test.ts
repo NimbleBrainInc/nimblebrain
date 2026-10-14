@@ -2,26 +2,19 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesResultSchema,
-  ListToolsRequestSchema,
-  ReadResourceResultSchema,
-  type ListResourcesResult,
-  type ReadResourceResult,
-} from "@modelcontextprotocol/sdk/types.js";
+import { ListResourcesResultSchema, ReadResourceResultSchema } from "@modelcontextprotocol/core";
+import type { ListResourcesResult, ReadResourceResult } from "@modelcontextprotocol/server";
+import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
+import type { EventSink } from "../../src/engine/types.ts";
+import { createFileStore, type FileStore } from "../../src/files/store.ts";
 import {
   FileBackedHostResourcesResolver,
   HOST_RESOURCES_LIST_METHOD,
   HOST_RESOURCES_READ_METHOD,
   TokenBucketRateLimit,
 } from "../../src/host-resources/index.ts";
-import { createFileStore, type FileStore } from "../../src/files/store.ts";
-import type { FileEntry } from "../../src/files/types.ts";
-import type { EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { textOf } from "../helpers/resource-contents.ts";
 
 // End-to-end wire test for the inbound host-resources handlers, without
 // spawning a real subprocess. We build a fake "connector" MCP Server inside
@@ -29,8 +22,7 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
 // drive a tool call whose implementation calls back through the server
 // → client request channel using the namespaced method.
 //
-// This closes the QA-flagged gap from Phase 1's review: the gate logic
-// is unit-tested in isolation, but the wiring that gets a real
+// The gate logic is unit-tested in isolation, but the wiring that gets a real
 // `setRequestHandler` to dispatch on real request frames isn't covered
 // by anything more than typechecking. The fake-server pattern exercises
 // the full Client.setRequestHandler → resolver → FileStore round trip.
@@ -42,7 +34,7 @@ let wsAStore: FileStore;
 
 beforeEach(async () => {
   rootDir = await mkdtemp(join(tmpdir(), "nb-host-resources-handlers-"));
-  wsAStore = createFileStore(join(rootDir, "ws_a", "files"));
+  wsAStore = createFileStore(join(rootDir, "ws_00079598e311c160", "files"));
 });
 
 afterEach(async () => {
@@ -63,9 +55,11 @@ async function seedFile(
     mimeType: mime,
     size: saved.size,
     createdAt: new Date().toISOString(),
-    description: undefined,
+    description: null,
     tags,
-  } as unknown as FileEntry);
+    source: "manual",
+    conversationId: null,
+  });
   return saved.id;
 }
 
@@ -77,9 +71,12 @@ async function seedFile(
  * end-to-end correctness.
  */
 async function buildFakeConnector(uriToRead: string) {
-  const server = new Server({ name: "fake-connector", version: "0.0.1" }, { capabilities: { tools: {} } });
+  const server = new Server(
+    { name: "fake-connector", version: "0.0.1" },
+    { capabilities: { tools: {} } },
+  );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
       {
         name: "read_via_host",
@@ -89,7 +86,7 @@ async function buildFakeConnector(uriToRead: string) {
     ],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async () => {
+  server.setRequestHandler("tools/call", async () => {
     // Server-initiated request to the client — this is the host-resources
     // method going back to the platform side, where McpSource's inbound
     // handler dispatches to the resolver. The SDK's `Server.request`
@@ -106,9 +103,7 @@ async function buildFakeConnector(uriToRead: string) {
       };
     } catch (err) {
       return {
-        content: [
-          { type: "text", text: err instanceof Error ? err.message : String(err) },
-        ],
+        content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
         isError: true,
       };
     }
@@ -138,7 +133,7 @@ describe("McpSource inbound host-resources handlers", () => {
       },
       NoopSink,
       {
-        workspaceId: "ws_a",
+        workspaceId: "ws_00079598e311c160",
         connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,
@@ -167,7 +162,7 @@ describe("McpSource inbound host-resources handlers", () => {
     expect(parsed.contents).toHaveLength(1);
     expect(parsed.contents[0]?.uri).toBe(uri);
     expect(parsed.contents[0]?.mimeType).toBe("text/csv");
-    expect(parsed.contents[0]?.text).toBe("hello,world");
+    expect(textOf(parsed.contents[0])).toBe("hello,world");
 
     await source.stop();
   });
@@ -187,7 +182,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { name: "fake-connector", version: "0.0.1" },
       { capabilities: { tools: {} } },
     );
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler("tools/list", async () => ({
       tools: [
         {
           name: "list_csvs",
@@ -196,7 +191,7 @@ describe("McpSource inbound host-resources handlers", () => {
         },
       ],
     }));
-    server.setRequestHandler(CallToolRequestSchema, async () => {
+    server.setRequestHandler("tools/call", async () => {
       try {
         const result = (await server.request(
           {
@@ -226,7 +221,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { type: "inProcess", createServer: async () => ({ server, clientTransport }) },
       NoopSink,
       {
-        workspaceId: "ws_a",
+        workspaceId: "ws_00079598e311c160",
         connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,
@@ -267,7 +262,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { name: "fake-connector", version: "0.0.1" },
       { capabilities: { tools: {} } },
     );
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler("tools/list", async () => ({
       tools: [
         {
           name: "list_drafts",
@@ -276,7 +271,7 @@ describe("McpSource inbound host-resources handlers", () => {
         },
       ],
     }));
-    server.setRequestHandler(CallToolRequestSchema, async () => {
+    server.setRequestHandler("tools/call", async () => {
       try {
         const result = (await server.request(
           {
@@ -306,7 +301,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { type: "inProcess", createServer: async () => ({ server, clientTransport }) },
       NoopSink,
       {
-        workspaceId: "ws_a",
+        workspaceId: "ws_00079598e311c160",
         connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,
@@ -340,7 +335,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { type: "inProcess", createServer: async () => fake },
       NoopSink,
       {
-        workspaceId: "ws_a",
+        workspaceId: "ws_00079598e311c160",
         connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,

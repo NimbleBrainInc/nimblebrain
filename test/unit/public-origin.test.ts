@@ -34,46 +34,46 @@ afterEach(() => {
 
 describe("publicOrigin — derivation policy", () => {
   it("derives the custom domain when set and canonical (default)", () => {
-    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
     expect(publicOrigin()).toBe("https://brain.acme.com");
   });
 
   it("derives the custom domain when canonical is explicitly true", () => {
-    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
     process.env.NB_CUSTOM_DOMAIN_CANONICAL = "true";
     expect(publicOrigin()).toBe("https://brain.acme.com");
   });
 
   it("falls back to the platform host when the custom domain is pinned non-canonical", () => {
-    process.env.NB_PLATFORM_HOST = "tenant-b.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "tenant-b.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.tenant-b.com";
     process.env.NB_CUSTOM_DOMAIN_CANONICAL = "false";
-    expect(publicOrigin()).toBe("https://tenant-b.platform.nimblebrain.ai");
+    expect(publicOrigin()).toBe("https://tenant-b.nb.example.com");
   });
 
   it("uses the platform host when no custom domain is set", () => {
-    process.env.NB_PLATFORM_HOST = "tenant-c.platform.nimblebrain.ai";
-    expect(publicOrigin()).toBe("https://tenant-c.platform.nimblebrain.ai");
+    process.env.NB_PLATFORM_HOST = "tenant-c.nb.example.com";
+    expect(publicOrigin()).toBe("https://tenant-c.nb.example.com");
   });
 
   it("honors an explicit NB_PUBLIC_ORIGIN override above derivation", () => {
     process.env.NB_PUBLIC_ORIGIN = "https://auth.customer.com";
-    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "ai.acme.com";
     expect(publicOrigin()).toBe("https://auth.customer.com");
   });
 
   it("ignores legacy NB_API_URL — the fallback was removed (no host facts → dev origin)", () => {
-    process.env.NB_API_URL = "https://legacy.platform.nimblebrain.ai";
+    process.env.NB_API_URL = "https://legacy.nb.example.com";
     expect(publicOrigin()).toBe("http://localhost:27247");
   });
 
   it("ignores NB_API_URL even when set alongside host facts (derived host wins)", () => {
-    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "ai.acme.com";
-    process.env.NB_API_URL = "https://stale.platform.nimblebrain.ai";
+    process.env.NB_API_URL = "https://stale.nb.example.com";
     expect(publicOrigin()).toBe("https://ai.acme.com");
   });
 
@@ -135,31 +135,31 @@ describe("publicOrigin — fail-closed assertions", () => {
 
 describe("canonicalOrigins", () => {
   it("includes both the canonical origin and the platform host for CORS", () => {
-    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
     const origins = canonicalOrigins();
     expect(origins).toContain("https://brain.acme.com");
-    expect(origins).toContain("https://acme.platform.nimblebrain.ai");
+    expect(origins).toContain("https://acme.nb.example.com");
   });
 
   it("dedupes when there is no custom domain", () => {
-    process.env.NB_PLATFORM_HOST = "tenant-c.platform.nimblebrain.ai";
-    expect(canonicalOrigins()).toEqual(["https://tenant-c.platform.nimblebrain.ai"]);
+    process.env.NB_PLATFORM_HOST = "tenant-c.nb.example.com";
+    expect(canonicalOrigins()).toEqual(["https://tenant-c.nb.example.com"]);
   });
 });
 
 describe("NB_CUSTOM_DOMAIN_CANONICAL parsing — the rollout safety pin", () => {
   it("pins non-canonical case-insensitively (False / FALSE)", () => {
-    process.env.NB_PLATFORM_HOST = "tenant-b.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "tenant-b.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.tenant-b.com";
     for (const v of ["false", "False", "FALSE", "  false  "]) {
       process.env.NB_CUSTOM_DOMAIN_CANONICAL = v;
-      expect(publicOrigin()).toBe("https://tenant-b.platform.nimblebrain.ai");
+      expect(publicOrigin()).toBe("https://tenant-b.nb.example.com");
     }
   });
 
   it("stays canonical for true (case-insensitive) and when unset", () => {
-    process.env.NB_PLATFORM_HOST = "acme.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
     for (const v of ["true", "TRUE", undefined]) {
       if (v === undefined) delete process.env.NB_CUSTOM_DOMAIN_CANONICAL;
@@ -169,7 +169,7 @@ describe("NB_CUSTOM_DOMAIN_CANONICAL parsing — the rollout safety pin", () => 
   });
 
   it("fails closed on an unrecognized value (typo can't silently flip the pin)", () => {
-    process.env.NB_PLATFORM_HOST = "tenant-b.platform.nimblebrain.ai";
+    process.env.NB_PLATFORM_HOST = "tenant-b.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.tenant-b.com";
     for (const v of ["no", "0", "off", "nope"]) {
       process.env.NB_CUSTOM_DOMAIN_CANONICAL = v;

@@ -73,7 +73,7 @@ For `auth: composio`, include a `composio` block with the toolkit slug and (stro
 servers:
   - name: com.google/gmail
     title: Gmail
-    description: Read, send, and draft mail (via Composio)
+    description: Read, send, and draft mail
     version: "1.0.0"
     icons:
       - src: https://static.nimblebrain.ai/icons/gmail.png
@@ -168,6 +168,7 @@ NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 | `operatorSetup` | required when `auth: static` | `{ portalUrl, hint, clientSecretKey }`. |
 | `secretHeaders` | no, `auth: provider` only | Header name → `{ ref: credential, key, label?, help? }`, for a connection that must present the *workspace's* own secret as well as its own credential. Resolved on every request at that workspace's scope. Only references are accepted — a literal is refused at install, naming the header. The install dialog asks the user for each value, using `label` / `help` when the entry sets them and a label derived from the key's last segment otherwise; both are display-only and never reach the transport. Nothing carries the field on any other auth kind, where it is silently ignored. See [per-workspace credentials](/config/secrets/#when-the-connection-also-has-to-say-who-is-calling). |
 | `composio` | required when `auth: composio` | `{ toolkit, tools?, authScheme?, fields? }`. `toolkit` is Composio's slug for the upstream, and doubles as the key your deployment's [`connectors.providers.composio.authConfigs`](/gateways/composio/#3-create-one-auth-config-per-toolkit-in-composio) is looked up under — the catalog itself carries no deployment-specific ids. `tools` is an optional allowlist of upstream tool names — strongly recommended to keep agent context bounded. `authScheme` defaults to `OAUTH2` (the redirect flow); set it to `API_KEY` for toolkits that authenticate by key (see below). `fields` is required for `API_KEY` — the inputs collected from the user at connect. |
+| `account` | no | `{ tool, arguments?, field }`. How to ask the service which account a connection is signed in as, when its sign-in does not say. See [Showing the connected account](#showing-the-connected-account). |
 | `tags` | no | Strings used for filter / search in the Browse page. |
 | `interactive` | no | Sets the "Interactive" badge. |
 | `docsUrl` | no | Connector-specific docs link surfaced on the Configure page. Must be http(s). |
@@ -234,7 +235,7 @@ Each `fields[].key` is sent to Composio verbatim, so it **must** match the toolk
 
 ### Offline access & refresh tokens
 
-Long-running agents and scheduled automations need a connector to **refresh** its own access token. Most vendors return a `refresh_token` from the authorization-code exchange by default, or when you request the standard `offline_access` scope via `requiredScopes`. A few gate it behind a **non-standard authorize-URL param** — without it the vendor issues only a short-lived access token and **no refresh token**, so the connection dies at every access-token expiry and has to be reconnected by hand (a daily automation then fails almost every run).
+Long-running agents and scheduled tasks need a connector to **refresh** its own access token. Most vendors return a `refresh_token` from the authorization-code exchange by default, or when you request the standard `offline_access` scope via `requiredScopes`. A few gate it behind a **non-standard authorize-URL param** — without it the vendor issues only a short-lived access token and **no refresh token**, so the connection dies at every access-token expiry and has to be reconnected by hand (a daily task then fails almost every run).
 
 Set the param via `additionalAuthorizationParams`:
 
@@ -258,6 +259,33 @@ The param is added to the authorize request only, so existing connections do **n
 <Aside type="tip">
   The runtime warns at connect time when a token exchange returns no refresh token: `[oauth] <connector> token exchange returned NO refresh_token …`. If you see that line — or a connector that repeatedly asks to reconnect — it's almost always a missing offline-access param.
 </Aside>
+
+### Showing the connected account
+
+A connected connector shows the account it is signed in as ("Connected as alice@example.com"), so nobody has to guess which of their accounts an agent is acting on. The account comes from whoever knows it:
+
+1. **The authorization server**, for an OIDC server. The runtime asks for `openid` and `email` and reads the id_token or the userinfo endpoint at sign-in. Nothing to configure, unless you pin `requiredScopes`: a pin is the whole request, so include `openid` and `email` in it.
+2. **The broker**, for `auth: composio`. The runtime reads the account name Composio records for some toolkits, or else the email in the id_token the vendor issued, when the connection lands. For a Google toolkit that means granting `openid` and `https://www.googleapis.com/auth/userinfo.email` on its auth config in Composio, not here.
+3. **The service itself**, for everything else: a server that is not OIDC, or a brokered connection with no account recorded. Declare the tool that answers for the signed-in user:
+
+```yaml
+    _meta:
+      ai.nimblebrain/connector:
+        auth: composio
+        composio:
+          toolkit: zoom
+          tools: [ZOOM_GET_USER, ZOOM_LIST_MEETINGS]
+        account:
+          tool: ZOOM_GET_USER        # the connector's own tool, by its bare name
+          arguments: { userId: me }  # optional
+          field: data.email          # dotted path into the tool's JSON answer
+```
+
+The runtime calls that tool once, the first time the connected connector is listed with no account recorded, and keeps the answer with the connection until the next sign-in replaces it. It asks only a connection that has signed in and is live in the runtime, and only a connector installed from this entry (same URL, or the same brokered id). The listing waits at most five seconds for the answer.
+
+- `tool` must be one the connection can call: for `auth: composio` it has to be in `composio.tools`, and its scope has to be in the grant.
+- `field` is a path through objects in the answer (`structuredContent`, or the first text block read as JSON). It must end at a short single-line string. Anything else shows no account, and the runtime logs `account lookup for <connector> named no account` with which half failed.
+- Pick a tool that only reads. The call runs with the connection's own credential, outside any agent run and outside the tool permissions a person set for agents.
 
 ### 3. Register the OAuth redirect URI
 
@@ -289,6 +317,8 @@ The new entry appears on Settings → Connectors → Browse. Walk through the in
 4. Open the connector detail page. The status pill should read **Ready** and the tools list populates.
 
 If anything is off, check the API server logs for `[static-source]` / `[connector-directory]` warnings — invalid entries are dropped with a logged reason.
+
+To replace a static-auth connector's OAuth app, open its detail page and edit the **OAuth client**. A new `client_id` reaches the installed connector at once and signs it out, because the vendor does not accept the old client's tokens from the new one, so click **Connect** again. Saving the same `client_id` with a new `client_secret` keeps the connection signed in.
 
 ## Catalog file format
 
@@ -369,7 +399,10 @@ Every `ServerDetail` is validated when its file is read and again when the catal
 | `auth='static' requires operatorSetup.{portalUrl,hint,clientSecretKey}` | Add the `operatorSetup` block under `_meta["ai.nimblebrain/connector"]`. |
 | `additionalAuthorizationParams cannot include reserved keys` | Remove `client_id`, `redirect_uri`, `state`, `code_challenge`, `code_challenge_method`, `scope`, etc. — these are filled by the OAuth provider. |
 | `duplicate name "<id>"` | Each entry's `name` must be unique within a single static source. |
+| `refused — its server name "<slug>" is also the server name of "<id>"` | Two names slugify to one server name (`a.b/c` and `a/b.c` are both `a-b-c`), so neither loads. Rename one. Logged as an error. |
 | `not installable: needs a \`remotes\` entry` | The entry advertises only `packages[]`. This runtime connects to remote MCP servers; give the entry a `remotes[]` URL. |
+
+An entry's grants — its host UI, `hooks` delivery and its outbox — apply only to an installed connector at the entry's `remotes[0].url` (a brokered connector: the provider and entry its broker recorded); a connector that only shares the entry's server name gets none of them. Its restriction, `admin_tools`, applies to every connector under its server name. Changing an entry's URL therefore takes its grants from every existing install until it is reinstalled.
 
 When the top-level shape is bad (not a list or `{servers: [...]}`, malformed YAML), the whole override is rejected and the bundled catalog is used. The startup logs name the file path and the parse error.
 
@@ -396,8 +429,10 @@ Offline and deterministic, unlike the DCR probe below, so it is cheap enough to 
 The platform ships a network-dependent probe that verifies every `auth: dcr` entry in a catalog actually serves the OAuth discovery chain it claims. Point it at any `ServerDetail` file or directory:
 
 ```bash
-bun run scripts/check-catalog-dcr.ts <catalog-file-or-dir>
+bun run scripts/check-catalog-dcr.ts <catalog-file-or-dir> <redirect-uri>
 ```
+
+`<redirect-uri>` is the `https` MCP OAuth callback your deployment registers with vendors, such as `https://nb.example.com/v1/mcp-auth/callback`. It is required because vendors check it against their own redirect-host allowlists, so only the real callback gives a truthful result.
 
 Steps 1–4 are the discovery chain the production OAuth provider uses; steps 5 and 6 then exercise the flow for real against the vendor.
 
@@ -405,7 +440,7 @@ Steps 1–4 are the discovery chain the production OAuth provider uses; steps 5 
 2. **RFC 9728** — `GET <connector-origin>/.well-known/oauth-protected-resource` to discover the authorization server origin.
 3. **RFC 8414** — `GET <as-origin>/.well-known/oauth-authorization-server` against each candidate AS origin (RFC 9728 advertised, plus the connector origin as fallback).
 4. **RFC 7591** — the AS metadata document must include `registration_endpoint`.
-5. **DCR registration** — POST a synthetic client to the `registration_endpoint` with a representative redirect URI. Catches vendors that advertise DCR but enforce a redirect-URI host allowlist (Intercom, Vercel).
+5. **DCR registration** — POST a synthetic client to the `registration_endpoint` with that redirect URI. Catches vendors that advertise DCR but enforce a redirect-URI host allowlist (Intercom, Vercel).
 6. **Authorize** — `GET` the `authorization_endpoint` with that `client_id` and the same redirect URI. Catches vendors that accept the registration but reject the redirect URI one step later (Canva).
 
 An entry passes only if every step succeeds; step 6 is skipped when the AS advertises no `authorization_endpoint`. Steps 5 and 6 are what catch "DCR theater" — a vendor that ships the RFC 7591 endpoints but enforces a parallel host allowlist the spec is meant to make obsolete, which discovery alone reports as healthy.
@@ -426,13 +461,15 @@ Settings → Connectors → <connector> → Set up
 
 The modal writes the public `client_id` into `workspace.json → oauthOperatorApps[<id>].clientId` and stores the `client_secret` in the workspace credential store under `operatorSetup.clientSecretKey`. There is no flag-based headless command for an operator OAuth secret — use the Set up modal (or the `manage_connectors` tool action it calls).
 
+The two halves go together. Uninstalling the last connector in the workspace that uses the app removes both the `oauthOperatorApps` record and the `client_secret`, and the uninstall result lists the secret's key with the connector's other removed secrets. The entry then shows **Set up** again, so a reinstall asks for the client id and secret. While another installed connector still uses the app, uninstalling keeps both.
+
 ## Migrating from a pre-alignment install
 
 Operators upgrading from a release before the `ServerDetail` alignment landed should be aware of these one-time migrations:
 
 - **`NB_CATALOG_PATH` and `NB_STDIO_CATALOG_PATH` removed.** Point `NB_CURATED_CATALOG_DIR` at a directory of `ServerDetail` YAML / JSON files.
 - **Catalog id format.** A catalog listing's `id` (and `InstalledConnector.catalogId`) is now the reverse-DNS `ServerDetail.name` (`io.asana/mcp`) instead of a bare slug (`asana`). Catalog-keyed state — `workspace.json#oauthOperatorApps[<id>]` and the matching `<clientSecretKey>` credential entries — must be rekeyed to the reverse-DNS form before existing static-auth connectors will resolve. There's no auto-migration; rekey workspace by workspace through the admin Connectors UI.
-- **Connector `serverName` slug.** New catalog installs persist a slugified canonical reverse-DNS form (`com-canva-mcp`) instead of a short brand slug. Existing installs keep their persisted `serverName` via a fallback. Operators querying by `serverName` (logs, audit) need both forms during the transition.
+- **Connector `serverName` slug.** A catalog install persists a slugified canonical reverse-DNS form (`com-canva-mcp`), and every connector entry carries its `serverName`.
 - **`packages[]`-only entries are not installable.** The runtime does not acquire or spawn a server's code, so a catalog entry advertising only `packages[]` never appears in Browse. Publish the server behind a URL and give the entry a `remotes[]` endpoint.
 
 ## Related

@@ -4,18 +4,13 @@ import { getActiveWorkspaceId, setActiveWorkspaceId } from "../api/client";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { toWsId } from "../lib/workspace-slug";
 
-const loadingWorkspace = (
-  <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-    Loading workspace...
-  </div>
-);
-
 /**
  * Route guard for `/w/:slug/*`.
  *
  * The URL slug is the single source of truth for the focused workspace. The
- * wire workspace (`X-Workspace-Id`, sent from the ambient `activeWorkspaceId`)
- * is a *projection* of that slug — never an independent value.
+ * wire workspace (the `/v1/workspaces/<wsId>/…` path REST helpers build from
+ * the ambient `activeWorkspaceId`) is a *projection* of that slug — never an
+ * independent value.
  *
  * The projection is set **synchronously during render**, before the `Outlet`'s
  * descendants render. That ordering is the whole point: a descendant's data
@@ -33,7 +28,7 @@ const loadingWorkspace = (
  */
 export function WorkspaceRouteGuard() {
   const { slug } = useParams<{ slug: string }>();
-  const { workspaces, activeWorkspace, setActiveWorkspace, loading } = useWorkspaceContext();
+  const { workspaces, activeWorkspace, setActiveWorkspace } = useWorkspaceContext();
 
   const routeWsId = slug ? toWsId(slug) : null;
   const isMember = !!routeWsId && workspaces.some((ws) => ws.id === routeWsId);
@@ -51,17 +46,13 @@ export function WorkspaceRouteGuard() {
   // projection above already made descendants correct, so this effect only
   // has to win against itself, never against child effects.
   useEffect(() => {
-    if (loading || !routeWsId || workspaces.length === 0) return;
+    if (!routeWsId || workspaces.length === 0) return;
     if (activeWorkspace?.id === routeWsId) return;
     const target = workspaces.find((ws) => ws.id === routeWsId);
     if (target) setActiveWorkspace(target);
-  }, [routeWsId, workspaces, activeWorkspace?.id, setActiveWorkspace, loading]);
+  }, [routeWsId, workspaces, activeWorkspace?.id, setActiveWorkspace]);
 
-  // No workspaces yet (initial list still loading) — the only true loading gate.
-  if (loading) return loadingWorkspace;
-
-  // Unknown / non-member slug → bounce to the default landing (only decidable
-  // once the workspace list has loaded).
+  // Unknown / non-member slug → bounce to the default landing.
   if (routeWsId && workspaces.length > 0 && !isMember) {
     return <Navigate to="/" replace />;
   }

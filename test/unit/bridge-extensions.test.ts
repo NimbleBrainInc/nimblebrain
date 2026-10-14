@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { CHAT_CONTEXT_META_KEY } from "../../web/src/bridge/extensions.ts";
 import type { BridgeCallbacks } from "../../web/src/bridge/types.ts";
 
 // ---------------------------------------------------------------------------
@@ -9,17 +8,26 @@ import type { BridgeCallbacks } from "../../web/src/bridge/types.ts";
 
 type Listener = (event: unknown) => void;
 
+/**
+ * The part of an iframe the bridge touches. This project has no DOM lib (the
+ * suite runs on Bun), so the fake is typed as what it provides rather than cast
+ * to `HTMLIFrameElement`.
+ */
+interface FakeIframe {
+  contentWindow: { postMessage(data: unknown, origin: string): void };
+}
+
 /** Fake iframe whose contentWindow can capture postMessage calls. */
 function makeFakeIframe() {
   const posted: unknown[] = [];
 
-  const iframe = {
+  const iframe: FakeIframe = {
     contentWindow: {
       postMessage(data: unknown, _origin: string) {
         posted.push(data);
       },
     },
-  } as unknown as HTMLIFrameElement;
+  };
 
   return { iframe, posted };
 }
@@ -41,21 +49,21 @@ beforeEach(() => {
     (globalThis as Record<string, unknown>).window = globalThis;
   }
 
-  (globalThis as unknown as { open: unknown }).open = mock(() => null);
+  globalThis.open = mock(() => null);
 
-  globalThis.window.addEventListener = ((type: string, fn: Listener) => {
+  globalThis.window.addEventListener = (type: string, fn: Listener) => {
     if (!windowListeners.has(type)) windowListeners.set(type, new Set());
     windowListeners.get(type)!.add(fn);
-  }) as unknown as typeof window.addEventListener;
+  };
 
-  globalThis.window.removeEventListener = ((type: string, fn: Listener) => {
+  globalThis.window.removeEventListener = (type: string, fn: Listener) => {
     windowListeners.get(type)?.delete(fn);
-  }) as unknown as typeof window.removeEventListener;
+  };
 
-  globalThis.window.dispatchEvent = ((event: Event & { detail?: unknown }) => {
+  globalThis.window.dispatchEvent = (event: Event & { detail?: unknown }) => {
     customEventsFired.push({ type: event.type, detail: event.detail });
     return true;
-  }) as unknown as typeof window.dispatchEvent;
+  };
 
   // Provide a minimal document shim so getHostThemeMode() doesn't throw.
   if (typeof globalThis.document === "undefined") {
@@ -92,10 +100,7 @@ afterEach(() => {
 });
 
 /** Simulate a postMessage from the iframe to the host. */
-function simulatePostMessage(
-  iframe: HTMLIFrameElement,
-  data: unknown,
-) {
+function simulatePostMessage(iframe: FakeIframe, data: unknown) {
   const listeners = windowListeners.get("message");
   if (!listeners) return;
   const event = { data, source: iframe.contentWindow } as MessageEvent;
@@ -110,10 +115,16 @@ function simulatePostMessage(
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic import after mocks
 const { createBridge } = await import("../../web/src/bridge/bridge.ts");
 const { postToApp } = await import("../../web/src/bridge/app-channel.ts");
+const { getHostThemeMode } = await import("../../web/src/bridge/theme.ts");
+const { colors, pick } = await import("../../web/src/theme/palette.ts");
 
 /** The app's side of the handshake's last step; the host posts nothing unsolicited before it. */
-function completeHandshake(iframe: HTMLIFrameElement) {
-  simulatePostMessage(iframe, { jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+function completeHandshake(iframe: FakeIframe) {
+  simulatePostMessage(iframe, {
+    jsonrpc: "2.0",
+    method: "ui/notifications/initialized",
+    params: {},
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +144,7 @@ describe("Bridge — ui/message (spec format)", () => {
 
     expect(customEventsFired).toContainEqual({
       type: "nb:chat",
-      detail: { message: "hello from iframe", context: undefined },
+      detail: { message: "hello from iframe" },
     });
 
     handle.destroy();
@@ -160,11 +171,14 @@ describe("Bridge — ui/message (spec format)", () => {
     handle.destroy();
   });
 
-  it("extracts the chat context from a text block's _meta", () => {
+  it("delivers the text of a block that carries _meta, and only the text", () => {
+    // An app on an SDK that attaches NimbleBrain chat context to the text
+    // block still reaches the chat; the host passes the text alone. App state
+    // reaches the agent through `ui/update-model-context`.
     const { iframe } = makeFakeIframe();
-    const received: Array<{ msg: string; ctx: unknown }> = [];
+    const received: unknown[][] = [];
     const handle = createBridge(iframe, "test-app", {
-      onChat: (msg, ctx) => received.push({ msg, ctx }),
+      onChat: (...args: unknown[]) => received.push(args),
     });
 
     simulatePostMessage(iframe, {
@@ -172,12 +186,62 @@ describe("Bridge — ui/message (spec format)", () => {
       method: "ui/message",
       params: {
         role: "user",
-        content: [{ type: "text", text: "with context", _meta: { [CHAT_CONTEXT_META_KEY]: { action: "test" } } }],
+        content: [
+          {
+            type: "text",
+            text: "with meta",
+            _meta: { "ai.nimblebrain/context": { action: "test" } },
+          },
+        ],
       },
     });
 
-    expect(received[0]?.msg).toBe("with context");
-    expect(received[0]?.ctx).toEqual({ action: "test" });
+    expect(received).toEqual([["with meta"]]);
+
+    handle.destroy();
+  });
+});
+
+describe("Bridge — ai.nimblebrain/action", () => {
+  it("hands every action to the shell by name, with no action handled in the bridge", () => {
+    const { iframe } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      method: "ai.nimblebrain/action",
+      params: { action: "openApp", name: "crm" },
+    });
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      method: "ai.nimblebrain/action",
+      params: { action: "navigate", route: "/settings" },
+    });
+
+    expect(customEventsFired.filter((e) => e.type === "nb:action")).toEqual([
+      { type: "nb:action", detail: { action: "openApp", name: "crm", serverName: "test-app" } },
+      {
+        type: "nb:action",
+        detail: { action: "navigate", route: "/settings", serverName: "test-app" },
+      },
+    ]);
+
+    handle.destroy();
+  });
+
+  it("names the sending server itself, whatever server the app claims to be", () => {
+    const { iframe } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      method: "ai.nimblebrain/action",
+      params: { action: "openConnectorSettings", serverName: "other-app" },
+    });
+
+    expect(customEventsFired.filter((e) => e.type === "nb:action")).toEqual([
+      { type: "nb:action", detail: { action: "openConnectorSettings", serverName: "test-app" } },
+    ]);
 
     handle.destroy();
   });
@@ -208,7 +272,7 @@ describe("Bridge — methods the host does not serve", () => {
   it("ignores the synapse/download-file notification older SDKs send", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");
-    const createObjectURL = mock(() => "blob:x");
+    const createObjectURL = mock((): `blob:${string}` => "blob:x");
     const original = URL.createObjectURL;
     URL.createObjectURL = createObjectURL;
     try {
@@ -237,11 +301,7 @@ describe("Bridge — ui/open-link and size-changed", () => {
       params: { url: "https://example.com" },
     });
 
-    expect((globalThis as unknown as { open: ReturnType<typeof mock> }).open).toHaveBeenCalledWith(
-      "https://example.com",
-      "_blank",
-      "noopener",
-    );
+    expect(globalThis.open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener");
 
     handle.destroy();
   });
@@ -283,7 +343,9 @@ describe("Bridge — ext-apps dual protocol", () => {
 
     // Should respond with a proper JSON-RPC result
     const response = posted.find(
-      (m: unknown) => (m as Record<string, unknown>).id === "init-1" && "result" in (m as Record<string, unknown>),
+      (m: unknown) =>
+        (m as Record<string, unknown>).id === "init-1" &&
+        "result" in (m as Record<string, unknown>),
     ) as Record<string, unknown> | undefined;
     expect(response).toBeDefined();
     expect(response!.jsonrpc).toBe("2.0");
@@ -390,6 +452,16 @@ describe("Bridge — ext-apps dual protocol", () => {
     // And we should still be sending the core spec-allowed ones
     expect(keys).toContain("--color-background-primary");
     expect(keys).toContain("--font-sans");
+    // The status colours go out under their spec keys, which any MCP Apps host
+    // can send, carrying the palette's values.
+    const mode = getHostThemeMode();
+    expect(hostContext.styles.variables).toMatchObject({
+      "--color-text-danger": pick(colors.destructive, mode),
+      "--color-text-success": pick(colors.success, mode),
+      "--color-text-warning": pick(colors.warning, mode),
+      "--color-background-info": pick(colors["info-light"], mode),
+      "--color-text-inverse": pick(colors["primary-foreground"], mode),
+    });
 
     handle.destroy();
   });
@@ -465,7 +537,7 @@ describe("Bridge — ext-apps dual protocol", () => {
   it("posts nothing before the app's ui/initialize request, and answers it first", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app", {
-      getHostExtensions: () => ({ workspace: { id: "ws_1", name: "One" } }),
+      getHostExtensions: () => ({ workspace: { id: "ws_0002ee92e8791c13", name: "One" } }),
     });
 
     // Everything the host can push on its own, before the app has spoken.
@@ -515,23 +587,46 @@ describe("Bridge — ext-apps dual protocol", () => {
     handle.destroy();
   });
 
+  it("delivers a pushed tool result as its CallToolResult, isError included", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+    completeHandshake(iframe);
+    const before = posted.length;
+
+    const refusal = { error: { code: "not_found", message: "No such record" } };
+    handle.sendToolResult({
+      content: [{ type: "text", text: JSON.stringify(refusal) }],
+      structuredContent: refusal,
+      isError: true,
+    });
+
+    expect(posted.slice(before)).toEqual([
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-result",
+        params: {
+          content: [{ type: "text", text: JSON.stringify(refusal) }],
+          structuredContent: refusal,
+          isError: true,
+        },
+      },
+    ]);
+
+    handle.destroy();
+  });
+
   it("holds one frame per thing to say, in the place it was first said", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");
     const listChanged = { jsonrpc: "2.0", method: "notifications/resources/list_changed" };
-    const status = (taskId: string, status: string) => ({
-      jsonrpc: "2.0",
-      method: "notifications/tasks/status",
-      params: { taskId, status },
-    });
 
     handle.setHostContext({ theme: "dark" });
     postToApp(iframe, listChanged);
-    postToApp(iframe, status("t1", "working"));
-    postToApp(iframe, status("t2", "working"));
+    handle.sendToolInput({ arguments: { q: "a" } });
+    handle.sendToolInput({ arguments: { q: "b" } });
     handle.setHostContext({ theme: "light" });
     postToApp(iframe, listChanged);
-    postToApp(iframe, status("t1", "completed"));
+    handle.sendToolInput({ arguments: { q: "a" } });
 
     completeHandshake(iframe);
 
@@ -539,11 +634,14 @@ describe("Bridge — ext-apps dual protocol", () => {
     expect(delivered.map((m) => (m as Record<string, unknown>).method)).toEqual([
       "ui/notifications/host-context-changed",
       "notifications/resources/list_changed",
-      "notifications/tasks/status",
-      "notifications/tasks/status",
+      "ui/notifications/tool-input",
+      "ui/notifications/tool-input",
     ]);
     expect((delivered[0] as { params: { theme: string } }).params.theme).toBe("light");
-    expect(delivered.slice(2)).toEqual([status("t1", "completed"), status("t2", "working")]);
+    expect(delivered.slice(2).map((m) => (m as { params: unknown }).params)).toEqual([
+      { arguments: { q: "a" } },
+      { arguments: { q: "b" } },
+    ]);
 
     handle.destroy();
   });
@@ -588,7 +686,8 @@ describe("Bridge — ext-apps dual protocol", () => {
     handle.setHostContext({ theme: "dark" });
 
     const msg = posted.find(
-      (m: unknown) => (m as Record<string, unknown>).method === "ui/notifications/host-context-changed",
+      (m: unknown) =>
+        (m as Record<string, unknown>).method === "ui/notifications/host-context-changed",
     ) as Record<string, unknown> | undefined;
     expect(msg).toBeDefined();
     expect((msg!.params as Record<string, unknown>).theme).toBe("dark");
@@ -630,9 +729,7 @@ describe("Bridge — ext-apps dual protocol", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // Should have attempted to respond (either result or error)
-    const response = posted.find(
-      (m: unknown) => (m as Record<string, unknown>).id === "tc-1",
-    );
+    const response = posted.find((m: unknown) => (m as Record<string, unknown>).id === "tc-1");
     expect(response).toBeDefined();
 
     handle.destroy();
@@ -689,7 +786,7 @@ describe("Bridge — ui/initialize hostContext extensions", () => {
   it("merges getHostExtensions() into hostContext alongside spec fields", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app", {
-      getHostExtensions: () => ({ workspace: { id: "ws_a", name: "Alpha" } }),
+      getHostExtensions: () => ({ workspace: { id: "ws_00079598e311c160", name: "Alpha" } }),
     });
 
     simulatePostMessage(iframe, {
@@ -701,7 +798,7 @@ describe("Bridge — ui/initialize hostContext extensions", () => {
 
     const response = findInitResponse(posted);
     expect(response?.result.hostContext).toMatchObject({
-      workspace: { id: "ws_a", name: "Alpha" },
+      workspace: { id: "ws_00079598e311c160", name: "Alpha" },
       theme: expect.anything(),
       styles: expect.anything(),
     });
@@ -714,7 +811,7 @@ describe("Bridge — ui/initialize hostContext extensions", () => {
     const handle = createBridge(iframe, "test-app", {
       getHostExtensions: () => {
         calls++;
-        return { workspace: { id: "ws_a", name: "Alpha" } };
+        return { workspace: { id: "ws_00079598e311c160", name: "Alpha" } };
       },
     });
 
@@ -736,7 +833,7 @@ describe("Bridge — ui/initialize hostContext extensions", () => {
         // Adversarial caller tries to override a spec field — bridge must ignore.
         theme: "WRONG",
         styles: { variables: { "--evil": "true" } },
-        workspace: { id: "ws_a", name: "Alpha" },
+        workspace: { id: "ws_00079598e311c160", name: "Alpha" },
       }),
     });
 
@@ -750,8 +847,10 @@ describe("Bridge — ui/initialize hostContext extensions", () => {
     const response = findInitResponse(posted);
     const ctx = response?.result.hostContext as Record<string, unknown>;
     expect(ctx.theme).not.toBe("WRONG");
-    expect((ctx.styles as Record<string, unknown>).variables).not.toMatchObject({ "--evil": "true" });
-    expect(ctx.workspace).toEqual({ id: "ws_a", name: "Alpha" });
+    expect((ctx.styles as Record<string, unknown>).variables).not.toMatchObject({
+      "--evil": "true",
+    });
+    expect(ctx.workspace).toEqual({ id: "ws_00079598e311c160", name: "Alpha" });
     handle.destroy();
   });
 

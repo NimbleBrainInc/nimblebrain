@@ -2,8 +2,9 @@
 /**
  * Generates the `.d.ts` trees under `web/src/_generated/` from the server-side
  * sources that own their shapes: the TypeBox schemas at
- * `src/platform/schemas/`, and the connector-catalog wire types at
- * `src/connectors/catalog/types.ts`.
+ * `src/platform/schemas/`, the connector-catalog wire types at
+ * `src/connectors/catalog/types.ts`, and the REST response bodies at
+ * `src/api/schemas/responses.ts`.
  *
  * Why this exists: web is a separate package (its own Dockerfile,
  * package.json, build context). The web shell needs the catalog's
@@ -30,17 +31,17 @@
  * Run: `bun run codegen` (alias for this script — see package.json).
  */
 
-import { execSync } from "node:child_process";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import ts from "typescript";
 
 const REPO_ROOT = resolve(import.meta.dirname ?? __dirname, "..");
 const TMP_OUT = join(REPO_ROOT, ".tmp-codegen");
 const WEB_DEST = join(REPO_ROOT, "web/src/_generated/platform-schemas");
-const WORKSPACE_ID_PATTERN_SRC = join(REPO_ROOT, "src/workspace/workspace-id-pattern.ts");
-const WORKSPACE_ID_PATTERN_DEST = join(REPO_ROOT, "web/src/_generated/workspace-id-pattern.ts");
 const CONNECTOR_TYPES_TMP = join(REPO_ROOT, ".tmp-codegen-connectors");
 const CONNECTOR_TYPES_DEST = join(REPO_ROOT, "web/src/_generated/connector-catalog");
+const API_TYPES_TMP = join(REPO_ROOT, ".tmp-codegen-api");
+const API_TYPES_DEST = join(REPO_ROOT, "web/src/_generated/api");
 const IDENTITY_SOURCES_SRC = join(REPO_ROOT, "src/tools/identity-sources.ts");
 /**
  * Zero-import runtime modules mirrored verbatim into the web tree.
@@ -88,31 +89,138 @@ function injectHeaders(dir: string, treeRoot: string, sourceRoot: string): void 
     }
     if (!entry.name.endsWith(".d.ts")) continue;
     // Map output path back to source path for the header.
-    const relFromOutput = full.slice(treeRoot.length + 1).replace(/\.d\.ts$/, ".ts");
+    const relFromOutput = full
+      .slice(treeRoot.length + 1)
+      .replaceAll("\\", "/")
+      .replace(/\.d\.ts$/, ".ts");
     const body = readFileSync(full, "utf-8");
     writeFileSync(full, header(`${sourceRoot}/${relFromOutput}`) + body);
   }
 }
 
-// ── workspace-id-pattern (Stage 2 / T012) ──────────────────────────
-//
-// Emits a runtime `.ts` mirroring the literal pattern + flags exported
-// from `src/workspace/workspace-id-pattern.ts`. The web tier
-// (`web/src/lib/namespaced-tool.ts`) imports the generated copy and
-// constructs its own RegExp locally. CI's `check:codegen` step
-// catches drift between the server source and the emitted copy.
-//
-// Why we don't ship a `.d.ts` here: the web tier needs the actual
-// string values at runtime to validate workspace ids. `.d.ts` would
-// only give us type-level types. So this step is a hand-written extract
-// of the two string literals — no `tsc` emission needed.
+/**
+ * Emits a `.d.ts` for every source file a tsconfig compiles (its roots and
+ * their imports), each from a program rooted at that file alone.
+ *
+ * Why not one `tsc -p`: the declaration printer writes a union in the order
+ * of its members' type ids, and a mapped type's properties in the order of
+ * its keys' ids. The checker interns a literal type once per program and
+ * numbers it when first seen, so in a shared program `"failed"` takes its id
+ * from whichever file mentions it first. A schema that adds a literal then
+ * reorders unions in files that never import it, and two schema changes in
+ * flight invalidate each other's generated files. A program rooted at one
+ * file holds only that file's import closure, so its `.d.ts` depends on that
+ * closure and nothing else.
+ *
+ * A file whose closure is every schema (`catalog.ts`) still inlines literal
+ * unions from modules it imports, so a literal one schema adds would reorder
+ * another schema's union there. `sortLiteralUnions` writes the literal
+ * members of every union the checker prints in value order, which no other
+ * file can move.
+ */
+function emitDeclarations(configPath: string): void {
+  const parsed = ts.getParsedCommandLineOfConfigFile(join(REPO_ROOT, configPath), undefined, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic: (d) => failOn([d]),
+  });
+  if (!parsed) throw new Error(`[codegen] could not read ${configPath}`);
+  failOn(parsed.errors);
+
+  const host = ts.createCompilerHost(parsed.options);
+  const whole = ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options, host });
+  failOn(ts.getPreEmitDiagnostics(whole));
+  const sources = whole
+    .getSourceFiles()
+    .filter((f) => !f.isDeclarationFile && !whole.isSourceFileFromExternalLibrary(f))
+    .map((f) => f.fileName)
+    .sort();
+
+  let previous: ts.Program = whole;
+  for (const file of sources) {
+    const program = ts.createProgram({
+      rootNames: [file],
+      options: parsed.options,
+      host,
+      oldProgram: previous,
+    });
+    previous = program;
+    const result = program.emit(program.getSourceFile(file), undefined, undefined, true, {
+      afterDeclarations: [sortLiteralUnions],
+    });
+    failOn(result.diagnostics);
+    if (result.emitSkipped) throw new Error(`[codegen] tsc skipped the emit of ${file}`);
+  }
+}
+
+/**
+ * Declaration transformer: reorders the literal members of each union the
+ * checker printed from a type by value (numbers ascending, then strings by
+ * code unit), leaving any other member (`null`, `string`, an object type) in
+ * its slot. A union copied from a source annotation is already in its author's
+ * order and is left alone. Union order carries no meaning to the type system;
+ * this only makes the printed order canonical.
+ */
+function sortLiteralUnions(context: ts.TransformationContext) {
+  const { factory } = context;
+  const visit = (node: ts.Node): ts.Node => {
+    const visited = ts.visitEachChild(node, visit, context);
+    if (!ts.isUnionTypeNode(visited) || ts.getParseTreeNode(node) !== undefined) return visited;
+    const slots = visited.types.flatMap((t, i) => (literalKey(t) === undefined ? [] : [i]));
+    if (slots.length < 2) return visited;
+    const sorted = slots
+      .map((i) => visited.types[i] as ts.TypeNode)
+      .sort((a, b) => compareKeys(literalKey(a) as LiteralKey, literalKey(b) as LiteralKey));
+    const types = [...visited.types];
+    slots.forEach((slot, k) => {
+      types[slot] = sorted[k] as ts.TypeNode;
+    });
+    return factory.updateUnionTypeNode(visited, factory.createNodeArray(types));
+  };
+  return <T extends ts.Node>(root: T): T => ts.visitNode(root, visit) as T;
+}
+
+type LiteralKey = { rank: 0; value: number } | { rank: 1; value: string };
+
+function literalKey(node: ts.TypeNode): LiteralKey | undefined {
+  if (!ts.isLiteralTypeNode(node)) return undefined;
+  const lit = node.literal;
+  if (ts.isNumericLiteral(lit)) return { rank: 0, value: Number(lit.text) };
+  if (
+    ts.isPrefixUnaryExpression(lit) &&
+    lit.operator === ts.SyntaxKind.MinusToken &&
+    ts.isNumericLiteral(lit.operand)
+  ) {
+    return { rank: 0, value: -Number(lit.operand.text) };
+  }
+  if (ts.isStringLiteral(lit)) return { rank: 1, value: lit.text };
+  return undefined;
+}
+
+function compareKeys(a: LiteralKey, b: LiteralKey): number {
+  if (a.rank !== b.rank) return a.rank - b.rank;
+  if (a.value === b.value) return 0;
+  return a.value < b.value ? -1 : 1;
+}
+
+function failOn(diagnostics: readonly ts.Diagnostic[]): void {
+  const errors = diagnostics.filter((d) => d.category === ts.DiagnosticCategory.Error);
+  if (errors.length === 0) return;
+  const text = ts.formatDiagnosticsWithColorAndContext(errors, {
+    getCanonicalFileName: (f) => f,
+    getCurrentDirectory: () => REPO_ROOT,
+    getNewLine: () => "\n",
+  });
+  throw new Error(`[codegen] tsc reported errors:\n${text}`);
+}
+
+// Mirrored string constants: a runtime `.ts` carrying a literal exported from
+// `src/`, which the web tier needs as a value (a `.d.ts` would give it only a
+// type). CI's `check:codegen` step catches drift between source and copy.
 
 function extractStringLiteral(source: string, name: string): string {
   // Match `export const <name> = "<value>";` with the value as a
-  // double-quoted JS string literal. No escapes are interpreted — the
-  // workspace-id pattern uses only ASCII + the chars `^$_{},|[]0-9a-z`,
-  // none of which need escaping in a JS string. If a future change to
-  // the source adds escapes, this regex needs to widen accordingly.
+  // double-quoted JS string literal. No escapes are interpreted; if a
+  // mirrored source ever adds escapes, this regex needs to widen accordingly.
   const re = new RegExp(`export\\s+const\\s+${name}\\s*=\\s*"([^"\\\\]*)"`);
   const m = re.exec(source);
   if (!m || typeof m[1] !== "string") {
@@ -123,40 +231,13 @@ function extractStringLiteral(source: string, name: string): string {
   return m[1];
 }
 
-console.log("[codegen] workspace-id-pattern → web/src/_generated/workspace-id-pattern.ts");
-
-{
-  const src = readFileSync(WORKSPACE_ID_PATTERN_SRC, "utf-8");
-  const pattern = extractStringLiteral(src, "WORKSPACE_ID_PATTERN");
-  const flags = extractStringLiteral(src, "WORKSPACE_ID_FLAGS");
-
-  // JSON.stringify produces a safely-quoted JS string literal even if
-  // someone slips a `"` or `\` into the pattern later. Defense in depth
-  // against silent codegen breakage.
-  const patternLiteral = JSON.stringify(pattern);
-  const flagsLiteral = JSON.stringify(flags);
-
-  const body = `${header("src/workspace/workspace-id-pattern.ts")}
-// Workspace-id pattern + flags mirrored from the server-side source.
-// The web tier rebuilds the regex locally; see the source file's
-// header for the contract.
-
-export const WORKSPACE_ID_PATTERN = ${patternLiteral};
-export const WORKSPACE_ID_FLAGS = ${flagsLiteral};
-`;
-
-  mkdirSync(dirname(WORKSPACE_ID_PATTERN_DEST), { recursive: true });
-  writeFileSync(WORKSPACE_ID_PATTERN_DEST, body);
-  console.log(`[codegen] OK → ${WORKSPACE_ID_PATTERN_DEST.replace(REPO_ROOT, ".")}`);
-}
-
 console.log(
   "[codegen] personal-connector-prefix → web/src/_generated/personal-connector-prefix.ts",
 );
 
 {
-  // Mirrored for the same reason as the workspace-id pattern, and with more at
-  // stake: this marker is what separates the caller's own connector from a
+  // Mirrored because the web tier needs the value, and with real stakes: this
+  // marker is what separates the caller's own connector from a
   // same-named workspace source. A hand-copied copy that drifts stops the web
   // tier recognising a marked name, which mounts a workspace app's iframe for a
   // connector's tool call — the exact collision the marker exists to prevent,
@@ -203,10 +284,7 @@ rmSync(WEB_DEST, { recursive: true, force: true });
 // Emit declarations only via the dedicated tsconfig. The dedicated config
 // keeps the generation independent of the project tsconfig (which uses
 // `noEmit` and other compile-time-only settings).
-execSync(`bunx tsc -p scripts/tsconfig.codegen-web.json`, {
-  cwd: REPO_ROOT,
-  stdio: "inherit",
-});
+emitDeclarations("scripts/tsconfig.codegen-web.json");
 
 // The tsc output preserves the source dir structure under `outDir`.
 // Move just the schemas tree into web/src/_generated/.
@@ -239,10 +317,7 @@ console.log("[codegen] connector-catalog → web/src/_generated/connector-catalo
 rmSync(CONNECTOR_TYPES_TMP, { recursive: true, force: true });
 rmSync(CONNECTOR_TYPES_DEST, { recursive: true, force: true });
 
-execSync(`bunx tsc -p scripts/tsconfig.codegen-web-connectors.json`, {
-  cwd: REPO_ROOT,
-  stdio: "inherit",
-});
+emitDeclarations("scripts/tsconfig.codegen-web-connectors.json");
 
 mkdirSync(dirname(CONNECTOR_TYPES_DEST), { recursive: true });
 cpSync(CONNECTOR_TYPES_TMP, CONNECTOR_TYPES_DEST, { recursive: true });
@@ -251,3 +326,25 @@ rmSync(CONNECTOR_TYPES_TMP, { recursive: true, force: true });
 injectHeaders(CONNECTOR_TYPES_DEST, CONNECTOR_TYPES_DEST, "src");
 
 console.log(`[codegen] OK → ${CONNECTOR_TYPES_DEST.replace(REPO_ROOT, ".")}`);
+
+// ── REST response bodies and SSE events ───────────────────────────────────────────
+//
+// The body of every JSON route (`responses.ts`) and every SSE event
+// (`events.ts`). Both import nothing outside their directory, and the config's
+// `rootDir` is that directory, so tsc refuses an outside import rather than
+// emitting its graph here.
+
+console.log("[codegen] api → web/src/_generated/api/");
+
+rmSync(API_TYPES_TMP, { recursive: true, force: true });
+rmSync(API_TYPES_DEST, { recursive: true, force: true });
+
+emitDeclarations("scripts/tsconfig.codegen-web-api.json");
+
+mkdirSync(dirname(API_TYPES_DEST), { recursive: true });
+cpSync(API_TYPES_TMP, API_TYPES_DEST, { recursive: true });
+rmSync(API_TYPES_TMP, { recursive: true, force: true });
+
+injectHeaders(API_TYPES_DEST, API_TYPES_DEST, "src/api/schemas");
+
+console.log(`[codegen] OK → ${API_TYPES_DEST.replace(REPO_ROOT, ".")}`);

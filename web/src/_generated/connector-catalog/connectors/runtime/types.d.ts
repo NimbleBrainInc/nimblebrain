@@ -3,7 +3,6 @@
  * Regenerate: bun run codegen. AI agents: edit the source, not this file.
  */
 import type { HookDeclaration } from "../../hooks/types.ts";
-import type { LifecycleDeclaration } from "../../lifecycle/types.ts";
 import type { NotificationsDeclaration } from "../../notifications/types.ts";
 import type { CredentialRef, CredentialValue } from "../../tools/credential-ref.ts";
 import type { Connection, ConnectionState } from "./connection.ts";
@@ -11,14 +10,17 @@ import type { Connection, ConnectionState } from "./connection.ts";
  * Declaration of a UI placement in the shell layout.
  *
  * Sidebar slot convention:
- *   "sidebar" (priority < 10)  → ungrouped core nav (Conversations, Files, Automations)
+ *   "sidebar" (priority < 10)  → ungrouped core nav (Conversations, Files, Tasks)
  *   "sidebar" (priority >= 10) → grouped under "general"
  *   "sidebar.<group>"          → named group with label (e.g., "sidebar.apps" → "Apps")
  *   "sidebar.bottom"           → pinned to bottom zone
  *   "main"                     → app route (page content, not a nav item)
+ *   "settings"                 → the component rendered on the connector's settings page.
+ *                                Claims no navigation. The host renders the first by
+ *                                priority; `route` and `label` are ignored.
  */
 export interface PlacementDeclaration {
-    /** Which slot this UI fills (e.g., "sidebar", "sidebar.apps", "sidebar.bottom", "main"). */
+    /** Which slot this UI fills (e.g., "sidebar", "sidebar.apps", "sidebar.bottom", "main", "settings"). */
     slot: string;
     /** ui:// resource URI served by this MCP server. */
     resourceUri: string;
@@ -26,7 +28,7 @@ export interface PlacementDeclaration {
     priority?: number;
     /** Human-readable label (for sidebar items, tabs, etc.). */
     label?: string;
-    /** Icon (emoji or identifier). */
+    /** Lucide icon name, shown on a `sidebar.bottom` entry. A connector's other sidebar entries show its catalog `icons`. */
     icon?: string;
     /** Route path. Registers as /app/<path> (or "/" for Home). Works in sidebar and main slots. */
     route?: string;
@@ -40,10 +42,8 @@ export interface PlacementEntry extends PlacementDeclaration {
     /** Workspace ID this placement belongs to (undefined = global/protected). */
     wsId?: string;
 }
-/** UI metadata stored on a connector entry (from manifest at install time). */
+/** UI metadata stored on a connector entry (from the catalog's host block). */
 export interface ConnectorUiMeta {
-    name: string;
-    icon: string;
     placements?: PlacementDeclaration[];
 }
 /** Transport configuration for remote MCP servers (url-based connectors). */
@@ -69,10 +69,9 @@ export interface RemoteTransportConfig {
      * `isMintedFleetSource`. The
      * built-in `"minted"` provider mints a short-lived, workspace-scoped service
      * token against the fleet authorizer (config:
-     * `{ audience, scope, tokenUrl?, issuer? }`) and re-mints on expiry. The
-     * endpoint resolves via `resolveAuthorizerTokenUrl`: `tokenUrl` is an explicit
-     * per-connection endpoint override; `issuer` is the legacy identity from which
-     * `${issuer}/token` is derived. Per-connection config wins over the global env.
+     * `{ audience, scope, tokenUrl? }`) and re-mints on expiry. The endpoint
+     * resolves via `resolveAuthorizerTokenUrl`: `tokenUrl` is a per-connection
+     * endpoint override that wins over the global `NB_FLEET_AUTHORIZER_TOKEN_URL`.
      * No interactive OAuth, no static secret. The
      * workspace dimension is the connection's own workspace.
      */
@@ -122,11 +121,9 @@ export type ConnectorRef = {
     url: string;
     /**
      * Canonical reverse-DNS server name from the source `ServerDetail.name`
-     * (e.g. `com.stripe/mcp`), slugified. When present, used as the
-     * lifecycle / route key directly. When absent (legacy installs),
-     * `serverNameFromRef` falls back to `deriveServerName(url)`.
+     * (e.g. `com.stripe/mcp`), slugified. The lifecycle / route key.
      */
-    serverName?: string;
+    serverName: string;
     transport?: RemoteTransportConfig;
     ui?: ConnectorUiMeta | null;
     /** Materialized connector-skill overlays bound to this connector. */
@@ -134,8 +131,8 @@ export type ConnectorRef = {
     /**
      * OAuth identity scope for this URL connector. `"workspace"` is the
      * only legal value: one identity per `(workspace, server)`, shared
-     * across workspace members. Personal connectors bind to the owning
-     * user's personal workspace (`personalWorkspaceIdFor(userId)`).
+     * across workspace members. Personal connectors live on the identity
+     * plane (`IdentityConnectorStore`), not here.
      */
     oauthScope?: "workspace";
     /**
@@ -203,8 +200,7 @@ export type ConnectorRef = {
      * a per-install session URL, so a url→catalog lookup misses and the stamped
      * id is the only way back to the entry), and `providerRef` is
      * `ManagedSession.providerRef` verbatim — opaque provider-scoped coordinates
-     * the kernel never reads. Read it through `brokeredRef()`
-     * (`./brokered.ts`), which also maps the legacy per-vendor blocks forward.
+     * the kernel never reads. Read it through `brokeredRef()` (`./brokered.ts`).
      */
     brokered?: BrokeredRef;
 };
@@ -252,19 +248,15 @@ export interface OAuthClientConfig {
 }
 /** Host manifest metadata at _meta["ai.nimblebrain/host"]. */
 export interface HostManifestMeta {
-    host_version: "1.0" | "1.1" | "1.2" | "1.3" | "1.4";
-    name?: string;
-    icon?: string;
     /**
-     * RESERVED — not consumed by the host (grouping/briefing prioritization is
-     * not wired to it). Tolerated for back-compat; slated for removal (nimblebrain#503).
+     * Contract major version, written `"1.0"`. It changes only on a breaking
+     * change; a block is enabled by being present, never by this value. A value
+     * outside major 1 is a contract this runtime cannot read, so the entry is
+     * dropped at the catalog boundary (`validateServerDetailSafety`). Any `1.x`
+     * is major 1.
      */
-    category?: string;
+    host_version: string;
     placements?: PlacementDeclaration[];
-    primaryView?: {
-        resourceUri: string;
-    };
-    briefing?: BriefingBlock;
     /**
      * Inbound event streams this server accepts, one per vendor. The runtime
      * mints a capability URL per `(workspace, connector, vendor)` at install and
@@ -280,7 +272,7 @@ export interface HostManifestMeta {
     hooks?: HookDeclaration[];
     /**
      * The outbox this server exposes: one MCP resource the runtime reads on a
-     * schedule for facts nobody asked for. Belongs to `host_version: "1.3"`.
+     * schedule for facts nobody asked for.
      *
      * Unlike {@link hooks}, declaring one grants no privilege. A hook
      * declaration decides where this runtime sends a delivery with a freshly
@@ -294,40 +286,17 @@ export interface HostManifestMeta {
      */
     notifications?: NotificationsDeclaration;
     /**
-     * The two moments the runtime can tell this server about its own
-     * installation — `on_ready` when it first becomes reachable in a workspace,
-     * `on_removing` immediately before its source is torn down. Each names a tool
-     * on this same server. Belongs to `host_version: "1.4"`.
+     * Bare names of tools on this same server that only a workspace admin may
+     * call.
      *
-     * The same line {@link HostManifestMeta.hooks} holds applies here with more
-     * force: nothing in this block describes what either event MEANS. The kernel
-     * says *you were installed*; what a bundle does about it — mint a vendor
-     * tenancy, release one, nothing at all — is the bundle's business. A block
-     * describing what to provision would be a vendor taxonomy in the kernel.
-     *
-     * See `src/lifecycle/types.ts`.
+     * It only narrows: the kernel removes these tools from a non-admin's listings
+     * and refuses them at dispatch on every door, and grants nothing. Read from
+     * the operator-trusted catalog only, like {@link hooks}, never from anything
+     * the running server sends. Workspace admin is the membership role `admin`
+     * in the bound workspace, with no org-admin bypass. See
+     * `src/permissions/admin-tools.ts`.
      */
-    lifecycle?: LifecycleDeclaration;
-}
-/** Briefing declaration — how this app contributes to the daily briefing. */
-export interface BriefingBlock {
-    priority?: "high" | "medium" | "low";
-    facets: BriefingFacet[];
-}
-/** A single briefing facet — one dimension of summary data.
- *  Resolved via one of: resource (MCP resource read) or tool (MCP tool call).
- *  Both answers come from the server that declared the facet, over MCP. */
-export interface BriefingFacet {
-    name: string;
-    label: string;
-    type: "attention" | "upcoming" | "activity" | "delta" | "kpi";
-    resource?: string;
-    tool?: string;
-    tool_input?: Record<string, unknown>;
-    /** Shown when the facet declares neither `tool` nor `resource`, and when
-     *  resolution fails. The only facet field besides label/type the briefing
-     *  reads — see `buildUserPayload` in `services/briefing-generator.ts`. */
-    description?: string;
+    admin_tools?: string[];
 }
 /** Runtime tracking for an installed connector. One per source. */
 export interface ConnectorInstance {
@@ -343,8 +312,6 @@ export interface ConnectorInstance {
     state: ConnectionState;
     /** UI placement metadata from _meta["ai.nimblebrain/host"]. */
     ui: ConnectorUiMeta | null;
-    /** Briefing metadata from _meta["ai.nimblebrain/host"].briefing. */
-    briefing: BriefingBlock | null;
     /**
      * Workspace that owns this instance. Required — every connector instance
      * belongs to exactly one workspace. Global/platform sources are
@@ -355,8 +322,7 @@ export interface ConnectorInstance {
     /**
      * OAuth identity scope for URL connectors. `"workspace"` is the only legal
      * value — one shared identity per `(workspace, server)`. Personal
-     * connectors are workspace-scoped to the user's personal workspace
-     * (`personalWorkspaceIdFor(userId)`).
+     * connectors live on the identity plane (`IdentityConnectorStore`).
      */
     oauthScope?: "workspace";
     /**
@@ -386,20 +352,10 @@ export interface LocalConnectorMeta {
     /** Human-readable description from manifest. */
     description?: string;
     ui: ConnectorUiMeta | null;
-    briefing: BriefingBlock | null;
 }
 /** Result from starting a connector source — includes the actual registered source name. */
 export interface StartConnectorResult {
     meta: LocalConnectorMeta | null;
     /** The actual source name registered in the ToolRegistry. */
     sourceName: string;
-}
-/** App info returned by GET /v1/apps. */
-export interface AppInfo {
-    name: string;
-    connectorName: string;
-    version: string;
-    status: ConnectionState;
-    toolCount: number;
-    ui: ConnectorUiMeta | null;
 }

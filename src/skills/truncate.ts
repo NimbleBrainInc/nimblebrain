@@ -34,8 +34,21 @@
  * `{ cap: true }`); every read/inspect/round-trip caller gets the full stored
  * body by default, so editing never persists a truncated file. Also caps the
  * server `skill://<name>/SKILL.md` body. Tune against a measured baseline.
+ *
+ * An authored write (`skills__create`, `skills__update`) refuses a body that
+ * would grow past this, measured by {@link skillBodyChars}, so the cut above is
+ * a backstop for files that arrived some other way, not something an author
+ * meets silently.
  */
 export const MAX_SKILL_BODY_CHARS = 12_000;
+
+/**
+ * A body's length as the loader measures it against {@link MAX_SKILL_BODY_CHARS}:
+ * frontmatter excluded, surrounding whitespace trimmed.
+ */
+export function skillBodyChars(body: string): number {
+  return body.trim().length;
+}
 
 export interface TruncateResult {
   body: string;

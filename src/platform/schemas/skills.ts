@@ -1,5 +1,5 @@
 import { type Static, Type } from "@sinclair/typebox";
-import { NumberEnum, StringEnum } from "./_shared.ts";
+import { clearable, NumberEnum, ObjectUnion, StringEnum } from "./_shared.ts";
 
 // ── Shared building blocks ───────────────────────────────────────────────
 
@@ -182,7 +182,7 @@ export const SkillsCreateInput = Type.Object(
 );
 export type SkillsCreateInput = Static<typeof SkillsCreateInput>;
 
-// Update: partial of ManifestFields minus `name` and `status`.
+// Update: a patch of ManifestFields minus `name` and `status`.
 //
 // `name` is not patchable because it IS the filename — the path-derived id
 // would drift out from under the caller.
@@ -194,15 +194,28 @@ export type SkillsCreateInput = Static<typeof SkillsCreateInput>;
 // `manifest` patch would hand the agent back exactly the capability the mute
 // exists to take away from it.
 //
-// All fields optional (omitted fields keep their current values), unlike
-// create where name + description are required.
+// An omitted field keeps its value; `null` clears one (platform/AGENTS.md
+// §1.3). `description` is required on every skill, so it takes no `null`.
 const UpdateManifestFields = {
   description: Type.Optional(ManifestFields.description),
-  loadingStrategy: ManifestFields.loadingStrategy,
-  priority: ManifestFields.priority,
-  toolAffinity: ManifestFields.toolAffinity,
-  triggers: ManifestFields.triggers,
-  allowedTools: ManifestFields.allowedTools,
+  loadingStrategy: clearable(
+    LoadingStrategy,
+    "`always` or `dynamic`, or null for the default (`dynamic`).",
+  ),
+  priority: clearable(SkillPriority, "11–99, or null for the default (50)."),
+  toolAffinity: clearable(
+    Type.Array(Type.String()),
+    "Tool-name globs (e.g. `gmail__*`); a dynamic skill auto-loads when one is active. " +
+      "null removes them.",
+  ),
+  triggers: clearable(
+    Type.Array(Type.String()),
+    "Exact phrases that deterministically activate a dynamic skill. null removes them.",
+  ),
+  allowedTools: clearable(
+    Type.Array(Type.String()),
+    "Tools the skill is permitted to call. null removes the list.",
+  ),
 };
 
 export const SkillsUpdateInput = Type.Object(
@@ -210,7 +223,8 @@ export const SkillsUpdateInput = Type.Object(
     id: Type.String({ description: "Filesystem path returned by `skills__list`." }),
     manifest: Type.Optional(
       Type.Object(UpdateManifestFields, {
-        description: "Partial manifest patch. Omitted fields keep their current values.",
+        description:
+          "Partial manifest patch. An omitted field keeps its value; `null` clears it to the default.",
       }),
     ),
     body: Type.Optional(
@@ -313,36 +327,41 @@ export const UseSkillInput = Type.Object(
 );
 export type UseSkillInput = Static<typeof UseSkillInput>;
 
-// ── Tool output types ────────────────────────────────────────────────────
+// ── Tool output schemas ──────────────────────────────────────────────────
 //
-// Same convention as `automations.ts` §2.1 in `platform/AGENTS.md`:
-// type-only exports, the handler's return type IS the contract, web and
-// server both import from here. Skills is a cleaner case than
-// automations — the read-side shapes lived nowhere canonical before
-// (both server's `platform/skills/source.ts` AND web's
-// `pages/settings/SkillsTab.tsx` / `components/InContextPopover.tsx`
-// hand-rolled identical interfaces). This file becomes the source of
-// truth; both sides import it, drift becomes structurally impossible.
+// Each tool registers its output schema with `typedTool`, which holds every
+// success result to the schema's static type and publishes the schema on
+// `tools/list` (`src/platform/AGENTS.md` §2.1). The web shell imports the same
+// types through codegen.
+//
+// Output schemas stay open — no `additionalProperties: false` — because the SDK
+// client validates every success result against them and fails a call whose
+// result it rejects.
+
+const ScopeValue = StringEnum(["org", "workspace", "user", "provided"] as const);
+const StatusValue = StringEnum(["active", "disabled"] as const);
+const LayerValue = NumberEnum([1, 3] as const);
 
 /** Tier a skill lives in. */
-export type SkillScope = "org" | "workspace" | "user" | "provided";
+export type SkillScope = Static<typeof ScopeValue>;
 
 /** Skill layer per the loading-strategy spec. */
-export type SkillLayer = 1 | 3;
+export type SkillLayer = Static<typeof LayerValue>;
 
 /** Per-skill enablement state. */
-export type SkillStatus = "active" | "disabled";
+export type SkillStatus = Static<typeof StatusValue>;
 
 /**
  * Source provenance for a skill — where it came from on disk or via
  * a connector. Optional fields; at least one is populated.
  */
-export interface SkillSource {
-  connector?: string;
-  connectorVersion?: string;
-  path?: string;
-  uri?: string;
-}
+export const SkillSource = Type.Object({
+  connector: Type.Optional(Type.String()),
+  connectorVersion: Type.Optional(Type.String()),
+  path: Type.Optional(Type.String()),
+  uri: Type.Optional(Type.String()),
+});
+export type SkillSource = Static<typeof SkillSource>;
 
 /**
  * Computed loading visibility: whether any loader path reaches a skill
@@ -351,63 +370,109 @@ export interface SkillSource {
  * affinity — that would otherwise be silently inert. Derived by
  * `resolveLoadingMechanism`, not stored on disk.
  */
-export interface SkillLoading {
-  wouldLoad: boolean;
-  mechanism: "always" | "tool_affinity" | "trigger" | "none";
-}
+export const SkillLoading = Type.Object({
+  wouldLoad: Type.Boolean(),
+  mechanism: StringEnum(["always", "tool_affinity", "trigger", "none"] as const),
+});
+export type SkillLoading = Static<typeof SkillLoading>;
 
 /**
  * Row returned per skill by `skills__list`. The summary surface for the
  * settings UI and the agent's `skills__list` enumeration.
  */
-export interface SkillSummary {
-  id: string;
-  name: string;
-  layer: SkillLayer;
-  scope: SkillScope;
-  status: SkillStatus;
-  tokens: number;
-  source: SkillSource;
-  description?: string;
-  modifiedAt?: string;
-  loadingStrategy?: string;
-  toolAffinity?: string[];
-  triggers?: string[];
-  priority?: number;
-  loading?: SkillLoading;
-}
+export const SkillSummary = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  layer: LayerValue,
+  scope: ScopeValue,
+  status: StatusValue,
+  tokens: Type.Number(),
+  source: SkillSource,
+  description: Type.Optional(Type.String()),
+  modifiedAt: Type.Optional(Type.String()),
+  loadingStrategy: Type.Optional(Type.String()),
+  toolAffinity: Type.Optional(Type.Array(Type.String())),
+  triggers: Type.Optional(Type.Array(Type.String())),
+  priority: Type.Optional(Type.Number()),
+  loading: Type.Optional(SkillLoading),
+});
+export type SkillSummary = Static<typeof SkillSummary>;
 
-export interface SkillsListOutput {
-  skills: SkillSummary[];
-}
+export const SkillsListOutput = Type.Object({ skills: Type.Array(SkillSummary) });
+export type SkillsListOutput = Static<typeof SkillsListOutput>;
 
 /**
  * Full skill detail returned by `skills__read` — includes the markdown
  * body and the full manifest metadata block.
  */
-export interface SkillDetail {
-  id: string;
-  content: string;
-  layer: SkillLayer;
-  scope: SkillScope;
-  source: SkillSource;
-  metadata: {
-    name: string;
-    description?: string;
-    priority?: number;
-    loadingStrategy?: string;
-    toolAffinity?: string[];
-    triggers?: string[];
-    status?: string;
-  };
-  modifiedAt?: string;
-}
-
-/** `SkillsReadOutput` is the detail itself — no wrapper envelope. */
-export type SkillsReadOutput = SkillDetail;
+export const SkillDetail = Type.Object({
+  id: Type.String(),
+  content: Type.String(),
+  layer: LayerValue,
+  scope: ScopeValue,
+  source: SkillSource,
+  metadata: Type.Object({
+    name: Type.String(),
+    description: Type.Optional(Type.String()),
+    priority: Type.Optional(Type.Number()),
+    loadingStrategy: Type.Optional(Type.String()),
+    toolAffinity: Type.Optional(Type.Array(Type.String())),
+    triggers: Type.Optional(Type.Array(Type.String())),
+    status: Type.Optional(Type.String()),
+  }),
+  modifiedAt: Type.Optional(Type.String()),
+  /**
+   * Present when the body is longer than the platform delivers: how many
+   * characters past the limit it runs. Those trailing sections are cut when the
+   * skill loads, so a reader editing it knows what never reaches the model.
+   */
+  overLimitBy: Type.Optional(Type.Number()),
+});
+export type SkillDetail = Static<typeof SkillDetail>;
 
 /**
- * Result of a write — `skills__create` and `skills__update` share it.
+ * One saved version, read with `skills__read { id, version }`. `manifest` is
+ * the snapshot's frontmatter as parsed, whatever version of the manifest
+ * schema it was written under.
+ */
+export const SkillVersionDetail = Type.Object({
+  id: Type.String(),
+  version: Type.String(),
+  body: Type.String(),
+  manifest: Type.Unknown(),
+});
+export type SkillVersionDetail = Static<typeof SkillVersionDetail>;
+
+/** The live skill's detail, or one saved version when `version` is given. */
+export const SkillsReadOutput = ObjectUnion([SkillDetail, SkillVersionDetail]);
+export type SkillsReadOutput = Static<typeof SkillsReadOutput>;
+
+/**
+ * One skill reaching the model once (`skills__loading_log`). Rows are projected
+ * from stored conversation logs, which keep the shape they were written in, so
+ * this accepts every entry the log can hold: `skill` and `tokens` are absent on
+ * an entry that recorded neither, and `loaded_by` is open beyond the current
+ * vocabulary (`always`, `tool_affinity`, `trigger`, `tool_use`, `activation`).
+ */
+export const SkillLoadRow = Type.Object({
+  ts: Type.String(),
+  conv_id: Type.String(),
+  run_id: Type.Optional(Type.String()),
+  skill: Type.Optional(Type.String()),
+  skill_id: Type.Optional(Type.String()),
+  loaded_by: Type.String(),
+  tokens: Type.Optional(Type.Number()),
+  scope: Type.Optional(Type.String()),
+  connector: Type.Optional(Type.String()),
+  tool_name: Type.Optional(Type.String()),
+});
+
+export const SkillsLoadingLogOutput = Type.Object({ loads: Type.Array(SkillLoadRow) });
+export type SkillsLoadingLogOutput = Static<typeof SkillsLoadingLogOutput>;
+
+/**
+ * Result of a write — `skills__create`, `skills__update`, and
+ * `skills__set_status` share it.
  *
  * `loading` answers the question a skill exists to answer, at the moment it is
  * written: a skill that reaches no loader path is reported here rather than
@@ -415,21 +480,60 @@ export type SkillsReadOutput = SkillDetail;
  * taken from a pasted SKILL.md, so a caller whose manifest was overridden by
  * the document it handed over is told which fields moved and why.
  */
-export interface SkillsWriteOutput {
-  id: string;
-  name: string;
-  scope: string;
-  loadingStrategy?: string;
-  loading?: SkillLoading;
+export const SkillsWriteOutput = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  scope: Type.String(),
+  loadingStrategy: Type.Optional(Type.String()),
+  loading: Type.Optional(SkillLoading),
   /** Absent when the body carried no frontmatter, or when `frontmatter: "ignore"`. */
-  frontmatterApplied?: string[];
-}
+  frontmatterApplied: Type.Optional(Type.Array(Type.String())),
+});
+export type SkillsWriteOutput = Static<typeof SkillsWriteOutput>;
+
+export const SkillsHistoryOutput = Type.Object({
+  id: Type.String(),
+  versions: Type.Array(
+    Type.Object({ version: Type.String(), savedAt: Type.String(), bytes: Type.Number() }),
+  ),
+});
+export type SkillsHistoryOutput = Static<typeof SkillsHistoryOutput>;
+
+export const SkillsRestoreOutput = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  scope: Type.String(),
+  version: Type.String(),
+});
+export type SkillsRestoreOutput = Static<typeof SkillsRestoreOutput>;
+
+export const SkillsDeleteOutput = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  scope: Type.String(),
+});
+export type SkillsDeleteOutput = Static<typeof SkillsDeleteOutput>;
+
+/** `skills__activate` / `skills__deactivate`: a mute that holds for this conversation only. */
+export const SkillsActivationOutput = Type.Object({
+  name: Type.String(),
+  suppressed: Type.Boolean(),
+  scope: StringEnum(["conversation"] as const),
+});
+export type SkillsActivationOutput = Static<typeof SkillsActivationOutput>;
 
 /**
  * `nb__use_skill` result. `loaded` delivers the skill (body rides the result's
  * `content`, not this typed envelope); `already_loaded` is the dedupe note —
  * the body is already in the conversation's context, so none is re-delivered.
  */
-export type SkillsUseOutput =
-  | { status: "loaded"; name: string; scope: string; tokens: number }
-  | { status: "already_loaded"; name: string };
+export const SkillsUseOutput = ObjectUnion([
+  Type.Object({
+    status: StringEnum(["loaded"] as const),
+    name: Type.String(),
+    scope: Type.String(),
+    tokens: Type.Number(),
+  }),
+  Type.Object({ status: StringEnum(["already_loaded"] as const), name: Type.String() }),
+]);
+export type SkillsUseOutput = Static<typeof SkillsUseOutput>;

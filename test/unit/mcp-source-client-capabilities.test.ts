@@ -14,14 +14,17 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { textContent } from "../../src/engine/content-helpers.ts";
+import { HOST_RESOURCES_CAPABILITY_KEY } from "../../src/host-resources/capability.ts";
+import { FACETS_EXTENSION_ID } from "../../src/services/facets-extension.ts";
+import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
+import { mcpSourceInternals } from "../helpers/mcp-source-internals.ts";
 
 /** The capabilities the connected server saw us declare. */
 function declaredCapabilities(source: McpSource) {
-  const server = (source as unknown as { inProcessServer: Server | null }).inProcessServer;
+  const server = mcpSourceInternals(source).inProcessServer;
   return server?.getClientCapabilities();
 }
 
@@ -32,7 +35,7 @@ describe("McpSource client capabilities", () => {
     source = undefined;
   });
 
-  test("claims task-augmented tools/call and cancel, and does NOT claim tasks.list", async () => {
+  test("claims no task capability: the 2025-11-25 tasks utility is not spoken (ADR-0046)", async () => {
     source = await makeInProcessSource("caps", [
       {
         name: "noop",
@@ -42,14 +45,32 @@ describe("McpSource client capabilities", () => {
       },
     ]);
 
-    const tasks = declaredCapabilities(source)?.tasks as
-      | { requests?: { tools?: { call?: unknown } }; cancel?: unknown; list?: unknown }
-      | undefined;
+    // The 2026-07-28 tasks extension is claimed per request by the task wire,
+    // never on the connection.
+    const declared = declaredCapabilities(source);
+    expect(declared?.tasks).toBeUndefined();
+    expect(declared?.extensions?.["io.modelcontextprotocol/tasks"]).toBeUndefined();
+  });
 
-    // Both of these are exercised: `startToolAsTask` opens the stream,
-    // `cancelTask` cancels it.
-    expect(tasks?.requests?.tools?.call).toBeDefined();
-    expect(tasks?.cancel).toBeDefined();
-    expect(tasks?.list).toBeUndefined();
+  test("declares the Skills extension, which skill discovery consumes", async () => {
+    source = await makeInProcessSource("caps-skills", []);
+    // Exercised by `listSkills` + verification in the runtime's discovery.
+    expect(declaredCapabilities(source)?.extensions?.[SKILLS_EXTENSION_ID]).toEqual({});
+  });
+
+  test("declares the facets extension, which the briefing collector consumes", async () => {
+    source = await makeInProcessSource("caps-facets", []);
+    // Exercised by the briefing collector's listing and reads.
+    expect(declaredCapabilities(source)?.extensions?.[FACETS_EXTENSION_ID]).toEqual({});
+  });
+
+  // A platform source has no `connectorContext`, so no host-resources handlers
+  // are registered for it; claiming the extension would promise a server
+  // requests nobody answers.
+  test("does NOT claim host-resources from a source that serves no handlers", async () => {
+    source = await makeInProcessSource("caps-host-resources", []);
+    expect(
+      declaredCapabilities(source)?.extensions?.[HOST_RESOURCES_CAPABILITY_KEY],
+    ).toBeUndefined();
   });
 });

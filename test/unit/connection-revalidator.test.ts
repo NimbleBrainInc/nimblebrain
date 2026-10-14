@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import type { ConnectionState } from "../../src/connectors/runtime/connection.ts";
 import type {
   ConnectionHealthProbe,
   ConnectionLiveness,
@@ -9,24 +10,17 @@ import {
   revalidatorIntervalMsFromEnv,
 } from "../../src/connectors/runtime/connection-revalidator.ts";
 import type { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { ConnectionState } from "../../src/connectors/runtime/connection.ts";
-import { log } from "../../src/observability/log.ts";
+import type { ConnectorInstance } from "../../src/connectors/runtime/types.ts";
+import { stub } from "../helpers/stub.ts";
 
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
 
-interface FakeConn {
-  principalId: string;
-  state: ConnectionState;
-}
-interface FakeInstance {
-  serverName: string;
-  wsId: string;
-  state: ConnectionState;
-  ref: unknown;
-  connections: Map<string, FakeConn>;
-}
+type FakeInstance = Pick<
+  ConnectorInstance,
+  "serverName" | "wsId" | "state" | "ref" | "connections"
+>;
 
 interface Flip {
   serverName: string;
@@ -35,22 +29,28 @@ interface Flip {
   newState: ConnectionState;
 }
 
-function composioInstance(serverName: string, wsId = "ws_1"): FakeInstance {
+function composioInstance(serverName: string, wsId = "ws_0002ee92e8791c13"): FakeInstance {
   return {
     serverName,
     wsId,
     state: "running",
-    ref: { url: "https://backend.composio.dev/x/mcp", composio: { connectorId: "com.x" } },
+    ref: {
+      url: "https://backend.composio.dev/x/mcp",
+      serverName,
+      brokered: { provider: "composio", connectorId: "com.x" },
+    },
     connections: new Map([[`_workspace`, { principalId: "_workspace", state: "running" }]]),
   };
 }
 
 function fakeLifecycle(instances: FakeInstance[]) {
   const flips: Flip[] = [];
-  const lifecycle = {
-    getInstances: () => instances,
+  const lifecycle = stub<ConnectorLifecycleManager>({
+    getInstances: () => instances.map((i) => stub<ConnectorInstance>(i)),
     getInstance: (serverName: string, wsId: string) =>
-      instances.find((i) => i.serverName === serverName && i.wsId === wsId),
+      stub<ConnectorInstance>(
+        instances.find((i) => i.serverName === serverName && i.wsId === wsId),
+      ),
     recordConnectionStateChange: (
       serverName: string,
       wsId: string,
@@ -64,7 +64,7 @@ function fakeLifecycle(instances: FakeInstance[]) {
       if (conn) conn.state = newState;
       if (inst) inst.state = newState;
     },
-  } as unknown as ConnectorLifecycleManager;
+  });
   return { lifecycle, flips };
 }
 
@@ -163,7 +163,7 @@ describe("ConnectionRevalidator — dispatch & filtering", () => {
 
   it("never probes a connection with no matching provider probe", async () => {
     const inst = composioInstance("plain");
-    inst.ref = { url: "https://example.com/mcp" }; // no composio field
+    inst.ref = { url: "https://example.com/mcp", serverName: "plain" }; // no brokered provider
     const { lifecycle, flips } = fakeLifecycle([inst]);
     const probe = new ScriptedProbe();
     const rv = new ConnectionRevalidator(lifecycle, [probe]);
@@ -187,72 +187,31 @@ describe("ConnectionRevalidator — dispatch & filtering", () => {
 });
 
 describe("revalidatorIntervalMsFromEnv", () => {
-  // Silence log.warn so the return-value cases (some of which exercise the legacy
-  // fallback) don't emit noise; the dedicated cases below assert on the spy.
-  let warnSpy: ReturnType<typeof spyOn>;
-  beforeEach(() => {
-    warnSpy = spyOn(log, "warn").mockImplementation(() => {});
-  });
-  afterEach(() => warnSpy.mockRestore());
-
   it("undefined (use the revalidator default) when unset", () => {
     expect(revalidatorIntervalMsFromEnv({})).toBeUndefined();
   });
 
   it("converts a positive seconds value from the generic env to ms", () => {
-    expect(
-      revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "300" }),
-    ).toBe(300_000);
-    expect(
-      revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "120" }),
-    ).toBe(120_000);
+    expect(revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "300" })).toBe(
+      300_000,
+    );
+    expect(revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "120" })).toBe(
+      120_000,
+    );
   });
 
-  it("honors the legacy COMPOSIO_MONITOR_INTERVAL_SECONDS as a fallback (back-compat)", () => {
-    expect(revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "300" })).toBe(300_000);
-  });
-
-  it("prefers the generic env when both are set", () => {
-    expect(
-      revalidatorIntervalMsFromEnv({
-        NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "600",
-        COMPOSIO_MONITOR_INTERVAL_SECONDS: "300",
-      }),
-    ).toBe(600_000);
-  });
-
-  it("a declared-but-blank generic env falls through to the legacy knob (migration safety)", () => {
-    // The normal migration artifact: `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS=`
-    // copied into a chart with no value must NOT mask an operator's existing
-    // COMPOSIO_MONITOR_INTERVAL_SECONDS override.
-    expect(
-      revalidatorIntervalMsFromEnv({
-        NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "",
-        COMPOSIO_MONITOR_INTERVAL_SECONDS: "900",
-      }),
-    ).toBe(900_000);
-    expect(
-      revalidatorIntervalMsFromEnv({
-        NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "   ",
-        COMPOSIO_MONITOR_INTERVAL_SECONDS: "900",
-      }),
-    ).toBe(900_000);
-  });
-
-  it("a blank generic env with no legacy knob → undefined (default)", () => {
+  it("a blank value → undefined (default)", () => {
     expect(
       revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "" }),
     ).toBeUndefined();
+    expect(
+      revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "   " }),
+    ).toBeUndefined();
   });
 
-  it("a set-but-garbage generic env falls to the default, not the legacy knob", () => {
-    // An explicit bad value is deliberate; it should not silently resurrect the
-    // deprecated knob.
+  it("ignores COMPOSIO_MONITOR_INTERVAL_SECONDS", () => {
     expect(
-      revalidatorIntervalMsFromEnv({
-        NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "abc",
-        COMPOSIO_MONITOR_INTERVAL_SECONDS: "900",
-      }),
+      revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "900" }),
     ).toBeUndefined();
   });
 
@@ -266,18 +225,6 @@ describe("revalidatorIntervalMsFromEnv", () => {
     expect(
       revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "abc" }),
     ).toBeUndefined();
-  });
-
-  it("warns, naming the replacement, when the legacy knob supplies the cadence", () => {
-    revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "900" });
-    const msg = String(warnSpy.mock.calls[0]?.[0] ?? "");
-    expect(msg).toContain("COMPOSIO_MONITOR_INTERVAL_SECONDS");
-    expect(msg).toContain("NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS");
-  });
-
-  it("does not warn when the generic env supplies the cadence", () => {
-    revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "300" });
-    expect(warnSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -294,9 +241,12 @@ describe("ConnectionRevalidator — timer ceiling", () => {
     const revalidator = new ConnectionRevalidator(lifecycle, [new ScriptedProbe()], { intervalMs });
     const delays: number[] = [];
     let fired = 0;
+    // A real, already-cleared handle for the fake to return.
+    const inert = setTimeout(() => {}, 0);
+    clearTimeout(inert);
 
     const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(((
-      fn: () => void,
+      fn: Parameters<typeof setTimeout>[0],
       ms?: number,
     ) => {
       delays.push(ms ?? 0);
@@ -304,10 +254,11 @@ describe("ConnectionRevalidator — timer ceiling", () => {
       // `setTimeout` lands after the microtask flush below.
       if (fired < cycles) {
         fired++;
-        fn();
+        if (typeof fn === "function") fn();
       }
-      return 0 as unknown as ReturnType<typeof setTimeout>;
-    }) as unknown as typeof setTimeout);
+      return inert;
+      // The call signature alone; `typeof setTimeout` also carries static members.
+    }) as typeof setTimeout);
 
     try {
       revalidator.start();

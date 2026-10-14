@@ -10,7 +10,7 @@
  */
 
 import { type Dirent, readdirSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { type FileHandle, open, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -28,139 +28,43 @@ export interface ConversationMeta {
   lastModel: string | null;
   /**
    * The model the conversation is bound to — the runtime stamps this on the
-   * line-1 header at create time and never mutates it. Absent on legacy files
-   * written before the binding. Distinct from `lastModel`, which is derived
-   * from events and describes what the last turn ran on.
+   * line-1 header at create time and never mutates it. Distinct from
+   * `lastModel`, which is derived from events and describes what the last turn
+   * ran on.
    */
-  model?: string;
+  model: string;
   ownerId?: string;
   /**
    * The workspace the conversation ran in — the breadcrumb the
-   * runtime stamps on the line-1 header at create time. Absent on legacy
-   * files written before workspace stamping; a consumer treats absent as
-   * the owner's personal workspace.
+   * runtime stamps on the line-1 header at create time. May be absent; the
+   * workspace the file is stored under is authoritative either way.
    */
   workspaceId?: string;
 }
 
-/**
- * A single chat turn as it should be rendered. One per `user.message` event
- * and one per `run.start`→`run.done` span — never split per iteration.
- */
-export interface DisplayMessage {
-  role: "user" | "assistant";
-  /** Aggregated text across all text blocks (convenient for copy/title). */
-  content: string;
-  /** Ordered content blocks — the primary structure for rendering. */
-  blocks: DisplayBlock[];
-  timestamp: string;
-  userId?: string;
-  /** All tool calls flattened out of blocks — derived, for consumers that scan them. */
-  toolCalls?: DisplayToolCall[];
-  /** Aggregate LLM usage for the whole turn; undefined for user messages. */
-  usage?: DisplayUsage;
-  files?: DisplayFile[];
-  /** Non-"complete" run terminations bubble up here ("max_iterations", "error"). */
-  stopReason?: string;
-  /**
-   * True when this assistant turn has no terminal event yet (no run.done /
-   * run.error) — i.e. the run was still in flight when the file was read. Lets
-   * a live viewer tell a partial disk snapshot from a finished turn and decide
-   * whether to reconcile against the server's replay.
-   */
-  pending?: boolean;
-  /**
-   * Skills the runtime composed into this turn's prompt (the `skills.loaded`
-   * event for the run) — the Context Ledger's durable source. The live stream
-   * carries the same payload for an in-flight turn; this is how a reopened
-   * conversation re-derives the ledger line. Absent when the turn loaded none.
-   */
-  skillsLoaded?: DisplaySkillsContext;
-}
+export type {
+  DisplayBlock,
+  DisplayFile,
+  DisplayMessage,
+  DisplayResourceLink,
+  DisplaySkill,
+  DisplaySkillsContext,
+  DisplayToolCall,
+  DisplayToolResult,
+  DisplayUsage,
+} from "../schemas/conversations.ts";
 
-/** One skill in a turn's `skills.loaded` telemetry, projected for display. */
-export interface DisplaySkill {
-  id: string;
-  /** The skill's own name — resolved here, safe to render directly. */
-  name: string;
-  /** The MCP server that published it; absent for filesystem skills. */
-  connector?: string;
-  scope: "org" | "workspace" | "user" | "provided";
-  tokens: number;
-  loadedBy: string;
-  reason: string;
-}
-
-/** A turn's skills-loaded telemetry — the ledger line's data. */
-export interface DisplaySkillsContext {
-  skills: DisplaySkill[];
-  totalTokens: number;
-}
-
-export type DisplayBlock =
-  | { type: "text"; text: string }
-  | { type: "reasoning"; text: string }
-  | { type: "tool"; toolCalls: DisplayToolCall[] };
-
-export interface DisplayToolCall {
-  id: string;
-  /** Full tool name (may include "server__tool" prefix). */
-  name: string;
-  /** Server prefix from the name (before "__"), if any — convenience for routing. */
-  appName?: string;
-  /** Terminal status — tool calls from history are never mid-flight. */
-  status: "done" | "error";
-  ok: boolean;
-  ms: number;
-  input: Record<string, unknown>;
-  /**
-   * MCP tool-result envelope — identical shape to what streaming emits, so the
-   * UI consumes one type regardless of source. `content[0].text` is the tool's
-   * text output; `isError` mirrors `!ok`.
-   */
-  result: DisplayToolResult;
-  resourceUri?: string;
-  resourceLinks?: DisplayResourceLink[];
-}
-
-export interface DisplayToolResult {
-  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
-  structuredContent?: Record<string, unknown>;
-  isError: boolean;
-}
-
-export interface DisplayResourceLink {
-  uri: string;
-  name?: string;
-  mimeType?: string;
-  description?: string;
-}
-
-export interface DisplayUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens?: number;
-  /**
-   * Cache-write and reasoning subtotals carried through so fork() can
-   * round-trip them onto the new file. The chat UI doesn't currently
-   * render these per-message, but losing them here means a forked
-   * conversation would silently report lower cost than the original on
-   * cache-heavy or reasoning-heavy turns.
-   */
-  cacheWriteTokens?: number;
-  reasoningTokens?: number;
-  /** Model of the last LLM call in the run (runs can switch models mid-turn). */
-  model: string;
-  llmMs: number;
-}
-
-export interface DisplayFile {
-  id: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-  extracted: boolean;
-}
+import type {
+  DisplayBlock,
+  DisplayFile,
+  DisplayMessage,
+  DisplayResourceLink,
+  DisplaySkill,
+  DisplaySkillsContext,
+  DisplayToolCall,
+  DisplayToolResult,
+  DisplayUsage,
+} from "../schemas/conversations.ts";
 
 export interface ConversationFile {
   meta: ConversationMeta;
@@ -216,14 +120,13 @@ interface LlmResponseEvent {
   runId: string;
   model: string;
   content: ContentPart[];
-  /** Absent on pre-unification legacy events. Reads must tolerate missing. */
-  usage?: UsageShape;
+  usage: UsageShape;
   llmMs: number;
 }
 
 /**
- * Usage for a forked fast-slot model call (compaction summarizer, auto-title,
- * briefing) that runs outside the agentic loop and emits no `llm.response`.
+ * Usage for a forked fast-slot model call (compaction summarizer, auto-title)
+ * that runs outside the agentic loop and emits no `llm.response`.
  * Mirrors the runtime's `AuxUsageEvent`. Carries no content and is never a
  * message — `reconstructFromEvents` skips it — but its usage is summed into
  * the conversation totals so the connector matches the runtime aggregator.
@@ -254,7 +157,7 @@ interface ToolDoneEvent {
   name: string;
   ok: boolean;
   ms: number;
-  output?: string;
+  output: string;
   resourceUri?: string;
   resourceLinks?: DisplayResourceLink[];
 }
@@ -339,6 +242,7 @@ function isRunError(e: { type: string }): e is RunErrorEvent {
 
 function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
   if (typeof raw.id !== "string" || typeof raw.createdAt !== "string") return null;
+  if (typeof raw.model !== "string" || raw.model.length === 0) return null;
   return {
     id: raw.id,
     createdAt: raw.createdAt,
@@ -348,7 +252,7 @@ function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
     totalOutputTokens: (raw.totalOutputTokens as number) ?? 0,
     totalCostUsd: (raw.totalCostUsd as number) ?? 0,
     lastModel: (raw.lastModel as string | null) ?? null,
-    ...(raw.model ? { model: raw.model as string } : {}),
+    model: raw.model,
     ...(raw.ownerId ? { ownerId: raw.ownerId as string } : {}),
     ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
   };
@@ -368,35 +272,15 @@ function accumulateEventMetrics(
 ): void {
   acc.lastEventTs = evt.ts;
   if (isLlmResponse(evt)) {
-    acc.totalInputTokens += evt.usage?.inputTokens ?? 0;
-    acc.totalOutputTokens += evt.usage?.outputTokens ?? 0;
+    acc.totalInputTokens += evt.usage.inputTokens;
+    acc.totalOutputTokens += evt.usage.outputTokens;
     acc.lastModel = evt.model;
   } else if (isAuxUsage(evt)) {
-    // Forked fast-slot calls (compaction/title/briefing) emit no
+    // Forked fast-slot calls (compaction/title) emit no
     // llm.response; count their usage so the app's totals match the
     // runtime aggregator (which counts aux.usage too).
     acc.totalInputTokens += evt.usage?.inputTokens ?? 0;
     acc.totalOutputTokens += evt.usage?.outputTokens ?? 0;
-  }
-}
-
-/**
- * Legacy message-format line: read assistant metadata.usage. Mirrors the
- * runtime's index-cache so both surfaces report the same totals for a file.
- */
-function accumulateLegacyMetrics(line: string, acc: DerivedMetrics): void {
-  try {
-    const msg = JSON.parse(line) as {
-      role?: string;
-      metadata?: { usage?: { inputTokens?: number; outputTokens?: number }; model?: string };
-    };
-    if (msg.role === "assistant" && msg.metadata?.usage && msg.metadata.model) {
-      acc.totalInputTokens += msg.metadata.usage.inputTokens ?? 0;
-      acc.totalOutputTokens += msg.metadata.usage.outputTokens ?? 0;
-      acc.lastModel = msg.metadata.model;
-    }
-  } catch {
-    // Skip malformed lines.
   }
 }
 
@@ -410,11 +294,7 @@ function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
 
   for (const line of lines) {
     const evt = parseEventLine(line);
-    if (evt) {
-      accumulateEventMetrics(evt, acc);
-      continue;
-    }
-    accumulateLegacyMetrics(line, acc);
+    if (evt) accumulateEventMetrics(evt, acc);
   }
 
   return acc;
@@ -450,26 +330,6 @@ function deriveTitleFromEvents(meta: ConversationMeta, eventLines: string[]): vo
       // skip malformed
     }
   }
-}
-
-/**
- * Cheap heuristic: is this line an event (not a stored message)?
- *
- * Event lines have `"ts":"…"` and one of a fixed set of `"type":"…"` strings.
- * Using the type prefix alone is too loose — `"type":"text"` appears inside
- * DisplayMessage blocks too, which tripped this before.
- */
-export function looksLikeEventLine(line: string): boolean {
-  if (!line.includes('"ts":"')) return false;
-  return (
-    line.includes('"type":"user.message"') ||
-    line.includes('"type":"run.start"') ||
-    line.includes('"type":"run.done"') ||
-    line.includes('"type":"llm.response"') ||
-    line.includes('"type":"tool.start"') ||
-    line.includes('"type":"tool.done"') ||
-    line.includes('"type":"metadata.')
-  );
 }
 
 function parseEventLine(line: string): (KnownEvent & { ts: string; type: string }) | null {
@@ -574,30 +434,13 @@ interface RunScan {
   nextIndex: number;
 }
 
-/**
- * The skill's name from its id, for entries recorded before `name` was on the
- * event. Mirrors `src/skills/display-name.ts`; duplicated rather than imported
- * because this app is deployable independently of the runtime (see the file
- * header). Both id shapes put the name in the last path segment EXCEPT the
- * `skill://…/SKILL.md` entrypoint, where it is the directory holding it.
- *
- * Exported so `test/unit/skills/display-name-parity.test.ts` can hold this copy
- * and the other two to one answer.
- */
-export function skillNameFromId(id: string): string {
-  const segments = id.split("/").filter(Boolean);
-  const last = segments[segments.length - 1] ?? id;
-  if (/^SKILL\.md$/i.test(last) && segments.length >= 2) {
-    return segments[segments.length - 2] ?? last;
-  }
-  return last.replace(/\.md$/i, "");
-}
-
 /** One recorded entry → a display row, every field defaulted. */
-function projectSkill(s: NonNullable<SkillsLoadedEvent["skills"]>[number] & { id: string }) {
+function projectSkill(
+  s: NonNullable<SkillsLoadedEvent["skills"]>[number] & { id: string; name: string },
+) {
   return {
     id: s.id,
-    name: s.name || skillNameFromId(s.id),
+    name: s.name,
     ...(s.connector ? { connector: s.connector } : {}),
     scope: s.scope ?? "org",
     tokens: typeof s.tokens === "number" ? s.tokens : 0,
@@ -612,7 +455,10 @@ function projectSkill(s: NonNullable<SkillsLoadedEvent["skills"]>[number] & { id
  */
 function projectSkillsLoaded(evt: SkillsLoadedEvent): DisplaySkillsContext | undefined {
   const skills: DisplaySkill[] = (evt.skills ?? [])
-    .filter((s): s is { id: string } & NonNullable<typeof s> => typeof s?.id === "string")
+    .filter(
+      (s): s is { id: string; name: string } & NonNullable<typeof s> =>
+        typeof s?.id === "string" && typeof s.name === "string",
+    )
     .map(projectSkill);
   if (skills.length === 0) return undefined;
   const totalTokens =
@@ -751,7 +597,8 @@ function buildToolCall(
     ok,
     ms: done?.ms ?? 0,
     input,
-    result: wrapOutputAsResult(done?.output ?? "", !ok),
+    // No `tool.done` yet (still running, or cut short): nothing to show.
+    result: wrapOutputAsResult(done ? done.output : "", !ok),
     ...(done?.resourceUri ? { resourceUri: done.resourceUri } : {}),
     ...(done?.resourceLinks && done.resourceLinks.length > 0
       ? { resourceLinks: done.resourceLinks }
@@ -811,25 +658,24 @@ interface UsageAccumulator {
 }
 
 /**
- * Add one llm.response's usage into the accumulator. `usage` is optional on the
- * wire (absent on pre-unification legacy events), contributing zero when missing.
- * cacheWrite and reasoning are carried so fork() can round-trip them; the chat UI
- * doesn't render them per-message today.
+ * Add one llm.response's usage into the accumulator. cacheWrite and reasoning
+ * are carried so fork() can round-trip them; the chat UI doesn't render them
+ * per-message today.
  */
 function addLlmUsage(acc: UsageAccumulator, llm: LlmResponseEvent): void {
-  acc.inputTokens += llm.usage?.inputTokens ?? 0;
-  acc.outputTokens += llm.usage?.outputTokens ?? 0;
-  const llmCacheRead = llm.usage?.cacheReadTokens ?? 0;
+  acc.inputTokens += llm.usage.inputTokens;
+  acc.outputTokens += llm.usage.outputTokens;
+  const llmCacheRead = llm.usage.cacheReadTokens ?? 0;
   if (llmCacheRead > 0) {
     acc.hasCacheReads = true;
     acc.cacheReadTokens += llmCacheRead;
   }
-  const llmCacheWrite = llm.usage?.cacheWriteTokens ?? 0;
+  const llmCacheWrite = llm.usage.cacheWriteTokens ?? 0;
   if (llmCacheWrite > 0) {
     acc.hasCacheWrites = true;
     acc.cacheWriteTokens += llmCacheWrite;
   }
-  const llmReasoning = llm.usage?.reasoningTokens ?? 0;
+  const llmReasoning = llm.usage.reasoningTokens ?? 0;
   if (llmReasoning > 0) {
     acc.hasReasoning = true;
     acc.reasoningTokens += llmReasoning;
@@ -926,149 +772,24 @@ function wrapOutputAsResult(text: string, isError: boolean): DisplayToolResult {
   };
 }
 
-/** Tool inputs may be JSON strings in the event log — parse defensively. */
+/**
+ * Tool inputs may be JSON strings in the event log — parse defensively. An
+ * input that is not a JSON object (unparseable, `null`, an array, a scalar)
+ * reads as `{}`, the shape `DisplayToolCall.input` declares.
+ */
 function parseToolInput(input: unknown): Record<string, unknown> {
+  let value = input;
   if (typeof input === "string") {
     try {
-      return JSON.parse(input) as Record<string, unknown>;
+      value = JSON.parse(input);
     } catch {
       return {};
     }
   }
-  if (input && typeof input === "object") return input as Record<string, unknown>;
-  return {};
-}
-
-// ---------------------------------------------------------------------------
-// Legacy (non-event) message-line format → DisplayMessage
-// ---------------------------------------------------------------------------
-
-/**
- * Legacy (pre-event) JSONL files stored one JSON-serialized message per line.
- * This path also handles files written by `fork`, which writes DisplayMessage
- * shape directly. Accepts both shapes:
- *
- *   - Old StoredMessage: tool calls and usage live under `metadata.*`.
- *   - New DisplayMessage: `blocks`, `toolCalls`, `usage` are top-level.
- *
- * Detection is structural — top-level fields override `metadata` when present.
- */
-function parseLegacyMessages(lines: string[]): {
-  messages: DisplayMessage[];
-  messageCount: number;
-  preview: string;
-} {
-  const messages: DisplayMessage[] = [];
-  let preview = "";
-
-  for (const line of lines) {
-    try {
-      const raw = JSON.parse(line) as Record<string, unknown>;
-      const msg = legacyLineToDisplay(raw);
-      if (!msg) continue;
-      messages.push(msg);
-      if (!preview && msg.role === "user" && msg.content) preview = msg.content;
-    } catch {
-      // skip malformed
-    }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
   }
-
-  return { messages, messageCount: messages.length, preview };
-}
-
-/**
- * Prefer the message's top-level DisplayMessage blocks; otherwise synthesize
- * them from `content` plus any hydrated tool calls.
- */
-function resolveLegacyBlocks(
-  raw: Record<string, unknown>,
-  content: string,
-  hydratedTools: DisplayToolCall[],
-): DisplayBlock[] {
-  const topBlocks = raw.blocks as DisplayBlock[] | undefined;
-  if (topBlocks && topBlocks.length > 0) return topBlocks;
-  return buildLegacyBlocks(content, hydratedTools.length > 0 ? hydratedTools : undefined);
-}
-
-function legacyLineToDisplay(raw: Record<string, unknown>): DisplayMessage | null {
-  const role = raw.role;
-  if (role !== "user" && role !== "assistant") return null;
-  const timestamp = typeof raw.timestamp === "string" ? raw.timestamp : "";
-  if (!timestamp) return null;
-  const content = typeof raw.content === "string" ? raw.content : "";
-
-  const metadata = (raw.metadata ?? {}) as Record<string, unknown>;
-  const rawToolCalls = (raw.toolCalls ?? metadata.toolCalls) as
-    | Array<Record<string, unknown>>
-    | undefined;
-  const hydratedTools = rawToolCalls?.map(hydrateLegacyToolCall) ?? [];
-
-  const blocks = resolveLegacyBlocks(raw, content, hydratedTools);
-  const usage = (raw.usage as DisplayUsage | undefined) ?? buildLegacyUsageFromMetadata(metadata);
-
-  return {
-    role,
-    content,
-    blocks,
-    timestamp,
-    ...(typeof raw.userId === "string" ? { userId: raw.userId } : {}),
-    ...(hydratedTools.length > 0 ? { toolCalls: hydratedTools } : {}),
-    ...(usage ? { usage } : {}),
-  };
-}
-
-/**
- * Legacy stored tool calls lack `status`, `result`, and `appName`. Derive them
- * on read so every DisplayToolCall the reader emits has the full shape,
- * regardless of file age or writer.
- */
-function hydrateLegacyToolCall(raw: Record<string, unknown>): DisplayToolCall {
-  const name = typeof raw.name === "string" ? raw.name : "";
-  const ok = typeof raw.ok === "boolean" ? raw.ok : true;
-  const output = typeof raw.output === "string" ? raw.output : "";
-  const result = (raw.result as DisplayToolResult | undefined) ?? wrapOutputAsResult(output, !ok);
-  const app = extractAppName(name);
-  return {
-    id: typeof raw.id === "string" ? raw.id : "",
-    name,
-    ...(app ? { appName: app } : {}),
-    status: ok ? "done" : "error",
-    ok,
-    ms: typeof raw.ms === "number" ? raw.ms : 0,
-    input: (raw.input ?? {}) as Record<string, unknown>,
-    result,
-    ...(typeof raw.resourceUri === "string" ? { resourceUri: raw.resourceUri } : {}),
-    ...(Array.isArray(raw.resourceLinks)
-      ? { resourceLinks: raw.resourceLinks as DisplayResourceLink[] }
-      : {}),
-  };
-}
-
-function buildLegacyBlocks(content: string, tools: DisplayToolCall[] | undefined): DisplayBlock[] {
-  const out: DisplayBlock[] = [];
-  if (content) out.push({ type: "text", text: content });
-  if (tools && tools.length > 0) out.push({ type: "tool", toolCalls: tools });
-  return out;
-}
-
-function buildLegacyUsageFromMetadata(metadata: Record<string, unknown>): DisplayUsage | undefined {
-  const usage = metadata.usage as UsageShape | undefined;
-  if (!usage) return undefined;
-  return {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    ...(typeof usage.cacheReadTokens === "number"
-      ? { cacheReadTokens: usage.cacheReadTokens }
-      : {}),
-    ...(typeof usage.cacheWriteTokens === "number"
-      ? { cacheWriteTokens: usage.cacheWriteTokens }
-      : {}),
-    ...(typeof usage.reasoningTokens === "number"
-      ? { reasoningTokens: usage.reasoningTokens }
-      : {}),
-    model: typeof metadata.model === "string" ? metadata.model : "unknown",
-    llmMs: typeof metadata.llmMs === "number" ? metadata.llmMs : 0,
-  };
+  return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -1135,11 +856,7 @@ export async function readConversation(
   if (!meta) return null;
 
   const dataLines = lines.slice(1);
-  const isEventFormat = raw.format === "events" || dataLines.some(looksLikeEventLine);
-
-  const { messages, messageCount, preview } = isEventFormat
-    ? reconstructFromEvents(dataLines)
-    : parseLegacyMessages(dataLines);
+  const { messages, messageCount, preview } = reconstructFromEvents(dataLines);
 
   applyDerivedMetrics(meta, deriveMetricsFromLines(dataLines));
   deriveTitleFromEvents(meta, dataLines);
@@ -1150,123 +867,209 @@ export async function readConversation(
 }
 
 /**
- * How many messages the header should report, without reconstructing any.
+ * A header read in progress: everything the summary is folded from, plus where
+ * in the file the fold stopped.
  *
- * A legacy file stores one message per line, so its lines are its count. An
- * event-sourced file does not: one turn is a `run.start`, an `llm.response`,
- * any number of `tool.*` pairs and a `run.done`, so counting lines counts
- * events and reports a 1-turn conversation as 5.
- *
- * The number has to agree with {@link readConversation}, because the two
- * describe the same file to the same user — `conversations__list` says how
- * many messages a conversation has and opening it shows them. So this mirrors
- * `reconstructFromEvents`' rule exactly: every `user.message`, plus every run
- * that produced at least one `llm.response` (a run that produced none yields
- * no message there, and must yield none here).
- *
- * One pass, two sets, no message building — this stays the fast path.
+ * Conversation files are append-only event logs, so a change to one is new
+ * lines at its end. Resuming from `offset` makes a re-read cost the bytes
+ * appended since the last one instead of the whole file, which is what keeps a
+ * list refresh during a turn on a long conversation from re-parsing megabytes
+ * on the event loop after every tool call. `ino` and `line1` detect the cases
+ * where the file is not the one the fold read (replaced, rewritten, truncated);
+ * those start over.
  */
-function countHeaderMessages(dataLines: string[], isEventFormat: boolean): number {
-  return isEventFormat
-    ? countEventMessages(dataLines)
-    : dataLines.filter((line) => parseJsonLine(line) !== null).length;
-}
-
-function countEventMessages(dataLines: string[]): number {
-  let userMessages = 0;
-  const runStarts: string[] = [];
-  const runsWithResponse = new Set<string>();
-
-  for (const line of dataLines) {
-    const parsed = parseJsonLine(line);
-    const runId = typeof parsed?.runId === "string" ? parsed.runId : null;
-    if (parsed?.type === "user.message") userMessages++;
-    else if (parsed?.type === "run.start" && runId) runStarts.push(runId);
-    else if (parsed?.type === "llm.response" && runId) runsWithResponse.add(runId);
-  }
-
-  return userMessages + runStarts.filter((runId) => runsWithResponse.has(runId)).length;
+export interface HeaderScan {
+  /** Line 1 as read, before event-derived fields are applied. */
+  meta: ConversationMeta;
+  /** The file's text through line 1, compared against its first bytes on resume. */
+  line1: string;
+  ino: number;
+  /** Bytes folded so far: always just past a newline, or the end of a final line that parsed. */
+  offset: number;
+  preview: string;
+  /** The last `metadata.title` event's title, when one has been seen. */
+  title?: string;
+  userMessages: number;
+  runStarts: string[];
+  runsWithResponse: Set<string>;
+  metrics: DerivedMetrics;
 }
 
 /**
- * The conversation's preview: the first user line's text, in either format.
+ * Fold one event line into the scan. One `JSON.parse` per line.
  *
- * The scan stops at that line rather than reading on — nothing after it can
- * change the answer. An empty user message is not an answer, so the search
- * continues past one (a picture with no caption still needs a preview).
+ * Each field keeps the rule it has always had, because the header must agree
+ * with {@link readConversation} on the same file:
+ *
+ * - The preview is the first user message with text. An empty user message is
+ *   not an answer, so the search continues past one (a picture with no caption
+ *   still needs a preview).
+ * - The count is messages, not lines. One turn is a `run.start`, an
+ *   `llm.response`, any number of `tool.*` pairs and a `run.done`, so this
+ *   mirrors `reconstructFromEvents`: every `user.message`, plus every run that
+ *   produced at least one `llm.response`.
+ * - The title is the last `metadata.title` event's.
+ * - Totals, last model and `updatedAt` come from events that carry `ts` and
+ *   `type`, through {@link accumulateEventMetrics}.
+ *
+ * Returns false when the line is not JSON.
  */
-function findPreview(dataLines: string[]): string {
-  for (const line of dataLines) {
-    const parsed = parseJsonLine(line);
-    if (!parsed) continue;
-    if (parsed.type === "user.message" && Array.isArray(parsed.content)) {
-      const text = extractText(parsed.content as ContentPart[]);
-      if (text) return text;
-    }
-    if (parsed.role === "user" && typeof parsed.content === "string" && parsed.content) {
-      return parsed.content;
-    }
+function foldHeaderLine(scan: HeaderScan, line: string): boolean {
+  let parsed: Record<string, unknown> & { ts?: string; type?: string };
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return false;
   }
-  return "";
+  if (parsed === null || typeof parsed !== "object") return true;
+  foldHeaderEvent(scan, parsed);
+  if (parsed.ts && parsed.type) {
+    // Same narrowing as `parseEventLine`: a line with `ts` and `type` is read
+    // as an event, and `accumulateEventMetrics` keys on `type` alone.
+    accumulateEventMetrics(parsed as KnownEvent & { ts: string; type: string }, scan.metrics);
+  }
+  return true;
 }
 
-function parseJsonLine(line: string): Record<string, unknown> | null {
+/** The preview, count and title parts of {@link foldHeaderLine}. */
+function foldHeaderEvent(scan: HeaderScan, parsed: Record<string, unknown>): void {
+  const runId = typeof parsed.runId === "string" ? parsed.runId : null;
+  if (parsed.type === "user.message") {
+    scan.userMessages++;
+    if (!scan.preview && Array.isArray(parsed.content)) {
+      scan.preview = extractText(parsed.content as ContentPart[]);
+    }
+  } else if (parsed.type === "run.start" && runId) {
+    scan.runStarts.push(runId);
+  } else if (parsed.type === "llm.response" && runId) {
+    scan.runsWithResponse.add(runId);
+  } else if (parsed.type === "metadata.title" && typeof parsed.title === "string") {
+    scan.title = parsed.title;
+  }
+}
+
+/**
+ * Fold the complete lines of `text` into the scan and return how much of it
+ * was consumed, in string length.
+ *
+ * A final line without a newline is folded only when it parses: an append in
+ * flight is left for the next read rather than skipped as malformed and then
+ * stepped over for good.
+ */
+function foldHeaderText(scan: HeaderScan, text: string): number {
+  const lastNl = text.lastIndexOf("\n");
+  for (const line of text.slice(0, Math.max(lastNl, 0)).split("\n")) {
+    if (line) foldHeaderLine(scan, line);
+  }
+  const tail = text.slice(lastNl + 1);
+  if (tail && foldHeaderLine(scan, tail)) return text.length;
+  return lastNl + 1;
+}
+
+/**
+ * Read a conversation file's header state, resuming from `prior` when the file
+ * has only grown since that read.
+ *
+ * Returns null when the file is missing, empty, or line 1 is not conversation
+ * metadata. A resumed read still opens the file and checks it is the same one
+ * (inode, line 1, not shorter); anything else is read again from the start.
+ */
+export async function scanConversationHeader(
+  filePath: string,
+  prior?: HeaderScan,
+): Promise<HeaderScan | null> {
+  let handle: FileHandle;
   try {
-    return JSON.parse(line) as Record<string, unknown>;
+    handle = await open(filePath, "r");
   } catch {
     return null;
   }
+  try {
+    const { ino, size } = await handle.stat();
+    if (prior && prior.ino === ino && size >= prior.offset) {
+      const line1Bytes = Buffer.byteLength(prior.line1);
+      const head = Buffer.alloc(line1Bytes);
+      const headRead = await handle.read(head, 0, line1Bytes, 0);
+      if (head.toString("utf8", 0, headRead.bytesRead) === prior.line1) {
+        const scan = cloneScan(prior);
+        if (size > prior.offset) {
+          const buf = Buffer.alloc(size - prior.offset);
+          const { bytesRead } = await handle.read(buf, 0, buf.length, prior.offset);
+          const text = buf.toString("utf8", 0, bytesRead);
+          scan.offset += Buffer.byteLength(text.slice(0, foldHeaderText(scan, text)));
+        }
+        return scan;
+      }
+    }
+
+    const content = (await handle.readFile()).toString("utf8");
+    // Line 1 is the first non-empty line. `line1` keeps any blank lines before
+    // it, so a resumed read can compare it against the file's first bytes.
+    const leading = content.length - content.replace(/^\n+/, "").length;
+    const lineEnd = content.indexOf("\n", leading);
+    const firstEnd = lineEnd < 0 ? content.length : lineEnd;
+    if (firstEnd === leading) return null;
+    let raw: Record<string, unknown>;
+    try {
+      raw = JSON.parse(content.slice(leading, firstEnd)) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+    const meta = parseMeta(raw);
+    if (!meta) return null;
+
+    const scan: HeaderScan = {
+      meta,
+      line1: content.slice(0, firstEnd),
+      ino,
+      offset: 0,
+      preview: "",
+      userMessages: 0,
+      runStarts: [],
+      runsWithResponse: new Set(),
+      metrics: { totalInputTokens: 0, totalOutputTokens: 0, lastModel: null, lastEventTs: null },
+    };
+    const afterLine1 = Math.min(firstEnd + 1, content.length);
+    const consumed = foldHeaderText(scan, content.slice(afterLine1));
+    scan.offset = Buffer.byteLength(content.slice(0, afterLine1 + consumed));
+    return scan;
+  } finally {
+    await handle.close();
+  }
+}
+
+function cloneScan(scan: HeaderScan): HeaderScan {
+  return {
+    ...scan,
+    meta: { ...scan.meta },
+    runStarts: [...scan.runStarts],
+    runsWithResponse: new Set(scan.runsWithResponse),
+    metrics: { ...scan.metrics },
+  };
+}
+
+/** The summary a scan describes: line-1 metadata with the event-derived fields applied. */
+export function headerOfScan(scan: HeaderScan): {
+  meta: ConversationMeta;
+  preview: string;
+  messageCount: number;
+} {
+  const meta = { ...scan.meta };
+  if (scan.title !== undefined) meta.title = scan.title;
+  applyDerivedMetrics(meta, scan.metrics);
+  const messageCount =
+    scan.userMessages + scan.runStarts.filter((runId) => scan.runsWithResponse.has(runId)).length;
+  return { meta, preview: scan.preview, messageCount };
 }
 
 /** Fast header read — metadata + preview + count, no message reconstruction. */
 export async function readConversationHeader(
   filePath: string,
 ): Promise<{ meta: ConversationMeta; preview: string; messageCount: number } | null> {
-  let content: string;
-  try {
-    content = await readFile(filePath, "utf-8");
-  } catch {
-    return null;
-  }
-
-  const lines = content.split("\n").filter(Boolean);
-  if (lines.length === 0) return null;
-
-  let raw: Record<string, unknown>;
-  try {
-    raw = JSON.parse(lines[0]!) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-
-  const meta = parseMeta(raw);
-  if (!meta) return null;
-
-  const dataLines = lines.slice(1);
-  // Same predicate as `readConversation`, so the two never disagree about which
-  // parser a file wants. Agreeing on the parser is not the same as agreeing on
-  // the count — that is what `countHeaderMessages` is for, and what the header/
-  // full-reader parity tests pin.
-  const isEventFormat = raw.format === "events" || dataLines.some(looksLikeEventLine);
-
-  const preview = findPreview(dataLines);
-  const messageCount = countHeaderMessages(dataLines, isEventFormat);
-
-  deriveTitleFromEvents(meta, dataLines);
-  applyDerivedMetrics(meta, deriveMetricsFromLines(dataLines));
-
-  return { meta, preview, messageCount };
+  const scan = await scanConversationHeader(filePath);
+  return scan ? headerOfScan(scan) : null;
 }
 
-/**
- * Conversation JSONL file paths under `dir`. Handles BOTH layouts:
- *   - flat: `.jsonl` files directly in `dir` (legacy / test fixtures);
- *   - workspace-owned: `dir` is the workspaces root; each workspace's
- *     `conversations/` holds one `<ownerId>/` partition per member.
- * A flat directory yields its own files; the workspaces root yields every
- * workspace's files. Self-contained (no runtime imports) so the app stays
- * independently deployable.
- */
 /** Collect `.jsonl` file paths under a workspace's `conversations/<ownerId>/` partitions. */
 function listWorkspaceConversationFiles(convRoot: string): string[] {
   const out: string[] = [];
@@ -1284,14 +1087,19 @@ function listWorkspaceConversationFiles(convRoot: string): string[] {
  *
  * `wsId` comes from the directory the walk descended through, which is the
  * authoritative binding — the `workspaceId` on line 1 is a denormalised
- * convenience and can disagree. `null` only for the legacy flat layout, whose
- * files are under no workspace at all and so match no workspace-scoped read.
+ * convenience and can disagree.
  */
 export interface ConversationFileRef {
   filePath: string;
-  wsId: string | null;
+  wsId: string;
 }
 
+/**
+ * Conversation JSONL file paths under `dir`, the workspaces root: each
+ * workspace's `conversations/` holds one `<ownerId>/` partition per member.
+ * Self-contained (no runtime imports) so the app stays independently
+ * deployable.
+ */
 export function listConversationFiles(dir: string): ConversationFileRef[] {
   const out: ConversationFileRef[] = [];
   let top: Dirent[];
@@ -1301,10 +1109,6 @@ export function listConversationFiles(dir: string): ConversationFileRef[] {
     return [];
   }
   for (const ent of top) {
-    if (ent.isFile() && ent.name.endsWith(".jsonl")) {
-      out.push({ filePath: join(dir, ent.name), wsId: null });
-      continue;
-    }
     if (!ent.isDirectory() || !ent.name.startsWith("ws_")) continue;
     // Workspace-owned layout: each workspace's conversations subtree. The
     // directory name IS the workspace, so no path re-parsing is needed.

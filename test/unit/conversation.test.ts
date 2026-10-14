@@ -1,15 +1,11 @@
-import { describe, expect, it, beforeEach, afterAll } from "bun:test";
-import { rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { InMemoryConversationStore } from "../../src/conversation/memory-store.ts";
-import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
-import { windowMessages } from "../../src/conversation/window.ts";
-import type { ConversationStore, StoredMessage } from "../../src/conversation/types.ts";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
+import { InMemoryConversationStore } from "../../src/conversation/memory-store.ts";
+import type { ConversationStore, StoredMessage } from "../../src/conversation/types.ts";
+import { windowMessages } from "../../src/conversation/window.ts";
 
-function msg(role: "user" | "assistant", content: string): StoredMessage {
-  return { role, content, timestamp: new Date().toISOString() };
+function msg(role: "user" | "assistant", text: string): StoredMessage {
+  return { role, content: [{ type: "text", text }], timestamp: new Date().toISOString() };
 }
 
 function conversationTests(name: string, makeStore: () => ConversationStore) {
@@ -21,13 +17,19 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
     });
 
     it("creates a conversation with a unique id", async () => {
-      const conv = await store.create({ ownerId: "user_test" });
+      const conv = await store.create({
+        model: "anthropic:claude-sonnet-4-6",
+        ownerId: "user_test",
+      });
       expect(conv.id).toMatch(/^conv_/);
       expect(conv.createdAt).toBeTruthy();
     });
 
     it("loads an existing conversation", async () => {
-      const conv = await store.create({ ownerId: "user_test" });
+      const conv = await store.create({
+        model: "anthropic:claude-sonnet-4-6",
+        ownerId: "user_test",
+      });
       const loaded = await store.load(conv.id);
       expect(loaded).not.toBeNull();
       expect(loaded!.id).toBe(conv.id);
@@ -39,7 +41,10 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
     });
 
     it("appends and retrieves messages", async () => {
-      const conv = await store.create({ ownerId: "user_test" });
+      const conv = await store.create({
+        model: "anthropic:claude-sonnet-4-6",
+        ownerId: "user_test",
+      });
       await store.append(conv, msg("user", "Hello"));
       await store.append(conv, msg("assistant", "Hi there"));
       await store.append(conv, msg("user", "How are you?"));
@@ -47,31 +52,40 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
       const history = await store.history(conv);
       expect(history).toHaveLength(3);
       expect(history[0]!.role).toBe("user");
-      expect(history[0]!.content).toBe("Hello");
+      expect(history[0]!.content).toEqual([{ type: "text", text: "Hello" }]);
       expect(history[1]!.role).toBe("assistant");
-      expect(history[2]!.content).toBe("How are you?");
+      expect(history[2]!.content).toEqual([{ type: "text", text: "How are you?" }]);
     });
 
     it("respects limit parameter", async () => {
-      const conv = await store.create({ ownerId: "user_test" });
+      const conv = await store.create({
+        model: "anthropic:claude-sonnet-4-6",
+        ownerId: "user_test",
+      });
       await store.append(conv, msg("user", "First"));
       await store.append(conv, msg("assistant", "Second"));
       await store.append(conv, msg("user", "Third"));
 
       const history = await store.history(conv, 2);
       expect(history).toHaveLength(2);
-      expect(history[0]!.content).toBe("Second");
-      expect(history[1]!.content).toBe("Third");
+      expect(history[0]!.content).toEqual([{ type: "text", text: "Second" }]);
+      expect(history[1]!.content).toEqual([{ type: "text", text: "Third" }]);
     });
 
     it("returns empty history for new conversation", async () => {
-      const conv = await store.create({ ownerId: "user_test" });
+      const conv = await store.create({
+        model: "anthropic:claude-sonnet-4-6",
+        ownerId: "user_test",
+      });
       const history = await store.history(conv);
       expect(history).toHaveLength(0);
     });
 
     it("preserves metadata in history output", async () => {
-      const conv = await store.create({ ownerId: "user_test" });
+      const conv = await store.create({
+        model: "anthropic:claude-sonnet-4-6",
+        ownerId: "user_test",
+      });
       await store.append(conv, {
         ...msg("assistant", "Matched skill"),
         metadata: { skill: "test-skill", toolCalls: [] },
@@ -79,7 +93,7 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
 
       const history = await store.history(conv);
       expect(history[0]!.role).toBe("assistant");
-      expect(history[0]!.content).toBe("Matched skill");
+      expect(history[0]!.content).toEqual([{ type: "text", text: "Matched skill" }]);
       expect(history[0]!.metadata).toBeDefined();
       expect(history[0]!.metadata!.skill).toBe("test-skill");
     });
@@ -88,37 +102,6 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
 
 // In-memory tests
 conversationTests("InMemoryConversationStore", () => new InMemoryConversationStore());
-
-// JSONL tests
-const testDir = join(tmpdir(), `nimblebrain-test-${Date.now()}`);
-conversationTests("JsonlConversationStore", () => new JsonlConversationStore(testDir));
-
-afterAll(() => {
-  if (existsSync(testDir)) rmSync(testDir, { recursive: true });
-});
-
-describe("JsonlConversationStore (persistence)", () => {
-  const persistDir = join(tmpdir(), `nimblebrain-persist-${Date.now()}`);
-
-  afterAll(() => {
-    if (existsSync(persistDir)) rmSync(persistDir, { recursive: true });
-  });
-
-  it("persists across store instances", async () => {
-    const store1 = new JsonlConversationStore(persistDir);
-    const conv = await store1.create({ ownerId: "user_test" });
-    await store1.append(conv, msg("user", "Remember me"));
-
-    // New instance, same directory
-    const store2 = new JsonlConversationStore(persistDir);
-    const loaded = await store2.load(conv.id);
-    expect(loaded).not.toBeNull();
-
-    const history = await store2.history(loaded!);
-    expect(history).toHaveLength(1);
-    expect(history[0]!.content).toBe("Remember me");
-  });
-});
 
 describe("windowMessages", () => {
   function wmsg(role: "user" | "assistant", text: string): LanguageModelV4Message {
@@ -146,10 +129,7 @@ describe("windowMessages", () => {
     const messages: LanguageModelV4Message[] = [];
     for (let i = 0; i < 10; i++) {
       messages.push(
-        wmsg(
-          i % 2 === 0 ? "user" : "assistant",
-          `Message number ${i}: ${"x".repeat(80)}`,
-        ),
+        wmsg(i % 2 === 0 ? "user" : "assistant", `Message number ${i}: ${"x".repeat(80)}`),
       );
     }
 
@@ -198,11 +178,11 @@ describe("windowMessages", () => {
 
   it("drops middle messages when budget is tight", () => {
     const messages = [
-      wmsg("user", "First: " + "a".repeat(40)), // ~12 tokens
-      wmsg("assistant", "Second: " + "b".repeat(400)), // ~100 tokens (big)
-      wmsg("user", "Third: " + "c".repeat(400)), // ~100 tokens (big)
-      wmsg("assistant", "Fourth: " + "d".repeat(40)), // ~12 tokens
-      wmsg("user", "Fifth: " + "e".repeat(40)), // ~12 tokens
+      wmsg("user", `First: ${"a".repeat(40)}`), // ~12 tokens
+      wmsg("assistant", `Second: ${"b".repeat(400)}`), // ~100 tokens (big)
+      wmsg("user", `Third: ${"c".repeat(400)}`), // ~100 tokens (big)
+      wmsg("assistant", `Fourth: ${"d".repeat(40)}`), // ~12 tokens
+      wmsg("user", `Fifth: ${"e".repeat(40)}`), // ~12 tokens
     ];
 
     // Budget: 50 tokens — enough for first (~12) + fourth (~12) + fifth (~12) = 36
@@ -217,22 +197,22 @@ describe("windowMessages", () => {
 
   it("handles messages with complex content (tool results)", () => {
     const messages: LanguageModelV4Message[] = [
-      { role: "user", content: "Hello" },
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
       {
         role: "assistant",
         content: [
           { type: "text", text: "Let me check." },
-          { type: "tool_use", id: "1", name: "test", input: {} },
+          { type: "tool-call", toolCallId: "1", toolName: "test", input: {} },
         ],
       },
       {
-        role: "user",
+        role: "tool",
         content: [
           {
-            type: "tool_result",
-            toolUseId: "1",
-            content: "result data",
-            isError: false,
+            type: "tool-result",
+            toolCallId: "1",
+            toolName: "test",
+            output: { type: "text", value: "result data" },
           },
         ],
       },

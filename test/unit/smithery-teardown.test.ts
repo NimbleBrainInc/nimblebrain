@@ -12,26 +12,31 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import {
-  _resetConnectorsConfigForTest,
-  setConnectorsConfig,
-} from "../../src/connectors/providers/config.ts";
-import {
-  _resetSmitheryConfigForTest,
-  validateSmitheryConfig,
-} from "../../src/connectors/providers/smithery/config.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
-import { ToolRegistry } from "../../src/tools/registry.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
+import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
+import {
+  _resetSmitheryConfigForTest,
+  validateSmitheryConfig,
+} from "../../src/connectors/providers/smithery/config.ts";
 import {
   cleanupSmitheryConnector,
   createSmitheryProvider,
 } from "../../src/connectors/providers/smithery/provider.ts";
-import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { ToolRegistry } from "../../src/tools/registry.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 const ENV_KEYS = ["SMITHERY_API_KEY"] as const;
 const saved: Record<string, string | undefined> = {};
@@ -92,7 +97,9 @@ describe("cleanupSmitheryConnector", () => {
 
   it("deletes at the host recorded on the ref, not a repointed one", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    setConnectorsConfig({ providers: { smithery: { namespace: "current-ns", baseUrl: "https://repointed.example" } } });
+    setConnectorsConfig({
+      providers: { smithery: { namespace: "current-ns", baseUrl: "https://repointed.example" } },
+    });
     _resetSmitheryConfigForTest();
     const { calls } = stubDelete(204);
 
@@ -152,9 +159,9 @@ describe("cleanupSmitheryConnector", () => {
 
   it("reports a transport failure and never throws", async () => {
     configure();
-    globalThis.fetch = (async () => {
+    globalThis.fetch = fakeFetch(async () => {
       throw new Error("network down");
-    }) as typeof fetch;
+    });
 
     const result = await cleanupSmitheryConnector({
       connectionId: "nb-abc",
@@ -193,6 +200,8 @@ describe("uninstall → broker teardown wiring", () => {
     const { calls } = stubDelete(204);
 
     const workDir = mkdtempSync(join(tmpdir(), "nb-smithery-uninstall-"));
+    // Seeding probes the connector's OAuth records, which live in the store.
+    installTestCredentialStore(workDir);
     try {
       const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
       lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([createSmitheryProvider()]));
@@ -215,17 +224,17 @@ describe("uninstall → broker teardown wiring", () => {
         ref.url,
         ref,
         undefined,
-        "ws_test",
-        workDir,
+        "ws_0076759dbbe19fcc",
       );
 
-      await lifecycle.uninstall("ai-bassethound-mcp", new ToolRegistry(), "ws_test");
+      await lifecycle.uninstall("ai-bassethound-mcp", new ToolRegistry(), "ws_0076759dbbe19fcc");
 
       const deletes = calls.filter((c) => c.method === "DELETE");
       expect(deletes).toHaveLength(1);
       expect(deletes[0]?.url).toContain("/connect/install-time-ns/nb-abc");
       expect(deletes[0]?.url).not.toContain("current-ns");
     } finally {
+      resetTestCredentialStore();
       rmSync(workDir, { recursive: true, force: true });
     }
   });

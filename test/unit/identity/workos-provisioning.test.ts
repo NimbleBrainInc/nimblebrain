@@ -8,15 +8,23 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { TransientAuthError } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
-import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import {
+  stubWorkosUserManagement,
+  workosAuthentication,
+  workosMembership,
+  workosMembershipList,
+  workosUser,
+  workosUserManagement,
+} from "../../helpers/workos-sdk.ts";
 
 // ── Test setup ───────────────────────────────────────────────────
 
@@ -27,7 +35,6 @@ let workspaceStore: WorkspaceStore;
 const MOCK_CONFIG: WorkosAuth = {
   adapter: "workos",
   clientId: "client_test",
-  redirectUri: "http://localhost/callback",
   organizationId: "org_test123",
   apiKey: "sk_test_fake",
 };
@@ -49,52 +56,35 @@ afterAll(() => {
  * orgMemberships controls which users have org access.
  */
 function createMockProvider(orgMemberships: Map<string, string>) {
-  const provider = new WorkosIdentityProvider(MOCK_CONFIG, userStore, workspaceStore);
+  const provider = new WorkosIdentityProvider(MOCK_CONFIG, userStore);
 
-  // Mock the WorkOS SDK methods on the provider's private workos instance
-  const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-
-  workos.userManagement = {
-    getUser: async (userId: string) => ({
-      id: userId,
-      email: `${userId}@test.com`,
-      firstName: "Test",
-      lastName: "User",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }),
-    listOrganizationMemberships: async (opts: { userId: string; organizationId: string }) => {
-      const roleSlug = orgMemberships.get(opts.userId);
-      if (!roleSlug) {
-        return { data: [] };
-      }
-      return {
-        data: [
-          {
-            id: "om_test",
-            userId: opts.userId,
-            organizationId: opts.organizationId,
-            role: { slug: roleSlug },
-            status: "active",
-          },
-        ],
-      };
+  stubWorkosUserManagement(provider, {
+    getUser: async (userId) =>
+      workosUser({ id: userId, email: `${userId}@test.com`, firstName: "Test", lastName: "User" }),
+    listOrganizationMemberships: async (opts) => {
+      const roleSlug = opts.userId ? orgMemberships.get(opts.userId) : undefined;
+      if (!roleSlug) return workosMembershipList([]);
+      return workosMembershipList([
+        workosMembership({
+          userId: opts.userId,
+          organizationId: opts.organizationId,
+          slug: roleSlug,
+        }),
+      ]);
     },
-    authenticateWithCode: async (_opts: unknown) => ({
-      accessToken: "test_access_token",
-      refreshToken: "test_refresh_token",
-      user: {
-        id: "user_unauthorized",
-        email: "unauthorized@test.com",
-        firstName: "Bad",
-        lastName: "Actor",
-      },
-    }),
+    authenticateWithCode: async () =>
+      workosAuthentication({
+        accessToken: "test_access_token",
+        refreshToken: "test_refresh_token",
+        user: workosUser({
+          id: "user_unauthorized",
+          email: "unauthorized@test.com",
+          firstName: "Bad",
+          lastName: "Actor",
+        }),
+      }),
     getAuthorizationUrl: () => "https://fake.workos.com/authorize",
-    listUsers: async () => ({ data: [] }),
-    createUser: async () => ({}),
-    deleteUser: async () => {},
-  };
+  });
 
   return provider;
 }
@@ -147,8 +137,8 @@ describe("WorkOS provisioning security", () => {
     // We can't easily test verifyRequest without a valid JWT, but we can test
     // the internal resolveUser path by checking that the cache doesn't store
     // unauthorized users
-    const cache = (provider as unknown as { userCache: Map<string, unknown> }).userCache;
-    expect(cache.size).toBe(0);
+    // biome-ignore lint/complexity/useLiteralKeys: userCache is private; bracket access is TypeScript's typed path to it
+    expect(provider["userCache"].size).toBe(0);
   });
 
   it("allows exchangeCode for users WITH org membership", async () => {
@@ -156,17 +146,17 @@ describe("WorkOS provisioning security", () => {
 
     // Override the mock to return the authorized user
     const provider = createMockProvider(memberships);
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).authenticateWithCode = async () => ({
-      accessToken: "valid_token",
-      refreshToken: "valid_refresh",
-      user: {
-        id: "user_authorized",
-        email: "authorized@test.com",
-        firstName: "Good",
-        lastName: "User",
-      },
-    });
+    workosUserManagement(provider).authenticateWithCode = async () =>
+      workosAuthentication({
+        accessToken: "valid_token",
+        refreshToken: "valid_refresh",
+        user: workosUser({
+          id: "user_authorized",
+          email: "authorized@test.com",
+          firstName: "Good",
+          lastName: "User",
+        }),
+      });
 
     const result = await provider.exchangeCode("test_code");
     expect(result.accessToken).toBe("valid_token");
@@ -180,12 +170,9 @@ describe("WorkOS provisioning security", () => {
     expect(profile!.orgRole).toBe("admin");
   });
 
-  it("does not create a workspace in exchangeCode (provisioning is on verifyRequest)", async () => {
-    // Workspace provisioning moved from exchangeCode to every verifyRequest so
-    // the invariant is self-healing and covers the AuthKit/MCP-OAuth path
-    // (which never routes through exchangeCode). Asserted by the AuthKit test
-    // in workos-authkit.test.ts and the OIDC self-heal test in
-    // test/integration/identity/oidc-adapter.test.ts.
+  it("does not create a workspace in exchangeCode (bootstrap provisions)", async () => {
+    // Authentication creates no workspace; bootstrap gives a user who belongs
+    // to none one of their own (`ensureUserWorkspace`).
     const workspaces = await workspaceStore.getWorkspacesForUser("user_authorized");
     expect(workspaces).toHaveLength(0);
   });
@@ -193,17 +180,17 @@ describe("WorkOS provisioning security", () => {
   it("does not create duplicate profile on subsequent login", async () => {
     const memberships = new Map([["user_authorized", "admin"]]);
     const provider = createMockProvider(memberships);
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).authenticateWithCode = async () => ({
-      accessToken: "valid_token_2",
-      refreshToken: "valid_refresh_2",
-      user: {
-        id: "user_authorized",
-        email: "authorized@test.com",
-        firstName: "Good",
-        lastName: "User",
-      },
-    });
+    workosUserManagement(provider).authenticateWithCode = async () =>
+      workosAuthentication({
+        accessToken: "valid_token_2",
+        refreshToken: "valid_refresh_2",
+        user: workosUser({
+          id: "user_authorized",
+          email: "authorized@test.com",
+          firstName: "Good",
+          lastName: "User",
+        }),
+      });
 
     const workspacesBefore = await workspaceStore.list();
     await provider.exchangeCode("test_code_2");
@@ -214,10 +201,8 @@ describe("WorkOS provisioning security", () => {
 
   it("resolveOrgRole never resolves a role on API error", async () => {
     const provider = createMockProvider(new Map());
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-
     // Make listOrganizationMemberships throw
-    (workos.userManagement as Record<string, unknown>).listOrganizationMemberships = async () => {
+    workosUserManagement(provider).listOrganizationMemberships = async () => {
       throw new Error("API timeout");
     };
 
@@ -227,9 +212,9 @@ describe("WorkOS provisioning security", () => {
     // (no value is produced at all) while letting the caller distinguish
     // "could not check" from "definitively no membership": the former answers
     // 503, the latter still denies. Nothing is granted on either path.
-    const resolveOrgRole = (provider as unknown as { resolveOrgRole: (id: string) => Promise<string | null> }).resolveOrgRole.bind(provider);
-    const err = await resolveOrgRole("user_any").then(
-      (role: string | null) => role,
+    // biome-ignore lint/complexity/useLiteralKeys: resolveOrgRole is private; bracket access is TypeScript's typed path to it
+    const err = await provider["resolveOrgRole"]("user_any").then(
+      (role) => role,
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(TransientAuthError);

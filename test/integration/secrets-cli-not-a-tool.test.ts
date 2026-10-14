@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 let runtime: Runtime;
@@ -31,20 +31,21 @@ let toolNames: string[];
 beforeAll(async () => {
   testDir = mkdtempSync(join(tmpdir(), "secrets-not-a-tool-"));
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
-  await ensureUserWorkspace(runtime.getWorkspaceStore(), {
+  const [ws] = await ensureUserWorkspace(runtime.getWorkspaceStore(), {
     id: DEV_IDENTITY.id,
     displayName: DEV_IDENTITY.displayName,
   });
-  const wsId = personalWorkspaceIdFor(DEV_IDENTITY.id);
+  const wsId = ws!.id;
   toolNames = (await runtime.listToolsForWorkspace(wsId, DEV_IDENTITY.id)).map((t) => t.name);
 });
 
 afterAll(async () => {
-  await runtime?.stop?.();
+  await runtime?.shutdown();
   rmSync(testDir, { recursive: true, force: true });
 });
 
@@ -84,7 +85,10 @@ test("nothing under src/tools or src/platform imports the operator command", asy
   const root = join(import.meta.dir, "..", "..", "src");
   const offenders: string[] = [];
   for (const dir of ["tools", "platform"]) {
-    for await (const file of new Glob("**/*.{ts,tsx}").scan({ cwd: join(root, dir), absolute: true })) {
+    for await (const file of new Glob("**/*.{ts,tsx}").scan({
+      cwd: join(root, dir),
+      absolute: true,
+    })) {
       if (IMPORTS_THE_COMMAND.test(await Bun.file(file).text())) offenders.push(file);
     }
   }

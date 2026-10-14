@@ -1,29 +1,27 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import type { ConnectorCatalog } from "../../../src/connectors/catalog/catalog.ts";
+import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
-import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { UserStore } from "../../../src/identity/user.ts";
-import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
+import { defineInProcessApp, type InProcessTool } from "../../../src/tools/in-process-app.ts";
 import {
   createManageWorkspacesTool,
   type ManageWorkspacesContext,
 } from "../../../src/tools/workspace-mgmt-tools.ts";
+import { WORKSPACE_ID_RE } from "../../../src/workspace/workspace-id-pattern.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
+import { stub } from "../../helpers/stub.ts";
+import { parseResult, resultText } from "../../helpers/tool-result.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────
-
-function extractText(result: { content: Array<{ type: string; text: string }> }): string {
-  return result.content[0].text;
-}
-
-function parseResult(result: { content: Array<{ type: string; text: string }>; structuredContent?: Record<string, unknown> }): unknown {
-  if (result.structuredContent) return result.structuredContent;
-  return JSON.parse(extractText(result));
-}
 
 // ── Setup ─────────────────────────────────────────────────────────
 
@@ -32,6 +30,8 @@ let store: WorkspaceStore;
 let userStore: UserStore;
 let tool: InProcessTool;
 let currentIdentity: UserIdentity | null;
+/** What the stub catalog serves; a test that names connectors seeds it. */
+let catalogEntries: ConnectorCatalogEntry[];
 
 /**
  * A runtime stub whose `deleteWorkspace` archives through the real store and
@@ -47,12 +47,17 @@ function makeCtx(): ManageWorkspacesContext {
   return {
     getIdentity: () => currentIdentity,
     workspaceStore: store,
-    runtime: {
+    runtime: stub<Runtime>({
       deleteWorkspace: async (wsId: string) => ({
         deleted: await store.delete(wsId),
         connectors: [],
       }),
-    } as unknown as Runtime,
+      getConnectorCatalog: () =>
+        stub<ConnectorCatalog>({
+          catalogByUrl: async () => new Map(catalogEntries.map((e) => [e.url, e])),
+          catalogByIdMap: async () => new Map(catalogEntries.map((e) => [e.id, e])),
+        }),
+    }),
     userStore,
   };
 }
@@ -61,12 +66,13 @@ beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-ws-mgmt-test-"));
   store = new WorkspaceStore(workDir);
   userStore = new UserStore(workDir);
-  currentIdentity = {
+  catalogEntries = [];
+  currentIdentity = makeIdentity({
     id: "usr_admin000000001",
     email: "admin@example.com",
     displayName: "Admin",
     orgRole: "admin",
-  };
+  });
   tool = createManageWorkspacesTool(makeCtx());
 });
 
@@ -89,20 +95,6 @@ describe("nb__manage_workspaces", () => {
       expect(parsed.workspace.name).toBe("Test Workspace");
     });
 
-    test("owner can create a workspace", async () => {
-      currentIdentity = { ...currentIdentity!, orgRole: "owner" };
-      tool = createManageWorkspacesTool(makeCtx());
-
-      const result = await tool.handler({
-        action: "create",
-        name: "Owner Workspace",
-      });
-
-      expect(result.isError).toBe(false);
-      const parsed = parseResult(result) as { workspace: { name: string } };
-      expect(parsed.workspace.name).toBe("Owner Workspace");
-    });
-
     test("member gets permission denied", async () => {
       currentIdentity = { ...currentIdentity!, orgRole: "member" };
       tool = createManageWorkspacesTool(makeCtx());
@@ -113,7 +105,7 @@ describe("nb__manage_workspaces", () => {
       });
 
       expect(result.isError).toBe(false);
-      expect(extractText(result)).toContain("You don't have permission to manage workspaces");
+      expect(resultText(result)).toContain("You don't have permission to manage workspaces");
     });
 
     test("null identity gets permission denied", async () => {
@@ -122,7 +114,7 @@ describe("nb__manage_workspaces", () => {
 
       const result = await tool.handler({ action: "list" });
 
-      expect(extractText(result)).toContain("You don't have permission to manage workspaces");
+      expect(resultText(result)).toContain("You don't have permission to manage workspaces");
     });
   });
 
@@ -148,19 +140,53 @@ describe("nb__manage_workspaces", () => {
       expect(existsSync(join(wsDir, "skills", ".gitkeep"))).toBe(true);
     });
 
-    test("creates workspace with custom slug", async () => {
-      const result = await tool.handler({
-        action: "create",
-        name: "My Workspace",
-        slug: "custom_slug",
-      });
+    test("refuses a slug at the schema boundary and creates nothing", async () => {
+      // Served the way the runtime serves it: the in-process MCP server
+      // validates arguments against the tool's input schema before the
+      // handler runs. The id of a created workspace is always generated.
+      const source = defineInProcessApp(
+        { name: "nb", version: "1.0.0", tools: [tool] },
+        new NoopEventSink(),
+      );
+      await source.start();
+      try {
+        const refused = await source.execute("manage_workspaces", {
+          action: "create",
+          name: "My Workspace",
+          slug: "custom_slug",
+        });
+        expect(refused.isError).toBe(true);
+        const { error } = parseResult(refused) as { error: string };
+        expect(error).toContain('Invalid arguments for "manage_workspaces"');
+        expect(error).toContain("must NOT have additional properties");
+        expect(await store.list()).toEqual([]);
 
-      expect(result.isError).toBe(false);
-      const parsed = parseResult(result) as { workspace: { id: string } };
-      expect(parsed.workspace.id).toBe("ws_custom_slug");
+        const created = await source.execute("manage_workspaces", {
+          action: "create",
+          name: "My Workspace",
+        });
+        expect(created.isError).toBe(false);
+        const [ws] = await store.list();
+        expect(ws?.id).toMatch(WORKSPACE_ID_RE);
+      } finally {
+        await source.stop();
+      }
     });
 
-    test("creates workspace with connectors", async () => {
+    test("declares no id or slug input", () => {
+      const schema = tool.inputSchema as {
+        properties: Record<string, unknown>;
+        additionalProperties?: boolean;
+      };
+      expect(schema.additionalProperties).toBe(false);
+      expect(Object.keys(schema.properties)).not.toContain("slug");
+      expect(Object.keys(schema.properties)).not.toContain("id");
+    });
+
+    test("creates workspace with connectors, reporting them by name", async () => {
+      catalogEntries = [
+        { id: "com.example/echo", name: "Echo", url: "https://echo.example.com/mcp" },
+      ] as ConnectorCatalogEntry[];
       const result = await tool.handler({
         action: "create",
         name: "Connector Workspace",
@@ -169,29 +195,42 @@ describe("nb__manage_workspaces", () => {
 
       expect(result.isError).toBe(false);
       const parsed = parseResult(result) as {
-        workspace: { connectors: Array<{ url: string; serverName?: string }> };
+        workspace: { id: string; connectors: Array<Record<string, unknown>> };
       };
-      expect(parsed.workspace.connectors).toHaveLength(1);
-      expect(parsed.workspace.connectors[0].url).toBe("https://echo.example.com/mcp");
-      expect(parsed.workspace.connectors[0].serverName).toBe("echo");
+      expect(parsed.workspace.connectors).toEqual([{ serverName: "echo", name: "Echo" }]);
+      const stored = await store.get(parsed.workspace.id);
+      expect(stored?.connectors[0]?.url).toBe("https://echo.example.com/mcp");
     });
 
     test("requires name", async () => {
       const result = await tool.handler({ action: "create" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("name is required");
+      expect(resultText(result)).toContain("name is required");
     });
 
-    test("returns error for duplicate explicit slug", async () => {
-      // Opaque ids never collide on name, so two same-name creates now
-      // succeed with distinct ids. The conflict path is exercised via an
-      // explicit slug that targets an already-taken id.
-      await tool.handler({ action: "create", name: "Dupe", slug: "dupe_slug" });
-      const result = await tool.handler({ action: "create", name: "Dupe Two", slug: "dupe_slug" });
-
+    test("refuses a name over 80 characters, counting an emoji as one, and creates nothing", async () => {
+      const before = (await store.list()).length;
+      const result = await tool.handler({ action: "create", name: "x".repeat(81) });
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("already exists");
+      expect(resultText(result)).toContain("at most 80 characters");
+      expect((await store.list()).length).toBe(before);
+
+      // 80 emoji are 80 characters, not 160 UTF-16 units.
+      const ok = await tool.handler({ action: "create", name: "🙂".repeat(80) });
+      expect(ok.isError).toBe(false);
+    });
+
+    test("two creates with the same name get distinct generated ids", async () => {
+      const a = parseResult(await tool.handler({ action: "create", name: "Dupe" })) as {
+        workspace: { id: string };
+      };
+      const b = parseResult(await tool.handler({ action: "create", name: "Dupe" })) as {
+        workspace: { id: string };
+      };
+      expect(a.workspace.id).toMatch(WORKSPACE_ID_RE);
+      expect(b.workspace.id).toMatch(WORKSPACE_ID_RE);
+      expect(a.workspace.id).not.toBe(b.workspace.id);
     });
   });
 
@@ -228,12 +267,12 @@ describe("nb__manage_workspaces", () => {
         orgRole: "member",
       });
 
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: creator.id,
         email: creator.email,
         displayName: creator.displayName,
         orgRole: "admin",
-      };
+      });
       tool = createManageWorkspacesTool(makeCtx());
 
       const createResult = await tool.handler({
@@ -305,10 +344,18 @@ describe("nb__manage_workspaces", () => {
 
       expect(updateResult.isError).toBe(false);
       const updated = parseResult(updateResult) as {
-        workspace: { connectors: Array<{ url: string }> };
+        workspace: { connectors: Array<Record<string, unknown>> };
       };
-      expect(updated.workspace.connectors).toHaveLength(2);
-      expect(updated.workspace.connectors[0]?.url).toBe("https://echo.example.com/mcp");
+      // Uncatalogued, so each is named by its server name; the ref stays in the store.
+      expect(updated.workspace.connectors).toEqual([
+        { serverName: "echo", name: "echo" },
+        { serverName: "bash", name: "bash" },
+      ]);
+      const stored = await store.get(created.workspace.id);
+      expect(stored?.connectors.map((c) => c.url)).toEqual([
+        "https://echo.example.com/mcp",
+        "https://bash.example.com/mcp",
+      ]);
     });
 
     test("refuses a connector row with no reachable url", async () => {
@@ -317,9 +364,9 @@ describe("nb__manage_workspaces", () => {
       // and every reader downstream would have to defend against it — so it is
       // refused at the boundary that creates it. Covers the empty string and
       // the legacy by-name shape.
-      const created = parseResult(
-        await tool.handler({ action: "create", name: "Bad Rows" }),
-      ) as { workspace: { id: string } };
+      const created = parseResult(await tool.handler({ action: "create", name: "Bad Rows" })) as {
+        workspace: { id: string };
+      };
 
       for (const bad of [{ url: "" }, { name: "@nimblebraininc/echo" }, { url: "ftp://x/mcp" }]) {
         const result = await tool.handler({
@@ -328,18 +375,39 @@ describe("nb__manage_workspaces", () => {
           connectors: [bad],
         });
         expect(result.isError).toBe(true);
-        expect(extractText(result)).toContain("http(s) URL");
+        expect(resultText(result)).toContain("http(s) URL");
+      }
+    });
+
+    test("refuses a connector row with no serverName, on create and update", async () => {
+      const created = parseResult(await tool.handler({ action: "create", name: "Unnamed" })) as {
+        workspace: { id: string };
+      };
+      const row = { url: "https://echo.example.com/mcp" };
+
+      const onCreate = await tool.handler({ action: "create", name: "Other", connectors: [row] });
+      expect(onCreate.isError).toBe(true);
+      expect(resultText(onCreate)).toContain("needs a serverName");
+
+      for (const bad of [row, { ...row, serverName: "  " }]) {
+        const onUpdate = await tool.handler({
+          action: "update",
+          workspaceId: created.workspace.id,
+          connectors: [bad],
+        });
+        expect(onUpdate.isError).toBe(true);
+        expect(resultText(onUpdate)).toContain("needs a serverName");
       }
     });
 
     test("an archive failure names the teardown that already ran, not a no-op", async () => {
-      const created = parseResult(
-        await tool.handler({ action: "create", name: "Stuck" }),
-      ) as { workspace: { id: string } };
+      const created = parseResult(await tool.handler({ action: "create", name: "Stuck" })) as {
+        workspace: { id: string };
+      };
 
       tool = createManageWorkspacesTool({
         ...makeCtx(),
-        runtime: {
+        runtime: stub<Runtime>({
           deleteWorkspace: async () => ({
             deleted: false,
             deleteError: "EEXIST: file already exists",
@@ -347,7 +415,7 @@ describe("nb__manage_workspaces", () => {
               { serverName: "com-example-alpha", ok: true, secrets: { deleted: [], failed: [] } },
             ],
           }),
-        } as unknown as Runtime,
+        }),
       });
 
       const result = await tool.handler({
@@ -358,15 +426,15 @@ describe("nb__manage_workspaces", () => {
       expect(result.isError).toBe(true);
       // `deleted: false` with a `deleteError` is NOT the store's idempotent
       // not-found, and must not be reported as one: the connectors are gone.
-      expect(extractText(result)).not.toContain("Workspace not found");
-      expect(extractText(result)).toContain("EEXIST");
-      expect(extractText(result)).toContain("Tore down 1 connector.");
-      expect(extractText(result)).toContain("cannot be undone");
+      expect(resultText(result)).not.toContain("Workspace not found");
+      expect(resultText(result)).toContain("EEXIST");
+      expect(resultText(result)).toContain("Tore down 1 connector.");
+      expect(resultText(result)).toContain("cannot be undone");
       // And it claims nothing about where the record ended up. The store
       // throws on both sides of its rename, so either claim is wrong half the
       // time — see `handleDelete`.
-      expect(extractText(result)).not.toContain("still on disk");
-      expect(extractText(result)).not.toContain("is archived");
+      expect(resultText(result)).not.toContain("still on disk");
+      expect(resultText(result)).not.toContain("is archived");
     });
 
     test("requires workspaceId", async () => {
@@ -376,18 +444,18 @@ describe("nb__manage_workspaces", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("workspaceId is required");
+      expect(resultText(result)).toContain("workspaceId is required");
     });
 
     test("returns error for non-existent workspace", async () => {
       const result = await tool.handler({
         action: "update",
-        workspaceId: "ws_nonexistent",
+        workspaceId: "ws_004f1f715b791487",
         name: "Ghost",
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Workspace not found");
+      expect(resultText(result)).toContain("Workspace not found");
     });
 
     test("requires at least one field to update", async () => {
@@ -403,7 +471,109 @@ describe("nb__manage_workspaces", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("No fields to update");
+      expect(resultText(result)).toContain("No fields to update");
+    });
+  });
+
+  describe("rename", () => {
+    function actAs(id: string) {
+      currentIdentity = makeIdentity({
+        id,
+        email: `${id}@example.com`,
+        displayName: id,
+        orgRole: "member",
+      });
+      tool = createManageWorkspacesTool(makeCtx());
+    }
+
+    test("a workspace admin who is not an org admin renames their workspace", async () => {
+      const ws = await store.create("Before");
+      await store.addMember(ws.id, "usr_wsadmin0000001", "admin");
+      actAs("usr_wsadmin0000001");
+
+      const result = await tool.handler({ action: "update", workspaceId: ws.id, name: "  After " });
+
+      expect(result.isError).toBe(false);
+      expect((await store.get(ws.id))!.name).toBe("After");
+    });
+
+    test("a plain member's rename is refused as an error, and the name stays", async () => {
+      const ws = await store.create("Kept");
+      await store.addMember(ws.id, "usr_member00000001", "member");
+      actAs("usr_member00000001");
+
+      const result = await tool.handler({ action: "update", workspaceId: ws.id, name: "Taken" });
+
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("permission to rename");
+      expect((await store.get(ws.id))!.name).toBe("Kept");
+    });
+
+    test("a workspace admin cannot change connectors through update", async () => {
+      const ws = await store.create("Connectors stay with org admins");
+      await store.addMember(ws.id, "usr_wsadmin0000001", "admin");
+      actAs("usr_wsadmin0000001");
+
+      const result = await tool.handler({
+        action: "update",
+        workspaceId: ws.id,
+        name: "Renamed",
+        connectors: [],
+      });
+
+      expect(resultText(result)).toContain("don't have permission");
+      expect((await store.get(ws.id))!.name).toBe("Connectors stay with org admins");
+    });
+
+    test("a plain member lists the roster through manage_workspaces, and cannot change it", async () => {
+      const ws = await store.create("Roster");
+      await store.addMember(ws.id, "usr_member00000001", "member");
+      actAs("usr_member00000001");
+
+      const listed = await tool.handler({ action: "list_members", workspaceId: ws.id });
+      expect(listed.isError).toBe(false);
+      const parsed = parseResult(listed) as { members: Array<{ userId: string }> };
+      expect(parsed.members.map((m) => m.userId)).toEqual(["usr_member00000001"]);
+
+      const added = await tool.handler({
+        action: "add_member",
+        workspaceId: ws.id,
+        email: "someone@example.com",
+      });
+      expect(resultText(added)).toContain("don't have permission");
+    });
+
+    test("someone outside the workspace cannot list its roster through manage_workspaces", async () => {
+      const ws = await store.create("Closed");
+      await store.addMember(ws.id, "usr_member00000001", "member");
+      actAs("usr_outsider000001");
+
+      const result = await tool.handler({ action: "list_members", workspaceId: ws.id });
+      expect(resultText(result)).toContain("don't have permission");
+    });
+
+    test("refuses a rename over 80 characters, and the name stays", async () => {
+      const ws = await store.create("Short");
+
+      const result = await tool.handler({
+        action: "update",
+        workspaceId: ws.id,
+        name: "y".repeat(81),
+      });
+
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("at most 80 characters");
+      expect((await store.get(ws.id))!.name).toBe("Short");
+    });
+
+    test("refuses an empty name", async () => {
+      const ws = await store.create("Named");
+
+      const result = await tool.handler({ action: "update", workspaceId: ws.id, name: "   " });
+
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("cannot be empty");
+      expect((await store.get(ws.id))!.name).toBe("Named");
     });
   });
 
@@ -432,13 +602,13 @@ describe("nb__manage_workspaces", () => {
     });
 
     test("reports what the delete tore down, and names what did not", async () => {
-      const created = parseResult(
-        await tool.handler({ action: "create", name: "Wired" }),
-      ) as { workspace: { id: string } };
+      const created = parseResult(await tool.handler({ action: "create", name: "Wired" })) as {
+        workspace: { id: string };
+      };
 
       tool = createManageWorkspacesTool({
         ...makeCtx(),
-        runtime: {
+        runtime: stub<Runtime>({
           deleteWorkspace: async (wsId: string) => ({
             deleted: await store.delete(wsId),
             connectors: [
@@ -451,7 +621,7 @@ describe("nb__manage_workspaces", () => {
               },
             ],
           }),
-        } as unknown as Runtime,
+        }),
       });
 
       const result = await tool.handler({
@@ -462,9 +632,9 @@ describe("nb__manage_workspaces", () => {
       expect(result.isError).toBe(false);
       // The record is archived, so this sentence is the last place the connector
       // whose grant may still be live at a vendor is nameable.
-      expect(extractText(result)).toContain("Tore down 2 connectors.");
-      expect(extractText(result)).toContain('"com-example-beta"');
-      expect(extractText(result)).not.toContain('"com-example-alpha"');
+      expect(resultText(result)).toContain("Tore down 2 connectors.");
+      expect(resultText(result)).toContain('"com-example-beta"');
+      expect(resultText(result)).not.toContain('"com-example-alpha"');
 
       const parsed = parseResult(result) as { connectors: Array<{ serverName: string }> };
       expect(parsed.connectors.map((c) => c.serverName)).toEqual([
@@ -477,17 +647,17 @@ describe("nb__manage_workspaces", () => {
       const result = await tool.handler({ action: "delete" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("workspaceId is required");
+      expect(resultText(result)).toContain("workspaceId is required");
     });
 
     test("returns error for non-existent workspace", async () => {
       const result = await tool.handler({
         action: "delete",
-        workspaceId: "ws_nonexistent",
+        workspaceId: "ws_004f1f715b791487",
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Workspace not found");
+      expect(resultText(result)).toContain("Workspace not found");
     });
   });
 
@@ -518,6 +688,54 @@ describe("nb__manage_workspaces", () => {
       expect(sorted[1].name).toBe("Beta");
     });
 
+    test("names each connector from the catalog and never returns the ref", async () => {
+      catalogEntries = [
+        {
+          id: "com.example/echo",
+          name: "Echo",
+          url: "https://echo.example.com/mcp",
+          iconUrl: "https://static.example.com/echo.svg",
+        },
+        { id: "com.example/mail", name: "Mail", url: "https://catalog.example.com/mail" },
+      ] as ConnectorCatalogEntry[];
+      await tool.handler({ action: "create", name: "Alpha" });
+      const [ws] = await store.list();
+      await store.update(ws.id, {
+        connectors: [
+          // Catalogued by URL, carrying an inline secret the listing must not echo.
+          {
+            url: "https://echo.example.com/mcp",
+            serverName: "echo",
+            transport: { auth: { type: "bearer", token: "inline-secret" } },
+          },
+          // Brokered: a per-install session URL, catalogued by the stamped id.
+          {
+            url: "https://session.example.com/abc",
+            serverName: "mail",
+            brokered: { provider: "composio", connectorId: "com.example/mail" },
+          },
+          // Uncatalogued: reported by its server name.
+          { url: "https://other.example.com/mcp", serverName: "other" },
+        ],
+      });
+
+      const parsed = parseResult(await tool.handler({ action: "list" })) as {
+        workspaces: Array<{ connectors: Array<Record<string, unknown>> }>;
+      };
+      const connectors = parsed.workspaces[0].connectors;
+      expect(connectors.map((c) => c.name)).toEqual(["Echo", "Mail", "other"]);
+      expect(connectors.map((c) => c.iconUrl)).toEqual([
+        "https://static.example.com/echo.svg",
+        undefined,
+        undefined,
+      ]);
+      expect(Object.keys(connectors[0]).sort()).toEqual(["iconUrl", "name", "serverName"]);
+      for (const c of connectors.slice(1)) {
+        expect(Object.keys(c).sort()).toEqual(["name", "serverName"]);
+      }
+      expect(JSON.stringify(parsed)).not.toContain("inline-secret");
+    });
+
     test("returns empty array when no workspaces exist", async () => {
       const listResult = await tool.handler({ action: "list" });
 
@@ -527,100 +745,65 @@ describe("nb__manage_workspaces", () => {
     });
   });
 
-  describe("claim_admin (stranded-workspace recovery)", () => {
-    test("org admin claims admin on a membered shared workspace that has no admin", async () => {
-      // A shared workspace populated only with default-role members under the
-      // old org-admin bypass — no admin member. This is the stranded state.
-      const ws = await store.create("Stranded");
-      await store.addMember(ws.id, "usr_member00000001", "member");
+  describe("recovering a workspace with no admin", () => {
+    // `add_member` rejects an unknown user, so the operator must exist in the store.
+    async function seatOperator(): Promise<void> {
+      const operator = await userStore.create({
+        email: "op@example.com",
+        displayName: "Op",
+        orgRole: "admin",
+      });
+      currentIdentity = { ...currentIdentity!, id: operator.id };
+      tool = createManageWorkspacesTool(makeCtx());
+    }
 
-      const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
-
-      expect(result.isError).toBe(false);
-      const parsed = parseResult(result) as {
-        workspace: { memberCount: number };
-        claimedAdmin: { userId: string };
-      };
-      expect(parsed.claimedAdmin.userId).toBe(currentIdentity!.id);
-      expect(parsed.workspace.memberCount).toBe(2);
-
-      const persisted = await store.get(ws.id);
-      expect(persisted?.members.find((m) => m.userId === currentIdentity!.id)?.role).toBe("admin");
-    });
-
-    test("recovery restores manageability: after claim_admin the operator can manage members with org role dropped", async () => {
+    test("org admin seats themselves as admin with add_member, then manages it with org role dropped", async () => {
+      await seatOperator();
       const member: User = await userStore.create({
         email: "m@example.com",
         displayName: "M",
         orgRole: "member",
       });
       const ws = await store.create("Stranded");
-      // Seat the future operator as a plain member to exercise the promote path.
-      await store.addMember(ws.id, currentIdentity!.id, "member");
+      await store.addMember(ws.id, member.id, "member");
 
-      const claim = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
-      expect(claim.isError).toBe(false);
-      // Promotion in place — no duplicate member row.
-      expect((parseResult(claim) as { workspace: { memberCount: number } }).workspace.memberCount).toBe(1);
-
-      // Drop org-admin entirely; the operator now relies solely on the seated
-      // workspace-admin membership the recovery granted.
-      currentIdentity = { ...currentIdentity!, orgRole: "member" };
-      tool = createManageWorkspacesTool(makeCtx());
-
-      const add = await tool.handler({
+      const seat = await tool.handler({
         action: "add_member",
         workspaceId: ws.id,
-        userId: member.id,
+        userId: currentIdentity!.id,
+        role: "admin",
       });
-      expect(add.isError).toBe(false);
-      expect((parseResult(add) as { workspace: { memberCount: number } }).workspace.memberCount).toBe(2);
-    });
+      expect(seat.isError).toBe(false);
 
-    test("claim_admin seats the operator as first admin of a memberless shared workspace", async () => {
-      const ws = await store.create("Empty");
-
-      const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
-
-      expect(result.isError).toBe(false);
-      expect((parseResult(result) as { workspace: { memberCount: number } }).workspace.memberCount).toBe(1);
-    });
-
-    test("refuses when the workspace already has an admin (not a backdoor into healthy workspaces)", async () => {
-      const ws = await store.create("Healthy");
-      await store.addMember(ws.id, "usr_other00000001", "admin");
-
-      const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
-
-      expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("already has an admin");
-      // The operator was NOT seated.
-      const persisted = await store.get(ws.id);
-      expect(persisted?.members.some((m) => m.userId === currentIdentity!.id)).toBe(false);
-    });
-
-    test("refuses on a personal workspace", async () => {
-      const ws = await store.create("Personal", "personal_usr_owner0001", {
-        isPersonal: true,
-        ownerUserId: "usr_owner0001",
-      });
-
-      const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
-
-      expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Personal workspaces");
-    });
-
-    test("non-org-admin cannot claim_admin", async () => {
-      const ws = await store.create("Stranded");
-      await store.addMember(ws.id, "usr_member00000001", "member");
-
+      // Drop org admin; the seated workspace-admin membership alone now grants management.
       currentIdentity = { ...currentIdentity!, orgRole: "member" };
       tool = createManageWorkspacesTool(makeCtx());
+      const promote = await tool.handler({
+        action: "update_member",
+        workspaceId: ws.id,
+        userId: member.id,
+        role: "admin",
+      });
+      expect(promote.isError).toBe(false);
+    });
 
-      const result = await tool.handler({ action: "claim_admin", workspaceId: ws.id });
+    test("org admin who is a plain member promotes themselves in place with update_member", async () => {
+      await seatOperator();
+      const ws = await store.create("Stranded");
+      await store.addMember(ws.id, currentIdentity!.id, "member");
 
-      expect(extractText(result)).toContain("don't have permission");
+      const result = await tool.handler({
+        action: "update_member",
+        workspaceId: ws.id,
+        userId: currentIdentity!.id,
+        role: "admin",
+      });
+
+      expect(result.isError).toBe(false);
+      const persisted = await store.get(ws.id);
+      expect(persisted?.members).toEqual([
+        expect.objectContaining({ userId: currentIdentity!.id, role: "admin" }),
+      ]);
     });
   });
 
@@ -635,7 +818,7 @@ describe("nb__manage_workspaces", () => {
 
     test("list_archives shows a deleted workspace, and an archive with no workspace.json as unknown", async () => {
       const id = await deleteViaTool("Gone");
-      await mkdir(join(store.getArchivedDir(), "ws_orphan"), { recursive: true });
+      await mkdir(join(store.getArchivedDir(), "ws_0057ae5b54fe4216"), { recursive: true });
 
       const result = await tool.handler({ action: "list_archives" });
 
@@ -644,7 +827,7 @@ describe("nb__manage_workspaces", () => {
         archives: Array<{ name: string; workspaceId: string | null; workspaceName: string | null }>;
       };
       expect(archives.find((a) => a.name === id)?.workspaceName).toBe("Gone");
-      const orphan = archives.find((a) => a.name === "ws_orphan");
+      const orphan = archives.find((a) => a.name === "ws_0057ae5b54fe4216");
       expect(orphan?.workspaceId).toBeNull();
       expect(orphan?.workspaceName).toBeNull();
     });
@@ -655,9 +838,9 @@ describe("nb__manage_workspaces", () => {
       tool = createManageWorkspacesTool(makeCtx());
 
       for (const action of ["list_archives", "purge_archive"]) {
-        const result = await tool.handler({ action, archive: "ws_anything" });
+        const result = await tool.handler({ action, archive: "ws_00194decd292a0f6" });
         expect(result.structuredContent).toBeUndefined();
-        expect(extractText(result)).toContain("You don't have permission to manage workspaces");
+        expect(resultText(result)).toContain("You don't have permission to manage workspaces");
       }
     });
 
@@ -686,7 +869,7 @@ describe("nb__manage_workspaces", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("is not an archive name");
+      expect(resultText(result)).toContain("is not an archive name");
       expect(existsSync(liveDir)).toBe(true);
     });
 
@@ -694,7 +877,7 @@ describe("nb__manage_workspaces", () => {
       const result = await tool.handler({ action: "purge_archive" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("archive is required");
+      expect(resultText(result)).toContain("archive is required");
     });
   });
 
@@ -703,7 +886,7 @@ describe("nb__manage_workspaces", () => {
       const result = await tool.handler({ action: "invalid" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Unknown action: invalid");
+      expect(resultText(result)).toContain("Unknown action: invalid");
     });
   });
 });

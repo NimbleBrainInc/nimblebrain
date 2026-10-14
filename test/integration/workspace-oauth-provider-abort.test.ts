@@ -37,15 +37,14 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
     // connection open without sending headers.
     const mockServer = Bun.serve({
       port: 0,
-      fetch: () => new Promise(() => {}),
+      fetch: () => new Promise<Response>(() => {}),
     });
 
     try {
       const controller = new AbortController();
       const provider = new WorkspaceOAuthProvider({
-        owner: { type: "workspace", wsId: "ws_test" },
+        owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "abort-test",
-        workDir,
         callbackUrl: CALLBACK,
         allowInsecureRemotes: true,
         // The abort threads into the redirect-probe fetch, which only runs
@@ -83,13 +82,12 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
     // signal doesn't fail-fast some new code path.
     const mockServer = Bun.serve({
       port: 0,
-      fetch: () => new Promise(() => {}),
+      fetch: () => new Promise<Response>(() => {}),
     });
     try {
       const provider = new WorkspaceOAuthProvider({
-        owner: { type: "workspace", wsId: "ws_test" },
+        owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "no-abort",
-        workDir,
         callbackUrl: CALLBACK,
         allowInsecureRemotes: true,
         headlessAuthProbe: true,
@@ -104,7 +102,10 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
       // a short delay; if the call rejected synchronously / immediately
       // for some reason that'd be a regression.
       const settled = await Promise.race([
-        provider.redirectToAuthorization(authUrl).then(() => "resolved" as const, () => "rejected" as const),
+        provider.redirectToAuthorization(authUrl).then(
+          () => "resolved" as const,
+          () => "rejected" as const,
+        ),
         new Promise<"hung">((r) => setTimeout(() => r("hung"), 200)),
       ]);
       expect(settled).toBe("hung");

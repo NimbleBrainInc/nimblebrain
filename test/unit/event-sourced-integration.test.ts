@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
+import { join } from "node:path";
 import { deriveUsageMetrics } from "../../src/conversation/event-reconstructor.ts";
-import type { ConversationEvent, StoredMessage } from "../../src/conversation/types.ts";
+import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
+import type { ConversationEvent } from "../../src/conversation/types.ts";
+import { engineEvent, llmDonePayload, runStartPayload } from "../helpers/engine-events.ts";
 
 function makeDirs() {
   const base = mkdtempSync(join(tmpdir(), "es-integ-test-"));
@@ -17,7 +18,7 @@ describe("Event-sourced integration", () => {
     const store = new EventSourcedConversationStore({ ...dirs });
 
     // Create conversation
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     expect(conv.format).toBe("events");
 
     // Append user message
@@ -29,30 +30,35 @@ describe("Event-sourced integration", () => {
 
     // Simulate engine events via emit()
     store.setActiveConversation(conv.id);
-    store.emit({
-      type: "run.start",
-      data: { runId: "r1", model: "claude-sonnet-4-5-20250929", maxIterations: 10, toolCount: 0 },
-    });
-    store.emit({
-      type: "llm.done",
-      data: {
-        runId: "r1",
-        model: "claude-sonnet-4-5-20250929",
-        content: [{ type: "text", text: "Hi there!" }],
-        usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: 0 },
-        llmMs: 200,
-      },
-    });
-    store.emit({
-      type: "run.done",
-      data: { runId: "r1", stopReason: "complete", totalMs: 250 },
-    });
+    store.emit(
+      engineEvent(
+        "run.start",
+        runStartPayload({ runId: "r1", model: "anthropic:claude-sonnet-4-5-20250929" }),
+      ),
+    );
+    store.emit(
+      engineEvent(
+        "llm.done",
+        llmDonePayload({
+          runId: "r1",
+          model: "anthropic:claude-sonnet-4-5-20250929",
+          content: [{ type: "text", text: "Hi there!" }],
+          usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: 0 },
+          llmMs: 200,
+        }),
+      ),
+    );
+    store.emit(
+      engineEvent("run.done", { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 250 }),
+    );
 
     // Wait for async metadata cache update
     await new Promise((r) => setTimeout(r, 100));
 
     // Verify file contains events
-    const lines = readFileSync(join(dirs.dir, `${conv.id}.jsonl`), "utf-8").trim().split("\n");
+    const lines = readFileSync(join(dirs.dir, `${conv.id}.jsonl`), "utf-8")
+      .trim()
+      .split("\n");
     expect(lines.length).toBeGreaterThanOrEqual(5); // meta + user.message + run.start + llm.response + run.done
 
     const events = lines.slice(1).map((l) => JSON.parse(l));
@@ -66,64 +72,12 @@ describe("Event-sourced integration", () => {
     expect(messages.length).toBe(2);
     expect(messages[0].role).toBe("user");
     expect(messages[1].role).toBe("assistant");
-    expect((messages[1].content as Array<{ type: string; text: string }>)[0].text).toBe("Hi there!");
+    expect((messages[1].content as Array<{ type: string; text: string }>)[0].text).toBe(
+      "Hi there!",
+    );
     expect(messages[1].metadata?.usage?.inputTokens).toBe(100);
     expect(messages[1].metadata?.usage?.outputTokens).toBe(20);
-    expect(messages[1].metadata?.model).toBe("claude-sonnet-4-5-20250929");
-  });
-
-  it("legacy format: old conversation files load and return messages directly", async () => {
-    const dirs = makeDirs();
-    const store = new EventSourcedConversationStore({ ...dirs });
-
-    // Manually write old-format file
-    const id = "conv_1e9ac4e9010000a1";
-    const meta = {
-      id,
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-01T00:00:01Z",
-      title: "Old convo",
-      totalInputTokens: 50,
-      totalOutputTokens: 10,
-      totalCostUsd: 0.001,
-      lastModel: "claude-sonnet-4-5-20250929",
-      // Stage 1: ownerId is required on every conversation. The
-      // migration script stamps it on pre-Stage-1 files.
-      ownerId: "user_test",
-    };
-    const userMsg: StoredMessage = {
-      role: "user",
-      content: [{ type: "text", text: "Legacy question" }],
-      timestamp: "2026-01-01T00:00:00Z",
-    };
-    const assistantMsg: StoredMessage = {
-      role: "assistant",
-      content: [{ type: "text", text: "Legacy answer" }],
-      timestamp: "2026-01-01T00:00:01Z",
-      metadata: {
-        inputTokens: 50,
-        outputTokens: 10,
-        model: "claude-sonnet-4-5-20250929",
-      },
-    };
-
-    writeFileSync(
-      join(dirs.dir, `${id}.jsonl`),
-      [JSON.stringify(meta), JSON.stringify(userMsg), JSON.stringify(assistantMsg)]
-        .map((l) => `${l}\n`)
-        .join(""),
-    );
-
-    const conv = await store.load(id);
-    expect(conv).not.toBeNull();
-    expect(conv!.title).toBe("Old convo");
-
-    const messages = await store.history(conv!);
-    expect(messages.length).toBe(2);
-    expect(messages[0].role).toBe("user");
-    expect((messages[0].content as Array<{ type: string; text: string }>)[0].text).toBe("Legacy question");
-    expect(messages[1].role).toBe("assistant");
-    expect((messages[1].content as Array<{ type: string; text: string }>)[0].text).toBe("Legacy answer");
+    expect(messages[1].metadata?.model).toBe("anthropic:claude-sonnet-4-5-20250929");
   });
 
   it("debug vs normal logging: verbose fields persisted only in debug mode", async () => {
@@ -133,28 +87,37 @@ describe("Event-sourced integration", () => {
     const normalStore = new EventSourcedConversationStore({ ...normalDirs, logLevel: "normal" });
     const debugStore = new EventSourcedConversationStore({ ...debugDirs, logLevel: "debug" });
 
-    const normalConv = await normalStore.create({ ownerId: "user_test" });
-    const debugConv = await debugStore.create({ ownerId: "user_test" });
+    const normalConv = await normalStore.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: "user_test",
+    });
+    const debugConv = await debugStore.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: "user_test",
+    });
 
-    const engineEvent = {
-      type: "run.start" as const,
-      data: {
+    const runStart = engineEvent(
+      "run.start",
+      runStartPayload({
         runId: "r1",
         model: "test-model",
         systemPrompt: "You are a helpful assistant.",
         toolNames: ["bash", "read_file"],
-        maxIterations: 10,
-      },
-    };
+      }),
+    );
 
     normalStore.setActiveConversation(normalConv.id);
-    normalStore.emit(engineEvent);
+    normalStore.emit(runStart);
 
     debugStore.setActiveConversation(debugConv.id);
-    debugStore.emit(engineEvent);
+    debugStore.emit(runStart);
 
-    const normalLines = readFileSync(join(normalDirs.dir, `${normalConv.id}.jsonl`), "utf-8").trim().split("\n");
-    const debugLines = readFileSync(join(debugDirs.dir, `${debugConv.id}.jsonl`), "utf-8").trim().split("\n");
+    const normalLines = readFileSync(join(normalDirs.dir, `${normalConv.id}.jsonl`), "utf-8")
+      .trim()
+      .split("\n");
+    const debugLines = readFileSync(join(debugDirs.dir, `${debugConv.id}.jsonl`), "utf-8")
+      .trim()
+      .split("\n");
 
     const normalEvent = JSON.parse(normalLines[1]);
     const debugEvent = JSON.parse(debugLines[1]);
@@ -183,13 +146,13 @@ describe("Event-sourced integration", () => {
         ts: "2026-04-11T00:00:01Z",
         type: "run.start",
         runId: "r1",
-        model: "claude-sonnet-4-5-20250929",
+        model: "anthropic:claude-sonnet-4-5-20250929",
       } as ConversationEvent,
       {
         ts: "2026-04-11T00:00:02Z",
         type: "llm.response",
         runId: "r1",
-        model: "claude-sonnet-4-5-20250929",
+        model: "anthropic:claude-sonnet-4-5-20250929",
         content: [{ type: "text", text: "Hello!" }],
         usage: { inputTokens: 200, outputTokens: 50, cacheReadTokens: 100, cacheWriteTokens: 0 },
         llmMs: 150,
@@ -198,7 +161,7 @@ describe("Event-sourced integration", () => {
         ts: "2026-04-11T00:00:03Z",
         type: "llm.response",
         runId: "r1",
-        model: "claude-sonnet-4-5-20250929",
+        model: "anthropic:claude-sonnet-4-5-20250929",
         content: [{ type: "text", text: "More text" }],
         usage: { inputTokens: 300, outputTokens: 80, cacheReadTokens: 200, cacheWriteTokens: 0 },
         llmMs: 200,
@@ -213,10 +176,9 @@ describe("Event-sourced integration", () => {
     ];
 
     const metrics = deriveUsageMetrics(events);
-    expect(metrics.totalInputTokens).toBe(500);   // 200 + 300
-    expect(metrics.totalOutputTokens).toBe(130);   // 50 + 80
-    expect(metrics.lastModel).toBe("claude-sonnet-4-5-20250929");
+    expect(metrics.totalInputTokens).toBe(500); // 200 + 300
+    expect(metrics.totalOutputTokens).toBe(130); // 50 + 80
+    expect(metrics.lastModel).toBe("anthropic:claude-sonnet-4-5-20250929");
     expect(metrics.totalCostUsd).toBeGreaterThan(0); // computed from catalog
   });
-
 });

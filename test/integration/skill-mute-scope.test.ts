@@ -1,39 +1,20 @@
-/**
- * Muting a skill steers ONE conversation and edits nothing.
- *
- * `skills__deactivate` used to write `status: disabled` into the skill's file.
- * That file is read by every conversation the user has, in every workspace, so
- * one chat's "not right now" silently reconfigured all the others — an operator
- * disabled a skill in one campaign and found it back on in another, because a
- * third conversation had flipped it. Nothing told them.
- *
- * The first test here is the whole point: deactivate in A, compose in B, assert
- * B is unchanged. The rest pin that the mute survives a resume of its own
- * conversation, that a new conversation starts clean, and that the durable file
- * is untouched.
- */
-
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/server";
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const SKILL_NAME = "house-voice";
 const GUIDE_SERVER = "ai-nimblebrain-guide-mcp";
@@ -48,18 +29,19 @@ function createGuideServer(): Server {
 
   const server = new Server(
     { name: "guide", version: "0.1.0" },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [{ name: "go", description: "Go", inputSchema: { type: "object", properties: {} } }],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "ok" }],
   }));
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [{ uri: "skill://guide/SKILL.md", name: "guide", mimeType: "text/markdown" }],
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (req) => ({
+  serveSkills(server, () => ({ "skill://guide/SKILL.md": body }));
+  server.setRequestHandler("resources/read", async (req) => ({
     contents: [{ uri: req.params.uri, mimeType: "text/markdown", text: body }],
   }));
 
@@ -136,7 +118,7 @@ function promptText(): string {
 async function callTool(name: string, input: Record<string, unknown>) {
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   const result = await runWithRequestContext(
-    { identity: null, workspaceId: TEST_WORKSPACE_ID },
+    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID },
     () => registry.execute({ id: `t-${Math.random()}`, name, input }),
   );
   return { content: extractText(result.content), isError: result.isError ?? false };
@@ -156,6 +138,7 @@ async function muteViaAgent(
 /** Send a turn, returning the conversation id. */
 async function chat(message: string, conversationId?: string): Promise<string> {
   const res = await runtime.chat({
+    identity: DEV_IDENTITY,
     workspaceId: TEST_WORKSPACE_ID,
     message,
     ...(conversationId ? { conversationId } : {}),
@@ -165,7 +148,8 @@ async function chat(message: string, conversationId?: string): Promise<string> {
 
 beforeAll(async () => {
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: capturingModel() },
+    identityProvider: devProvider,
+    languageModel: capturingModel(),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },
@@ -362,7 +346,7 @@ describe("muting reaches every channel a skill can compose through", () => {
     const named = async () =>
       (
         await runWithRequestContext(
-          { identity: null, workspaceId: TEST_WORKSPACE_ID, conversationId: conv },
+          { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, conversationId: conv },
           () => runtime.describeRequestSkills(TEST_WORKSPACE_ID),
         )
       ).context.map((sk) => sk.manifest.name);

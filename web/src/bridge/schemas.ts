@@ -25,11 +25,19 @@
 // behavior.
 //
 // Spec methods use the `ui/` and `tools/` prefixes (ext-apps spec
-// 2026-01-26). NimbleBrain extensions use the `synapse/` prefix.
+// 2026-01-26). NimbleBrain extensions use the `ai.nimblebrain/` prefix.
 // ---------------------------------------------------------------------------
 
 import { type Static, Type } from "@sinclair/typebox";
-import { ACTION_METHOD, KEYDOWN_METHOD, REQUEST_FILE_METHOD } from "./extensions";
+import {
+  ACTION_METHOD,
+  KEYDOWN_METHOD,
+  LOCATION_METHOD,
+  NAVIGATE_METHOD,
+  NOTIFY_METHOD,
+  REQUEST_FILE_METHOD,
+  UPLOAD_FILES_METHOD,
+} from "./extensions";
 
 // ── Shared building blocks ───────────────────────────────────────────────
 
@@ -51,8 +59,7 @@ const EmptyParams = Type.Optional(Type.Object({}, { additionalProperties: false 
 /**
  * JSON-RPC 2.0 request id. Per spec § 4: "An identifier established by
  * the Client that MUST contain a String, Number, or NULL value if
- * included." The MCP SDK's `RequestId` (`@modelcontextprotocol/sdk/types`)
- * is `string | number`. ext-apps clients built on
+ * included." MCP's `RequestId` is `string | number`. ext-apps clients built on
  * `@reboot-dev/reboot-react` use numeric ids starting at 0; the iframe
  * boundary cannot dictate caller id shape.
  *
@@ -302,6 +309,21 @@ export const SynapseRequestFileMessage = Type.Object({
 });
 export type SynapseRequestFileMessage = Static<typeof SynapseRequestFileMessage>;
 
+/**
+ * `files` holds `File` objects, which `postMessage` clones whole. The schema
+ * can only say "an array"; the handler refuses any entry that is not a `File`.
+ */
+export const SynapseUploadFilesMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal(UPLOAD_FILES_METHOD),
+  id: RequestId,
+  params: Type.Object({
+    files: Type.Array(Type.Unknown(), { minItems: 1, maxItems: 100 }),
+    maxSize: Type.Optional(Type.Number()),
+  }),
+});
+export type SynapseUploadFilesMessage = Static<typeof SynapseUploadFilesMessage>;
+
 export const UiKeydownMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal(KEYDOWN_METHOD),
@@ -314,6 +336,51 @@ export const UiKeydownMessage = Type.Object({
   }),
 });
 export type UiKeydownMessage = Static<typeof UiKeydownMessage>;
+
+/**
+ * One step of an app's trail: the view's stable address as `id` (its resource
+ * URI when it has one; the host never parses it and hands it back in
+ * `ai.nimblebrain/navigate`) and the label the host shows. Bounded so a
+ * page cannot push an unbounded string or list into the shell's chrome.
+ */
+export const AppTrailEntry = Type.Object({
+  id: Type.String({ maxLength: 512 }),
+  label: Type.String({ minLength: 1, maxLength: 200 }),
+});
+export type AppTrailEntry = Static<typeof AppTrailEntry>;
+
+export const UiLocationMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal(LOCATION_METHOD),
+  params: Type.Object({
+    trail: Type.Array(AppTrailEntry, { minItems: 1, maxItems: 32 }),
+  }),
+});
+export type UiLocationMessage = Static<typeof UiLocationMessage>;
+
+/**
+ * The shape only. Level and lengths are checked by the handler, which answers a
+ * bad value with `-32602` and the reason; a schema failure is dropped without a
+ * reply, which would leave the app's request waiting.
+ */
+export const UiNotifyMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal(NOTIFY_METHOD),
+  id: RequestId,
+  params: Type.Object({
+    level: Type.String(),
+    title: Type.String(),
+    description: Type.Optional(Type.String()),
+  }),
+});
+export type UiNotifyMessage = Static<typeof UiNotifyMessage>;
+
+export const UiNavigateNotification = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal(NAVIGATE_METHOD),
+  params: Type.Object({ id: Type.String() }),
+});
+export type UiNavigateNotification = Static<typeof UiNavigateNotification>;
 
 /** Discriminated union of every App → Host envelope. */
 export const AppToHostMessage = Type.Union([
@@ -330,7 +397,10 @@ export const AppToHostMessage = Type.Union([
   UiRequestDisplayModeMessage,
   LoggingMessageNotification,
   SynapseRequestFileMessage,
+  SynapseUploadFilesMessage,
   UiKeydownMessage,
+  UiLocationMessage,
+  UiNotifyMessage,
   ExtAppsInitializeRequest,
   ExtAppsInitializedNotification,
   ExtAppsRequestTeardownNotification,
@@ -362,32 +432,39 @@ export const UiResourceResultError = Type.Object({
 });
 export type UiResourceResultError = Static<typeof UiResourceResultError>;
 
+/**
+ * An MCP `CallToolResult`. A tool execution error is one of these with
+ * `isError: true`, its `structuredContent` intact; only a call with no result
+ * (refused, unreachable, or timed out) is a JSON-RPC error
+ * (`UiToolResultError`).
+ */
+const CallToolResultShape = Type.Object(
+  {
+    content: Type.Array(ToolResultContent),
+    structuredContent: Type.Optional(UnknownRecord),
+    isError: Type.Optional(Type.Boolean()),
+    _meta: Type.Optional(UnknownRecord),
+  },
+  { additionalProperties: true },
+);
+
 export const UiToolResultResponse = Type.Object({
   jsonrpc: JsonRpcVersion,
   id: RequestId,
-  result: Type.Object({
-    content: Type.Array(ToolResultContent),
-    structuredContent: Type.Optional(UnknownRecord),
-  }),
+  result: CallToolResultShape,
 });
 export type UiToolResultResponse = Static<typeof UiToolResultResponse>;
 
 export const UiToolResultError = Type.Object({
   jsonrpc: JsonRpcVersion,
   id: RequestId,
-  error: Type.Object({ code: Type.Number(), message: Type.String() }),
-});
-export type UiToolResultError = Static<typeof UiToolResultError>;
-
-export const UiToolResultMessage = Type.Object({
-  jsonrpc: JsonRpcVersion,
-  method: Type.Literal("ui/notifications/tool-result"),
-  params: Type.Object({
-    content: Type.Array(ToolResultContent),
-    structuredContent: Type.Optional(UnknownRecord),
+  error: Type.Object({
+    code: Type.Number(),
+    message: Type.String(),
+    data: Type.Optional(Type.Unknown()),
   }),
 });
-export type UiToolResultMessage = Static<typeof UiToolResultMessage>;
+export type UiToolResultError = Static<typeof UiToolResultError>;
 
 export const ExtAppsInitializeResponse = Type.Object({
   jsonrpc: JsonRpcVersion,
@@ -423,10 +500,7 @@ export type ExtAppsToolInputNotification = Static<typeof ExtAppsToolInputNotific
 export const ExtAppsToolResultNotification = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("ui/notifications/tool-result"),
-  params: Type.Object({
-    content: Type.Array(ToolResultContent),
-    structuredContent: Type.Optional(UnknownRecord),
-  }),
+  params: CallToolResultShape,
 });
 export type ExtAppsToolResultNotification = Static<typeof ExtAppsToolResultNotification>;
 
@@ -458,7 +532,6 @@ export type RelayedServerNotification = Static<typeof RelayedServerNotification>
 export const HostToAppMessage = Type.Union([
   UiToolResultResponse,
   UiToolResultError,
-  UiToolResultMessage,
   UiResourceResultResponse,
   UiResourceResultError,
   ExtAppsInitializeResponse,
@@ -466,5 +539,6 @@ export const HostToAppMessage = Type.Union([
   ExtAppsToolResultNotification,
   ExtAppsHostContextChangedNotification,
   RelayedServerNotification,
+  UiNavigateNotification,
 ]);
 export type HostToAppMessage = Static<typeof HostToAppMessage>;

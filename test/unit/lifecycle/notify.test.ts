@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { LifecycleContractError } from "../../../src/lifecycle/declaration.ts";
 import {
   forgetReadyNotification,
   type LifecycleNotifyDeps,
@@ -8,7 +7,8 @@ import {
   notifyRemoving,
   resetReadyNotifications,
 } from "../../../src/lifecycle/notify.ts";
-import type { LifecycleDeclaration } from "../../../src/lifecycle/types.ts";
+import type { LifecycleBinding } from "../../../src/lifecycle/types.ts";
+import { LIFECYCLE_EXTENSION_ID } from "../../../src/services/lifecycle-extension.ts";
 import {
   type ConnectorPort,
   stopAllToolSurfaceWatches,
@@ -30,21 +30,29 @@ import type { Tool, ToolResult } from "../../../src/tools/types.ts";
  * install.
  */
 
-const WS = "ws_acme";
+const WS = "ws_000f7ed6658f9d30";
 const CONNECTOR = "acme-billing-mcp";
 
-const DECL: LifecycleDeclaration = {
+const DECL: LifecycleBinding = {
   on_ready: "workspace_ready",
   on_removing: "workspace_removing",
 };
 
-/** A handler as a well-behaved server advertises it: no required arguments. */
+/**
+ * A handler as a well-behaved server advertises it: marked for its event, with
+ * no required arguments, and a `ready` handler declaring `reason`.
+ */
 function handler(name: string): Tool {
+  const event = name.endsWith("_removing") ? "removing" : "ready";
   return {
     name,
     description: "Lifecycle handler",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: {
+      type: "object",
+      properties: event === "ready" ? { reason: { type: "string" } } : {},
+    },
     source: CONNECTOR,
+    meta: { [LIFECYCLE_EXTENSION_ID]: { event } },
   };
 }
 
@@ -91,8 +99,8 @@ function makeFake(tools: Tool[], notice = "Setting up your workspace — watch t
   };
 }
 
-/** `null` means the connector declares no lifecycle block at all. */
-function makeDeps(fake: Fake | undefined, decl: LifecycleDeclaration | null = DECL) {
+/** `null` means the connector does not advertise the extension. */
+function makeDeps(fake: Fake | undefined, decl: LifecycleBinding | null = DECL) {
   const deps: LifecycleNotifyDeps = {
     declarationFor: async () => decl ?? undefined,
     portFor: () => fake?.port,
@@ -131,9 +139,7 @@ describe("on_ready", () => {
 
     expect(outcome.settled).toBe(true);
     expect(outcome.notice).toBe("Setting up your workspace — watch the panel.");
-    expect(fake.calls).toEqual([
-      { tool: "workspace_ready", input: { reason: "install" } },
-    ]);
+    expect(fake.calls).toEqual([{ tool: "workspace_ready", input: { reason: "install" } }]);
   });
 
   test("a fresh install is NOT swallowed by the observer's dedupe", async () => {
@@ -206,7 +212,7 @@ describe("on_ready", () => {
     expect(outcome).toEqual({ settled: false });
   });
 
-  test("an empty tool list defers rather than accusing a correct manifest", async () => {
+  test("an empty tool list defers rather than accusing a correct binding", async () => {
     // Every declared name is absent from an empty list, so checking one against
     // it would report a manifest that is correct. The tool-surface signal is
     // what brings the pass back when the list materializes.
@@ -222,15 +228,7 @@ describe("on_ready", () => {
     expect(fake.calls[0]?.input).toEqual({ reason: "resume" });
   });
 
-  test("a declared handler the server does not advertise is a contract error", async () => {
-    const fake = makeFake([handler("something_else")]);
-    await expect(notifyReady(makeDeps(fake), WS, CONNECTOR, "install")).rejects.toBeInstanceOf(
-      LifecycleContractError,
-    );
-    expect(fake.calls).toHaveLength(0);
-  });
-
-  test("a connector that declares no lifecycle block is a silent no-op", async () => {
+  test("a connector that does not advertise the extension is a silent no-op", async () => {
     const fake = makeFake([handler("workspace_ready")]);
     const outcome = await notifyReady(makeDeps(fake, null), WS, CONNECTOR, "install");
     expect(outcome).toEqual({ settled: true });
@@ -295,11 +293,8 @@ describe("on_removing", () => {
   });
 
   test("a handler that never answers does not hold the uninstall open", async () => {
-    // r2c1's regression test. `verifyLifecycleTools` runs on the READY path
-    // only — it warns, it does not gate this call — so a server advertising a
-    // task-augmented `on_removing` from its very first `tools/list` installs
-    // with a warning and then reaches `port.execute` at uninstall anyway, where
-    // the task API's await has no deadline of its own. Everything behind this
+    // Nothing but this deadline bounds the removal: a merely slow inline
+    // handler has no other bound. Everything behind this
     // call waits on it: the OAuth revoke, the teardown, the hook revoke, the
     // secret deletion. The bound has to live here.
     const deps: LifecycleNotifyDeps = {
@@ -356,5 +351,59 @@ describe("on_removing", () => {
     const fake = makeFake([handler("workspace_ready")]);
     await notifyRemoving(makeDeps(fake, { on_ready: "workspace_ready" }), WS, CONNECTOR);
     expect(fake.calls).toHaveLength(0);
+  });
+});
+
+describe("the outbox position", () => {
+  test("is taken before the on_ready handler is called", async () => {
+    // What the handler starts it reports through the outbox, and a cursor taken
+    // after that report steps over it.
+    const order: string[] = [];
+    const fake = makeFake([handler("workspace_ready"), handler("workspace_removing")]);
+    const execute = fake.port.execute;
+    fake.port.execute = async (tool, input) => {
+      order.push(tool);
+      return execute(tool, input);
+    };
+    const deps: LifecycleNotifyDeps = {
+      ...makeDeps(fake),
+      positionOutbox: async (wsId, connector) => {
+        order.push(`position:${wsId}:${connector}`);
+      },
+    };
+
+    await notifyReady(deps, WS, CONNECTOR, "install");
+
+    expect(order).toEqual([`position:${WS}:${CONNECTOR}`, "workspace_ready"]);
+  });
+
+  test("a position that fails still lets the handler be called", async () => {
+    const fake = makeFake([handler("workspace_ready"), handler("workspace_removing")]);
+    const deps: LifecycleNotifyDeps = {
+      ...makeDeps(fake),
+      positionOutbox: async () => {
+        throw new Error("catalog unreachable");
+      },
+    };
+
+    const outcome = await notifyReady(deps, WS, CONNECTOR, "install");
+
+    expect(outcome.settled).toBe(true);
+    expect(fake.calls.map((c) => c.tool)).toEqual(["workspace_ready"]);
+  });
+
+  test("is not taken for a connector with no on_ready handler", async () => {
+    const fake = makeFake([handler("workspace_removing")]);
+    let positioned = false;
+    const deps: LifecycleNotifyDeps = {
+      ...makeDeps(fake, { on_removing: "workspace_removing" }),
+      positionOutbox: async () => {
+        positioned = true;
+      },
+    };
+
+    await notifyReady(deps, WS, CONNECTOR, "install");
+
+    expect(positioned).toBe(false);
   });
 });

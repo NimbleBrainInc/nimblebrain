@@ -15,9 +15,7 @@ export function requireAuth(options: AuthMiddlewareOptions) {
     const result = await authenticateRequest(c.req.raw, options);
     if (isAuthError(result)) return result;
 
-    if (result.identity) {
-      c.set("identity", result.identity);
-    }
+    c.set("identity", result.identity);
     await next();
   });
 }

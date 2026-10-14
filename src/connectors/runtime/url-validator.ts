@@ -158,7 +158,7 @@ function assertAllowedHttp(
   // cluster DNS suffix, NOT the dev-only `allowInsecure` flag.
   //
   // Callers must key this on the `minted` credential provider specifically, NOT
-  // on `auth.type === "provider"`. Provider auth is no longer synonymous with
+  // on `auth.type === "provider"`. Provider auth is not synonymous with
   // "came from the vetted catalog": a brokered connector (Composio) also names a
   // credential provider, but its URL comes from the vendor's API response and is
   // persisted into tenant state. Only the minted rail carries the operator

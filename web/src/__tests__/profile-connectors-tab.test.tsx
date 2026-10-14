@@ -10,10 +10,11 @@
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
+import type * as ApiClient from "../api/client";
 import type { CatalogListing, PersonalConnector } from "../api/client";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 let nextConnectors: PersonalConnector[] = [];
 let nextCatalog: CatalogListing[] = [];
@@ -32,7 +33,7 @@ const installPersonalConnector = mock(async () => ({
   serverName: "granola",
   scope: "identity" as const,
 }));
-const initiateIdentityConnect = mock(async () => ({
+const initiateIdentityConnect = mock<typeof ApiClient.initiateIdentityConnect>(async () => ({
   authorizationUrl: "https://vendor.test/auth",
 }));
 const initiateComposioIdentityConnect = mock(async () => ({
@@ -46,9 +47,16 @@ const disconnectPersonalConnector = mock(async () => ({
   serverName: "granola",
   revokedWorkspaces: 0,
 }));
+const listConnectorToolsWithPermissions = mock(async (serverName: string) => ({
+  scope: "user" as const,
+  serverName,
+  tools: [{ name: "list_notes", description: "List notes", inputSchema: { type: "object" } }],
+  permissions: {},
+}));
 
 mock.module("../api/client", () => ({
   ...realClient,
+  listConnectorToolsWithPermissions,
   listPersonalConnectors,
   listPersonalCatalog,
   installPersonalConnector,
@@ -68,16 +76,12 @@ Object.defineProperty(window, "location", {
   value: { ...window.location, assign: locationAssign },
 });
 
-// Disconnect confirms via window.confirm. Stub it so tests drive the accept /
-// cancel branch deterministically (happy-dom returns false by default).
-let confirmReturn = true;
-const windowConfirm = mock((_msg?: string) => confirmReturn);
-Object.defineProperty(window, "confirm", { configurable: true, value: windowConfirm });
-
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
-const { ProfileConnectorsTab } = await import("../pages/settings/ProfileConnectorsTab");
+const { ProfileConnectorsTab, workspaceReach } = await import(
+  "../pages/settings/ProfileConnectorsTab"
+);
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 
 interface Mounted {
@@ -115,11 +119,10 @@ async function mountWithWorkspaces(workspaces: WorkspaceInfo[]): Promise<Mounted
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(
-        WorkspaceProvider,
-        { initialWorkspaces: workspaces },
-        React.createElement(ProfileConnectorsTab),
-      ),
+      React.createElement(WorkspaceProvider, {
+        initialWorkspaces: workspaces,
+        children: React.createElement(ProfileConnectorsTab),
+      }),
     );
   });
   await act(async () => {
@@ -140,6 +143,14 @@ function click(el: Element | null | undefined): Promise<void> {
     el?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await Promise.resolve();
   });
+}
+
+/** Every button on the page, the confirm dialog's portal included. */
+const allButtons = () => [...document.body.getElementsByTagName("button")];
+
+/** Open a connector's row by clicking its name, the row's disclosure. */
+async function openRow(name: string): Promise<void> {
+  await click(allButtons().find((b) => b.textContent === name));
 }
 
 function catalogEntry(overrides: Partial<CatalogListing> = {}): CatalogListing {
@@ -170,8 +181,7 @@ beforeEach(() => {
   grantConnector.mockClear();
   revokeConnector.mockClear();
   disconnectPersonalConnector.mockClear();
-  windowConfirm.mockClear();
-  confirmReturn = true;
+  listConnectorToolsWithPermissions.mockClear();
   nextConnectors = [];
   nextCatalog = [];
   nextError = null;
@@ -185,7 +195,7 @@ describe("ProfileConnectorsTab", () => {
     expect(mounted.container.textContent ?? "").toContain("haven't connected any connectors");
   });
 
-  test("lists each connector with its state and grant count", async () => {
+  test("lists each connector with its state and where it is on", async () => {
     nextConnectors = [
       {
         serverName: "granola",
@@ -193,7 +203,7 @@ describe("ProfileConnectorsTab", () => {
         description: "Meeting notes",
         state: "running",
         auth: "dcr",
-        grantedWorkspaces: ["ws_helix"],
+        grantedWorkspaces: ["ws_003eba8844413cd9"],
       },
       {
         serverName: "gmail",
@@ -209,16 +219,17 @@ describe("ProfileConnectorsTab", () => {
 
     expect(text).toContain("Granola");
     expect(text).toContain("Connected"); // running → "Connected"
-    expect(text).toContain("Granted to 1 workspace");
+    expect(text).toContain("On in 1 workspace");
 
     expect(text).toContain("Gmail");
-    expect(text).toContain("Not granted");
+    expect(text).toContain("Not connected");
+    expect(text).toContain("Not on in any workspace");
     // A not-yet-authenticated connector offers a Connect action, not a raw state.
     expect(text).toContain("Connect");
     expect(text).not.toContain("not_authenticated");
   });
 
-  test("pluralizes the grant count for 2+ workspaces", async () => {
+  test("names the signed-in account on a connected connector, email before name", async () => {
     nextConnectors = [
       {
         serverName: "granola",
@@ -226,11 +237,92 @@ describe("ProfileConnectorsTab", () => {
         description: null,
         state: "running",
         auth: "dcr",
-        grantedWorkspaces: ["ws_helix", "ws_acme"],
+        identity: { email: "user@example.com", name: "A User" },
+        grantedWorkspaces: [],
+      },
+      {
+        serverName: "gmail",
+        displayName: "Gmail",
+        description: null,
+        state: "running",
+        auth: "composio",
+        connectorId: "com.google/gmail",
+        identity: { name: "other@example.com" },
+        grantedWorkspaces: [],
       },
     ];
     mounted = await mount();
-    expect(mounted.container.textContent ?? "").toContain("Granted to 2 workspaces");
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("Connected as user@example.com");
+    expect(text).not.toContain("A User");
+    expect(text).toContain("Connected as other@example.com");
+  });
+
+  test("offers to show tools only on a connected connector", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+      {
+        serverName: "gmail",
+        displayName: "Gmail",
+        description: null,
+        state: "not_authenticated",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount();
+    await openRow("Granola");
+    await openRow("Gmail");
+    expect(allButtons().filter((b) => b.textContent === "Show tools")).toHaveLength(1);
+    expect(mounted.container.textContent ?? "").toContain("Connect Gmail to see its tools.");
+  });
+
+  test("lists a personal connector's tools only once Show tools is clicked", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount();
+    // Listing tools starts a cold connector, so neither page load nor opening
+    // the row may do it.
+    expect(listConnectorToolsWithPermissions).not.toHaveBeenCalled();
+    await openRow("Granola");
+    expect(listConnectorToolsWithPermissions).not.toHaveBeenCalled();
+
+    await click(allButtons().find((b) => b.textContent === "Show tools"));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(listConnectorToolsWithPermissions).toHaveBeenCalledWith("granola", "identity");
+    expect(mounted.container.textContent ?? "").toContain("list_notes");
+  });
+
+  test("pluralizes the workspace count for 2+ workspaces", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: ["ws_003eba8844413cd9", "ws_000f7ed6658f9d30"],
+      },
+    ];
+    mounted = await mount();
+    expect(mounted.container.textContent ?? "").toContain("On in 2 workspaces");
   });
 
   test("offers the curated personal catalog with a Connect action", async () => {
@@ -265,7 +357,7 @@ describe("ProfileConnectorsTab", () => {
     expect(text).not.toContain("Add a connector");
   });
 
-  test("grant panel: lists the caller's workspaces and grants into one", async () => {
+  test("workspace switches: list the caller's workspaces and turn one on", async () => {
     nextConnectors = [
       {
         serverName: "granola",
@@ -273,29 +365,31 @@ describe("ProfileConnectorsTab", () => {
         description: null,
         state: "running",
         auth: "dcr",
-        grantedWorkspaces: ["ws_helix"],
+        grantedWorkspaces: ["ws_003eba8844413cd9"],
       },
     ];
     mounted = await mountWithWorkspaces([
-      { id: "ws_helix", name: "Helix", memberCount: 1, connectors: [] },
-      { id: "ws_user_x", name: "Home Space", memberCount: 1, connectors: [], isPersonal: true },
+      { id: "ws_003eba8844413cd9", name: "Helix", memberCount: 1, connectorCount: 0 },
+      { id: "ws_00488fa17f87e9a3", name: "Mat's workspace", memberCount: 1, connectorCount: 0 },
     ]);
     const container = mounted.container;
-    const buttons = () => [...container.getElementsByTagName("button")];
+    expect(container.textContent ?? "").toContain("On in 1 of 2 workspaces");
 
-    // Expand the manage panel via the grant-count toggle.
-    await click(buttons().find((b) => b.textContent?.includes("Granted to 1 workspace")));
-
+    await openRow("Granola");
     const text = container.textContent ?? "";
     expect(text).toContain("Helix");
-    expect(text).toContain("Home Space");
-    // The personal workspace is listed like any other (marked, not special-cased).
-    expect(text).toContain("personal");
-    // Already-granted workspace → Revoke; ungranted → Grant.
-    expect(buttons().some((b) => b.textContent === "Revoke")).toBe(true);
+    expect(text).toContain("Mat's workspace");
+    // Every workspace is listed by name alone — none is marked apart.
+    expect(text).not.toContain("· personal");
 
-    await click(buttons().find((b) => b.textContent === "Grant"));
-    expect(grantConnector).toHaveBeenCalledWith("granola", "ws_user_x");
+    const switchFor = (ws: string) =>
+      container.querySelector(`[role="switch"][aria-label="Use Granola in ${ws}"]`);
+    expect(switchFor("Helix")?.getAttribute("aria-checked")).toBe("true");
+    expect(switchFor("Mat's workspace")?.getAttribute("aria-checked")).toBe("false");
+
+    await click(switchFor("Mat's workspace"));
+    expect(grantConnector).toHaveBeenCalledWith("granola", "ws_00488fa17f87e9a3");
+    expect(revokeConnector).not.toHaveBeenCalled();
   });
 
   test("shows an error state when the list load fails", async () => {
@@ -416,6 +510,23 @@ describe("ProfileConnectorsTab", () => {
     );
   });
 
+  test("gives a connector with no icon a letter tile, so every row's name lines up", async () => {
+    nextConnectors = [
+      {
+        serverName: "notion",
+        displayName: "Notion",
+        description: null,
+        state: "not_authenticated",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount();
+    expect(mounted.container.getElementsByTagName("img")).toHaveLength(0);
+    const tile = mounted.container.querySelector('[aria-hidden="true"].h-6.w-6');
+    expect(tile?.textContent).toBe("N");
+  });
+
   test("Disconnect confirms, calls the API, and refreshes", async () => {
     nextConnectors = [
       {
@@ -424,25 +535,31 @@ describe("ProfileConnectorsTab", () => {
         description: null,
         state: "running",
         auth: "dcr",
-        grantedWorkspaces: ["ws_helix"],
+        grantedWorkspaces: ["ws_003eba8844413cd9"],
       },
     ];
     mounted = await mount();
-    const disconnect = [...mounted.container.getElementsByTagName("button")].find(
-      (b) => b.textContent === "Disconnect",
-    );
+    await openRow("Granola");
+    await click(allButtons().find((b) => b.textContent === "Disconnect"));
+    await flush();
+    // The dialog says what disconnecting takes with it.
+    expect(document.body.textContent ?? "").toContain("It turns off in the 1 workspace");
+    expect(disconnectPersonalConnector).not.toHaveBeenCalled();
+
     // Emptied on the post-disconnect refresh so the row goes away.
     nextConnectors = [];
-    await click(disconnect);
+    await click(
+      allButtons()
+        .filter((b) => b.textContent === "Disconnect")
+        .at(-1),
+    );
     await flush();
-    expect(windowConfirm).toHaveBeenCalled();
     expect(disconnectPersonalConnector).toHaveBeenCalledWith("granola");
     // Re-fetched after the disconnect.
     expect(listPersonalConnectors.mock.calls.length).toBeGreaterThan(1);
   });
 
   test("cancelling the Disconnect confirm is a no-op", async () => {
-    confirmReturn = false;
     nextConnectors = [
       {
         serverName: "granola",
@@ -454,12 +571,58 @@ describe("ProfileConnectorsTab", () => {
       },
     ];
     mounted = await mount();
-    const disconnect = [...mounted.container.getElementsByTagName("button")].find(
-      (b) => b.textContent === "Disconnect",
-    );
-    await click(disconnect);
+    await openRow("Granola");
+    await click(allButtons().find((b) => b.textContent === "Disconnect"));
     await flush();
-    expect(windowConfirm).toHaveBeenCalled();
+    await click(allButtons().find((b) => b.textContent === "Cancel"));
+    await flush();
     expect(disconnectPersonalConnector).not.toHaveBeenCalled();
+  });
+
+  test("a failed Disconnect stays in the confirm dialog, with its error", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    disconnectPersonalConnector.mockImplementationOnce(async () => {
+      throw new Error("vendor refused the sign-out");
+    });
+    mounted = await mount();
+    await openRow("Granola");
+    await click(allButtons().find((b) => b.textContent === "Disconnect"));
+    await flush();
+    await click(
+      allButtons()
+        .filter((b) => b.textContent === "Disconnect")
+        .at(-1),
+    );
+    await flush();
+    expect(disconnectPersonalConnector).toHaveBeenCalledWith("granola");
+    expect(document.querySelector('[role="dialog"]')?.textContent ?? "").toContain(
+      "vendor refused the sign-out",
+    );
+    expect(mounted.container.textContent ?? "").toContain("Granola");
+  });
+});
+
+describe("workspaceReach", () => {
+  const ws = (id: string): WorkspaceInfo => ({ id, name: id, memberCount: 1, connectorCount: 0 });
+
+  test("names where the connector is on, counted against the caller's workspaces", () => {
+    expect(workspaceReach([], [ws("a"), ws("b")])).toBe("Not on in any workspace");
+    expect(workspaceReach(["a"], [ws("a"), ws("b"), ws("c")])).toBe("On in 1 of 3 workspaces");
+    expect(workspaceReach(["a", "b"], [ws("a"), ws("b")])).toBe("On in all workspaces");
+    expect(workspaceReach(["a"], [ws("a")])).toBe("On in your workspace");
+  });
+
+  test("falls back to a plain count when a grant is outside the known list", () => {
+    expect(workspaceReach(["a", "z"], [ws("a"), ws("b")])).toBe("On in 2 workspaces");
+    expect(workspaceReach(["a"], [])).toBe("On in 1 workspace");
   });
 });

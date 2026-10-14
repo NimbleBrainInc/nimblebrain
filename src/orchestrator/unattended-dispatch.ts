@@ -4,7 +4,7 @@
  * The other two both establish a principal from something the caller PROVED:
  * a chat or task session carries an authenticated identity and a
  * membership-validated workspace (`IdentityToolRouter`), and a `/mcp` request
- * carries a validated `X-Workspace-Id` (`McpServerHost.handlePost`). This one
+ * carries the membership-validated workspace in its URL (`routes/mcp.ts`). This one
  * takes its principal from **stored configuration** — a user id an admin's
  * write stamped, read back later with nobody present. That is the whole of
  * what is new, and it is why the door is a primitive rather than a call site:
@@ -26,7 +26,7 @@
  *      (`src/tools/unattended-policy.ts`).
  *   3. **The router**, built for `(principalId, workspaceId)` exactly as a
  *      session builds it, so the wall (ADR-0005), `assertToolAllowed`, the
- *      personal-connector grant (ADR-0006) and `INTERNAL_TOOL_ANNOTATION`
+ *      personal-connector grant (ADR-0006) and tool visibility
  *      semantics all apply by being the same code, not by being re-stated.
  *   4. **Bounds** — a wall-clock timeout that actually cancels the in-flight
  *      call, and a cap on how large a result may come back.
@@ -85,8 +85,9 @@ export interface UnattendedDispatchOptions {
   input: Record<string, unknown>;
   /**
    * The caller's own short string saying what fired this (`"route:rt_…"`).
-   * Opaque here: it is echoed into the audit line and stamped on the outbound
-   * call's `_meta`, and nothing parses it. Truncated at
+   * Opaque here: it is echoed into the audit line, and nothing parses it. It
+   * never leaves the host: a server is not told which configuration fired the
+   * call, or that no one is watching it. Truncated at
    * {@link UNATTENDED_REASON_MAX}.
    */
   reason: string;
@@ -117,6 +118,8 @@ export type UnattendedDispatchClassification =
   | "workspace_access_denied"
   | "connector_grant_denied"
   | "tool_permission_denied"
+  | "workspace_admin_required"
+  | "host_only_tool"
   // error
   | "unknown_tool_source"
   | "unknown_identity_source"
@@ -152,7 +155,8 @@ export interface UnattendedDispatchRuntime extends OrchestratorRuntime {
 /**
  * Map the door's structured refusals onto this door's outcomes. Keyed on the
  * `reason` discriminator `mapOrchestratorErrorToToolResult` emits and on
- * `assertToolAllowed`'s own `tool_permission_denied` — never on message text.
+ * `assertToolAllowed`'s own `tool_permission_denied` and the connector gate's
+ * `workspace_admin_required` and `host_only_tool` — never on message text.
  */
 const CLASSIFICATION_BY_REASON: Readonly<
   Record<string, { outcome: UnattendedDispatchOutcome; as: UnattendedDispatchClassification }>
@@ -246,6 +250,7 @@ export async function dispatchUnattended(
       identityId: opts.principalId,
       workspaceId: opts.workspaceId,
       runtime,
+      caller: "dispatch",
     });
     const dispatched = runWithRequestContext(
       {
@@ -256,10 +261,9 @@ export async function dispatchUnattended(
         // it, which is the right authority for a call nobody is watching.
         identity: { id: opts.principalId } as UserIdentity,
         workspaceId: opts.workspaceId,
-        // Bars the automation-authoring surface at the sources themselves, so
+        // Bars the task-authoring surface at the sources themselves, so
         // the wall holds below anything this door checks by name.
         unattended: true,
-        unattendedReason: reason,
       },
       () =>
         router.execute(
@@ -301,8 +305,9 @@ export async function dispatchUnattended(
 
 /**
  * Turn what came back into an outcome, reading the door's OWN structured
- * errors — `mapOrchestratorErrorToToolResult`'s `reason` discriminator and
- * `assertToolAllowed`'s `tool_permission_denied` — never the message text.
+ * errors — `mapOrchestratorErrorToToolResult`'s `reason` discriminator,
+ * `assertToolAllowed`'s `tool_permission_denied`, and the connector gate's
+ * `workspace_admin_required` and `host_only_tool` — never the message text.
  */
 function classify(result: ToolResult): UnattendedDispatchResult {
   if (!result.isError) return { outcome: "ok", result };
@@ -311,12 +316,13 @@ function classify(result: ToolResult): UnattendedDispatchResult {
   if (mapped) {
     return { outcome: mapped.outcome, classification: mapped.as, error: resultText(result) };
   }
-  if (result.structuredContent?.error === "tool_permission_denied") {
-    return {
-      outcome: "denied",
-      classification: "tool_permission_denied",
-      error: resultText(result),
-    };
+  const refusal = result.structuredContent?.error;
+  if (
+    refusal === "tool_permission_denied" ||
+    refusal === "workspace_admin_required" ||
+    refusal === "host_only_tool"
+  ) {
+    return { outcome: "denied", classification: refusal, error: resultText(result) };
   }
   // The tool ran and reported failure. The result rides along: a caller
   // deciding whether to retry needs what the tool actually said.

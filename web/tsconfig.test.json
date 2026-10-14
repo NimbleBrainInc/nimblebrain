@@ -1,0 +1,12 @@
+{
+  // The web suite (`src/**/*.test.ts(x)`, `src/**/__tests__`, `test/`) under the
+  // same strict options as the shipped source, plus Bun's types so `bun:test`
+  // resolves. `tsconfig.json` excludes the tests and leaves Bun out, so shipped
+  // code cannot name a Bun global. Gated by `scripts/check-web-tests.ts`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": ["src", "test"],
+  "exclude": []
+}

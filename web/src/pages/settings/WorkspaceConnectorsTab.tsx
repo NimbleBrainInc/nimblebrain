@@ -11,9 +11,9 @@ export function WorkspaceConnectorsTab() {
   const { slug } = useParams<{ slug: string }>();
   const base = `/w/${slug}/settings/connectors`;
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SettingsPageHeader
-        title="Workspace connectors"
+        title="Connectors"
         description="Services and tools available to everyone in this workspace."
         action={
           <Link

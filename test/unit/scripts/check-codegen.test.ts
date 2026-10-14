@@ -91,7 +91,7 @@ describe("check-codegen — verdictFor fails closed", () => {
     });
     expect(verdict.ok).toBe(false);
     expect(verdict).toMatchObject({ reason: "git-failed" });
-    if (!verdict.ok && verdict.reason === "git-failed") {
+    if (verdict.ok === false && verdict.reason === "git-failed") {
       expect(verdict.detail).toContain("exit 128");
       expect(verdict.detail).toContain("not a git repository");
     }
@@ -100,7 +100,8 @@ describe("check-codegen — verdictFor fails closed", () => {
   test("fails when git was killed by a signal", () => {
     const verdict = verdictFor({ status: null, signal: "SIGKILL", stdout: "", stderr: "" });
     expect(verdict.ok).toBe(false);
-    if (!verdict.ok && verdict.reason === "git-failed") {
+    expect(verdict).toMatchObject({ reason: "git-failed" });
+    if (verdict.ok === false && verdict.reason === "git-failed") {
       expect(verdict.detail).toContain("SIGKILL");
     }
   });
@@ -108,7 +109,8 @@ describe("check-codegen — verdictFor fails closed", () => {
   test("reports drift when git succeeded but named a path", () => {
     const verdict = verdictFor(ran("?? web/src/_generated/platform-schemas/probe.d.ts"));
     expect(verdict.ok).toBe(false);
-    if (!verdict.ok && verdict.reason === "drift") {
+    expect(verdict).toMatchObject({ reason: "drift" });
+    if (verdict.ok === false && verdict.reason === "drift") {
       expect(verdict.entries).toHaveLength(1);
       expect(verdict.entries[0]?.code).toBe("??");
     }

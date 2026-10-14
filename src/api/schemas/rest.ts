@@ -1,34 +1,28 @@
 // ---------------------------------------------------------------------------
-// REST request/response schemas for /v1/* endpoints.
+// REST request schemas for /v1/* endpoints.
 //
 // Single source of truth for both runtime validation (TypeBox `Value.Check`
-// at the route entry point) and TypeScript types (Static<>) that the
-// handlers and the web client consume.
+// at the route entry point) and the TypeScript types (Static<>) the handlers
+// consume. REST is first-party, but a type-only request contract can still
+// drift from what a client sends, so request shapes are checked at runtime.
 //
-// Trust boundary policy: REST is first-party only — same team controls
-// both ends. We still validate request shapes at runtime because the
-// SkillsTab incident showed type-only contracts can drift silently.
-// Response shapes are type-only (no runtime check) — we generate them,
-// we trust them.
+// Response bodies are type-only and live in `responses.ts`, which imports
+// nothing so the web codegen can emit it alone.
 //
-// Migration scope: this module covers `/v1/tools/call` and `/v1/chat`
-// only — the highest-traffic endpoints. The remaining REST routes
-// (`/v1/auth/*`, `/v1/bootstrap`, `/v1/events`, `/v1/resources/*`,
-// `/v1/shell`, `/v1/files/*`, `/v1/apps/*`, well-known, mcp internals)
-// are tracked in #163 for a follow-up PR. Until then they continue to
-// use hand-rolled shape checks; do not add new routes that follow that
-// pattern — add them here.
+// This module covers `/v1/workspaces/:wsId/tools/call` and
+// `/v1/workspaces/:wsId/chat/start`. The other routes parse their small bodies by
+// hand; a new route with a JSON body declares its schema here.
 // ---------------------------------------------------------------------------
 
 import { type Static, Type } from "@sinclair/typebox";
 import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
 
-// ── /v1/tools/call ───────────────────────────────────────────────────────
+// ── /v1/workspaces/:wsId/tools/call ─────────────────────────────────────────
 
 export const ToolCallRequestEnvelope = Type.Object(
   {
     server: Type.String({
-      description: "Tool source name (e.g. `skills`, `home`, `automations`).",
+      description: "Tool source name (e.g. `skills`, `home`, `tasks`).",
     }),
     tool: Type.String({
       description:
@@ -45,14 +39,14 @@ export const ToolCallRequestEnvelope = Type.Object(
 );
 export type ToolCallRequestEnvelope = Static<typeof ToolCallRequestEnvelope>;
 
-// ── /v1/chat ─────────────────────────────────────────────────────────────
+// ── /v1/workspaces/:wsId/chat/start ─────────────────────────────────────────
 
 const ContentPart = Type.Object({ type: Type.String() }, { additionalProperties: true });
 
 const FileReference = Type.Object({ id: Type.String() }, { additionalProperties: true });
 
 /**
- * JSON body schema for `/v1/chat` and `/v1/chat/stream`. Multipart form
+ * JSON body schema for `/v1/workspaces/:wsId/chat/start`. Multipart form
  * uploads have their own parse path (parseMultipartChatBody) and don't
  * go through this schema.
  *
@@ -84,7 +78,7 @@ export const ChatRequestBody = Type.Object(
     workspaceId: Type.Optional(
       Type.String({
         description:
-          "DEPRECATED: the chat surface is identity-bound; tools come from every workspace the caller can see and each call routes by namespace prefix, so this body field is ignored on /v1/chat (kept for client compatibility). The focused workspace comes from the X-Workspace-Id header instead, which scopes the prompt briefing (installed apps + house rules) — not this field. Per-tool-call workspace attribution lives on each tool.done event's `workspaceId` field.",
+          "DEPRECATED and ignored (kept for client compatibility). The workspace is the one in the URL, /v1/workspaces/<wsId>/chat; it scopes the tools and the prompt briefing (installed apps + house rules). Per-tool-call workspace attribution lives on each tool.done event's `workspaceId` field.",
       }),
     ),
     appContext: Type.Optional(

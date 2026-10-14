@@ -1,19 +1,24 @@
 // ---------------------------------------------------------------------------
 // GlobalHomePage — workspace-agnostic landing at `/`
 //
-// Stage 2 follow-up: with chat, conversations, automations, and files now
-// identity-bound, the root URL is no longer "workspace home" — it's the
-// user's cross-workspace landing. v1 is intentionally minimal: greeting +
-// a tiled grid of the user's workspaces (each tile links to its overview
-// at `/w/<slug>/`). Recent conversations / files / automations layer in
-// when their data sources are ready, without changing the page shape.
+// A user in exactly one workspace goes straight into it: there is nothing to
+// choose between. Anyone else sees their workspaces here, each with its unread
+// dot. Which workspace to open is never remembered or defaulted (ADR-0044).
+//
+// With chat, conversations, tasks, and files identity-bound, the root URL is
+// the user's cross-workspace landing, not a workspace home. It is
+// intentionally minimal: greeting + a tiled grid of the user's workspaces
+// (each tile links to its overview at `/w/<slug>/`).
 // ---------------------------------------------------------------------------
 
-import { Plus } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Pin, Plus } from "lucide-react";
+import { Link, Navigate } from "react-router-dom";
+import { UnreadDot } from "../components/shell/UnreadDot";
 import { useSession } from "../context/SessionContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
+import { useWorkspaceUnread } from "../context/WorkspaceUnreadContext";
 import { getGreeting } from "../lib/greeting";
+import { usePinnedWorkspaces } from "../lib/pinned-workspaces";
 import { cn } from "../lib/utils";
 import { getWorkspaceAvatar } from "../lib/workspace-avatar";
 import { orderWorkspacesForSidebar } from "../lib/workspace-order";
@@ -30,7 +35,13 @@ export function GlobalHomePage() {
     year: "numeric",
   });
   const name = session?.user?.displayName ?? session?.user?.email ?? "";
-  const ordered = orderWorkspacesForSidebar(wsCtx.workspaces);
+  const { pinned, toggle: togglePin } = usePinnedWorkspaces();
+  const ordered = orderWorkspacesForSidebar(wsCtx.workspaces, pinned);
+  const [only] = wsCtx.workspaces;
+
+  if (wsCtx.workspaces.length === 1 && only) {
+    return <Navigate to={`/w/${toSlug(only.id)}/`} replace />;
+  }
 
   return (
     <div className="h-full overflow-y-auto" data-testid="global-home-page">
@@ -47,38 +58,75 @@ export function GlobalHomePage() {
           <h2 className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
             Your workspaces
           </h2>
-          {wsCtx.loading ? (
-            <div className="text-sm text-muted-foreground">Loading workspaces…</div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {ordered.map((ws) => (
-                <WorkspaceTile key={ws.id} workspace={ws} />
-              ))}
-              <NewWorkspaceTile />
-            </div>
-          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {ordered.map((ws) => (
+              <WorkspaceTile
+                key={ws.id}
+                workspace={ws}
+                pinned={pinned.has(ws.id)}
+                onTogglePin={() => togglePin(ws.id)}
+              />
+            ))}
+            <NewWorkspaceTile />
+          </div>
         </section>
       </div>
     </div>
   );
 }
 
-function WorkspaceTile({ workspace }: { workspace: WorkspaceInfo }) {
+// The pin toggle is a sibling of the tile's link, laid over its right edge (an
+// interactive control cannot nest in a link).
+function WorkspaceTile({
+  workspace,
+  pinned,
+  onTogglePin,
+}: {
+  workspace: WorkspaceInfo;
+  pinned: boolean;
+  onTogglePin: () => void;
+}) {
   const avatar = getWorkspaceAvatar(workspace);
-  // App count intentionally omitted from this tile: the underlying
-  // `WorkspaceInfo.connectors[]` arrives empty for some workspaces post-
-  // Stage-2 even when apps exist (data-path bug, separate fix), and
-  // showing a stale "0 apps" line on a workspace that has apps is
-  // worse than showing nothing. The workspace overview page reads
-  // from the placement registry (single source of truth) and shows
-  // the correct count, so the user sees accurate data one click in.
+  return (
+    <div className="group/tile relative">
+      <WorkspaceTileLink workspace={workspace} avatar={avatar} />
+      <button
+        type="button"
+        onClick={onTogglePin}
+        aria-label={pinned ? `Unpin ${workspace.name}` : `Pin ${workspace.name} to the top`}
+        aria-pressed={pinned}
+        title={pinned ? "Unpin" : "Pin to top"}
+        data-testid="home-workspace-pin"
+        data-workspace-id={workspace.id}
+        className={cn(
+          "absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-sm text-muted-foreground",
+          "hover:bg-foreground/10 hover:text-foreground transition-opacity",
+          "focus-visible:opacity-100 group-hover/tile:opacity-100 [@media(pointer:coarse)]:opacity-100",
+          pinned ? "opacity-60" : "opacity-0",
+        )}
+      >
+        <Pin className={cn("w-4 h-4", pinned && "fill-current")} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function WorkspaceTileLink({
+  workspace,
+  avatar,
+}: {
+  workspace: WorkspaceInfo;
+  avatar: ReturnType<typeof getWorkspaceAvatar>;
+}) {
+  const unread = useWorkspaceUnread().unreadFor(workspace.id) > 0;
   return (
     <Link
       to={`/w/${toSlug(workspace.id)}/`}
       data-testid="home-workspace-tile"
       data-workspace-id={workspace.id}
       className={cn(
-        "group flex items-center gap-3 p-4 rounded-sm border border-border bg-card",
+        // Right padding leaves room for the pin toggle laid over the tile.
+        "group flex items-center gap-3 p-4 pr-12 rounded-sm border border-border bg-card",
         "hover:border-foreground/20 hover:bg-foreground/[0.02] transition-colors",
       )}
     >
@@ -90,8 +138,18 @@ function WorkspaceTile({ workspace }: { workspace: WorkspaceInfo }) {
         {avatar.letter}
       </span>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-foreground">{workspace.name}</div>
-        {workspace.userRole && (
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium text-foreground">{workspace.name}</span>
+          {unread && (
+            <>
+              <UnreadDot />
+              <span className="sr-only">Unread notifications</span>
+            </>
+          )}
+        </div>
+        {/* Only an exception is worth a line: most tiles are the viewer's own
+            workspaces, where "admin" on every tile says nothing. */}
+        {workspace.userRole && workspace.userRole !== "admin" && (
           <div className="truncate text-xs text-muted-foreground">{workspace.userRole}</div>
         )}
       </div>

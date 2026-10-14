@@ -19,7 +19,7 @@ describe("validateToolInput", () => {
   it("rejects missing required field", () => {
     const result = validateToolInput({ count: 5 }, schema);
     expect(result.valid).toBe(false);
-    if (!result.valid) {
+    if (result.valid === false) {
       expect(result.error).toContain("name");
     }
   });
@@ -27,7 +27,7 @@ describe("validateToolInput", () => {
   it("rejects wrong type", () => {
     const result = validateToolInput({ name: 123 }, schema);
     expect(result.valid).toBe(false);
-    if (!result.valid) {
+    if (result.valid === false) {
       expect(result.error).toContain("string");
     }
   });
@@ -95,7 +95,7 @@ describe("validateToolInput — nullable optional fields", () => {
   it("rejects null for a type: 'string' optional field", () => {
     const result = validateToolInput({ filename: "a.txt", description: null }, strictSchema);
     expect(result.valid).toBe(false);
-    if (!result.valid) {
+    if (result.valid === false) {
       expect(result.error).toContain("description");
       expect(result.error).toContain("string");
     }

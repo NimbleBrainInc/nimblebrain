@@ -1,11 +1,12 @@
 import { Download, FileText, Loader2 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
-import { ApiClientError, type ReadResourceContent, readResource } from "../api/client";
+import { ApiClientError, readResource } from "../api/client";
+import type { ResourceContents } from "../types";
 
 export interface ResourceLinkViewProps {
   /** URI from the resource_link content block (e.g., `collateral://exports/exp_abc.pdf`). */
   uri: string;
-  /** Server/app that owns the resource — forwarded to POST /v1/resources/read. */
+  /** Server/app that owns the resource — forwarded to POST /v1/workspaces/:wsId/resources/read. */
   appName: string;
   /** Optional display name from the resource_link block. */
   name?: string;
@@ -43,7 +44,7 @@ function resolveErrorMessage(err: unknown): string {
 }
 
 interface FetchedResource {
-  content: ReadResourceContent;
+  content: ResourceContents;
   bytes: Uint8Array | null;
 }
 
@@ -255,7 +256,7 @@ export function ResourceLinkView({
   mimeType,
   description,
 }: ResourceLinkViewProps) {
-  const [content, setContent] = useState<ReadResourceContent | null>(null);
+  const [content, setContent] = useState<ResourceContents | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [byteSize, setByteSize] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);

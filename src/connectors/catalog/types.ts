@@ -13,8 +13,8 @@
 import type { ConnectorAuthKind } from "../../connectors/auth-kind.ts";
 import type { ConnectorUiMeta } from "../../connectors/runtime/types.ts";
 import type { HookDeclaration } from "../../hooks/types.ts";
-import type { LifecycleDeclaration } from "../../lifecycle/types.ts";
 import type { NotificationsDeclaration } from "../../notifications/types.ts";
+import type { AccountLookup } from "./account-lookup.ts";
 import type {
   ComposioConnectorConfig,
   SecretHeaderRef,
@@ -114,6 +114,12 @@ export interface ConnectorCatalogEntry {
   /** Offered for personal (identity-plane) connection — see `NimbleBrainConnectorMeta.personal`. */
   personal?: boolean;
   /**
+   * The tool to ask for the signed-in account, from
+   * `_meta["ai.nimblebrain/connector"].account`. Absent for a connector whose
+   * sign-in names its account, or whose entry declares no lookup.
+   */
+  account?: AccountLookup;
+  /**
    * Host UI integration (sidebar placement, etc.) declared by the server in
    * `ServerDetail._meta["ai.nimblebrain/host"]`. Server-authored, carried here
    * from the operator-trusted catalog so the install path can register the
@@ -146,22 +152,27 @@ export interface ConnectorCatalogEntry {
    */
   notifications?: NotificationsDeclaration;
   /**
-   * The lifecycle handlers the server declares in
-   * `ServerDetail._meta["ai.nimblebrain/host"].lifecycle` — the tools the
-   * runtime calls when the connector first becomes reachable in a workspace and
-   * when it is about to be removed.
+   * The tools the server declares in
+   * `ServerDetail._meta["ai.nimblebrain/host"].admin_tools` — the ones only a
+   * workspace admin may call.
    *
-   * Carried from the operator-trusted catalog beside `hooks`, though for a
-   * middle reason. A hook declaration must be operator-trusted because it
-   * chooses where a delivery is sent with a platform token attached; this one
-   * chooses only which of the server's OWN tools the runtime calls, with no
-   * required arguments, on the server that declared it — a reach the caller
-   * already has. It is read from the same place because that is where the host
-   * extension is published, not because a forged one would be dangerous.
-   * Absent for connectors that declare no lifecycle block.
+   * Carried from the operator-trusted catalog beside `hooks`, and for a reason
+   * of its own: the kernel enforces this list on every call, so it must be
+   * known before the connector connects and must not move when a later build
+   * of the server stops saying it. Absent for connectors that declare none.
    */
-  lifecycle?: LifecycleDeclaration;
+  adminTools?: AdminToolsDeclaration;
 }
+
+/**
+ * A parsed `admin_tools` declaration. `names` gates those tools; `all` gates
+ * every tool on the connector, which is what a malformed declaration means:
+ * the field only narrows, so a declaration the kernel cannot read fails
+ * closed. Interpreted only by `isAdminToolAllowed`.
+ */
+export type AdminToolsDeclaration =
+  | { readonly kind: "names"; readonly names: readonly string[] }
+  | { readonly kind: "all"; readonly reason: string };
 
 /** How to install an entry — varies by source type. */
 export type InstallAction = RemoteOAuthInstall | DirectUrlInstall;
@@ -169,7 +180,7 @@ export type InstallAction = RemoteOAuthInstall | DirectUrlInstall;
 /**
  * Curated remote OAuth service. The existing connector catalog flow:
  * lifecycle.install adds the URL connector to workspace.json, then
- * /v1/mcp-auth/initiate kicks off the OAuth round-trip.
+ * /v1/workspaces/:wsId/mcp-auth/initiate kicks off the OAuth round-trip.
  */
 export interface RemoteOAuthInstall {
   kind: "remote-oauth";

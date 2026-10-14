@@ -19,7 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -80,38 +80,42 @@ mock.module("@composio/core", () => ({
 // (because step 4 failed) with a message that proves startConnectorSource
 // was reached.
 
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 // Imports come after the hoisted mocks. Bun's mock.module guarantees
 // the mocks resolve first even though they appear textually above —
 // keeping the order explicit makes the precondition obvious to a
 // future reader.
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
-import type { UserIdentity } from "../../src/identity/provider.ts";
-import type { Runtime } from "../../src/runtime/runtime.ts";
-import {
-  createManageConnectorsTool,
-  type ManageConnectorsContext,
-} from "../../src/tools/connector-tools.ts";
-import { ToolRegistry } from "../../src/tools/registry.ts";
-import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
-import {
-  _resetConnectorsConfigForTest,
-  setConnectorsConfig,
-} from "../../src/connectors/providers/config.ts";
-import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import {
   composioConnectorDir,
   hasPersistedComposioConnection,
   saveComposioConnection,
 } from "../../src/connectors/providers/composio/connection.ts";
 import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
+import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
+import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { UserStore } from "../../src/identity/user.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
+import type { Runtime } from "../../src/runtime/runtime.ts";
+import {
+  createManageConnectorsTool,
+  type ManageConnectorsContext,
+} from "../../src/tools/connector-tools.ts";
+import { ToolRegistry } from "../../src/tools/registry.ts";
+import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { stub } from "../helpers/stub.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 // ── Catalog fixture ─────────────────────────────────────────────────
 //
@@ -130,6 +134,7 @@ function gmailEntry(): import("../../src/connectors/catalog/types.ts").CatalogLi
     install: {
       kind: "remote-oauth",
       url: GMAIL_URL,
+      transportType: "streamable-http",
       auth: "composio",
       composio: {
         toolkit: "gmail",
@@ -157,7 +162,7 @@ interface Harness {
 function buildHarness(): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-composio-install-"));
   const credStore = installTestCredentialStore(workDir);
-  const wsId = "ws_test";
+  const wsId = "ws_0076759dbbe19fcc";
   const workspaceStore = new WorkspaceStore(workDir);
 
   // The catalog must PUBLISH the entry: a brokered install is permitted only
@@ -194,7 +199,7 @@ function buildHarness(): Harness {
   });
   const workspaceRegistry = new ToolRegistry();
 
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
@@ -203,22 +208,23 @@ function buildHarness(): Harness {
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,
     getEventSink: () => new NoopEventSink(),
-    getPermissionStore: () => ({
-      deleteConnector: async () => {},
-      listConnectorGrants: async () => ({}),
-      getConnectorGrants: async () => [],
-      revokeConnector: async () => {},
-    }),
-    getUserStore: () => ({ get: async () => null }),
+    getPermissionStore: () =>
+      stub<PermissionStore>({
+        deleteConnector: async () => {},
+        listConnectorGrants: async () => ({}),
+        getConnectorGrants: async () => [],
+        revokeConnector: async () => {},
+      }),
+    getUserStore: () => stub<UserStore>({ get: async () => null }),
     getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
-  } as unknown as Runtime;
+  });
 
   return { workDir, wsId, workspaceStore, workspaceRegistry, runtime };
 }
 
 async function provision(h: Harness): Promise<void> {
-  await h.workspaceStore.create("Test", h.wsId.slice(3));
+  await seedWorkspace(h.workspaceStore, h.wsId, { name: "Test" });
   await h.workspaceStore.addMember(h.wsId, ADMIN.id, "admin");
 }
 
@@ -317,9 +323,9 @@ describe("manage_connectors.install (composio-auth)", () => {
 
     const installed = await installAndReadPersistedRef();
     expect(installed?.transport?.auth?.type).toBe("provider");
-    expect(
-      (installed?.transport?.auth as { provider?: string } | undefined)?.provider,
-    ).toBe("composio");
+    expect((installed?.transport?.auth as { provider?: string } | undefined)?.provider).toBe(
+      "composio",
+    );
 
     // Full disk-shape audit. The secret must not be on disk — and neither must
     // the env var's NAME: a persisted `${COMPOSIO_API_KEY}` is a durable pointer
@@ -470,10 +476,10 @@ describe("manage_connectors.install (composio-auth)", () => {
     const identities: string[] = [];
     const lifecycle = h.runtime.getLifecycle();
     const realSync = lifecycle.syncBoundSkills.bind(lifecycle);
-    lifecycle.syncBoundSkills = (async (identity: string, ...rest: unknown[]) => {
-      identities.push(identity);
-      return (realSync as unknown as (...a: unknown[]) => Promise<unknown>)(identity, ...rest);
-    }) as typeof lifecycle.syncBoundSkills;
+    lifecycle.syncBoundSkills = async (...args: Parameters<typeof realSync>) => {
+      identities.push(args[0]);
+      return realSync(...args);
+    };
 
     try {
       const forged = {
@@ -486,7 +492,7 @@ describe("manage_connectors.install (composio-auth)", () => {
           auth: "dcr",
           composio: { toolkit: "../../../evil-org/evil-repo/main/payload" },
         },
-      } as unknown as import("../../src/connectors/catalog/types.ts").CatalogListing;
+      };
 
       await buildTool(h).handler({ action: "install", entry: forged, wsId: h.wsId });
 
@@ -531,7 +537,7 @@ describe("manage_connectors.install (composio-auth)", () => {
       serverName: "com-google-gmail",
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
-      composio: { connectorId: GMAIL_ID },
+      brokered: { provider: "composio", connectorId: GMAIL_ID },
     };
     await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
 
@@ -578,6 +584,75 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(lifecycle.getInstance("com-google-gmail", h.wsId)).not.toBeNull();
   });
 
+  test("(f-2) self-heal takes the host UI from the catalog, not the orphan's stored copy", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    // The catalog now declares a settings placement the orphan's install never saw.
+    const catalogFile = join(h.workDir, "empty-catalog.yaml");
+    writeFileSync(
+      catalogFile,
+      [
+        readFileSync(catalogFile, "utf-8").trimEnd(),
+        "      ai.nimblebrain/host:",
+        '        host_version: "1.4"',
+        "        name: Gmail",
+        "        placements:",
+        "          - slot: settings",
+        "            resourceUri: ui://gmail/settings",
+        "",
+      ].join("\n"),
+    );
+    const orphanRef: Extract<ConnectorRef, { url: string }> = {
+      url: "https://composio.test/mcp/session_orphaned",
+      serverName: "com-google-gmail",
+      transport: { type: "streamable-http" },
+      oauthScope: "workspace",
+      brokered: { provider: "composio", connectorId: GMAIL_ID },
+      ui: { placements: [] },
+    };
+    await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
+
+    const result = await buildTool(h).handler({
+      action: "install",
+      entry: gmailEntry(),
+      wsId: h.wsId,
+    });
+
+    expect(result.isError).toBe(false);
+    const instance = h.runtime.getLifecycle().getInstance("com-google-gmail", h.wsId);
+    expect(instance?.ui?.placements?.map((p) => p.resourceUri)).toEqual(["ui://gmail/settings"]);
+  });
+
+  test("(f-3) self-heal keeps the orphan's stored host UI when no catalog entry names it", async () => {
+    const url = "https://uncatalogued.test/mcp";
+    const orphanRef: Extract<ConnectorRef, { url: string }> = {
+      url,
+      serverName: "com-example-uncatalogued",
+      transport: { type: "streamable-http" },
+      oauthScope: "workspace",
+      ui: {
+        placements: [{ slot: "settings", resourceUri: "ui://uncatalogued/settings" }],
+      },
+    };
+    await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
+
+    const result = await buildTool(h).handler({
+      action: "install",
+      entry: {
+        id: "com.example/uncatalogued",
+        name: "Uncatalogued",
+        description: "Not in the catalog",
+        install: { kind: "remote-oauth", url, auth: "dcr" },
+      },
+      wsId: h.wsId,
+    });
+
+    expect(result.isError).toBe(false);
+    const instance = h.runtime.getLifecycle().getInstance("com-example-uncatalogued", h.wsId);
+    expect(instance?.ui?.placements?.map((p) => p.resourceUri)).toEqual([
+      "ui://uncatalogued/settings",
+    ]);
+  });
+
   test("install surfaces createComposioSession failures as errResult", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     composioCalls.createImpl = async () => {
@@ -597,23 +672,19 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
-  // ── personal-workspace target ─────────────────────────────────────
+  // ── single-member workspace target ────────────────────────────────
   //
-  // The path this whole change unblocks: composio-auth install into a
-  // personal workspace. A stale guard used to reject it inside the
-  // `auth === "composio"` branch; dcr/static were never gated, so a
-  // dcr fixture would NOT cover this. These two tests pin the composio
-  // path specifically — install succeeds, and disconnect cleanup is
-  // keyed on the personal `wsId` with no `isPersonal` special-casing
-  // (the invariant the removed guard's safety argument rests on).
+  // A workspace the caller alone belongs to takes a composio install like
+  // any other: install succeeds, and disconnect cleanup is keyed on that
+  // `wsId` with nothing special about who belongs to it.
 
-  test("(g) composio install into a personal workspace persists the ref (the path the removed guard blocked)", async () => {
+  test("(g) composio install into a single-member workspace persists the ref", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
-    const personalWsId = personalWorkspaceIdFor(ADMIN.id);
-    await h.workspaceStore.create("Admin Personal", `user_${ADMIN.id}`, {
-      isPersonal: true,
-      ownerUserId: ADMIN.id,
+    const personalWsId = "ws_00130226f6411195";
+    await seedWorkspace(h.workspaceStore, personalWsId, {
+      name: "Admin's workspace",
+      members: [{ userId: ADMIN.id, role: "admin" }],
     });
 
     const tool = buildTool(h);
@@ -624,15 +695,14 @@ describe("manage_connectors.install (composio-auth)", () => {
     });
 
     // Eager startConnectorSource fails on the fake session URL (same as
-    // the shared-workspace path), so this returns success-with-warning,
-    // NOT the old "cannot install into a personal workspace" error.
+    // the shared-workspace path), so this returns success-with-warning.
     expect(result.isError).toBe(false);
     const sc = result.structuredContent as { scope?: string; wsId?: string };
     expect(sc.scope).toBe("workspace");
     expect(sc.wsId).toBe(personalWsId);
 
-    // The ref landed in the personal workspace with the composio marker
-    // and the post-T008 workspace scope.
+    // The ref landed in the workspace with the composio marker
+    // and the workspace scope.
     const personalWs = await h.workspaceStore.get(personalWsId);
     const installed = personalWs?.connectors.find(
       (b): b is Extract<ConnectorRef, { url: string }> => "url" in b && b.brokered !== undefined,
@@ -642,23 +712,23 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(installed?.oauthScope).toBe("workspace");
   });
 
-  test("(h) disconnect of a personal-workspace composio connector runs cleanup keyed on that wsId (no isPersonal gate)", async () => {
+  test("(h) disconnect of a single-member workspace composio connector runs cleanup keyed on that wsId", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
-    const personalWsId = personalWorkspaceIdFor(ADMIN.id);
-    await h.workspaceStore.create("Admin Personal", `user_${ADMIN.id}`, {
-      isPersonal: true,
-      ownerUserId: ADMIN.id,
+    const personalWsId = "ws_00130226f6411195";
+    await seedWorkspace(h.workspaceStore, personalWsId, {
+      name: "Admin's workspace",
+      members: [{ userId: ADMIN.id, role: "admin" }],
     });
 
-    // Install seeds the ConnectorRef + lifecycle instance for the personal
+    // Install seeds the ConnectorRef + lifecycle instance for the
     // workspace (the eager-start failure is caught and logged after).
     const tool = buildTool(h);
     await tool.handler({ action: "install", entry: gmailEntry(), wsId: personalWsId });
 
     // Simulate a completed Composio OAuth: a connection.json under the
-    // personal workspace's credential path. Cleanup must find and remove
-    // THIS file — proving it resolves by wsId, personal included.
+    // workspace's credential path. Cleanup must find and remove THIS
+    // file — proving it resolves by wsId.
     await saveComposioConnection(h.workDir, { type: "workspace", wsId: personalWsId }, GMAIL_ID, {
       connectedAccountId: "ca_personal",
       toolkit: "gmail",
@@ -666,22 +736,31 @@ describe("manage_connectors.install (composio-auth)", () => {
       connectedAt: "2026-06-02T00:00:00.000Z",
       status: "ACTIVE",
     });
-    expect(hasPersistedComposioConnection(h.workDir, { type: "workspace", wsId: personalWsId }, GMAIL_ID)).toBe(true);
+    expect(
+      hasPersistedComposioConnection(
+        h.workDir,
+        { type: "workspace", wsId: personalWsId },
+        GMAIL_ID,
+      ),
+    ).toBe(true);
 
     // Drop the API key so cleanup skips the upstream revoke (offline);
     // the local-delete branch is the part that pins the wsId routing.
     delete process.env.COMPOSIO_API_KEY;
 
     // Disconnect through the real lifecycle caller (serverName is the
-    // slug of GMAIL_ID; principal is the workspace principal). If a
-    // future change gated this caller on `isPersonal`, the personal
-    // workspace's connection would survive and orphan upstream — this
-    // assertion fails first.
+    // slug of GMAIL_ID; principal is the workspace principal).
     await h.runtime
       .getLifecycle()
       .disconnect("com-google-gmail", personalWsId, "_workspace", { workDir: h.workDir });
 
-    expect(hasPersistedComposioConnection(h.workDir, { type: "workspace", wsId: personalWsId }, GMAIL_ID)).toBe(false);
+    expect(
+      hasPersistedComposioConnection(
+        h.workDir,
+        { type: "workspace", wsId: personalWsId },
+        GMAIL_ID,
+      ),
+    ).toBe(false);
   });
 });
 
@@ -699,7 +778,11 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     process.env.COMPOSIO_API_KEY = "k_test";
 
     const tool = buildTool(h);
-    const result = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+    const result = await tool.handler({
+      action: "install",
+      entry: gmailEntry(),
+      scope: "identity",
+    });
 
     // No eager-start on the identity path → the fake session URL is never dialed,
     // so this succeeds outright (the workspace path fails at eager-start).
@@ -751,7 +834,11 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     // API-key-specific.
 
     const tool = buildTool(h);
-    const result = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+    const result = await tool.handler({
+      action: "install",
+      entry: gmailEntry(),
+      scope: "identity",
+    });
 
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
@@ -780,9 +867,15 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     const tool = buildTool(h);
     const first = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
     expect(first.isError).toBe(false);
-    expect((first.structuredContent as { alreadyInstalled?: boolean }).alreadyInstalled).toBe(false);
+    expect((first.structuredContent as { alreadyInstalled?: boolean }).alreadyInstalled).toBe(
+      false,
+    );
 
-    const second = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+    const second = await tool.handler({
+      action: "install",
+      entry: gmailEntry(),
+      scope: "identity",
+    });
     expect(second.isError).toBe(false);
     const sc = second.structuredContent as {
       ok?: boolean;
@@ -809,7 +902,11 @@ describe("manage_connectors.install scope:identity (composio personal connector)
 
     // Simulate a completed composio Connect: a connection.json under the identity
     // composio credential root (the dir the disconnect teardown must clear).
-    const composioDir = composioConnectorDir(h.workDir, { type: "user", userId: ADMIN.id }, GMAIL_ID);
+    const composioDir = composioConnectorDir(
+      h.workDir,
+      { type: "user", userId: ADMIN.id },
+      GMAIL_ID,
+    );
     mkdirSync(composioDir, { recursive: true });
     writeFileSync(
       join(composioDir, "connection.json"),

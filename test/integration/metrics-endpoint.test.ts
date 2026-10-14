@@ -13,12 +13,13 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
+import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const API_KEY = "metrics-endpoint-test-key-1234";
 let runtime: Runtime;
@@ -30,15 +31,15 @@ beforeAll(async () => {
   mkdirSync(workDir, { recursive: true });
   // No metrics config of any kind — this is the bare local/no-k8s setup.
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: testAuthAdapter(API_KEY),
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
   });
-  await provisionTestWorkspace(runtime);
+  await provisionTestWorkspace(runtime, TEST_WORKSPACE_ID, "Test Workspace", [TEST_IDENTITY.id]);
   handle = startServer({
     runtime,
     port: 0,
-    provider: createTestAuthAdapter(API_KEY, runtime),
   });
   baseUrl = `http://localhost:${handle.port}`;
 });
@@ -61,12 +62,10 @@ describe("metrics with no Prometheus configured", () => {
   });
 
   test("a chat turn drives the metrics sink without error and populates a counter", async () => {
-    const chat = await fetch(`${baseUrl}/v1/chat`, {
-      method: "POST",
+    const chat = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${API_KEY}`,
-        "X-Workspace-Id": TEST_WORKSPACE_ID,
       },
       body: JSON.stringify({ message: "hello" }),
     });

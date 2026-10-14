@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  listConnectorOverlays,
   materializeConnectorSkill,
   readConnectorSkillCandidates,
   removeConnectorSkillsForServer,
@@ -113,6 +114,53 @@ describe("readConnectorSkillCandidates", () => {
     expect(candidates[0]!.scope).toBe("connector");
     expect(candidates[0]!.toolAffinity).toEqual(["gmail__*"]);
     expect(candidates[0]!.body).toContain("Confirm the recipient");
+  });
+
+  it("binds a declared tool-affinity to the install's server namespace", () => {
+    const root = tmp();
+    const declared = OVERLAY.replace(
+      "    priority: 30\n",
+      "    priority: 30\n    tool-affinity:\n      - draft_email\n      - send_*\n",
+    );
+    expect(declared).toContain("draft_email");
+    materializeConnectorSkill({
+      connectorSkillsDir: root,
+      serverName: "work-mail",
+      overlayBody: declared,
+      source: "connector:gmail@v0.2.0",
+      now: "2026-01-01T00:00:00.000Z",
+    });
+
+    const candidates = readConnectorSkillCandidates(root);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.toolAffinity).toEqual(["work-mail__draft_email", "work-mail__send_*"]);
+  });
+
+  it("accepts a nimblebrain block that declares only tool-affinity", () => {
+    const root = tmp();
+    const affinityOnly = `---
+name: gmail-usage
+description: How to use the Gmail connector
+metadata:
+  nimblebrain:
+    tool-affinity:
+      - send_*
+---
+
+Confirm the recipient before sending.
+`;
+    const res = materializeConnectorSkill({
+      connectorSkillsDir: root,
+      serverName: "work-mail",
+      overlayBody: affinityOnly,
+      source: "connector:gmail@v0.2.0",
+      now: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(res).not.toBeNull();
+    expect(readFileSync(res!.path, "utf-8")).toContain("loading-strategy: dynamic");
+    expect(readConnectorSkillCandidates(root)[0]!.toolAffinity).toEqual(["work-mail__send_*"]);
+    expect(listConnectorOverlays(root)[0]!.toolAffinity).toEqual(["work-mail__send_*"]);
   });
 });
 

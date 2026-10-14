@@ -1,92 +1,102 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { reconstructMessages } from "../../../../../src/conversation/event-reconstructor.ts";
+import type { ConversationEvent } from "../../../../../src/conversation/types.ts";
 import { ConversationIndex } from "../../../../../src/platform/conversations/index-cache.ts";
 import { readConversation } from "../../../../../src/platform/conversations/jsonl-reader.ts";
 import { handleFork } from "../../../../../src/platform/conversations/tools/fork.ts";
+import {
+  conversationEventLines,
+  type FixtureTurn,
+} from "../../../../helpers/conversation-events.ts";
 
-const TMP_DIR = join(import.meta.dir, ".tmp-fork");
+/** The workspaces root the index walks. */
+const ROOT = join(import.meta.dir, ".tmp-fork");
+/** One owner partition of one workspace, where the fixtures live. */
+const TMP_DIR = join(ROOT, "ws_00859aff6f095b0e", "conversations", "usr_test");
 
 function writeTmpFile(name: string, lines: string[]): string {
-	const path = join(TMP_DIR, name);
-	writeFileSync(path, lines.map((l) => `${l}\n`).join(""));
-	return path;
+  const path = join(TMP_DIR, name);
+  writeFileSync(path, lines.map((l) => `${l}\n`).join(""));
+  return path;
 }
 
 // Helpers to build test data
 const SOURCE_ID = "conv_source00000001";
 
 function makeMeta(overrides: Record<string, unknown> = {}) {
-	return {
-		id: SOURCE_ID,
-		createdAt: "2025-01-01T00:00:00.000Z",
-		updatedAt: "2025-01-01T00:05:00.000Z",
-		title: "Source conversation",
-		totalInputTokens: 400,
-		totalOutputTokens: 240,
-		totalCostUsd: 0.03,
-		lastModel: "claude-sonnet-4-5-20250929",
-		...overrides,
-	};
+  return {
+    model: "anthropic:claude-sonnet-4-6",
+    id: SOURCE_ID,
+    createdAt: "2025-01-01T00:00:00.000Z",
+    updatedAt: "2025-01-01T00:05:00.000Z",
+    title: "Source conversation",
+    totalInputTokens: 400,
+    totalOutputTokens: 240,
+    totalCostUsd: 0.03,
+    lastModel: "claude-sonnet-4-5-20250929",
+    ...overrides,
+  };
 }
 
 function makeMessages() {
-	return [
-		{
-			role: "user",
-			content: "Hello there",
-			timestamp: "2025-01-01T00:01:00.000Z",
-		},
-		{
-			role: "assistant",
-			content: "Hi! How can I help?",
-			timestamp: "2025-01-01T00:02:00.000Z",
-			metadata: {
-				usage: { inputTokens: 100, outputTokens: 60 },
-				model: "claude-sonnet-4-5-20250929",
-			},
-		},
-		{
-			role: "user",
-			content: "What is MCP?",
-			timestamp: "2025-01-01T00:03:00.000Z",
-		},
-		{
-			role: "assistant",
-			content: "MCP stands for Model Context Protocol.",
-			timestamp: "2025-01-01T00:04:00.000Z",
-			metadata: {
-				usage: { inputTokens: 200, outputTokens: 120 },
-				model: "claude-sonnet-4-5-20250929",
-			},
-		},
-		{
-			role: "user",
-			content: "Thanks!",
-			timestamp: "2025-01-01T00:05:00.000Z",
-		},
-	];
+  return [
+    {
+      role: "user",
+      content: "Hello there",
+      timestamp: "2025-01-01T00:01:00.000Z",
+    },
+    {
+      role: "assistant",
+      content: "Hi! How can I help?",
+      timestamp: "2025-01-01T00:02:00.000Z",
+      metadata: {
+        usage: { inputTokens: 100, outputTokens: 60 },
+        model: "claude-sonnet-4-5-20250929",
+      },
+    },
+    {
+      role: "user",
+      content: "What is MCP?",
+      timestamp: "2025-01-01T00:03:00.000Z",
+    },
+    {
+      role: "assistant",
+      content: "MCP stands for Model Context Protocol.",
+      timestamp: "2025-01-01T00:04:00.000Z",
+      metadata: {
+        usage: { inputTokens: 200, outputTokens: 120 },
+        model: "claude-sonnet-4-5-20250929",
+      },
+    },
+    {
+      role: "user",
+      content: "Thanks!",
+      timestamp: "2025-01-01T00:05:00.000Z",
+    },
+  ];
 }
 
 function writeSourceConversation(metaOverrides: Record<string, unknown> = {}): string {
-	const meta = makeMeta(metaOverrides);
-	const messages = makeMessages();
-	const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
-	return writeTmpFile(`${SOURCE_ID}.jsonl`, lines);
+  const meta = makeMeta(metaOverrides);
+  const messages = makeMessages();
+  const lines = [JSON.stringify(meta), ...conversationEventLines(messages as FixtureTurn[])];
+  return writeTmpFile(`${SOURCE_ID}.jsonl`, lines);
 }
 
 async function buildIndex(): Promise<ConversationIndex> {
-	const index = new ConversationIndex();
-	await index.build(TMP_DIR);
-	return index;
+  const index = new ConversationIndex();
+  await index.build(ROOT);
+  return index;
 }
 
 beforeEach(() => {
-	mkdirSync(TMP_DIR, { recursive: true });
+  mkdirSync(TMP_DIR, { recursive: true });
 });
 
 afterEach(() => {
-	rmSync(TMP_DIR, { recursive: true, force: true });
+  rmSync(ROOT, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -94,210 +104,262 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("handleFork", () => {
-	test("fork full conversation — new file with all messages, same token totals", async () => {
-		writeSourceConversation();
-		const index = await buildIndex();
+  test("fork full conversation — new file with all messages, same token totals", async () => {
+    writeSourceConversation();
+    const index = await buildIndex();
 
-		const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+    const result = await handleFork({ id: SOURCE_ID }, index);
 
-		// Result should have a new ID
-		expect(result.id).not.toBe(SOURCE_ID);
-		expect(typeof result.id).toBe("string");
-		expect((result.id as string).startsWith("conv_")).toBe(true);
-		expect((result.id as string).length).toBe(5 + 16); // "conv_" + 16 hex chars
+    // Result should have a new ID
+    expect(result.id).not.toBe(SOURCE_ID);
+    expect(typeof result.id).toBe("string");
+    expect((result.id as string).startsWith("conv_")).toBe(true);
+    expect((result.id as string).length).toBe(5 + 16); // "conv_" + 16 hex chars
 
-		// Message count should match
-		expect(result.messageCount).toBe(5);
+    // Message count should match
+    expect(result.messageCount).toBe(5);
 
-		// Token totals should match source (recalculated from assistant messages)
-		// Source has 2 assistant messages: 100+200=300 input, 60+120=180 output, 0.005+0.015=0.02 cost
-		expect(result.totalInputTokens).toBe(300);
-		expect(result.totalOutputTokens).toBe(180);
-		expect(result.lastModel).toBe("claude-sonnet-4-5-20250929");
+    // Token totals should match source (recalculated from assistant messages)
+    // Source has 2 assistant messages: 100+200=300 input, 60+120=180 output
+    expect(result.totalInputTokens).toBe(300);
+    expect(result.totalOutputTokens).toBe(180);
+    expect(result.lastModel).toBe("claude-sonnet-4-5-20250929");
 
-		// updatedAt should be last message timestamp
-		expect(result.updatedAt).toBe("2025-01-01T00:05:00.000Z");
+    // updatedAt should be last message timestamp
+    expect(result.updatedAt).toBe("2025-01-01T00:05:00.000Z");
 
-		// Preview should be first user message
-		expect(result.preview).toBe("Hello there");
+    // Preview should be first user message
+    expect(result.preview).toBe("Hello there");
 
-		// title should be null for forked conversations
-		expect(result.title).toBeNull();
+    // title should be null for forked conversations
+    expect(result.title).toBeNull();
 
-		// Verify the new JSONL file is valid and readable
-		const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
-		const newConv = await readConversation(newFilePath);
-		expect(newConv).not.toBeNull();
-		expect(newConv!.meta.id).toBe(result.id);
-		expect(newConv!.messageCount).toBe(5);
-		expect(newConv!.meta.totalInputTokens).toBe(300);
-		expect(newConv!.meta.totalOutputTokens).toBe(180);
-	});
+    // Verify the new JSONL file is valid and readable
+    const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
+    const newConv = await readConversation(newFilePath);
+    expect(newConv).not.toBeNull();
+    expect(newConv!.meta.id).toBe(result.id);
+    expect(newConv!.messageCount).toBe(5);
+    expect(newConv!.meta.totalInputTokens).toBe(300);
+    expect(newConv!.meta.totalOutputTokens).toBe(180);
 
-	test("fork inherits the source's model binding", async () => {
-		// A fork continues the source conversation, so it carries the source's
-		// history — re-resolving the model would replay that history to a
-		// different provider. `handleFork` builds its own line 1, independent of
-		// `EventSourcedConversationStore.fork`, so both need holding to this.
-		const model = "nebius:moonshotai/Kimi-K2.6";
-		writeSourceConversation({ model });
-		const index = await buildIndex();
+    // The runtime replays a forked conversation through `reconstructMessages`
+    // when someone continues it, so the fork must read the same there.
+    const events = readFileSync(newFilePath, "utf-8")
+      .split("\n")
+      .slice(1)
+      .filter((l) => l.trim() !== "")
+      .map((l) => JSON.parse(l) as ConversationEvent);
+    const replayed = reconstructMessages(events, { ignoreCompaction: true });
+    expect(replayed.map((m) => m.role)).toEqual(newConv!.messages.map((m) => m.role));
+  });
 
-		const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+  test("fork inherits the source's model binding", async () => {
+    // A fork continues the source conversation, so it carries the source's
+    // history — re-resolving the model would replay that history to a
+    // different provider. `handleFork` builds its own line 1, independent of
+    // `EventSourcedConversationStore.fork`, so both need holding to this.
+    const model = "nebius:moonshotai/Kimi-K2.6";
+    writeSourceConversation({ model });
+    const index = await buildIndex();
 
-		const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
-		const newConv = await readConversation(newFilePath);
-		expect(newConv!.meta.model).toBe(model);
-	});
+    const result = await handleFork({ id: SOURCE_ID }, index);
 
-	test("fork of an unpinned source stays unpinned", async () => {
-		// Absence is what marks a record as pre-binding; a fork must not invent
-		// a binding the source never had.
-		writeSourceConversation();
-		const index = await buildIndex();
+    const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
+    const newConv = await readConversation(newFilePath);
+    expect(newConv!.meta.model).toBe(model);
+  });
 
-		const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+  // ---------------------------------------------------------------------------
+  // Fork at message index
+  // ---------------------------------------------------------------------------
 
-		const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
-		const newConv = await readConversation(newFilePath);
-		expect(newConv!.meta.model).toBeUndefined();
-	});
+  test("fork at message 3 — new file with only messages 0-2, recalculated tokens", async () => {
+    writeSourceConversation();
+    const index = await buildIndex();
 
-	// ---------------------------------------------------------------------------
-	// Fork at message index
-	// ---------------------------------------------------------------------------
+    const result = await handleFork({ id: SOURCE_ID, atMessage: 3 }, index);
 
-	test("fork at message 3 — new file with only messages 0-2, recalculated tokens", async () => {
-		writeSourceConversation();
-		const index = await buildIndex();
+    // Should have 3 messages (indices 0, 1, 2)
+    expect(result.messageCount).toBe(3);
 
-		const result = (await handleFork({ id: SOURCE_ID, atMessage: 3 }, index)) as Record<
-			string,
-			unknown
-		>;
+    // Only 1 assistant message in first 3 messages (index 1: 100 input, 60 output)
+    expect(result.totalInputTokens).toBe(100);
+    expect(result.totalOutputTokens).toBe(60);
+    expect(result.lastModel).toBe("claude-sonnet-4-5-20250929");
 
-		// Should have 3 messages (indices 0, 1, 2)
-		expect(result.messageCount).toBe(3);
+    // updatedAt should be timestamp of message at index 2
+    expect(result.updatedAt).toBe("2025-01-01T00:03:00.000Z");
 
-		// Only 1 assistant message in first 3 messages (index 1: 100 input, 60 output)
-		expect(result.totalInputTokens).toBe(100);
-		expect(result.totalOutputTokens).toBe(60);
-		expect(result.lastModel).toBe("claude-sonnet-4-5-20250929");
+    // Verify the new file
+    const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
+    const newConv = await readConversation(newFilePath);
+    expect(newConv).not.toBeNull();
+    expect(newConv!.messageCount).toBe(3);
+    expect(newConv!.messages[0]!.content).toBe("Hello there");
+    expect(newConv!.messages[1]!.content).toBe("Hi! How can I help?");
+    expect(newConv!.messages[2]!.content).toBe("What is MCP?");
+  });
 
-		// updatedAt should be timestamp of message at index 2
-		expect(result.updatedAt).toBe("2025-01-01T00:03:00.000Z");
+  // ---------------------------------------------------------------------------
+  // Fork non-existent ID
+  // ---------------------------------------------------------------------------
 
-		// Verify the new file
-		const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
-		const newConv = await readConversation(newFilePath);
-		expect(newConv).not.toBeNull();
-		expect(newConv!.messageCount).toBe(3);
-		expect(newConv!.messages[0]!.content).toBe("Hello there");
-		expect(newConv!.messages[1]!.content).toBe("Hi! How can I help?");
-		expect(newConv!.messages[2]!.content).toBe("What is MCP?");
-	});
+  test("fork non-existent ID — error", async () => {
+    writeSourceConversation();
+    const index = await buildIndex();
 
-	// ---------------------------------------------------------------------------
-	// Fork non-existent ID
-	// ---------------------------------------------------------------------------
+    expect(handleFork({ id: "conv_doesnotexist00" }, index)).rejects.toThrow(
+      "Conversation not found: conv_doesnotexist00",
+    );
+  });
 
-	test("fork non-existent ID — error", async () => {
-		writeSourceConversation();
-		const index = await buildIndex();
+  // ---------------------------------------------------------------------------
+  // Source file unchanged after fork
+  // ---------------------------------------------------------------------------
 
-		expect(
-			handleFork({ id: "conv_doesnotexist00" }, index),
-		).rejects.toThrow("Conversation not found: conv_doesnotexist00");
-	});
+  test("source file unchanged after fork", async () => {
+    writeSourceConversation();
+    const sourcePath = join(TMP_DIR, `${SOURCE_ID}.jsonl`);
+    const originalContent = readFileSync(sourcePath, "utf-8");
 
-	// ---------------------------------------------------------------------------
-	// Source file unchanged after fork
-	// ---------------------------------------------------------------------------
+    const index = await buildIndex();
+    await handleFork({ id: SOURCE_ID, atMessage: 2 }, index);
 
-	test("source file unchanged after fork", async () => {
-		writeSourceConversation();
-		const sourcePath = join(TMP_DIR, `${SOURCE_ID}.jsonl`);
-		const originalContent = readFileSync(sourcePath, "utf-8");
+    const afterContent = readFileSync(sourcePath, "utf-8");
+    expect(afterContent).toBe(originalContent);
+  });
 
-		const index = await buildIndex();
-		await handleFork({ id: SOURCE_ID, atMessage: 2 }, index);
+  // ---------------------------------------------------------------------------
+  // New file is valid JSONL (parseable by readConversation)
+  // ---------------------------------------------------------------------------
 
-		const afterContent = readFileSync(sourcePath, "utf-8");
-		expect(afterContent).toBe(originalContent);
-	});
+  test("new file is valid JSONL parseable by readConversation", async () => {
+    writeSourceConversation();
+    const index = await buildIndex();
 
-	// ---------------------------------------------------------------------------
-	// New file is valid JSONL (parseable by readConversation)
-	// ---------------------------------------------------------------------------
+    const result = await handleFork({ id: SOURCE_ID }, index);
+    const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
 
-	test("new file is valid JSONL parseable by readConversation", async () => {
-		writeSourceConversation();
-		const index = await buildIndex();
+    // Read raw content and verify structure
+    const raw = readFileSync(newFilePath, "utf-8");
+    const lines = raw.split("\n").filter(Boolean);
 
-		const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
-		const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
+    // Line 1 is the event-sourced store's header: no stored totals.
+    const meta = JSON.parse(lines[0]!);
+    expect(meta.id).toBe(result.id);
+    expect(meta.format).toBe("events");
+    expect(typeof meta.createdAt).toBe("string");
+    expect(typeof meta.updatedAt).toBe("string");
+    expect(meta.totalInputTokens).toBeUndefined();
+    expect(meta.totalOutputTokens).toBeUndefined();
+    expect(meta.totalCostUsd).toBeUndefined();
 
-		// Read raw content and verify structure
-		const raw = readFileSync(newFilePath, "utf-8");
-		const lines = raw.split("\n").filter(Boolean);
+    // Every subsequent line is an event.
+    expect(lines.length).toBeGreaterThan(1);
+    for (let i = 1; i < lines.length; i++) {
+      const evt = JSON.parse(lines[i]!);
+      expect(typeof evt.type).toBe("string");
+      expect(typeof evt.ts).toBe("string");
+      expect(evt.role).toBeUndefined();
+    }
 
-		// First line should be valid JSON metadata
-		const meta = JSON.parse(lines[0]!);
-		expect(meta.id).toBe(result.id);
-		expect(typeof meta.createdAt).toBe("string");
-		expect(typeof meta.updatedAt).toBe("string");
+    // And readConversation should parse it successfully
+    const conv = await readConversation(newFilePath);
+    expect(conv).not.toBeNull();
+    expect(conv!.meta.id).toBe(result.id);
+  });
 
-		// Each subsequent line should be a valid message
-		for (let i = 1; i < lines.length; i++) {
-			const msg = JSON.parse(lines[i]!);
-			expect(msg.role).toBeDefined();
-			expect(msg.content).toBeDefined();
-			expect(msg.timestamp).toBeDefined();
-		}
+  // ---------------------------------------------------------------------------
+  // Fork at 0 — empty conversation
+  // ---------------------------------------------------------------------------
 
-		// And readConversation should parse it successfully
-		const conv = await readConversation(newFilePath);
-		expect(conv).not.toBeNull();
-		expect(conv!.meta.id).toBe(result.id);
-	});
+  test("fork at message 0 — creates conversation with no messages", async () => {
+    writeSourceConversation();
+    const index = await buildIndex();
 
-	// ---------------------------------------------------------------------------
-	// Fork at 0 — empty conversation
-	// ---------------------------------------------------------------------------
+    const result = await handleFork({ id: SOURCE_ID, atMessage: 0 }, index);
 
-	test("fork at message 0 — creates conversation with no messages", async () => {
-		writeSourceConversation();
-		const index = await buildIndex();
+    expect(result.messageCount).toBe(0);
+    expect(result.totalInputTokens).toBe(0);
+    expect(result.totalOutputTokens).toBe(0);
+    expect(result.lastModel).toBeNull();
+    expect(result.preview).toBe("");
 
-		const result = (await handleFork({ id: SOURCE_ID, atMessage: 0 }, index)) as Record<
-			string,
-			unknown
-		>;
+    // Verify the file exists and is parseable
+    const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
+    const newConv = await readConversation(newFilePath);
+    expect(newConv).not.toBeNull();
+    expect(newConv!.messageCount).toBe(0);
+  });
 
-		expect(result.messageCount).toBe(0);
-		expect(result.totalInputTokens).toBe(0);
-		expect(result.totalOutputTokens).toBe(0);
-		expect(result.lastModel).toBeNull();
-		expect(result.preview).toBe("");
+  // ---------------------------------------------------------------------------
+  // Round trip: the fork reads back as the source's turns
+  // ---------------------------------------------------------------------------
 
-		// Verify the file exists and is parseable
-		const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
-		const newConv = await readConversation(newFilePath);
-		expect(newConv).not.toBeNull();
-		expect(newConv!.messageCount).toBe(0);
-	});
+  test("the fork reads back as the source's turns, tool calls included", async () => {
+    const turns: FixtureTurn[] = [
+      {
+        role: "user",
+        content: "Find the file",
+        timestamp: "2025-01-01T00:01:00.000Z",
+        userId: "usr_test",
+      },
+      {
+        role: "assistant",
+        content: "Looking.",
+        timestamp: "2025-01-01T00:02:00.000Z",
+        metadata: {
+          usage: { inputTokens: 40, outputTokens: 20, cacheReadTokens: 10 },
+          model: "claude-sonnet-4-5-20250929",
+          llmMs: 300,
+          toolCalls: [
+            {
+              id: "tc_1",
+              name: "files__search",
+              input: { q: "a" },
+              output: "found",
+              ok: true,
+              ms: 5,
+            },
+            {
+              id: "tc_2",
+              name: "files__read",
+              input: { id: "f" },
+              output: "boom",
+              ok: false,
+              ms: 7,
+            },
+          ],
+        },
+      },
+      { role: "user", content: "Thanks", timestamp: "2025-01-01T00:03:00.000Z" },
+    ];
+    writeTmpFile(`${SOURCE_ID}.jsonl`, [
+      JSON.stringify(makeMeta({ ownerId: "usr_test" })),
+      ...conversationEventLines(turns),
+    ]);
+    const index = await buildIndex();
 
-	// ---------------------------------------------------------------------------
-	// ID format validation
-	// ---------------------------------------------------------------------------
+    const result = await handleFork({ id: SOURCE_ID }, index);
 
-	test("generated ID follows conv_<16 hex chars> pattern", async () => {
-		writeSourceConversation();
-		const index = await buildIndex();
+    const source = await readConversation(join(TMP_DIR, `${SOURCE_ID}.jsonl`));
+    const forked = await readConversation(join(TMP_DIR, `${result.id}.jsonl`));
+    expect(forked!.messages).toEqual(source!.messages);
+    expect(forked!.meta.ownerId).toBe("usr_test");
+  });
 
-		const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
-		const id = result.id as string;
+  // ---------------------------------------------------------------------------
+  // ID format validation
+  // ---------------------------------------------------------------------------
 
-		expect(id).toMatch(/^conv_[0-9a-f]{16}$/);
-	});
+  test("generated ID follows conv_<16 hex chars> pattern", async () => {
+    writeSourceConversation();
+    const index = await buildIndex();
+
+    const result = await handleFork({ id: SOURCE_ID }, index);
+    const id = result.id as string;
+
+    expect(id).toMatch(/^conv_[0-9a-f]{16}$/);
+  });
 });

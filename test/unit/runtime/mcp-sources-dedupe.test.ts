@@ -15,10 +15,10 @@ import { ToolRegistry } from "../../../src/tools/registry.ts";
  * would obscure it.
  */
 function runtimeWith(registries: Map<string, ToolRegistry>): Runtime {
-  const rt = Object.create(Runtime.prototype) as Runtime & {
-    _workspaceRegistries: Map<string, ToolRegistry>;
-  };
-  rt._workspaceRegistries = registries;
+  const rt = Object.create(Runtime.prototype) as Runtime;
+  // Seeds the private registry map the method under test reads.
+  // biome-ignore lint/complexity/useLiteralKeys: _workspaceRegistries is private; bracket access is TypeScript's typed path to it
+  rt["_workspaceRegistries"] = registries;
   return rt;
 }
 
@@ -33,7 +33,7 @@ function remoteSource(name: string): McpSource {
 describe("Runtime.mcpSources — what HealthMonitor gets to watch", () => {
   it("keeps every per-workspace instance of a connector installed in many workspaces", () => {
     // A URL connector's source name comes from the connector, not the workspace
-    // (`ref.serverName ?? deriveServerName(ref.url)`), so the SAME fleet connector
+    // (`ref.serverName`), so the SAME fleet connector
     // in N workspaces produces N separate McpSource objects — separate
     // transports, separate sessions — under one name. Keying the de-dup on the
     // name kept the first and dropped the rest, so a source that went down in
@@ -50,9 +50,9 @@ describe("Runtime.mcpSources — what HealthMonitor gets to watch", () => {
 
     const got = runtimeWith(
       new Map([
-        ["ws_a", wsA],
-        ["ws_b", wsB],
-        ["ws_c", wsC],
+        ["ws_00079598e311c160", wsA],
+        ["ws_001c32f121060ff3", wsB],
+        ["ws_002444caec819fe3", wsC],
       ]),
     ).mcpSources();
 
@@ -72,8 +72,8 @@ describe("Runtime.mcpSources — what HealthMonitor gets to watch", () => {
 
     const got = runtimeWith(
       new Map([
-        ["ws_a", wsA],
-        ["ws_b", wsB],
+        ["ws_00079598e311c160", wsA],
+        ["ws_001c32f121060ff3", wsB],
       ]),
     ).mcpSources();
 
@@ -97,8 +97,8 @@ describe("Runtime.mcpSources — what HealthMonitor gets to watch", () => {
 
     const got = runtimeWith(
       new Map([
-        ["ws_a", wsA],
-        ["ws_b", wsB],
+        ["ws_00079598e311c160", wsA],
+        ["ws_001c32f121060ff3", wsB],
       ]),
     ).mcpSources();
 

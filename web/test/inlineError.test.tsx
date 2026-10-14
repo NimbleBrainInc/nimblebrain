@@ -1,9 +1,9 @@
-import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, mock } from "bun:test";
-import { realClient } from "./setup";
+import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { ChatProvider, useChatContext } from "../src/context/ChatContext.tsx";
+import { realClient } from "./setup";
 
 // ---------------------------------------------------------------------------
 // Inline error UX under the server-authoritative path. We capture the turn

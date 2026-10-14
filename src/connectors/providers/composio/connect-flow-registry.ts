@@ -1,7 +1,7 @@
 /**
  * Process-local registry for pending Composio connect flows.
  *
- * A record is created at `/v1/composio-auth/initiate*` — behind `requireAuth`,
+ * A record is created at a Composio initiate route — behind `requireAuth`,
  * with the owner derived from the authenticated session — and consumed once at
  * the unauthenticated `/v1/composio-auth/callback` (the return leg from the
  * vendor). This server-side record, not the `nb_composio_state` cookie, is the
@@ -28,7 +28,7 @@
  * session affinity (already configured, a no-op at one replica) pins a browser
  * to the pod that served `/initiate`, so the callback still resolves here;
  * moving to a shared (Redis) store to also survive a mid-flow pod restart is
- * deferred with the other `replicas > 1` prerequisites.
+ * deferred with the rest of what blocks more than one replica (`src/api/AGENTS.md`).
  */
 
 import type { ConnectorOwner } from "../../../identity/connector-owner.ts";

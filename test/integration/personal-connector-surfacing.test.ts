@@ -20,18 +20,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp } from "../../src/tools/in-process-app.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { type FakeConnectorServer, startFakeConnectorServer } from "../helpers/fake-connector-server.ts";
+import {
+  type FakeConnectorServer,
+  startFakeConnectorServer,
+} from "../helpers/fake-connector-server.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nb-pc-surfacing-${Date.now()}`);
-const SHARED_WS = "ws_helix";
+const SHARED_WS = "ws_003eba8844413cd9";
 
 let runtime: Runtime;
 let personalWs: string;
@@ -76,20 +79,21 @@ async function toolNames(wsId: string, identityId?: string): Promise<string[]> {
 beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
     allowInsecureRemotes: true,
   });
 
   const wsStore = runtime.getWorkspaceStore();
-  await wsStore.create("Helix", SHARED_WS.slice(3));
+  await seedWorkspace(wsStore, SHARED_WS, { name: "Helix" });
   await wsStore.addMember(SHARED_WS, DEV_IDENTITY.id, "admin");
-  await ensureUserWorkspace(wsStore, {
-    id: DEV_IDENTITY.id,
-    displayName: DEV_IDENTITY.displayName,
-  });
-  personalWs = personalWorkspaceIdFor(DEV_IDENTITY.id);
+  personalWs = (
+    await wsStore.create("Own", {
+      members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
+    })
+  ).id;
 
   // Shared-room workspace source, so granted personal connectors must be *additive*.
   await registerWorkspaceSource(SHARED_WS, "crm", "search");
@@ -151,6 +155,7 @@ describe("personal-connector surfacing", () => {
   // /mcp and nb__search doors forward identity the same way.
   it("surfaces through IdentityToolRouter.availableTools (the engine door)", async () => {
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: DEV_IDENTITY.id,
       workspaceId: SHARED_WS,
       runtime,

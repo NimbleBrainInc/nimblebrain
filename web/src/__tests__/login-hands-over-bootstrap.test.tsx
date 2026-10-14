@@ -16,13 +16,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { BootstrapResponse } from "../types";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { Login } = await import("../components/Login");
 
+// biome-ignore lint/plugin/double-cast: No `config`: Login hands the body on without reading it, and the test asserts it arrives as sent.
 const BOOTSTRAP = {
   user: {
     id: "usr_1",

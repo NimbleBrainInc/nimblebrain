@@ -3,7 +3,7 @@
  *
  * A run is one pass of the agentic loop on behalf of one principal, walled to
  * one workspace. Every way of starting one — a person typing in chat, the
- * automations scheduler firing a cron tick, an operator pressing Run now —
+ * tasks scheduler firing a cron tick, an operator pressing Run now —
  * describes itself as a {@link RunSpec} and hands it to `Runtime.startRun`,
  * which establishes the run and returns a {@link RunHandle}.
  *
@@ -24,6 +24,7 @@ import type { SkillMatch } from "../skills/matcher.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import type { Skill } from "../skills/types.ts";
 import type { RequestContext } from "./request-context.ts";
+import type { SpendAccount } from "./spend.ts";
 import type { AppContext, ChatResult, TurnUsage } from "./types.ts";
 
 /** A user-message text content block. */
@@ -40,10 +41,10 @@ export type UserResourceLinkPart = {
 /**
  * What woke the agent. Exactly today's callers, no more:
  *
- *  - `chat`     — a person in a conversation (`/v1/chat*`, `startTurn`).
- *  - `schedule` — an automations cron tick (`Scheduler.dispatchRun`).
- *  - `manual`   — an operator pressing Run now (`automations__run`).
- *  - `event`    — a notification a workspace admin routed to an automation.
+ *  - `chat`     — a person in a conversation (`/v1/workspaces/:wsId/chat*`, `startTurn`).
+ *  - `schedule` — a tasks cron tick (`Scheduler.dispatchRun`).
+ *  - `manual`   — an operator pressing Run now (`tasks__run`).
+ *  - `event`    — a notification a workspace admin routed to a task.
  *  - `api`      — a caller driving the runtime directly (embedded, CLI, evals).
  *
  * The value is descriptive, not a policy switch: nothing branches on a
@@ -58,9 +59,8 @@ export type RunTrigger = "chat" | "schedule" | "manual" | "event" | "api";
 /** Who a run acts as. */
 export interface RunPrincipal {
   /**
-   * The identity the run acts as — the caller's in production, `DEV_IDENTITY`
-   * when no identity provider is configured. Drives prompt preferences and
-   * role-based tool visibility.
+   * The identity the run acts as — the caller's, under every identity
+   * provider. Drives prompt preferences and role-based tool visibility.
    */
   identity: UserIdentity;
   /**
@@ -94,8 +94,7 @@ export interface RunInput {
    */
   content: Array<UserTextPart | UserResourceLinkPart>;
   /**
-   * The author stamped on that message. Absent leaves the message unattributed,
-   * which is what a dev-mode chat with no identity produces.
+   * The author stamped on that message. Absent leaves the message unattributed.
    */
   userId?: string;
   /** File references persisted alongside the message. */
@@ -106,7 +105,11 @@ export interface RunInput {
    * prompt is a task description, not a phrase a skill should claim.
    */
   matchOn?: string;
-  /** Glob patterns filtering which tools reach the model. */
+  /**
+   * Glob patterns narrowing the run's tools (`nb__*` always pass). A chat's set
+   * only the turn-start tools; an unattended run's also bound what it can
+   * activate and call.
+   */
   allowedTools?: string[];
   /** Scopes the run to one app's briefing and tool surface. Chat only. */
   appContext?: AppContext;
@@ -116,8 +119,16 @@ export interface RunInput {
 export interface RunBudget {
   /** Per-request iteration cap; falls back to the configured default. */
   maxIterations?: number;
-  /** Per-request input-token cap, treated as a CAP; falls back to config. */
-  maxInputTokens?: number;
+  /** Input tokens the whole run may spend across every model call. Absent = no cap. */
+  maxRunInputTokens?: number;
+  /**
+   * The spend accounts the run draws on (`src/runtime/spend.ts`). Each model
+   * call's output is clamped to what they allow and its worst case reserved
+   * against them, then debited after it; the run ends with stopReason
+   * `spend_limit` before a call they cannot pay for. Absent or empty = no
+   * account, which is every chat.
+   */
+  spendAccounts?: SpendAccount[];
 }
 
 /**
@@ -144,11 +155,11 @@ export interface RunSpec {
    */
   workspaceId: string;
   /**
-   * The workspace the prompt NARRATES — installed apps, instruction overlays,
+   * The workspace the prompt NARRATES — installed apps,
    * the "## Workspace" block, the workspace persona. Equal to `workspaceId` for
-   * a run focused on its workspace; absent for a run merely *housed* in the
-   * owner's personal workspace (an unfocused automation), which is walled to
-   * that workspace without being about it.
+   * a run focused on its workspace; absent for a run merely *housed* in a
+   * workspace (an unfocused task), which is walled to that workspace without
+   * being about it.
    */
   briefingWorkspaceId?: string;
   /** Present when the run belongs to a persisted conversation. */
@@ -163,6 +174,8 @@ export interface RunSpec {
   model: string;
   /** Cancellation, threaded into the engine and down to every tool call. */
   signal?: AbortSignal;
+  /** The run's id, when the caller minted it ahead of the run; absent, the door mints one. */
+  runId?: string;
   /** Per-request event sink (SSE stream, executor tap) joined to the defaults. */
   sink?: EventSink;
   onAbort: RunAbortDisposition;
@@ -186,6 +199,12 @@ export interface RunHandle {
   skillName: string | null;
   toolCalls: ChatResult["toolCalls"];
   stopReason: string;
+  /** The last model call's unified finish reason. See `EngineResult.finishReason`. */
+  finishReason?: string;
+  /** The last model call's provider-native stop reason. See `EngineResult.finishReasonRaw`. */
+  finishReasonRaw?: string;
+  /** The account that stopped the run, when `stopReason` is `spend_limit`. */
+  spendAccountId?: string;
   usage: TurnUsage;
 }
 

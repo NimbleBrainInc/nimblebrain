@@ -13,7 +13,7 @@ This is the counterpart to a workspace [Connector](/using/connectors), which is 
 
 Open **Profile → Connectors**. The page has two lists:
 
-- **Your connectors** — what you've already connected, each with its connection state and the number of workspaces it's granted into.
+- **Your connectors** — what you've already connected. Each row shows the account it's connected as and where it is on (for example, **On in 2 of 3 workspaces**). Click a row to open it and manage that connector.
 - **Add a connector** — the curated set of services offered for a personal connection you haven't added yet.
 
 Which services appear under **Add a connector** is set by the platform operator (a connector is flagged as personal in the catalog). Personal connectors authenticate by standard OAuth (**dcr**) or through **Composio**.
@@ -26,21 +26,23 @@ Which services appear under **Add a connector** is set by the platform operator 
 3. Sign in and approve access. You're returned to **Profile → Connectors**, and the service moves into **Your connectors** as **Connected**.
 </Steps>
 
+When the service reports which account you signed in with, the row reads **Connected as** that account (for example, an email address). A service whose sign-in supports OpenID Connect reports it, since the platform asks it for your email address, and so does a Composio connection. A service without OpenID Connect has no standard way to report the account, so its row reads **Connected**. So does a service that supports OpenID Connect but won't share your email address with the platform: the sign-in goes ahead without it. To switch accounts, **Disconnect** and connect again with the other account.
+
 Connecting installs the connector on your identity and runs the sign-in in one step. Nothing runs on the platform host except the connection itself; your tokens are stored against your identity, outside any workspace.
 
 <Aside type="caution" title="Connecting is not the same as usable">
-A freshly connected personal connector is **not yet available to your agent anywhere** — not even in your personal workspace. You have to **grant** it into a workspace first. See below.
+A freshly connected personal connector is **not yet available to your agent anywhere** — not even in a workspace only you belong to. You have to **grant** it into a workspace first. See below.
 </Aside>
 
 ## Grants — the key idea
 
 A personal connector is yours, so **you** decide which of your workspaces may use it. Until you grant it into a workspace, the agent in that workspace has none of its tools. This is deliberate: a grant is explicit, audited, and revocable, so a connection you hold personally never leaks into a shared workspace's agent without your say-so.
 
-The rule has **no exception for your personal workspace** — a personal workspace is just a workspace, so you grant the connector there too before your agent can use it in your own chat. There is no "free at home".
+The rule has **no exception for a workspace only you belong to** — you grant the connector there too before your agent can use it. There is no "free at home".
 
 <Steps>
-1. In **Your connectors**, click a connector's **"Granted to N workspaces"** label to open its access panel.
-2. Toggle **Grant** on each workspace where you want your agent to use it. Toggle **Revoke** to take access away again.
+1. In **Your connectors**, click the connector's row to open it.
+2. Under **Workspaces**, switch the connector on in each workspace where you want your agent to use it. Switching it on grants it there; switching it off revokes the grant.
 </Steps>
 
 Granting into a workspace makes that connector's tools appear to the agent there on its next turn. Revoking removes them just as immediately. Grants are per-workspace and independent — granting into one never affects another.
@@ -50,6 +52,12 @@ You can also grant from **chat**: ask the agent to "grant Granola to this worksp
 ## Using it in a workspace
 
 Once a personal connector is **granted into the workspace you're chatting in**, its tools are available to the agent there, namespaced to that workspace. Ask the agent to use the service ("summarize my last three Granola meetings") and it will call the connector's tools. In a workspace where you haven't granted it, those tools simply aren't present.
+
+## Tool permissions
+
+Open a connected personal connector's row and click **Show tools** under **Tool permissions**. A table lists the connector's tools, each set to **Allow** or **Disallow**, with **Allow all** and **Disallow all** for the whole set. A tool with no setting is allowed.
+
+The policy is yours, like the connector: it applies in every workspace you grant the connector into, and no admin role is needed to change it. It is separate from a workspace connector of the same name, whose policy the workspace's admins set under Settings → Connectors. From chat, ask the agent to set it; the agent addresses your personal connector with `scope: "identity"`.
 
 ## In a notification route
 
@@ -70,7 +78,7 @@ way it stops the agent — immediately, and visibly in the item's delivery ledge
 
 ## Disconnecting
 
-**Disconnect** on a connector's row fully removes it from your identity in one step:
+**Disconnect**, at the bottom of a connector's opened row, fully removes it from your identity in one step:
 
 - revokes **every** workspace grant,
 - deletes the connection's stored credentials,

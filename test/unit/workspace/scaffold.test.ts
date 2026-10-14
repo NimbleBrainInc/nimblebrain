@@ -1,12 +1,9 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, statSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  WORKSPACE_DIRS,
-  scaffoldWorkspace,
-} from "../../../src/workspace/scaffold.ts";
+import { scaffoldWorkspace, WORKSPACE_DIRS } from "../../../src/workspace/scaffold.ts";
 
 let wsPath: string;
 

@@ -5,7 +5,9 @@ import type {
   ConnectionStateChangedEvent,
   ConversationTitleEvent,
   NotificationCreatedEvent,
-  NotificationDeliveryEvent,
+  NotificationDeliveredEvent,
+  NotificationDeliveryFailedEvent,
+  NotificationReadEvent,
   ServerNotificationEvent,
 } from "../types";
 
@@ -32,12 +34,19 @@ export interface UseEventsOptions {
    */
   onNotificationCreated?: (event: NotificationCreatedEvent) => void;
   /**
+   * Called when items in a workspace inbox this identity can see were marked
+   * read, by anyone: read state is shared across the workspace.
+   */
+  onNotificationRead?: (event: NotificationReadEvent) => void;
+  /**
    * Called when a route target for a notification reached a terminal outcome —
    * delivered, or given up on. Both wire to the same refetch as
    * `onNotificationCreated`: the change is on an item already in the list, and
    * the list is where the ledger lives.
    */
-  onNotificationDelivery?: (event: NotificationDeliveryEvent) => void;
+  onNotificationDelivery?: (
+    event: NotificationDeliveredEvent | NotificationDeliveryFailedEvent,
+  ) => void;
   /**
    * Called after every successful reconnection (NOT the initial
    * connect). The workspace stream has no `Last-Event-Id` replay, so
@@ -60,16 +69,10 @@ export interface UseEventsOptions {
  * `App` + `WorkspaceAppIconsProvider` (+ optionally `ConnectorList`)
  * each mounted it.
  *
- * The `token` and `workspaceId` parameters are vestigial — the
- * singleton reads the current token internally per (re)connect and
- * `/v1/events` is identity-scoped server-side. The signature is
- * preserved so call sites need no edits.
+ * The singleton reads the current token per (re)connect, and `/v1/events`
+ * is identity-scoped server-side, so the hook takes neither.
  */
-export function useEvents(
-  _token: string,
-  _workspaceId: string | undefined,
-  options?: UseEventsOptions,
-): void {
+export function useEvents(options?: UseEventsOptions): void {
   const onServerNotificationRef = useRef(options?.onServerNotification);
   onServerNotificationRef.current = options?.onServerNotification;
   const onConfigChangedRef = useRef(options?.onConfigChanged);
@@ -82,6 +85,8 @@ export function useEvents(
   onConnectorLifecycleChangedRef.current = options?.onConnectorLifecycleChanged;
   const onNotificationCreatedRef = useRef(options?.onNotificationCreated);
   onNotificationCreatedRef.current = options?.onNotificationCreated;
+  const onNotificationReadRef = useRef(options?.onNotificationRead);
+  onNotificationReadRef.current = options?.onNotificationRead;
   const onNotificationDeliveryRef = useRef(options?.onNotificationDelivery);
   onNotificationDeliveryRef.current = options?.onNotificationDelivery;
   const onReconnectRef = useRef(options?.onReconnect);
@@ -105,7 +110,7 @@ export function useEvents(
     );
     unsubs.push(
       subscribe("conversation.title", (data) => {
-        onConversationTitleRef.current?.(data as ConversationTitleEvent);
+        onConversationTitleRef.current?.(data);
       }),
     );
     unsubs.push(
@@ -126,6 +131,11 @@ export function useEvents(
     unsubs.push(
       subscribe("notification.created", (data) => {
         onNotificationCreatedRef.current?.(data);
+      }),
+    );
+    unsubs.push(
+      subscribe("notification.read", (data) => {
+        onNotificationReadRef.current?.(data);
       }),
     );
     unsubs.push(

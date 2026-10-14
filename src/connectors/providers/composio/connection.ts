@@ -69,6 +69,13 @@ export interface ComposioConnection {
    * connector layer decide what's actionable.
    */
   status: string;
+  /**
+   * The provider-side account this connection is signed in as (e.g. the Gmail
+   * address), from Composio's `state.val.displayName` or else the email in
+   * its `state.val.id_token`, when the connection landed. Display-only;
+   * absent when neither names an account.
+   */
+  displayName?: string;
 }
 
 /**
@@ -199,6 +206,9 @@ export async function readComposioConnection(
     userId: obj.userId as string,
     connectedAt: obj.connectedAt as string,
     status: obj.status as string,
+    ...(typeof obj.displayName === "string" && obj.displayName.length > 0
+      ? { displayName: obj.displayName }
+      : {}),
   };
 }
 

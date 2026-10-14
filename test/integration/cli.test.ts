@@ -1,8 +1,8 @@
-import { spawn, spawnSync } from "bun";
-import { mkdtempSync, rmSync } from "node:fs";
+import { describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
+import { spawn, spawnSync } from "bun";
 
 // The runtime binary's one job is to serve. The deploy command is
 // `bun run src/cli/index.ts serve` (Dockerfile CMD; `start` and `dev:api` also
@@ -29,6 +29,7 @@ async function waitForHealth(port: number, opts: { timeoutMs: number }): Promise
 describe("serve entry", () => {
   it("the deploy command (`serve`) boots and serves /v1/health", async () => {
     const workDir = mkdtempSync(join(tmpdir(), "nb-serve-"));
+    writeFileSync(join(workDir, "instance.json"), JSON.stringify({ auth: { adapter: "dev" } }));
     const port = 27991;
     const proc = spawn(
       [
@@ -53,6 +54,41 @@ describe("serve entry", () => {
     } finally {
       proc.kill();
       await proc.exited;
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("refuses to start without instance.json, naming what to write", async () => {
+    const workDir = mkdtempSync(join(tmpdir(), "nb-serve-noauth-"));
+    const proc = spawn(
+      [
+        "bun",
+        "run",
+        "--no-env-file",
+        CLI,
+        "serve",
+        "--port",
+        "27992",
+        "--config",
+        ".environments/empty/nimblebrain.json",
+      ],
+      {
+        env: { ...process.env, NB_WORK_DIR: workDir, NB_TELEMETRY_DISABLED: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    try {
+      expect(await proc.exited).toBe(1);
+      const output =
+        (await new Response(proc.stdout).text()) + (await new Response(proc.stderr).text());
+      expect(output).toContain(
+        `No identity provider: ${join(workDir, "instance.json")} does not exist`,
+      );
+      expect(output).toContain('{"auth":{"adapter":"dev"}}');
+      expect(output).toContain('"adapter":"oidc"');
+    } finally {
+      proc.kill();
       rmSync(workDir, { recursive: true, force: true });
     }
   }, 30_000);

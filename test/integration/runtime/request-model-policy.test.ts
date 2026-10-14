@@ -2,10 +2,13 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ModelNotAllowedError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import type { ModelSlots } from "../../../src/runtime/types.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-request-model-policy-${Date.now()}`);
 
@@ -14,13 +17,14 @@ afterAll(() => {
 });
 
 /** A runtime whose anthropic provider allows exactly one model. */
-async function startWithAllowlist(name: string, models: string[], slots?: Record<string, string>) {
+async function startWithAllowlist(name: string, models: string[], slots?: Partial<ModelSlots>) {
   const workDir = join(testDir, name);
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     providers: { anthropic: { apiKey: "test-key", models } },
-    ...(slots ? { models: slots as never } : {}),
+    ...(slots ? { models: slots } : {}),
     workDir,
   });
   await provisionTestWorkspace(runtime);
@@ -38,6 +42,7 @@ async function startWithAllowlist(name: string, models: string[], slots?: Record
 const chatError = (runtime: Runtime, model?: string): Promise<unknown> =>
   runtime
     .chat({
+      identity: DEV_IDENTITY,
       message: "hi",
       workspaceId: TEST_WORKSPACE_ID,
       ...(model !== undefined ? { model } : {}),
@@ -78,7 +83,6 @@ describe("a caller-supplied model is checked against the allowlist", () => {
       await runtime.shutdown();
     }
   });
-
 });
 
 describe("operator config is not the caller's input and is not gated", () => {
@@ -91,7 +95,6 @@ describe("operator config is not the caller's input and is not gated", () => {
     const runtime = await startWithAllowlist("default-exempt", ["claude-sonnet-4-6"], {
       default: "anthropic:claude-opus-4-6",
       fast: "anthropic:claude-opus-4-6",
-      reasoning: "anthropic:claude-opus-4-6",
     });
     try {
       expect(await chatError(runtime)).not.toBeInstanceOf(ModelNotAllowedError);
@@ -104,7 +107,6 @@ describe("operator config is not the caller's input and is not gated", () => {
     const runtime = await startWithAllowlist("slot-exempt", ["claude-sonnet-4-6"], {
       default: "anthropic:claude-opus-4-6",
       fast: "anthropic:claude-opus-4-6",
-      reasoning: "anthropic:claude-opus-4-6",
     });
     try {
       expect(await chatError(runtime, "alias:fast")).not.toBeInstanceOf(ModelNotAllowedError);
@@ -126,7 +128,8 @@ describe("a deployment with no providers config has no policy to enforce", () =>
     const workDir = join(testDir, name);
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -176,6 +179,7 @@ describe("the gate runs where the model is used, not on every turn", () => {
 
       const err = await runtime
         .chat({
+          identity: DEV_IDENTITY,
           message: "again",
           workspaceId: TEST_WORKSPACE_ID,
           conversationId: id,

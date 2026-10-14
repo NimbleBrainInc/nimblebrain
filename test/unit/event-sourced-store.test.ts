@@ -1,10 +1,21 @@
-import { describe, expect, it, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import type { EngineEvent } from "../../src/engine/types.ts";
 import type { ConversationEvent, StoredMessage } from "../../src/conversation/types.ts";
+import type { LlmDonePayload } from "../../src/engine/schemas/events.ts";
+import {
+  engineEvent,
+  llmDonePayload,
+  runStartPayload,
+  toolDonePayload,
+} from "../helpers/engine-events.ts";
+
+/** A `tool.start` with the input the model sent. */
+function toolStart(runId: string, name: string, id: string, input: Record<string, unknown> = {}) {
+  return engineEvent("tool.start", { runId, name, id, resourceUri: undefined, input });
+}
 
 function makeDir() {
   const base = mkdtempSync(join(tmpdir(), "es-store-test-"));
@@ -26,39 +37,39 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("creates conversations with format: events", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     expect(conv.format).toBe("events");
     expect(conv.id).toMatch(/^conv_/);
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
     const meta = JSON.parse(lines[0]);
     expect(meta.format).toBe("events");
-    // Token totals are no longer stored on Conversation; they're derived
+    // Token totals are not stored on Conversation; they're derived
     // from events at read time.
     expect(meta.totalInputTokens).toBeUndefined();
   });
 
   it("emit() writes engine events to conversation file", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
       type: "run.start",
-      data: { runId: "r1", model: "test-model", maxIterations: 10, toolCount: 0 },
+      data: runStartPayload({ runId: "r1", model: "test-model", maxIterations: 10, toolCount: 0 }),
     });
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "test-model",
         content: [{ type: "text", text: "Hello" }],
         usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 50,
-      },
+      }),
     });
     store.emit({
       type: "run.done",
-      data: { runId: "r1", stopReason: "complete", totalMs: 100 },
+      data: { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 100 },
     });
 
     // Wait for async metadata cache update (llm.response triggers rewrite)
@@ -75,16 +86,49 @@ describe("EventSourcedConversationStore", () => {
     expect(events[2].type).toBe("run.done");
   });
 
+  it("persists the raw finish reason on llm.response next to the unified one", async () => {
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
+    store.setActiveConversation(conv.id);
+
+    const llmDone = (
+      runId: string,
+      finish: Pick<LlmDonePayload, "finishReason" | "finishReasonRaw">,
+    ) =>
+      store.emit({
+        type: "llm.done",
+        data: llmDonePayload({
+          runId,
+          model: "test-model",
+          content: [{ type: "text", text: "Hello" }],
+          usage: { inputTokens: 1, outputTokens: 1 },
+          llmMs: 5,
+          ...finish,
+        }),
+      });
+    llmDone("r1", { finishReason: "other", finishReasonRaw: "compaction" });
+    llmDone("r2", { finishReason: "stop" });
+
+    const events = readLines(join(dirs.dir, `${conv.id}.jsonl`))
+      .slice(1)
+      .map((l) => JSON.parse(l))
+      .filter((e) => e.type === "llm.response");
+    expect(events).toHaveLength(2);
+    expect(events[0].finishReason).toBe("other");
+    expect(events[0].finishReasonRaw).toBe("compaction");
+    // Absent, not undefined-valued, when the provider reported none.
+    expect("finishReasonRaw" in events[1]).toBe(false);
+  });
+
   it("persists resourceLinks + resourceUri on tool.done (artifact rehydration)", async () => {
     // Regression: the engine emits resource references on tool.done, but they
     // were dropped on persist — so a reopened conversation lost its artifact://
     // viewers (e.g. the deep_research report panel). They must round-trip.
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
       type: "tool.done",
-      data: {
+      data: toolDonePayload({
         runId: "r1",
         name: "web__deep_research",
         id: "tc_1",
@@ -93,7 +137,7 @@ describe("EventSourcedConversationStore", () => {
         output: "digest text",
         resourceUri: "artifact://art_abc",
         resourceLinks: [{ uri: "artifact://art_abc", name: "report", mimeType: "text/markdown" }],
-      },
+      }),
     });
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
@@ -110,7 +154,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("history() reconstructs messages from events", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
 
     // Write user message event
     store.appendEvent(conv.id, {
@@ -151,51 +195,22 @@ describe("EventSourcedConversationStore", () => {
     expect(messages[1].role).toBe("assistant");
   });
 
-  it("history() reads legacy format files", async () => {
-    // Create a legacy-format file manually
-    const id = "conv_1e9ac4e5000000a2";
-    const meta = {
-      id,
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-01T00:00:00Z",
-      title: "Legacy",
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCostUsd: 0,
-      lastModel: null,
-      ownerId: "user_test",
-    };
-    const userMsg: StoredMessage = {
-      role: "user",
-      content: [{ type: "text", text: "old message" }],
-      timestamp: "2026-01-01T00:00:00Z",
-    };
-    const assistantMsg: StoredMessage = {
-      role: "assistant",
-      content: [{ type: "text", text: "old response" }],
-      timestamp: "2026-01-01T00:00:01Z",
-    };
-
-    const path = join(dirs.dir, `${id}.jsonl`);
-    writeFileSync(path, [JSON.stringify(meta), JSON.stringify(userMsg), JSON.stringify(assistantMsg)].map((l) => `${l}\n`).join(""));
-
-    const conv = await store.load(id);
-    expect(conv).not.toBeNull();
-
-    const messages = await store.history(conv!);
-    expect(messages.length).toBe(2);
-    expect(messages[0].role).toBe("user");
-    expect((messages[0].content as Array<{ type: string; text: string }>)[0].text).toBe("old message");
-    expect(messages[1].role).toBe("assistant");
-  });
-
   it("skips non-conversation events", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({ type: "text.delta", data: { runId: "r1", text: "hi" } });
-    store.emit({ type: "connector.installed", data: { serverName: "test" } });
-    store.emit({ type: "config.changed", data: {} });
+    store.emit(
+      engineEvent("connector.installed", {
+        wsId: "ws_0076759dbbe19fcc",
+        serverName: "test",
+        connectorName: "test",
+        version: "1.0.0",
+        ui: null,
+        placements: null,
+      }),
+    );
+    store.emit(engineEvent("config.changed", { fields: [] }));
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
     // Only line 0 (metadata), no event lines
@@ -207,25 +222,32 @@ describe("EventSourcedConversationStore", () => {
       ...dirs,
       logLevel: "debug",
     });
-    const conv = await debugStore.create({ ownerId: "user_test" });
+    const conv = await debugStore.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: "user_test",
+    });
     debugStore.setActiveConversation(conv.id);
 
     debugStore.emit({
       type: "run.start",
-      data: {
+      data: runStartPayload({
         runId: "r1",
         model: "test-model",
         systemPrompt: "You are a helpful assistant",
         toolNames: ["bash", "read"],
-      },
+      }),
     });
-    debugStore.emit({
-      type: "tool.start",
-      data: { runId: "r1", name: "bash", id: "t1", input: { command: "ls" } },
-    });
+    debugStore.emit(toolStart("r1", "bash", "t1", { command: "ls" }));
     debugStore.emit({
       type: "tool.done",
-      data: { runId: "r1", name: "bash", id: "t1", ok: true, ms: 50, output: "file1.txt" },
+      data: toolDonePayload({
+        runId: "r1",
+        name: "bash",
+        id: "t1",
+        ok: true,
+        ms: 50,
+        output: "file1.txt",
+      }),
     });
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
@@ -238,25 +260,29 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("normal logging strips verbose fields but keeps tool output", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
       type: "run.start",
-      data: {
+      data: runStartPayload({
         runId: "r1",
         model: "test-model",
         systemPrompt: "secret prompt",
         toolNames: ["bash"],
-      },
+      }),
     });
-    store.emit({
-      type: "tool.start",
-      data: { runId: "r1", name: "bash", id: "t1", input: { command: "ls" } },
-    });
+    store.emit(toolStart("r1", "bash", "t1", { command: "ls" }));
     store.emit({
       type: "tool.done",
-      data: { runId: "r1", name: "bash", id: "t1", ok: true, ms: 50, output: "file1.txt" },
+      data: toolDonePayload({
+        runId: "r1",
+        name: "bash",
+        id: "t1",
+        ok: true,
+        ms: 50,
+        output: "file1.txt",
+      }),
     });
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
@@ -271,39 +297,47 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("tool output survives the full round-trip: emit → persist → reconstruct → history", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     // Simulate a complete run with a tool call that produces output
-    store.emit({ type: "run.start", data: { runId: "r1", model: "test-model" } });
+    store.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: "test-model" })));
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "test-model",
-        content: [
-          { type: "tool-call", toolCallId: "tc1", toolName: "files__read", input: "{}" },
-        ],
+        content: [{ type: "tool-call", toolCallId: "tc1", toolName: "files__read", input: "{}" }],
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
-      },
+      }),
     });
-    store.emit({ type: "tool.start", data: { runId: "r1", name: "files__read", id: "tc1" } });
+    store.emit(toolStart("r1", "files__read", "tc1"));
     store.emit({
       type: "tool.done",
-      data: { runId: "r1", name: "files__read", id: "tc1", ok: true, ms: 10, output: "Hello world file content" },
+      data: toolDonePayload({
+        runId: "r1",
+        name: "files__read",
+        id: "tc1",
+        ok: true,
+        ms: 10,
+        output: "Hello world file content",
+      }),
     });
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "test-model",
         content: [{ type: "text", text: "I read the file." }],
         usage: { inputTokens: 200, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 400,
-      },
+      }),
     });
-    store.emit({ type: "run.done", data: { runId: "r1", stopReason: "end_turn", totalMs: 1000 } });
+    store.emit({
+      type: "run.done",
+      data: { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 1000 },
+    });
 
     // Load history — this goes through the reconstructor
     const messages = await store.history(conv);
@@ -323,19 +357,25 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("routes events to the correct conversation", async () => {
-    const conv1 = await store.create({ ownerId: "user_test" });
-    const conv2 = await store.create({ ownerId: "user_test" });
+    const conv1 = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: "user_test",
+    });
+    const conv2 = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
+      ownerId: "user_test",
+    });
 
     store.setActiveConversation(conv1.id);
     store.emit({
       type: "run.start",
-      data: { runId: "r1", model: "m1" },
+      data: runStartPayload({ runId: "r1", model: "m1" }),
     });
 
     store.setActiveConversation(conv2.id);
     store.emit({
       type: "run.start",
-      data: { runId: "r2", model: "m2" },
+      data: runStartPayload({ runId: "r2", model: "m2" }),
     });
 
     const lines1 = readLines(join(dirs.dir, `${conv1.id}.jsonl`));
@@ -349,7 +389,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("load() and delete() work", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     const loaded = await store.load(conv.id);
     expect(loaded).not.toBeNull();
     expect(loaded!.id).toBe(conv.id);
@@ -362,7 +402,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("update() patches title", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     const updated = await store.update(conv.id, { title: "New Title" });
     expect(updated).not.toBeNull();
     expect(updated!.title).toBe("New Title");
@@ -372,7 +412,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("update() appends metadata event instead of rewriting line 1", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     const path = join(dirs.dir, `${conv.id}.jsonl`);
 
     const linesBefore = readLines(path);
@@ -390,41 +430,47 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("interleaved appends and title update preserves all events", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     // Turn 1
     const runId = "run-1";
-    store.emit({ type: "run.start", data: { runId, model: "test" } });
+    store.emit(engineEvent("run.start", runStartPayload({ runId, model: "test" })));
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId,
         model: "test",
         content: [{ type: "text", text: "response 1" }],
         usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 100,
-      },
+      }),
     });
-    store.emit({ type: "run.done", data: { runId, stopReason: "complete", totalMs: 100 } });
+    store.emit({
+      type: "run.done",
+      data: { runId, stopReason: "complete", iterations: 1, totalMs: 100 },
+    });
 
     // Title generation fires (simulates fire-and-forget from runtime)
     const updatePromise = store.update(conv.id, { title: "Generated Title" });
 
     // Turn 2 starts before title generation completes
     const runId2 = "run-2";
-    store.emit({ type: "run.start", data: { runId: runId2, model: "test" } });
+    store.emit(engineEvent("run.start", runStartPayload({ runId: runId2, model: "test" })));
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: runId2,
         model: "test",
         content: [{ type: "text", text: "response 2" }],
         usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 100,
-      },
+      }),
     });
-    store.emit({ type: "run.done", data: { runId: runId2, stopReason: "complete", totalMs: 100 } });
+    store.emit({
+      type: "run.done",
+      data: { runId: runId2, stopReason: "complete", iterations: 1, totalMs: 100 },
+    });
 
     await updatePromise;
     await store.flush();
@@ -454,12 +500,8 @@ describe("EventSourcedConversationStore", () => {
     expect(totalIn).toBe(20);
   });
 
-  // Stage 1 removed share/unshare/addParticipant/removeParticipant —
-  // see the Stage 1 refactor. Sharing returns in
-  // Stage 4 with policy-gated primitives.
-
   it("list() reflects title from metadata events", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     await store.update(conv.id, { title: "Event-Derived Title" });
 
     const result = await store.list();
@@ -469,7 +511,7 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("list() filters by ownerId — non-owner cannot see another user's conversation", async () => {
-    const conv = await store.create({ ownerId: "owner" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "owner" });
 
     // Owner sees their conversation.
     const ownerView = await store.list(undefined, { userId: "owner" });
@@ -482,10 +524,11 @@ describe("EventSourcedConversationStore", () => {
 
   it("backward compat: old files with title in line 1 still work", async () => {
     // Simulate an old-format file with title baked into line 1 — but
-    // ownerId is required post-Stage-1 (the migration script stamps it).
+    // ownerId is required (the migration script stamps it).
     const id = "conv_1e9ac4c0000000a1";
     const path = join(dirs.dir, `${id}.jsonl`);
     const meta = {
+      model: "anthropic:claude-sonnet-4-6",
       id,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -506,26 +549,28 @@ describe("EventSourcedConversationStore", () => {
   });
 
   it("fork() preserves assistant turns through history() round-trip", async () => {
-    // Regression: fork() previously wrote llm.response events without
-    // run.start/run.done bookends. The reconstructor only emits assistant
-    // messages inside an active run scope, so history() on a forked
-    // event-format conversation returned only the user turns. Assistant
-    // turns silently disappeared.
-    const conv = await store.create({ ownerId: "user_test" });
+    // fork() must write llm.response events inside run.start/run.done
+    // bookends. The reconstructor only emits assistant messages inside an
+    // active run scope, so without them history() on a forked event-format
+    // conversation returns only the user turns.
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
-    store.emit({ type: "run.start", data: { runId: "r1", model: "test-model" } });
+    store.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: "test-model" })));
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "test-model",
         content: [{ type: "text", text: "First reply" }],
         usage: { inputTokens: 10, outputTokens: 5 },
         llmMs: 50,
-      },
+      }),
     });
-    store.emit({ type: "run.done", data: { runId: "r1", stopReason: "complete", totalMs: 50 } });
+    store.emit({
+      type: "run.done",
+      data: { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 50 },
+    });
 
     store.appendEvent(conv.id, {
       ts: new Date().toISOString(),
@@ -533,18 +578,21 @@ describe("EventSourcedConversationStore", () => {
       content: [{ type: "text", text: "Follow up" }],
     } as ConversationEvent);
 
-    store.emit({ type: "run.start", data: { runId: "r2", model: "test-model" } });
+    store.emit(engineEvent("run.start", runStartPayload({ runId: "r2", model: "test-model" })));
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r2",
         model: "test-model",
         content: [{ type: "text", text: "Second reply" }],
         usage: { inputTokens: 20, outputTokens: 8 },
         llmMs: 75,
-      },
+      }),
     });
-    store.emit({ type: "run.done", data: { runId: "r2", stopReason: "complete", totalMs: 75 } });
+    store.emit({
+      type: "run.done",
+      data: { runId: "r2", stopReason: "complete", iterations: 1, totalMs: 75 },
+    });
 
     const sourceMessages = await store.history(conv);
     const sourceAssistantCount = sourceMessages.filter((m) => m.role === "assistant").length;
@@ -570,7 +618,7 @@ describe("EventSourcedConversationStore", () => {
     // still shows. fork() must read the full verbatim history (ignore
     // compaction) so a fork copies the real turns the user sees.
     const T = (n: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString();
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
 
     const log: ConversationEvent[] = [
       { ts: T(1), type: "user.message", content: [{ type: "text", text: "FIRST QUESTION" }] },
@@ -583,6 +631,7 @@ describe("EventSourcedConversationStore", () => {
         content: [{ type: "text", text: "FIRST REPLY" }],
         usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 1,
+        finishReason: "stop",
       },
       { ts: T(4), type: "run.done", runId: "r1", stopReason: "complete", totalMs: 1 },
       { ts: T(5), type: "user.message", content: [{ type: "text", text: "SECOND QUESTION" }] },
@@ -595,6 +644,7 @@ describe("EventSourcedConversationStore", () => {
         content: [{ type: "text", text: "SECOND REPLY" }],
         usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 1,
+        finishReason: "stop",
       },
       { ts: T(8), type: "run.done", runId: "r2", stopReason: "complete", totalMs: 1 },
       {

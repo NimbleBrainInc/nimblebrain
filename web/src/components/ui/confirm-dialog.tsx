@@ -45,9 +45,11 @@ export function ConfirmDialog({
   /** Render confirm in the destructive variant. */
   destructive?: boolean;
   /**
-   * Resolve to close. Throw to leave the dialog open with the error shown —
-   * the caller's failure is reported where the caller can act on it, rather
-   * than behind a dialog that has already dismissed itself.
+   * Throw to leave the dialog open with the error shown — the caller's failure
+   * is reported where the caller can act on it, rather than behind a dialog
+   * that has already dismissed itself. Resolving does NOT close it: the caller
+   * closes it on success (`open` to false) or navigates away. Until it does,
+   * the dialog stays on its pending label with every dismissal blocked.
    */
   onConfirm: () => Promise<void> | void;
 }) {

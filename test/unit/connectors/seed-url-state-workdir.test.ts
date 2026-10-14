@@ -1,36 +1,26 @@
 /**
- * Boot-time Connection seeding must probe credentials under the runtime's
- * resolved work directory, not `defaultWorkDir()`.
+ * Boot-time Connection seeding for a remote OAuth connector: which state the
+ * probe decides on from the connection's OAuth records in the credential store.
  *
- * The two coincide whenever `NB_WORK_DIR` is set — which is every container,
- * since the image sets it. They diverge exactly when an operator sets `workDir`
- * in `nimblebrain.json` and leaves `NB_WORK_DIR` unset, which is the bare-metal
- * self-host shape. Probing the wrong root finds no tokens and seeds
- * `not_authenticated` for every remote connector at boot, however many are
- * actually connected — and since a re-connect is admin-gated, a member then
- * hits a hard 403 on a connector that is already working.
- *
- * Each case writes tokens under one root, points `NB_WORK_DIR` at the other,
- * and asserts which state the probe decides on. The third case pins the
- * direction: a probe reading `defaultWorkDir()` passes the first two by
- * coincidence and fails only that one.
+ * The runtime's configured workDir and `NB_WORK_DIR` are set apart so a probe
+ * that resolved its own root instead of the runtime's would be visible.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { ConnectorLifecycleManager } from "../../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
-import { legacyMcpOAuthDir, McpOAuthRecords } from "../../../src/tools/mcp-oauth-records.ts";
+import { McpOAuthRecords } from "../../../src/tools/mcp-oauth-records.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../../helpers/credential-store.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
-const WS = "ws_probe";
+const WS = "ws_006049df791a1f50";
 const SERVER = "remote-thing";
 
 let configuredWorkDir: string;
@@ -39,9 +29,9 @@ let priorEnv: string | undefined;
 
 beforeEach(() => {
   configuredWorkDir = mkdtempSync(join(tmpdir(), "nb-configured-"));
-  seedWorkspaceRoot(configuredWorkDir, "ws_probe");
+  seedWorkspaceRoot(configuredWorkDir, "ws_006049df791a1f50");
   defaultishWorkDir = mkdtempSync(join(tmpdir(), "nb-default-"));
-  seedWorkspaceRoot(defaultishWorkDir, "ws_probe");
+  seedWorkspaceRoot(defaultishWorkDir, "ws_006049df791a1f50");
   installTestCredentialStore(configuredWorkDir);
   priorEnv = process.env.NB_WORK_DIR;
   // The divergence under test: `defaultWorkDir()` resolves here, the runtime's
@@ -58,27 +48,7 @@ afterEach(() => {
 });
 
 function urlConnector(): ConnectorRef {
-  return {
-    type: "url",
-    url: "https://example.invalid/mcp",
-    transport: "http",
-  } as ConnectorRef;
-}
-
-/**
- * Plant a pre-store `tokens.json` under `root`, marking the connector as
- * authenticated there.
- *
- * The legacy file is what still has a *root* to get wrong: the credential
- * store is constructed once, at the composition root, against the runtime's
- * resolved workDir, so the store leg of the probe cannot address the wrong
- * tree. The legacy import leg takes a `workDir` argument, and that argument is
- * what these cases pin.
- */
-function writeTokens(root: string): void {
-  const dir = legacyMcpOAuthDir(root, { type: "workspace", wsId: WS }, SERVER);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "tokens.json"), JSON.stringify({ access_token: "t" }));
+  return { url: "https://example.invalid/mcp", serverName: SERVER };
 }
 
 /**
@@ -88,33 +58,18 @@ function writeTokens(root: string): void {
  * instance, so reading state back would test the instance registry rather than
  * the probe. Capturing the call tests the decision, which is the unit here.
  */
-async function seededState(mgr: ConnectorLifecycleManager): Promise<string | undefined> {
+async function seededState(
+  mgr: ConnectorLifecycleManager,
+  startError?: string,
+): Promise<string | undefined> {
   let seen: string | undefined;
-  (mgr as unknown as { recordConnectionStateChange: unknown }).recordConnectionStateChange = (
-    _server: string,
-    _ws: string,
-    _principal: string,
-    state: string,
-  ): void => {
+  mgr.recordConnectionStateChange = (_server, _ws, _principal, state) => {
     seen = state;
   };
-  await (
-    mgr as unknown as {
-      seedUrlConnectionState: (s: string, w: string, r: ConnectorRef) => Promise<void>;
-    }
-  ).seedUrlConnectionState(SERVER, WS, urlConnector());
+  // biome-ignore lint/complexity/useLiteralKeys: seedUrlConnectionState is private; bracket access is TypeScript's typed path to it
+  await mgr["seedUrlConnectionState"](SERVER, WS, urlConnector(), startError);
   return seen;
 }
-
-test("seeds from the configured workDir, not NB_WORK_DIR", async () => {
-  const mgr = new ConnectorLifecycleManager(new NoopEventSink());
-  mgr.setWorkDir(configuredWorkDir);
-
-  // Connected: the tokens exist under the workDir the runtime resolved.
-  writeTokens(configuredWorkDir);
-
-  expect(await seededState(mgr)).toBe("running");
-});
 
 test("still seeds not_authenticated when no tokens exist anywhere", async () => {
   const mgr = new ConnectorLifecycleManager(new NoopEventSink());
@@ -123,27 +78,64 @@ test("still seeds not_authenticated when no tokens exist anywhere", async () => 
   expect(await seededState(mgr)).toBe("not_authenticated");
 });
 
-test("tokens under NB_WORK_DIR alone do not count as connected", async () => {
-  // The inverse of the first case, and the one that pins the direction: a
-  // probe reading `defaultWorkDir()` would call this connected. It is not —
-  // nothing the runtime writes lives there under this config.
-  const mgr = new ConnectorLifecycleManager(new NoopEventSink());
-  mgr.setWorkDir(configuredWorkDir);
-
-  writeTokens(defaultishWorkDir);
-
-  expect(await seededState(mgr)).toBe("not_authenticated");
-});
-
-test("tokens already in the credential store seed running with no legacy file", async () => {
+test("tokens in the credential store seed running", async () => {
   const mgr = new ConnectorLifecycleManager(new NoopEventSink());
   mgr.setWorkDir(configuredWorkDir);
 
   await new McpOAuthRecords({
     owner: { type: "workspace", wsId: WS },
     serverName: SERVER,
-    workDir: configuredWorkDir,
   }).write("tokens", { access_token: "t" });
 
   expect(await seededState(mgr)).toBe("running");
+});
+
+// ── auth_lost: a broken connection survives a restart ──────────────────
+//
+// The SDK deletes the rejected tokens on `invalid_grant`, so without the flag a
+// connection whose credential was revoked boots exactly like one the user
+// disconnected. The flag is what keeps amber "Reconnect" apart from a neutral
+// "Not connected" across a deploy.
+
+function records(): McpOAuthRecords {
+  return new McpOAuthRecords({
+    owner: { type: "workspace", wsId: WS },
+    serverName: SERVER,
+  });
+}
+
+test("test_seed_authLostWithoutTokens_seedsReauthRequired", async () => {
+  const mgr = new ConnectorLifecycleManager(new NoopEventSink());
+  mgr.setWorkDir(configuredWorkDir);
+  await records().write("auth_lost", { at: "2026-01-01T00:00:00.000Z" });
+
+  expect(await seededState(mgr)).toBe("reauth_required");
+});
+
+test("test_seed_authLostOnFailedBoot_seedsReauthRequiredNotDead", async () => {
+  // The boot that discovers the rejection fails with it; that must still read
+  // as reauth, not as an unreachable endpoint.
+  const mgr = new ConnectorLifecycleManager(new NoopEventSink());
+  mgr.setWorkDir(configuredWorkDir);
+  await records().write("auth_lost", { at: "2026-01-01T00:00:00.000Z" });
+
+  expect(await seededState(mgr, "reauthorization required")).toBe("reauth_required");
+});
+
+test("test_seed_authLostWithWorkingTokens_seedsRunning", async () => {
+  // A refresh that failed with a server error leaves the tokens in place, and
+  // a boot that starts with them is connected.
+  const mgr = new ConnectorLifecycleManager(new NoopEventSink());
+  mgr.setWorkDir(configuredWorkDir);
+  await records().write("auth_lost", { at: "2026-01-01T00:00:00.000Z" });
+  await records().write("tokens", { access_token: "t" });
+
+  expect(await seededState(mgr)).toBe("running");
+});
+
+test("test_seed_failedBootWithoutAuthLost_seedsDead", async () => {
+  const mgr = new ConnectorLifecycleManager(new NoopEventSink());
+  mgr.setWorkDir(configuredWorkDir);
+
+  expect(await seededState(mgr, "ECONNREFUSED")).toBe("dead");
 });

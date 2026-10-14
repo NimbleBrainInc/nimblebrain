@@ -1,13 +1,14 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { type Context, Hono } from "hono";
 import { requireAuth } from "../../../api/middleware/auth.ts";
-import { requireWorkspace } from "../../../api/middleware/workspace.ts";
+import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../../../api/middleware/workspace.ts";
 import {
   profileConnectorsUrl,
   workspaceConnectorsUrl,
 } from "../../../api/routes/connectors-redirect.ts";
-import { SUCCESS_PAGE_CSP, successPageHtml } from "../../../api/routes/oauth-success-page.ts";
-import { type AppContext, type AppEnv, apiError } from "../../../api/types.ts";
+import { reinitiateParagraph, successPage } from "../../../api/routes/oauth-success-page.ts";
+import type { ComposioInitiateResponse } from "../../../api/schemas/responses.ts";
+import { type AppContext, type AppEnv, apiError, json } from "../../../api/types.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../../connectors/runtime/connection.ts";
 import { slugifyServerName } from "../../../connectors/runtime/paths.ts";
 import { type ConnectorOwner, connectorOwnerKey } from "../../../identity/connector-owner.ts";
@@ -22,6 +23,7 @@ import {
   composioCallbackUrl,
   composioUserId,
   findActiveComposioConnection,
+  getComposioAccountDisplayName,
   initiateComposioConnection,
 } from "./sdk.ts";
 
@@ -34,12 +36,12 @@ import {
  *
  * Three endpoints:
  *
- * - `POST /v1/composio-auth/initiate` (workspace-authed): asks
- *   Composio to begin a connection for this workspace, sets a session-
+ * - `POST /v1/workspaces/:wsId/composio-auth/initiate` (workspace-authed):
+ *   asks Composio to begin a connection for this workspace, sets a session-
  *   bound `nb_composio_state` cookie, and returns the redirect URL the
- *   browser should navigate to. **POST-only** + `X-Workspace-Id` header
- *   forces a CORS preflight, killing simple-form CSRF — same posture
- *   as `/v1/mcp-auth/initiate`.
+ *   browser should navigate to. **POST-only**, and a cross-site write under
+ *   `/v1/workspaces/` is refused — same posture as the workspace
+ *   `mcp-auth/initiate`.
  *
  * - `GET /v1/composio-auth/callback` (unauthenticated): the return
  *   leg from Composio after the user consents at the vendor. Recovers
@@ -105,11 +107,11 @@ export function composioAuthRoutes(ctx: AppContext) {
 
   const app = new Hono<AppEnv>();
 
-  // ── POST /v1/composio-auth/initiate ───────────────────────────────
+  // ── POST /v1/workspaces/:wsId/composio-auth/initiate ──────────────
   app.post(
-    "/v1/composio-auth/initiate",
+    `${WORKSPACE_ROUTE_PREFIX}/composio-auth/initiate`,
     requireAuth(ctx.authOptions),
-    requireWorkspace(ctx.workspaceStore),
+    requireWorkspace(ctx),
     async (c) => {
       const parsed = await parseInitiateRequest(c);
       if (parsed instanceof Response) return parsed;
@@ -123,7 +125,7 @@ export function composioAuthRoutes(ctx: AppContext) {
       if (creds instanceof Response) return creds;
       const { apiKey, authConfigId } = creds;
 
-      return connectComposio(ctx, c, {
+      return connectComposio(ctx, {
         entry,
         connectorId,
         owner: { type: "workspace", wsId },
@@ -169,7 +171,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     if (creds instanceof Response) return creds;
     const { apiKey, authConfigId } = creds;
 
-    return connectComposio(ctx, c, {
+    return connectComposio(ctx, {
       entry,
       connectorId,
       owner: { type: "user", userId },
@@ -191,12 +193,20 @@ export function composioAuthRoutes(ctx: AppContext) {
     if (entry instanceof Response) return entry;
 
     const composioUser = composioUserId(owner);
+    // The redirect carries only the account id, so the account's label is one
+    // bounded read. Awaited, not fired after the save: a late rewrite could land
+    // after a Disconnect and put `connection.json` back.
+    const { apiKey } = validateComposioConfig();
+    const displayName = apiKey
+      ? await getComposioAccountDisplayName({ apiKey, connectedAccountId })
+      : undefined;
     const connection: ComposioConnection = {
       connectedAccountId,
       toolkit: entry.composio.toolkit,
       userId: composioUser,
       connectedAt: new Date().toISOString(),
       status,
+      ...(displayName ? { displayName } : {}),
     };
 
     try {
@@ -215,8 +225,9 @@ export function composioAuthRoutes(ctx: AppContext) {
     c.header("Set-Cookie", buildComposioStateCookie("", 0, ctx.secureCookies));
 
     const returnUrl = connectorsReturnUrl(owner);
-    c.header("Content-Security-Policy", SUCCESS_PAGE_CSP);
-    return c.html(successPageHtml("Connection complete", returnUrl));
+    const page = successPage("Connection complete", returnUrl);
+    c.header("Content-Security-Policy", page.csp);
+    return c.html(page.html);
   });
 
   // ── GET /v1/composio-auth/proxy ───────────────────────────────────
@@ -343,7 +354,6 @@ function resolveComposioCredentials(
 /** Reuse an already-ACTIVE Composio account for this owner (adopting it), or null to run a fresh OAuth initiate. */
 async function adoptExistingComposioConnection(
   ctx: AppContext,
-  c: Context<AppEnv>,
   args: {
     entry: ComposioCatalogEntry;
     connectorId: string;
@@ -417,6 +427,7 @@ async function adoptExistingComposioConnection(
         userId: composioUser,
         connectedAt: new Date().toISOString(),
         status: existing.status,
+        ...(existing.displayName ? { displayName: existing.displayName } : {}),
       };
       await saveComposioConnection(ctx.runtime.getWorkDir(), owner, connectorId, connection);
       if (owner.type === "workspace") {
@@ -427,7 +438,7 @@ async function adoptExistingComposioConnection(
           "running",
         );
       }
-      return c.json({
+      return json<ComposioInitiateResponse>({
         authorizationUrl: connectorsReturnUrl(owner),
         alreadyConnected: true,
       });
@@ -449,7 +460,6 @@ async function adoptExistingComposioConnection(
  */
 async function connectComposio(
   ctx: AppContext,
-  c: Context<AppEnv>,
   args: {
     entry: ComposioCatalogEntry;
     connectorId: string;
@@ -458,9 +468,9 @@ async function connectComposio(
     authConfigId: string;
   },
 ): Promise<Response> {
-  const adopted = await adoptExistingComposioConnection(ctx, c, args);
+  const adopted = await adoptExistingComposioConnection(ctx, args);
   if (adopted) return adopted;
-  return initiateFreshComposioConnection(ctx, c, {
+  return initiateFreshComposioConnection(ctx, {
     connectorId: args.connectorId,
     owner: args.owner,
     apiKey: args.apiKey,
@@ -471,7 +481,6 @@ async function connectComposio(
 /** Begin a fresh Composio OAuth connection: bind the state cookie and return the vendor authorization URL. */
 async function initiateFreshComposioConnection(
   ctx: AppContext,
-  c: Context<AppEnv>,
   args: {
     connectorId: string;
     owner: ConnectorOwner;
@@ -522,10 +531,8 @@ async function initiateFreshComposioConnection(
   // that already holds the nonce recomputes it. Kept for parity with
   // /v1/mcp-auth/callback as cheap defense-in-depth.
   const stateHash = sha256Hex(nonce);
-  c.header("Set-Cookie", buildComposioStateCookie(stateHash, 900, ctx.secureCookies));
-
-  return c.json({
-    authorizationUrl: initiateResponse.redirectUrl,
+  return json<ComposioInitiateResponse>({ authorizationUrl: initiateResponse.redirectUrl }, 200, {
+    "Set-Cookie": buildComposioStateCookie(stateHash, 900, ctx.secureCookies),
   });
 }
 
@@ -568,7 +575,7 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
     return c.html(
       `<html><body><h3>Connection failed</h3><pre>${escapeHtml(status)}</pre>` +
-        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+        `${reinitiateParagraph()}</body></html>`,
       400,
     );
   }
@@ -588,7 +595,7 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
     return c.html(
       "<html><body><h3>Authorization session mismatch.</h3>" +
-        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+        `${reinitiateParagraph()}</body></html>`,
       400,
     );
   }
@@ -603,7 +610,7 @@ async function validateCallbackParams(c: Context<AppEnv>): Promise<
     c.header("Content-Security-Policy", ERROR_PAGE_CSP);
     return c.html(
       "<html><body><h3>Unknown or expired authorization flow.</h3>" +
-        "<p>Re-initiate the connection from NimbleBrain.</p></body></html>",
+        `${reinitiateParagraph()}</body></html>`,
       400,
     );
   }
@@ -619,7 +626,7 @@ async function loadCallbackCatalogEntry(
 ): Promise<ComposioCatalogEntry | Response> {
   const directory = ctx.runtime.getConnectorCatalog();
   const entry = await directory.catalogById(cid);
-  if (!entry || entry.auth !== "composio" || !entry.composio) {
+  if (entry?.auth !== "composio" || !entry.composio) {
     return c.text(`connector "${cid}" is not Composio-backed`, 400);
   }
   return entry as ComposioCatalogEntry;
@@ -633,7 +640,7 @@ async function recoverCallbackSource(
 ): Promise<void> {
   // Transition the lifecycle state from `not_authenticated` (set
   // at boot when connection.json was absent) to `running`. Without
-  // this the UI would keep showing "Sign-in required" until the
+  // this the UI would keep showing "Not connected" until the
   // next platform restart, even though tools were already callable.
   //
   // After a Disconnect → Connect cycle, `teardownConnectionSource`

@@ -20,10 +20,10 @@
  * it is a misroute.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { textContent } from "../../../src/engine/content-helpers.ts";
 import type { ToolResult, ToolSchema } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
@@ -140,7 +140,7 @@ function makeRecordingSource(name: string): RecordingSource {
   };
 }
 
-const WS_ID = "ws_helix";
+const WS_ID = "ws_003eba8844413cd9";
 const USER_ID = "u1";
 
 /**
@@ -256,6 +256,7 @@ describe("the orchestrator door agrees with the grammar", () => {
       const source = makeRecordingSource(c.sourcePrefix);
       const lookups: string[] = [];
       const router = new IdentityToolRouter({
+        caller: "chat",
         identityId: USER_ID,
         workspaceId: WS_ID,
         runtime: makeStubRuntime(workDir, [source], lookups),
@@ -274,6 +275,7 @@ describe("the orchestrator door agrees with the grammar", () => {
     const source = makeRecordingSource("plain");
     const lookups: string[] = [];
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: USER_ID,
       workspaceId: WS_ID,
       runtime: makeStubRuntime(workDir, [source], lookups),
@@ -289,6 +291,7 @@ describe("the orchestrator door agrees with the grammar", () => {
   test("an empty source segment is unroutable", async () => {
     const lookups: string[] = [];
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: USER_ID,
       workspaceId: WS_ID,
       runtime: makeStubRuntime(workDir, [makeRecordingSource("leading")], lookups),
@@ -323,6 +326,7 @@ describe("the orchestrator door agrees with the grammar", () => {
       },
     };
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: USER_ID,
       workspaceId: WS_ID,
       runtime,
@@ -354,6 +358,7 @@ describe("the orchestrator door agrees with the grammar", () => {
         },
       };
       const router = new IdentityToolRouter({
+        caller: "chat",
         identityId: USER_ID,
         workspaceId: WS_ID,
         runtime,

@@ -13,16 +13,17 @@ import { createFetchWithRefresh } from "../src/api/fetch-with-refresh";
 const REFRESH = "/v1/auth/refresh";
 
 /** Fake fetch: refresh URL returns `refreshStatus`; the original request walks
- *  `reqStatuses` (first call, then the post-refresh retry). */
-function makeFetch(reqStatuses: number[], refreshStatus: number) {
+ *  `reqStatuses` (first call, then the post-refresh retry). Bun's `typeof fetch`
+ *  also carries a static `preconnect`, which the code under test never calls. */
+function makeFetch(reqStatuses: number[], refreshStatus: number): typeof globalThis.fetch {
   let i = 0;
-  const fn = mock((input: string) => {
+  const handler = (input: string | URL | Request): Promise<Response> => {
     if (input === REFRESH) return Promise.resolve(new Response(null, { status: refreshStatus }));
     const status = reqStatuses[Math.min(i, reqStatuses.length - 1)] ?? 200;
     i++;
     return Promise.resolve(new Response(null, { status }));
-  });
-  return fn as unknown as typeof globalThis.fetch;
+  };
+  return Object.assign(handler, { preconnect: () => {} });
 }
 
 describe("createFetchWithRefresh telemetry", () => {

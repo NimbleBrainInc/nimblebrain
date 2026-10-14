@@ -3,12 +3,16 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ModelNotAllowedError } from "../../../src/runtime/errors.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
+import type { ModelSlots } from "../../../src/runtime/types.ts";
 import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-user-model-pref-${Date.now()}`);
 
@@ -23,7 +27,8 @@ async function start(name: string, allowlist?: string[]) {
   const workDir = join(testDir, name);
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    identityProvider: devProvider,
+    languageModel: createEchoModel(),
     models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
     ...(allowlist ? { providers: { anthropic: { apiKey: "k", models: allowlist } } } : {}),
     workDir,
@@ -34,16 +39,14 @@ async function start(name: string, allowlist?: string[]) {
 
 /** Read the slots as a caller whose profile carries `model`. */
 function slotsFor(runtime: Runtime, model?: string) {
-  const identity = {
+  const identity = makeIdentity({
     id: "usr_test",
     email: "t@example.com",
     displayName: "T",
     orgRole: "member",
     preferences: model === undefined ? {} : { models: { default: model } },
-  } as unknown as UserIdentity;
-  return runWithRequestContext({ identity, workspaceId: null } as never, () =>
-    runtime.getModelSlots(),
-  );
+  });
+  return runWithRequestContext({ identity }, () => runtime.getModelSlots());
 }
 
 describe("a person's model choice applies to their turns", () => {
@@ -115,14 +118,60 @@ describe("a stored choice is re-checked, not trusted", () => {
   });
 });
 
+/** Read the slots inside a workspace whose record carries `models`. */
+function slotsInWorkspace(runtime: Runtime, models: Partial<ModelSlots> | null) {
+  return runWithRequestContext(
+    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, workspaceModelOverride: models },
+    () => runtime.getModelSlots(),
+  );
+}
+
+describe("a workspace's model overrides", () => {
+  const WS_FAST = "anthropic:claude-haiku-4-5-20251001";
+  const WS_DEFAULT = "anthropic:claude-opus-4-6";
+
+  it("replace only the slots they name", async () => {
+    const runtime = await start("ws-partial");
+    try {
+      const slots = slotsInWorkspace(runtime, { fast: WS_FAST });
+      expect(slots.fast).toBe(WS_FAST);
+      expect(slots.default).toBe(CONFIGURED_DEFAULT);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("replace every slot they name", async () => {
+    const runtime = await start("ws-full");
+    try {
+      expect(slotsInWorkspace(runtime, { default: WS_DEFAULT, fast: WS_FAST })).toEqual({
+        default: WS_DEFAULT,
+        fast: WS_FAST,
+      });
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("leave the configured slots when absent or empty", async () => {
+    const runtime = await start("ws-none");
+    try {
+      const configured = { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT };
+      expect(slotsInWorkspace(runtime, null)).toEqual(configured);
+      expect(slotsInWorkspace(runtime, {})).toEqual(configured);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+});
+
 /** Invoke `set_preferences` through the real core tool, as the given user. */
 async function setPreference(runtime: Runtime, userId: string, model: string | null) {
-    const identity = (await runtime.getUserStore().get(userId)) as unknown as UserIdentity;
-    const tool = createCoreToolDefs(runtime).find((d) => d.name === "set_preferences");
-    if (!tool) throw new Error("set_preferences tool not found");
-  return runWithRequestContext({ identity, workspaceId: null } as never, () =>
-    tool.handler({ model }),
-  );
+  const identity: UserIdentity | null = await runtime.getUserStore().get(userId);
+  if (!identity) throw new Error(`user ${userId} not found`);
+  const tool = createCoreToolDefs(runtime).find((d) => d.name === "set_preferences");
+  if (!tool) throw new Error("set_preferences tool not found");
+  return runWithRequestContext({ identity }, () => tool.handler({ model }));
 }
 
 async function seedUser(runtime: Runtime) {
@@ -159,6 +208,20 @@ describe("saving a choice", () => {
     }
   });
 
+  it("refuses a bare model id, naming the qualified form, and stores nothing", async () => {
+    const runtime = await start("save-bare");
+    try {
+      const userId = await seedUser(runtime);
+      const res = await setPreference(runtime, userId, "claude-opus-4-6");
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.content)).toContain('\\"anthropic:claude-opus-4-6\\"');
+      const user = await runtime.getUserStore().get(userId);
+      expect(user?.preferences.models?.default).toBeUndefined();
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("clears the choice on null", async () => {
     const runtime = await start("save-clear", ["claude-sonnet-4-6", "claude-opus-4-6"]);
     try {
@@ -175,8 +238,7 @@ describe("saving a choice", () => {
 
 describe("an empty model id is not a choice", () => {
   // `get_config` reports an unset preference as `""`, so a client that reads
-  // preferences and writes them back sends `""`. Storing it would resolve to
-  // `anthropic:` — the bare-id fallback applied to nothing — and pin every
+  // preferences and writes them back sends `""`. Storing it would pin every
   // conversation that user starts to a model that cannot answer, which they
   // could not correct from chat because correcting it needs a turn.
   it("clears rather than storing, round-tripping the unset sentinel", async () => {
@@ -193,16 +255,16 @@ describe("an empty model id is not a choice", () => {
     }
   });
 
-  // Driven through chat, not through the predicate. Asserting
+  // Driven through chat, not through the predicate: asserting
   // `isModelPermitted("")` passes whether or not the request path reaches the
-  // floor before qualification — which is how the previous version of this
-  // test stayed green while `POST /v1/chat {"model":""}` still went through.
+  // floor before qualification, so it cannot show that a chat turn with
+  // `{"model":""}` is refused.
   it("is refused on the request path, where it is malformed rather than a clear", async () => {
     const runtime = await start("empty-request");
     try {
       for (const model of ["", "   "]) {
         const err = await runtime
-          .chat({ message: "hi", workspaceId: TEST_WORKSPACE_ID, model })
+          .chat({ identity: DEV_IDENTITY, message: "hi", workspaceId: TEST_WORKSPACE_ID, model })
           .then(
             () => null,
             (e) => e,
@@ -227,20 +289,21 @@ describe("a caller's own choice never becomes everyone's default", () => {
     const workDir = join(testDir, "no-leak");
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
     try {
-      const identity = {
+      const identity = makeIdentity({
         id: "usr_admin",
         email: "a@example.com",
         displayName: "A",
-        orgRole: "owner",
+        orgRole: "admin",
         preferences: { models: { default: CHOSEN } },
-      } as unknown as UserIdentity;
+      });
 
-      runWithRequestContext({ identity, workspaceId: null } as never, () =>
+      runWithRequestContext({ identity }, () =>
         runtime.updateConfig({ models: { fast: "anthropic:claude-haiku-4-5-20251001" } }),
       );
 
@@ -261,32 +324,30 @@ describe("the settings view is the configured one", () => {
     const workDir = join(testDir, "settings-view");
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
       models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
       workDir,
     });
     await provisionTestWorkspace(runtime);
     try {
-      const identity = {
+      const identity = makeIdentity({
         id: "usr_admin",
         email: "a@example.com",
         displayName: "A",
-        orgRole: "owner",
+        orgRole: "admin",
         preferences: { models: { default: CHOSEN } },
-      } as unknown as UserIdentity;
+      });
 
       const tool = createCoreToolDefs(runtime).find((d) => d.name === "get_config");
       if (!tool) throw new Error("get_config not found");
-      const { config, slots } = await runWithRequestContext(
-        { identity, workspaceId: null } as never,
-        async () => ({
-          config: (await tool.handler({})).structuredContent as {
-            models: { default: string };
-            newConversationModel: string;
-          },
-          slots: runtime.getModelSlots(),
-        }),
-      );
+      const { config, slots } = await runWithRequestContext({ identity }, async () => ({
+        config: (await tool.handler({})).structuredContent as {
+          models: { default: string };
+          newConversationModel: string;
+        },
+        slots: runtime.getModelSlots(),
+      }));
 
       // The same caller, in the same context, sees both: their own choice on
       // the turn, and the untinted configured value on the settings surface.

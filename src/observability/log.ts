@@ -43,8 +43,8 @@
  *   - `notify` — notification envelopes, outbox declarations and poll results
  *     dropped at parse, and sweeps the poller skipped
  *
- * Keep this list in sync with the CLAUDE.md "Debug Logging" section so it's
- * discoverable without reading source.
+ * Keep this list in sync with the "Debug Logging" section of
+ * src/observability/AGENTS.md so it's discoverable without reading source.
  */
 
 import { requestIdentityAttrs } from "./identity.ts";

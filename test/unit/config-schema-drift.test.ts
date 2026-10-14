@@ -1,17 +1,22 @@
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, test } from "bun:test";
 import { resolveFeatures } from "../../src/config/features.ts";
+import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
+import {
+  resolveTasksConfig,
+  TASKS_CONFIG_BOUNDS,
+  TASKS_CONFIG_KEYS,
+} from "../../src/config/tasks.ts";
 import {
   COMPOSIO_PROVIDER_CONFIG_KEYS,
-  GATEWAY_CONFIG_KEYS,
-  SMITHERY_PROVIDER_CONFIG_KEYS,
   CONNECTORS_CONFIG_KEYS,
+  GATEWAY_CONFIG_KEYS,
   MANAGED_PROVIDER_KEYS,
+  SMITHERY_PROVIDER_CONFIG_KEYS,
 } from "../../src/connectors/providers/config.ts";
 import { MODEL_SLOTS } from "../../src/model/slots.ts";
 import { NOTIFICATIONS_POLL_CONFIG_KEYS } from "../../src/notifications/poll-config.ts";
-import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
 
 /**
  * Drift guard: the published config schema must stay in lockstep with the
@@ -41,6 +46,9 @@ const schema = JSON.parse(
 ) as {
   properties: {
     features: SchemaObject;
+    tasks: SchemaObject & {
+      properties: Record<string, { minimum: number; maximum: number; default?: number }>;
+    };
     models: SchemaObject;
     notifications: SchemaObject & {
       properties: { poll: SchemaObject };
@@ -49,7 +57,7 @@ const schema = JSON.parse(
     connectors: SchemaObject & {
       properties: {
         providers: SchemaObject & {
-          properties: { composio: SchemaObject };
+          properties: { composio: SchemaObject; smithery: SchemaObject };
         };
         // Gateway names are operator-chosen, so the map itself is open and the
         // per-gateway object under `additionalProperties` is what is closed.
@@ -132,6 +140,26 @@ describe("config schema ↔ notification poll config", () => {
   // The parent carries exactly one member today; declaring it keeps a future
   // `notifications.<something>` from landing in the schema alone.
   expectLockstep("notifications", schema.properties.notifications, ["poll"]);
+});
+
+describe("config schema ↔ tasks config", () => {
+  // `TASKS_CONFIG_KEYS` is derived from the bounds the resolver clamps
+  // against, so a key the runtime reads is a key the schema must declare.
+  expectLockstep("tasks", schema.properties.tasks, TASKS_CONFIG_KEYS);
+
+  // The schema's range and default are what an editor offers, and the
+  // resolver's are what runs; a ceiling with no default must not advertise one.
+  test("tasks: each key's range and default match the resolver's", () => {
+    const resolved = resolveTasksConfig();
+    for (const key of TASKS_CONFIG_KEYS) {
+      const declared = schema.properties.tasks.properties[key];
+      expect({ key, min: declared?.minimum, max: declared?.maximum }).toEqual({
+        key,
+        ...TASKS_CONFIG_BOUNDS[key],
+      });
+      expect({ key, default: declared?.default }).toEqual({ key, default: resolved[key] });
+    }
+  });
 });
 
 describe("config schema ↔ secrets block", () => {

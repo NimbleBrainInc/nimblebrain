@@ -32,8 +32,30 @@ it belongs in an MCP server, a Synapse app, or upstream MCP — not the runtime.
 ### Workspace
 The authorization boundary (ADR-0001). A session reaches exactly **one**
 workspace plus the caller's identity tools — never a union across workspaces. A
-non-personal workspace has an opaque id `ws_<16-hex>`, members, and roles
-(`admin` | `member`).
+workspace has an opaque, generated id (`ws_<16-hex>`, the only form boot
+accepts, ADR-0042), members, and roles
+(`admin` | `member`). How a workspace came to exist never changes what it is
+(ADR-0039).
+
+An MCP connection is addressed to one workspace by URL: `<publicOrigin>/mcp/<wsId>`
+(ADR-0036). Bare `/mcp` names none and is refused. A token from the MCP
+authorization server is valid only at the URL its `aud` names exactly. A
+first-party credential is bound to no resource: the instance's login session,
+or an authorization-server token issued to a client the operator configures as
+its own (ADR-0038). A credential's audience says where it may be used; the
+client it was issued to says whose app holds it, and only a configured
+first-party client gets first-party standing. Either way, **membership of
+`<wsId>`, checked per request, authorizes** — the audience only prevents replay.
+An MCP request is bound to (identity, workspace); `/mcp/<wsId>` keeps no session (ADR-0048).
+
+REST addresses a workspace the same way: `/v1/workspaces/<wsId>/…` (ADR-0037),
+admitted by the same membership check. A route either acts on a workspace and
+names it in its path, or acts on the caller or on a primitive its own id
+locates (bootstrap, the event stream, a conversation, a file) and names none.
+No header, argument, qualified name or default selects a workspace for a request, and a conversation is resumed only at its own workspace's path. The
+URL is the only thing that names a workspace: bootstrap returns the caller's
+workspaces and no focus (ADR-0044). A kernel tool that acts on the caller or
+the org needs no workspace and is called without one (ADR-0043).
 
 A workspace exists because `create` made it and stops existing because `delete`
 archived it. **No write brings one into being**: a writer may create paths
@@ -42,10 +64,20 @@ So a workspace directory on disk is always one a create produced, which is what
 lets `list()` treat an unparseable `workspace.json` as corruption rather than as
 a tree some writer conjured.
 
-### Personal workspace
-A user's own workspace, `ws_user_<userId>`, sole-owned. It is a workspace like
-any other — "everything is workspace-bound" holds with no "no-workspace" void.
-Home = your personal workspace.
+### First workspace
+A user who belongs to no workspace gets one at bootstrap, named for them with
+them as admin. It is an ordinary workspace — it can be shared, and nothing
+marks how it was made (ADR-0039) or makes it the one the user opens. `/` takes
+a user in exactly one workspace into it and shows anyone else all of theirs
+(ADR-0044).
+
+### Identity provider
+What authenticates a request and says who made it, named by `auth.adapter` in
+`instance.json`: `dev` (every request is one local developer, an org admin),
+`oidc` or `workos`. It is always a choice: with no `instance.json` (and none
+passed in) the runtime does not start, and no request is admitted as `dev`
+because the file is absent. Every run names its caller and its workspace
+(ADR-0040).
 
 ### Owner
 The authenticated principal a primitive belongs to. Stored as an `<ownerId>`
@@ -67,20 +99,20 @@ A tool name's shape is its scope (ADR-0005). **Workspace tools** are bare
 `<source>__<tool>` — the workspace is not in the name, so another one cannot be
 addressed. **Personal connectors** carry a reserved `my_` marker
 (`my_gmail__send`). **Identity tools** (kernel sources — conversations, files,
-automations) are bare too, owned by the user, outside any workspace. The source
+tasks) are bare too, owned by the user, outside any workspace. The source
 segment alone decides which door a call takes.
 
 **Two senses of "owned" meet here.** A kernel source is *identity*-owned — the
 tool is the user's and takes the identity door in every workspace. The data it
-reaches is *workspace*-owned — each conversation, file, and automation sits in
+reaches is *workspace*-owned — each conversation, file, and task sits in
 one workspace's partition (ADR-0003). Identity-owned door, workspace-owned
 data; both are true at once, and the wall is the second one.
 
-### Primitive (conversation / file / automation)
+### Primitive (conversation / file / task)
 Workspace-owned, stored at `workspaces/<wsId>/<primitive>/<ownerId>/`
 (ADR-0003). The path is authoritative; `workspaceId`/`ownerId` on the record are
 denormalised. Private to the owner by default (ADR-0004). **Active use**
-(resuming a conversation, running an automation, reaching the workspace's tools)
+(resuming a conversation, running a task, reaching the workspace's tools)
 requires **current membership** of the primitive's workspace — checked at session
 establishment, so offboarding revokes reach; **reading** your own authored
 primitive stays owner-gated (ADR-0007).
@@ -104,7 +136,7 @@ fields it defined and never the server's opaque `data`.
 ### Source
 Any tool/resource provider behind the MCP boundary. Every source is one
 `McpSource` over one transport union (ADR-0022): a remote server over HTTPS, or
-one of the kernel's own capabilities — conversations, files, automations,
+one of the kernel's own capabilities — conversations, files, tasks,
 skills — served by a real MCP server on an in-memory linked-pair transport. The
 platform's own capabilities are MCP servers to themselves, so nothing above the
 source can tell them apart.
@@ -120,8 +152,8 @@ the process, which is what host-owned `_meta` markers are conditioned on
 (ADR-0014, ADR-0024).
 
 ### Platform app
-One of the kernel's own capabilities, expressed as a source: home,
-conversations, files, automations, usage, skills, instructions, hooks,
+One of the kernel's own capabilities, expressed as a source:
+conversations, files, tasks, usage, skills, instructions, hooks,
 notifications, compose. Each is an in-process MCP server the runtime hosts
 rather than connects to — there is no URL, no credential, and no connection
 to supervise, so none of what the *Connection* entry below describes applies
@@ -159,19 +191,33 @@ role only — never invocation** (ADR-0026); the session it returns is an ordina
 remote source. `dcr` and `static` are runtime-native and stay outside the seam.
 
 ### Task augmentation
-How a long-running tool call is made without holding a socket open. A server
-marks a tool `execution.taskSupport`; the runtime attaches a task, polls the
-stream, and can cancel (ADR-0029). The retry policy inverts with it: an inline
+How a long-running tool call is made without holding a socket open: the
+2026-07-28 tasks extension, and only that (ADR-0046). The server decides per call
+whether to answer with a task; the runtime polls it and can cancel (ADR-0029). A
+2025-era connection never carries a task: `/mcp` serves only 2026-07-28
+(ADR-0048), and the runtime calls a 2025-era connector's tools inline or refuses
+one that requires a task. The retry policy inverts with it: an inline
 call is re-issued once on a transport error, and a task call is **never**
 retried — it has already created server-side state, so replaying it would
 duplicate the side effect.
+
+### Task *(proposed, ADR-0045)*
+The unattended primitive: a definition (what to do, optional schemas and
+acceptance criteria, limits, and an **optional** trigger) and its **runs**. A
+scheduled task has a trigger; a one-off is a task run once with none; a
+batch is one task run over many inputs. A run's outcome has two parts:
+*execution* (how it ended) and *assessment* (whether the deliverable is
+acceptable). Not the same word as *task augmentation*: that is how a run travels
+over MCP, not what a run is.
 
 ### Skill
 A unit of guidance in the Agent Skills format. The file is the standard,
 unmodified, with the runtime's own configuration nested under
 `metadata.nimblebrain` and validated by one schema (ADR-0009). A skill comes off
-the filesystem, off an MCP server's `skill://…/SKILL.md` resource (a peer, not a
-lesser kind — ADR-0011), or from a curated connector overlay (ADR-0013).
+the filesystem, from an MCP server's `skills/list` under the MCP Skills
+Extension (a peer, not a lesser kind; its body fetched when needed and verified
+against the listed digest — ADR-0011), or from a curated connector overlay
+(ADR-0013).
 
 ### Role / channel
 A skill's declared `loading-strategy`, and the prompt channel that follows from
@@ -206,6 +252,11 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0006](adr/0006-personal-connector-use-requires-a-grant.md) — personal-connector use in a shared workspace requires a grant
 - [0007](adr/0007-offboarding-revokes-active-use.md) — offboarding revokes active use; ownership is necessary, not sufficient
 - [0008](adr/0008-notifications-are-pulled-and-routed-by-the-operator.md) — notifications are pulled into a workspace inbox and routed by the operator
+- [0036](adr/0036-an-mcp-connection-is-addressed-to-one-workspace-by-url.md) — an MCP connection is addressed to one workspace by URL; a token is valid only for its resource; membership authorizes (amended by 0048)
+- [0037](adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md) — a workspace is addressed by URL on every surface; a route is workspace-scoped or identity-scoped, and its path says which
+- [0038](adr/0038-a-credential-is-first-party-by-the-client-it-was-issued-to.md) — a credential's audience says where it may be used; the client it was issued to says whose app holds it; only a configured first-party client gets first-party standing
+- [0039](adr/0039-the-first-workspace-is-an-ordinary-workspace.md) — the workspace provisioned for a user is an ordinary workspace; the default a user lands in is a preference
+- [0040](adr/0040-the-identity-provider-is-chosen-never-defaulted.md) — `instance.json` names the identity provider, `dev` included; with none, the server does not start
 
 Manage skills:
 
@@ -227,15 +278,22 @@ Orchestrate over remote MCP:
 - [0020](adr/0020-the-runtime-connects-it-does-not-acquire.md) — the runtime orchestrates over remote MCP; it does not acquire or execute a server's code
 - [0021](adr/0021-one-run-start-door.md) — one run-start door; delegation is not a kernel capability
 - [0022](adr/0022-one-source-type-over-one-transport-union.md) — every source is one `McpSource` over one transport union
-- [0023](adr/0023-client-capability-advertisement.md) — the client advertises `tasks` and `extensions`, and nothing it does not serve
+- [0023](adr/0023-client-capability-advertisement.md) — the client advertises `extensions` and nothing it does not serve; `tasks` only as the 2026 extension (amended by 0046, 0050)
 - [0024](adr/0024-private-extensions-live-under-one-reverse-dns-namespace.md) — private extensions live under `ai.nimblebrain/*`, and reuse the spec's schemas
 - [0025](adr/0025-hook-declarations-come-from-the-operator-trusted-catalog.md) — hook declarations come from operator-trusted catalog metadata
 - [0026](adr/0026-a-brokered-provider-owns-auth-and-session-only.md) — a brokered provider owns auth-and-session only, never invocation
 - [0027](adr/0027-persisted-state-names-the-credential-not-the-value.md) — persisted state names *what* credential it needs, never *where* the value lives
 - [0028](adr/0028-two-disjoint-health-loops.md) — two disjoint health loops: process liveness and credential liveness
-- [0029](adr/0029-long-running-tools-are-task-augmented-and-never-retried.md) — long-running tools are task-augmented; task calls never retry
+- [0029](adr/0029-long-running-tools-are-task-augmented-and-never-retried.md) — long-running tools are task-augmented; task calls never retry (amended by 0046)
 - [0030](adr/0030-consuming-resource-update-notifications.md) — *(proposed)* how far resource-update consumption generalizes
 - [0031](adr/0031-which-tool-annotations-the-consent-model-reads.md) — *(proposed)* which spec `ToolAnnotations` the consent model reads
 - [0032](adr/0032-provider-typed-ref-blocks-on-persisted-state.md) — *(proposed)* the provider-typed blocks on persisted connector state
 - [0033](adr/0033-an-events-family-names-its-subject.md) — an event's family names its subject; process liveness is a connector fact
 - [0035](adr/0035-the-secrets-backend-is-configuration-and-a-sealed-value-opens-or-refuses.md) — the secrets backend is configuration; a value that claims to be sealed opens or refuses
+- [0045](adr/0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) — *(proposed)* a task is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment
+- [0046](adr/0046-task-augmentation-is-the-2026-tasks-extension-only.md) — task augmentation is the 2026-07-28 tasks extension, inbound, outbound and app to host; the 2025-11-25 tasks utility is not spoken (amended by 0048)
+- [0047](adr/0047-the-door-decides-a-run-and-an-execution-provider-runs-it.md) — *(proposed)* the door decides a run and an execution provider runs it; in-process is the default and the reference; a remote execution provider gets a resolved spec and a run-scoped credential, and calls back through `/mcp` and a runtime-hosted model endpoint
+- [0048](adr/0048-mcp-serves-2026-07-28-only.md) — `/mcp/<wsId>` serves 2026-07-28 only, per request, with no session; the runtime as a client still falls back to 2025-11-25 for a connector
+- [0049](adr/0049-the-agent-reads-a-connectors-records-as-resources.md) — a connector's resource templates are named in its prompt entry, bounded; a non-skill `read_resource` returns up to the tool-result limit
+- [0050](adr/0050-a-servers-url-request-reaches-a-person-or-comes-back-as-a-link.md) — an inline `/mcp/<wsId>` call carries the outside client's capabilities to the connector and relays its input requests back, each elicitation naming the connector; the connector's `requestState` travels sealed to the caller, workspace, tool and arguments; tasks and the runtime's own turns claim nothing
+- [0052](adr/0052-a-view-opens-what-it-names-by-uri.md) — a view or the agent opens a place by URI (`ai.nimblebrain/open`) and the host finds who shows it: a kernel scheme, an app's `ui://` root, or the one app whose resource template matches; opening one's own connector settings is a separate parameterless request

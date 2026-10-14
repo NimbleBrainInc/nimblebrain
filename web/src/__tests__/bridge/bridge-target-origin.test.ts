@@ -14,17 +14,11 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { realMcpBridgeClient } from "../../../test/setup";
 
 mock.module("../../mcp-bridge-client", () => ({
-  getMcpBridgeClient: async () => ({
-    callTool: async () => ({ content: [], structuredContent: {} }),
-    readResource: async () => ({ contents: [] }),
-    request: async () => ({}),
-    setNotificationHandler: () => {},
-    removeNotificationHandler: () => {},
-  }),
-  resetMcpBridgeClient: () => {},
-  withSessionRetry: async <T>(op: () => Promise<T>): Promise<T> => op(),
+  ...realMcpBridgeClient,
+  sendMcpRequest: mock(async () => ({ result: { content: [] } })),
 }));
 
 const { createBridge } = await import("../../bridge/bridge");
@@ -58,8 +52,7 @@ function makeTestIframe(): TestIframe {
   });
 
   function send(data: unknown): void {
-    const WindowMessageEvent = (window as unknown as { MessageEvent: typeof MessageEvent })
-      .MessageEvent;
+    const WindowMessageEvent = window.MessageEvent;
     const event = new WindowMessageEvent("message", { data });
     Object.defineProperty(event, "source", {
       configurable: true,

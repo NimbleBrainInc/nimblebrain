@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { extractText, textContent } from "../../src/engine/content-helpers.ts";
-import { type InProcessTool } from "../../src/tools/in-process-app.ts";
+import type { InProcessTool } from "../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
@@ -128,7 +128,7 @@ describe("ToolRegistry", () => {
     registry.addSource(a);
     registry.addSource(b);
 
-    expect((await registry.availableTools())).toHaveLength(2);
+    expect(await registry.availableTools()).toHaveLength(2);
 
     await registry.removeSource("a");
 
