@@ -67,7 +67,7 @@ describe("MCP extension docs", () => {
   test("the scan finds the runtime's declared keys", () => {
     // Guards the guard: a regex that stops matching would pass vacuously.
     expect(keys.has("ai.nimblebrain/host-resources")).toBe(true);
-    expect(keys.has("ai.nimblebrain/action")).toBe(true);
+    expect(keys.has("ai.nimblebrain/open")).toBe(true);
   });
 
   test("every declared ai.nimblebrain/* key is documented in docs/…/{extensions,mcp}/", () => {
