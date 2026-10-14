@@ -1,5 +1,5 @@
-import { structuredContent, textContent } from "../../engine/content-helpers.ts";
-import type { EventSink, ToolResult } from "../../engine/types.ts";
+import { textContent } from "../../engine/content-helpers.ts";
+import type { EventSink } from "../../engine/types.ts";
 import {
   DEFAULT_SOURCE_MAX_LEVEL,
   ROUTES_EXECUTE,
@@ -22,7 +22,14 @@ import { notificationId, parseNotificationId } from "../../notifications/types.t
 import { toNotificationView } from "../../notifications/view.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import { defineInProcessApp, type InProcessTool, typedTool } from "../../tools/in-process-app.ts";
+import {
+  defineInProcessApp,
+  type InProcessTool,
+  type ToolErrorResult,
+  type ToolSuccessResult,
+  type TypedToolResult,
+  typedTool,
+} from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import {
@@ -30,14 +37,15 @@ import {
   NOTIFICATION_SOURCES_MAX,
   type NotificationSourceView,
   NotificationsListInput,
-  type NotificationsListOutput,
+  NotificationsListOutput,
   NotificationsMarkReadInput,
-  type NotificationsMarkReadOutput,
+  NotificationsMarkReadOutput,
   NotificationsSendTestInput,
+  NotificationsSendTestOutput,
   NotificationsSetRoutesInput,
   NotificationsSetSourceLevelInput,
   NotificationsSettingsInput,
-  type NotificationsSettingsOutput,
+  NotificationsSettingsOutput,
 } from "../schemas/notifications.ts";
 import { isEventSchedule } from "../tasks/types.ts";
 
@@ -129,6 +137,18 @@ function listOptionsFrom(args: NotificationsListInput): NotificationListOptions 
 }
 
 /**
+ * A success: the model reads `data` as JSON text, and the SDK checks
+ * `structuredContent` against the tool's output schema.
+ */
+function ok<T>(data: T): ToolSuccessResult<T> {
+  return {
+    content: textContent(JSON.stringify(data, null, 2)),
+    structuredContent: data,
+    isError: false,
+  };
+}
+
+/**
  * The outboxes one poller sweep may read.
  *
  * One catalog per sweep, shared by every installed connector's lookup. A
@@ -164,19 +184,18 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
   }
 
   /**
-   * Shared error handler — catches, formats, returns an isError result.
-   *
-   * The payload goes in `content` and nowhere else. Only `content` reaches the
-   * model (the engine sends `extractTextForModel(result.content)`), and these
-   * items exist to be read by the agent, so a second copy in
-   * `structuredContent` would be bytes on the wire that nothing reads. The
-   * shape is pinned by the named `XxxOutput` declaration at each call site,
-   * which is what the output-type convention actually rests on.
+   * Runs a handler as a tool result: a throw becomes an `isError` result
+   * carrying its message, and a success goes out through {@link ok}: the model reads the JSON in
+   * `content` (the engine sends `extractTextForModel(result.content)`), and the
+   * same object is `structuredContent`, which the SDK checks against the
+   * tool's output schema and the web shell reads.
    */
-  function withErrorHandling<I>(fn: (input: I) => object): (input: I) => Promise<ToolResult> {
+  function withErrorHandling<I, T>(
+    fn: (input: I) => T,
+  ): (input: I) => Promise<ToolSuccessResult<T> | ToolErrorResult> {
     return async (input) => {
       try {
-        return { content: textContent(JSON.stringify(fn(input), null, 2)), isError: false };
+        return ok(fn(input));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { content: textContent(JSON.stringify({ error: message })), isError: true };
@@ -192,7 +211,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
    * reads — and in `structuredContent` so a programmatic caller sees the same
    * string without parsing prose.
    */
-  function refuse(message: string): ToolResult {
+  function refuse(message: string): ToolErrorResult {
     return { content: textContent(message), structuredContent: { error: message }, isError: true };
   }
 
@@ -288,7 +307,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
       routes: config.routes ?? [],
       deliverableTools,
       tasks: ownTasks(),
-      placeholders: NOTIFICATION_PLACEHOLDERS,
+      placeholders: [...NOTIFICATION_PLACEHOLDERS],
       routesExecuted: ROUTES_EXECUTE,
     };
   }
@@ -298,16 +317,11 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     wsId: string,
     mutate: (current: WorkspaceNotificationsConfig) => WorkspaceNotificationsConfig,
     field: string,
-  ): Promise<ToolResult> {
+  ): Promise<TypedToolResult<typeof NotificationsSettingsOutput>> {
     const written = await updateNotificationsConfig(runtime.getWorkspaceStore(), wsId, mutate);
     if (written === null) return refuse(`Workspace "${wsId}" not found.`);
     eventSink.emit({ type: "config.changed", data: { fields: [field] } });
-    const out = await readSettings(wsId);
-    return {
-      content: textContent(JSON.stringify(out, null, 2)),
-      structuredContent: structuredContent(out),
-      isError: false,
-    };
+    return ok(await readSettings(wsId));
   }
 
   const dispatcher = new RouteDispatcher({
@@ -328,14 +342,15 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
       name: "list",
       description: LIST_DESCRIPTION,
       inputSchema: NotificationsListInput,
-      handler: withErrorHandling((args) => {
+      outputSchema: NotificationsListOutput,
+      handler: withErrorHandling((args: NotificationsListInput): NotificationsListOutput => {
         if (args.since !== undefined && Number.isNaN(Date.parse(args.since))) {
           throw new Error(`"since" is not an ISO 8601 instant: ${args.since}`);
         }
         const store = currentStore();
         const { items, unread, hasMore } = store.listWithUnread(listOptionsFrom(args));
         const notifications = items.map(toNotificationView);
-        const out: NotificationsListOutput = {
+        return {
           notifications,
           unread,
           hasMore,
@@ -343,60 +358,61 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
             ? { cursor: Math.max(...notifications.map((n) => n.seq)) }
             : {}),
         };
-        return out;
       }),
     }),
     typedTool({
       name: "mark_read",
       description: MARK_READ_DESCRIPTION,
       inputSchema: NotificationsMarkReadInput,
-      handler: withErrorHandling((input) => {
-        const { ids } = input;
-        const refs: NotificationRef[] = [];
-        for (const id of ids) {
-          const ref = parseNotificationId(id);
-          if (ref) refs.push(ref);
-        }
-        // Read state is shared across the workspace, so the caller's identity
-        // is recorded rather than used as a partition key: the row says who
-        // cleared it, and a second member marking it again changes nothing.
-        const marked = new Set(
-          currentStore()
-            .markRead(refs, runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined))
-            .map(notificationId),
-        );
-        const out: NotificationsMarkReadOutput = {
-          // A malformed id never became a ref, so it is already in the
-          // complement — `skipped` is every id the store did not just change,
-          // whatever the reason.
-          marked: [...marked],
-          skipped: ids.filter((id) => !marked.has(id)),
-        };
-        return out;
-      }),
+      outputSchema: NotificationsMarkReadOutput,
+      handler: withErrorHandling(
+        (input: NotificationsMarkReadInput): NotificationsMarkReadOutput => {
+          const { ids } = input;
+          const refs: NotificationRef[] = [];
+          for (const id of ids) {
+            const ref = parseNotificationId(id);
+            if (ref) refs.push(ref);
+          }
+          // Read state is shared across the workspace, so the caller's identity
+          // is recorded rather than used as a partition key: the row says who
+          // cleared it, and a second member marking it again changes nothing.
+          const marked = new Set(
+            currentStore()
+              .markRead(
+                refs,
+                runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined),
+              )
+              .map(notificationId),
+          );
+          return {
+            // A malformed id never became a ref, so it is already in the
+            // complement — `skipped` is every id the store did not just change,
+            // whatever the reason.
+            marked: [...marked],
+            skipped: ids.filter((id) => !marked.has(id)),
+          };
+        },
+      ),
     }),
-    {
+    typedTool({
       name: "settings",
       description: SETTINGS_DESCRIPTION,
       meta: { ui: { visibility: ["app"] } },
       inputSchema: NotificationsSettingsInput,
-      handler: async (): Promise<ToolResult> => {
+      outputSchema: NotificationsSettingsOutput,
+      handler: async () => {
         const auth = await requireAdmin();
         if (!auth.ok) return refuse(auth.reason);
-        const out = await readSettings(auth.wsId);
-        return {
-          content: textContent(JSON.stringify(out, null, 2)),
-          structuredContent: structuredContent(out),
-          isError: false,
-        };
+        return ok(await readSettings(auth.wsId));
       },
-    },
+    }),
     typedTool({
       name: "set_source_level",
       description: SET_SOURCE_LEVEL_DESCRIPTION,
       meta: { ui: { visibility: ["app"] } },
       inputSchema: NotificationsSetSourceLevelInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: NotificationsSettingsOutput,
+      handler: async (input) => {
         const auth = await requireAdmin();
         if (!auth.ok) return refuse(auth.reason);
         const { source, maxLevel } = input;
@@ -428,7 +444,8 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
       description: SET_ROUTES_DESCRIPTION,
       meta: { ui: { visibility: ["app"] } },
       inputSchema: NotificationsSetRoutesInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: NotificationsSettingsOutput,
+      handler: async (input) => {
         const auth = await requireAdmin();
         if (!auth.ok) return refuse(auth.reason);
         const { routes } = input;
@@ -453,7 +470,8 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
       description: SEND_TEST_DESCRIPTION,
       meta: { ui: { visibility: ["app"] } },
       inputSchema: NotificationsSendTestInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: NotificationsSendTestOutput,
+      handler: async (input) => {
         const auth = await requireAdmin();
         if (!auth.ok) return refuse(auth.reason);
         const { routeId } = input;
@@ -470,11 +488,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
           dispatcher,
           declaredSources: (await runtime.listNotificationSources(auth.wsId)).map((e) => e.source),
         });
-        return {
-          content: textContent(JSON.stringify(out, null, 2)),
-          structuredContent: structuredContent(out),
-          isError: false,
-        };
+        return ok(out);
       },
     }),
   ];

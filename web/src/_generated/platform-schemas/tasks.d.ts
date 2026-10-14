@@ -768,8 +768,8 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
         toolCalls: number;
         inputTokens: number;
         outputTokens: number;
-        taskId: string;
         label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
+        taskId: string;
         startedAt: string;
         iterations: number;
         execution: "skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete";
@@ -863,8 +863,8 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
         toolCalls: number;
         inputTokens: number;
         outputTokens: number;
-        taskId: string;
         label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
+        taskId: string;
         startedAt: string;
         iterations: number;
         execution: "skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete";
@@ -1318,8 +1318,8 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         toolCalls: number;
         inputTokens: number;
         outputTokens: number;
-        taskId: string;
         label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
+        taskId: string;
         startedAt: string;
         iterations: number;
         execution: "skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete";
@@ -1759,6 +1759,7 @@ export declare const TaskBatchView: import("@sinclair/typebox").TObject<{
     costUsd: import("@sinclair/typebox").TNumber;
     completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     updatedAt: import("@sinclair/typebox").TString;
+    createdBy: import("@sinclair/typebox").TString;
     items: import("@sinclair/typebox").TNumber;
     concurrency: import("@sinclair/typebox").TNumber;
     budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1785,7 +1786,6 @@ export declare const TaskBatchView: import("@sinclair/typebox").TObject<{
         skipped: import("@sinclair/typebox").TNumber;
         cancelled: import("@sinclair/typebox").TNumber;
     }>;
-    createdBy: import("@sinclair/typebox").TString;
     done: import("@sinclair/typebox").TNumber;
     passRate: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>;
 }>;
@@ -1819,6 +1819,7 @@ export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         updatedAt: import("@sinclair/typebox").TString;
+        createdBy: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1845,7 +1846,6 @@ export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
             skipped: import("@sinclair/typebox").TNumber;
             cancelled: import("@sinclair/typebox").TNumber;
         }>;
-        createdBy: import("@sinclair/typebox").TString;
         done: import("@sinclair/typebox").TNumber;
         passRate: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>;
     }>;
@@ -1869,6 +1869,7 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         updatedAt: import("@sinclair/typebox").TString;
+        createdBy: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1895,7 +1896,6 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
             skipped: import("@sinclair/typebox").TNumber;
             cancelled: import("@sinclair/typebox").TNumber;
         }>;
-        createdBy: import("@sinclair/typebox").TString;
         done: import("@sinclair/typebox").TNumber;
         passRate: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>;
     }>;
@@ -1931,6 +1931,7 @@ export declare const TasksBatchControlOutput: import("@sinclair/typebox").TObjec
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         updatedAt: import("@sinclair/typebox").TString;
+        createdBy: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1957,7 +1958,6 @@ export declare const TasksBatchControlOutput: import("@sinclair/typebox").TObjec
             skipped: import("@sinclair/typebox").TNumber;
             cancelled: import("@sinclair/typebox").TNumber;
         }>;
-        createdBy: import("@sinclair/typebox").TString;
         done: import("@sinclair/typebox").TNumber;
         passRate: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>;
     }>;
@@ -1977,6 +1977,7 @@ export declare const TasksBatchesOutput: import("@sinclair/typebox").TObject<{
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         updatedAt: import("@sinclair/typebox").TString;
+        createdBy: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -2003,7 +2004,6 @@ export declare const TasksBatchesOutput: import("@sinclair/typebox").TObject<{
             skipped: import("@sinclair/typebox").TNumber;
             cancelled: import("@sinclair/typebox").TNumber;
         }>;
-        createdBy: import("@sinclair/typebox").TString;
         done: import("@sinclair/typebox").TNumber;
         passRate: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>;
     }>>;
