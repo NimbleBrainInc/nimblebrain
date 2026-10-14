@@ -67,19 +67,6 @@ router.get("/b", (c) => c.text("b"));
 const use = (x: unknown) => x;
 use(router);
 `,
-  "platform-object-return.grit": `
-export function a(): object { return {}; } // flagged
-export async function b(): Promise<object> { return {}; } // flagged
-export const c = (): Promise<object> | object => ({}); // flagged
-export const d = function (): (object) { return {}; }; // flagged
-export const e = { m(): object { return {}; } }; // flagged
-export class F { m(): Promise<object | null> { return Promise.resolve(null); } } // flagged
-export function g(): Record<string, object> { return {}; }
-export function h(): { inner: object } { return { inner: {} }; }
-export type Handler = (input: unknown) => Promise<object>;
-export interface Shape { m(): object }
-export function register(fn: (input: unknown) => Promise<object>): void { void fn; }
-`,
 };
 
 const dirs: string[] = [];

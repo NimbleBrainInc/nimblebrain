@@ -74,10 +74,6 @@
       "plugins": ["./biome-plugins/router-use.grit"]
     },
     {
-      "includes": ["src/platform/**/*.ts", "!src/platform/*/ui/**"],
-      "plugins": ["./biome-plugins/platform-object-return.grit"]
-    },
-    {
       "includes": ["src/**/*.ts"],
       "linter": {
         "rules": {
