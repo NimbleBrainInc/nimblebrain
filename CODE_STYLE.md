@@ -424,7 +424,9 @@ code no longer receives.
 
 **Detection.** The Biome plugin `biome-plugins/never-cast.grit` (run by
 `bun run lint`) flags `x as never` and `x as never[]`. A `never` annotation
-(`const xs: never[] = []`, an exhaustiveness check) is not a cast and passes.
+(`const xs: never[] = []`, an exhaustiveness check) is not a cast and passes. It
+does not look for `x as Array<never>` or a `<never>x` assertion; the repo has
+neither.
 
 **Override.** `// biome-ignore lint/plugin/never-cast: <reason>` on the line
 directly above the line where the cast expression starts. The plugin runs on
