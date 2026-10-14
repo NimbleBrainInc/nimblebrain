@@ -27,11 +27,11 @@ import {
   type TaskOwnerContext,
 } from "../../tools/types.ts";
 import { validateToolInput } from "../../tools/validate-input.ts";
-import { TasksRunInput } from "../schemas/tasks.ts";
-import { executionOf, labelOf } from "./assessment.ts";
+import { TasksRunInput, type TasksRunOutput } from "../schemas/tasks.ts";
+import { executionOf, toRunView } from "./assessment.ts";
 import { isOpenRun } from "./scheduler.ts";
 import { prepareRun, type ToolContext } from "./server.ts";
-import type { RunTicket, TaskRun, TaskRunResult } from "./types.ts";
+import type { RunTicket, Task, TaskRun, TaskRunResult } from "./types.ts";
 
 /** The source's name: the `<source>` of `tasks__run`, and the task's origin. */
 const SOURCE = "tasks";
@@ -48,6 +48,8 @@ export interface TaskRunSourceDeps {
   toolContext: () => ToolContext;
   /** A requested run's ticket for an owner in a workspace, settled when a stopped process left it open. */
   readTicket: (wsId: string, ownerId: string, runId: string) => RunTicket | null;
+  /** A stored task of an owner in a workspace, or null when there is none. */
+  readTask: (wsId: string, ownerId: string, taskId: string) => Task | null;
   /** A run's result sidecar, when it left one. */
   readResult: (
     wsId: string,
@@ -194,12 +196,18 @@ export function createTaskRunSource(deps: TaskRunSourceDeps): IdentityTaskSource
         ticket.taskId,
         taskId,
       );
+      // The inline `run` branch of `tasks__run`'s output schema, which `/mcp`
+      // publishes for this result too, carrying the result it waited for.
+      const ownerId = ownerContext.identityId ?? "";
+      const task = deps.readTask(ownerContext.workspaceId, ownerId, ticket.taskId);
+      const output: Extract<TasksRunOutput, { run: unknown }> = {
+        run: toRunView(run),
+        enabled: task?.enabled ?? false,
+        result,
+      };
       return {
         content: [{ type: "text", text: result?.output ?? "" }],
-        structuredContent: {
-          run: { ...run, execution: executionOf(run), label: labelOf(run) },
-          result,
-        },
+        structuredContent: output,
       };
     },
 

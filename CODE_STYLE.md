@@ -396,6 +396,45 @@ app UIs included), `web/src/`, `test/`, and `web/test/`.
 
 ---
 
+### A cast to `never` names its mismatch
+
+`never` is assignable to every type, so `x as never` passes `x` into any slot
+unchecked: a double cast in one step. Give the value its slot's type instead;
+where the value is deliberately outside that type, suppress with a reason.
+
+```ts
+// BAD — the fixture can drift from the type it stands in for, and nothing fails.
+runWithRequestContext({ identity: { id: USER } as never }, run);
+```
+
+```ts
+// GOOD — `makeIdentity` (test/helpers/identity.ts) returns a whole `UserIdentity`,
+// so a change to the type fails in one place.
+runWithRequestContext({ identity: makeIdentity({ id: USER }) }, run);
+
+// GOOD — the value is outside the type on purpose, and the reason says so.
+// biome-ignore lint/plugin/never-cast: a stored tier outside `SkillScope`, which is the input under test
+skillProvenanceLabel({ scope: "retired-tier" as never });
+```
+
+**Rationale.** The same as for a double cast: the compiler stops checking the
+value, and nothing records why. A test fixture cast this way keeps compiling
+after the type it imitates changes, so the test goes on exercising a shape the
+code no longer receives.
+
+**Detection.** The Biome plugin `biome-plugins/never-cast.grit` (run by
+`bun run lint`) flags `x as never` and `x as never[]`. A `never` annotation
+(`const xs: never[] = []`, an exhaustiveness check) is not a cast and passes. It
+does not look for `x as Array<never>` or a `<never>x` assertion; the repo has
+neither.
+
+**Override.** `// biome-ignore lint/plugin/never-cast: <reason>` on the line
+directly above the line where the cast expression starts. The plugin runs on
+the paths in its `biome.json` override: `scripts/`, `src/` (the platform app
+UIs included), `web/src/`, `web/test/`, and `test/helpers/`.
+
+---
+
 ## Adding a new rule
 
 1. **Pick the smallest possible rule.** One pattern, one example, one
