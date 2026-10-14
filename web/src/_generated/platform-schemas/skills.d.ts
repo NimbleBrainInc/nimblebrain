@@ -239,9 +239,9 @@ export declare const SkillsReadOutput: import("@sinclair/typebox").TUnsafe<{
     scope: "user" | "org" | "workspace" | "provided";
     source: {
         connector?: string | undefined;
+        uri?: string | undefined;
         path?: string | undefined;
         connectorVersion?: string | undefined;
-        uri?: string | undefined;
     };
     metadata: {
         description?: string | undefined;
@@ -252,8 +252,8 @@ export declare const SkillsReadOutput: import("@sinclair/typebox").TUnsafe<{
         triggers?: string[] | undefined;
         name: string;
     };
-    layer: 1 | 3;
     content: string;
+    layer: 1 | 3;
 } | {
     id: string;
     manifest: unknown;

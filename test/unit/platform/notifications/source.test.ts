@@ -111,6 +111,9 @@ beforeEach(async () => {
   seedWorkspaceRoot(workDir, WS_B);
   source = createNotificationsSource(makeRuntime(), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {
@@ -175,6 +178,53 @@ describe("list", () => {
       link: { resource: "acme://campaigns/1" },
       data: { workspace: WS_A },
     });
+  });
+
+  test("an item with a clamped level, delivery records, and read state passes its output schema", async () => {
+    const envelope = parseNotificationEnvelope({
+      eventId: "a1",
+      name: "domain.active",
+      timestamp: "2026-09-01T18:42:10Z",
+      data: { workspace: WS_A },
+      _meta: { "ai.nimblebrain/notification": { level: "attention", title: "Active" } },
+    });
+    if (!envelope) throw new Error("fixture did not parse");
+    const store = storeFor(WS_A);
+    store.append("acme", envelope, "info");
+    const ref = { source: "acme", eventId: "a1" };
+    store.recordDeliveries(ref, [
+      {
+        routeId: "rt_1",
+        target: "slack__post",
+        index: 0,
+        kind: "tool",
+        attempts: 3,
+        lastError: "timeout",
+        outcome: "pending",
+        classification: "timeout",
+        updatedAt: "2026-09-01T18:43:00Z",
+        nextAttemptAt: "2026-09-01T18:48:00Z",
+      },
+      {
+        routeId: "rt_1",
+        target: "digest",
+        index: 1,
+        kind: "agent",
+        attempts: 1,
+        outcome: "delivered",
+        updatedAt: "2026-09-01T18:43:00Z",
+        runId: "run_1",
+      },
+    ]);
+    store.markRead([ref], OWNER_ID);
+
+    // The client validates the result against `list`'s output schema; a
+    // mismatch comes back as an error result.
+    const result = await exec("list", {}, WS_A);
+    expect(result.isError).toBeFalsy();
+    const [item] = payload<NotificationsListOutput>(result).notifications;
+    expect(item).toMatchObject({ level: "attention", effectiveLevel: "info", readBy: OWNER_ID });
+    expect(item?.deliveries?.map((d) => d.outcome)).toEqual(["pending", "delivered"]);
   });
 
   test("a `since` that is not an instant is refused, not read as no filter", async () => {

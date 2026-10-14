@@ -16,16 +16,21 @@
  *      prevent.
  */
 
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ConnectorLifecycleManager } from "../../../../src/connectors/runtime/lifecycle.ts";
 import type { EventSink } from "../../../../src/engine/types.ts";
 import { isModelVisible } from "../../../../src/engine/types.ts";
 import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
-import type { NotificationStore } from "../../../../src/notifications/store.ts";
+import { NotificationStore } from "../../../../src/notifications/store.ts";
 import { createNotificationsSource } from "../../../../src/platform/notifications/source.ts";
 import {
   NOTIFICATION_SOURCES_MAX,
   type NotificationRouteInput,
+  type NotificationsListOutput,
+  type NotificationsSendTestOutput,
   type NotificationsSettingsOutput,
 } from "../../../../src/platform/schemas/notifications.ts";
 import type { TaskDomainContext } from "../../../../src/platform/tasks/domain.ts";
@@ -34,10 +39,12 @@ import { runWithRequestContext } from "../../../../src/runtime/request-context.t
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { ToolRegistry } from "../../../../src/tools/registry.ts";
+import { WorkspaceContext } from "../../../../src/workspace/context.ts";
 import type { Workspace } from "../../../../src/workspace/types.ts";
 import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
 import { makeIdentity } from "../../../helpers/identity.ts";
 import { stub } from "../../../helpers/stub.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 import { resultText, structuredOutput } from "../../../helpers/tool-result.ts";
 
 const WS = "ws_005b519ef7efc353";
@@ -115,8 +122,11 @@ class FakeRuntime {
   getNotificationsPollConfig() {
     return resolvePollConfig();
   }
+  /** Set by the tests that send through a route; the rest write no notifications. */
+  store: NotificationStore | null = null;
   getNotificationStore(): NotificationStore {
-    throw new Error("these tests write no notifications");
+    if (!this.store) throw new Error("these tests write no notifications");
+    return this.store;
   }
 
   seed(role: "admin" | "member"): void {
@@ -140,6 +150,9 @@ beforeEach(async () => {
   runtime.seed("admin");
   source = createNotificationsSource(stub<Runtime>(runtime), noopSink);
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 /** Run a tool with `WS` as the request's bound workspace. */
@@ -438,5 +451,40 @@ describe("without a bound workspace", () => {
     );
     expect(res.isError).toBe(true);
     expect(resultText(res)).toContain("No workspace in scope");
+  });
+});
+
+describe("a test send", () => {
+  let workDir: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-notify-settings-"));
+    seedWorkspaceRoot(workDir, WS);
+    runtime.store = new NotificationStore(new WorkspaceContext({ wsId: WS, workDir }), {
+      eventSink: noopSink,
+    });
+  });
+
+  afterEach(() => {
+    runtime.store = null;
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  test("through a route above its source's ceiling writes the item and says why nothing fired", async () => {
+    const saved = await exec("set_routes", {
+      routes: [route({ match: { level: "urgent" } })],
+    });
+    expect(saved.isError).toBe(false);
+    const [stored] = structuredOutput<NotificationsSettingsOutput>(saved).routes;
+
+    const res = await exec("send_test", { routeId: stored!.id });
+    expect(res.isError).toBe(false);
+    const out = structuredOutput<NotificationsSendTestOutput>(res);
+    expect(out.effectiveLevel).toBe("info");
+    expect(out.matched).toBe(false);
+    expect(out.reason).toBeString();
+    expect(out.deliveries).toEqual([]);
+    const listed = await exec("list", { ids: [out.notificationId] });
+    expect(structuredOutput<NotificationsListOutput>(listed).notifications).toHaveLength(1);
   });
 });
