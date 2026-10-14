@@ -20,8 +20,9 @@ export const ComposeEffectiveContextInput = Type.Object({
   connector: Type.Optional(
     Type.String({
       description:
-        "Filter the response to that connector's contributions (the apps " +
-        "section and its focused-app section).",
+        "Filter the response to that connector's contributions (its app " +
+        "entry, its focused-app section, and the skills it published; in " +
+        "historical mode, only the skills).",
     }),
   ),
 });
