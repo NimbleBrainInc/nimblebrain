@@ -3,7 +3,7 @@ title: Obot Gateway Setup
 description: Reach MCP servers an Obot installation fronts, using one Obot API key.
 ---
 
-import { Steps, Aside } from '@astrojs/starlight/components';
+import { Steps } from '@astrojs/starlight/components';
 
 [Obot](https://obot.ai) is a self-hosted MCP gateway. An organization registers MCP servers in it — remote endpoints it proxies, or packages it hosts itself — and every client reaches each one at `https://<obot-host>/mcp-connect/<server-id>` with an Obot API key. Obot audits each JSON-RPC call and applies its own access policies on the way through.
 
@@ -73,7 +73,7 @@ Reach for this when an organization already runs Obot and wants the platform's c
 |---|---|---|
 | `apiKey` | none | Falls back to `<NAME>_API_KEY`, so a gateway named `obot` reads `OBOT_API_KEY`. A blank declared value counts as absent and falls through to the environment. |
 
-The gateway name is yours to pick, and it must match `providerAuth.provider` in every entry that uses it. `minted`, `composio`, and `smithery` are reserved by built-in credential providers; declaring one of those logs a warning and skips it rather than displacing the built-in.
+The gateway name is yours to pick, and it must match `providerAuth.provider` in every entry that uses it. `minted`, `composio`, `smithery`, and `credential` are reserved by built-in credential providers; declaring one of those logs a warning and skips it rather than displacing the built-in.
 
 ## What passes through
 
