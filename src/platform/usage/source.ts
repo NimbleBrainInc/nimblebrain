@@ -19,15 +19,21 @@
  *     `manage_users` precedent.
  */
 
-import { structuredContent, textContent } from "../../engine/content-helpers.ts";
-import type { EventSink, ToolResult } from "../../engine/types.ts";
+import { textContent } from "../../engine/content-helpers.ts";
+import type { EventSink } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import { defineInProcessApp, type InProcessTool, typedTool } from "../../tools/in-process-app.ts";
+import {
+  defineInProcessApp,
+  type InProcessTool,
+  type ToolErrorResult,
+  type TypedToolResult,
+  typedTool,
+} from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { WORKSPACE_OPTIONAL_META } from "../../tools/workspace-optional.ts";
 import { aggregateUsage } from "../../usage/aggregate.ts";
-import { UsageReportInput, type UsageReportOutput } from "../schemas/usage.ts";
+import { UsageReportInput, UsageReportOutput } from "../schemas/usage.ts";
 
 const USAGE_REPORT_DESCRIPTION =
   "Get aggregated usage (tokens, cost, LLM calls) recorded at the point of spend. " +
@@ -66,6 +72,11 @@ function resolveScope(
   return { scope: "user", ownerFilter: identity.id };
 }
 
+/** A refusal, read by the model as plain text. */
+function fail(message: string): ToolErrorResult {
+  return { content: textContent(message), isError: true };
+}
+
 export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSource {
   const tools: InProcessTool[] = [
     typedTool({
@@ -73,13 +84,14 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
       description: USAGE_REPORT_DESCRIPTION,
       meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: UsageReportInput,
-      handler: async (args): Promise<ToolResult> => {
+      outputSchema: UsageReportOutput,
+      handler: async (args): Promise<TypedToolResult<typeof UsageReportOutput>> => {
         try {
           const requestedScope = args.scope ?? "user";
 
           const resolved = resolveScope(runtime, requestedScope);
           if ("error" in resolved) {
-            return { content: textContent(resolved.error), isError: true };
+            return fail(resolved.error);
           }
           // A user-scope caller may name only themselves. Refused rather than
           // returned empty, so asking for a peer's spend reads as not allowed
@@ -90,10 +102,7 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
             args.userId !== undefined &&
             args.userId !== resolved.ownerFilter
           ) {
-            return {
-              content: textContent('Filtering by another user requires scope: "org".'),
-              isError: true,
-            };
+            return fail('Filtering by another user requires scope: "org".');
           }
 
           const period = args.period ?? "month";
@@ -118,7 +127,7 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
           const out: UsageReportOutput = { scope: resolved.scope, ...report };
           return {
             content: textContent(JSON.stringify(out, null, 2)),
-            structuredContent: structuredContent(out),
+            structuredContent: out,
             isError: false,
           };
         } catch (err) {

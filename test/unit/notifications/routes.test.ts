@@ -40,7 +40,7 @@ import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { stub } from "../../helpers/stub.ts";
 
-const SOURCE = "precision-outbound";
+const SOURCE = "acme-outbound";
 const AUTHOR = "usr_admin";
 const TOOL = "slack__send_message";
 

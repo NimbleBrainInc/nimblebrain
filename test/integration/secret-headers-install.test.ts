@@ -489,12 +489,12 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
   });
 
   test("a key a static-auth sibling's client secret names is kept", async () => {
-    // The third declaration site, and the asymmetric one: an uninstall never
-    // deletes an `oauthClient.clientSecret` key (`remove_operator_setup` owns
-    // it), but it is still a reason not to delete it on someone else's
-    // uninstall. Without the referrer read, uninstalling the header connector
-    // takes the operator app's secret with it and the static connector can no
-    // longer complete a token exchange, on a value nothing returns.
+    // The third declaration site: an `oauthClient.clientSecret` key goes only
+    // with its operator app, on the uninstall of that app's last user, and it
+    // is still a reason not to delete it on someone else's uninstall. Without
+    // the referrer read, uninstalling the header connector takes the operator
+    // app's secret with it and the static connector can no longer complete a
+    // token exchange, on a value nothing returns.
     const tool = toolFor("ws_00741647fd740fac");
     await tool.handler({
       action: "setup_operator",

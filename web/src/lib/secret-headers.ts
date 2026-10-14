@@ -104,6 +104,10 @@ export function secretHeaderFields(install: CatalogListing["install"]): SecretHe
  * Every workspace credential key a catalog entry names, for a surface that must
  * account for all of them rather than ask for the ones a person types.
  *
+ * A `static`-auth entry names one: its operator OAuth app's client secret
+ * (`operatorSetup.clientSecretKey`), which uninstall removes with the app's
+ * last installed connector.
+ *
  * Two declaration sites, and a `provider`-auth entry may use either:
  * `secretHeaders` binds a key to a named outgoing header, and `providerAuth`
  * for the built-in `credential` provider names one in `config.key`, which the
@@ -120,7 +124,12 @@ export function workspaceKeysDeclaredBy(cat: {
   auth?: string;
   secretHeaders?: Record<string, SecretHeaderRef> | undefined;
   providerAuth?: { provider: string; config: Record<string, unknown> } | undefined;
+  operatorSetup?: { clientSecretKey: string } | undefined;
 }): string[] {
+  if (cat.auth === "static") {
+    const key = cat.operatorSetup?.clientSecretKey;
+    return key ? [key] : [];
+  }
   if (cat.auth !== "provider") return [];
   const keys = new Set<string>();
   for (const field of secretHeaderFieldsFrom(cat.secretHeaders)) keys.add(field.key);
