@@ -15,16 +15,18 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
 import type { Conversation, ConversationEvent } from "../../../../src/conversation/types.ts";
-import type { ToolResult } from "../../../../src/engine/types.ts";
+import type { ToolResult, ToolSchema } from "../../../../src/engine/types.ts";
 import { ADMIT_ALL } from "../../../../src/permissions/admin-tools.ts";
 import { createComposeSource } from "../../../../src/platform/compose/source.ts";
 import type {
   ComposeAssembledContextOutput,
   ComposeEffectiveContextOutput,
 } from "../../../../src/platform/schemas/compose.ts";
+import type { PromptAppInfo } from "../../../../src/prompt/compose.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import { hashSkillBody } from "../../../../src/runtime/skills-loaded-payload.ts";
+import type { Skill } from "../../../../src/skills/types.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { ToolRegistry } from "../../../../src/tools/registry.ts";
 import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
@@ -94,7 +96,16 @@ function recordedEvents(): ConversationEvent[] {
   ];
 }
 
-function makeRuntime(): Runtime {
+/** What the workspace holds in live mode: none by default, or one app with a skill that loads for it. */
+interface LiveWorkspace {
+  apps: PromptAppInfo[];
+  skills: Skill[];
+  tools: ToolSchema[];
+}
+
+const EMPTY_WORKSPACE: LiveWorkspace = { apps: [], skills: [], tools: [] };
+
+function makeRuntime(live: LiveWorkspace = EMPTY_WORKSPACE): Runtime {
   const store = stub<EventSourcedConversationStore>({
     load: async (id: string) => stub<Conversation>({ id }),
     readEvents: async (id: string) => (id === CONV_ID ? recordedEvents() : []),
@@ -104,10 +115,10 @@ function makeRuntime(): Runtime {
     requireWorkspaceId: () => WS_ID,
     resolveConversationStore: async () => store,
     getWorkspaceStore: () => stub<WorkspaceStore>({ get: async () => null }),
-    loadConversationSkills: () => [],
+    loadConversationSkills: () => live.skills,
     loadConnectorSkillCandidates: () => [],
-    buildAppsList: async () => [],
-    getRegistryForWorkspace: () => stub<ToolRegistry>({ availableTools: async () => [] }),
+    buildAppsList: async () => live.apps,
+    getRegistryForWorkspace: () => stub<ToolRegistry>({ availableTools: async () => live.tools }),
     connectorAdmission: async () => ADMIT_ALL,
   });
 }
@@ -169,6 +180,45 @@ describe("compose__effective_context", () => {
     expect(composed.layers.length).toBeGreaterThan(0);
     expect(composed.text.length).toBeGreaterThan(0);
     expect(composed.runId).toBeUndefined();
+  });
+
+  test("live mode returns an installed app and a tool-affinity skill as sub-items", async () => {
+    await source.stop();
+    source = createComposeSource(
+      makeRuntime({
+        apps: [{ name: "acme", description: "Acme CRM", ui: null }],
+        tools: [
+          {
+            name: "acme__find",
+            description: "Find a record.",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+        skills: [
+          {
+            manifest: {
+              name: "acme-rules",
+              description: "How to use Acme",
+              loadingStrategy: "dynamic",
+              priority: 60,
+              status: "active",
+              scope: "workspace",
+              toolAffinity: ["acme__*"],
+            },
+            body: "Search before you create.",
+            sourcePath: skillPath,
+          },
+        ],
+      }),
+      new NoopEventSink(),
+    );
+    await source.start();
+    await source.tools();
+
+    const result = await exec("effective_context", { conversation_id: CONV_ID });
+    const composed = succeeded<ComposeEffectiveContextOutput>(result);
+    const subItems = composed.layers.flatMap((l) => l.subItems ?? []);
+    expect(subItems.map((s) => s.kind).sort()).toEqual(["app", "layer3_skill"]);
   });
 
   test("historical mode returns the recorded skills layer with its sub-items", async () => {
