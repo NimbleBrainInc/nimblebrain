@@ -539,8 +539,8 @@ export declare const NotificationRouteView: import("@sinclair/typebox").TObject<
         input?: {
             [x: string]: unknown;
         } | undefined;
-        tool: string;
         kind: "tool";
+        tool: string;
     } | {
         kind: "agent";
         task: string;
@@ -596,8 +596,8 @@ export declare const NotificationsSettingsOutput: import("@sinclair/typebox").TO
             input?: {
                 [x: string]: unknown;
             } | undefined;
-            tool: string;
             kind: "tool";
+            tool: string;
         } | {
             kind: "agent";
             task: string;

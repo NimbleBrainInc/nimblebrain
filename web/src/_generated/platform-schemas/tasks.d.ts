@@ -1225,6 +1225,10 @@ export type TaskWarning = Static<typeof TaskWarning>;
  * `as { run: ... }`.
  */
 export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
+    warnings?: {
+        code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
+        message: string;
+    }[] | undefined;
     result?: {
         error?: string | undefined;
         stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
@@ -1250,10 +1254,6 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         }[];
     } | null | undefined;
     message?: string | undefined;
-    warnings?: {
-        code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
-        message: string;
-    }[] | undefined;
     enabled: boolean;
     run: {
         trigger?: "manual" | "event" | "scheduled" | undefined;
@@ -1329,8 +1329,8 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
         message: string;
     }[] | undefined;
-    status: "dispatched";
     runId: string;
+    status: "dispatched";
     enabled: boolean;
     taskId: string;
     message: string;
@@ -1340,8 +1340,8 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
         message: string;
     }[] | undefined;
-    status: "queued";
     runId: string;
+    status: "queued";
     enabled: boolean;
     taskId: string;
     message: string;

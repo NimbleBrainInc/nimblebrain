@@ -136,6 +136,9 @@ export type FolderRecord = Static<typeof FolderRecord>;
 export declare const ListedFile: import("@sinclair/typebox").TObject<{
     description: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
     id: import("@sinclair/typebox").TString;
+    conversationId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+    source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
     createdAt: import("@sinclair/typebox").TString;
     ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -143,10 +146,7 @@ export declare const ListedFile: import("@sinclair/typebox").TObject<{
     filename: import("@sinclair/typebox").TString;
     size: import("@sinclair/typebox").TNumber;
     folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
-    conversationId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
-    runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
     tags: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
-    source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
     visibility: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"private" | "shared">>;
     deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
     deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -181,6 +181,9 @@ export declare const FilesListOutput: import("@sinclair/typebox").TObject<{
     files: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
         id: import("@sinclair/typebox").TString;
+        conversationId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+        runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+        source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
         createdAt: import("@sinclair/typebox").TString;
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -188,10 +191,7 @@ export declare const FilesListOutput: import("@sinclair/typebox").TObject<{
         filename: import("@sinclair/typebox").TString;
         size: import("@sinclair/typebox").TNumber;
         folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
-        conversationId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
-        runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
         tags: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
-        source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
         visibility: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"private" | "shared">>;
         deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
         deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
