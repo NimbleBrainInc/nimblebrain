@@ -59,7 +59,14 @@
       "plugins": ["./biome-plugins/double-cast.grit"]
     },
     {
-      "includes": ["scripts/**", "src/**", "web/src/**", "web/test/**", "test/helpers/**"],
+      "includes": [
+        "scripts/**",
+        "src/**",
+        "web/src/**",
+        "web/test/**",
+        "test/helpers/**",
+        "test/integration/**"
+      ],
       "plugins": ["./biome-plugins/never-cast.grit"]
     },
     {
