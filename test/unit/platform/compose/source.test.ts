@@ -231,6 +231,20 @@ describe("compose__effective_context", () => {
     expect(layer?.subItems?.map((s) => s.metadata?.hashStatus)).toEqual(["match", "missing"]);
   });
 
+  test("historical mode keeps a connector's recorded skills under its filter", async () => {
+    const result = await exec("effective_context", {
+      conversation_id: CONV_ID,
+      run_id: RUN_ID,
+      connector: "acme-mcp",
+    });
+    const composed = succeeded<ComposeEffectiveContextOutput>(result);
+    expect(composed.layers.map((l) => l.kind)).toEqual(["layer3_skills"]);
+    const subItems = composed.layers[0]?.subItems ?? [];
+    expect(subItems.map((s) => [s.id, s.connector])).toEqual([
+      ["skill://acme-mcp/usage/SKILL.md", "acme-mcp"],
+    ]);
+  });
+
   test("a connector filter that matches nothing still returns a result the schema accepts", async () => {
     const result = await exec("effective_context", {
       conversation_id: CONV_ID,
