@@ -1,10 +1,14 @@
 // ---------------------------------------------------------------------------
-// Opening an app at a view: the shell side of `openApp` and `nb__open_app`.
+// Opening: the shell side of `ai.nimblebrain/open` and `nb__open_app`.
 //
-// `openApp` (the shell's action, from an app's `ai.nimblebrain/action` or the
-// agent's `nb__open_app`) navigates to the app's route carrying an optional
-// target in the router state. The routed app view reads it and hands it to the
-// app as `ai.nimblebrain/navigate`. Pure: no React.
+// The server resolves what opens (`nb__open_app`, ADR-0052) and answers a
+// destination; the shell puts it on screen. An app destination navigates to the
+// app's route carrying an optional target in the router state, which the routed
+// app view hands to the app as `ai.nimblebrain/navigate`. Pure: no React.
+//
+// The shell registers one opener (`provideShellOpener`) and every app frame's
+// bridge reaches it through `shellOpener()`, so a frame mounted anywhere opens
+// through the same code as the agent's call.
 // ---------------------------------------------------------------------------
 
 import type { PlacementEntry } from "../types";
@@ -56,3 +60,57 @@ export function resolveAppRouteIn(
   }
   return found.route;
 }
+
+/**
+ * Where an open lands, as `nb__open_app` answers it in `structuredContent`:
+ * the chat panel at a conversation, or an app (by route, else server name) at
+ * an optional target.
+ */
+export type OpenDestination =
+  | { conversationId: string }
+  | { app: string; name: string; target?: string };
+
+/** The destination in a tool answer's `structuredContent`, or `null` when it carries none. */
+export function destinationFrom(structured: unknown): OpenDestination | null {
+  if (typeof structured !== "object" || structured === null) return null;
+  const s = structured as Record<string, unknown>;
+  if (typeof s.conversationId === "string") return { conversationId: s.conversationId };
+  if (typeof s.app === "string" && typeof s.name === "string") {
+    return {
+      app: s.app,
+      name: s.name,
+      ...(typeof s.target === "string" ? { target: s.target } : {}),
+    };
+  }
+  return null;
+}
+
+/** What the shell does when an app asks it to open something. Each rejects with the reason the app is told. */
+export interface ShellOpener {
+  open(uri: string): Promise<void>;
+  openConnectorSettings(serverName: string): Promise<void>;
+}
+
+let currentOpener: ShellOpener | null = null;
+
+/** Register the shell's opener; returns the unregister. */
+export function provideShellOpener(opener: ShellOpener): () => void {
+  currentOpener = opener;
+  return () => {
+    if (currentOpener === opener) currentOpener = null;
+  };
+}
+
+/**
+ * The bridge callbacks that reach the shell's opener. Each looks it up when
+ * called, so a frame mounted before the shell registered still opens, and one
+ * with no shell behind it is refused rather than left waiting.
+ */
+export const shellOpenCallbacks = {
+  onOpen: (uri: string): Promise<void> =>
+    currentOpener ? currentOpener.open(uri) : Promise.reject(new Error("Nothing here opens it")),
+  onOpenConnectorSettings: (serverName: string): Promise<void> =>
+    currentOpener
+      ? currentOpener.openConnectorSettings(serverName)
+      : Promise.reject(new Error("Nothing here opens it")),
+};

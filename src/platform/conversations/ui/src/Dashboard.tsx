@@ -1,5 +1,11 @@
 import { hostSupports } from "@nimblebrain/synapse";
-import { useAction, useApp, useDataSync, useHostContext } from "@nimblebrain/synapse/react";
+import {
+  useApp,
+  useDataSync,
+  useHostContext,
+  useNotify,
+  useOpen,
+} from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationList } from "./ConversationList";
 import { groupByDate } from "./dateUtils";
@@ -20,7 +26,8 @@ export function Dashboard() {
   // `ai.nimblebrain/location`, so the view leaves its own out rather than say it
   // twice. A host without it (any other MCP Apps host) gets the view's title.
   const hostShowsTitle = hostSupports(app, "location");
-  const action = useAction();
+  const open = useOpen();
+  const notify = useNotify();
   // Pushed by the host via hostContext: the workspace the shell is focused on —
   // used here ONLY as a change signal (refetch when the user switches
   // workspace), never as a filter value: the server derives the workspace from
@@ -170,9 +177,17 @@ export function Dashboard() {
 
   const handleOpenConversation = useCallback(
     (id: string) => {
-      action("openConversation", { id });
+      // The host refuses a conversation it cannot show; say so rather than
+      // leave the click doing nothing.
+      open(`conversation://${id}`).catch((err: unknown) =>
+        notify({
+          level: "error",
+          title: "Couldn't open the conversation",
+          description: err instanceof Error ? err.message : String(err),
+        }).catch(() => {}),
+      );
     },
-    [action],
+    [open, notify],
   );
 
   // `conversations` is already workspace-scoped by the server (see `loadList`),

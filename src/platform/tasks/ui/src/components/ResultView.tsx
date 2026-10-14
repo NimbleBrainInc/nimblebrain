@@ -1,4 +1,4 @@
-import { action as hostAction } from "@nimblebrain/synapse";
+import { notify, open } from "@nimblebrain/synapse";
 import { useApp } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import { STARTED_BY_TEXT, startedByOf } from "../lib/activity.ts";
@@ -490,10 +490,21 @@ export function useAssess(
   };
 }
 
-/** Open a run's file in the Files app, when the host can open apps. */
+/**
+ * Open a run's file through the host, by its address: the host finds the app
+ * that shows `files://`. A refusal is shown as a notice rather than dropped.
+ */
 export function useOpenFile(): (file: RunFileRef) => void {
   const app = useApp();
-  return (file) => hostAction(app, "openApp", { name: "files", target: `files://${file.id}` });
+  return (file) => {
+    open(app, `files://${file.id}`).catch((err: unknown) =>
+      notify(app, {
+        level: "error",
+        title: "Couldn't open the file",
+        description: err instanceof Error ? err.message : String(err),
+      }).catch(() => {}),
+    );
+  };
 }
 
 /** The result screen's status line: label, who started it, when, how long, what it cost. */

@@ -26,7 +26,7 @@ A settings form whose fields stand alone saves each field when its edit is compl
 
 - `SlotRenderer` effect depends only on `placementKey` (callbacks via refs, not deps)
 - Shell components must not consume `ChatContext` (use `ChatConfigContext` instead)
-- **The agent moves the screen only from a turn this tab sent and is watching live.** Host UI driven by a tool call (`nb__open_app` → the `openApp` action) listens through `chatStore.onToolDone`, which reports a finished call only on a connection `sendTurn` opened, once per call. Never drive UI from a rendered transcript or a resumed stream: history loads, reload re-attaches and other tabs replay the same calls, and each would move someone's screen again.
+- **The agent moves the screen only from a turn this tab sent and is watching live.** Host UI driven by a tool call (`nb__open_app` → the destination it answers) listens through `chatStore.onToolDone`, which reports a finished call only on a connection `sendTurn` opened, once per call. Never drive UI from a rendered transcript or a resumed stream: history loads, reload re-attaches and other tabs replay the same calls, and each would move someone's screen again.
 - `setAuthToken` in `web/src/api/client.ts` fires the registered auth lifecycle handlers on real changes only (equality-guarded), and `setActiveWorkspaceId` fires the separate workspace lifecycle handlers (`addWorkspaceLifecycleHandler`), never the auth ones. A holder of identity- or workspace-bound state (the SSE event clients) registers there to drop it. A stateless caller reads the current values per request and needs no hook: the REST helpers, and the bridge's `/mcp` sender (`web/src/mcp-bridge-client.ts`), which opens no session.
 
 ## The chat panel's workspace scope
@@ -35,7 +35,7 @@ A settings form whose fields stand alone saves each field when its edit is compl
 
 The panel keeps its conversation and the URL's workspace in agreement, because a chat runs in the workspace its URL names and the server answers a conversation from any other workspace as unknown (`404 conversation_not_found`). When they disagree, one gives:
 
-- **The URL, for a conversation the user chose.** `openConversation` (a `?chat=` deep link through `openPanel`, Recents, an app's `openConversation` action) marks the conversation followed; once its workspace is known and differs from the focus, the provider navigates to `/w/<its slug>`, and the arrival is not treated as a switch away from it. Only for a workspace the user belongs to.
+- **The URL, for a conversation the user chose.** `openConversation` (a `?chat=` deep link through `openPanel`, Recents, an app's `open` of a `conversation://` URI) marks the conversation followed; once its workspace is known and differs from the focus, the provider navigates to `/w/<its slug>`, and the arrival is not treated as a switch away from it. Only for a workspace the user belongs to.
 - **The conversation, otherwise.** `loadConversation` alone (the per-tab restore) never moves the URL: the URL the user loaded wins. Re-scoping uses the narrow `newConversation()` (back to the panel's unsent chat, or a fresh one once a send was attempted in it; an unsent chat has no workspace until its first send), **not** `chatStore.reset()` (that is the identity-change broad reset).
 
 Two triggers:

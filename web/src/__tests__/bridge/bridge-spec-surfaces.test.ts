@@ -204,6 +204,8 @@ describe("ui/initialize — advertised capabilities", () => {
     // reversed domain we own, which is how the spec names a third party's.
     expect(sent.hostCapabilities.experimental).toEqual({
       "io.modelcontextprotocol/tasks": tasks,
+      "ai.nimblebrain/open": {},
+      "ai.nimblebrain/open-connector-settings": {},
       "ai.nimblebrain/action": {},
       "ai.nimblebrain/notify": {},
       "ai.nimblebrain/request-file": {},
@@ -218,6 +220,8 @@ describe("ui/initialize — advertised capabilities", () => {
     const parsed = McpUiInitializeResultSchema.parse(reply.result);
     expect(parsed.hostCapabilities.experimental).toEqual({
       "io.modelcontextprotocol/tasks": tasks,
+      "ai.nimblebrain/open": {},
+      "ai.nimblebrain/open-connector-settings": {},
       "ai.nimblebrain/action": {},
       "ai.nimblebrain/notify": {},
       "ai.nimblebrain/request-file": {},

@@ -1,3 +1,4 @@
+import { CONVERSATION_URI_SCHEME } from "../conversation/uri.ts";
 import { FILE_URI_SCHEME } from "../files/uri.ts";
 import { ARTIFACT_URI_SCHEME } from "../host-resources/artifacts/artifact-uri.ts";
 
@@ -32,9 +33,9 @@ import { ARTIFACT_URI_SCHEME } from "../host-resources/artifacts/artifact-uri.ts
  * Two sets, because they answer different questions and do not coincide:
  * a set that governs a refusal has to be complete or the refusal is decorative,
  * while a set that renders prose has to match what the reader can actually
- * reach. `artifact://`, `files://` and `app://` are host-resolved but are not
- * things to point `read_resource` at, so they belong in the first and not the
- * second.
+ * reach. `artifact://`, `files://`, `conversation://` and `app://` are
+ * host-resolved but are not things to point `read_resource` at, so they belong
+ * in the first and not the second.
  *
  * Completeness is the property the refusal rests on, and a comment cannot hold
  * it: `scripts/check-resource-schemes.ts` fails the build on a scheme spelled
@@ -73,9 +74,11 @@ export const APP_INSTRUCTIONS_URI = `${APP_URI_SCHEME}://instructions`;
  * Every scheme the runtime resolves itself, and so the closed set a declared
  * outbox may not land on.
  *
- * Composed rather than restated: `artifact` and `files` are taken from the
- * modules that own them, each of which already validates its own scheme as the
- * single authority for it. Adding a sixth means extending
+ * Composed rather than restated: `artifact`, `files` and `conversation` are
+ * taken from the modules that own them, each the single authority for its own
+ * scheme. `conversation://` is answered by opening, not reading: the host shows
+ * it in the chat panel (ADR-0052), which is still an answer a declared resource
+ * must not collide with. Adding another means extending
  * {@link REGISTRY_RESOURCE_SCHEMES}, importing the constant its owner exports, or —
  * when the scheme has no owner but this module — declaring it here as `app` is
  * declared. Never a second spelling of a scheme that already has a home.
@@ -84,6 +87,7 @@ export const RESERVED_RESOURCE_SCHEMES = [
   ...REGISTRY_RESOURCE_SCHEMES,
   ARTIFACT_URI_SCHEME,
   FILE_URI_SCHEME,
+  CONVERSATION_URI_SCHEME,
   APP_URI_SCHEME,
 ] as const;
 
