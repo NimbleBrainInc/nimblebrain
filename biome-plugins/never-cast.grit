@@ -1,0 +1,13 @@
+// `never` is assignable to every type, so `x as never` fits any slot and the
+// compiler checks nothing about `x` there. Retype the value; where no typed path
+// exists, suppress with a reason naming the mismatch (CODE_STYLE.md, "A cast to
+// `never` names its mismatch").
+or {
+  `$x as never`,
+  `$x as never[]`
+} as $cast where {
+  register_diagnostic(
+    span=$cast,
+    message="Cast to `never`, which fits any type and checks nothing. Retype the value (the parameter's own type, a typed fixture, `stub<T>`), or suppress with `// biome-ignore lint/plugin/never-cast: <what the value is, and what the code claims>`."
+  )
+}

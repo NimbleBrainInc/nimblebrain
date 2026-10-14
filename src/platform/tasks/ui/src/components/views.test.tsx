@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { TaskRun, TaskSummary, UpcomingData } from "../types.ts";
+import type { TaskBatch, TaskRun, TaskSummary, UpcomingData } from "../types.ts";
 
 type Mod<T> = T extends Promise<infer U> ? U : never;
 let home: Mod<ReturnType<typeof importHome>>;
@@ -22,6 +22,32 @@ const importUpcoming = () => import("./UpcomingView.tsx");
 const importActivity = () => import("./ActivityView.tsx");
 const importResult = () => import("./ResultView.tsx");
 const importInput = () => import("./InputEditor.tsx");
+
+/** A running batch of the `digest` task: 7 of 10 items done. */
+const BATCH: TaskBatch = {
+  id: "batch_4f2a00000000",
+  taskId: "digest",
+  items: 10,
+  concurrency: 2,
+  state: "running",
+  counts: {
+    pending: 2,
+    queued: 0,
+    running: 1,
+    pass: 5,
+    fail: 1,
+    uncertain: 1,
+    not_assessed: 0,
+    failed: 0,
+    skipped: 0,
+    cancelled: 0,
+  },
+  costUsd: 2.5,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  done: 7,
+  passRate: 5 / 6,
+};
 
 beforeAll(async () => {
   const { window } = new JSDOM("", { url: "http://localhost" });
@@ -261,7 +287,7 @@ describe("Upcoming", () => {
   test("loaded: the queue with batch items, scheduled fires, and event tasks", () => {
     const html = body({
       data: DATA,
-      batches: new Map([["batch_4f2a00000000", { items: 1000 } as never]]),
+      batches: new Map([[BATCH.id, { ...BATCH, items: 1000 }]]),
     });
     expect(html).toContain("1 running · 1 waiting");
     expect(html).toContain("Research · batch 4f2a · item 512/1000");
@@ -321,30 +347,7 @@ describe("Activity", () => {
         {
           kind: "batch",
           at: RUN.startedAt,
-          batch: {
-            id: "batch_4f2a00000000",
-            taskId: "digest",
-            items: 10,
-            concurrency: 2,
-            state: "running",
-            counts: {
-              pending: 2,
-              queued: 0,
-              running: 1,
-              pass: 5,
-              fail: 1,
-              uncertain: 1,
-              not_assessed: 0,
-              failed: 0,
-              skipped: 0,
-              cancelled: 0,
-            },
-            costUsd: 2.5,
-            createdAt: RUN.startedAt,
-            updatedAt: RUN.startedAt,
-            done: 7,
-            passRate: 5 / 6,
-          },
+          batch: { ...BATCH, createdAt: RUN.startedAt, updatedAt: RUN.startedAt },
         },
       ],
     });
