@@ -265,13 +265,19 @@ async function handleTag(store: FileStore, args: FilesTagInput): Promise<object>
 
 ```ts
 // GOOD — the schema is the contract; the handler returns its static type.
-import { FilesTagOutput } from "../schemas/files.ts";
+import { FilesTagInput, FilesTagOutput } from "../schemas/files.ts";
 
 async function handleTag(store: FileStore, args: FilesTagInput): Promise<FilesTagOutput> {
   return { id: args.id, tags: newTags };
 }
 
-typedTool({ name: "tag", inputSchema: FilesTagInput, outputSchema: FilesTagOutput, handler });
+typedTool({
+  name: "tag",
+  description: "Add or remove tags on a file.",
+  inputSchema: FilesTagInput,
+  outputSchema: FilesTagOutput,
+  handler: async (input) => ok(await handleTag(getStore(), input)),
+});
 ```
 
 **Rationale.** A handler's return type is its tool's contract. Declared as
@@ -283,7 +289,9 @@ changed shape fails the build at each consumer.
 
 **Detection.** `typedTool` fails the typecheck when a success result's
 `structuredContent` is not the output schema's static type, so a helper typed
-`object` cannot feed it. `test/unit/platform/schema-shape.test.ts` fails when a
+`object` cannot feed it while the schema has a required field. (`object` is
+assignable to an all-optional object type, so there the SDK client's runtime
+check is the guard.) `test/unit/platform/schema-shape.test.ts` fails when a
 platform tool publishes no output schema, and the SDK client fails any call
 whose result does not match the published one.
 
