@@ -15,6 +15,7 @@ import {
 } from "../../../src/services/briefing-collector.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import { facetEntry, startFacetsSource } from "../../helpers/facets-server.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
 const WS = "ws_0035e6c51e90e60f";
 
@@ -305,7 +306,10 @@ describe("the cache", () => {
     const collector = collectorFor([source]);
     const asMember = (id: string) =>
       runWithRequestContext(
-        { identity: { id, email: `${id}@example.com`, displayName: id } as never, workspaceId: WS },
+        {
+          identity: makeIdentity({ id, email: `${id}@example.com`, displayName: id }),
+          workspaceId: WS,
+        },
         () => collector.collect(WS, [instance("shared")]),
       );
 

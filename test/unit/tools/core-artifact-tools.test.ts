@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { artifactResolutionsTotal } from "../../../src/api/metrics.ts";
+import type { ToolResult } from "../../../src/engine/types.ts";
 import type { ArtifactResolver } from "../../../src/host-resources/artifacts/artifact-resolver.ts";
 import {
   ArtifactNotFoundError,
@@ -22,18 +23,15 @@ import { stub } from "../../helpers/stub.ts";
 const WS = "ws_0076759dbbe19fcc";
 const runtime = stub<Runtime>({ requireWorkspaceId: () => WS });
 
-function handlerFor(name: string): (input: Record<string, unknown>) => Promise<{
-  content: Array<{ text?: string }>;
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-}> {
+function handlerFor(name: string): (input: Record<string, unknown>) => Promise<ToolResult> {
   const tool = createCoreToolDefs(runtime).find((d) => d.name === name);
   if (!tool) throw new Error(`tool ${name} not registered`);
-  return tool.handler as never;
+  return tool.handler;
 }
 
-function firstText(res: { content: Array<{ text?: string }> }): string {
-  return res.content[0]?.text ?? "";
+function firstText(res: ToolResult): string {
+  const block = res.content[0];
+  return block?.type === "text" ? block.text : "";
 }
 
 afterEach(() => setArtifactResolver(undefined));

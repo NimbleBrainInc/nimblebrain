@@ -22,29 +22,17 @@ const sink = { emit: () => {} };
 
 describe("McpSource event source name", () => {
   test("a workspace connector emits its bare name", () => {
-    const s = new McpSource("gmail", remote as never, sink as never);
+    const s = new McpSource("gmail", remote, sink);
     expect(emittedName(s)).toBe("gmail");
   });
 
   test("a personal connector emits the MARKED name", () => {
-    const s = new McpSource(
-      "gmail",
-      remote as never,
-      sink as never,
-      undefined,
-      personalConnectorWireName("gmail"),
-    );
+    const s = new McpSource("gmail", remote, sink, undefined, personalConnectorWireName("gmail"));
     expect(emittedName(s)).toBe("my_gmail");
   });
 
   test("its registry key stays bare — dispatch and policy lookups depend on it", () => {
-    const s = new McpSource(
-      "gmail",
-      remote as never,
-      sink as never,
-      undefined,
-      personalConnectorWireName("gmail"),
-    );
+    const s = new McpSource("gmail", remote, sink, undefined, personalConnectorWireName("gmail"));
     expect(s.name).toBe("gmail");
   });
 });

@@ -1484,6 +1484,7 @@ describe("manage_connectors installed entry — displayName", () => {
   test("ignores a host UI name stored on an installed ref", async () => {
     // Installs made while the host block carried `name` persisted it in the
     // ref's `ui` snapshot. Nothing reads it.
+    // biome-ignore lint/plugin/never-cast: a `ui` snapshot holding the `name` and `icon` `ConnectorUiMeta` no longer has, which is the stored ref under test
     const ui = { name: "Spoofed", icon: "" } as never;
     await h.lifecycle.seedInstance(
       STUB_SERVER_NAME,
@@ -1524,7 +1525,7 @@ describe("manage_connectors — disconnect applies only to a sign-in", () => {
         url: STUB_URL,
         serverName: STUB_SERVER_NAME,
         ...(transport ? { transport } : {}),
-      } as never,
+      },
       { manifestName: STUB_SERVER_NAME, version: "1.0.0", ui: null },
       h.wsId,
     );

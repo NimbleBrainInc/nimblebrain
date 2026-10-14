@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import type { ManagedConnectorProvider } from "../../../src/connectors/providers/managed-provider.ts";
 import { ConnectorLifecycleManager } from "../../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
+import { stub } from "../../helpers/stub.ts";
 
 // Disconnect revokes a credential a person authorized, so it can be redone. Whether a
 // connection has one is decided here, once, for the web menu and the disconnect tool.
@@ -15,21 +17,32 @@ const ref = (over: Partial<ConnectorRef> = {}): ConnectorRef => ({
 });
 
 /** A lifecycle whose managed-connector registry holds exactly `providers`. */
-function lifecycleWith(providers: Record<string, object>): ConnectorLifecycleManager {
+function lifecycleWith(
+  providers: Record<string, ManagedConnectorProvider>,
+): ConnectorLifecycleManager {
   const lc = new ConnectorLifecycleManager(new NoopEventSink());
   lc.setManagedConnectorRegistry({
     get: (id: string) => providers[id],
     has: (id: string) => id in providers,
     list: () => Object.values(providers),
-  } as never);
+  });
   return lc;
 }
 
 describe("isDisconnectable", () => {
   const lc = lifecycleWith({
-    reconnects: { id: "reconnects", initiate: async () => ({}) },
-    apikey: { id: "apikey", connectApiKey: async () => ({}) },
-    oneway: { id: "oneway" },
+    reconnects: stub<ManagedConnectorProvider>({
+      id: "reconnects",
+      initiate: async () => ({
+        redirectUrl: "https://auth.example.test/start",
+        connectedAccountId: "ca_1",
+      }),
+    }),
+    apikey: stub<ManagedConnectorProvider>({
+      id: "apikey",
+      connectApiKey: async () => ({ status: "ACTIVE" }),
+    }),
+    oneway: stub<ManagedConnectorProvider>({ id: "oneway" }),
   });
 
   test("an OAuth connection is, with no transport auth or with `none`", () => {

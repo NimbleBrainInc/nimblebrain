@@ -105,7 +105,7 @@ function dispatcher(overrides: Partial<RouteDispatcherDeps> = {}): RouteDispatch
 
 /** Write the workspace's notifications block: ceilings and routes. */
 async function configure(block: Record<string, unknown>): Promise<void> {
-  await workspaceStore.update(wsId, { notifications: block } as never);
+  await workspaceStore.update(wsId, { notifications: block });
 }
 
 /** One route delivering to `TOOL`, with the match and input a test needs. */
