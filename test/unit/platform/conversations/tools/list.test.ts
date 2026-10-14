@@ -193,6 +193,7 @@ describe("handleList", () => {
     expect(conv).toHaveProperty("totalOutputTokens");
     expect(conv).toHaveProperty("lastModel");
     expect(conv).toHaveProperty("preview");
+    expect(conv).not.toHaveProperty("filePath");
   });
 
   test("limit=2 returns 2 conversations and sets nextCursor", async () => {

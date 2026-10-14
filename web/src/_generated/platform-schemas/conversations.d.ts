@@ -71,7 +71,6 @@ export type ConversationsUpdateOutput = Static<typeof ConversationsUpdateOutput>
 /** One row of `conversations__list`. */
 export declare const ConversationListEntry: import("@sinclair/typebox").TObject<{
     title: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
-    filePath: import("@sinclair/typebox").TString;
     ownerId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
     workspaceId: import("@sinclair/typebox").TString;
     active: import("@sinclair/typebox").TBoolean;
@@ -89,7 +88,6 @@ export type ConversationListEntry = Static<typeof ConversationListEntry>;
 export declare const ConversationsListOutput: import("@sinclair/typebox").TObject<{
     conversations: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         title: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
-        filePath: import("@sinclair/typebox").TString;
         ownerId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
         workspaceId: import("@sinclair/typebox").TString;
         active: import("@sinclair/typebox").TBoolean;

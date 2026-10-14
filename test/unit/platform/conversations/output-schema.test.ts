@@ -210,6 +210,8 @@ async function call<T>(tool: string, args: Record<string, unknown>): Promise<T> 
   if (result.isError) throw new Error(`${tool} failed: ${text}`);
   // The model reads the text; clients read `structuredContent`. Both say the same.
   expect(result.structuredContent).toEqual(JSON.parse(text));
+  // No result names where the server keeps conversations: readers address one by id.
+  expect(text).not.toContain(workDir);
   return result.structuredContent as T;
 }
 
@@ -263,6 +265,7 @@ describe("conversations tools publish results their output schemas admit", () =>
     const data = await call<ConversationsListOutput>("list", {});
     expect(data.conversations.map((c) => c.id)).toEqual([CONV_ID]);
     expect(data.conversations[0]?.active).toBe(false);
+    expect(data.conversations[0]).not.toHaveProperty("filePath");
   });
 
   test("stats", async () => {

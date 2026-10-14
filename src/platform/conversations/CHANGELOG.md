@@ -4,6 +4,9 @@
 
 ### Removed
 
+- **`filePath` on `conversations__list` rows.** A row names a conversation by
+  `id` and its workspace by `workspaceId`; the server's storage path stays on
+  the server.
 - **The flat layout reader.** `listConversationFiles` reads only the
   workspace-owned layout, so `ConversationFileRef.wsId`,
   `ConversationChange.wsId` and `IndexEntry.workspaceId` are always a

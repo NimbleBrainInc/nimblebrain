@@ -146,7 +146,6 @@ export type ConversationsUpdateOutput = Static<typeof ConversationsUpdateOutput>
 export const ConversationListEntry = Type.Object({
   ...ConversationSummaryFields,
   title: NullableString,
-  filePath: Type.String(),
   ownerId: Type.Union([Type.String(), Type.Null()], {
     description: "The conversation's owner; null when its header names none.",
   }),
