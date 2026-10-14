@@ -21,6 +21,15 @@ describe("validateToolInput: the schema's declared dialect", () => {
     expect(validateToolInput({}, schema).valid).toBe(false);
   });
 
+  test("test_validate_2019_09_schema_compiles", () => {
+    const schema = {
+      $schema: "https://json-schema.org/draft/2019-09/schema",
+      type: "object",
+      required: ["q"],
+    };
+    expect(validateToolInput({}, schema).valid).toBe(false);
+  });
+
   test("test_validate_2020_12_prefixItems_rejects_bad_input", () => {
     const schema = {
       $schema: DRAFT_2020,
