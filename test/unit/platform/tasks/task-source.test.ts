@@ -21,6 +21,7 @@ import {
 import type { ToolContext } from "../../../../src/platform/tasks/server.ts";
 import {
   loadOwnerTasks,
+  loadTask,
   readIdempotencyKey,
   readRunResult,
   readRuns,
@@ -142,7 +143,7 @@ function harness(opts: { executor: Executor; admission?: RunAdmission }) {
   const source = createTaskRunSource({
     toolContext: () => ctx(),
     readTicket: currentTicket,
-    readTask: (wsId, owner, id) => loadOwnerTasks(workDir, wsId, owner).get(id) ?? null,
+    readTask: (wsId, owner, id) => loadTask(workDir, wsId, owner, id),
     readResult: (wsId, owner, id, runId) => readRunResult(workDir, wsId, owner, id, runId),
     runEnded: (runId) => scheduler.runEnded(runId),
     cancelRun: (wsId, owner, runId) => scheduler.cancelRunById(wsId, owner, runId),
