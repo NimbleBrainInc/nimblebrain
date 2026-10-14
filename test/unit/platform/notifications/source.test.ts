@@ -94,7 +94,7 @@ function exec(
   wsId: string | undefined,
 ): Promise<ToolResult> {
   return runWithRequestContext(
-    { identity: { id: OWNER_ID } as never, ...(wsId ? { workspaceId: wsId } : {}) },
+    { identity: makeIdentity({ id: OWNER_ID }), ...(wsId ? { workspaceId: wsId } : {}) },
     () => source.execute(tool, args),
   );
 }

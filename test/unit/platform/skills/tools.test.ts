@@ -25,6 +25,7 @@ import type {
   ConversationAccessContext,
   ConversationListResult,
   ListOptions,
+  SkillsLoadedEvent,
 } from "../../../../src/conversation/types.ts";
 import type { IdentityProvider, UserIdentity } from "../../../../src/identity/provider.ts";
 import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
@@ -716,7 +717,7 @@ describe("skills__loading_log", () => {
       .create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     runtime.store().setActiveConversation(conv.id);
 
-    const events = [
+    const events: Array<Omit<SkillsLoadedEvent, "type">> = [
       {
         runId: "r1",
         ts: "2026-01-01T00:00:00.000Z",
@@ -784,7 +785,7 @@ describe("skills__loading_log", () => {
       },
     ];
     for (const e of events) {
-      runtime.store().appendEvent(conv.id, { type: "skills.loaded", ...e } as never);
+      runtime.store().appendEvent(conv.id, { type: "skills.loaded", ...e });
     }
 
     const src = await buildSource();
@@ -844,7 +845,7 @@ describe("skills__loading_log", () => {
       skillName: "gmail-usage",
       skillBody: "Use the send tool carefully.",
       scope: "connector",
-    } as never);
+    });
     runtime.store().appendEvent(conv.id, {
       type: "skill.activated",
       ts: "2026-01-01T00:01:00.000Z",
@@ -853,7 +854,7 @@ describe("skills__loading_log", () => {
       skillName: "invoice-runbook",
       scope: "workspace",
       tokens: 300,
-    } as never);
+    });
 
     const src = await buildSource();
     const client = src.getClient()!;
@@ -894,6 +895,7 @@ describe("skills__loading_log", () => {
       skills: [
         {
           id: "/skills/a.md",
+          name: "a",
           layer: 3,
           scope: "org",
           version: "",
@@ -904,7 +906,7 @@ describe("skills__loading_log", () => {
         },
       ],
       totalTokens: 10,
-    } as never);
+    });
     runtime.store().appendEvent(conv2.id, {
       type: "skills.loaded",
       ts: "2026-02-01T00:00:00.000Z",
@@ -912,6 +914,7 @@ describe("skills__loading_log", () => {
       skills: [
         {
           id: "/skills/a.md",
+          name: "a",
           layer: 3,
           scope: "org",
           version: "",
@@ -922,7 +925,7 @@ describe("skills__loading_log", () => {
         },
       ],
       totalTokens: 10,
-    } as never);
+    });
 
     // A conversation the same owner has in a DIFFERENT workspace. The scan
     // must not reach it: skills are workspace-tiered, so "which skills loaded"
@@ -945,6 +948,7 @@ describe("skills__loading_log", () => {
       skills: [
         {
           id: "/skills/a.md",
+          name: "a",
           layer: 3,
           scope: "org",
           version: "",
@@ -955,7 +959,7 @@ describe("skills__loading_log", () => {
         },
       ],
       totalTokens: 10,
-    } as never);
+    });
 
     // The enumeration branch needs an active workspace — it is scoped, not
     // owner-wide, so the caller must be in one.

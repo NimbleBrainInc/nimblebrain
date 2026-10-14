@@ -682,6 +682,7 @@ describe("handleList filters", () => {
     const ctx = makeCtx();
     seedTasks(ctx);
     const defs = ctx.definitions();
+    // biome-ignore lint/plugin/never-cast: a stored source outside `TaskSource`, which is the record under test
     defs.get("active-agent")!.source = "retired-source" as never;
     ctx.save(defs);
 

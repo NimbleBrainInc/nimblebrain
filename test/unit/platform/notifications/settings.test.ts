@@ -144,9 +144,8 @@ beforeEach(async () => {
 
 /** Run a tool with `WS` as the request's bound workspace. */
 function exec(tool: string, args: Record<string, unknown> = {}) {
-  return runWithRequestContext(
-    { identity: { id: runtime.identity?.id } as never, workspaceId: WS },
-    () => source.execute(tool, args),
+  return runWithRequestContext({ identity: runtime.getCurrentIdentity(), workspaceId: WS }, () =>
+    source.execute(tool, args),
   );
 }
 
@@ -433,7 +432,7 @@ describe("what the editor is told", () => {
 
 describe("without a bound workspace", () => {
   test("the settings read denies rather than guessing one", async () => {
-    const res = await runWithRequestContext({ identity: { id: USER } as never }, () =>
+    const res = await runWithRequestContext({ identity: makeIdentity({ id: USER }) }, () =>
       source.execute("settings", {}),
     );
     expect(res.isError).toBe(true);

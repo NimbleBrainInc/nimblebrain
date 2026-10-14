@@ -22,6 +22,7 @@ import {
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
 import { textOf } from "../../../helpers/resource-contents.ts";
 import { stub } from "../../../helpers/stub.ts";
 
@@ -289,7 +290,7 @@ describe("skills source — unattended-run wall", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
-      { identity: { id: "user_test" }, unattended: true } as never,
+      { identity: makeIdentity({ id: "user_test" }), unattended: true },
       () => client.callTool({ name: "create", arguments: VALID_CREATE }),
     );
     expect(result.isError).toBe(true);
@@ -305,7 +306,7 @@ describe("skills source — unattended-run wall", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
-      { identity: { id: "user_test" }, unattended: true } as never,
+      { identity: makeIdentity({ id: "user_test" }), unattended: true },
       () => client.callTool({ name: "list", arguments: {} }),
     );
     const text = (result.content as Array<{ type: string; text: string }>)
@@ -324,7 +325,7 @@ describe("skills source — unattended-run wall", () => {
     const src = await buildSourceWithFeatures();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
-      { identity: { id: "user_test" }, unattended: true } as never,
+      { identity: makeIdentity({ id: "user_test" }), unattended: true },
       () => client.callTool({ name: "create", arguments: VALID_CREATE }),
     );
     expect(result.isError).toBe(true);
