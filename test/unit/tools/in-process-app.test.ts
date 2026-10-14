@@ -80,6 +80,24 @@ describe("defineInProcessApp — schema validation", () => {
     source = undefined;
   });
 
+  test("refuses a call when the tool's input schema does not compile", async () => {
+    const { handler, calls } = makeSpy();
+    const def = createDef(handler);
+    source = await buildSource("test", [
+      {
+        ...def,
+        inputSchema: { ...def.inputSchema, $schema: "http://json-schema.org/draft-04/schema#" },
+      },
+    ]);
+
+    const result = await source.execute("create", {});
+
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    const body = parseFirst(result) as { error: string };
+    expect(body.error).toContain("input schema does not compile");
+  });
+
   test("blocks handler when a required field is missing", async () => {
     const { handler, calls } = makeSpy();
     source = await buildSource("test", [createDef(handler)]);

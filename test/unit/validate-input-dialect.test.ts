@@ -51,10 +51,18 @@ describe("validateToolInput: the schema's declared dialect", () => {
     expect(validateToolInput({ pair: [1] }, schema).valid).toBe(false);
   });
 
-  test("test_validate_uncompilable_schema_passes_instead_of_throwing", () => {
+  test("test_validate_uncompilable_schema_refuses_by_default", () => {
     const schema = { $schema: "http://json-schema.org/draft-04/schema#", type: "object" };
-    expect(validateToolInput({ any: 1 }, schema).valid).toBe(true);
-    expect(validateToolInput({ any: 2 }, schema).valid).toBe(true);
+    expect(validateToolInput({ any: 1 }, schema)).toMatchObject({
+      valid: false,
+      error: expect.stringContaining("input schema does not compile"),
+    });
+  });
+
+  test("test_validate_uncompilable_schema_passes_when_caller_opts_in", () => {
+    const schema = { $schema: "http://json-schema.org/draft-04/schema#", type: "object" };
+    expect(validateToolInput({ any: 1 }, schema, { uncompilable: "pass" }).valid).toBe(true);
+    expect(validateToolInput({ any: 2 }, schema, { uncompilable: "pass" }).valid).toBe(true);
   });
 
   test("test_validate_schemas_sharing_an_id_both_compile", () => {

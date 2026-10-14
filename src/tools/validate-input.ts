@@ -2,11 +2,8 @@ import type { ErrorObject, ValidateFunction } from "ajv";
 import { log } from "../observability/log.ts";
 import { compileJsonSchema } from "../util/json-schema-dialect.ts";
 
-/** A schema that does not compile: its calls pass through to the server. */
-const UNCOMPILABLE = "uncompilable";
-
 /** Cache compiled validators by schema reference (schemas are stable at runtime). */
-const cache = new WeakMap<object, ValidateFunction | typeof UNCOMPILABLE>();
+const cache = new WeakMap<object, ValidateFunction | { uncompilable: string }>();
 
 export type ValidationResult =
   | { valid: true }
@@ -26,14 +23,17 @@ export type ValidationResult =
  * anything anyway, and it saves a round-trip.
  *
  * A schema that does not compile (an unknown `$schema` dialect, a malformed
- * keyword) is logged once and its input passes as valid. The schema is the
- * server's, and the server checks its own input; refusing here would fail
- * every call to the tool, which no change of arguments could fix, and a throw
- * would end the run.
+ * keyword) is logged once and never throws. By default its input is refused
+ * with a readable error: for a platform tool this check is the only gate
+ * before a handler that trusts its typed input. A caller whose server checks
+ * its own input passes `uncompilable: "pass"` to let the call through instead
+ * (the engine, for a connector's schema), since a refusal there would fail
+ * every call to the tool, which no change of arguments could fix.
  */
 export function validateToolInput(
   input: Record<string, unknown>,
   schema: Record<string, unknown>,
+  options: { uncompilable?: "refuse" | "pass" } = {},
 ): ValidationResult {
   if (Object.keys(schema).length === 0) {
     return { valid: true };
@@ -44,16 +44,21 @@ export function validateToolInput(
     try {
       validate = compileJsonSchema(schema);
     } catch (err) {
-      validate = UNCOMPILABLE;
+      validate = { uncompilable: err instanceof Error ? err.message : String(err) };
       log.warn("[tools] input_schema.uncompilable", {
         schemaDialect: typeof schema.$schema === "string" ? schema.$schema : undefined,
-        error: err instanceof Error ? err.message : String(err),
+        error: validate.uncompilable,
       });
     }
     cache.set(schema, validate);
   }
-  if (validate === UNCOMPILABLE) {
-    return { valid: true };
+  if (typeof validate !== "function") {
+    if (options.uncompilable === "pass") return { valid: true };
+    return {
+      valid: false,
+      error: `the tool's input schema does not compile: ${validate.uncompilable}`,
+      errors: [],
+    };
   }
 
   if (validate(input)) {
