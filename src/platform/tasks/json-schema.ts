@@ -8,9 +8,8 @@
  * refused there rather than at the first run.
  */
 
-import Ajv, { type ValidateFunction } from "ajv";
-
-const ajv = new Ajv({ allErrors: true, strict: false });
+import type { ValidateFunction } from "ajv";
+import { compileJsonSchema } from "../../util/json-schema-dialect.ts";
 
 /** Compiled validators, by schema text: stored definitions are re-read per request. */
 const compiled = new Map<string, ValidateFunction>();
@@ -22,7 +21,7 @@ function validatorFor(schema: Record<string, unknown>): ValidateFunction {
   const key = JSON.stringify(schema);
   const hit = compiled.get(key);
   if (hit) return hit;
-  const validate = ajv.compile(schema);
+  const validate = compileJsonSchema(schema);
   if (compiled.size >= MAX_COMPILED) {
     const oldest = compiled.keys().next().value;
     if (oldest !== undefined) compiled.delete(oldest);

@@ -3862,6 +3862,72 @@ describe("cache breakpoint edge cases", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tool schemas declaring a JSON Schema dialect other than draft-07
+// ---------------------------------------------------------------------------
+
+describe("tool schema dialect", () => {
+  for (const [label, dialect] of [
+    ["2020-12", "https://json-schema.org/draft/2020-12/schema"],
+    ["an unknown dialect", "http://json-schema.org/draft-04/schema#"],
+  ] as const) {
+    it(`dispatches a call to a tool whose schema declares ${label} without ending the run`, async () => {
+      let handlerCalls = 0;
+      let callCount = 0;
+      const model = createMockModel(() => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call_1",
+                toolName: "test__lookup",
+                input: JSON.stringify({ q: "x" }),
+              },
+            ],
+            inputTokens: 10,
+            outputTokens: 5,
+          };
+        }
+        return { content: [{ type: "text", text: "Done" }], inputTokens: 10, outputTokens: 5 };
+      });
+      const schemas = [
+        {
+          name: "test__lookup",
+          description: "Lookup",
+          inputSchema: {
+            $schema: dialect,
+            type: "object",
+            properties: { q: { type: "string" } },
+            required: ["q"],
+          },
+        },
+      ];
+      const handler = (): ToolResult => {
+        handlerCalls++;
+        return { content: textContent("found"), isError: false };
+      };
+      const events: EngineEvent[] = [];
+      const engine = new AgentEngine(model, new StaticToolRouter(schemas, handler), {
+        emit: (e) => events.push(e),
+      });
+
+      const result = await engine.run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+        schemas,
+      );
+
+      expect(events.find((e) => e.type === "run.error")).toBeUndefined();
+      expect(handlerCalls).toBe(1);
+      expect(result.toolCalls[0]!.ok).toBe(true);
+      expect(result.stopReason).toBe("complete");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Error path coverage — malformed tool call input
 // ---------------------------------------------------------------------------
 
