@@ -349,7 +349,7 @@ describe("createTask / deleteTask — internal caller path", () => {
 describe("an event schedule", () => {
   const eventSchedule = {
     type: "event" as const,
-    match: { source: "precision-outbound", name: "reply.*" },
+    match: { source: "acme-outbound", name: "reply.*" },
   };
 
   test("carries no nextRunAt, because it has no position in time", () => {

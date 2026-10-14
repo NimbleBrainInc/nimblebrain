@@ -20,16 +20,28 @@
  * reading is what discloses the capability; rotating only replaces it.
  */
 
-import type { EventSink, ToolResult } from "../../engine/types.ts";
+import type { EventSink } from "../../engine/types.ts";
 
 import { ensureHooks } from "../../hooks/reconcile.ts";
 import { isPreviousStillValid, listRegistrations } from "../../hooks/registrations.ts";
 import { buildHookUrl } from "../../hooks/token.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
-import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
+import {
+  defineInProcessApp,
+  type InProcessTool,
+  type ToolErrorResult,
+  type ToolSuccessResult,
+  type TypedToolResult,
+  typedTool,
+} from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
-import { HooksListInput, HooksRotateInput } from "../schemas/hooks.ts";
+import {
+  HooksListInput,
+  HooksListOutput,
+  HooksRotateInput,
+  HooksRotateOutput,
+} from "../schemas/hooks.ts";
 
 /** Source name — keep stable; the settings UI calls `hooks__list_webhooks`. */
 export const HOOKS_SOURCE_NAME = "hooks";
@@ -38,7 +50,17 @@ function textContent(text: string) {
   return [{ type: "text" as const, text }];
 }
 
-function refuse(message: string): ToolResult {
+/**
+ * A success: `data` as JSON text, and the same object as `structuredContent`,
+ * which the SDK checks against the tool's output schema. The structured result
+ * carries nothing the text does not, so a URL reaches no reader the text did
+ * not already reach.
+ */
+function ok<T>(data: T): ToolSuccessResult<T> {
+  return { content: textContent(JSON.stringify(data)), structuredContent: data, isError: false };
+}
+
+function refuse(message: string): ToolErrorResult {
   // Human text in `content`: the web tier's parseToolResult throws
   // `new Error(content[0].text)`, so whatever is here is what the admin reads.
   return { content: textContent(message), structuredContent: { error: message }, isError: true };
@@ -94,7 +116,7 @@ async function rotate(
   wsId: string,
   connector: string,
   vendor: string,
-): Promise<ToolResult> {
+): Promise<TypedToolResult<typeof HooksRotateOutput>> {
   const provisioned = await ensureHooks(runtime.getHookReconcileDeps(), wsId, connector, {
     rotate: true,
     onlyVendor: vendor,
@@ -118,28 +140,23 @@ async function rotate(
     (r) => r.connector === connector && r.vendor === vendor,
   );
 
-  return {
-    content: textContent(
-      JSON.stringify({
-        connector,
-        vendor,
-        url: rotated?.deliveryId ? buildHookUrl(rotated.deliveryId) : null,
-        // Whether the CONNECTOR took the new URL. False is the recoverable case
-        // and has to be said: the URL is minted and the door admits it, but the
-        // vendor is still delivering to the old one, which the grace window is
-        // holding open.
-        registered: outcome.registered,
-        error: outcome.error ?? null,
-        previousStillValid: rotated ? isPreviousStillValid(rotated) : false,
-      }),
-    ),
-    isError: false,
-  };
+  return ok({
+    connector,
+    vendor,
+    url: rotated?.deliveryId ? buildHookUrl(rotated.deliveryId) : null,
+    // Whether the CONNECTOR took the new URL. False is the recoverable case
+    // and has to be said: the URL is minted and the door admits it, but the
+    // vendor is still delivering to the old one, which the grace window is
+    // holding open.
+    registered: outcome.registered,
+    error: outcome.error ?? null,
+    previousStillValid: rotated ? isPreviousStillValid(rotated) : false,
+  });
 }
 
 export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSource {
   const tools: InProcessTool[] = [
-    {
+    typedTool({
       name: "list_webhooks",
       description:
         "Every inbound delivery URL this workspace holds, with the address itself, " +
@@ -147,7 +164,8 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
         "Workspace admin only. Read-only.",
       meta: { ui: { visibility: ["app"] } },
       inputSchema: HooksListInput,
-      handler: async (): Promise<ToolResult> => {
+      outputSchema: HooksListOutput,
+      handler: async () => {
         const auth = await adminWorkspace(runtime);
         if (!auth.ok) return refuse(auth.reason);
 
@@ -174,13 +192,10 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
           previousStillValid: isPreviousStillValid(reg),
         }));
 
-        return {
-          content: textContent(JSON.stringify({ webhooks, count: webhooks.length })),
-          isError: false,
-        };
+        return ok({ webhooks, count: webhooks.length });
       },
-    },
-    {
+    }),
+    typedTool({
       name: "rotate_webhook",
       description:
         "Replace one stream's delivery URL and hand the new one to the connector, " +
@@ -189,12 +204,11 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
         "Workspace admin only.",
       meta: { ui: { visibility: ["app"] } },
       inputSchema: HooksRotateInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: HooksRotateOutput,
+      handler: async ({ connector, vendor }) => {
         const auth = await adminWorkspace(runtime);
         if (!auth.ok) return refuse(auth.reason);
 
-        const connector = String(input.connector ?? "");
-        const vendor = String(input.vendor ?? "");
         if (!(await holdsStream(runtime, auth.wsId, connector, vendor))) {
           return refuse(
             `This workspace holds no ${vendor} stream for ${connector}. list_webhooks ` +
@@ -203,7 +217,7 @@ export function createHooksSource(runtime: Runtime, eventSink: EventSink): McpSo
         }
         return rotate(runtime, auth.wsId, connector, vendor);
       },
-    },
+    }),
   ];
 
   return defineInProcessApp(

@@ -42,6 +42,15 @@ const c = 1 as unknown;
 const d = "x" as string;
 export { a, b, c, d };
 `,
+  "never-cast.grit": `
+const a = 1 as never; // flagged
+const b = [1] as never[]; // flagged
+const c = ({ n: 1 }) as never; // flagged
+const d = "x" as string;
+const e: never[] = [];
+function f(x: never): never { return x; }
+export { a, b, c, d, e, f };
+`,
   "inline-type-import.grit": `
 import type { Hono } from "hono";
 export type A = import("hono").Hono; // flagged

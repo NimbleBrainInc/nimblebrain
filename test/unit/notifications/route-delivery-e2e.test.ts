@@ -13,7 +13,7 @@
  * unit test's arrangement, a level clamped in one place and matched in another.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -418,8 +418,33 @@ describe("a connector's fact reaching a Slack channel", () => {
 
 describe("a connector's fact reaching a task", () => {
   const TASK = "reply-triage";
-  /** Short enough that a batching test finishes in milliseconds. */
-  const DEBOUNCE = 20;
+  /**
+   * The batch window. The test closes it (`closeWindow`); the clock never does.
+   * No other timer here is armed for this long, so the spy holds only windows.
+   */
+  const DEBOUNCE = 60_001;
+
+  /**
+   * The timers the trigger armed for its batch windows, held until the test
+   * closes them. Every other timer runs for real. Holding the window is what
+   * lets a test look inside it however long a sweep takes.
+   */
+  let openWindows: Array<() => void>;
+
+  beforeEach(() => {
+    openWindows = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const held = spyOn(globalThis, "setTimeout").mockImplementation(((
+      handler: () => void,
+      ms?: number,
+    ) => {
+      if (ms !== DEBOUNCE) return realSetTimeout(handler, ms);
+      openWindows.push(handler);
+      // A real handle, so the trigger's `clearTimeout` has something to clear.
+      return realSetTimeout(() => {}, 0);
+    }) as typeof setTimeout);
+    teardown.push(() => held.mockRestore());
+  });
 
   /** Every run the trigger started, and the input it carried. */
   let runs: RunInput[];
@@ -483,9 +508,14 @@ describe("a connector's fact reaching a task", () => {
     } as never);
   }
 
-  /** Let the debounce window close and the stubbed run settle. */
-  async function settleWindow(): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, DEBOUNCE + 20));
+  /**
+   * Close every open batch window and let the runs they start settle. The
+   * stubbed run resolves at once and a settlement writes the ledger
+   * synchronously, so one turn of the event loop is enough.
+   */
+  async function closeWindow(): Promise<void> {
+    for (const fire of openWindows.splice(0)) fire();
+    await new Promise((resolve) => setImmediate(resolve));
   }
 
   test("goes outbox → inbox → route → batch → run, and the ledger names the run", async () => {
@@ -508,7 +538,7 @@ describe("a connector's fact reaching a task", () => {
     });
     expect(runs).toHaveLength(0);
 
-    await settleWindow();
+    await closeWindow();
 
     expect(runs).toHaveLength(1);
     expect(runs[0]?.preamble).toContain("<event>");
@@ -534,7 +564,7 @@ describe("a connector's fact reaching a task", () => {
     fixture.emit(fixtureEvent("evt_second"));
     clock += PAST_ANY_BACKOFF_MS;
     await sweepAndSettle(poller);
-    await settleWindow();
+    await closeWindow();
 
     expect(runs).toHaveLength(1);
     expect(runs[0]?.preamble).toContain("2 notifications matched");
@@ -590,7 +620,7 @@ describe("a connector's fact reaching a task", () => {
     fixture.emit(fixtureEvent("evt_domain_active"));
     clock += PAST_ANY_BACKOFF_MS;
     await sweepAndSettle(poller);
-    await settleWindow();
+    await closeWindow();
 
     expect(runs).toHaveLength(0);
     expect(inbox()[0]?.deliveries ?? []).toEqual([]);

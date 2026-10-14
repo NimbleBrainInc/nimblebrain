@@ -847,6 +847,117 @@ describe("manage_connectors.setup_operator before install", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+// uninstall of a static-auth connector — the operator app goes with its last user
+// ─────────────────────────────────────────────────────────────────────
+
+describe("manage_connectors.uninstall of a static-auth connector", () => {
+  const SERVER = "com-dropbox-mcp";
+  const scope = () => ({ kind: "workspace" as const, wsId: h.wsId });
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+    const tool = buildTool(h, ADMIN_USER);
+    await tool.handler({
+      action: "setup_operator",
+      catalogId: DROPBOX_ID,
+      clientId: "cid",
+      clientSecret: "sec",
+    });
+    const installed = await tool.handler({
+      action: "install",
+      entry: dropboxEntry(),
+      wsId: h.wsId,
+    });
+    expect(installed.isError).toBe(false);
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  async function operatorConfigured(): Promise<boolean | undefined> {
+    const result = await buildTool(h, ADMIN_USER).handler({ action: "list_directory" });
+    return (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID)?.operatorConfigured;
+  }
+
+  test("removing the last user clears the operator app, so the entry needs Set up again", async () => {
+    expect(await operatorConfigured()).toBe(true);
+
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "uninstall",
+      serverName: SERVER,
+    });
+    expect(result.isError).toBe(false);
+
+    const ws = await h.workspaceStore.get(h.wsId);
+    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]).toBeUndefined();
+    expect(await h.credStore.get(scope(), DROPBOX_SECRET_KEY, TEST_READ)).toBeNull();
+    expect(await operatorConfigured()).toBe(false);
+  });
+
+  test("the result lists the removed client secret key", async () => {
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "uninstall",
+      serverName: SERVER,
+    });
+    const out = result.structuredContent as { deletedSecretKeys?: string[] };
+    expect(out.deletedSecretKeys).toEqual([DROPBOX_SECRET_KEY]);
+  });
+
+  test("a client secret that fails to delete is reported with its error", async () => {
+    const realDelete = h.credStore.delete.bind(h.credStore);
+    h.credStore.delete = async (scope, key) => {
+      if (key === DROPBOX_SECRET_KEY) throw new Error("store unavailable");
+      return realDelete(scope, key);
+    };
+
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "uninstall",
+      serverName: SERVER,
+    });
+    expect(result.isError).toBe(false);
+    const out = result.structuredContent as {
+      failedSecretKeys?: string[];
+      secretDeleteError?: string;
+    };
+    expect(out.failedSecretKeys).toEqual([DROPBOX_SECRET_KEY]);
+    expect(out.secretDeleteError).toBe("store unavailable");
+  });
+
+  test("an app another installed connector still uses is kept, and said", async () => {
+    // A second ref built on the same operator app: same url, same secret ref.
+    const ws = await h.workspaceStore.get(h.wsId);
+    const first = ws?.connectors.find((c) => c.serverName === SERVER);
+    expect(first?.oauthClient).toBeDefined();
+    await h.workspaceStore.update(h.wsId, {
+      connectors: [
+        ...(ws?.connectors ?? []),
+        { ...first, serverName: `${SERVER}-2` } as ConnectorRef,
+      ],
+    });
+
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "uninstall",
+      serverName: SERVER,
+    });
+    expect(result.isError).toBe(false);
+    const out = result.structuredContent as {
+      deletedSecretKeys?: string[];
+      retainedSecretKeys?: string[];
+    };
+    expect(out.deletedSecretKeys).toEqual([]);
+    expect(out.retainedSecretKeys).toEqual([DROPBOX_SECRET_KEY]);
+
+    const after = await h.workspaceStore.get(h.wsId);
+    expect(after?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid");
+    expect((await h.credStore.get(scope(), DROPBOX_SECRET_KEY, TEST_READ))?.reveal()).toBe("sec");
+    expect(await operatorConfigured()).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
 // install — entry-based dispatch
 // ─────────────────────────────────────────────────────────────────────
 
