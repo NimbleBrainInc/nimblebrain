@@ -627,12 +627,16 @@ function ActionBridge({
       navigateRef.current(path);
     };
 
+    // Where `nb__open_app` puts this input, answered by the server (ADR-0052),
+    // or `null` when it refuses.
+    const resolveOpen = async (input: Record<string, unknown>): Promise<OpenDestination | null> =>
+      destinationFrom(parseToolResponse<unknown>(await callTool("nb", "open_app", input)));
+
     // An app's `ai.nimblebrain/open`: the server resolves the URI, as it does
-    // for the agent (`nb__open_app`, ADR-0052), and the shell shows the answer.
+    // for the agent, and the shell shows the answer.
     const offOpener = provideShellOpener({
       async open(uri) {
-        const res = await callTool("nb", "open_app", { uri });
-        const dest = destinationFrom(parseToolResponse<unknown>(res));
+        const dest = await resolveOpen({ uri });
         if (!dest) throw new Error(`Nothing in this workspace opens ${uri}.`);
         show(dest);
       },
@@ -672,20 +676,20 @@ function ActionBridge({
     };
     window.addEventListener("nb:action", handler);
 
-    // The agent's `nb__open_app`, once it finishes in a turn this tab sent: the
-    // destination the server answered. The store never reports a call from
-    // history, a resumed stream, or another tab, so only the screen of the
-    // person who asked moves.
+    // The agent's `nb__open_app`, once it finishes in a turn this tab sent. The
+    // stream carries only the call's input, so the shell asks the same resolver
+    // with it. The store never reports a call from history, a resumed stream,
+    // or another tab, so only the screen of the person who asked moves.
     const offToolDone = chatStore.onToolDone((call) => {
       if (!call.ok || !isOpenAppCall(call.name)) return;
-      const dest = destinationFrom(call.structuredContent);
-      if (!dest) return;
-      try {
-        show(dest);
-      } catch {
-        // The model was already told the app is opening; a route this shell
-        // lacks leaves the screen where it was.
-      }
+      resolveOpen(call.input)
+        .then((dest) => {
+          if (dest) show(dest);
+        })
+        .catch(() => {
+          // The model was already told the app is opening; a destination this
+          // shell cannot show leaves the screen where it was.
+        });
     });
 
     return () => {

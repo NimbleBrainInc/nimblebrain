@@ -105,6 +105,44 @@ describe("nb__open_app with an app", () => {
   });
 });
 
+describe("nb__open_app with a conversation URI", () => {
+  /** A runtime whose caller owns `conv_mine` in `ws_a`; any other id or owner is refused, as the store refuses it. */
+  function conversationRuntime(callerId: string | undefined): Runtime {
+    return stub<Runtime>({
+      requireWorkspaceId: () => "ws_a",
+      getPlacementRegistry: () => stub<PlacementRegistry>({ forWorkspace: () => PLACEMENTS }),
+      getRegistryForWorkspace: () => stub<ReturnType<Runtime["getRegistryForWorkspace"]>>({}),
+      getCurrentIdentity: () =>
+        callerId
+          ? stub<NonNullable<ReturnType<Runtime["getCurrentIdentity"]>>>({ id: callerId })
+          : null,
+      assertConversationInWorkspace: (id: string, wsId: string, ownerId: string) => {
+        if (id !== "conv_mine" || wsId !== "ws_a" || ownerId !== "u_owner") {
+          throw new Error("conversation not found");
+        }
+      },
+    });
+  }
+
+  test("opens the caller's own conversation in the chat panel", async () => {
+    const result = await createOpenAppTool(conversationRuntime("u_owner")).handler({
+      uri: "conversation://conv_mine",
+    });
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toEqual({ conversationId: "conv_mine" });
+  });
+
+  test("refuses another user's conversation, and any conversation with no caller", async () => {
+    for (const callerId of ["u_other", undefined]) {
+      const result = await createOpenAppTool(conversationRuntime(callerId)).handler({
+        uri: "conversation://conv_mine",
+      });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toBe("No conversation conversation://conv_mine in this workspace.");
+    }
+  });
+});
+
 /** A scope where `people` serves `people://contacts/{id}` and `files` serves `files://{id}`. */
 function scope(over: Partial<OpenScope> = {}): OpenScope {
   const templates: Record<string, { uriTemplate: string }[]> = {

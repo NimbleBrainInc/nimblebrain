@@ -474,8 +474,6 @@ export interface FinishedToolCall {
   ok: boolean;
   /** The arguments the agent called it with. */
   input: Record<string, unknown>;
-  /** The tool's typed answer, when it returned one. */
-  structuredContent?: Record<string, unknown>;
 }
 
 export interface ChatStore {
@@ -1096,7 +1094,6 @@ export function createChatStore(): ChatStore {
       name: evt.name,
       ok: evt.ok,
       input: tool?.input ?? {},
-      ...(evt.result?.structuredContent ? { structuredContent: evt.result.structuredContent } : {}),
     };
     for (const listener of toolDoneListeners) listener(done);
   }
