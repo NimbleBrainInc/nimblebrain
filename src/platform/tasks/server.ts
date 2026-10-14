@@ -28,16 +28,21 @@ import type {
   TasksCreateOutput,
   TasksDeleteInput,
   TasksDeleteOutput,
+  TasksJudgesInput,
   TasksJudgesOutput,
+  TasksListInput,
   TasksListOutput,
+  TasksRunInput,
   TasksRunOutput,
   TasksRunResultInput,
   TasksRunResultOutput,
   TasksRunsInput,
   TasksRunsOutput,
+  TasksStatsInput,
   TasksStatsOutput,
   TasksStatusInput,
   TasksStatusOutput,
+  TasksUpcomingInput,
   TasksUpcomingOutput,
   TasksUpdateInput,
   TasksUpdateOutput,
@@ -86,7 +91,6 @@ import {
   type ScheduleSpec,
   type Task,
   type TaskJudge,
-  type TaskKind,
   type TaskRun,
   type TaskRunResult,
   type TokenBudget,
@@ -744,7 +748,7 @@ export function handleDelete(args: TasksDeleteInput, ctx: ToolContext): TasksDel
   return deleteTask(taskId, ctx);
 }
 
-export function handleList(args: Record<string, unknown>, ctx: ToolContext): TasksListOutput {
+export function handleList(args: TasksListInput, ctx: ToolContext): TasksListOutput {
   const defs = ctx.definitions();
 
   let tasks = Array.from(defs.values());
@@ -758,7 +762,7 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Tas
   }
   // Saved by default: a one-off is kept with its history, not listed with the
   // tasks someone keeps.
-  const kind = (args.kind as TaskKind | "all" | undefined) ?? "saved";
+  const kind = args.kind ?? "saved";
   if (kind !== "all") {
     tasks = tasks.filter((a) => kindOf(a) === kind);
   }
@@ -781,14 +785,14 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Tas
   // pattern conversation listing already uses. An unknown cursor (its record
   // was deleted) leaves the slice untouched and re-serves the first page,
   // which repeats work rather than skipping any.
-  const cursor = args.cursor as string | undefined;
+  const { cursor } = args;
   if (cursor) {
     const idx = tasks.findIndex((a) => a.id === cursor);
     if (idx >= 0) tasks = tasks.slice(idx + 1);
   }
 
   const limit = Math.min(
-    Math.max(1, Math.floor((args.limit as number) ?? TASKS_LIST_DEFAULT_LIMIT)),
+    Math.max(1, Math.floor(args.limit ?? TASKS_LIST_DEFAULT_LIMIT)),
     TASKS_LIST_MAX_LIMIT,
   );
   // Remaining after this page, computed from what is actually left rather than
@@ -967,11 +971,8 @@ const STATS_PAGE = 5_000;
  * scheduler's own admission keys), the coming fires of timed schedules, and
  * the tasks events fire.
  */
-export function handleUpcoming(
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-): TasksUpcomingOutput {
-  const days = (args.days as number | undefined) ?? DEFAULT_UPCOMING_DAYS;
+export function handleUpcoming(args: TasksUpcomingInput, ctx: ToolContext): TasksUpcomingOutput {
+  const days = args.days ?? DEFAULT_UPCOMING_DAYS;
   const now = Date.now();
   const windowEnd = now + days * 24 * HOUR_MS;
   const defs = ctx.definitions();
@@ -1167,9 +1168,8 @@ function eventTaskOf(task: Task, ctx: ToolContext): TaskUpcomingEventTask {
  * pass rate and cost, read back through the archive months, and the newest
  * run's label.
  */
-export function handleStats(args: Record<string, unknown>, ctx: ToolContext): TasksStatsOutput {
-  const sinceArg = args.since as string | undefined;
-  const taskId = args.taskId as string | undefined;
+export function handleStats(args: TasksStatsInput, ctx: ToolContext): TasksStatsOutput {
+  const { since: sinceArg, taskId } = args;
   const since = sinceArg ?? new Date(Date.now() - STATS_DEFAULT_DAYS * 24 * HOUR_MS).toISOString();
   if (Number.isNaN(new Date(since).getTime())) {
     throw new Error(`Invalid since timestamp: "${since}"`);
@@ -1221,7 +1221,7 @@ function countRun(stats: TaskRunStats, run: TaskRun): void {
 
 /** `tasks__judges`: the judge servers connected in this workspace, and why a task naming none would not be judged. */
 export async function handleJudges(
-  _args: Record<string, unknown>,
+  _args: TasksJudgesInput,
   ctx: ToolContext,
 ): Promise<TasksJudgesOutput> {
   const sources = ctx.judgeSources ? await ctx.judgeSources() : [];
@@ -1380,14 +1380,6 @@ export interface InlineManifest {
 export interface InlineDefinition {
   manifest?: InlineManifest;
   body?: string;
-}
-
-/** `tasks__run`'s arguments, already shape-checked by the tool's input schema. */
-interface RunArgs {
-  taskId?: string;
-  definition?: InlineDefinition;
-  input?: unknown;
-  idempotencyKey?: string;
 }
 
 /** What `tasks__run` became: a run it asked for, or one an idempotency key already started. */
@@ -1554,8 +1546,7 @@ function checkRunInput(
  * and the task-augmented one, so the two cannot disagree on what a call
  * starts.
  */
-export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): PreparedRun {
-  const args = rawArgs as RunArgs;
+export function prepareRun(args: TasksRunInput, ctx: ToolContext): PreparedRun {
   if ((args.taskId === undefined) === (args.definition === undefined)) {
     throw new Error(
       "Give `taskId` (a task to run, from tasks__list) or `definition` (a one-off), not both.",
@@ -1638,10 +1629,7 @@ function existingRunAnswer(task: Task, ticket: RunTicket, ctx: ToolContext): Tas
   };
 }
 
-export async function handleRun(
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-): Promise<TasksRunOutput> {
+export async function handleRun(args: TasksRunInput, ctx: ToolContext): Promise<TasksRunOutput> {
   const prepared = prepareRun(args, ctx);
   const { task } = prepared;
   const name = task.name;
