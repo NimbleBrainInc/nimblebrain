@@ -172,8 +172,7 @@ describe("a registration that predates delivery ids", () => {
     // record; the page has to say the same thing, or an admin pastes a dead
     // address into a vendor console and gets no error from anyone.
     const { deliveryId: _dropped, ...stale } = reg();
-    // biome-ignore lint/plugin/never-cast: a registration without the `deliveryId` `HookRegistration` requires, which is the record under test
-    runtime.seed("admin", { "acme-billing-mcp:acme": stale as never });
+    runtime.seed("admin", { "acme-billing-mcp:acme": stale });
     const webhooks = (await list()).webhooks as Array<Record<string, unknown>>;
     expect(webhooks[0]?.url).toBeNull();
     expect(JSON.stringify(webhooks)).not.toContain("undefined");

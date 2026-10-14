@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hostMetaToUiMeta, sanitizePlacements } from "../../src/connectors/runtime/defaults.ts";
+import { hostMetaToUiMeta } from "../../src/connectors/runtime/defaults.ts";
 import { composeSystemPrompt, type PromptAppInfo } from "../../src/prompt/compose.ts";
 
 /**
