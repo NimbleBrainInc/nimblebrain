@@ -270,17 +270,17 @@ describe("a source that is running but has advertised nothing yet", () => {
     // filter skipped such a stream on every boot for ever — nothing was missing,
     // so nothing reconciled it, and the only symptom was a vendor that never
     // delivered. The predicate is the ADDRESS, so this heals on the next pass.
-    // biome-ignore lint/plugin/never-cast: a stored registration without the delivery id `HookRegistration` requires, which is the record under test
     await store.update(wsId, {
       hooks: {
         [`${CONNECTOR}/${DECL.vendor}`]: {
           connector: CONNECTOR,
           vendor: DECL.vendor,
           kid: "hk_before_delivery_ids",
+          createdAt: "2026-01-01T00:00:00.000Z",
           route: DECL.route,
         },
       },
-    } as never);
+    });
 
     const fake = makeSource([advertised("set_webhook_url")]);
     const provisioned = await ensureHooks(makeDeps(fake.source), wsId, CONNECTOR, {
