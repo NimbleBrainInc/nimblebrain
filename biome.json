@@ -55,14 +55,12 @@
   },
   "overrides": [
     {
-      "includes": [
-        "scripts/**",
-        "src/**",
-        "web/src/**",
-        "test/**",
-        "web/test/**"
-      ],
+      "includes": ["scripts/**", "src/**", "web/src/**", "test/**", "web/test/**"],
       "plugins": ["./biome-plugins/double-cast.grit"]
+    },
+    {
+      "includes": ["scripts/**", "src/**", "web/src/**", "web/test/**", "test/helpers/**"],
+      "plugins": ["./biome-plugins/never-cast.grit"]
     },
     {
       "includes": ["src/**/*.ts", "!src/api/app.ts"],

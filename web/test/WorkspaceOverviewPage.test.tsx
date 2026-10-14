@@ -23,7 +23,7 @@
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
-import type { PlacementEntry } from "../src/types";
+import type { ChatRequest, PlacementEntry } from "../src/types";
 import { realClient } from "./setup";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -42,13 +42,13 @@ type CallTool = (server: string, tool: string) => Promise<unknown>;
 let callToolImpl: CallTool = () => new Promise(() => {});
 // The composer's send reaches `startChatTurn`; a test records it here. Unset, the
 // real function runs, so the mock changes nothing for other suites.
-type StartChatTurn = (req: { message: string }) => Promise<unknown>;
+type StartChatTurn = (req: ChatRequest) => Promise<unknown>;
 let startChatTurnImpl: StartChatTurn | null = null;
 mock.module("../src/api/client", () => ({
   ...realClient,
   callTool: (server: string, tool: string) => callToolImpl(server, tool),
-  startChatTurn: (req: { message: string }) =>
-    startChatTurnImpl ? startChatTurnImpl(req) : realClient.startChatTurn(req as never),
+  startChatTurn: (req: ChatRequest) =>
+    startChatTurnImpl ? startChatTurnImpl(req) : realClient.startChatTurn(req),
 }));
 
 const ReactDOMClient = await import("react-dom/client");
