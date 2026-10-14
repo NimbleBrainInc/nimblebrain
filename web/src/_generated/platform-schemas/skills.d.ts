@@ -17,7 +17,7 @@ import { type Static } from "@sinclair/typebox";
  */
 export declare const SkillPriority: import("@sinclair/typebox").TNumber;
 export declare const SkillsListInput: import("@sinclair/typebox").TObject<{
-    scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace" | "provided">>;
+    scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"org" | "provided" | "user" | "workspace">>;
     layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<1 | 3>>;
     loading_strategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
     tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -33,13 +33,13 @@ export type SkillsReadInput = Static<typeof SkillsReadInput>;
 export declare const SkillsLoadingLogInput: import("@sinclair/typebox").TObject<{
     conversation_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    loaded_by: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "tool_affinity" | "trigger" | "tool_use" | "activation">>;
+    loaded_by: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"activation" | "always" | "tool_affinity" | "tool_use" | "trigger">>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     until: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type SkillsLoadingLogInput = Static<typeof SkillsLoadingLogInput>;
 export declare const SkillsCreateInput: import("@sinclair/typebox").TObject<{
-    scope: import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace">;
+    scope: import("@sinclair/typebox").TUnsafe<"org" | "user" | "workspace">;
     manifest: import("@sinclair/typebox").TObject<{
         name: import("@sinclair/typebox").TString;
         description: import("@sinclair/typebox").TString;
@@ -98,7 +98,7 @@ export declare const UseSkillInput: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TString;
 }>;
 export type UseSkillInput = Static<typeof UseSkillInput>;
-declare const ScopeValue: import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace" | "provided">;
+declare const ScopeValue: import("@sinclair/typebox").TUnsafe<"org" | "provided" | "user" | "workspace">;
 declare const StatusValue: import("@sinclair/typebox").TUnsafe<"active" | "disabled">;
 declare const LayerValue: import("@sinclair/typebox").TUnsafe<1 | 3>;
 /** Tier a skill lives in. */
@@ -127,7 +127,7 @@ export type SkillSource = Static<typeof SkillSource>;
  */
 export declare const SkillLoading: import("@sinclair/typebox").TObject<{
     wouldLoad: import("@sinclair/typebox").TBoolean;
-    mechanism: import("@sinclair/typebox").TUnsafe<"always" | "tool_affinity" | "trigger" | "none">;
+    mechanism: import("@sinclair/typebox").TUnsafe<"always" | "none" | "tool_affinity" | "trigger">;
 }>;
 export type SkillLoading = Static<typeof SkillLoading>;
 /**
@@ -138,7 +138,7 @@ export declare const SkillSummary: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
     name: import("@sinclair/typebox").TString;
     layer: import("@sinclair/typebox").TUnsafe<1 | 3>;
-    scope: import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace" | "provided">;
+    scope: import("@sinclair/typebox").TUnsafe<"org" | "provided" | "user" | "workspace">;
     status: import("@sinclair/typebox").TUnsafe<"active" | "disabled">;
     tokens: import("@sinclair/typebox").TNumber;
     source: import("@sinclair/typebox").TObject<{
@@ -155,7 +155,7 @@ export declare const SkillSummary: import("@sinclair/typebox").TObject<{
     priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     loading: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         wouldLoad: import("@sinclair/typebox").TBoolean;
-        mechanism: import("@sinclair/typebox").TUnsafe<"always" | "tool_affinity" | "trigger" | "none">;
+        mechanism: import("@sinclair/typebox").TUnsafe<"always" | "none" | "tool_affinity" | "trigger">;
     }>>;
 }>;
 export type SkillSummary = Static<typeof SkillSummary>;
@@ -164,7 +164,7 @@ export declare const SkillsListOutput: import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
         name: import("@sinclair/typebox").TString;
         layer: import("@sinclair/typebox").TUnsafe<1 | 3>;
-        scope: import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace" | "provided">;
+        scope: import("@sinclair/typebox").TUnsafe<"org" | "provided" | "user" | "workspace">;
         status: import("@sinclair/typebox").TUnsafe<"active" | "disabled">;
         tokens: import("@sinclair/typebox").TNumber;
         source: import("@sinclair/typebox").TObject<{
@@ -181,7 +181,7 @@ export declare const SkillsListOutput: import("@sinclair/typebox").TObject<{
         priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         loading: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             wouldLoad: import("@sinclair/typebox").TBoolean;
-            mechanism: import("@sinclair/typebox").TUnsafe<"always" | "tool_affinity" | "trigger" | "none">;
+            mechanism: import("@sinclair/typebox").TUnsafe<"always" | "none" | "tool_affinity" | "trigger">;
         }>>;
     }>>;
 }>;
@@ -194,7 +194,7 @@ export declare const SkillDetail: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
     content: import("@sinclair/typebox").TString;
     layer: import("@sinclair/typebox").TUnsafe<1 | 3>;
-    scope: import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace" | "provided">;
+    scope: import("@sinclair/typebox").TUnsafe<"org" | "provided" | "user" | "workspace">;
     source: import("@sinclair/typebox").TObject<{
         connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         connectorVersion: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -235,14 +235,16 @@ export type SkillVersionDetail = Static<typeof SkillVersionDetail>;
 export declare const SkillsReadOutput: import("@sinclair/typebox").TUnsafe<{
     modifiedAt?: string | undefined;
     overLimitBy?: number | undefined;
+    scope: "org" | "provided" | "user" | "workspace";
+    layer: 1 | 3;
     id: string;
-    scope: "user" | "org" | "workspace" | "provided";
     source: {
         connector?: string | undefined;
-        uri?: string | undefined;
-        path?: string | undefined;
         connectorVersion?: string | undefined;
+        path?: string | undefined;
+        uri?: string | undefined;
     };
+    content: string;
     metadata: {
         description?: string | undefined;
         status?: string | undefined;
@@ -252,13 +254,11 @@ export declare const SkillsReadOutput: import("@sinclair/typebox").TUnsafe<{
         triggers?: string[] | undefined;
         name: string;
     };
-    content: string;
-    layer: 1 | 3;
 } | {
     id: string;
+    version: string;
     manifest: unknown;
     body: string;
-    version: string;
 }> & {
     type: "object";
 };
@@ -314,7 +314,7 @@ export declare const SkillsWriteOutput: import("@sinclair/typebox").TObject<{
     loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     loading: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         wouldLoad: import("@sinclair/typebox").TBoolean;
-        mechanism: import("@sinclair/typebox").TUnsafe<"always" | "tool_affinity" | "trigger" | "none">;
+        mechanism: import("@sinclair/typebox").TUnsafe<"always" | "none" | "tool_affinity" | "trigger">;
     }>>;
     /** Absent when the body carried no frontmatter, or when `frontmatter: "ignore"`. */
     frontmatterApplied: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -355,13 +355,13 @@ export type SkillsActivationOutput = Static<typeof SkillsActivationOutput>;
  * the body is already in the conversation's context, so none is re-delivered.
  */
 export declare const SkillsUseOutput: import("@sinclair/typebox").TUnsafe<{
-    tokens: number;
-    name: string;
     scope: string;
     status: "loaded";
-} | {
     name: string;
+    tokens: number;
+} | {
     status: "already_loaded";
+    name: string;
 }> & {
     type: "object";
 };

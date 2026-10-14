@@ -44,7 +44,7 @@ export declare const TasksCreateInput: import("@sinclair/typebox").TObject<{
         criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
             id: import("@sinclair/typebox").TString;
             rule: import("@sinclair/typebox").TString;
-            type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+            type: import("@sinclair/typebox").TUnsafe<"boolean" | "choice" | "score">;
             levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
@@ -55,11 +55,11 @@ export declare const TasksCreateInput: import("@sinclair/typebox").TObject<{
             id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
         }>>;
-        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
+        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"notify" | "record" | "retry_once">>;
         name: import("@sinclair/typebox").TString;
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
+            type: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "once">;
             expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -67,13 +67,13 @@ export declare const TasksCreateInput: import("@sinclair/typebox").TObject<{
             match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
             }>>;
             debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
             maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
         }>>;
         enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-        kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
+        kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"oneoff" | "saved">>;
     }>;
     body: import("@sinclair/typebox").TString;
 }>;
@@ -83,7 +83,7 @@ export declare const TasksUpdateInput: import("@sinclair/typebox").TObject<{
     manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
         schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
-            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
+            type: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "once">;
             expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -91,7 +91,7 @@ export declare const TasksUpdateInput: import("@sinclair/typebox").TObject<{
             match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
             }>>;
             debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
             maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
@@ -113,7 +113,7 @@ export declare const TasksUpdateInput: import("@sinclair/typebox").TObject<{
         criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
             id: import("@sinclair/typebox").TString;
             rule: import("@sinclair/typebox").TString;
-            type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+            type: import("@sinclair/typebox").TUnsafe<"boolean" | "choice" | "score">;
             levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
@@ -124,7 +124,7 @@ export declare const TasksUpdateInput: import("@sinclair/typebox").TObject<{
             id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
         }>, import("@sinclair/typebox").TNull]>>;
-        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">, import("@sinclair/typebox").TNull]>>;
+        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"notify" | "record" | "retry_once">, import("@sinclair/typebox").TNull]>>;
     }>>;
     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
@@ -135,8 +135,8 @@ export declare const TasksDeleteInput: import("@sinclair/typebox").TObject<{
 export type TasksDeleteInput = Static<typeof TasksDeleteInput>;
 export declare const TasksListInput: import("@sinclair/typebox").TObject<{
     enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-    source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "agent">>;
-    kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "saved" | "oneoff">>;
+    source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"agent" | "user">>;
+    kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "oneoff" | "saved">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
@@ -148,8 +148,8 @@ export declare const TasksStatusInput: import("@sinclair/typebox").TObject<{
 export type TasksStatusInput = Static<typeof TasksStatusInput>;
 export declare const TasksRunsInput: import("@sinclair/typebox").TObject<{
     taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    label: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled">>;
-    verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pass" | "fail" | "uncertain" | "not_assessed">>;
+    label: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Skipped" | "Succeeded">>;
+    verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"fail" | "not_assessed" | "pass" | "uncertain">>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     before: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
@@ -187,7 +187,7 @@ export declare const TasksRunInput: import("@sinclair/typebox").TObject<{
             criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
                 id: import("@sinclair/typebox").TString;
                 rule: import("@sinclair/typebox").TString;
-                type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+                type: import("@sinclair/typebox").TUnsafe<"boolean" | "choice" | "score">;
                 levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                 options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                 pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
@@ -198,7 +198,7 @@ export declare const TasksRunInput: import("@sinclair/typebox").TObject<{
                 id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
             }>>;
-            onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
+            onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"notify" | "record" | "retry_once">>;
         }>>;
         body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>>;
@@ -209,7 +209,7 @@ export type TasksRunInput = Static<typeof TasksRunInput>;
 export declare const TasksAssessInput: import("@sinclair/typebox").TObject<{
     runId: import("@sinclair/typebox").TString;
     taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pass" | "fail">>;
+    verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"fail" | "pass">>;
     note: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     reassess: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
 }>;
@@ -243,7 +243,7 @@ export declare const TasksRunBatchInput: import("@sinclair/typebox").TObject<{
             criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
                 id: import("@sinclair/typebox").TString;
                 rule: import("@sinclair/typebox").TString;
-                type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+                type: import("@sinclair/typebox").TUnsafe<"boolean" | "choice" | "score">;
                 levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                 options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                 pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
@@ -270,20 +270,20 @@ export type TasksRunBatchInput = Static<typeof TasksRunBatchInput>;
 export declare const TasksBatchInput: import("@sinclair/typebox").TObject<{
     batchId: import("@sinclair/typebox").TString;
     results: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-    filter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pending" | "skipped" | "failed" | "pass" | "fail" | "uncertain" | "not_assessed" | "cancelled" | "failing">>;
+    filter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"cancelled" | "fail" | "failed" | "failing" | "not_assessed" | "pass" | "pending" | "skipped" | "uncertain">>;
     cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
 }>;
 export type TasksBatchInput = Static<typeof TasksBatchInput>;
 export declare const TasksBatchControlInput: import("@sinclair/typebox").TObject<{
     batchId: import("@sinclair/typebox").TString;
-    action: import("@sinclair/typebox").TUnsafe<"pause" | "resume" | "cancel" | "rerun_failed">;
+    action: import("@sinclair/typebox").TUnsafe<"cancel" | "pause" | "rerun_failed" | "resume">;
     budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
 export type TasksBatchControlInput = Static<typeof TasksBatchControlInput>;
 export declare const TasksBatchesInput: import("@sinclair/typebox").TObject<{
     taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    state: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">>;
+    state: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
 }>;
 export type TasksBatchesInput = Static<typeof TasksBatchesInput>;
@@ -293,12 +293,12 @@ export type TasksBatchesInput = Static<typeof TasksBatchesInput>;
  * — the list view shows the most recent COMPLETED run's outcome, never
  * one in flight.
  */
-export declare const TaskLastRunStatus: import("@sinclair/typebox").TUnsafe<"skipped" | "success" | "degraded" | "failure" | "timeout">;
+export declare const TaskLastRunStatus: import("@sinclair/typebox").TUnsafe<"degraded" | "failure" | "skipped" | "success" | "timeout">;
 export type TaskLastRunStatus = Static<typeof TaskLastRunStatus>;
 /** How a once schedule's occurrence ended, and when. Mirror of `OnceDone`. */
 export declare const TaskOnceDone: import("@sinclair/typebox").TObject<{
     at: import("@sinclair/typebox").TString;
-    outcome: import("@sinclair/typebox").TUnsafe<"ran" | "missed">;
+    outcome: import("@sinclair/typebox").TUnsafe<"missed" | "ran">;
 }>;
 export type TaskOnceDone = Static<typeof TaskOnceDone>;
 /**
@@ -313,7 +313,7 @@ export declare const TaskTokenBudget: import("@sinclair/typebox").TObject<{
 export type TaskTokenBudget = Static<typeof TaskTokenBudget>;
 /** Schedule spec block on a stored task. Mirror of `ScheduleSpec`. */
 export declare const TaskScheduleSpec: import("@sinclair/typebox").TObject<{
-    type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
+    type: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "once">;
     expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -321,7 +321,7 @@ export declare const TaskScheduleSpec: import("@sinclair/typebox").TObject<{
     match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+        level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
     }>>;
     debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -331,7 +331,7 @@ export type TaskScheduleSpec = Static<typeof TaskScheduleSpec>;
 export declare const TaskCriterion: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
     rule: import("@sinclair/typebox").TString;
-    type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+    type: import("@sinclair/typebox").TUnsafe<"boolean" | "choice" | "score">;
     levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
@@ -353,17 +353,17 @@ export declare const TaskSummary: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TString;
     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     schedule: import("@sinclair/typebox").TString;
-    scheduleType: import("@sinclair/typebox").TUnsafe<"none" | "cron" | "interval" | "event" | "once">;
-    kind: import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">;
+    scheduleType: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "none" | "once">;
+    kind: import("@sinclair/typebox").TUnsafe<"oneoff" | "saved">;
     /** Set when a once schedule has fired or missed its time; the task is inert until re-armed. */
     onceDone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         at: import("@sinclair/typebox").TString;
-        outcome: import("@sinclair/typebox").TUnsafe<"ran" | "missed">;
+        outcome: import("@sinclair/typebox").TUnsafe<"missed" | "ran">;
     }>>;
     enabled: import("@sinclair/typebox").TBoolean;
-    source: import("@sinclair/typebox").TUnsafe<"user" | "agent">;
+    source: import("@sinclair/typebox").TUnsafe<"agent" | "user">;
     runCount: import("@sinclair/typebox").TNumber;
-    lastRunStatus: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"skipped" | "success" | "degraded" | "failure" | "timeout">, import("@sinclair/typebox").TNull]>;
+    lastRunStatus: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"degraded" | "failure" | "skipped" | "success" | "timeout">, import("@sinclair/typebox").TNull]>;
     lastRunAt: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
     nextRunAt: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
     disabledAt: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
@@ -379,17 +379,17 @@ export declare const TasksListOutput: import("@sinclair/typebox").TObject<{
         name: import("@sinclair/typebox").TString;
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         schedule: import("@sinclair/typebox").TString;
-        scheduleType: import("@sinclair/typebox").TUnsafe<"none" | "cron" | "interval" | "event" | "once">;
-        kind: import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">;
+        scheduleType: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "none" | "once">;
+        kind: import("@sinclair/typebox").TUnsafe<"oneoff" | "saved">;
         /** Set when a once schedule has fired or missed its time; the task is inert until re-armed. */
         onceDone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
-            outcome: import("@sinclair/typebox").TUnsafe<"ran" | "missed">;
+            outcome: import("@sinclair/typebox").TUnsafe<"missed" | "ran">;
         }>>;
         enabled: import("@sinclair/typebox").TBoolean;
-        source: import("@sinclair/typebox").TUnsafe<"user" | "agent">;
+        source: import("@sinclair/typebox").TUnsafe<"agent" | "user">;
         runCount: import("@sinclair/typebox").TNumber;
-        lastRunStatus: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"skipped" | "success" | "degraded" | "failure" | "timeout">, import("@sinclair/typebox").TNull]>;
+        lastRunStatus: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"degraded" | "failure" | "skipped" | "success" | "timeout">, import("@sinclair/typebox").TNull]>;
         lastRunAt: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
         nextRunAt: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
         disabledAt: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
@@ -435,16 +435,16 @@ export declare const TaskCriterionResult: import("@sinclair/typebox").TObject<{
 export type TaskCriterionResult = Static<typeof TaskCriterionResult>;
 /** A person's verdict on a run. Mirror of `HumanVerdict`. */
 export declare const TaskHumanVerdict: import("@sinclair/typebox").TObject<{
-    verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail">;
+    verdict: import("@sinclair/typebox").TUnsafe<"fail" | "pass">;
     note: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     by: import("@sinclair/typebox").TString;
-    via: import("@sinclair/typebox").TUnsafe<"ui" | "remote">;
+    via: import("@sinclair/typebox").TUnsafe<"remote" | "ui">;
     at: import("@sinclair/typebox").TString;
 }>;
 export type TaskHumanVerdict = Static<typeof TaskHumanVerdict>;
 /** Whether a run's deliverable is acceptable. Mirror of `RunAssessment`. */
 export declare const TaskRunAssessment: import("@sinclair/typebox").TObject<{
-    verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail" | "uncertain" | "not_assessed">;
+    verdict: import("@sinclair/typebox").TUnsafe<"fail" | "not_assessed" | "pass" | "uncertain">;
     reason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         code: import("@sinclair/typebox").TString;
         message: import("@sinclair/typebox").TString;
@@ -475,19 +475,19 @@ export declare const TaskRunAssessment: import("@sinclair/typebox").TObject<{
     stateTruncated: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     assessedAt: import("@sinclair/typebox").TString;
     human: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail">;
+        verdict: import("@sinclair/typebox").TUnsafe<"fail" | "pass">;
         note: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         by: import("@sinclair/typebox").TString;
-        via: import("@sinclair/typebox").TUnsafe<"ui" | "remote">;
+        via: import("@sinclair/typebox").TUnsafe<"remote" | "ui">;
         at: import("@sinclair/typebox").TString;
     }>>;
 }>;
 export type TaskRunAssessment = Static<typeof TaskRunAssessment>;
 /** How a run ended (ADR-0045), derived from its record. Mirror of `RunExecution`. */
-export declare const TaskRunExecution: import("@sinclair/typebox").TUnsafe<"skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete">;
+export declare const TaskRunExecution: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped">;
 export type TaskRunExecution = Static<typeof TaskRunExecution>;
 /** The one label a run reads as, derived and never stored. Mirror of `RunLabel`. */
-export declare const TaskRunLabel: import("@sinclair/typebox").TUnsafe<"Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running">;
+export declare const TaskRunLabel: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
 export type TaskRunLabel = Static<typeof TaskRunLabel>;
 /**
  * A single run record as the store holds it and the handlers return it.
@@ -499,16 +499,16 @@ export declare const TaskRunRecord: import("@sinclair/typebox").TObject<{
     taskId: import("@sinclair/typebox").TString;
     startedAt: import("@sinclair/typebox").TString;
     completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    status: import("@sinclair/typebox").TUnsafe<"skipped" | "cancelled" | "running" | "success" | "degraded" | "failure" | "timeout" | "queued">;
+    status: import("@sinclair/typebox").TUnsafe<"cancelled" | "degraded" | "failure" | "queued" | "running" | "skipped" | "success" | "timeout">;
     inputTokens: import("@sinclair/typebox").TNumber;
     outputTokens: import("@sinclair/typebox").TNumber;
     toolCalls: import("@sinclair/typebox").TNumber;
     iterations: import("@sinclair/typebox").TNumber;
     error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     transient: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-    trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
+    trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"event" | "manual" | "scheduled">>;
     resultPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
+    stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit">>;
     /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
     spendAccountId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /** The JSON input the run was given. */
@@ -523,7 +523,7 @@ export declare const TaskRunRecord: import("@sinclair/typebox").TObject<{
     unrecoveredToolFailures: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     /** Whether the deliverable is acceptable; absent until assessed. */
     assessment: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail" | "uncertain" | "not_assessed">;
+        verdict: import("@sinclair/typebox").TUnsafe<"fail" | "not_assessed" | "pass" | "uncertain">;
         reason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             code: import("@sinclair/typebox").TString;
             message: import("@sinclair/typebox").TString;
@@ -554,10 +554,10 @@ export declare const TaskRunRecord: import("@sinclair/typebox").TObject<{
         stateTruncated: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         assessedAt: import("@sinclair/typebox").TString;
         human: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail">;
+            verdict: import("@sinclair/typebox").TUnsafe<"fail" | "pass">;
             note: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             by: import("@sinclair/typebox").TString;
-            via: import("@sinclair/typebox").TUnsafe<"ui" | "remote">;
+            via: import("@sinclair/typebox").TUnsafe<"remote" | "ui">;
             at: import("@sinclair/typebox").TString;
         }>>;
     }>>;
@@ -579,29 +579,29 @@ export type TaskRunRecord = Static<typeof TaskRunRecord>;
  */
 export declare const TaskRunView: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
-    status: import("@sinclair/typebox").TUnsafe<"skipped" | "cancelled" | "running" | "success" | "degraded" | "failure" | "timeout" | "queued">;
-    trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
-    error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
-    toolCalls: import("@sinclair/typebox").TNumber;
-    inputTokens: import("@sinclair/typebox").TNumber;
-    outputTokens: import("@sinclair/typebox").TNumber;
-    stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
     taskId: import("@sinclair/typebox").TString;
+    input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
     idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     batchId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    inputTokens: import("@sinclair/typebox").TNumber;
+    outputTokens: import("@sinclair/typebox").TNumber;
     costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     startedAt: import("@sinclair/typebox").TString;
     completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    status: import("@sinclair/typebox").TUnsafe<"cancelled" | "degraded" | "failure" | "queued" | "running" | "skipped" | "success" | "timeout">;
+    toolCalls: import("@sinclair/typebox").TNumber;
     iterations: import("@sinclair/typebox").TNumber;
     transient: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+    trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"event" | "manual" | "scheduled">>;
     resultPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit">>;
     spendAccountId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     outputSchemaValid: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     outputSchemaErrors: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     unrecoveredToolFailures: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     assessment: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail" | "uncertain" | "not_assessed">;
+        verdict: import("@sinclair/typebox").TUnsafe<"fail" | "not_assessed" | "pass" | "uncertain">;
         reason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             code: import("@sinclair/typebox").TString;
             message: import("@sinclair/typebox").TString;
@@ -632,17 +632,17 @@ export declare const TaskRunView: import("@sinclair/typebox").TObject<{
         stateTruncated: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         assessedAt: import("@sinclair/typebox").TString;
         human: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail">;
+            verdict: import("@sinclair/typebox").TUnsafe<"fail" | "pass">;
             note: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             by: import("@sinclair/typebox").TString;
-            via: import("@sinclair/typebox").TUnsafe<"ui" | "remote">;
+            via: import("@sinclair/typebox").TUnsafe<"remote" | "ui">;
             at: import("@sinclair/typebox").TString;
         }>>;
     }>>;
     retryOf: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-    label: import("@sinclair/typebox").TUnsafe<"Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running">;
-    execution: import("@sinclair/typebox").TUnsafe<"skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete">;
+    label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
+    execution: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped">;
 }>;
 export type TaskRunView = Static<typeof TaskRunView>;
 /** One tool call from a run's activity log. Mirror of `RunToolCall`. */
@@ -689,7 +689,7 @@ export declare const TaskRunResultBody: import("@sinclair/typebox").TObject<{
         outputTokens: import("@sinclair/typebox").TNumber;
         iterations: import("@sinclair/typebox").TNumber;
     }>;
-    stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
+    stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit">>;
     /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
     structured: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
     /** Why the run failed or did not start, as its record says. */
@@ -703,33 +703,24 @@ export type TaskRunResultBody = Static<typeof TaskRunResultBody>;
  */
 export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
     position?: number | undefined;
-    status: "running" | "queued";
     message: string;
+    status: "queued" | "running";
     run: {
-        trigger?: "manual" | "event" | "scheduled" | undefined;
-        error?: string | undefined;
         input?: unknown;
-        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
         idempotencyKey?: string | undefined;
         batchId?: string | undefined;
+        error?: string | undefined;
         costUsd?: number | undefined;
         completedAt?: string | undefined;
         transient?: boolean | undefined;
+        trigger?: "event" | "manual" | "scheduled" | undefined;
         resultPreview?: string | undefined;
+        stopReason?: "complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit" | undefined;
         spendAccountId?: string | undefined;
         outputSchemaValid?: boolean | undefined;
         outputSchemaErrors?: string[] | undefined;
         unrecoveredToolFailures?: string[] | undefined;
         assessment?: {
-            reason?: {
-                code: string;
-                message: string;
-            } | undefined;
-            usage?: {
-                inputTokens?: number | undefined;
-                outputTokens?: number | undefined;
-                costUsd?: number | undefined;
-            } | undefined;
             criteria?: {
                 probabilities?: {
                     [x: string]: number;
@@ -746,38 +737,47 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
                 server: string;
                 calibrated: boolean;
             } | undefined;
+            reason?: {
+                code: string;
+                message: string;
+            } | undefined;
             schema?: {
                 errors?: string[] | undefined;
                 valid: boolean;
+            } | undefined;
+            usage?: {
+                inputTokens?: number | undefined;
+                outputTokens?: number | undefined;
+                costUsd?: number | undefined;
             } | undefined;
             stateTruncated?: boolean | undefined;
             human?: {
                 note?: string | undefined;
                 at: string;
-                verdict: "pass" | "fail";
+                verdict: "fail" | "pass";
                 by: string;
-                via: "ui" | "remote";
+                via: "remote" | "ui";
             } | undefined;
-            verdict: "pass" | "fail" | "uncertain" | "not_assessed";
+            verdict: "fail" | "not_assessed" | "pass" | "uncertain";
             assessedAt: string;
         } | undefined;
         retryOf?: string | undefined;
         batchIndex?: number | undefined;
         id: string;
-        status: "skipped" | "cancelled" | "running" | "success" | "degraded" | "failure" | "timeout" | "queued";
-        toolCalls: number;
+        taskId: string;
+        label: "Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded";
         inputTokens: number;
         outputTokens: number;
-        label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
-        taskId: string;
         startedAt: string;
+        status: "cancelled" | "degraded" | "failure" | "queued" | "running" | "skipped" | "success" | "timeout";
+        toolCalls: number;
         iterations: number;
-        execution: "skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete";
+        execution: "cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped";
     };
 } | {
     result?: {
         error?: string | undefined;
-        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
+        stopReason?: "complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit" | undefined;
         structured?: unknown;
         usage: {
             inputTokens: number;
@@ -788,11 +788,11 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
         output: string;
         activityLog: {
             input?: unknown;
-            id: string;
             name: string;
+            id: string;
+            output: string;
             ok: boolean;
             ms: number;
-            output: string;
         }[];
         outputFiles: {
             id: string;
@@ -801,30 +801,21 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
     } | undefined;
     status: "ended";
     run: {
-        trigger?: "manual" | "event" | "scheduled" | undefined;
-        error?: string | undefined;
         input?: unknown;
-        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
         idempotencyKey?: string | undefined;
         batchId?: string | undefined;
+        error?: string | undefined;
         costUsd?: number | undefined;
         completedAt?: string | undefined;
         transient?: boolean | undefined;
+        trigger?: "event" | "manual" | "scheduled" | undefined;
         resultPreview?: string | undefined;
+        stopReason?: "complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit" | undefined;
         spendAccountId?: string | undefined;
         outputSchemaValid?: boolean | undefined;
         outputSchemaErrors?: string[] | undefined;
         unrecoveredToolFailures?: string[] | undefined;
         assessment?: {
-            reason?: {
-                code: string;
-                message: string;
-            } | undefined;
-            usage?: {
-                inputTokens?: number | undefined;
-                outputTokens?: number | undefined;
-                costUsd?: number | undefined;
-            } | undefined;
             criteria?: {
                 probabilities?: {
                     [x: string]: number;
@@ -841,33 +832,42 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
                 server: string;
                 calibrated: boolean;
             } | undefined;
+            reason?: {
+                code: string;
+                message: string;
+            } | undefined;
             schema?: {
                 errors?: string[] | undefined;
                 valid: boolean;
+            } | undefined;
+            usage?: {
+                inputTokens?: number | undefined;
+                outputTokens?: number | undefined;
+                costUsd?: number | undefined;
             } | undefined;
             stateTruncated?: boolean | undefined;
             human?: {
                 note?: string | undefined;
                 at: string;
-                verdict: "pass" | "fail";
+                verdict: "fail" | "pass";
                 by: string;
-                via: "ui" | "remote";
+                via: "remote" | "ui";
             } | undefined;
-            verdict: "pass" | "fail" | "uncertain" | "not_assessed";
+            verdict: "fail" | "not_assessed" | "pass" | "uncertain";
             assessedAt: string;
         } | undefined;
         retryOf?: string | undefined;
         batchIndex?: number | undefined;
         id: string;
-        status: "skipped" | "cancelled" | "running" | "success" | "degraded" | "failure" | "timeout" | "queued";
-        toolCalls: number;
+        taskId: string;
+        label: "Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded";
         inputTokens: number;
         outputTokens: number;
-        label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
-        taskId: string;
         startedAt: string;
+        status: "cancelled" | "degraded" | "failure" | "queued" | "running" | "skipped" | "success" | "timeout";
+        toolCalls: number;
         iterations: number;
-        execution: "skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete";
+        execution: "cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped";
     };
 }> & {
     type: "object";
@@ -886,7 +886,7 @@ export declare const TaskStatusDetail: import("@sinclair/typebox").TObject<{
     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     prompt: import("@sinclair/typebox").TString;
     schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
+        type: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "once">;
         expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -894,21 +894,21 @@ export declare const TaskStatusDetail: import("@sinclair/typebox").TObject<{
         match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
         }>>;
         debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     }>>;
-    kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
+    kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"oneoff" | "saved">>;
     onceDone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         at: import("@sinclair/typebox").TString;
-        outcome: import("@sinclair/typebox").TUnsafe<"ran" | "missed">;
+        outcome: import("@sinclair/typebox").TUnsafe<"missed" | "ran">;
     }>>;
     scheduleHuman: import("@sinclair/typebox").TString;
     /** The IANA timezone its schedule is read in: the schedule's own, else this instance's. */
     timezone: import("@sinclair/typebox").TString;
     enabled: import("@sinclair/typebox").TBoolean;
-    source: import("@sinclair/typebox").TUnsafe<"user" | "agent">;
+    source: import("@sinclair/typebox").TUnsafe<"agent" | "user">;
     ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
@@ -919,7 +919,7 @@ export declare const TaskStatusDetail: import("@sinclair/typebox").TObject<{
     criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
         rule: import("@sinclair/typebox").TString;
-        type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+        type: import("@sinclair/typebox").TUnsafe<"boolean" | "choice" | "score">;
         levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
@@ -930,7 +930,7 @@ export declare const TaskStatusDetail: import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
     }>>;
-    onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
+    onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"notify" | "record" | "retry_once">>;
     maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -945,7 +945,7 @@ export declare const TaskStatusDetail: import("@sinclair/typebox").TObject<{
     }>, import("@sinclair/typebox").TNull]>;
     budgetResetAt: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
     lastRunAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    lastRunStatus: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "success" | "degraded" | "failure" | "timeout">>;
+    lastRunStatus: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"degraded" | "failure" | "skipped" | "success" | "timeout">>;
     nextRunAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     disabledAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     disabledReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -963,7 +963,7 @@ export declare const TasksStatusOutput: import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         prompt: import("@sinclair/typebox").TString;
         schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
+            type: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "once">;
             expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -971,21 +971,21 @@ export declare const TasksStatusOutput: import("@sinclair/typebox").TObject<{
             match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
             }>>;
             debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         }>>;
-        kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
+        kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"oneoff" | "saved">>;
         onceDone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
-            outcome: import("@sinclair/typebox").TUnsafe<"ran" | "missed">;
+            outcome: import("@sinclair/typebox").TUnsafe<"missed" | "ran">;
         }>>;
         scheduleHuman: import("@sinclair/typebox").TString;
         /** The IANA timezone its schedule is read in: the schedule's own, else this instance's. */
         timezone: import("@sinclair/typebox").TString;
         enabled: import("@sinclair/typebox").TBoolean;
-        source: import("@sinclair/typebox").TUnsafe<"user" | "agent">;
+        source: import("@sinclair/typebox").TUnsafe<"agent" | "user">;
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
@@ -996,7 +996,7 @@ export declare const TasksStatusOutput: import("@sinclair/typebox").TObject<{
         criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
             id: import("@sinclair/typebox").TString;
             rule: import("@sinclair/typebox").TString;
-            type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+            type: import("@sinclair/typebox").TUnsafe<"boolean" | "choice" | "score">;
             levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
@@ -1007,7 +1007,7 @@ export declare const TasksStatusOutput: import("@sinclair/typebox").TObject<{
             id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
         }>>;
-        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
+        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"notify" | "record" | "retry_once">>;
         maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1022,7 +1022,7 @@ export declare const TasksStatusOutput: import("@sinclair/typebox").TObject<{
         }>, import("@sinclair/typebox").TNull]>;
         budgetResetAt: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
         lastRunAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        lastRunStatus: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "success" | "degraded" | "failure" | "timeout">>;
+        lastRunStatus: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"degraded" | "failure" | "skipped" | "success" | "timeout">>;
         nextRunAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         disabledAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         disabledReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -1034,29 +1034,29 @@ export declare const TasksStatusOutput: import("@sinclair/typebox").TObject<{
     }>;
     recentRuns: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
-        status: import("@sinclair/typebox").TUnsafe<"skipped" | "cancelled" | "running" | "success" | "degraded" | "failure" | "timeout" | "queued">;
-        trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
-        error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
-        toolCalls: import("@sinclair/typebox").TNumber;
-        inputTokens: import("@sinclair/typebox").TNumber;
-        outputTokens: import("@sinclair/typebox").TNumber;
-        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
         taskId: import("@sinclair/typebox").TString;
+        input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        inputTokens: import("@sinclair/typebox").TNumber;
+        outputTokens: import("@sinclair/typebox").TNumber;
         costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         startedAt: import("@sinclair/typebox").TString;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        status: import("@sinclair/typebox").TUnsafe<"cancelled" | "degraded" | "failure" | "queued" | "running" | "skipped" | "success" | "timeout">;
+        toolCalls: import("@sinclair/typebox").TNumber;
         iterations: import("@sinclair/typebox").TNumber;
         transient: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+        trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"event" | "manual" | "scheduled">>;
         resultPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit">>;
         spendAccountId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         outputSchemaValid: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         outputSchemaErrors: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         unrecoveredToolFailures: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         assessment: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail" | "uncertain" | "not_assessed">;
+            verdict: import("@sinclair/typebox").TUnsafe<"fail" | "not_assessed" | "pass" | "uncertain">;
             reason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                 code: import("@sinclair/typebox").TString;
                 message: import("@sinclair/typebox").TString;
@@ -1087,46 +1087,46 @@ export declare const TasksStatusOutput: import("@sinclair/typebox").TObject<{
             stateTruncated: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
             assessedAt: import("@sinclair/typebox").TString;
             human: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-                verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail">;
+                verdict: import("@sinclair/typebox").TUnsafe<"fail" | "pass">;
                 note: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 by: import("@sinclair/typebox").TString;
-                via: import("@sinclair/typebox").TUnsafe<"ui" | "remote">;
+                via: import("@sinclair/typebox").TUnsafe<"remote" | "ui">;
                 at: import("@sinclair/typebox").TString;
             }>>;
         }>>;
         retryOf: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        label: import("@sinclair/typebox").TUnsafe<"Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running">;
-        execution: import("@sinclair/typebox").TUnsafe<"skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete">;
+        label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
+        execution: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped">;
     }>>;
 }>;
 export type TasksStatusOutput = Static<typeof TasksStatusOutput>;
 export declare const TasksRunsOutput: import("@sinclair/typebox").TObject<{
     runs: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
-        status: import("@sinclair/typebox").TUnsafe<"skipped" | "cancelled" | "running" | "success" | "degraded" | "failure" | "timeout" | "queued">;
-        trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
-        error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
-        toolCalls: import("@sinclair/typebox").TNumber;
-        inputTokens: import("@sinclair/typebox").TNumber;
-        outputTokens: import("@sinclair/typebox").TNumber;
-        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
         taskId: import("@sinclair/typebox").TString;
+        input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        inputTokens: import("@sinclair/typebox").TNumber;
+        outputTokens: import("@sinclair/typebox").TNumber;
         costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         startedAt: import("@sinclair/typebox").TString;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        status: import("@sinclair/typebox").TUnsafe<"cancelled" | "degraded" | "failure" | "queued" | "running" | "skipped" | "success" | "timeout">;
+        toolCalls: import("@sinclair/typebox").TNumber;
         iterations: import("@sinclair/typebox").TNumber;
         transient: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+        trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"event" | "manual" | "scheduled">>;
         resultPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit">>;
         spendAccountId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         outputSchemaValid: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         outputSchemaErrors: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         unrecoveredToolFailures: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         assessment: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail" | "uncertain" | "not_assessed">;
+            verdict: import("@sinclair/typebox").TUnsafe<"fail" | "not_assessed" | "pass" | "uncertain">;
             reason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                 code: import("@sinclair/typebox").TString;
                 message: import("@sinclair/typebox").TString;
@@ -1157,17 +1157,17 @@ export declare const TasksRunsOutput: import("@sinclair/typebox").TObject<{
             stateTruncated: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
             assessedAt: import("@sinclair/typebox").TString;
             human: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-                verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail">;
+                verdict: import("@sinclair/typebox").TUnsafe<"fail" | "pass">;
                 note: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 by: import("@sinclair/typebox").TString;
-                via: import("@sinclair/typebox").TUnsafe<"ui" | "remote">;
+                via: import("@sinclair/typebox").TUnsafe<"remote" | "ui">;
                 at: import("@sinclair/typebox").TString;
             }>>;
         }>>;
         retryOf: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        label: import("@sinclair/typebox").TUnsafe<"Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running">;
-        execution: import("@sinclair/typebox").TUnsafe<"skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete">;
+        label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
+        execution: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped">;
     }>>;
     total: import("@sinclair/typebox").TInteger;
     /**
@@ -1189,7 +1189,7 @@ export type TasksRunsOutput = Static<typeof TasksRunsOutput>;
  * `uncertain` (Needs review) until one is connected or named.
  */
 export declare const TaskWarning: import("@sinclair/typebox").TObject<{
-    code: import("@sinclair/typebox").TUnsafe<"no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable">;
+    code: import("@sinclair/typebox").TUnsafe<"allowed_tool_unavailable" | "judge_ambiguous" | "judge_not_found" | "no_judge">;
     message: import("@sinclair/typebox").TString;
 }>;
 export type TaskWarning = Static<typeof TaskWarning>;
@@ -1225,13 +1225,10 @@ export type TaskWarning = Static<typeof TaskWarning>;
  * `as { run: ... }`.
  */
 export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
-    warnings?: {
-        code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
-        message: string;
-    }[] | undefined;
+    message?: string | undefined;
     result?: {
         error?: string | undefined;
-        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
+        stopReason?: "complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit" | undefined;
         structured?: unknown;
         usage: {
             inputTokens: number;
@@ -1242,44 +1239,38 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         output: string;
         activityLog: {
             input?: unknown;
-            id: string;
             name: string;
+            id: string;
+            output: string;
             ok: boolean;
             ms: number;
-            output: string;
         }[];
         outputFiles: {
             id: string;
             filename: string;
         }[];
     } | null | undefined;
-    message?: string | undefined;
+    warnings?: {
+        code: "allowed_tool_unavailable" | "judge_ambiguous" | "judge_not_found" | "no_judge";
+        message: string;
+    }[] | undefined;
     enabled: boolean;
     run: {
-        trigger?: "manual" | "event" | "scheduled" | undefined;
-        error?: string | undefined;
         input?: unknown;
-        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
         idempotencyKey?: string | undefined;
         batchId?: string | undefined;
+        error?: string | undefined;
         costUsd?: number | undefined;
         completedAt?: string | undefined;
         transient?: boolean | undefined;
+        trigger?: "event" | "manual" | "scheduled" | undefined;
         resultPreview?: string | undefined;
+        stopReason?: "complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit" | undefined;
         spendAccountId?: string | undefined;
         outputSchemaValid?: boolean | undefined;
         outputSchemaErrors?: string[] | undefined;
         unrecoveredToolFailures?: string[] | undefined;
         assessment?: {
-            reason?: {
-                code: string;
-                message: string;
-            } | undefined;
-            usage?: {
-                inputTokens?: number | undefined;
-                outputTokens?: number | undefined;
-                costUsd?: number | undefined;
-            } | undefined;
             criteria?: {
                 probabilities?: {
                     [x: string]: number;
@@ -1296,55 +1287,64 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
                 server: string;
                 calibrated: boolean;
             } | undefined;
+            reason?: {
+                code: string;
+                message: string;
+            } | undefined;
             schema?: {
                 errors?: string[] | undefined;
                 valid: boolean;
+            } | undefined;
+            usage?: {
+                inputTokens?: number | undefined;
+                outputTokens?: number | undefined;
+                costUsd?: number | undefined;
             } | undefined;
             stateTruncated?: boolean | undefined;
             human?: {
                 note?: string | undefined;
                 at: string;
-                verdict: "pass" | "fail";
+                verdict: "fail" | "pass";
                 by: string;
-                via: "ui" | "remote";
+                via: "remote" | "ui";
             } | undefined;
-            verdict: "pass" | "fail" | "uncertain" | "not_assessed";
+            verdict: "fail" | "not_assessed" | "pass" | "uncertain";
             assessedAt: string;
         } | undefined;
         retryOf?: string | undefined;
         batchIndex?: number | undefined;
         id: string;
-        status: "skipped" | "cancelled" | "running" | "success" | "degraded" | "failure" | "timeout" | "queued";
-        toolCalls: number;
+        taskId: string;
+        label: "Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded";
         inputTokens: number;
         outputTokens: number;
-        label: "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
-        taskId: string;
         startedAt: string;
+        status: "cancelled" | "degraded" | "failure" | "queued" | "running" | "skipped" | "success" | "timeout";
+        toolCalls: number;
         iterations: number;
-        execution: "skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete";
+        execution: "cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped";
     };
 } | {
     warnings?: {
-        code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
+        code: "allowed_tool_unavailable" | "judge_ambiguous" | "judge_not_found" | "no_judge";
         message: string;
     }[] | undefined;
-    runId: string;
-    status: "dispatched";
     enabled: boolean;
     taskId: string;
+    runId: string;
     message: string;
     startedAt: string;
+    status: "dispatched";
 } | {
     warnings?: {
-        code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
+        code: "allowed_tool_unavailable" | "judge_ambiguous" | "judge_not_found" | "no_judge";
         message: string;
     }[] | undefined;
-    runId: string;
-    status: "queued";
     enabled: boolean;
     taskId: string;
+    runId: string;
     message: string;
+    status: "queued";
     position: number;
     queuedAt: string;
 }> & {
@@ -1355,29 +1355,29 @@ export type TasksRunOutput = Static<typeof TasksRunOutput>;
 export declare const TasksAssessOutput: import("@sinclair/typebox").TObject<{
     run: import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
-        status: import("@sinclair/typebox").TUnsafe<"skipped" | "cancelled" | "running" | "success" | "degraded" | "failure" | "timeout" | "queued">;
-        trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
-        error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
-        toolCalls: import("@sinclair/typebox").TNumber;
-        inputTokens: import("@sinclair/typebox").TNumber;
-        outputTokens: import("@sinclair/typebox").TNumber;
-        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter">>;
         taskId: import("@sinclair/typebox").TString;
+        input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        inputTokens: import("@sinclair/typebox").TNumber;
+        outputTokens: import("@sinclair/typebox").TNumber;
         costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         startedAt: import("@sinclair/typebox").TString;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        status: import("@sinclair/typebox").TUnsafe<"cancelled" | "degraded" | "failure" | "queued" | "running" | "skipped" | "success" | "timeout">;
+        toolCalls: import("@sinclair/typebox").TNumber;
         iterations: import("@sinclair/typebox").TNumber;
         transient: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+        trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"event" | "manual" | "scheduled">>;
         resultPreview: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit">>;
         spendAccountId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         outputSchemaValid: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         outputSchemaErrors: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         unrecoveredToolFailures: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         assessment: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail" | "uncertain" | "not_assessed">;
+            verdict: import("@sinclair/typebox").TUnsafe<"fail" | "not_assessed" | "pass" | "uncertain">;
             reason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                 code: import("@sinclair/typebox").TString;
                 message: import("@sinclair/typebox").TString;
@@ -1408,17 +1408,17 @@ export declare const TasksAssessOutput: import("@sinclair/typebox").TObject<{
             stateTruncated: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
             assessedAt: import("@sinclair/typebox").TString;
             human: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-                verdict: import("@sinclair/typebox").TUnsafe<"pass" | "fail">;
+                verdict: import("@sinclair/typebox").TUnsafe<"fail" | "pass">;
                 note: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 by: import("@sinclair/typebox").TString;
-                via: import("@sinclair/typebox").TUnsafe<"ui" | "remote">;
+                via: import("@sinclair/typebox").TUnsafe<"remote" | "ui">;
                 at: import("@sinclair/typebox").TString;
             }>>;
         }>>;
         retryOf: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        label: import("@sinclair/typebox").TUnsafe<"Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running">;
-        execution: import("@sinclair/typebox").TUnsafe<"skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete">;
+        label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
+        execution: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped">;
     }>;
     message: import("@sinclair/typebox").TString;
 }>;
@@ -1442,7 +1442,7 @@ export declare const TaskRecord: import("@sinclair/typebox").TObject<{
     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     prompt: import("@sinclair/typebox").TString;
     schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
+        type: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "once">;
         expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -1450,15 +1450,15 @@ export declare const TaskRecord: import("@sinclair/typebox").TObject<{
         match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+            level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
         }>>;
         debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     }>>;
-    kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
+    kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"oneoff" | "saved">>;
     onceDone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         at: import("@sinclair/typebox").TString;
-        outcome: import("@sinclair/typebox").TUnsafe<"ran" | "missed">;
+        outcome: import("@sinclair/typebox").TUnsafe<"missed" | "ran">;
     }>>;
     skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -1467,7 +1467,7 @@ export declare const TaskRecord: import("@sinclair/typebox").TObject<{
     criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
         rule: import("@sinclair/typebox").TString;
-        type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+        type: import("@sinclair/typebox").TUnsafe<"boolean" | "choice" | "score">;
         levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
@@ -1478,7 +1478,7 @@ export declare const TaskRecord: import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
     }>>;
-    onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
+    onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"notify" | "record" | "retry_once">>;
     maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1486,11 +1486,11 @@ export declare const TaskRecord: import("@sinclair/typebox").TObject<{
     enabled: import("@sinclair/typebox").TBoolean;
     ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    source: import("@sinclair/typebox").TUnsafe<"user" | "agent">;
+    source: import("@sinclair/typebox").TUnsafe<"agent" | "user">;
     createdAt: import("@sinclair/typebox").TString;
     updatedAt: import("@sinclair/typebox").TString;
     lastRunAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    lastRunStatus: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "success" | "degraded" | "failure" | "timeout">>;
+    lastRunStatus: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"degraded" | "failure" | "skipped" | "success" | "timeout">>;
     nextRunAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     runCount: import("@sinclair/typebox").TNumber;
     consecutiveErrors: import("@sinclair/typebox").TNumber;
@@ -1526,7 +1526,7 @@ export declare const TasksCreateOutput: import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         prompt: import("@sinclair/typebox").TString;
         schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
+            type: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "once">;
             expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -1534,15 +1534,15 @@ export declare const TasksCreateOutput: import("@sinclair/typebox").TObject<{
             match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
             }>>;
             debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         }>>;
-        kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
+        kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"oneoff" | "saved">>;
         onceDone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
-            outcome: import("@sinclair/typebox").TUnsafe<"ran" | "missed">;
+            outcome: import("@sinclair/typebox").TUnsafe<"missed" | "ran">;
         }>>;
         skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -1551,7 +1551,7 @@ export declare const TasksCreateOutput: import("@sinclair/typebox").TObject<{
         criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
             id: import("@sinclair/typebox").TString;
             rule: import("@sinclair/typebox").TString;
-            type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+            type: import("@sinclair/typebox").TUnsafe<"boolean" | "choice" | "score">;
             levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
@@ -1562,7 +1562,7 @@ export declare const TasksCreateOutput: import("@sinclair/typebox").TObject<{
             id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
         }>>;
-        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
+        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"notify" | "record" | "retry_once">>;
         maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1570,11 +1570,11 @@ export declare const TasksCreateOutput: import("@sinclair/typebox").TObject<{
         enabled: import("@sinclair/typebox").TBoolean;
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        source: import("@sinclair/typebox").TUnsafe<"user" | "agent">;
+        source: import("@sinclair/typebox").TUnsafe<"agent" | "user">;
         createdAt: import("@sinclair/typebox").TString;
         updatedAt: import("@sinclair/typebox").TString;
         lastRunAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        lastRunStatus: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "success" | "degraded" | "failure" | "timeout">>;
+        lastRunStatus: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"degraded" | "failure" | "skipped" | "success" | "timeout">>;
         nextRunAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         runCount: import("@sinclair/typebox").TNumber;
         consecutiveErrors: import("@sinclair/typebox").TNumber;
@@ -1598,7 +1598,7 @@ export declare const TasksCreateOutput: import("@sinclair/typebox").TObject<{
     timezone: import("@sinclair/typebox").TString;
     /** About the saved task, which was saved anyway. */
     warnings: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
-        code: import("@sinclair/typebox").TUnsafe<"no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable">;
+        code: import("@sinclair/typebox").TUnsafe<"allowed_tool_unavailable" | "judge_ambiguous" | "judge_not_found" | "no_judge">;
         message: import("@sinclair/typebox").TString;
     }>>>;
 }>;
@@ -1610,7 +1610,7 @@ export declare const TasksUpdateOutput: import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         prompt: import("@sinclair/typebox").TString;
         schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
+            type: import("@sinclair/typebox").TUnsafe<"cron" | "event" | "interval" | "once">;
             expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -1618,15 +1618,15 @@ export declare const TasksUpdateOutput: import("@sinclair/typebox").TObject<{
             match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"attention" | "info" | "urgent">>;
             }>>;
             debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         }>>;
-        kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
+        kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"oneoff" | "saved">>;
         onceDone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
-            outcome: import("@sinclair/typebox").TUnsafe<"ran" | "missed">;
+            outcome: import("@sinclair/typebox").TUnsafe<"missed" | "ran">;
         }>>;
         skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -1635,7 +1635,7 @@ export declare const TasksUpdateOutput: import("@sinclair/typebox").TObject<{
         criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
             id: import("@sinclair/typebox").TString;
             rule: import("@sinclair/typebox").TString;
-            type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+            type: import("@sinclair/typebox").TUnsafe<"boolean" | "choice" | "score">;
             levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
@@ -1646,7 +1646,7 @@ export declare const TasksUpdateOutput: import("@sinclair/typebox").TObject<{
             id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
         }>>;
-        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
+        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"notify" | "record" | "retry_once">>;
         maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1654,11 +1654,11 @@ export declare const TasksUpdateOutput: import("@sinclair/typebox").TObject<{
         enabled: import("@sinclair/typebox").TBoolean;
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        source: import("@sinclair/typebox").TUnsafe<"user" | "agent">;
+        source: import("@sinclair/typebox").TUnsafe<"agent" | "user">;
         createdAt: import("@sinclair/typebox").TString;
         updatedAt: import("@sinclair/typebox").TString;
         lastRunAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        lastRunStatus: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "success" | "degraded" | "failure" | "timeout">>;
+        lastRunStatus: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"degraded" | "failure" | "skipped" | "success" | "timeout">>;
         nextRunAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         runCount: import("@sinclair/typebox").TNumber;
         consecutiveErrors: import("@sinclair/typebox").TNumber;
@@ -1683,7 +1683,7 @@ export declare const TasksUpdateOutput: import("@sinclair/typebox").TObject<{
     timezone: import("@sinclair/typebox").TString;
     /** About the saved task, which was saved anyway. */
     warnings: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
-        code: import("@sinclair/typebox").TUnsafe<"no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable">;
+        code: import("@sinclair/typebox").TUnsafe<"allowed_tool_unavailable" | "judge_ambiguous" | "judge_not_found" | "no_judge">;
         message: import("@sinclair/typebox").TString;
     }>>>;
 }>;
@@ -1722,9 +1722,9 @@ export declare const TaskBatchRecord: import("@sinclair/typebox").TObject<{
         afterItems: import("@sinclair/typebox").TNumber;
     }>>;
     stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-    state: import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">;
+    state: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">;
     pause: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        reason: import("@sinclair/typebox").TUnsafe<"manual" | "budget" | "pass_rate" | "unavailable">;
+        reason: import("@sinclair/typebox").TUnsafe<"budget" | "manual" | "pass_rate" | "unavailable">;
         message: import("@sinclair/typebox").TString;
         at: import("@sinclair/typebox").TString;
     }>>;
@@ -1751,15 +1751,10 @@ export type TaskBatchRecord = Static<typeof TaskBatchRecord>;
 /** A batch as the batch tools return it: the record plus figures derived on read. */
 export declare const TaskBatchView: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
-    createdAt: import("@sinclair/typebox").TString;
-    ownerId: import("@sinclair/typebox").TString;
-    workspaceId: import("@sinclair/typebox").TString;
     taskId: import("@sinclair/typebox").TString;
     idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     costUsd: import("@sinclair/typebox").TNumber;
     completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    updatedAt: import("@sinclair/typebox").TString;
-    createdBy: import("@sinclair/typebox").TString;
     items: import("@sinclair/typebox").TNumber;
     concurrency: import("@sinclair/typebox").TNumber;
     budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1768,11 +1763,15 @@ export declare const TaskBatchView: import("@sinclair/typebox").TObject<{
         afterItems: import("@sinclair/typebox").TNumber;
     }>>;
     pause: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        reason: import("@sinclair/typebox").TUnsafe<"manual" | "budget" | "pass_rate" | "unavailable">;
+        reason: import("@sinclair/typebox").TUnsafe<"budget" | "manual" | "pass_rate" | "unavailable">;
         message: import("@sinclair/typebox").TString;
         at: import("@sinclair/typebox").TString;
     }>>;
-    state: import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">;
+    state: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">;
+    ownerId: import("@sinclair/typebox").TString;
+    workspaceId: import("@sinclair/typebox").TString;
+    createdAt: import("@sinclair/typebox").TString;
+    updatedAt: import("@sinclair/typebox").TString;
     stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     counts: import("@sinclair/typebox").TObject<{
         pending: import("@sinclair/typebox").TNumber;
@@ -1786,6 +1785,7 @@ export declare const TaskBatchView: import("@sinclair/typebox").TObject<{
         skipped: import("@sinclair/typebox").TNumber;
         cancelled: import("@sinclair/typebox").TNumber;
     }>;
+    createdBy: import("@sinclair/typebox").TString;
     done: import("@sinclair/typebox").TNumber;
     passRate: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>;
 }>;
@@ -1795,13 +1795,13 @@ export declare const TaskBatchItemView: import("@sinclair/typebox").TObject<{
     index: import("@sinclair/typebox").TNumber;
     /** The item's input as JSON, cut to a short preview. */
     inputSummary: import("@sinclair/typebox").TString;
-    state: import("@sinclair/typebox").TUnsafe<"done" | "pending" | "running" | "queued">;
+    state: import("@sinclair/typebox").TUnsafe<"done" | "pending" | "queued" | "running">;
     runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     previousRunIds: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-    execution: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete">>;
-    verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pass" | "fail" | "uncertain" | "not_assessed">>;
+    execution: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped">>;
+    verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"fail" | "not_assessed" | "pass" | "uncertain">>;
     /** The label the item's run reads as, from its execution and verdict. */
-    label: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running">>;
+    label: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">>;
     costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /** The top-level scalar fields of the run's structured output, when it has one. */
@@ -1811,15 +1811,10 @@ export type TaskBatchItemView = Static<typeof TaskBatchItemView>;
 export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
     batch: import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
-        createdAt: import("@sinclair/typebox").TString;
-        ownerId: import("@sinclair/typebox").TString;
-        workspaceId: import("@sinclair/typebox").TString;
         taskId: import("@sinclair/typebox").TString;
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        updatedAt: import("@sinclair/typebox").TString;
-        createdBy: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1828,11 +1823,15 @@ export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
             afterItems: import("@sinclair/typebox").TNumber;
         }>>;
         pause: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            reason: import("@sinclair/typebox").TUnsafe<"manual" | "budget" | "pass_rate" | "unavailable">;
+            reason: import("@sinclair/typebox").TUnsafe<"budget" | "manual" | "pass_rate" | "unavailable">;
             message: import("@sinclair/typebox").TString;
             at: import("@sinclair/typebox").TString;
         }>>;
-        state: import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">;
+        state: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">;
+        ownerId: import("@sinclair/typebox").TString;
+        workspaceId: import("@sinclair/typebox").TString;
+        createdAt: import("@sinclair/typebox").TString;
+        updatedAt: import("@sinclair/typebox").TString;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;
@@ -1846,6 +1845,7 @@ export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
             skipped: import("@sinclair/typebox").TNumber;
             cancelled: import("@sinclair/typebox").TNumber;
         }>;
+        createdBy: import("@sinclair/typebox").TString;
         done: import("@sinclair/typebox").TNumber;
         passRate: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>;
     }>;
@@ -1853,7 +1853,7 @@ export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
     existing: import("@sinclair/typebox").TBoolean;
     message: import("@sinclair/typebox").TString;
     warnings: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
-        code: import("@sinclair/typebox").TUnsafe<"no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable">;
+        code: import("@sinclair/typebox").TUnsafe<"allowed_tool_unavailable" | "judge_ambiguous" | "judge_not_found" | "no_judge">;
         message: import("@sinclair/typebox").TString;
     }>>>;
 }>;
@@ -1861,15 +1861,10 @@ export type TasksRunBatchOutput = Static<typeof TasksRunBatchOutput>;
 export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
     batch: import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
-        createdAt: import("@sinclair/typebox").TString;
-        ownerId: import("@sinclair/typebox").TString;
-        workspaceId: import("@sinclair/typebox").TString;
         taskId: import("@sinclair/typebox").TString;
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        updatedAt: import("@sinclair/typebox").TString;
-        createdBy: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1878,11 +1873,15 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
             afterItems: import("@sinclair/typebox").TNumber;
         }>>;
         pause: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            reason: import("@sinclair/typebox").TUnsafe<"manual" | "budget" | "pass_rate" | "unavailable">;
+            reason: import("@sinclair/typebox").TUnsafe<"budget" | "manual" | "pass_rate" | "unavailable">;
             message: import("@sinclair/typebox").TString;
             at: import("@sinclair/typebox").TString;
         }>>;
-        state: import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">;
+        state: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">;
+        ownerId: import("@sinclair/typebox").TString;
+        workspaceId: import("@sinclair/typebox").TString;
+        createdAt: import("@sinclair/typebox").TString;
+        updatedAt: import("@sinclair/typebox").TString;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;
@@ -1896,6 +1895,7 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
             skipped: import("@sinclair/typebox").TNumber;
             cancelled: import("@sinclair/typebox").TNumber;
         }>;
+        createdBy: import("@sinclair/typebox").TString;
         done: import("@sinclair/typebox").TNumber;
         passRate: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>;
     }>;
@@ -1904,13 +1904,13 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
         index: import("@sinclair/typebox").TNumber;
         /** The item's input as JSON, cut to a short preview. */
         inputSummary: import("@sinclair/typebox").TString;
-        state: import("@sinclair/typebox").TUnsafe<"done" | "pending" | "running" | "queued">;
+        state: import("@sinclair/typebox").TUnsafe<"done" | "pending" | "queued" | "running">;
         runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         previousRunIds: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-        execution: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "failed" | "cancelled" | "running" | "completed" | "queued" | "incomplete">>;
-        verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pass" | "fail" | "uncertain" | "not_assessed">>;
+        execution: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "failed" | "incomplete" | "queued" | "running" | "skipped">>;
+        verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"fail" | "not_assessed" | "pass" | "uncertain">>;
         /** The label the item's run reads as, from its execution and verdict. */
-        label: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running">>;
+        label: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">>;
         costUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         /** The top-level scalar fields of the run's structured output, when it has one. */
@@ -1923,15 +1923,10 @@ export type TasksBatchOutput = Static<typeof TasksBatchOutput>;
 export declare const TasksBatchControlOutput: import("@sinclair/typebox").TObject<{
     batch: import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
-        createdAt: import("@sinclair/typebox").TString;
-        ownerId: import("@sinclair/typebox").TString;
-        workspaceId: import("@sinclair/typebox").TString;
         taskId: import("@sinclair/typebox").TString;
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        updatedAt: import("@sinclair/typebox").TString;
-        createdBy: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1940,11 +1935,15 @@ export declare const TasksBatchControlOutput: import("@sinclair/typebox").TObjec
             afterItems: import("@sinclair/typebox").TNumber;
         }>>;
         pause: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            reason: import("@sinclair/typebox").TUnsafe<"manual" | "budget" | "pass_rate" | "unavailable">;
+            reason: import("@sinclair/typebox").TUnsafe<"budget" | "manual" | "pass_rate" | "unavailable">;
             message: import("@sinclair/typebox").TString;
             at: import("@sinclair/typebox").TString;
         }>>;
-        state: import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">;
+        state: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">;
+        ownerId: import("@sinclair/typebox").TString;
+        workspaceId: import("@sinclair/typebox").TString;
+        createdAt: import("@sinclair/typebox").TString;
+        updatedAt: import("@sinclair/typebox").TString;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;
@@ -1958,6 +1957,7 @@ export declare const TasksBatchControlOutput: import("@sinclair/typebox").TObjec
             skipped: import("@sinclair/typebox").TNumber;
             cancelled: import("@sinclair/typebox").TNumber;
         }>;
+        createdBy: import("@sinclair/typebox").TString;
         done: import("@sinclair/typebox").TNumber;
         passRate: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>;
     }>;
@@ -1969,15 +1969,10 @@ export type TasksBatchControlOutput = Static<typeof TasksBatchControlOutput>;
 export declare const TasksBatchesOutput: import("@sinclair/typebox").TObject<{
     batches: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
-        createdAt: import("@sinclair/typebox").TString;
-        ownerId: import("@sinclair/typebox").TString;
-        workspaceId: import("@sinclair/typebox").TString;
         taskId: import("@sinclair/typebox").TString;
         idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         costUsd: import("@sinclair/typebox").TNumber;
         completedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        updatedAt: import("@sinclair/typebox").TString;
-        createdBy: import("@sinclair/typebox").TString;
         items: import("@sinclair/typebox").TNumber;
         concurrency: import("@sinclair/typebox").TNumber;
         budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -1986,11 +1981,15 @@ export declare const TasksBatchesOutput: import("@sinclair/typebox").TObject<{
             afterItems: import("@sinclair/typebox").TNumber;
         }>>;
         pause: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            reason: import("@sinclair/typebox").TUnsafe<"manual" | "budget" | "pass_rate" | "unavailable">;
+            reason: import("@sinclair/typebox").TUnsafe<"budget" | "manual" | "pass_rate" | "unavailable">;
             message: import("@sinclair/typebox").TString;
             at: import("@sinclair/typebox").TString;
         }>>;
-        state: import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">;
+        state: import("@sinclair/typebox").TUnsafe<"cancelled" | "completed" | "paused" | "running">;
+        ownerId: import("@sinclair/typebox").TString;
+        workspaceId: import("@sinclair/typebox").TString;
+        createdAt: import("@sinclair/typebox").TString;
+        updatedAt: import("@sinclair/typebox").TString;
         stopRuleDisarmed: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         counts: import("@sinclair/typebox").TObject<{
             pending: import("@sinclair/typebox").TNumber;
@@ -2004,6 +2003,7 @@ export declare const TasksBatchesOutput: import("@sinclair/typebox").TObject<{
             skipped: import("@sinclair/typebox").TNumber;
             cancelled: import("@sinclair/typebox").TNumber;
         }>;
+        createdBy: import("@sinclair/typebox").TString;
         done: import("@sinclair/typebox").TNumber;
         passRate: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>;
     }>>;
@@ -2015,14 +2015,14 @@ export declare const TaskUpcomingRun: import("@sinclair/typebox").TObject<{
     /** Absent when the task's definition is gone. */
     taskName: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    state: import("@sinclair/typebox").TUnsafe<"running" | "queued">;
+    state: import("@sinclair/typebox").TUnsafe<"queued" | "running">;
     /** Queued only: 1 is next (the numbering of tasks__run's queued answer). */
     position: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     /** Running only. */
     startedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /** Queued only: when the run was asked for, when it has a ticket. */
     queuedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
+    trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"event" | "manual" | "scheduled">>;
     batchId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
@@ -2076,14 +2076,14 @@ export declare const TasksUpcomingOutput: import("@sinclair/typebox").TObject<{
         /** Absent when the task's definition is gone. */
         taskName: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        state: import("@sinclair/typebox").TUnsafe<"running" | "queued">;
+        state: import("@sinclair/typebox").TUnsafe<"queued" | "running">;
         /** Queued only: 1 is next (the numbering of tasks__run's queued answer). */
         position: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
         /** Running only. */
         startedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         /** Queued only: when the run was asked for, when it has a ticket. */
         queuedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
+        trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"event" | "manual" | "scheduled">>;
         batchId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     }>>;
@@ -2092,14 +2092,14 @@ export declare const TasksUpcomingOutput: import("@sinclair/typebox").TObject<{
         /** Absent when the task's definition is gone. */
         taskName: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        state: import("@sinclair/typebox").TUnsafe<"running" | "queued">;
+        state: import("@sinclair/typebox").TUnsafe<"queued" | "running">;
         /** Queued only: 1 is next (the numbering of tasks__run's queued answer). */
         position: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
         /** Running only. */
         startedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         /** Queued only: when the run was asked for, when it has a ticket. */
         queuedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"manual" | "event" | "scheduled">>;
+        trigger: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"event" | "manual" | "scheduled">>;
         batchId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         batchIndex: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     }>>;
@@ -2162,7 +2162,7 @@ export declare const TaskRunStats: import("@sinclair/typebox").TObject<{
     lastRun: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
         startedAt: import("@sinclair/typebox").TString;
-        label: import("@sinclair/typebox").TUnsafe<"Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running">;
+        label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
     }>>;
 }>;
 export type TaskRunStats = Static<typeof TaskRunStats>;
@@ -2184,7 +2184,7 @@ export declare const TasksStatsOutput: import("@sinclair/typebox").TObject<{
         lastRun: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             id: import("@sinclair/typebox").TString;
             startedAt: import("@sinclair/typebox").TString;
-            label: import("@sinclair/typebox").TUnsafe<"Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running">;
+            label: import("@sinclair/typebox").TUnsafe<"Cancelled" | "Failed" | "Needs review" | "Poor result" | "Queued" | "Running" | "Skipped" | "Succeeded">;
         }>>;
     }>>;
 }>;
@@ -2194,7 +2194,7 @@ export declare const TasksJudgesOutput: import("@sinclair/typebox").TObject<{
     servers: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
     /** Why a task naming no judge server would not be judged: none connected, or several. */
     warning: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        code: import("@sinclair/typebox").TUnsafe<"no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable">;
+        code: import("@sinclair/typebox").TUnsafe<"allowed_tool_unavailable" | "judge_ambiguous" | "judge_not_found" | "no_judge">;
         message: import("@sinclair/typebox").TString;
     }>>;
 }>;

@@ -14,7 +14,7 @@ export declare const ConversationsListInput: import("@sinclair/typebox").TObject
 export type ConversationsListInput = Static<typeof ConversationsListInput>;
 export declare const ConversationsGetInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"messages" | "metadata" | "full">>;
+    expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"full" | "messages" | "metadata">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
 export type ConversationsGetInput = Static<typeof ConversationsGetInput>;
@@ -34,12 +34,12 @@ export declare const ConversationsForkInput: import("@sinclair/typebox").TObject
 }>;
 export type ConversationsForkInput = Static<typeof ConversationsForkInput>;
 export declare const ConversationsStatsInput: import("@sinclair/typebox").TObject<{
-    period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
+    period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "day" | "month" | "week">>;
 }>;
 export type ConversationsStatsInput = Static<typeof ConversationsStatsInput>;
 export declare const ConversationsExportInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    format: import("@sinclair/typebox").TUnsafe<"markdown" | "json">;
+    format: import("@sinclair/typebox").TUnsafe<"json" | "markdown">;
 }>;
 export type ConversationsExportInput = Static<typeof ConversationsExportInput>;
 /** What `conversations__fork` returns: a summary of the new conversation. */
@@ -240,7 +240,7 @@ export type DisplaySkillsContext = Static<typeof DisplaySkillsContext>;
  * and one per `run.start`→`run.done` span — never split per iteration.
  */
 export declare const DisplayMessage: import("@sinclair/typebox").TObject<{
-    role: import("@sinclair/typebox").TUnsafe<"user" | "assistant">;
+    role: import("@sinclair/typebox").TUnsafe<"assistant" | "user">;
     content: import("@sinclair/typebox").TString;
     blocks: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
         type: import("@sinclair/typebox").TUnsafe<"text">;
@@ -392,7 +392,7 @@ export declare const ConversationsGetOutput: import("@sinclair/typebox").TObject
     droppedOlderMessages: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     truncationHint: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     messages: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
-        role: import("@sinclair/typebox").TUnsafe<"user" | "assistant">;
+        role: import("@sinclair/typebox").TUnsafe<"assistant" | "user">;
         content: import("@sinclair/typebox").TString;
         blocks: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
             type: import("@sinclair/typebox").TUnsafe<"text">;

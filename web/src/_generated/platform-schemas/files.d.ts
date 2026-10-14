@@ -15,8 +15,8 @@ export declare const FilesListInput: import("@sinclair/typebox").TObject<{
     folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     recursive: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     query: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    kinds: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"image" | "document" | "data" | "font" | "other">>>;
-    sources: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">>>;
+    kinds: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"data" | "document" | "font" | "image" | "other">>>;
+    sources: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"agent" | "app" | "chat" | "manual">>>;
     conversationId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     createdAfter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -54,7 +54,7 @@ export declare const FilesCreateInput: import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>;
     body: import("@sinclair/typebox").TString;
-    encoding: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"text" | "base64">>;
+    encoding: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"base64" | "text">>;
 }>;
 export type FilesCreateInput = Static<typeof FilesCreateInput>;
 export declare const FilesInfoInput: import("@sinclair/typebox").TObject<{
@@ -106,7 +106,7 @@ export declare const FileRecord: import("@sinclair/typebox").TObject<{
     mimeType: import("@sinclair/typebox").TString;
     size: import("@sinclair/typebox").TNumber;
     tags: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
-    source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
+    source: import("@sinclair/typebox").TUnsafe<"agent" | "app" | "chat" | "manual">;
     conversationId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
     runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
     createdAt: import("@sinclair/typebox").TString;
@@ -135,18 +135,18 @@ export type FolderRecord = Static<typeof FolderRecord>;
 /** A listed file, with the '/'-separated path of its folder ("" at the top level). */
 export declare const ListedFile: import("@sinclair/typebox").TObject<{
     description: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
-    id: import("@sinclair/typebox").TString;
+    folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
     conversationId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
     runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
-    source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
-    createdAt: import("@sinclair/typebox").TString;
-    ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    tags: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
     mimeType: import("@sinclair/typebox").TString;
+    createdAt: import("@sinclair/typebox").TString;
     filename: import("@sinclair/typebox").TString;
     size: import("@sinclair/typebox").TNumber;
-    folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
-    tags: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
+    id: import("@sinclair/typebox").TString;
+    source: import("@sinclair/typebox").TUnsafe<"agent" | "app" | "chat" | "manual">;
+    ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     visibility: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"private" | "shared">>;
     deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
     deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -155,8 +155,8 @@ export declare const ListedFile: import("@sinclair/typebox").TObject<{
 export type ListedFile = Static<typeof ListedFile>;
 /** A listed folder, with its own '/'-separated path. */
 export declare const ListedFolder: import("@sinclair/typebox").TObject<{
-    id: import("@sinclair/typebox").TString;
     createdAt: import("@sinclair/typebox").TString;
+    id: import("@sinclair/typebox").TString;
     deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
     deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     name: import("@sinclair/typebox").TString;
@@ -180,18 +180,18 @@ export type ListedFolder = Static<typeof ListedFolder>;
 export declare const FilesListOutput: import("@sinclair/typebox").TObject<{
     files: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
-        id: import("@sinclair/typebox").TString;
+        folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
         conversationId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
         runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
-        source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
-        createdAt: import("@sinclair/typebox").TString;
-        ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        tags: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
         mimeType: import("@sinclair/typebox").TString;
+        createdAt: import("@sinclair/typebox").TString;
         filename: import("@sinclair/typebox").TString;
         size: import("@sinclair/typebox").TNumber;
-        folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
-        tags: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
+        id: import("@sinclair/typebox").TString;
+        source: import("@sinclair/typebox").TUnsafe<"agent" | "app" | "chat" | "manual">;
+        ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         visibility: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"private" | "shared">>;
         deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
         deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -199,8 +199,8 @@ export declare const FilesListOutput: import("@sinclair/typebox").TObject<{
     }>>;
     total: TInteger;
     folders: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
-        id: import("@sinclair/typebox").TString;
         createdAt: import("@sinclair/typebox").TString;
+        id: import("@sinclair/typebox").TString;
         deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
         deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         name: import("@sinclair/typebox").TString;
@@ -212,8 +212,8 @@ export declare const FilesListOutput: import("@sinclair/typebox").TObject<{
         name: import("@sinclair/typebox").TString;
     }>>;
     facets: import("@sinclair/typebox").TObject<{
-        kinds: import("@sinclair/typebox").TObject<Record<"image" | "document" | "data" | "font" | "other", TInteger>>;
-        sources: import("@sinclair/typebox").TObject<Record<"chat" | "agent" | "app" | "manual", TInteger>>;
+        kinds: import("@sinclair/typebox").TObject<Record<"data" | "document" | "font" | "image" | "other", TInteger>>;
+        sources: import("@sinclair/typebox").TObject<Record<"agent" | "app" | "chat" | "manual", TInteger>>;
     }>;
 }>;
 export type FilesListOutput = Static<typeof FilesListOutput>;
@@ -225,7 +225,7 @@ export declare const FilesSearchOutput: import("@sinclair/typebox").TObject<{
         mimeType: import("@sinclair/typebox").TString;
         size: import("@sinclair/typebox").TNumber;
         tags: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
-        source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
+        source: import("@sinclair/typebox").TUnsafe<"agent" | "app" | "chat" | "manual">;
         conversationId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
         runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
         createdAt: import("@sinclair/typebox").TString;
@@ -285,7 +285,7 @@ export declare const FilesInfoOutput: import("@sinclair/typebox").TObject<{
     mimeType: import("@sinclair/typebox").TString;
     size: import("@sinclair/typebox").TNumber;
     tags: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
-    source: import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">;
+    source: import("@sinclair/typebox").TUnsafe<"agent" | "app" | "chat" | "manual">;
     conversationId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
     runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
     createdAt: import("@sinclair/typebox").TString;
@@ -317,8 +317,8 @@ export declare const FilesMoveOutput: import("@sinclair/typebox").TObject<{
 export type FilesMoveOutput = Static<typeof FilesMoveOutput>;
 /** What `files__create_folder` and `files__update_folder` return. */
 export declare const FilesFolderOutput: import("@sinclair/typebox").TObject<{
-    id: import("@sinclair/typebox").TString;
     createdAt: import("@sinclair/typebox").TString;
+    id: import("@sinclair/typebox").TString;
     deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
     deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     name: import("@sinclair/typebox").TString;
