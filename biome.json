@@ -64,8 +64,7 @@
         "src/**",
         "web/src/**",
         "web/test/**",
-        "test/helpers/**",
-        "test/unit/**"
+        "test/**"
       ],
       "plugins": ["./biome-plugins/never-cast.grit"]
     },

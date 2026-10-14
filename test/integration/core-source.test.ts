@@ -22,6 +22,7 @@ import {
 import { asDevUser, devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { facetEntry, startFacetsSource } from "../helpers/facets-server.ts";
+import { makeIdentity } from "../helpers/identity.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
@@ -1394,7 +1395,7 @@ describe("Core Source", () => {
       facetSource = await seedFacetApp(runtime);
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const ctxFor = (id: string, displayName: string) => ({
-        identity: { id, email: `${id}@example.com`, displayName } as never,
+        identity: makeIdentity({ id, email: `${id}@example.com`, displayName }),
         workspaceId: TEST_WORKSPACE_ID,
       });
 

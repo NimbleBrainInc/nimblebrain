@@ -131,7 +131,7 @@ describe("the two config routes agree", () => {
     const tool = createCoreToolDefs(runtime).find((d) => d.name === "get_config");
     if (!tool) throw new Error("get_config not found");
     return runWithRequestContext(
-      { identity: PICKY, workspaceId: null } as never,
+      { identity: PICKY },
       async () => (await tool.handler({})).structuredContent as ComposerConfig,
     );
   }

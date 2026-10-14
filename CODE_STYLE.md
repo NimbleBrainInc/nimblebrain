@@ -431,7 +431,7 @@ neither.
 **Override.** `// biome-ignore lint/plugin/never-cast: <reason>` on the line
 directly above the line where the cast expression starts. The plugin runs on
 the paths in its `biome.json` override: `scripts/`, `src/` (the platform app
-UIs included), `web/src/`, `web/test/`, `test/helpers/`, and `test/unit/`.
+UIs included), `web/src/`, `web/test/`, and `test/`.
 
 ---
 
