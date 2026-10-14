@@ -80,9 +80,14 @@ record no longer asks the model which app shows it.
 
 **Opening one's own connector settings is a separate request,
 `ai.nimblebrain/open-connector-settings`, with no parameters.** The host
-resolves the connector from the view that sent it, so a view can open only its
-own settings. An address would let a view name another connector's, which is
-the one thing this request must not allow.
+resolves the connector from the view that sent it. "My settings" is not an
+address: a URI names the same place whoever holds it, which is what lets a
+view, the agent, a trail or a link pass one along, and this request means a
+different page for every sender. The settings page of a named connector would
+be an address, but a view cannot spell it, because a connector's id is the
+host's own naming and nothing hands it to the view. When more host pages need
+opening from a view, they get kernel-shown schemes and the host publishes
+each view's own addresses; this request then folds into `open`.
 
 **Both requests replace `ai.nimblebrain/action`.** The SDK exposes them as
 `open(app, uri)` and `openConnectorSettings(app)` with `useOpen` and
@@ -129,5 +134,10 @@ a refusal, as `notify` does.
 - **Resolve by reading the URI from each server until one answers**:
   rejected. It costs a read per server, triggers the server's side effects,
   and lets any server that answers loosely claim another's addresses.
-- **Fold connector settings into `open` with a self-address**: rejected. The
-  safety of that request is that it takes no address.
+- **Fold connector settings into `open` with a self-address**: rejected. A
+  URI whose meaning depends on its sender cannot be passed along, which is
+  the property `open` rests on.
+- **Give each connector's settings a scheme now, and publish the view's own
+  URI in the host context**: deferred. It is new host surface for a single
+  caller; one parameterless request costs less until other host pages need
+  the same.
