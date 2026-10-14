@@ -77,7 +77,7 @@ The gateway name is yours to pick, and it must match `providerAuth.provider` in 
 
 ## What passes through
 
-For a server Obot registers with the `remote` runtime, Obot relays the MCP session as a plain reverse proxy: it inspects each message for its audit log and forwards it unchanged. Everything the platform depends on survives the hop, checked against Obot v0.26.0 with a probe server on the far side:
+For a server Obot registers with the `remote` runtime, Obot relays the MCP session as a plain reverse proxy: it inspects each message for its audit log and forwards it unchanged. Everything the platform depends on survives the hop, checked against Obot v0.26 with a probe server on the far side:
 
 - tool-level `_meta` and `execution.taskSupport` in `tools/list`;
 - result-level `_meta`, `structuredContent`, and image content;
@@ -88,11 +88,9 @@ For a server Obot registers with the `remote` runtime, Obot relays the MCP sessi
 
 Obot records each of these as its own audit entry, including the server-to-client requests.
 
-## Register servers with the `remote` runtime
+## Obot version
 
-Obot hosts `npx` and `uvx` packages behind its own stdio wrapper, and that wrapper terminates the MCP session rather than relaying it. Its list handlers — `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list` — reject a request whose `params` object is absent with `-32602 invalid <method> request`. The platform's MCP client omits `params` on a first page, which the MCP schema permits, so a connector pointed at a package-hosted server installs, starts, and lists **zero tools** — the install itself reports the `-32602` and offers **Connect** to retry, and the retry fails the same way. Calls that always carry `params`, such as `resources/read`, work on the same server.
-
-Until Obot's wrapper accepts the omitted `params` (tracked upstream as [obot-platform/obot#8000](https://github.com/obot-platform/obot/issues/8000)), publish only servers Obot registers as `remote`: run the package as an HTTP MCP server somewhere Obot can reach, and register that URL. The `containerized` runtime has not been checked either way.
+Run Obot v0.26.1 or later. Earlier releases host `npx` and `uvx` packages behind a wrapper that rejects `tools/list`, `prompts/list`, `resources/list`, and `resources/templates/list` when the `params` object is absent (`-32602 invalid <method> request`). The platform's MCP client omits `params` on a first page, as the MCP schema permits, so on those releases a connector pointed at a package-hosted server installs, starts, and lists **zero tools**. Servers registered as `remote` are unaffected on any release, because that path is a plain reverse proxy. The fix shipped in v0.26.1 ([obot-platform/obot#8000](https://github.com/obot-platform/obot/issues/8000)).
 
 ## What this shape costs you
 
@@ -110,7 +108,7 @@ That is inherent to a gateway rather than a gap in the integration. Obot is also
 
 **A request returns 402.** Obot's license check found a configured provider without its entitlement and is refusing gateway traffic. That is an Obot-side condition; nothing in the platform configuration changes it.
 
-**The connector starts and lists zero tools, with `invalid tools/list request` in the install message.** The server is package-hosted (`npx` or `uvx`) — see [Register servers with the `remote` runtime](#register-servers-with-the-remote-runtime).
+**The connector starts and lists zero tools, with `invalid tools/list request` in the install message.** Obot is older than v0.26.1 and the server is package-hosted (`npx` or `uvx`) — see [Obot version](#obot-version).
 
 **Boot warns that a name is reserved.** Rename the gateway. A gateway may not take a name a built-in credential provider already holds.
 
