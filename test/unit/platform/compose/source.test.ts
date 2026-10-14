@@ -26,7 +26,6 @@ import type { PromptAppInfo } from "../../../../src/prompt/compose.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import { hashSkillBody } from "../../../../src/runtime/skills-loaded-payload.ts";
-import { connectorSkillManifestName } from "../../../../src/skills/connector-skills.ts";
 import type { Skill } from "../../../../src/skills/types.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { ToolRegistry } from "../../../../src/tools/registry.ts";
@@ -244,45 +243,6 @@ describe("compose__effective_context", () => {
     expect(subItems.map((s) => [s.id, s.connector])).toEqual([
       ["skill://acme-mcp/usage/SKILL.md", "acme-mcp"],
     ]);
-  });
-
-  test("live mode keeps a connector's layer-3 skill under its filter", async () => {
-    await source.stop();
-    source = createComposeSource(
-      makeRuntime({
-        apps: [],
-        tools: [
-          {
-            name: "acme__find",
-            description: "Find a record.",
-            inputSchema: { type: "object", properties: {} },
-          },
-        ],
-        skills: [
-          {
-            manifest: {
-              name: connectorSkillManifestName("acme", "usage"),
-              description: "How to use Acme",
-              loadingStrategy: "dynamic",
-              priority: 60,
-              status: "active",
-              scope: "provided",
-              toolAffinity: ["acme__*"],
-            },
-            body: "Search before you create.",
-            sourcePath: "skill://acme/usage/SKILL.md",
-          },
-        ],
-      }),
-      new NoopEventSink(),
-    );
-    await source.start();
-    await source.tools();
-
-    const result = await exec("effective_context", { conversation_id: CONV_ID, connector: "acme" });
-    const composed = succeeded<ComposeEffectiveContextOutput>(result);
-    const subItems = composed.layers.flatMap((l) => l.subItems ?? []);
-    expect(subItems.map((s) => [s.kind, s.connector])).toEqual([["layer3_skill", "acme"]]);
   });
 
   test("a connector filter that matches nothing still returns a result the schema accepts", async () => {

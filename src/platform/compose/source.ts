@@ -87,8 +87,8 @@ const COMPOSE_DESCRIPTION =
   "for that run from the calling workspace's conv jsonl and verifies each " +
   "layer-3 skill's `contentHash` against its current source, flagging drift. " +
   "Pass `connector` to filter the response to that connector's contributions " +
-  "(its app entry, its focused-app section, and the skills it published; in " +
-  "historical mode, only the skills). Read-only. " +
+  "(in live mode, its app entry; in historical mode, the skills it published " +
+  "that loaded in the run). Read-only. " +
   "Use this to answer 'what's in the agent's prompt right now' or 'what was " +
   "in the prompt for run X'. " +
   "`totalTokens` is the size of the composed system prompt, in both modes — " +

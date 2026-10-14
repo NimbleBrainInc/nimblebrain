@@ -1,6 +1,5 @@
 import { renderBrandName } from "../brand/index.ts";
 import type { SkillCatalogEntry } from "../skills/catalog.ts";
-import { parseConnectorSkillName } from "../skills/connector-skills.ts";
 import type { LoadedBy } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
@@ -66,8 +65,9 @@ export function wrapContained(tag: ContainmentTag, body: string): string {
  * `subItems` is populated for sections that aggregate multiple operator-
  * authored entries (apps, layer3 skills). It lets debug tools render per-
  * item attribution and detect content drift on a per-skill basis without
- * re-parsing the section text; an app entry, and a skill entry a connector
- * published, also carry the connector the `connector` filter matches on.
+ * re-parsing the section text; an app entry, and a skill entry rebuilt from a
+ * recorded `skills.loaded` event, also carry the connector the `connector`
+ * filter matches on.
  */
 export interface TracedLayer {
   kind: TracedLayerKind;
@@ -614,21 +614,17 @@ function layer3SkillsLayers(layer3Skills?: Layer3SkillEntry[]): PendingLayer[] {
       tokens: approxTokens(section),
       subItems: layer3Skills
         .filter((entry) => entry.body && entry.body.trim().length > 0)
-        .map((entry) => {
-          const published = parseConnectorSkillName(entry.name);
-          return {
-            kind: "layer3_skill" as const,
-            id: entry.sourcePath ?? `nb:layer3:${entry.name}`,
-            source: entry.sourcePath ?? entry.name,
-            ...(published ? { connector: published.connector } : {}),
-            metadata: {
-              name: entry.name,
-              scope: entry.scope,
-              loadedBy: entry.loadedBy,
-              reason: entry.reason,
-            },
-          };
-        }),
+        .map((entry) => ({
+          kind: "layer3_skill" as const,
+          id: entry.sourcePath ?? `nb:layer3:${entry.name}`,
+          source: entry.sourcePath ?? entry.name,
+          metadata: {
+            name: entry.name,
+            scope: entry.scope,
+            loadedBy: entry.loadedBy,
+            reason: entry.reason,
+          },
+        })),
     },
   ];
 }
