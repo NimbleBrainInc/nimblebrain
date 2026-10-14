@@ -96,9 +96,9 @@ describe("BlockTimeline phase segmentation", () => {
   test("consecutive same-tool blocks fold into one chip", async () => {
     expect(
       await render([
-        search("t1", "precision outbound campaign create", 17),
+        search("t1", "acme outbound campaign create", 17),
         search("t2", "campaign", 6),
-        search("t3", "precision", 5),
+        search("t3", "acme", 5),
       ]),
     ).toEqual({ chips: 1, textItems: 0, blankTextItems: 0 });
   });
@@ -107,11 +107,11 @@ describe("BlockTimeline phase segmentation", () => {
     expect(
       await render([
         text("\n"),
-        search("t1", "precision outbound campaign create", 17),
+        search("t1", "acme outbound campaign create", 17),
         text("\n"),
         search("t2", "campaign", 6),
         text("\n\n"),
-        search("t3", "precision", 5),
+        search("t3", "acme", 5),
         text("   "),
       ]),
     ).toEqual({ chips: 1, textItems: 0, blankTextItems: 0 });
@@ -132,7 +132,7 @@ describe("BlockTimeline phase segmentation", () => {
       await render([
         search("t1", "campaign", 6),
         text("Let me widen the search."),
-        search("t2", "precision", 5),
+        search("t2", "acme", 5),
       ]),
     ).toEqual({ chips: 2, textItems: 1, blankTextItems: 0 });
   });
@@ -143,7 +143,7 @@ describe("BlockTimeline phase segmentation", () => {
         { type: "reasoning", text: "narrowing the query" },
         search("t1", "campaign", 6),
         { type: "reasoning", text: "still nothing" },
-        search("t2", "precision", 5),
+        search("t2", "acme", 5),
       ]),
     ).toEqual({ chips: 1, textItems: 0, blankTextItems: 0 });
   });

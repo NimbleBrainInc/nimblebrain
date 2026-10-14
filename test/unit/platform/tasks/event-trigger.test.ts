@@ -36,7 +36,7 @@ import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 const WS = "ws_0002ee92e8791c13";
 const OWNER = "usr_admin";
 const ID = "reply-triage";
-const SOURCE = "precision-outbound";
+const SOURCE = "acme-outbound";
 
 /** A short window, so a batching test finishes in milliseconds rather than 30s. */
 const DEBOUNCE = 20;
@@ -437,7 +437,7 @@ describe("the <event> block", () => {
 
     expect(block.startsWith("<event>")).toBe(true);
     expect(block.endsWith("</event>")).toBe(true);
-    expect(block).toContain("precision-outbound");
+    expect(block).toContain("acme-outbound");
     expect(block).toContain("reply.received");
     expect(block).toContain("2026-09-01T18:42:10.000Z");
     expect(block).toContain("acme.com");
