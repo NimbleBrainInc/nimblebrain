@@ -108,6 +108,8 @@ function writeRichConversation(): void {
         },
         // A stored input that parses to something other than an object.
         { type: "tool-call", toolCallId: "tc_null", toolName: "nb__status", input: "null" },
+        // A tool name that is also an Object.prototype member, which `stats` counts.
+        { type: "tool-call", toolCallId: "tc_proto", toolName: "toString", input: "{}" },
       ],
       usage: {
         inputTokens: 100,
@@ -151,10 +153,21 @@ function writeRichConversation(): void {
       output: "failed",
     },
     {
+      ts: "2026-01-01T00:01:04.700Z",
+      type: "tool.done",
+      runId,
+      name: "toString",
+      id: "tc_proto",
+      ok: false,
+      ms: 1,
+      output: "unknown tool",
+    },
+    {
       ts: "2026-01-01T00:01:05.000Z",
       type: "llm.response",
       runId,
-      model: "m2",
+      // A model name that is also an Object.prototype member.
+      model: "constructor",
       content: [{ type: "text", text: "Here is the summary." }],
       usage: { inputTokens: 50, outputTokens: 30 },
       llmMs: 200,
@@ -255,8 +268,15 @@ describe("conversations tools publish results their output schemas admit", () =>
   test("stats", async () => {
     const data = await call<ConversationsStatsOutput>("stats", { period: "all" });
     expect(data.totalConversations).toBe(1);
-    expect(Object.keys(data.byModel).sort()).toEqual(["m2"]);
-    expect(data.topTools.map((t) => t.name).sort()).toEqual(["files__read", "nb__status"]);
+    expect(Object.entries(data.byModel)).toEqual([
+      ["constructor", expect.objectContaining({ conversations: 1 })],
+    ]);
+    expect(data.topTools.map((t) => t.name).sort()).toEqual([
+      "files__read",
+      "nb__status",
+      "toString",
+    ]);
+    expect(data.topTools.find((t) => t.name === "toString")?.callCount).toBe(1);
   });
 
   test("export as markdown and as JSON", async () => {
