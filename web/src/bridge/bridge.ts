@@ -22,8 +22,10 @@
 //     relay in hooks/useServerNotificationRelay.ts
 //
 // NimbleBrain extensions (ai.nimblebrain/ namespace — no spec equivalent):
-//   ai.nimblebrain/action, ai.nimblebrain/keydown, ai.nimblebrain/request-file,
-//   ai.nimblebrain/location (in) and ai.nimblebrain/navigate (out)
+//   ai.nimblebrain/open, ai.nimblebrain/open-connector-settings,
+//   ai.nimblebrain/notify, ai.nimblebrain/keydown, ai.nimblebrain/request-file,
+//   ai.nimblebrain/upload-files, ai.nimblebrain/location (in) and
+//   ai.nimblebrain/navigate (out)
 //   Each is served only because it is declared: see host-capabilities.ts.
 // ---------------------------------------------------------------------------
 
@@ -39,7 +41,6 @@ import {
 import type { FileEntry } from "../types";
 import { openAppChannel } from "./app-channel";
 import {
-  ACTION_METHOD,
   HOST_STYLES_EXTENSION,
   KEYDOWN_METHOD,
   LOCATION_METHOD,
@@ -70,7 +71,6 @@ import type {
   ResourcesReadMessage,
   SynapseRequestFileMessage,
   SynapseUploadFilesMessage,
-  UiActionMessage,
   UiMessageMessage,
   UiToolResultError,
   UiToolResultResponse,
@@ -368,13 +368,6 @@ export function createBridge(
       // -----------------------------------------------------------------
       case "notifications/message":
         logAppMessage(appName, msg.params);
-        break;
-
-      // -----------------------------------------------------------------
-      // Extension: ai.nimblebrain/action — semantic host actions
-      // -----------------------------------------------------------------
-      case ACTION_METHOD:
-        handleSynapseAction(msg.params, appName);
         break;
 
       // -----------------------------------------------------------------
@@ -987,21 +980,6 @@ function handleUpdateModelContext(
   // The same helper the served requests use: id `0` is an id, and a frame
   // without one is a notification that takes no answer.
   answerIfRequest({ id }, {}, postToIframe);
-}
-
-/**
- * Handle an ai.nimblebrain/action by dispatching an `nb:action` event, which
- * the shell resolves by name.
- *
- * `serverName` is the server whose view sent the action, set here and last so
- * a param of the same name from the app cannot replace it. An action about
- * "this connector" reads it; the app never names itself.
- */
-function handleSynapseAction(params: UiActionMessage["params"], appName: string): void {
-  const { action, ...rest } = params;
-  window.dispatchEvent(
-    new CustomEvent("nb:action", { detail: { action, ...rest, serverName: appName } }),
-  );
 }
 
 /**

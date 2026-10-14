@@ -65,7 +65,6 @@ These have no spec equivalent. Each name is both the method and the identifier t
 |--------|-----------|-------------|
 | `ai.nimblebrain/open` | App → Host | Open what a resource URI names; the host finds what shows it. Answered `{}`. See [below](#ainimblebrainopen). |
 | `ai.nimblebrain/open-connector-settings` | App → Host | Open your connector's own settings page. Answered `{}`. See [below](#ainimblebrainopen-connector-settings). |
-| `ai.nimblebrain/action` | App → Host | Served for one release for bundles built against an SDK without `open`. See [below](#ainimblebrainaction). |
 | `ai.nimblebrain/notify` | App → Host | Show the user a notice (success, info, warning or error), labelled with your app; answered `{}`. See [below](#ainimblebrainnotify). |
 | `ai.nimblebrain/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ files: [...] }`. See [below](#ainimblebrainrequest-file). |
 | `ai.nimblebrain/upload-files` | App → Host | Store `File`s the app already holds (dropped on it, say), the way a pick is stored; answered `{ files: [...] }`. Offered only to the platform's Files app. See [below](#ainimblebrainupload-files). |
@@ -116,7 +115,6 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
         "io.modelcontextprotocol/tasks": {},
         "ai.nimblebrain/open": {},
         "ai.nimblebrain/open-connector-settings": {},
-        "ai.nimblebrain/action": {},
         "ai.nimblebrain/request-file": {},
         "ai.nimblebrain/keydown": {},
         "ai.nimblebrain/location": {}
@@ -612,35 +610,6 @@ Ask the host to open your connector's settings page in the current workspace. It
 ```
 
 Answered `{}` once open, or an error when the connector has no settings page.
-
-### `ai.nimblebrain/action`
-
-The host serves this notification for one release beside `open` and `open-connector-settings`, for bundles built against an SDK that predates them, and then removes it. Use `open` and `open-connector-settings`.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "ai.nimblebrain/action",
-  "params": {
-    "action": "openConversation",
-    "id": "conv_abc123"
-  }
-}
-```
-
-The `action` field is required. All other fields in `params` are action-specific.
-
-| Action | Params | Description |
-|--------|--------|-------------|
-| `openConversation` | `{ id: string }` | Open the chat panel and load a specific conversation. |
-| `openApp` | `{ name: string, target?: string }` | Open an installed app, named by its route, server name or sidebar label. `target` is a view inside it, by the stable address that app reports in [`ai.nimblebrain/location`](#ainimblebrainlocation); the shell sends it to that app as [`ai.nimblebrain/navigate`](#ainimblebrainnavigate) once the app has reported its location, whether it was already open or not. An app opened by this action gets the target at its first report. |
-| `openConnectorSettings` | none | Open this connector's settings page in the current workspace. The connector is always the one that sent the action. |
-
-The bridge adds `serverName`, the server whose view sent the action, to every action's params, replacing any `serverName` the app passed, and dispatches it as an `nb:action` custom event on `window`. The shell ignores an action it does not know, and nothing reports one that failed. To put a message into the conversation, use [`ui/message`](#uimessage); to open an external page, [`ui/open-link`](#uiopen-link).
-
-<Aside type="note">
-`ai.nimblebrain/action` is a NimbleBrain platform extension — it is not part of the ext-apps specification. The host declares it as `experimental["ai.nimblebrain/action"]`.
-</Aside>
 
 ### `ai.nimblebrain/request-file`
 

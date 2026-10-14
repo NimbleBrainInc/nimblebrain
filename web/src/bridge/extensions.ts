@@ -33,12 +33,6 @@ export const OPEN_METHOD = "ai.nimblebrain/open";
  * `{}`, or an error when it has none.
  */
 export const OPEN_CONNECTOR_SETTINGS_METHOD = "ai.nimblebrain/open-connector-settings";
-/**
- * App → host notification: a named host action. Served for one release beside
- * `open` and `open-connector-settings` for bundles built against an SDK that
- * predates them, then removed (ADR-0052).
- */
-export const ACTION_METHOD = "ai.nimblebrain/action";
 /** App → host request: the host's file picker, answered `{ files }`. */
 export const REQUEST_FILE_METHOD = "ai.nimblebrain/request-file";
 /**
@@ -86,7 +80,6 @@ export const NOTIFY_METHOD = "ai.nimblebrain/notify";
 export const NIMBLEBRAIN_EXTENSIONS = [
   OPEN_METHOD,
   OPEN_CONNECTOR_SETTINGS_METHOD,
-  ACTION_METHOD,
   NOTIFY_METHOD,
   REQUEST_FILE_METHOD,
   UPLOAD_FILES_METHOD,

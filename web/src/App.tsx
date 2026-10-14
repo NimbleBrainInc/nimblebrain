@@ -263,8 +263,8 @@ function BootstrappedShell({
  * ChatContext (streaming). This prevents the entire shell from re-rendering
  * on every text delta during chat streaming.
  *
- * Action handling (which needs sendMessage from ChatContext) is isolated in
- * ActionBridge, a non-rendering child component.
+ * Opening what apps and the agent ask for is isolated in OpenBridge, a
+ * non-rendering child component that consumes the chat panel context.
  */
 function AuthenticatedAppContent({
   forSlot,
@@ -389,9 +389,9 @@ function AuthenticatedAppContent({
 
   return (
     <ShellProvider value={{ forSlot, mainRoutes, shellWorkspaceId }}>
-      {/* ActionBridge handles iframe action events. It consumes ChatContext
-          (streaming) but renders nothing, so its re-renders are free. */}
-      <ActionBridge
+      {/* OpenBridge puts on screen what apps and the agent open. It consumes
+          the chat panel context but renders nothing, so its re-renders are free. */}
+      <OpenBridge
         handleNavigate={handleNavigate}
         resolveAppRoute={resolveAppRoute}
         activeSlug={activeSlug}
@@ -577,10 +577,10 @@ function AuthenticatedAppContent({
 /**
  * Non-rendering component that puts on screen what apps and the agent open:
  * the shell's opener for `ai.nimblebrain/open` and `open-connector-settings`,
- * the agent's `nb__open_app`, and `nb:action` events. Isolated here so that
+ * and the agent's `nb__open_app`. Isolated here so that
  * consuming the chat panel context doesn't re-render the shell layout.
  */
-function ActionBridge({
+function OpenBridge({
   handleNavigate,
   resolveAppRoute,
   activeSlug,
@@ -645,37 +645,6 @@ function ActionBridge({
       },
     });
 
-    // `ai.nimblebrain/action`, served for one release beside `open` for bundles
-    // built against an SDK that predates it. Unknown actions, and a destination
-    // that cannot be shown, no-op: the notification takes no answer.
-    const actions: Record<string, (params: Record<string, unknown>) => void> = {
-      openConversation(params) {
-        if (typeof params.id === "string") show({ conversationId: params.id });
-      },
-      openApp(params) {
-        if (typeof params.name !== "string") return;
-        const target = typeof params.target === "string" ? params.target : undefined;
-        show({ app: params.name, name: params.name, ...(target ? { target } : {}) });
-      },
-      openConnectorSettings(params) {
-        if (typeof params.serverName === "string") openConnectorSettings(params.serverName);
-      },
-    };
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (!detail?.action) return;
-      // Own-key guard so an inherited name (constructor/__proto__) on the event
-      // detail can't resolve to an Object.prototype member.
-      const action = detail.action as string;
-      if (!Object.hasOwn(actions, action)) return;
-      try {
-        actions[action]?.(detail as Record<string, unknown>);
-      } catch {
-        // Nothing to show it to: an action is never answered.
-      }
-    };
-    window.addEventListener("nb:action", handler);
-
     // The agent's `nb__open_app`, once it finishes in a turn this tab sent. The
     // stream carries only the call's input, so the shell asks the same resolver
     // with it. The store never reports a call from history, a resumed stream,
@@ -694,7 +663,6 @@ function ActionBridge({
 
     return () => {
       offOpener();
-      window.removeEventListener("nb:action", handler);
       offToolDone();
     };
   }, []); // Stable — all dependencies are refs

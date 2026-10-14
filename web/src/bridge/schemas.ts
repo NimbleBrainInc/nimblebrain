@@ -30,7 +30,6 @@
 
 import { type Static, Type } from "@sinclair/typebox";
 import {
-  ACTION_METHOD,
   KEYDOWN_METHOD,
   LOCATION_METHOD,
   NAVIGATE_METHOD,
@@ -221,17 +220,6 @@ export type ExtAppsRequestTeardownNotification = Static<typeof ExtAppsRequestTea
 
 // ── App → Host messages (NimbleBrain extensions) ─────────────────────────
 
-export const UiActionMessage = Type.Object({
-  jsonrpc: JsonRpcVersion,
-  method: Type.Literal(ACTION_METHOD),
-  id: Type.Optional(RequestId),
-  params: Type.Intersect([
-    Type.Object({ action: Type.String() }),
-    Type.Record(Type.String(), Type.Unknown()),
-  ]),
-});
-export type UiActionMessage = Static<typeof UiActionMessage>;
-
 export const UiOpenMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal(OPEN_METHOD),
@@ -410,7 +398,6 @@ export const AppToHostMessage = Type.Union([
   UiOpenLinkMessage,
   UiSizeChangedMessage,
   UiUpdateModelContextMessage,
-  UiActionMessage,
   UiOpenMessage,
   UiOpenConnectorSettingsMessage,
   UiDownloadFileSpecMessage,
