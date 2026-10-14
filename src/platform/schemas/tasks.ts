@@ -1402,6 +1402,9 @@ const Warnings = Type.Optional(Type.Array(TaskWarning));
  * `tasks__cancel` (runId) stops them. Only an error response means nothing
  * was asked for (an unknown task, bad input, a bad definition).
  *
+ * A call made through the tasks extension (`/mcp`) answers once the run has
+ * ended, so its result is always the first shape, carrying `result` as well.
+ *
  * `enabled` is the task's own flag. Run now runs a disabled task, because it
  * is a deliberate act and the create form's test run depends on it; a
  * disabled task is not fired by its schedule or by events, and `message`
@@ -1416,6 +1419,12 @@ export const TasksRunOutput = ObjectUnion([
     enabled: Type.Boolean(),
     message: Type.Optional(Type.String()),
     warnings: Warnings,
+    /**
+     * The run's result, on a call made through the tasks extension (`/mcp`
+     * `tasks/result`), which answers once the run has ended; `null` when it
+     * cannot be read. An inline call reads it with `tasks__run_result`.
+     */
+    result: Type.Optional(Type.Union([TaskRunResultBody, Type.Null()])),
   }),
   Type.Object({
     status: Type.Literal("dispatched"),

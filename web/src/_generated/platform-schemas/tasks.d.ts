@@ -1213,6 +1213,9 @@ export type TaskWarning = Static<typeof TaskWarning>;
  * `tasks__cancel` (runId) stops them. Only an error response means nothing
  * was asked for (an unknown task, bad input, a bad definition).
  *
+ * A call made through the tasks extension (`/mcp`) answers once the run has
+ * ended, so its result is always the first shape, carrying `result` as well.
+ *
  * `enabled` is the task's own flag. Run now runs a disabled task, because it
  * is a deliberate act and the create form's test run depends on it; a
  * disabled task is not fired by its schedule or by events, and `message`
@@ -1223,6 +1226,30 @@ export type TaskWarning = Static<typeof TaskWarning>;
  */
 export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
     message?: string | undefined;
+    result?: {
+        error?: string | undefined;
+        stopReason?: "length" | "error" | "other" | "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "content_filter" | undefined;
+        structured?: unknown;
+        usage: {
+            inputTokens: number;
+            outputTokens: number;
+            iterations: number;
+        };
+        completedAt: string;
+        output: string;
+        activityLog: {
+            input?: unknown;
+            id: string;
+            name: string;
+            output: string;
+            ok: boolean;
+            ms: number;
+        }[];
+        outputFiles: {
+            id: string;
+            filename: string;
+        }[];
+    } | null | undefined;
     warnings?: {
         code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
         message: string;

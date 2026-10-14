@@ -536,6 +536,7 @@ export async function createTasksSource(
     createTaskRunSource({
       toolContext: getToolContext,
       readTicket: currentTicket,
+      readTask: (wsId, owner, id) => loadOwnerTasks(workDir, wsId, owner).get(id) ?? null,
       readResult: (wsId, owner, id, runId) => readRunResult(workDir, wsId, owner, id, runId),
       runEnded: (runId) => scheduler.runEnded(runId),
       cancelRun: (wsId, owner, runId) => scheduler.cancelRunById(wsId, owner, runId),
