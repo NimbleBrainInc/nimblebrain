@@ -184,9 +184,8 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
   }
 
   /**
-   * Shared error handler — catches, formats, returns an isError result.
-   *
-   * A success goes out through {@link ok}: the model reads the JSON in
+   * Runs a handler as a tool result: a throw becomes an `isError` result
+   * carrying its message, and a success goes out through {@link ok}: the model reads the JSON in
    * `content` (the engine sends `extractTextForModel(result.content)`), and the
    * same object is `structuredContent`, which the SDK checks against the
    * tool's output schema and the web shell reads.
