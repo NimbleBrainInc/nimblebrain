@@ -102,7 +102,7 @@ function exec(
 ): Promise<ToolResult> {
   return runWithRequestContext(
     {
-      identity: { id: OWNER_ID } as never,
+      identity: makeIdentity({ id: OWNER_ID }),
       ...(wsId ? { workspaceId: wsId } : {}),
     },
     () => source.execute(tool, args),
