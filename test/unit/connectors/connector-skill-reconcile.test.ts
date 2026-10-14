@@ -15,7 +15,7 @@ import { stub } from "../../helpers/stub.ts";
 const PIN = "v0.3.0";
 
 function lock(identity: string, version: string): ConnectorSkillLockEntry {
-  return { identity, version, sha: `sha-${version}`, path: `/ws/connector-skills/${identity}.md` };
+  return { identity, version, sha: `sha-${version}` };
 }
 
 function connector(fields: {

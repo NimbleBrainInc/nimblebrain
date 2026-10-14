@@ -784,7 +784,7 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
       {
         url: servers[1]!.url,
         serverName: OVERLAY_SERVER,
-        skillsLock: [{ identity: "pages", version: "v0.1.0", sha: "a1", path: "pages-usage.md" }],
+        skillsLock: [{ identity: "pages", version: "v0.1.0", sha: "a1" }],
       },
       undefined,
       TEST_WORKSPACE_ID,

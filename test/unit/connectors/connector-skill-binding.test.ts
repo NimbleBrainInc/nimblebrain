@@ -79,7 +79,8 @@ describe("ConnectorLifecycleManager.syncBoundSkills (P4)", () => {
     expect(lock[0]!.identity).toBe("gmail");
     expect(lock[0]!.version).toBe("v0.4.0");
     expect(lock[0]!.sha).toMatch(/^[0-9a-f]{64}$/);
-    expect(existsSync(lock[0]!.path)).toBe(true);
+    expect(Object.keys(lock[0]!).sort()).toEqual(["identity", "sha", "version"]);
+    expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(true);
   });
 
   it("is a no-op (returns []) when no overlay is curated (404)", async () => {
