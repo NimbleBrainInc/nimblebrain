@@ -482,18 +482,20 @@ push({ filter: 'overdue', count: 3 }, 'Viewing 3 overdue tasks');
 
 ## Shell actions
 
-Send a message into the conversation, open a link, or ask the NimbleBrain shell to open an app or a conversation:
+Send a message into the conversation, open a link, or ask the NimbleBrain shell to open something:
 
 ```typescript
-import { action } from '@nimblebrain/synapse';
+import { open, openConnectorSettings } from '@nimblebrain/synapse';
 
 app.sendMessage('Show me the Q2 report');
 app.openLink('https://example.com');
 
-action(app, 'openConversation', { id: 'conv_abc123' });
-action(app, 'openApp', { name: '@nimblebraininc/contacts' });
-action(app, 'openConnectorSettings'); // this connector's settings page
+await open(app, 'conversation://conv_abc123'); // the chat panel
+await open(app, 'files://fl_abc123');          // whichever app shows files
+await openConnectorSettings(app);              // this connector's settings page
 ```
+
+`open` names *what* to show by its resource URI; the host finds the app that shows it. Each resolves `true` once done, `false` on a host that does not offer it, and rejects with the host's reason when nothing shows the URI.
 
 To tell the agent what the user is acting on, push it with `app.updateModelContext()` (see [LLM-aware UI state](#llm-aware-ui-state)) before `sendMessage`; the next turn carries it.
 

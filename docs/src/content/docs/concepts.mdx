@@ -239,7 +239,7 @@ Every NimbleBrain instance gives the agent these `nb__*` tools:
 | `nb__search` | Search installed tools (`scope: "tools"`) or the connector catalog (`scope: "catalog"`) |
 | `nb__status` | Platform status; `scope: "connectors"` for per-connector health, `scope: "skills"` for loaded skills, `scope: "config"` for model and limits |
 | `nb__read_resource` | Read an MCP resource by URI |
-| `nb__open_app` | Open an app on the user's screen, optionally at a view inside it (by its resource URI) |
+| `nb__open_app` | Open an app at its home, or what a resource URI names (a record, a file, a conversation) in whichever app shows it |
 
 Administration tools are app-only: `nb__manage_connectors` (install and disconnect connectors), `nb__manage_workspaces` (create workspaces and manage their members), and `nb__manage_users` are called by the settings pages and never appear in the agent's tool list. The agent can find a connector in the catalog with `nb__search`, but installing it and creating a workspace happen in the UI.
 

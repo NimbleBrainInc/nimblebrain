@@ -11,6 +11,7 @@ import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { ToolResultForUI } from "../hooks/chat-store";
 import { useAppDisplayName } from "../hooks/useAppDisplayName";
 import { useHostContextSync } from "../hooks/useHostContextSync";
+import { shellOpenCallbacks } from "../lib/open-app";
 import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
 import { useNotice } from "./notices";
 
@@ -137,6 +138,7 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
             buildHostExtensions(workspaceRef.current, undefined, uploadLimitsRef.current),
           getUploadLimits: () => uploadLimitsRef.current,
           onNotify: (notice) => notifyRef.current({ ...notice, source: nameApp(appName) }),
+          ...shellOpenCallbacks,
         });
         bridgeRef.current = bridge;
 

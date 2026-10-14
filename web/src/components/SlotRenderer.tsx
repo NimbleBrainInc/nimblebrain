@@ -13,6 +13,7 @@ import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { useAppDisplayName } from "../hooks/useAppDisplayName";
 import { useHostContextSync } from "../hooks/useHostContextSync";
+import { shellOpenCallbacks } from "../lib/open-app";
 import type { PlacementEntry } from "../types";
 import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
 import { useNotice } from "./notices";
@@ -263,6 +264,7 @@ export function SlotRenderer({
       getHostExtensions: () =>
         buildHostExtensions(workspaceRef.current, connectorRef.current, uploadLimitsRef.current),
       getUploadLimits: () => uploadLimitsRef.current,
+      ...shellOpenCallbacks,
     };
 
     // Fetch + mount one placement. A failure is contained here: it renders its

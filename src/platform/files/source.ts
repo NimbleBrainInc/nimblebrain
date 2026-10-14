@@ -25,7 +25,7 @@ import { IMAGE_TYPES, isExtractable, PDF_TYPES } from "../../files/ingest.ts";
 import { isTextMime, resolveMimeType } from "../../files/mime.ts";
 import type { FileStore } from "../../files/store.ts";
 import type { FileEntry } from "../../files/types.ts";
-import { fileIdToUri, uriToFileId } from "../../files/uri.ts";
+import { FILE_URI_SCHEME, fileIdToUri, uriToFileId } from "../../files/uri.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import {
@@ -726,6 +726,9 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       resources,
       listResources: listResourcesFn,
       resourceHandler,
+      // The shape the handler above serves, advertised so `open` can find the
+      // app that shows a `files://` URI (ADR-0052).
+      templates: [{ uriTemplate: `${FILE_URI_SCHEME}://{id}`, name: "file" }],
       placements: [
         {
           slot: "sidebar",

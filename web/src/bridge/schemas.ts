@@ -35,6 +35,8 @@ import {
   LOCATION_METHOD,
   NAVIGATE_METHOD,
   NOTIFY_METHOD,
+  OPEN_CONNECTOR_SETTINGS_METHOD,
+  OPEN_METHOD,
   REQUEST_FILE_METHOD,
   UPLOAD_FILES_METHOD,
 } from "./extensions";
@@ -230,6 +232,22 @@ export const UiActionMessage = Type.Object({
 });
 export type UiActionMessage = Static<typeof UiActionMessage>;
 
+export const UiOpenMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal(OPEN_METHOD),
+  id: RequestId,
+  params: Type.Object({ uri: Type.String() }),
+});
+export type UiOpenMessage = Static<typeof UiOpenMessage>;
+
+export const UiOpenConnectorSettingsMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal(OPEN_CONNECTOR_SETTINGS_METHOD),
+  id: RequestId,
+  params: Type.Optional(UnknownRecord),
+});
+export type UiOpenConnectorSettingsMessage = Static<typeof UiOpenConnectorSettingsMessage>;
+
 /**
  * Spec `ui/download-file` — the standard way an app hands the user a file.
  *
@@ -393,6 +411,8 @@ export const AppToHostMessage = Type.Union([
   UiSizeChangedMessage,
   UiUpdateModelContextMessage,
   UiActionMessage,
+  UiOpenMessage,
+  UiOpenConnectorSettingsMessage,
   UiDownloadFileSpecMessage,
   UiRequestDisplayModeMessage,
   LoggingMessageNotification,
