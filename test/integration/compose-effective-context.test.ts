@@ -20,6 +20,7 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import type { ComposeAssembledContextOutput } from "../../src/platform/schemas/compose.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { hashSkillBody } from "../../src/runtime/skills-loaded-payload.ts";
@@ -131,13 +132,7 @@ async function callAssembled(
   runtime: Runtime,
   args: Record<string, unknown>,
   ctxConvId?: string,
-): Promise<{
-  structured: {
-    sources: Array<{ kind: string; tokens: number }>;
-    totalTokens: number;
-    windowTokens: number;
-  } | null;
-}> {
+): Promise<{ structured: ComposeAssembledContextOutput | null }> {
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
   const result = await runWithRequestContext(
     {
@@ -153,7 +148,7 @@ async function callAssembled(
       }),
   );
   const sc = (result as { structuredContent?: unknown }).structuredContent;
-  return { structured: sc ? (sc as never) : null };
+  return { structured: sc ? (sc as ComposeAssembledContextOutput) : null };
 }
 
 describe("compose_effective_context — live mode", () => {
