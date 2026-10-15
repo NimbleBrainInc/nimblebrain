@@ -52,6 +52,9 @@ name: `io.modelcontextprotocol/tasks` already names long-running tool calls
 - optionally, an output schema, acceptance criteria, `onPoorResult`, and
   whether the task starts enabled.
 
+The marker is accepted from the wire under ADR-0024's two kinds of `_meta`
+key: it is a request, and it widens nothing until an admin approves it.
+
 The prompt's `arguments` are the per-workspace values. A prompt is listed like
 any other, so a host without the extension still sees an ordinary prompt.
 
@@ -71,11 +74,13 @@ connector. The principal:
   creates from that connector's scheduled prompts;
 - **has standing in place of membership.** The run-start door admits its run
   only while the connector is installed in the run's workspace. After an
-  uninstall the run is recorded skipped, as a removed member's run is;
+  uninstall the run is recorded skipped, as a removed member's run is, and a
+  reinstall lets the next run through;
 - **reaches only what the workspace holds.** Its run calls only its server's
-  approved tools and the connectors bound to its needs, through the workspace wall, the unattended policy and the run's tool
-  bound. It gets no identity tools and no personal connector, because a
-  personal-connector grant belongs to the user who made it (ADR-0006);
+  approved tools and the connectors bound to its needs, through the
+  workspace wall, the unattended policy and the run's tool bound. It gets no
+  identity tools and no personal connector, because a personal-connector
+  grant belongs to the user who made it (ADR-0006);
 - **uses the workspace's credential for each connector it calls.** A connector
   reachable only with a member's own credential cannot declare scheduled
   prompts;
@@ -90,13 +95,16 @@ meets a need. The approval records the bounds, the values and the bindings,
 never the prompt text. After install:
 
 - A declaration whose bounds narrow or stay the same applies at once.
-- One that widens them waits for approval: a new tool of its own, a more
-  frequent schedule, higher limits or budget. Until then the approved bounds
-  keep running.
+- One that widens any bound waits whole for approval: a new tool of its own, a
+  more frequent schedule, higher limits or budget. Until then the approved
+  bounds keep running.
+- A new required argument waits for its value, and the task is held until the
+  admin gives one. A removed argument is a narrowing.
 - Reach into another connector is widened only by the workspace. A release
-  that changes `needs` changes the wording shown, never a binding.
+  that changes `needs` changes the wording shown, never a binding. A need the
+  admin leaves unbound is a decision, and the run goes without that reach.
 - A bound connector that is uninstalled is unbound from every task, and the
-  admin is asked to choose another.
+  admin is asked to choose another. Until they answer, those tasks are held.
 - A prompt added after install waits for approval too.
 - An agent that installs a connector asks before approving, as it asks before
   creating a task.
@@ -110,16 +118,22 @@ approval. It acts only within bounds a person approved, which is the trust that
 installing a server already gives its tools.
 
 **The runtime reconciles; it never deletes.** It reconciles when the connection
-reaches running, on `notifications/prompts/list_changed`, on boot, and before
-teardown on uninstall, keyed by workspace, server and prompt name:
+reaches running, on `notifications/prompts/list_changed`, and on boot, keyed by
+workspace, server and prompt name:
 
 - It creates the task for an approved prompt that has none.
 - It updates the bounds of one that narrowed.
-- It disables the task of a prompt that was withdrawn (gone, unmarked, or
-  answering `-32602` at run time).
-- It disables every task of an uninstalled connector.
+- It holds the task of a prompt that was withdrawn: absent from `prompts/list`,
+  or no longer marked. A run that fails, with `-32602` or anything else, is a
+  failed run and never a withdrawal, because the protocol gives a missing
+  prompt and a missing argument the same code.
+- It lifts a hold of its own once the cause clears: the prompt is listed and
+  marked again, the value is given, or the admin answers for the need. A
+  restored prompt whose bounds widened waits for approval like any widening.
 
-Run history is kept in every case.
+A hold is the runtime's own state, recorded with its reason and kept apart from
+an admin's pause, so lifting one never undoes an admin's choice. Run history is
+kept in every case.
 
 **An admin's changes win over the declaration.** A pause, a moved schedule or a
 lowered budget is an override, stored apart from the declaration and never
@@ -148,9 +162,11 @@ admin's grant, and the provenance allowlist refuses it.
   managed by admins, never private to a person), and notifications (the
   workspace inbox). A gap in any of them is a gap in the wall, so each is
   tested with the principal as the caller.
-- Which platform tools act on the workspace and which act on a person becomes
-  a property each platform tool must state. A principal reaches only the
-  first kind.
+- A principal reaches only the tools that act on the workspace. The runtime
+  already draws that line: identity-scoped sources have one authority
+  (`src/tools/identity-sources.ts`), tools that act on the caller or the org
+  carry ADR-0043's mark, and the org administration tools are app-only. The
+  router refuses all three to a principal; no tool gains a new property.
 - Binding a connector to a task is trusting the declaring server's procedure
   with that connector, unattended, for as long as both stay installed. The
   approval says so in words. The runtime enforces the bounds whatever the
