@@ -218,6 +218,8 @@ export interface RunHandle {
   /** The account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
   usage: TurnUsage;
+  /** The run's cost in USD; see `ChatResult.costUsd`. */
+  costUsd: number;
 }
 
 /**

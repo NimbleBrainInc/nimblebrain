@@ -260,7 +260,7 @@ import { createSystemTools } from "../tools/system-tools.ts";
 import { isToolAllowedForRun, unmatchedAllowedTools } from "../tools/tool-pattern.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { toToolSchema } from "../tools/types.ts";
-import { resolveRates } from "../usage/cost.ts";
+import { estimateCost, resolveRates } from "../usage/cost.ts";
 import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
 import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
@@ -1466,6 +1466,7 @@ export class Runtime {
       toolCalls: handle.toolCalls,
       stopReason: handle.stopReason,
       usage: handle.usage,
+      costUsd: handle.costUsd,
     };
   }
 
@@ -1575,6 +1576,7 @@ export class Runtime {
       stopReason: handle.stopReason,
       ...stopDetail(handle),
       usage: handle.usage,
+      costUsd: handle.costUsd,
     };
   }
 
@@ -1761,8 +1763,8 @@ export class Runtime {
       signal: spec.signal,
     });
 
-    // The per-run usage accumulator is joined to the sink chain only where an
-    // abort must still report — see {@link createPartialRunAccumulator}.
+    // The per-run accumulator prices every run, and stands in for the engine's
+    // totals where an abort must still report — see {@link createPartialRunAccumulator}.
     const partial = createPartialRunAccumulator();
     const sinks = this.buildRunSinks(spec, binding, partial.sink);
 
@@ -1845,6 +1847,7 @@ export class Runtime {
         toolCalls: partial.toolCalls,
         stopReason: "aborted",
         usage: partial.usage(spec.model),
+        costUsd: partial.costUsd(),
       };
     } finally {
       releaseSpend();
@@ -1865,6 +1868,7 @@ export class Runtime {
         llmMs: result.llmMs,
         iterations: result.iterations,
       },
+      costUsd: partial.costUsd(),
     };
   }
 
@@ -2165,10 +2169,10 @@ export class Runtime {
   /**
    * The run's event-sink chain.
    *
-   * The engine returns cumulative usage and llmMs in its `EngineResult`, so the
-   * clean path needs no side-channel metrics collector; the partial accumulator
-   * joins only for a run whose caller must still be told what happened after an
-   * abort.
+   * The engine returns cumulative usage and llmMs in its `EngineResult`; the
+   * partial accumulator joins every run to price it call by call, and its
+   * totals replace the engine's only for a run whose caller must still be told
+   * what happened after an abort.
    */
   private buildRunSinks(
     spec: RunSpec,
@@ -2184,7 +2188,9 @@ export class Runtime {
       binding.store.setActiveConversation(binding.conversation.id);
       sinks.push(binding.store);
     }
-    if (spec.onAbort === "partial") sinks.push(partialSink);
+    // On every run: it prices the run. Its usage and tool calls stand in for
+    // the engine's only when a run with `onAbort: "partial"` aborts.
+    sinks.push(partialSink);
     return sinks;
   }
 
@@ -6289,13 +6295,18 @@ function buildOpeningMessage(input: RunSpec["input"]): StoredMessage {
  * — and retain them across the throw, so a timed-out task reports the work
  * it actually did instead of 0/0/0/0. Drops with the process: a real SIGKILL
  * still reports zero, and the persisted run result is the post-mortem.
+ *
+ * It also prices every run, aborted or not: each call on its own rate card,
+ * summed. Pricing the cumulative usage instead would bill a run of short
+ * prompts on a model's long-prompt card once their sum crossed its threshold.
  */
 function createPartialRunAccumulator(): {
   sink: EventSink;
   toolCalls: RunHandle["toolCalls"];
   usage: (model: string) => TurnUsage;
+  costUsd: () => number;
 } {
-  const totals = { inputTokens: 0, outputTokens: 0, iterations: 0, llmMs: 0 };
+  const totals = { inputTokens: 0, outputTokens: 0, iterations: 0, llmMs: 0, costUsd: 0 };
   const toolCalls: RunHandle["toolCalls"] = [];
   const sink: EventSink = {
     emit(event: EngineEvent): void {
@@ -6305,6 +6316,7 @@ function createPartialRunAccumulator(): {
         totals.llmMs += data.llmMs;
         totals.inputTokens += data.usage.inputTokens;
         totals.outputTokens += data.usage.outputTokens;
+        totals.costUsd += estimateCost(data.model, data.usage);
       } else if (event.type === "tool.done") {
         const { data } = event;
         // `errorReason` is intentionally absent here: this accumulator only
@@ -6340,6 +6352,7 @@ function createPartialRunAccumulator(): {
       llmMs: totals.llmMs,
       iterations: totals.iterations,
     }),
+    costUsd: () => totals.costUsd,
   };
 }
 
