@@ -718,13 +718,16 @@ function createAffinityFixtureServer(tools: string[], skills: Record<string, str
 }
 
 function affinitySkill(name: string, affinity: string[]): string {
+  const declared =
+    affinity.length === 0
+      ? "    tool-affinity: []"
+      : `    tool-affinity:\n${affinity.map((a) => `      - ${a}`).join("\n")}`;
   return `---
 name: ${name}
 description: Guidance for ${name}.
 metadata:
   nimblebrain:
-    tool-affinity:
-${affinity.map((a) => `      - ${a}`).join("\n")}
+${declared}
 ---
 
 # ${name}`;
@@ -764,6 +767,7 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
       createAffinityFixtureServer(["draft_email", "send_email"], {
         writing: affinitySkill("writing", ["draft_email"]),
         outreach: affinitySkill("outreach", ["draft_emial", "send_*"]),
+        reference: affinitySkill("reference", []),
       }),
     );
 
@@ -852,5 +856,20 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
     // be bound to every tool of the server and load for `send_email` too.
     expect(await loadedFor("draft_email")).toContain("skill://writing/SKILL.md");
     expect(await loadedFor("send_email")).not.toContain("skill://writing/SKILL.md");
+  });
+
+  it("never loads a published skill that declares an empty tool-affinity", async () => {
+    for (const tool of ["draft_email", "send_email"]) {
+      const chat = await affinityRuntime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "go",
+        allowedTools: [`${AFFINITY_SERVER}__${tool}`],
+      });
+      const store = await affinityRuntime.resolveConversationStore(chat.conversationId);
+      const events = await store!.readEvents(chat.conversationId);
+      const loaded = firstStoredEvent(events, "skills.loaded");
+      expect(loaded?.skills.map((s) => s.id) ?? []).not.toContain("skill://reference/SKILL.md");
+    }
   });
 });

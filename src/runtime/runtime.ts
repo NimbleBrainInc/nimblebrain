@@ -3345,7 +3345,7 @@ export class Runtime {
               ...(s.loadingStrategy ? { loadingStrategy: s.loadingStrategy } : {}),
               ...(s.priority !== undefined ? { priority: s.priority } : {}),
               ...(s.triggers?.length ? { triggers: s.triggers } : {}),
-              ...(s.toolAffinity?.length ? { toolAffinity: s.toolAffinity } : {}),
+              ...(s.toolAffinity !== undefined ? { toolAffinity: s.toolAffinity } : {}),
             }),
           );
         } catch {
