@@ -23,10 +23,6 @@ function streamingResponse(parts: string[]): Response {
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-async function drain(res: Response): Promise<string> {
-  return await new Response(res.body).text();
-}
-
 function chunk(toolCalls: object[], finishReason: string | null = null): object {
   return {
     id: "chatcmpl-1",
@@ -148,14 +144,7 @@ describe("wrapFetchRepairingToolCallIndex", () => {
   });
 
   it("a misindexed closing fragment becomes one complete tool call with a stable id", async () => {
-    const parts = await streamToolCalls(MISINDEXED, true);
-    expect(parts.find((p) => p.type === "error")).toBeUndefined();
-    const calls = parts.filter((p) => p.type === "tool-call");
-    expect(calls).toHaveLength(1);
-    const call = calls[0] as Extract<LanguageModelV4StreamPart, { type: "tool-call" }>;
-    expect(call.toolCallId).toBe("call_a");
-    expect(call.toolName).toBe("web_search");
-    expect(JSON.parse(call.input)).toEqual({ query: "acme corp hiring" });
+    expectOneRepairedCall(await streamToolCalls(MISINDEXED, true));
   });
 
   it("keeps genuine parallel calls separate", async () => {
@@ -170,13 +159,15 @@ describe("wrapFetchRepairingToolCallIndex", () => {
     ]);
   });
 
-  it("repairs lines split across byte chunks", async () => {
+  it("repairs a misindexed line split across byte chunks", async () => {
     const whole = MISINDEXED.join("");
-    const split = [whole.slice(0, 37), whole.slice(37, 211), whole.slice(211)];
-    const base: FetchLike = async () => streamingResponse(split);
-    const text = await drain(await wrapFetchRepairingToolCallIndex(base, "nebius")("https://x"));
-    expect(text).not.toContain('"index":1');
-    expect(text.endsWith("data: [DONE]\n\n")).toBe(true);
+    const mid = whole.indexOf('"index":1');
+    expectOneRepairedCall(await streamToolCalls([whole.slice(0, mid), whole.slice(mid)], true));
+  });
+
+  it("repairs a CRLF stream delivered one byte at a time", async () => {
+    const crlf = MISINDEXED.join("").replaceAll("\n\n", "\r\n\r\n");
+    expectOneRepairedCall(await streamToolCalls([...crlf], true));
   });
 
   it("passes a non-event-stream response through untouched", async () => {
@@ -189,3 +180,14 @@ describe("wrapFetchRepairingToolCallIndex", () => {
     expect(res).toBe(original);
   });
 });
+
+/** The repaired MISINDEXED stream: one call with the opening id, the name, and the full arguments. */
+function expectOneRepairedCall(parts: LanguageModelV4StreamPart[]): void {
+  expect(parts.find((p) => p.type === "error")).toBeUndefined();
+  const calls = parts.filter((p) => p.type === "tool-call");
+  expect(calls).toHaveLength(1);
+  const call = calls[0] as Extract<LanguageModelV4StreamPart, { type: "tool-call" }>;
+  expect(call.toolCallId).toBe("call_a");
+  expect(call.toolName).toBe("web_search");
+  expect(JSON.parse(call.input)).toEqual({ query: "acme corp hiring" });
+}
