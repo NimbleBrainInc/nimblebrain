@@ -329,11 +329,20 @@ const ModelField = Type.String({
     "Model for this task's runs, as provider:model-id (e.g. anthropic:claude-sonnet-4-6) or a slot name (fast). Omit to use the workspace default.",
 });
 
+// Mirrors `ThinkingEffort` (`src/engine/types.ts`); this tree cannot import it.
+const ThinkingEffortField = StringEnum(["low", "medium", "high", "xhigh", "max"] as const, {
+  description:
+    "How hard this task's runs reason, when the model reasons: low, medium, high, xhigh, or max. " +
+    "Omit to use the workspace setting. Has no effect when the operator turned thinking off or " +
+    "set it adaptive, or on a model that does not reason.",
+});
+
 // The definition fields every shape shares: create's manifest, update's patch
 // (each clearable), and an inline one-off's manifest.
 const DefinitionFields = {
   skill: Type.Optional(SkillField),
   model: Type.Optional(ModelField),
+  thinkingEffort: Type.Optional(ThinkingEffortField),
   allowedTools: Type.Optional(AllowedToolsField),
   maxIterations: Type.Optional(MaxIterationsField),
   maxInputTokens: Type.Optional(MaxInputTokensField),
@@ -404,6 +413,10 @@ const UpdateManifest = Type.Object(
     ),
     skill: clearable(SkillField, "Skill each run carries out, or null for none."),
     model: clearable(ModelField, "Model for its runs, or null for the workspace default."),
+    thinkingEffort: clearable(
+      ThinkingEffortField,
+      "Reasoning depth for its runs, or null for the workspace setting.",
+    ),
     allowedTools: clearable(
       AllowedToolsField,
       "Tools its runs may use (see tasks__create), or null to allow every tool.",
@@ -1316,6 +1329,7 @@ export const TaskStatusDetail = Type.Object({
   ownerId: Type.Optional(Type.String()),
   workspaceId: Type.Optional(Type.String()),
   model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  thinkingEffort: Type.Optional(Type.Union([ThinkingEffortField, Type.Null()])),
   skill: Type.Optional(Type.String()),
   allowedTools: Type.Optional(Type.Array(Type.String())),
   inputSchema: Type.Optional(JsonObject),
@@ -1497,6 +1511,7 @@ export const TaskRecord = Type.Object({
   maxInputTokens: Type.Optional(Type.Number()),
   maxRunDurationMs: Type.Optional(Type.Number()),
   model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  thinkingEffort: Type.Optional(Type.Union([ThinkingEffortField, Type.Null()])),
   enabled: Type.Boolean(),
   ownerId: Type.Optional(Type.String()),
   workspaceId: Type.Optional(Type.String()),

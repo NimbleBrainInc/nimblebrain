@@ -2,6 +2,7 @@
  * Type definitions for the tasks domain.
  */
 
+import type { ThinkingEffort } from "../../engine/types.ts";
 import type { NotificationRouteMatch } from "../schemas/notifications.ts";
 
 // ---------------------------------------------------------------------------
@@ -134,6 +135,14 @@ export interface Task {
 
   /** Model override for this task. Null = workspace default. */
   model?: string | null;
+
+  /**
+   * Reasoning depth for this task's runs. Null = the operator's
+   * `thinkingEffort`, else the platform default. Ranks as the operator's own
+   * tier would, so it does not reach past an operator `thinking` of `off` or
+   * `adaptive`, nor onto a model that does not reason (`resolveThinking`).
+   */
+  thinkingEffort?: ThinkingEffort | null;
 
   /** Whether this task is active. */
   enabled: boolean;
@@ -681,6 +690,7 @@ export type UpdateTaskInput = Partial<
     | "maxInputTokens"
     | "maxRunDurationMs"
     | "model"
+    | "thinkingEffort"
     | "enabled"
     | "tokenBudget"
   >

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { effectiveRunLimits, resolveTasksConfig } from "../../../../src/config/tasks.ts";
-import type { TasksCreateInput, TasksUpdateInput } from "../../../../src/platform/schemas/tasks.ts";
+import { TasksCreateInput, TasksUpdateInput } from "../../../../src/platform/schemas/tasks.ts";
 import type { RunNowTicket } from "../../../../src/platform/tasks/scheduler.ts";
 import {
   estimateRunsPerDay,
@@ -31,6 +31,7 @@ import {
   saveTask,
 } from "../../../../src/platform/tasks/store.ts";
 import type { Task, TaskRun } from "../../../../src/platform/tasks/types.ts";
+import { validateToolInput } from "../../../../src/tools/validate-input.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const WS = "ws_0076759dbbe19fcc";
@@ -1153,6 +1154,47 @@ describe("handleCreate — new fields", () => {
     expect(auto.tokenBudget).toEqual({ maxInputTokens: 10000, period: "daily" });
     expect(auto.cumulativeInputTokens).toBe(0);
     expect(auto.cumulativeOutputTokens).toBe(0);
+  });
+});
+
+describe("thinkingEffort", () => {
+  test("create stores it, update changes it, and null clears it", () => {
+    const ctx = makeCtx();
+    const created = handleCreate(
+      createArgs(
+        "Effort Test",
+        "test",
+        { type: "interval", intervalMs: 60_000 },
+        {
+          thinkingEffort: "low",
+        },
+      ),
+      ctx,
+    );
+    const id = (created.task as Task).id;
+    expect((created.task as Task).thinkingEffort).toBe("low");
+
+    const raised = handleUpdate(updateArgs(id, { thinkingEffort: "high" }), ctx);
+    expect((raised.task as Task).thinkingEffort).toBe("high");
+
+    const cleared = handleUpdate(updateArgs(id, { thinkingEffort: null }), ctx);
+    expect((cleared.task as Task).thinkingEffort).toBeUndefined();
+  });
+
+  test("the input schemas take a known depth and refuse any other", () => {
+    const create = (thinkingEffort: unknown) =>
+      validateToolInput({ manifest: { name: "x", thinkingEffort }, body: "test" }, TasksCreateInput)
+        .valid;
+    expect(create("low")).toBe(true);
+    expect(create("max")).toBe(true);
+    expect(create("extreme")).toBe(false);
+    expect(create(3)).toBe(false);
+
+    const update = (thinkingEffort: unknown) =>
+      validateToolInput({ taskId: "x", manifest: { thinkingEffort } }, TasksUpdateInput).valid;
+    expect(update("medium")).toBe(true);
+    expect(update(null)).toBe(true);
+    expect(update("none")).toBe(false);
   });
 });
 

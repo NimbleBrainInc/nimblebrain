@@ -133,6 +133,15 @@ describe("testRunArgs", () => {
     });
   });
 
+  test("carries the stored task's reasoning depth, which the form does not edit", () => {
+    const d = draftFromDetail({ ...DETAIL, thinkingEffort: "low" });
+    const manifest = testRunArgs(d, { company: "Acme" }).args?.definition as {
+      manifest: Record<string, unknown>;
+    };
+    expect(manifest.manifest.thinkingEffort).toBe("low");
+    expect(updateArgs("research", d, { ...d, name: "Renamed" }).args?.manifest).toBeUndefined();
+  });
+
   test("reports what is wrong instead of running", () => {
     const d = { ...emptyDraft(), prompt: "x", outputJson: "{nope" };
     expect(testRunArgs(d, undefined).problems[0]).toContain("output schema is not valid JSON");
