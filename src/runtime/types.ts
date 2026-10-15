@@ -454,6 +454,11 @@ export interface TaskRequest {
    */
   workspaceId?: string;
   model?: string;
+  /**
+   * Reasoning depth for this run, in place of `RuntimeConfig.thinkingEffort`.
+   * Absent = the configured depth. See `RunSpec.thinkingEffort`.
+   */
+  thinkingEffort?: ThinkingEffort;
   maxIterations?: number;
   /**
    * Input tokens the whole run may spend, summed over every model call. Before
