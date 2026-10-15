@@ -47,7 +47,7 @@ describe("absorbFrontmatter", () => {
 
     expect(result.fields.loadingStrategy).toBe("dynamic");
     expect(result.fields.priority).toBe(25);
-    expect(result.fields.toolAffinity).toEqual(["skills__*"]);
+    expect(result.fields.toolAffinity).toEqual(["skills__create", "skills__update"]);
     expect(result.fields.triggers).toHaveLength(8);
     expect(result.fields.description).toContain("Guide for authoring");
     expect(result.fields.version).toBe("1.2.0");

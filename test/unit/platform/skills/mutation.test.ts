@@ -545,7 +545,7 @@ describe("a pasted SKILL.md in the body", () => {
     );
     expect(written?.manifest.loadingStrategy).toBe("dynamic");
     expect(written?.manifest.priority).toBe(25);
-    expect(written?.manifest.toolAffinity).toEqual(["skills__*"]);
+    expect(written?.manifest.toolAffinity).toEqual(["skills__create", "skills__update"]);
     expect(written?.manifest.triggers).toHaveLength(8);
     expect(written?.manifest.description).toContain("Guide for authoring");
     // The filename is the caller's — it is what the permission gate ran against.
