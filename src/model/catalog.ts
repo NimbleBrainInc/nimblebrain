@@ -24,6 +24,24 @@ export interface ModelCost {
   cacheWrite?: number;
   /** USD per 1M reasoning tokens */
   reasoning?: number;
+  /**
+   * Rate cards for longer prompts, ascending by `aboveInputTokens`. A call
+   * whose prompt (every input-side token, cached or not) exceeds a tier's
+   * threshold bills every bucket at that tier's rates instead of the base
+   * ones. Absent for a model with one rate card.
+   */
+  tiers?: ModelCostTier[];
+}
+
+/** One prompt-length rate card; the rates have the same units as `ModelCost`. */
+export interface ModelCostTier {
+  /** The tier applies to a call whose prompt is longer than this many tokens. */
+  aboveInputTokens: number;
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number;
 }
 
 export interface ModelLimits {
@@ -287,6 +305,7 @@ export function getProviderFromModel(modelString: string): string {
  * models.dev ever emits one.
  */
 const ADAPTIVE_ONLY_THINKING_MODELS: ReadonlySet<string> = new Set([
+  "claude-haiku-5-5",
   "claude-opus-4-7",
   "claude-opus-4-8",
   "claude-opus-5",

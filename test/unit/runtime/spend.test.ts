@@ -52,6 +52,30 @@ describe("spend accounts — clamping a call", () => {
     expect(other.check(call(100_000, 128_000))).toEqual({ accountId: "usd" });
   });
 
+  it("a dollar account projects at the dearest rate card a longer prompt can reach", () => {
+    const tiered: SpendPricing = {
+      model: "test:tiered",
+      rates: {
+        ...PRICED.rates!,
+        tiers: [
+          {
+            aboveInputTokens: 100_000,
+            input: 5,
+            output: 50,
+            cacheRead: 0.5,
+            cacheWrite5m: 6.25,
+            cacheWrite1h: 10,
+          },
+        ],
+      },
+    };
+    const balances = createSpendBalances();
+    const hold = balances.open([{ id: "usd", unit: "usd", remaining: 1 }], tiered);
+    // $1 minus 1,000 input at $10/M (the 1h write on the long card) leaves $0.99,
+    // which buys 19,800 output at $50/M.
+    expect(hold.check(call(1_000, 128_000))).toEqual({ maxOutputTokens: 19_800 });
+  });
+
   it("names the account that refuses the call", () => {
     const balances = createSpendBalances();
     const hold = balances.open(
