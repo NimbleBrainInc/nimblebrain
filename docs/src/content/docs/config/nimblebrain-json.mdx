@@ -135,7 +135,7 @@ and the runtime translates.
 |---|---|
 | Anthropic — Opus 4.7/4.8, Sonnet 5, Opus 5 | `thinking: {type: "adaptive"}` + `output_config.effort`, the tier verbatim |
 | Anthropic — up to Sonnet 4.6 | `thinking: {type: "enabled"}` + a `budgetTokens` sized from the tier |
-| OpenAI, and Nebius-hosted open-weight models (Qwen, Kimi, GLM, gpt-oss, Cosmos3) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there. On OpenAI, acceptance is also per model — see below |
+| OpenAI, and Nebius-hosted open-weight models (Qwen, DeepSeek, Kimi, GLM, Nemotron, gpt-oss) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there. On OpenAI, acceptance is also per model — see below |
 | xAI (Grok) | `reasoningEffort`, tops out at `high`. Acceptance is per model and some Grok models take no effort parameter at all — see below |
 | Google Gemini 3 | `thinkingConfig.thinkingLevel`, tops out at `high` |
 | Google Gemini 2.5 | `thinkingConfig.thinkingBudget`, sized from the tier and held inside the model's documented range |
@@ -305,7 +305,7 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the runtime 
 
 ### Nebius Token Factory
 
-`nebius` is an OpenAI-compatible gateway for open-weight models (Qwen, Kimi, GLM, gpt-oss). Configure it like any other provider and reference models with the `nebius:` prefix:
+`nebius` is an OpenAI-compatible gateway for open-weight models (Qwen, DeepSeek, Kimi, GLM, Nemotron, gpt-oss). Configure it like any other provider and reference models with the `nebius:` prefix:
 
 ```json
 {
@@ -320,7 +320,7 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the runtime 
 }
 ```
 
-The key falls back to `NEBIUS_API_KEY`. Unlike the other providers, this key is **required when `nebius` is configured** — the runtime fails to start if neither `providers.nebius.apiKey` nor `NEBIUS_API_KEY` is set, because the Nebius adapter reads no environment variable of its own and a keyless provider has nothing to authenticate with. Override the endpoint with `baseURL` (default `https://api.tokenfactory.nebius.com/v1`). A curated set of flagship models ships in the catalog so they appear in the model picker with pricing; any other Nebius model id still routes as free text (`nebius:<org>/<model>`), just without catalog metadata. Nebius requests use the Chat Completions API and rely on the provider's automatic prefix caching — the Anthropic-style explicit cache breakpoints don't apply.
+The key falls back to `NEBIUS_API_KEY`. Unlike the other providers, this key is **required when `nebius` is configured** — the runtime fails to start if neither `providers.nebius.apiKey` nor `NEBIUS_API_KEY` is set, because the Nebius adapter reads no environment variable of its own and a keyless provider has nothing to authenticate with. Override the endpoint with `baseURL` (default `https://api.tokenfactory.nebius.com/v1`). A curated set of flagship models ships in the catalog so they appear in the model picker with pricing; any other Nebius model id still routes as free text (`nebius:<org>/<model>`), just without catalog metadata. Nebius requests use the Chat Completions API and rely on the provider's automatic prefix caching — the Anthropic-style explicit cache breakpoints don't apply. Nebius reports cached prompt tokens in usage but publishes no cache-read price, so a cached token costs the same as any other input token; when a model's listing carries one, `sync-nebius` records it and usage prices cached tokens at it.
 
 Reasoning models hosted here stream their thinking back and it is shown in the chat. Those blocks carry no provider signature, so a Nebius turn that hits the output limit mid-answer stops there and reports why, instead of automatically continuing the way an Anthropic turn does.
 
