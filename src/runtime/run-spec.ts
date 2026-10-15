@@ -210,7 +210,7 @@ export interface DeclaredSkill {
 /**
  * One skill reaching (or missing) the model during a run, for a caller with no
  * conversation log to read it from. `loadedBy` is the load ledger's vocabulary
- * for the runtime's own channels, plus `declared`: given in the opening message
+ * for the runtime's own channels, plus `declared`: given in the system prompt
  * because the run named it. `status` marks a bound skill that did NOT arrive.
  */
 export interface SkillDelivery {
@@ -270,7 +270,7 @@ export interface RunComposition {
   alwaysOnSkills: Skill[];
   /** Overlays the engine may surface once into history mid-run. */
   connectorSkillCandidates: ConnectorSkillCandidate[];
-  /** The skills the run declared, with the bodies its opening message carries. */
+  /** The skills the run declared, with the bodies its system prompt carries. */
   declaredSkills: DeclaredSkill[];
   /** The cached system prefix. */
   stableSystem: string;

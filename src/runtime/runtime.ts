@@ -174,7 +174,7 @@ import type {
   Layer3SkillEntry,
   PromptAppInfo,
 } from "../prompt/compose.ts";
-import { composeSystemSegments, formatDeclaredSkillBlock } from "../prompt/compose.ts";
+import { composeSystemSegments } from "../prompt/compose.ts";
 import {
   type ActivatableSkill,
   collectActivatableSkills,
@@ -1713,13 +1713,10 @@ export class Runtime {
     // unless the prompt carries file refs, run for shape consistency with the
     // engine's message contract.
     const fileStore = this.getWorkspaceFileStore(spec.workspaceId, ownerId);
-    const messages = withDeclaredSkills(
-      await rehydrateUserResources(effectiveHistory, fileStore, {
-        model: spec.model,
-        maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
-      }),
-      composed.declaredSkills,
-    );
+    const messages = await rehydrateUserResources(effectiveHistory, fileStore, {
+      model: spec.model,
+      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
+    });
 
     const perRequestHooks = this.buildRunHooks(spec, binding, messageBudget.budget);
 
@@ -1765,7 +1762,7 @@ export class Runtime {
       // From the UN-rehydrated history — this is what makes surface-ONCE hold
       // across turns. A fresh one-shot run has a single user message and no
       // prior history, so its set is empty.
-      // A declared skill is in the opening message, so no channel delivers it again.
+      // A declared skill is in the system prompt, so no channel delivers it again.
       alreadyInjectedConnectorSkills: [
         ...this.collectInjectedConnectorSkills(effectiveHistory),
         ...composed.declaredSkills.map((s) => s.name),
@@ -2136,6 +2133,20 @@ export class Runtime {
       ...requestContextSkills.map((s) => s.manifest.name),
       ...composedSkillNames(selectedLayer3, skill),
     ]);
+
+    // Declared bodies join the stable Layer 3 section, not the opening message:
+    // they are the same on every run of the task, and only the system prefix
+    // is cached across runs (the opening message's breakpoint falls after the
+    // run's own input, which differs run to run).
+    layer3Entries.push(
+      ...declaredSkills.map((s) => ({
+        name: s.name,
+        body: s.body,
+        scope: s.scope,
+        loadedBy: "declared" as const,
+        reason: "named by the run's task",
+      })),
+    );
 
     // Task mode prepends TASK_IDENTITY so an unattended run produces a
     // deliverable rather than a conversational reply. The runtime owns that
@@ -6281,25 +6292,6 @@ function stopDetail(
  */
 function isReportableAbort(spec: RunSpec, signal: AbortSignal | undefined): boolean {
   return spec.onAbort === "partial" && signal?.aborted === true;
-}
-
-/**
- * Prepend the run's declared skills to the message it opens on, each in the
- * containment an activated skill uses, so the run reads them before its job.
- * The opening message is the last one: a run that declares skills is
- * unattended and has no history.
- */
-function withDeclaredSkills(
-  messages: LanguageModelV4Message[],
-  declared: DeclaredSkill[],
-): LanguageModelV4Message[] {
-  const last = messages[messages.length - 1];
-  if (declared.length === 0 || last?.role !== "user") return messages;
-  const blocks = declared.map((s) => ({
-    type: "text" as const,
-    text: formatDeclaredSkillBlock(s.name, s.scope, s.body),
-  }));
-  return [...messages.slice(0, -1), { ...last, content: [...blocks, ...last.content] }];
 }
 
 /**
