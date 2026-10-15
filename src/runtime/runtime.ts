@@ -2086,14 +2086,23 @@ export class Runtime {
       skill ? hydrateSkill(skill) : Promise.resolve(null),
       hydrateSelected(selectedLayer3Unloaded),
     ]);
+    // Skill catalog, surface-once candidates, and task-skill resolution share
+    // one read of the workspace's connector-overlay store.
+    const connectorOverlayCandidates = candidatesWithoutSuppressed(
+      this.loadConnectorSkillCandidates(spec.workspaceId),
+      suppressed,
+    );
     // The skills the run's definition names join Layer 3, in the cached prefix,
     // so a task's runs share that prefix across inputs and never spend a call
     // loading them. Resolved over the pool `nb__use_skill` serves (filesystem
-    // tiers, then server-published skills); fail closed, like a declared tool.
+    // tiers, then server-published skills, then overlays); fail closed, like a
+    // declared tool. An overlay-only name is not composed: overlays ride
+    // conversation history, so `nb__use_skill` delivers it on demand.
     const taskLayer3 = await this.resolveTaskSkills(spec.input.skills, {
-      alwaysOn: [...poolContext, ...connectorContextSelected],
+      alwaysOn: [...poolContext, ...connectorContext],
       alreadySelected: affinityLayer3,
       capability: [...poolCapability, ...connectorCapability],
+      overlays: connectorOverlayCandidates.map((c) => c.name),
     });
     const selectedLayer3 = [...affinityLayer3, ...taskLayer3];
     const taskSkillNames = new Set(taskLayer3.map((s) => s.skill.manifest.name));
@@ -2112,16 +2121,11 @@ export class Runtime {
       reason: s.reason,
     }));
 
-    // Skill catalog + surface-once candidates share one read of the workspace's
-    // connector-overlay store — the pools are all computed above on this path
-    // already; no second discovery pass. The catalog is name+description only
-    // (never load state), so the stable segment's bytes move only on
-    // install/authoring events. An unattended run gets the same catalog: it
-    // benefits from on-demand guidance at least as much as a chat.
-    const connectorOverlayCandidates = candidatesWithoutSuppressed(
-      this.loadConnectorSkillCandidates(spec.workspaceId),
-      suppressed,
-    );
+    // The pools are all computed above on this path already; no second
+    // discovery pass. The catalog is name+description only (never load state),
+    // so the stable segment's bytes move only on install/authoring events. An
+    // unattended run gets the same catalog: it benefits from on-demand guidance
+    // at least as much as a chat.
     // The catalog is loaded through `nb__use_skill`, so a run whose list does
     // not name that tool gets no catalog rather than one it cannot open.
     const skillCatalog =
@@ -2222,13 +2226,6 @@ export class Runtime {
   }
 
   /**
-   * Refuse an unattended run whose `allowedTools` names tools nothing it can
-   * reach matches. The owner declared those tools as the run's job; left to
-   * run, it ends normally without ever trying one and reads Succeeded. Checked
-   * against the router's set (`listToolsForWorkspace`), not `listRunTools`,
-   * which leaves out granted personal connectors.
-   */
-  /**
    * The skills a run's definition names, ready to compose as Layer 3: resolved
    * by {@link selectTaskSkills} and their bodies fetched. Any name that resolves
    * to nothing, or to a server-published skill whose body cannot be fetched,
@@ -2261,6 +2258,13 @@ export class Runtime {
     return hydrated.filter((sel): sel is SelectedSkill => sel !== null);
   }
 
+  /**
+   * Refuse an unattended run whose `allowedTools` names tools nothing it can
+   * reach matches. The owner declared those tools as the run's job; left to
+   * run, it ends normally without ever trying one and reads Succeeded. Checked
+   * against the router's set (`listToolsForWorkspace`), not `listRunTools`,
+   * which leaves out granted personal connectors.
+   */
   private async assertDeclaredToolsReachable(
     wsId: string,
     identityId: string,

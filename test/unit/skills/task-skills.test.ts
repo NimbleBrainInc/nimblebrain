@@ -34,6 +34,7 @@ describe("selectTaskSkills", () => {
       names: ["close-checklist", "invoice-runbook"],
       alwaysOn: [],
       alreadySelected: [],
+      overlays: [],
       capability: [RUNBOOK, CHECKLIST],
     });
     expect(names(selected)).toEqual(["close-checklist", "invoice-runbook"]);
@@ -46,6 +47,7 @@ describe("selectTaskSkills", () => {
       names: ["invoice-runbook", "no-such-skill", "close-checklist"],
       alwaysOn: [],
       alreadySelected: [],
+      overlays: [],
       capability: [RUNBOOK, makeSkill("close-checklist", { status: "disabled" })],
     });
     expect(names(selected)).toEqual(["invoice-runbook"]);
@@ -57,6 +59,7 @@ describe("selectTaskSkills", () => {
       names: ["invoice-runbook"],
       alwaysOn: [],
       alreadySelected: [{ skill: RUNBOOK, loadedBy: "tool_affinity", reason: "matched" }],
+      overlays: [],
       capability: [RUNBOOK],
     });
     expect(selected).toEqual([]);
@@ -69,6 +72,7 @@ describe("selectTaskSkills", () => {
       names: ["house-voice"],
       alwaysOn: [voice],
       alreadySelected: [],
+      overlays: [],
       capability: [],
     });
     expect(selected).toEqual([]);
@@ -82,6 +86,7 @@ describe("selectTaskSkills", () => {
       names: ["invoice-runbook"],
       alwaysOn: [],
       alreadySelected: [],
+      overlays: [],
       capability: [workspaceTier, published],
     });
     expect(selected.map((s) => s.skill.sourcePath)).toEqual(["/ws/invoice-runbook.md"]);
@@ -92,8 +97,22 @@ describe("selectTaskSkills", () => {
       names: ["invoice-runbook", "invoice-runbook"],
       alwaysOn: [],
       alreadySelected: [],
+      overlays: [],
       capability: [RUNBOOK],
     });
     expect(names(selected)).toEqual(["invoice-runbook"]);
+  });
+
+  test("defers a name only a connector overlay holds; a filesystem or published skill wins", () => {
+    const { selected, deferred, missing } = selectTaskSkills({
+      names: ["crm-guide", "invoice-runbook", "no-such-skill"],
+      alwaysOn: [],
+      alreadySelected: [],
+      overlays: ["crm-guide", "invoice-runbook"],
+      capability: [RUNBOOK],
+    });
+    expect(names(selected)).toEqual(["invoice-runbook"]);
+    expect(deferred).toEqual(["crm-guide"]);
+    expect(missing).toEqual(["no-such-skill"]);
   });
 });

@@ -17,6 +17,12 @@ import type { Skill } from "./types.ts";
 export interface TaskSkillSelection {
   /** Skills to compose as Layer 3, in the order named, bodies not yet fetched. */
   selected: SelectedSkill[];
+  /**
+   * Names that resolve only to a curated connector overlay. Overlays are
+   * delivered through conversation history, never composed, so these are not
+   * preloaded; `nb__use_skill` and the overlay's tool binding still deliver them.
+   */
+  deferred: string[];
   /** Names nothing in the pools resolves to an active skill. */
   missing: string[];
 }
@@ -36,16 +42,21 @@ function keyOf(skill: Skill): string {
  * - `capability`: the activatable skills, filesystem tiers first, then the
  *   workspace's server-published skills, the order `nb__use_skill` resolves a
  *   name in. The first active skill of a name wins.
+ * - `overlays`: the names of the workspace's curated connector overlays, the
+ *   last pool `nb__use_skill` resolves. A name only they hold is deferred, not
+ *   missing.
  */
 export function selectTaskSkills(input: {
   names: readonly string[];
   alwaysOn: readonly Skill[];
   alreadySelected: readonly SelectedSkill[];
   capability: readonly Skill[];
+  overlays: readonly string[];
 }): TaskSkillSelection {
   const composed = new Set(input.alwaysOn.map((s) => s.manifest.name));
   const selectedKeys = new Set(input.alreadySelected.map((s) => keyOf(s.skill)));
   const selected: SelectedSkill[] = [];
+  const deferred: string[] = [];
   const missing: string[] = [];
   const seen = new Set<string>();
 
@@ -57,12 +68,12 @@ export function selectTaskSkills(input: {
       (s) => s.manifest.name === name && s.manifest.status === "active",
     );
     if (!skill) {
-      missing.push(name);
+      (input.overlays.includes(name) ? deferred : missing).push(name);
       continue;
     }
     if (selectedKeys.has(keyOf(skill))) continue;
     selectedKeys.add(keyOf(skill));
     selected.push({ skill, loadedBy: "task", reason: "named by the task" });
   }
-  return { selected, missing };
+  return { selected, deferred, missing };
 }

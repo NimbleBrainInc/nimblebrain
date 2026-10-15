@@ -131,8 +131,9 @@ export class DeclaredSkillsUnavailableError extends Error {
   constructor(public readonly skills: readonly string[]) {
     super(
       `Declared skill${skills.length === 1 ? "" : "s"} unavailable: ${skills.join(", ")}. ` +
-        `This workspace has no active skill by ${skills.length === 1 ? "that name" : "those names"} ` +
-        `that the run can load, so the run did not start.`,
+        `This workspace has no active skill by ${skills.length === 1 ? "that name" : "those names"}, ` +
+        `or the connector serving ${skills.length === 1 ? "it" : "them"} could not deliver its text, ` +
+        `so the run did not start.`,
     );
     this.name = "DeclaredSkillsUnavailableError";
   }
