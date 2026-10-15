@@ -217,6 +217,10 @@ describe("runtime.executeTask", () => {
     it("does not reach past an operator's thinking off", async () => {
       expect(await effortSent({ thinking: "off" }, "low")).toBeUndefined();
     });
+
+    it("does not reach past an operator's thinking adaptive", async () => {
+      expect(await effortSent({ thinking: "adaptive" }, "low")).toBeUndefined();
+    });
   });
 
   it("ends the run with spend_limit, naming the account, before a call that would overrun it", async () => {
