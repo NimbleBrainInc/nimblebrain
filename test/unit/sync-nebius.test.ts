@@ -4,6 +4,7 @@ import {
   buildNebiusCatalog,
   DEFAULT_OUTPUT_LIMIT,
   MIN_USABLE_CONTEXT,
+  nebiusCost,
   probeModel,
   type RawNebiusModel,
 } from "../../src/model/sync-nebius.ts";
@@ -90,6 +91,32 @@ describe("buildNebiusCatalog", () => {
     const models = buildNebiusCatalog([raw({ id: "org/Different" })], curated);
     expect(models["org/Model-A"]).toBeUndefined();
     expect(Object.keys(models)).toHaveLength(0);
+  });
+});
+
+describe("nebiusCost", () => {
+  it("records a published cache-read price per 1M", () => {
+    const models = buildNebiusCatalog(
+      [
+        raw({
+          pricing: { prompt: "0.0000002", completion: "0.0000006", input_cache_read: "0.00000002" },
+        }),
+      ],
+      curated,
+    );
+    expect(models["org/Model-A"]!.cost).toEqual({ input: 0.2, output: 0.6, cacheRead: 0.02 });
+  });
+
+  it("omits cacheRead when the listing publishes none, so cached tokens bill at input", () => {
+    // The account lists `input_cache_read: null` while still reporting cached
+    // tokens in usage. Writing 0 here would price those tokens as free.
+    expect(
+      nebiusCost({ prompt: "0.0000002", completion: "0.0000006", input_cache_read: null }),
+    ).toEqual({ input: 0.2, output: 0.6 });
+    expect(nebiusCost({ prompt: "0.0000002", completion: "0.0000006" })).toEqual({
+      input: 0.2,
+      output: 0.6,
+    });
   });
 });
 
