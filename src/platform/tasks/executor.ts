@@ -11,6 +11,7 @@
  */
 
 import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/tasks.ts";
+import type { ThinkingEffort } from "../../engine/types.ts";
 import { wrapContained } from "../../prompt/compose.ts";
 import type { AdmissionLease } from "../../runtime/admission.ts";
 import { estimateCost } from "../../usage/cost.ts";
@@ -61,6 +62,8 @@ export interface TaskFnRequest {
    */
   trigger?: "schedule" | "manual" | "event";
   model?: string;
+  /** The task's reasoning depth; absent, the operator's applies. */
+  thinkingEffort?: ThinkingEffort;
   maxIterations?: number;
   maxRunInputTokens?: number;
   /**
@@ -235,6 +238,7 @@ function buildRequest(
     },
   };
   if (task.model != null) req.model = task.model;
+  if (task.thinkingEffort != null) req.thinkingEffort = task.thinkingEffort;
   // Already clamped to the operator's per-run ceilings (see
   // `effectiveRunLimits`). Iterations are always capped; input tokens only when
   // the definition or the operator sets a cap.

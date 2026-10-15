@@ -16,7 +16,7 @@ A task has:
 - **A name** — becomes a kebab-case ID (for example, "Weekly Report" → `weekly-report`). A name whose ID is taken is refused; change that task instead
 - **A prompt** — the instruction sent to the agent on each run
 - **A schedule (optional)** — a cron expression, a fixed interval, one date and time, or a set of notifications to run on. With none, it runs only when you run it
-- **Optional run-time policy** — a model override, a forced skill match, iteration and token caps, a token budget, and the tools it may use
+- **Optional run-time policy** — a model override, a reasoning depth, a forced skill match, iteration and token caps, a token budget, and the tools it may use
 
 ## Who a task runs as
 
@@ -154,6 +154,8 @@ Both limits sit under **Limits** in the create form, and the agent can set them 
 
 A shorter tool list also makes each run cheaper, because the model is sent fewer tool definitions.
 
+A task can also set `thinkingEffort`, how hard its runs reason: `low`, `medium`, `high`, `xhigh`, or `max`. It replaces the instance's [`thinkingEffort`](/config/nimblebrain-json/#reasoning-depth) for that task's runs only, and has no effect when the operator turned `thinking` off or set it to `adaptive`, or on a model that does not reason. Reasoning is billed as output, so a lower depth makes a task that runs often cheaper. Set it through `tasks__create` or `tasks__update` (`null` clears it); the create form does not show it.
+
 Describe the job in the prompt ("find the issues opened this week"), not a tool's name (`github__search_issues`). A tool's name depends on how its connector is installed (a personal connection carries `my_`) and on the connector itself, so a prompt that names one breaks silently when either changes. Put the tools a task needs in **Allowed tools** instead, where the runtime checks them.
 
 ## Managing tasks
@@ -196,7 +198,7 @@ Every tool names a task by its id (`taskId`, as `tasks__list` returns it) and a 
 
 <Steps>
 
-1. **A saved task or an inline one-off.** Pass `taskId` to run a saved task. Or pass `definition` instead: `{ manifest, body }`, the shape `tasks__create` takes, without a name, schedule, or `enabled`. `body` is the prompt; `manifest` holds the rest (`skill`, `model`, `allowedTools`, `inputSchema`, `outputSchema`, `criteria`, `confidenceThreshold`, `judge`, `onPoorResult` (see [Judging results](#judging-results)), `maxIterations`, `maxInputTokens`, `maxRunDurationMs`, `tokenBudget`). An inline call creates a one-off task with no schedule, owned by you in that workspace, runs it once, and keeps it with its run. Nothing deletes it.
+1. **A saved task or an inline one-off.** Pass `taskId` to run a saved task. Or pass `definition` instead: `{ manifest, body }`, the shape `tasks__create` takes, without a name, schedule, or `enabled`. `body` is the prompt; `manifest` holds the rest (`skill`, `model`, `thinkingEffort`, `allowedTools`, `inputSchema`, `outputSchema`, `criteria`, `confidenceThreshold`, `judge`, `onPoorResult` (see [Judging results](#judging-results)), `maxIterations`, `maxInputTokens`, `maxRunDurationMs`, `tokenBudget`). An inline call creates a one-off task with no schedule, owned by you in that workspace, runs it once, and keeps it with its run. Nothing deletes it.
 
 2. **Input.** `input` is any JSON value, at most 64 KiB serialized. When the task has an `inputSchema`, an input that does not match it, or a missing one, is refused before the run starts, with the reasons. The input is kept on the run record and given to the run as data, inside a block the model is told never to follow as instructions.
 

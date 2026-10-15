@@ -14,6 +14,7 @@ import {
   type EffectiveRunLimits,
   effectiveRunLimits,
 } from "../../config/tasks.ts";
+import type { ThinkingEffort } from "../../engine/types.ts";
 import { MAX_ITERATIONS, TASKS_LIST_DEFAULT_LIMIT, TASKS_LIST_MAX_LIMIT } from "../../limits.ts";
 import type {
   TaskEffectiveLimits,
@@ -689,6 +690,7 @@ export function handleCreate(args: TasksCreateInput, ctx: ToolContext): TasksCre
       description: manifest.description,
       skill: manifest.skill,
       model: manifest.model,
+      thinkingEffort: manifest.thinkingEffort,
       maxIterations: manifest.maxIterations,
       maxInputTokens: manifest.maxInputTokens,
       maxRunDurationMs: manifest.maxRunDurationMs,
@@ -1360,6 +1362,7 @@ export const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 export interface InlineManifest {
   skill?: string;
   model?: string;
+  thinkingEffort?: ThinkingEffort;
   allowedTools?: string[];
   maxIterations?: number;
   maxInputTokens?: number;
@@ -1411,6 +1414,7 @@ const ONEOFF_DEFINITION_FIELDS = [
   "prompt",
   "skill",
   "model",
+  "thinkingEffort",
   "inputSchema",
   "outputSchema",
   "allowedTools",

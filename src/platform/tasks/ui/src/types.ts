@@ -35,6 +35,7 @@ export interface TaskDetail {
   enabled: boolean;
   source: "user" | "agent";
   model?: string | null;
+  thinkingEffort?: ThinkingEffort | null;
   maxIterations?: number;
   maxInputTokens?: number;
   allowedTools?: string[];
@@ -65,6 +66,9 @@ export interface TaskDetail {
   judge?: TaskJudgeSpec;
   onPoorResult?: OnPoorResult;
 }
+
+/** A task's reasoning depth (mirror of the runtime's ThinkingEffort). */
+export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 /** What a `fail` assessment does. */
 export type OnPoorResult = "record" | "notify" | "retry_once";
