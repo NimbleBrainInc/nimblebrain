@@ -537,7 +537,8 @@ function classifyRunFailure(err: unknown): {
   // FAILURE, never skipped: it feeds consecutiveErrors so a connector that
   // stays gone backs the task off and disables it, saying why. Not transient:
   // a retry minutes later meets the same missing connector.
-  if ((err as { code?: string })?.code === "declared_tools_unavailable") {
+  const code = (err as { code?: string })?.code;
+  if (code === "declared_tools_unavailable" || code === "declared_skills_unavailable") {
     return { status: "failure", error: errorMsg, transient: false };
   }
   if (errorMsg.includes("timed out")) {

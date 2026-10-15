@@ -39,7 +39,7 @@ export interface TaskDetail {
   maxIterations?: number;
   maxInputTokens?: number;
   allowedTools?: string[];
-  skill?: string;
+  skills?: string[];
   runCount: number;
   consecutiveErrors: number;
   lastRunStatus: string | null;

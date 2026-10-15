@@ -120,7 +120,7 @@ export interface DomainCreateInput {
   schedule?: ScheduleSpec;
   kind?: TaskKind;
   description?: string;
-  skill?: string;
+  skills?: string[];
   model?: string;
   thinkingEffort?: ThinkingEffort;
   maxIterations?: number;
@@ -150,7 +150,7 @@ export interface DomainUpdatePatch {
   /** `null` removes the schedule: nothing fires the task unattended. */
   schedule?: ScheduleSpec | null;
   prompt?: string;
-  skill?: string | null;
+  skills?: string[] | null;
   /** `null` removes it: runs use the workspace default model. */
   model?: string | null;
   /** `null` removes it: runs reason at the workspace setting. */
@@ -279,7 +279,7 @@ export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): Cr
     ...(input.schedule ? { schedule: input.schedule } : {}),
     ...(input.kind ? { kind: input.kind } : {}),
     description: input.description,
-    skill: input.skill,
+    skills: input.skills,
     allowedTools: input.allowedTools,
     ...(input.inputSchema ? { inputSchema: input.inputSchema } : {}),
     ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
@@ -340,7 +340,7 @@ const UPDATABLE_FIELDS = [
   "description",
   "prompt",
   "schedule",
-  "skill",
+  "skills",
   "allowedTools",
   "inputSchema",
   "outputSchema",

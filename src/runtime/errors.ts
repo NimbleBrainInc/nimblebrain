@@ -119,6 +119,24 @@ export class DeclaredToolsUnavailableError extends Error {
 }
 
 /**
+ * Thrown before an unattended run's first model call when a skill it declares
+ * (`TaskRequest.skills`) is not one its workspace offers: unknown, disabled, or
+ * published by a connector that is gone. Left to run, it would do its job
+ * without the guidance the owner named for it.
+ */
+export class DeclaredSkillsUnavailableError extends Error {
+  readonly code = "declared_skills_unavailable";
+  constructor(public readonly skills: readonly string[]) {
+    super(
+      `Declared skill${skills.length === 1 ? "" : "s"} unavailable: ${skills.join(", ")}. ` +
+        `The task's workspace offers no skill by ${skills.length === 1 ? "that name" : "those names"}, ` +
+        `so the run did not start.`,
+    );
+    this.name = "DeclaredSkillsUnavailableError";
+  }
+}
+
+/**
  * Thrown when a conversation file on disk fails the ownership invariant
  * check at load time — specifically, a pre-migration file that lacks
  * `ownerId`. The store can't synthesize an owner safely and the chat

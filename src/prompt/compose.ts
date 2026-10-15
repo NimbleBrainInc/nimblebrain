@@ -1068,6 +1068,18 @@ export function formatActivatedSkillBlock(name: string, scope: string, body: str
 }
 
 /**
+ * Wrap a skill an unattended run declared for delivery in its opening message.
+ * Same containment as {@link formatActivatedSkillBlock}; the provenance says
+ * the run was given it rather than asked for it.
+ */
+export function formatDeclaredSkillBlock(name: string, scope: string, body: string): string {
+  const safeName = sanitizeLineField(name);
+  const safeScope = sanitizeLineField(scope);
+  const provenance = `_${safeName}_ — scope: ${safeScope}; given to this run by its task`;
+  return `${provenance}\n\n${wrapContained("activated-skill", body)}`;
+}
+
+/**
  * Files and conversations are workspace-OWNED but reached through the identity
  * door: the tools are always loaded and take no workspace argument, because the
  * workspace comes from the request itself. Both workspace blocks narrate that a

@@ -209,6 +209,38 @@ describe("createDirectExecutor", () => {
 // (Restores coverage lost when the executeHttp tests were deleted.)
 // ---------------------------------------------------------------------------
 
+describe("createDirectExecutor — a task's declared skills", () => {
+  test("passes the skills to the run and records what the run was given", async () => {
+    let captured: TaskFnRequest | undefined;
+    const taskFn: TaskFn = async (req) => {
+      captured = req;
+      return {
+        ...(await makeDirectTaskFn()(req)),
+        skillsDelivered: [{ name: "ledger-runbook", loadedBy: "declared" }],
+      };
+    };
+    const executor = createDirectExecutor(taskFn, () => ({}));
+    const { result } = await executor(makeTask({ skills: ["ledger-runbook"] }));
+    expect(captured?.skills).toEqual(["ledger-runbook"]);
+    expect(result?.skillsDelivered).toEqual([{ name: "ledger-runbook", loadedBy: "declared" }]);
+  });
+
+  test("a task with skills and no prompt runs on an instruction to carry them out", async () => {
+    let captured: TaskFnRequest | undefined;
+    const executor = createDirectExecutor(
+      async (req) => {
+        captured = req;
+        return makeDirectTaskFn()(req);
+      },
+      () => ({}),
+    );
+    await executor(makeTask({ prompt: "", skills: ["ledger-runbook", "record-rules"] }));
+    expect(captured?.prompt).toBe(
+      'Carry out the "ledger-runbook", "record-rules" skills on this run\'s input, and give the result as the deliverable.',
+    );
+  });
+});
+
 describe("createDirectExecutor — the run input cap", () => {
   async function requestFor(overrides: Partial<Task>) {
     let seen: Parameters<TaskFn>[0] | undefined;
