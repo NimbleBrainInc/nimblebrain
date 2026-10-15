@@ -269,7 +269,7 @@
 
 ### Fixed
 
-- **Nebius gpt-oss tool calls no longer fail the run.** Nebius sometimes streams a tool call's closing fragment on the next index with no id; the Nebius provider now moves it back onto its call instead of failing with `Expected 'id' to be a string.`
+- **Nebius gpt-oss tool calls no longer fail the run.** Nebius sometimes streams a tool call's closing fragment on the next index with no id; `@ai-sdk/openai-compatible` 3.0.62 attaches it to its call instead of failing with `Expected 'id' to be a string.`
 - **Signing out under WorkOS ends the WorkOS session.** Sign-out revokes it, so the next sign-in asks for credentials instead of resuming the old one, and a person can switch accounts.
 - **The model sees a remote tool's structured data.** A remote server that returns its data only in `structuredContent`, with a summary as the text, now has that JSON passed to the model as text (within the usual result bound) instead of the summary alone.
 - **The chat panel's resize handle and the usage chart's daily bars work from the keyboard.** Arrow keys resize the panel; a focused bar shows its day's breakdown and is labelled for screen readers.

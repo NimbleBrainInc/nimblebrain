@@ -12,7 +12,6 @@ import {
 } from "ai";
 import { wrapFetchWithLiveness } from "./fetch-liveness.ts";
 import { requireQualifiedModelId } from "./model-id.ts";
-import { wrapFetchRepairingToolCallIndex } from "./tool-call-index-repair.ts";
 
 export interface ProvidersConfig {
   providers?: {
@@ -119,16 +118,12 @@ export function buildRegistry(config: ProvidersConfig): Provider {
     // `supportsStructuredOutputs` — without it a schema-bearing
     //   `responseFormat` degrades to `{"type":"json_object"}`, dropping the
     //   schema and strict decoding.
-    //
-    // `fetch` repairs a tool call's closing fragment streamed on the wrong
-    // index, which the adapter's parser rejects. See tool-call-index-repair.ts.
     providers.nebius = createOpenAICompatible({
       name: "nebius",
       apiKey: nebiusApiKey,
       baseURL: baseURL ?? NEBIUS_DEFAULT_BASE_URL,
       includeUsage: true,
       supportsStructuredOutputs: true,
-      fetch: wrapFetchRepairingToolCallIndex(globalThis.fetch, "nebius") as typeof fetch,
     });
   }
 
