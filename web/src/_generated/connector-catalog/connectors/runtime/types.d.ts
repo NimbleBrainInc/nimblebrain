@@ -237,10 +237,12 @@ export interface OAuthClientConfig {
      */
     clientSecret?: CredentialRef;
     /**
-     * Token endpoint auth method. Defaults to "none" (PKCE-only public
-     * client) when `clientSecret` is absent; "client_secret_post" is the
-     * common case when a secret is present. "client_secret_basic" is
-     * supported for vendors that mandate it.
+     * Token endpoint auth method, used on every token request (code exchange
+     * and refresh). Defaults to "none" (PKCE-only public client) when
+     * `clientSecret` is absent and "client_secret_post" when it is present,
+     * whatever order the server lists its methods in. "client_secret_basic"
+     * is for vendors that mandate it. A method the server does not advertise
+     * falls back to the SDK's choice among those it does.
      */
     tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
 }

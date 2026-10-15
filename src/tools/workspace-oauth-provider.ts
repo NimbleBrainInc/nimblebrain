@@ -769,6 +769,19 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     return this.cachedClientInfo?.redirect_uris?.[0] ?? this.callbackUrl;
   }
 
+  /**
+   * How this client authenticates at the token endpoint: the static client's
+   * configured method, else `client_secret_post` when it has a secret, else
+   * `none` (public PKCE client, and every DCR registration). One source for
+   * both `clientMetadata` and the static `clientInformation()`.
+   */
+  private get tokenEndpointAuthMethod(): "none" | "client_secret_post" | "client_secret_basic" {
+    return (
+      this.staticClient?.tokenEndpointAuthMethod ??
+      (this.staticClient?.clientSecret ? "client_secret_post" : "none")
+    );
+  }
+
   get clientMetadata(): OAuthClientMetadata {
     const ownerLabel =
       this.ownerDisplayName ??
@@ -780,9 +793,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       redirect_uris: [this.callbackUrl],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
-      token_endpoint_auth_method:
-        this.staticClient?.tokenEndpointAuthMethod ??
-        (this.staticClient?.clientSecret ? "client_secret_post" : "none"),
+      token_endpoint_auth_method: this.tokenEndpointAuthMethod,
     };
     // Track A: requested OAuth scopes flow into the SDK's authorize URL
     // build via the standard `scope` field on clientMetadata. Joined with
@@ -841,6 +852,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         ...(this.staticClient.clientSecret
           ? { client_secret: this.staticClient.clientSecret }
           : {}),
+        // The SDK picks token-request client auth from the client information
+        // alone (`selectClientAuthMethod`), never from `clientMetadata`. Without
+        // the method here, a client with a secret gets `client_secret_basic`
+        // whenever the server advertises it, which some servers accept on the
+        // code exchange and reject on the refresh grant.
+        token_endpoint_auth_method: this.tokenEndpointAuthMethod,
       };
       return info;
     }
