@@ -208,6 +208,51 @@ describe("AgentEngine final-step reminder before the run input cap", () => {
     expect(result.usage.inputTokens).toBe(6_000);
   });
 
+  it("adds the reminder on the first call when its prompt estimate alone fits once but not twice", async () => {
+    // A ~4,000-token prompt (16,000 chars) under a 6,000 cap: the hard stop
+    // lets call 1 through (4,000 ≤ 6,000), but 2 × 4,000 passes the cap, so
+    // call 1 is the run's last likely call. No previous call exists, so the
+    // estimate alone drives the projection.
+    const reminded: boolean[] = [];
+    const model = createMockModel((callOpts) => {
+      const prompt = callOpts.prompt;
+      const sawReminder = JSON.stringify(prompt[prompt.length - 1]).includes("final step");
+      reminded.push(sawReminder);
+      if (sawReminder) {
+        return {
+          content: [{ type: "text", text: "partial answer" }],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return {
+        content: [
+          { type: "tool-call", toolCallId: "call_1", toolName: "test__score", input: "{}" },
+        ],
+        inputTokens: 10,
+        outputTokens: 5,
+      };
+    });
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(
+        tools,
+        (): ToolResult => ({ content: textContent("scored"), isError: false }),
+      ),
+      { emit() {} },
+    );
+    const result = await engine.run(
+      { ...baseConfig, maxRunInputTokens: 6_000 },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "x".repeat(16_000) }] }],
+      tools,
+    );
+
+    expect(reminded).toEqual([true]);
+    expect(result.stopReason).toBe("complete");
+    expect(result.output).toContain("partial answer");
+  });
+
   it("adds no reminder when no cap is set", async () => {
     const r = growingRun();
     await r.run();
