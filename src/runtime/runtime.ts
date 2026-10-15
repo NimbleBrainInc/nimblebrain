@@ -2131,11 +2131,10 @@ export class Runtime {
       connectorCandidates: connectorOverlayCandidates,
     });
     const skillCatalog = toCatalogEntries(activatable);
-    const declaredSkills = await resolveDeclaredSkills(
-      spec.input.skills,
-      activatable,
-      requestContextSkills,
-    );
+    const declaredSkills = await resolveDeclaredSkills(spec.input.skills, activatable, [
+      ...requestContextSkills.map((s) => s.manifest.name),
+      ...composedSkillNames(selectedLayer3, skill),
+    ]);
 
     // Task mode prepends TASK_IDENTITY so an unattended run produces a
     // deliverable rather than a conversational reply. The runtime owns that
@@ -6488,19 +6487,21 @@ function buildWorkspaceContext(
 /** A skill body loader as the engine's surface-once channel takes it: the body, or `null`. */
 /**
  * The skills an unattended run declared, resolved to the bodies its opening
- * message carries. A name the turn already composes as an `always` skill needs
- * no delivery. A name the workspace does not offer refuses the run before its
- * first model call (`DeclaredSkillsUnavailableError`), as an unreachable
- * declared tool does: the owner named it as the run's job. A body that cannot
- * be fetched fails the run as a transient error, so the next run tries again.
+ * message carries. A name the turn already composes into its system prompt
+ * (`composedNames`: the `always` skills, tool-affinity selection, and the trigger
+ * match) needs no delivery. A name the workspace does not offer refuses the
+ * run before its first model call (`DeclaredSkillsUnavailableError`), as an
+ * unreachable declared tool does: the owner named it as the run's job. A body
+ * that cannot be fetched fails the run as an ordinary failure, and the task's
+ * next run tries again.
  */
 async function resolveDeclaredSkills(
   names: string[] | undefined,
   activatable: ActivatableSkill[],
-  alwaysOn: Skill[],
+  composedNames: string[],
 ): Promise<DeclaredSkill[]> {
   if (!names?.length) return [];
-  const composed = new Set(alwaysOn.map((s) => s.manifest.name));
+  const composed = new Set(composedNames);
   const byName = new Map(activatable.map((s) => [s.name, s]));
   const wanted = [...new Set(names)].filter((n) => !composed.has(n));
   const unavailable = wanted.filter((n) => !byName.has(n));

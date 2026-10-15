@@ -3,10 +3,11 @@
  * before its first model call — never left to the model choosing to load them.
  *
  * Covers the run-start door (`executeTask` with `skills`): the body rides the
- * opening message, a declared skill bound to a tool is not held for again, an
- * unknown name refuses the run before any model call, and the run reports what
- * it was given (`skillsDelivered`). Also: a run limited by `allowedTools` can
- * still open the skill catalog.
+ * opening message, a declared skill the turn already composes reaches the model
+ * once and is not held for again, an unknown name or an unreadable body fails
+ * the run before any model call, and the run reports what it was given
+ * (`skillsDelivered`). Also: a run limited by `allowedTools` can still open the
+ * skill catalog.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -21,16 +22,25 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { DeclaredSkillsUnavailableError } from "../../src/runtime/errors.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { connectorSkillManifestName } from "../../src/skills/connector-skills.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
+import {
+  handleSkillsList,
+  SKILLS_EXTENSION_CAPABILITY,
+  skillEntryFor,
+} from "../helpers/skills-server.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const SERVER = "ai-nimblebrain-fixture-ledger";
 const RECORD = `${SERVER}__record`;
 const RUNBOOK_MARKER = "RUNBOOK-STEPS-MARKER";
 const BOUND_MARKER = "RECORD-RULES-MARKER";
+const ALWAYS_MARKER = "HOUSE-STYLE-MARKER";
+const UNREADABLE_SERVER = "ai-nimblebrain-fixture-unreadable";
+const UNREADABLE_SKILL = connectorSkillManifestName(UNREADABLE_SERVER, "unreadable-guide");
 
 let prompts: LanguageModelV4CallOptions["prompt"][] = [];
 let executed = 0;
@@ -51,6 +61,32 @@ function createFixtureServer(): Server {
     return { content: [{ type: "text", text: "recorded" }] };
   });
   return server;
+}
+
+/** Lists one catalog skill and throws on every read of its body. */
+function createUnreadableServer(): Server {
+  const server = new Server(
+    { name: "unreadable", version: "0.1.0" },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
+  );
+  server.setRequestHandler("tools/list", async () => ({ tools: [] }));
+  handleSkillsList(server, () => ({
+    skills: [
+      skillEntryFor(
+        "skill://unreadable-guide/SKILL.md",
+        "---\nname: unreadable-guide\ndescription: Guidance that cannot be read.\n---\n\nUnreachable.",
+      ),
+    ],
+  }));
+  server.setRequestHandler("resources/read", async () => {
+    throw new Error("resources/read is unavailable");
+  });
+  return server;
+}
+
+/** How many times `needle` occurs in `text`. */
+function occurrences(text: string, needle: string): number {
+  return text.split(needle).length - 1;
 }
 
 function promptText(p: LanguageModelV4CallOptions["prompt"]): string {
@@ -88,6 +124,8 @@ const testDir = join(tmpdir(), `nimblebrain-task-declared-skills-${Date.now()}`)
 let runtime: Runtime;
 let source: McpSource;
 let server: RemoteMcpFixture;
+let unreadableSource: McpSource;
+let unreadableServer: RemoteMcpFixture;
 
 async function createWorkspaceSkill(manifest: Record<string, unknown>, body: string) {
   const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
@@ -121,6 +159,14 @@ beforeAll(async () => {
   );
   await source.start();
   runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
+  unreadableServer = startRemoteMcpServer(createUnreadableServer);
+  unreadableSource = new McpSource(
+    UNREADABLE_SERVER,
+    { type: "remote", url: new URL(unreadableServer.url), allowInsecure: true },
+    new NoopEventSink(),
+  );
+  await unreadableSource.start();
+  runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(unreadableSource);
 
   // Catalog-only: nothing but the task's declaration delivers it.
   await createWorkspaceSkill(
@@ -135,12 +181,15 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  try {
-    await source.stop();
-  } catch {
-    // already stopped
+  for (const s of [source, unreadableSource]) {
+    try {
+      await s.stop();
+    } catch {
+      // already stopped
+    }
   }
   server.close();
+  unreadableServer.close();
   await runtime.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
@@ -160,15 +209,14 @@ describe("a task's declared skills", () => {
 
     const first = promptText(prompts[0] ?? []);
     expect(first).toContain(RUNBOOK_MARKER);
-    expect(first).toContain(BOUND_MARKER);
+    // Narrowed to its tool, the bound skill is composed by tool affinity, so
+    // the declaration adds no second copy.
+    expect(occurrences(first, BOUND_MARKER)).toBe(1);
     expect(first).toContain("load it with `nb__use_skill`");
     // The bound skill was declared, so its tool's first call is not held for it.
     expect(prompts.some((p) => promptText(p).includes(`Not run: ${RECORD}`))).toBe(false);
     expect(executed).toBe(1);
-    expect(result.skillsDelivered).toEqual([
-      { name: "ledger-runbook", loadedBy: "declared" },
-      { name: "record-rules", loadedBy: "declared" },
-    ]);
+    expect(result.skillsDelivered).toEqual([{ name: "ledger-runbook", loadedBy: "declared" }]);
   });
 
   it("refuse the run before any model call when one is not offered", async () => {
@@ -195,5 +243,35 @@ describe("a task's declared skills", () => {
       prompt: "Record today's entry.",
     });
     expect(result.skillsDelivered).toEqual([{ name: "record-rules", loadedBy: "before_call" }]);
+  });
+
+  it("fail the run before any model call when a body cannot be fetched", async () => {
+    prompts = [];
+    await expect(
+      runtime.executeTask({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        prompt: "Record today's entry.",
+        skills: [UNREADABLE_SKILL],
+      }),
+    ).rejects.toThrow(`Declared skill "${UNREADABLE_SKILL}" could not be fetched`);
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("add nothing for a name the turn already composes as `always`", async () => {
+    await createWorkspaceSkill(
+      { name: "house-style", description: "House style.", loadingStrategy: "always" },
+      `${ALWAYS_MARKER} — plain words.`,
+    );
+    prompts = [];
+    const result = await runtime.executeTask({
+      identity: DEV_IDENTITY,
+      workspaceId: TEST_WORKSPACE_ID,
+      prompt: "Record today's entry.",
+      allowedTools: [RECORD],
+      skills: ["house-style"],
+    });
+    expect(occurrences(promptText(prompts[0] ?? []), ALWAYS_MARKER)).toBe(1);
+    expect(result.skillsDelivered.some((d) => d.loadedBy === "declared")).toBe(false);
   });
 });
