@@ -46,16 +46,16 @@
           "output": ["text"]
         }
       },
-      "Qwen/Qwen3-Next-80B-A3B-Thinking": {
-        "id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
-        "name": "Qwen3 Next 80B A3B Thinking",
+      "Qwen/Qwen3.5-397B-A17B": {
+        "id": "Qwen/Qwen3.5-397B-A17B",
+        "name": "Qwen3.5 397B A17B",
         "family": "qwen",
         "cost": {
-          "input": 0.15,
-          "output": 1.2
+          "input": 0.6,
+          "output": 3.6
         },
         "limits": {
-          "context": 128000,
+          "context": 262144,
           "output": 16384
         },
         "capabilities": {
@@ -68,16 +68,38 @@
           "output": ["text"]
         }
       },
-      "nvidia/Cosmos3-Super-Reasoner": {
-        "id": "nvidia/Cosmos3-Super-Reasoner",
-        "name": "Cosmos3 Super Reasoner",
-        "family": "nvidia",
+      "deepseek-ai/DeepSeek-V4-Flash-0731": {
+        "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+        "name": "DeepSeek V4 Flash",
+        "family": "deepseek",
         "cost": {
-          "input": 0.1,
-          "output": 0.3
+          "input": 0.14,
+          "output": 0.28
         },
         "limits": {
-          "context": 262144,
+          "context": 1024000,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        }
+      },
+      "nvidia/Nemotron-3-Ultra-550b-a55b": {
+        "id": "nvidia/Nemotron-3-Ultra-550b-a55b",
+        "name": "Nemotron 3 Ultra",
+        "family": "nvidia",
+        "cost": {
+          "input": 1,
+          "output": 3
+        },
+        "limits": {
+          "context": 1048576,
           "output": 16384
         },
         "capabilities": {
@@ -112,16 +134,16 @@
           "output": ["text"]
         }
       },
-      "zai-org/GLM-5.1": {
-        "id": "zai-org/GLM-5.1",
-        "name": "GLM 5.1",
+      "zai-org/GLM-5.3": {
+        "id": "zai-org/GLM-5.3",
+        "name": "GLM 5.3",
         "family": "glm",
         "cost": {
           "input": 1.4,
           "output": 4.4
         },
         "limits": {
-          "context": 202752,
+          "context": 1024000,
           "output": 16384
         },
         "capabilities": {
