@@ -180,10 +180,33 @@ export const ConnectorSkillInjectedPayload = Type.Object({
   skillName: Type.String(),
   /** The overlay body (markdown), surfaced verbatim into history. */
   skillBody: Type.String(),
-  /** Scope label for containment / telemetry. Always `"connector"` in v1. */
+  /** Storage tier, or `connector` for a curated overlay. */
   scope: Type.String(),
+  /**
+   * The call held until this body arrived. Absent when the body followed a
+   * call that ran, or a promotion.
+   */
+  heldToolCallId: Type.Optional(Type.String()),
 });
 export type ConnectorSkillInjectedPayload = Static<typeof ConnectorSkillInjectedPayload>;
+
+/**
+ * `skill.not_delivered` — a skill bound to a called tool did not reach the
+ * model on that call: its body could not be fetched, the hold's size cap left
+ * it out, or a `beforeToolCall` hook renamed the call past the hold. Recorded
+ * so the load ledger shows the gap instead of silence.
+ */
+export const SkillNotDeliveredPayload = Type.Object({
+  runId: Type.String(),
+  toolName: Type.String(),
+  skillName: Type.String(),
+  reason: Type.Union([
+    Type.Literal("fetch_failed"),
+    Type.Literal("capped"),
+    Type.Literal("renamed_unheld"),
+  ]),
+});
+export type SkillNotDeliveredPayload = Static<typeof SkillNotDeliveredPayload>;
 
 export const NotificationCreatedPayload = Type.Object({
   workspaceId: Type.String({
@@ -365,6 +388,11 @@ export const ToolDonePayload = Type.Object({
   resourceLinks: Type.Optional(opaque<ResourceLinkInfo[]>("MCP `resource_link` blocks.")),
   supervisorTripped: Type.Optional(Type.Literal(true)),
   trippedTool: Type.Optional(Type.String()),
+  held: Type.Optional(
+    Type.Literal(true, {
+      description: "The call did not run; it waits for guidance the model has not read yet.",
+    }),
+  ),
   consecutiveRepeats: Type.Optional(Type.Number()),
   workspaceId: Type.Optional(
     Type.String({ description: "The workspace the call ran in, stamped by the runtime." }),
@@ -691,6 +719,7 @@ export interface EngineEventPayloads {
    * scope, tokens }.
    */
   "skill.activated": SkillActivatedPayload;
+  "skill.not_delivered": SkillNotDeliveredPayload;
   "skill.suppression": SkillSuppressionPayload;
   "context.assembled": ContextAssembledPayload & { runId: string };
   /**

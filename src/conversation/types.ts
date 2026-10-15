@@ -330,6 +330,7 @@ export type ConversationEventType =
   | "context.assembled"
   | "connector.skill.injected"
   | "skill.activated"
+  | "skill.not_delivered"
   | "metadata.title"
   | "history.compacted"
   | "aux.usage";
@@ -433,6 +434,11 @@ export interface ToolDoneEvent {
    */
   resourceUri?: string;
   resourceLinks?: ResourceLinkInfo[];
+  /**
+   * The call did not run: the engine held it until the guidance for its tool
+   * reached the model. Its `output` is the held notice the model read.
+   */
+  held?: true;
 }
 
 export interface ToolProgressEvent {
@@ -523,8 +529,29 @@ export interface ConnectorSkillInjectedEvent {
   skillName: string;
   /** The overlay body (markdown), surfaced verbatim into history. */
   skillBody: string;
-  /** Scope label for containment / telemetry. Always `"connector"` in v1. */
+  /** Storage tier, or `connector` for a curated overlay. */
   scope: string;
+  /**
+   * The call held until this body arrived. Absent on a body delivered after a
+   * call that ran, or on a promotion. Replay reads it for the block's
+   * provenance line, and the load ledger for `before_call`.
+   */
+  heldToolCallId?: string;
+}
+
+/**
+ * A skill bound to a called tool did not reach the model on that call: its
+ * body could not be fetched, a hold's size cap left it out, or a
+ * `beforeToolCall` hook renamed the call past the hold. Reconstruction ignores
+ * it; the load ledger shows it, so a gap is visible rather than silent.
+ */
+export interface SkillNotDeliveredEvent {
+  ts: string;
+  type: "skill.not_delivered";
+  runId: string;
+  toolName: string;
+  skillName: string;
+  reason: "fetch_failed" | "capped" | "renamed_unheld";
 }
 
 /**
@@ -610,6 +637,7 @@ export type ConversationEvent =
   | ContextAssembledEvent
   | ConnectorSkillInjectedEvent
   | SkillActivatedEvent
+  | SkillNotDeliveredEvent
   | SkillSuppressionEvent
   | TitleChangeEvent
   | HistoryCompactedEvent

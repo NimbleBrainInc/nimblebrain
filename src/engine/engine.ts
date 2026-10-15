@@ -27,6 +27,7 @@ import { callModel, type StreamResult } from "../model/stream.ts";
 import { log } from "../observability/log.ts";
 import { formatConnectorSkillBlock } from "../prompt/compose.ts";
 import { toolMatches } from "../skills/select.ts";
+import { MAX_SKILL_BODY_CHARS } from "../skills/truncate.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
@@ -47,6 +48,7 @@ import { withRetry } from "./retry.ts";
 import type {
   ConnectorSkillInjectedPayload,
   RunErrorPayload,
+  SkillNotDeliveredPayload,
   ToolDonePayload,
 } from "./schemas/events.ts";
 import { createRunSupervisor, type RunSupervisor, type SupervisorVerdict } from "./supervisor.ts";
@@ -63,6 +65,7 @@ import {
   type ResolvedThinking,
   SKILL_ACTIVATED_META_KEY,
   SKILL_ACTIVATED_SYNTHETIC,
+  SKILL_GUIDANCE_PENDING,
   SKILL_SUPPRESSION_META_KEY,
   type StopReason,
   type ThinkingEffort,
@@ -938,6 +941,46 @@ function enforceMaxToolResultSize(
 }
 
 /**
+ * The result a held call returns in place of running: an error, because
+ * nothing ran, carrying {@link SKILL_GUIDANCE_PENDING} so task accounting can
+ * tell it from a failure. The guidance follows it in history.
+ */
+function heldResult(toolName: string, delivered: string[], notIncluded: string[]): ToolResult {
+  const left =
+    notIncluded.length > 0
+      ? ` Also bound to this tool but left out to keep this short: ${notIncluded.join(", ")}; load one with nb__use_skill if the job needs it.`
+      : "";
+  return {
+    content: textContent(
+      `Not run: ${toolName} is governed by guidance you have not read yet (${delivered.join(", ")}). ` +
+        `It follows this result. Read it, then call ${toolName} again.${left}`,
+    ),
+    isError: true,
+    structuredContent: {
+      reason: SKILL_GUIDANCE_PENDING,
+      skills: delivered,
+      ...(notIncluded.length > 0 ? { notIncluded } : {}),
+    },
+  };
+}
+
+/** `work`'s value, or null as soon as `signal` aborts. */
+async function raceAbort<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T | null> {
+  if (!signal) return work;
+  if (signal.aborted) return null;
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<null>((resolve) => {
+    onAbort = () => resolve(null);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([work, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
  * Assemble the `tool.done` event payload. `result` is attached only when there
  * is an inline-UI resourceUri; `modelOutput` only when bounding actually shrank
  * the text (so small results don't carry a duplicate field, and replay falls
@@ -956,6 +999,7 @@ function buildToolDoneData(params: {
   modelOutput: string;
   resourceLinks: ResourceLinkInfo[];
   verdict: SupervisorVerdict;
+  held?: true;
 }): ToolDonePayload {
   const {
     runId,
@@ -969,6 +1013,7 @@ function buildToolDoneData(params: {
     modelOutput,
     resourceLinks,
     verdict,
+    held,
   } = params;
   return {
     runId,
@@ -981,6 +1026,7 @@ function buildToolDoneData(params: {
     ...(bounded ? { modelOutput } : {}),
     result: resourceUri ? finalResult : undefined,
     ...(resourceLinks.length > 0 ? { resourceLinks } : {}),
+    ...(held ? { held } : {}),
     ...(verdict.type === "synth"
       ? {
           supervisorTripped: true,
@@ -1015,6 +1061,7 @@ function buildToolResults(toolResults: ToolExecResult[]): {
     resourceUri: uri,
     resourceLinks: links,
     modelOutput,
+    held,
   } of toolResults) {
     const llmText =
       modelOutput ??
@@ -1034,6 +1081,7 @@ function buildToolResults(toolResults: ToolExecResult[]): {
       ...(result.isError && typeof result.structuredContent?.reason === "string"
         ? { errorReason: result.structuredContent.reason }
         : {}),
+      ...(held ? { held } : {}),
       ...(uri ? { resourceUri: uri } : {}),
       ...(links && links.length > 0 ? { resourceLinks: links } : {}),
     });
@@ -1072,19 +1120,49 @@ function buildRunErrorData(runId: string, err: unknown): RunErrorPayload {
 interface PendingOverlayFetch {
   data: Omit<ConnectorSkillInjectedPayload, "skillBody">;
   body: Promise<string | null>;
+  /** Left out of a hold by its size cap: settled without being delivered. */
+  dropped?: boolean;
+  /** Counted as delivered by some hold, so no later hold may drop it. */
+  kept?: boolean;
 }
+
+/**
+ * The run's skill-delivery state: which bound skills have reached the model
+ * (or are on their way), which are queued for this iteration's drain, and
+ * which have already held a call. One object per run, shared by the promotion
+ * path, the per-call hold, and the after-call delivery, so the three can never
+ * disagree about what is delivered.
+ */
+interface SkillDelivery {
+  runId: string;
+  candidates: ConnectorSkillCandidate[];
+  /** Delivered earlier in the conversation, or claimed in this run. */
+  injected: Set<string>;
+  /** Claimed this iteration, by name: what a same-message call waits on. Cleared at the drain. */
+  queued: Map<string, PendingOverlayFetch>;
+  /** Every claim of this iteration, settled before the drain. */
+  fetches: PendingOverlayFetch[];
+  /** Skills that have held a call in this run. A skill holds at most once per run. */
+  held: Set<string>;
+  /** Bodies ready to deliver after this iteration's tool results. */
+  pending: ConnectorSkillInjectedPayload[];
+  /** Left out of a hold by its size cap: not delivered, but not offered again this run. */
+  notIncluded: Set<string>;
+}
+
+/**
+ * Most characters of skill guidance one held call delivers: three bodies at
+ * the loader's per-skill limit. Skills past it are named in the held result,
+ * loadable with `nb__use_skill`, and recorded as `skill.not_delivered`.
+ */
+const MAX_HELD_GUIDANCE_CHARS = 3 * MAX_SKILL_BODY_CHARS;
 
 /** Per-tool-call context shared across an iteration's concurrent executions. */
 interface ToolExecContext {
   config: EngineConfig;
   runId: string;
   toolMeta: Map<string, Record<string, unknown>>;
-  connectorSkillCandidates: ConnectorSkillCandidate[];
-  injectedConnectorSkills: Set<string>;
-  /** Drained into history after this iteration's tool results. */
-  pendingOverlayDeliveries: ConnectorSkillInjectedPayload[];
-  /** Surfaced overlays whose bodies are still being fetched; settled before the drain. */
-  pendingOverlayFetches: PendingOverlayFetch[];
+  skills: SkillDelivery;
   toolSchemaMap: Map<string, ToolSchema>;
   /** Every router tool's schema: validates a call to a tool promoted in the same message. */
   allToolSchemaMap: Map<string, ToolSchema>;
@@ -1102,6 +1180,8 @@ interface ToolExecResult {
   resourceUri?: string;
   resourceLinks?: ResourceLinkInfo[];
   modelOutput?: string;
+  /** The call did not run; see {@link SKILL_GUIDANCE_PENDING}. */
+  held?: true;
 }
 
 export class AgentEngine {
@@ -1121,29 +1201,25 @@ export class AgentEngine {
     const history = [...messages];
     const maxIter = Math.min(config.maxIterations, MAX_ITERATIONS);
 
-    // Connector-skill overlays: curated guidance surfaced ONCE into the
-    // conversation history on the first matching tool call — never into the
-    // cached system prefix. The dedup set is seeded primarily from
-    // `alreadyInjectedConnectorSkills`, which the runtime computes from the
-    // UN-rehydrated history: `rehydrateUserResources` strips message `metadata`
-    // (where the synthetic marker lives) before the engine sees the messages,
-    // so scanning `history` here can't be the sole source on the real chat
-    // path. The scan is kept as a fallback for callers that pass
-    // metadata-bearing messages directly (the engine+store integration test).
-    // The set also dedups multiple matching calls within this run.
+    // Skills bound to tools: guidance delivered ONCE into the conversation
+    // history, never into the cached system prefix, before the call it governs
+    // runs. The first call to a bound tool is held (`holdForGuidance`) until
+    // the body has been read, unless a promotion already delivered it; a call
+    // that runs anyway (a read its server's default binding does not hold, a
+    // hook rename) gets the guidance after it. Bodies drain after the
+    // iteration's tool results, before the model's next action, in the
+    // position the reconstructor replays them into.
+    //
+    // The dedup set is seeded primarily from `alreadyInjectedConnectorSkills`,
+    // which the runtime computes from the UN-rehydrated history:
+    // `rehydrateUserResources` strips message `metadata` (where the synthetic
+    // marker lives) before the engine sees the messages, so scanning `history`
+    // here can't be the sole source on the real chat path. The scan is kept as
+    // a fallback for callers that pass metadata-bearing messages directly (the
+    // engine+store integration test).
     const connectorSkillCandidates = config.connectorSkillCandidates ?? [];
     const injectedConnectorSkills = new Set<string>(config.alreadyInjectedConnectorSkills ?? []);
     seedInjectedConnectorSkills(history, connectorSkillCandidates, injectedConnectorSkills);
-
-    // Overlays surfaced during the iteration currently executing. The injector
-    // fires mid-tool-execution (at `tool.start`, or when a promote makes a
-    // server's tools live), which is too late to reach the model through the
-    // event alone: the reconstructor only materializes that event on a LATER
-    // rehydration. Buffering here and draining after the iteration's tool
-    // results lets the guidance land in THIS run, before the model's next
-    // action — which is the point of surfacing it on first use at all.
-    const pendingOverlayDeliveries: ConnectorSkillInjectedPayload[] = [];
-    const pendingOverlayFetches: PendingOverlayFetch[] = [];
 
     let iteration = 0;
     const cumulativeUsage: TokenUsage = emptyUsage();
@@ -1151,6 +1227,16 @@ export class AgentEngine {
     let output = "";
     const allToolCalls: ToolCallRecord[] = [];
     const runId = crypto.randomUUID();
+    const skills: SkillDelivery = {
+      runId,
+      candidates: connectorSkillCandidates,
+      injected: injectedConnectorSkills,
+      queued: new Map(),
+      fetches: [],
+      held: new Set(),
+      pending: [],
+      notIncluded: new Set(),
+    };
 
     const allRouterTools = await this.tools.availableTools();
     const { toolMeta, allToolSchemaMap } = buildToolLookups(allRouterTools);
@@ -1253,14 +1339,7 @@ export class AgentEngine {
         // Delivery rides the history tail (cache-safe — never the frozen prefix) and
         // lands after this iteration's tool results, so the guidance is in context for
         // the model's next action in THIS run.
-        this.injectConnectorSkillOverlays(
-          runId,
-          toolName,
-          connectorSkillCandidates,
-          injectedConnectorSkills,
-          pendingOverlayDeliveries,
-          pendingOverlayFetches,
-        );
+        this.injectConnectorSkillOverlays(skills, toolName);
 
         // Backstop: cap active tools by evicting LRU agent-promoted entries.
         // Initial tools are exempt because they're not in `promotedLastUsed`.
@@ -1576,10 +1655,7 @@ export class AgentEngine {
           config,
           runId,
           toolMeta,
-          connectorSkillCandidates,
-          injectedConnectorSkills,
-          pendingOverlayDeliveries,
-          pendingOverlayFetches,
+          skills,
           toolSchemaMap,
           allToolSchemaMap,
           promotedLastUsed,
@@ -1618,12 +1694,8 @@ export class AgentEngine {
         // the next `llm.response`, the same iteration the injector fired in,
         // so replay places it where the live run does. A body that cannot be
         // fetched is not delivered, and the skill stays eligible.
-        await this.settleOverlayFetches(
-          pendingOverlayFetches,
-          injectedConnectorSkills,
-          pendingOverlayDeliveries,
-        );
-        for (const overlay of pendingOverlayDeliveries) {
+        await this.settleOverlayFetches(skills);
+        for (const overlay of skills.pending) {
           history.push({
             role: "user",
             content: [
@@ -1633,12 +1705,14 @@ export class AgentEngine {
                   overlay.skillName,
                   overlay.scope,
                   overlay.skillBody,
+                  overlay.heldToolCallId !== undefined,
                 ),
               },
             ],
           });
         }
-        pendingOverlayDeliveries.length = 0;
+        skills.pending.length = 0;
+        skills.queued.clear();
 
         iteration++;
       }
@@ -1983,72 +2057,163 @@ export class AgentEngine {
   }
 
   /**
-   * Surface-once connector-skill overlays whose tool-affinity matches this call.
-   * On the first call to a matching tool, emit `connector.skill.injected` — the
-   * reconstructor turns it into a synthetic history message that rides the cached
-   * history from the next turn (never the system prefix). Deduped across runs
-   * (`injected` is seeded from history) and within this run. Synchronous between
-   * the has-check and the add — no await — so parallel tool calls in the
-   * iteration's `Promise.all` can't both pass the check and double-inject the
-   * same overlay. Mutates `injected`.
+   * Deliver, after the call, every undelivered skill bound to `toolName`: the
+   * path for a promotion (the guidance lands before the model's next action,
+   * ahead of any call it makes to the promoted tool), and for a call that ran
+   * without being held — a read its server's own default binding does not
+   * hold, a call renamed past the hold, or a skill whose hold already happened
+   * this run. Synchronous between the check and the claim, so parallel calls
+   * cannot both claim one skill.
    */
-  private injectConnectorSkillOverlays(
-    runId: string,
-    toolName: string,
-    candidates: ConnectorSkillCandidate[],
-    injected: Set<string>,
-    pending: ConnectorSkillInjectedPayload[],
-    fetches: PendingOverlayFetch[],
-  ): void {
-    for (const candidate of candidates) {
-      if (injected.has(candidate.name)) continue;
+  private injectConnectorSkillOverlays(skills: SkillDelivery, toolName: string): void {
+    for (const candidate of skills.candidates) {
+      if (skills.injected.has(candidate.name)) continue;
       if (!candidate.toolAffinity.some((p) => toolMatches(toolName, p))) continue;
-      injected.add(candidate.name);
-      if (candidate.loadBody) {
-        // Fetched now, alongside the tool call, and settled before the drain.
-        fetches.push({
-          data: { runId, toolName, skillName: candidate.name, scope: candidate.scope },
-          body: candidate.loadBody().catch(() => null),
-        });
-        continue;
-      }
-      const data = {
-        runId,
-        toolName,
-        skillName: candidate.name,
-        skillBody: candidate.body,
-        scope: candidate.scope,
-      };
-      this.events.emit({ type: "connector.skill.injected", data });
-      // The event is the durable record; this is the same body's path into the
-      // live history so it reaches the model in this run. Both sides build the
-      // message from the same fields, so live and replay agree.
-      pending.push(data);
+      this.claimSkill(skills, candidate, toolName);
     }
   }
 
   /**
-   * Settle the overlays surfaced this iteration whose bodies were fetched on
-   * demand: record each one that arrived (`connector.skill.injected`) and queue
-   * it for delivery, and make a skill whose fetch failed eligible again. Drains
-   * `fetches`.
+   * Claim one skill for this iteration's drain: mark it delivered, start
+   * fetching its body, and queue it, so a call in the same message waits on
+   * the same fetch instead of running ahead of it. Synchronous.
    */
-  private async settleOverlayFetches(
-    fetches: PendingOverlayFetch[],
-    injected: Set<string>,
-    pending: ConnectorSkillInjectedPayload[],
-  ): Promise<void> {
-    for (const fetch of fetches) {
-      const skillBody = await fetch.body;
+  private claimSkill(
+    skills: SkillDelivery,
+    candidate: ConnectorSkillCandidate,
+    toolName: string,
+    heldToolCallId?: string,
+  ): PendingOverlayFetch {
+    skills.injected.add(candidate.name);
+    const claim: PendingOverlayFetch = {
+      data: {
+        runId: skills.runId,
+        toolName,
+        skillName: candidate.name,
+        scope: candidate.scope,
+        ...(heldToolCallId !== undefined ? { heldToolCallId } : {}),
+      },
+      body: candidate.loadBody
+        ? candidate.loadBody().catch(() => null)
+        : Promise.resolve(candidate.body || null),
+    };
+    skills.fetches.push(claim);
+    skills.queued.set(candidate.name, claim);
+    return claim;
+  }
+
+  /**
+   * Settle this iteration's claims before the drain: record each body that
+   * arrived (`connector.skill.injected`) and queue it for delivery; record a
+   * body that did not arrive (`skill.not_delivered`) and make its skill
+   * eligible again. A claim a hold dropped for size is neither. Emitted before
+   * the next `llm.response`, so replay places each body where the live run did.
+   */
+  private async settleOverlayFetches(skills: SkillDelivery): Promise<void> {
+    for (const claim of skills.fetches) {
+      if (claim.dropped) continue;
+      const skillBody = await claim.body;
       if (skillBody === null) {
-        injected.delete(fetch.data.skillName);
+        skills.injected.delete(claim.data.skillName);
+        this.emitNotDelivered(
+          skills.runId,
+          claim.data.toolName,
+          claim.data.skillName,
+          "fetch_failed",
+        );
         continue;
       }
-      const data = { ...fetch.data, skillBody };
+      const data = { ...claim.data, skillBody };
       this.events.emit({ type: "connector.skill.injected", data });
-      pending.push(data);
+      skills.pending.push(data);
     }
-    fetches.length = 0;
+    skills.fetches.length = 0;
+  }
+
+  private emitNotDelivered(
+    runId: string,
+    toolName: string,
+    skillName: string,
+    reason: SkillNotDeliveredPayload["reason"],
+  ): void {
+    this.events.emit({ type: "skill.not_delivered", data: { runId, toolName, skillName, reason } });
+  }
+
+  /**
+   * Skills bound to `call` whose guidance must reach the model before the call
+   * runs, in delivery order. A skill qualifies when it is undelivered and has
+   * not held a call this run, or when it is queued this iteration. A skill
+   * bound only by its server's implicit whole-server default does not qualify
+   * on a tool that server annotates read-only: the annotation is the server's
+   * claim about itself, so it may waive only that server's own default.
+   */
+  private boundSkills(
+    skills: SkillDelivery,
+    toolName: string,
+    readOnly: boolean,
+  ): ConnectorSkillCandidate[] {
+    return skills.candidates
+      .filter((c) => c.toolAffinity.some((p) => toolMatches(toolName, p)))
+      .filter((c) => !(readOnly && c.implicitBinding))
+      .filter(
+        (c) =>
+          skills.queued.has(c.name) || (!skills.injected.has(c.name) && !skills.held.has(c.name)),
+      )
+      .sort(
+        (a, b) =>
+          (a.priority ?? 50) - (b.priority ?? 50) ||
+          (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
+      );
+  }
+
+  /**
+   * Hold `call` when a skill bound to its tool has not reached the model yet:
+   * return the result the model sees instead of running it, or null to let it
+   * run. The bound skills are claimed synchronously, before the first await,
+   * so a parallel call to a tool they bind waits on the same fetches. The call
+   * is held only when at least one body arrives; when none does, it runs, and
+   * each missing body is recorded. Bodies past {@link MAX_HELD_GUIDANCE_CHARS}
+   * are left out and named.
+   */
+  private async holdForGuidance(call: ToolCall, ctx: ToolExecContext): Promise<ToolResult | null> {
+    const { skills } = ctx;
+    const readOnly = ctx.allToolSchemaMap.get(call.name)?.annotations?.readOnlyHint === true;
+    const bound = this.boundSkills(skills, call.name, readOnly);
+    if (bound.length === 0) return null;
+
+    const claims = bound.map((c) => {
+      const queued = skills.queued.get(c.name);
+      if (queued) return { name: c.name, claim: queued };
+      skills.held.add(c.name);
+      return { name: c.name, claim: this.claimSkill(skills, c, call.name, call.id) };
+    });
+    const bodies = await raceAbort(
+      Promise.all(claims.map(({ claim }) => claim.body)),
+      ctx.config.signal,
+    );
+    // A cancelled run ends here: the call neither runs nor waits for its guidance.
+    throwIfAborted(ctx.config.signal);
+    if (bodies === null) return null;
+
+    const delivered: string[] = [];
+    const notIncluded: string[] = [];
+    let chars = 0;
+    claims.forEach(({ name, claim }, i) => {
+      const body = bodies[i];
+      if (body === null || body === undefined || claim.dropped) return;
+      if (!claim.kept && delivered.length > 0 && chars + body.length > MAX_HELD_GUIDANCE_CHARS) {
+        claim.dropped = true;
+        skills.notIncluded.add(name);
+        notIncluded.push(name);
+        this.emitNotDelivered(skills.runId, call.name, name, "capped");
+        return;
+      }
+      claim.kept = true;
+      chars += body.length;
+      delivered.push(name);
+    });
+    if (delivered.length === 0) return null;
+    return heldResult(call.name, delivered, notIncluded);
   }
 
   /**
@@ -2071,8 +2236,10 @@ export class AgentEngine {
     if (!raw || typeof raw !== "object") return;
     const marker = raw as { skillName?: unknown; scope?: unknown; tokens?: unknown };
     if (typeof marker.skillName !== "string" || marker.skillName.length === 0) return;
-    if (ctx.injectedConnectorSkills.has(marker.skillName)) return;
-    ctx.injectedConnectorSkills.add(marker.skillName);
+    const { skills } = ctx;
+    if (skills.injected.has(marker.skillName) && !skills.notIncluded.has(marker.skillName)) return;
+    skills.injected.add(marker.skillName);
+    skills.notIncluded.delete(marker.skillName);
     this.events.emit({
       type: "skill.activated",
       data: {
@@ -2194,6 +2361,58 @@ export class AgentEngine {
   }
 
   /**
+   * Record a held call: `tool.start` and `tool.done` like any call, so replay
+   * keeps it beside its re-issue, but marked `held` and carrying no UI binding
+   * (nothing ran, so there is no result to render). It skips everything that
+   * reads a call's outcome: execution, `afterToolCall`, the supervisor, and the
+   * promoted-tool LRU.
+   */
+  private finishHeldCall(
+    toolCall: LanguageModelV4ToolCall,
+    gatedCall: ToolCall,
+    result: ToolResult,
+    parsedInput: Record<string, unknown>,
+    ctx: ToolExecContext,
+  ): ToolExecResult {
+    this.events.emit({
+      type: "tool.start",
+      data: { runId: ctx.runId, name: gatedCall.name, id: gatedCall.id, input: parsedInput },
+    });
+    const outputText = extractTextForModel(result.content);
+    this.events.emit({
+      type: "tool.done",
+      data: buildToolDoneData({
+        runId: ctx.runId,
+        name: gatedCall.name,
+        id: gatedCall.id,
+        finalResult: result,
+        ms: 0,
+        resourceUri: undefined,
+        outputText,
+        bounded: false,
+        modelOutput: outputText,
+        resourceLinks: [],
+        verdict: { type: "pass" },
+        held: true,
+      }),
+    });
+    return { toolCall, gatedCall, result, ms: 0, modelOutput: outputText, held: true };
+  }
+
+  /**
+   * A `beforeToolCall` hook renamed the call after the hold had checked the
+   * name the model sent. The renamed call runs, and its tool's guidance comes
+   * after it; record each bound skill that missed the hold.
+   */
+  private recordRenamedPastHold(name: string, ctx: ToolExecContext): void {
+    const readOnly = ctx.allToolSchemaMap.get(name)?.annotations?.readOnlyHint === true;
+    for (const skill of this.boundSkills(ctx.skills, name, readOnly)) {
+      if (ctx.skills.queued.has(skill.name)) continue;
+      this.emitNotDelivered(ctx.runId, name, skill.name, "renamed_unheld");
+    }
+  }
+
+  /**
    * Check a model call, then put it through the beforeToolCall gate. The call
    * is checked first (visibility, coerce, validate) so a person is asked to
    * approve only a call the engine would dispatch, and approves the coerced
@@ -2209,7 +2428,11 @@ export class AgentEngine {
     toolCall: LanguageModelV4ToolCall,
     parsedInput: Record<string, unknown>,
     ctx: ToolExecContext,
-  ): Promise<{ refused: ToolExecResult } | { gatedCall: ToolCall; result?: ToolResult }> {
+  ): Promise<
+    | { refused: ToolExecResult }
+    | { gatedCall: ToolCall; result: ToolResult; held: true }
+    | { gatedCall: ToolCall; result?: ToolResult; held?: undefined }
+  > {
     const offered: ToolCall = {
       id: toolCall.toolCallId,
       name: toolCall.toolName,
@@ -2223,6 +2446,9 @@ export class AgentEngine {
     if (checked.errorResult) return { gatedCall: validated, result: checked.errorResult };
     const repeat = repeatOfTrip(toolCall, validated, ctx);
     if (repeat) return { refused: repeat };
+    // Ahead of the hook, so no person approves a call that is then held.
+    const held = await this.holdForGuidance(validated, ctx);
+    if (held) return { gatedCall: validated, result: held, held: true };
     const beforeToolCall = ctx.config.hooks?.beforeToolCall;
     if (!beforeToolCall) return { gatedCall: validated };
 
@@ -2246,6 +2472,7 @@ export class AgentEngine {
     const rechecked = coerceAndValidateToolInput(hooked.input, toolSchemaFor(ctx, hooked.name));
     const gatedCall: ToolCall = { ...hooked, input: rechecked.input };
     if (rechecked.errorResult) return { gatedCall, result: rechecked.errorResult };
+    if (gatedCall.name !== validated.name) this.recordRenamedPastHold(gatedCall.name, ctx);
     const hookedRepeat = repeatOfTrip(toolCall, gatedCall, ctx);
     if (hookedRepeat) return { refused: hookedRepeat };
     return { gatedCall };
@@ -2282,6 +2509,8 @@ export class AgentEngine {
 
     const checked = await this.checkAndGate(toolCall, parsedInput, ctx);
     if ("refused" in checked) return checked.refused;
+    if (checked.held)
+      return this.finishHeldCall(toolCall, checked.gatedCall, checked.result, parsedInput, ctx);
     const { gatedCall } = checked;
     let result = checked.result;
 
@@ -2305,14 +2534,7 @@ export class AgentEngine {
       },
     });
 
-    this.injectConnectorSkillOverlays(
-      ctx.runId,
-      gatedCall.name,
-      ctx.connectorSkillCandidates,
-      ctx.injectedConnectorSkills,
-      ctx.pendingOverlayDeliveries,
-      ctx.pendingOverlayFetches,
-    );
+    this.injectConnectorSkillOverlays(ctx.skills, gatedCall.name);
 
     const start = performance.now();
 

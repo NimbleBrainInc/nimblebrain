@@ -48,6 +48,13 @@ export const SKILL_ACTIVATED_SYNTHETIC = "skill_activated";
  * strips it from results arriving over a real wire; only in-process platform
  * sources (the `skills` source) may carry it through.
  */
+/**
+ * `structuredContent.reason` of a call the engine held rather than ran,
+ * because a skill bound to its tool had not reached the model yet. The bodies
+ * follow the result; the model re-issues the call.
+ */
+export const SKILL_GUIDANCE_PENDING = "skill_guidance_pending";
+
 export const SKILL_ACTIVATED_META_KEY = "ai.nimblebrain/skill-activated";
 
 /**
@@ -550,10 +557,19 @@ export interface ConnectorSkillCandidate {
    * resolves `null`. `body` is empty until then.
    */
   loadBody?: () => Promise<string | null>;
-  /** Scope label for containment / telemetry. Always `"connector"` in v1. */
+  /** Storage tier (`org` / `workspace` / `user` / `provided`), or `connector` for an overlay. */
   scope: string;
-  /** Tool-affinity globs (e.g. `["<server>__*"]`); the first match triggers surfacing. */
+  /** Tool-affinity globs (e.g. `["<server>__*"]`); a matching call or promotion delivers it. */
   toolAffinity: string[];
+  /** Lower delivers first when one call is held for several skills. Defaults to 50. */
+  priority?: number;
+  /**
+   * The affinity is the publisher's implicit whole-server default, not a list
+   * the skill declared. Only such a skill skips the hold on a tool its server
+   * annotates `readOnlyHint` — the annotation is the server's claim about
+   * itself, so it may waive only that server's own default binding.
+   */
+  implicitBinding?: boolean;
 }
 
 /**
@@ -738,6 +754,13 @@ export interface ToolCallRecord {
    * connector. Absent when the call succeeded or carried no structured reason.
    */
   errorReason?: string;
+  /**
+   * The call did not run: the engine held it until the guidance for its tool
+   * reached the model (`SKILL_GUIDANCE_PENDING`). `ok` is false, because
+   * nothing happened. The tasks executor does not count it as a failure unless
+   * the run stopped before re-issuing it.
+   */
+  held?: true;
   resourceUri?: string;
   /**
    * MCP `resource_link` content blocks surfaced by the tool result.

@@ -115,7 +115,25 @@ beforeAll(async () => {
       prompts.push(options.prompt);
       modelCalls += 1;
       // First pass calls the server's tool — that is what fires the surface-once
-      // hook. Everything after answers, so the run terminates.
+      // hook. A held call is re-issued once, as a model does on reading the
+      // guidance that followed it. Everything after answers, so the run ends.
+      const last = options.prompt.findLast((m) => m.role === "tool");
+      const heldLast =
+        last?.role === "tool" &&
+        last.content.some(
+          (p) =>
+            p.type === "tool-result" &&
+            "value" in p.output &&
+            String(p.output.value).startsWith("Not run:"),
+        );
+      if (heldLast) {
+        return {
+          content: [
+            { type: "tool-call", toolCallId: "call-2", toolName: CALLED_TOOL, input: "{}" },
+          ],
+          finishReason: "tool-calls",
+        };
+      }
       if (modelCalls === 1) {
         return {
           content: [
@@ -178,7 +196,7 @@ describe("published skills and the surface-once channel", () => {
     expect(peakOccurrences(MARKER_B)).toBe(1);
   });
 
-  it("still delivers a skill Layer 3 could NOT select, when its tool is promoted", async () => {
+  it("delivers a skill Layer 3 could NOT select before its tool's first call runs", async () => {
     prompts = [];
     modelCalls = 0;
     // `allowedTools` excludes the server's tool, so it is not in the active set at
@@ -193,23 +211,22 @@ describe("published skills and the surface-once channel", () => {
 
     expect(modelCalls).toBeGreaterThan(1);
 
-    // The delivery must come from a call that RAN, not merely one that was
-    // attempted. `injectConnectorSkillOverlays` fires just after the `tool.start`
-    // emit and before input coercion/validation, so a call that fails validation
-    // injects the body too — and this case would then pass while proving nothing
-    // about the promotion path. Read the persisted `tool.done` instead of
-    // inferring execution from the injection it precedes.
+    // The first call is held, not run, and the re-issue after the guidance runs.
+    // Read the persisted `tool.done`s rather than inferring either from the
+    // injection between them.
     const store = await runtime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const done = events.find(
+    const dones = events.filter(
       (e) => e.type === "tool.done" && (e as { name?: string }).name === CALLED_TOOL,
-    ) as { ok?: boolean } | undefined;
-    expect(done?.ok).toBe(true);
+    ) as Array<{ ok?: boolean; held?: true }>;
+    expect(dones.map((d) => ({ ok: d.ok, held: d.held === true }))).toEqual([
+      { ok: false, held: true },
+      { ok: true, held: false },
+    ]);
 
     // Not composed at turn start...
     expect(promptText(prompts[0] ?? [])).not.toContain(MARKER_A);
-    // ...but delivered once the tool ran. Subtracting the Layer-3 selection must
-    // not empty the channel it is narrowing.
+    // ...but delivered before the call that ran, once.
     expect(peakOccurrences(MARKER_A)).toBe(1);
     // The per-server glob reaches the neighbour here too: `beta` has no tool of
     // its own, and one call to `doit` delivers it. Exactly once, same as `alpha`.

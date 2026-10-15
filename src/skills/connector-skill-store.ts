@@ -156,6 +156,7 @@ export function readConnectorSkillCandidates(
       body: skill.body,
       scope: CONNECTOR_SKILL_SCOPE,
       toolAffinity: affinity,
+      priority: skill.manifest.priority,
     });
   }
   return out;

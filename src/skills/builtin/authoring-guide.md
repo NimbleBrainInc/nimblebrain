@@ -7,7 +7,8 @@ metadata:
     loading-strategy: dynamic
     priority: 25
     tool-affinity:
-      - skills__*
+      - skills__create
+      - skills__update
     triggers:
       - "create a skill"
       - "new skill"

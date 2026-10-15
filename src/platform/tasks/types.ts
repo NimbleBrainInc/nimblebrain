@@ -587,6 +587,8 @@ export interface RunToolCall {
   output: string;
   ok: boolean;
   ms: number;
+  /** The call did not run: the engine held it until its tool's guidance was read. */
+  held?: true;
 }
 
 /** A reference to a file the run produced, resolvable in the workspace file store. */

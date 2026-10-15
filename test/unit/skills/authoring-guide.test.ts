@@ -28,12 +28,12 @@ describe("authoring-guide Layer 1 skill", () => {
     if (!skill) throw new Error("parseSkillFile returned null");
 
     expect(skill.manifest.name).toBe("authoring-guide");
-    // Capability skill: dynamic + tool-affinity (skills__*), routed to Layer 3.
+    // Capability skill bound to the authoring tools only, so it reaches the
+    // model before a skill is written, not before a mute or a read.
     // (`scope` is stamped at load, not present when parsing the file directly.)
     expect(skill.manifest.loadingStrategy).toBe("dynamic");
     expect(skill.manifest.priority).toBe(25);
-    expect(skill.manifest.toolAffinity).toBeDefined();
-    expect(skill.manifest.toolAffinity).toContain("skills__*");
+    expect(skill.manifest.toolAffinity).toEqual(["skills__create", "skills__update"]);
   });
 
   test("body is non-empty and exceeds the minimum operational size", () => {

@@ -1228,6 +1228,11 @@ export const RunToolCallRecord = Type.Object({
   output: Type.String(),
   ok: Type.Boolean(),
   ms: Type.Number(),
+  held: Type.Optional(
+    Type.Literal(true, {
+      description: "The call did not run: it waited for guidance the model had not read yet.",
+    }),
+  ),
 });
 export type RunToolCallRecord = Static<typeof RunToolCallRecord>;
 
