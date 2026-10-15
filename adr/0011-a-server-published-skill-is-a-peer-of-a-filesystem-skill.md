@@ -65,7 +65,13 @@ frontmatter and stamped onto the synthesized manifest, so identical frontmatter
 means identical behaviour whichever way the document arrived. The synthesized
 skill then flows through `partitionSkillsByRole` like any other (ADR-0010): a
 declared `always` reaches the context channel, and the default when a server
-declares nothing is `dynamic`, tool-affined to that server's own namespace.
+declares nothing is `dynamic`, tool-affined to that server's own namespace. One
+rule covers every source: an absent `tool-affinity` binds a skill to its
+publisher's own namespace, and a filesystem skill's publisher has none, so it
+is catalog-only. A server that wants a catalog-only skill declares
+`tool-affinity: []`, which is kept distinct from absent through the reader, the
+overlay stamp and the synthesized manifest. A value that is not a list, or a
+list of only blank entries, reads as absent.
 
 **Reading is lenient where authoring is strict.** A discovered skill comes from
 an arbitrary server, so a malformed or absent `nimblebrain` block leaves the

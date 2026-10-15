@@ -115,6 +115,7 @@
 
 ### Changed
 
+- **A connector can publish a catalog-only skill.** `tool-affinity: []` binds a server-published skill or curated overlay to no tool, so it loads only when the model asks for it; an omitted field still binds the whole server. Settings and `skills__list` say such a skill loads "when the agent asks for it" (`on_request`) instead of "won't auto-load", and `loading.wouldLoad` is removed, since every skill can load. [Docs](https://docs.nimblebrain.ai/using/skills/#skills-published-by-an-mcp-server).
 - **Uninstalling a static-auth connector removes its operator OAuth app** (client id and secret) when no other installed connector uses it, so a reinstall starts at Set up.
 - **Automations are now Tasks.** The source, its tools (`tasks__*`), the sidebar view (`/w/<slug>/tasks`) and storage (`workspaces/<wsId>/tasks/<ownerId>/`) take the name. A deployment on v0.34.x or earlier upgrades through v0.35.x, whose boot moves storage from `automations/`. [Docs](https://docs.nimblebrain.ai/using/tasks/).
 - **The host block has no `name`, `icon`, `category` or `primaryView`.** A connector's display name is its catalog entry's `title` (or `name`) on every surface — the connector page, the workspace listing, the briefing, and the system prompt — and a valid placement is projected without a `name`. A block that still declares them loads; the host ignores them, and placements alone declare a connector's views. [Docs](https://docs.nimblebrain.ai/apps/manifest/).

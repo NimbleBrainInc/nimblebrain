@@ -2320,9 +2320,7 @@ function describeWrittenSkill(
 ): SkillsWriteOutput {
   const written = readSkill(dir, name);
   const mechanism = written ? resolveLoadingMechanism(written.manifest) : undefined;
-  const loading: SkillLoading | undefined = mechanism
-    ? { mechanism }
-    : undefined;
+  const loading: SkillLoading | undefined = mechanism ? { mechanism } : undefined;
   return {
     id,
     name,
