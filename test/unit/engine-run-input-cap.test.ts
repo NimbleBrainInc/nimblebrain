@@ -21,11 +21,29 @@ const tools: ToolSchema[] = [
  * 1,000 tokens (call k reports k × 1,000), and the model asks for a tool on
  * every call until the fifth, which answers. Uncapped, the run spends
  * 1k + 2k + 3k + 4k + 5k = 15,000 input tokens over 5 calls.
+ *
+ * `reminded` records, per call, whether its last message carried the
+ * final-step reminder. With `answerOnReminder` the model answers on the first
+ * call that carries it, as a model that heeds the reminder does.
  */
-function growingRun(maxRunInputTokens?: number) {
+function growingRun(
+  maxRunInputTokens?: number,
+  opts: { answerOnReminder?: boolean; maxIterations?: number } = {},
+) {
   let calls = 0;
-  const model = createMockModel(() => {
+  const reminded: boolean[] = [];
+  const model = createMockModel((callOpts) => {
     calls++;
+    const prompt = callOpts.prompt;
+    const sawReminder = JSON.stringify(prompt[prompt.length - 1]).includes("final step");
+    reminded.push(sawReminder);
+    if (opts.answerOnReminder && sawReminder) {
+      return {
+        content: [{ type: "text", text: "partial: some items scored" }],
+        inputTokens: calls * 1_000,
+        outputTokens: 10,
+      };
+    }
     if (calls === 5) {
       return {
         content: [{ type: "text", text: "all items scored" }],
@@ -51,8 +69,11 @@ function growingRun(maxRunInputTokens?: number) {
     }),
     { emit: (e) => events.push(e) },
   );
-  const config: EngineConfig =
-    maxRunInputTokens === undefined ? baseConfig : { ...baseConfig, maxRunInputTokens };
+  const config: EngineConfig = {
+    ...baseConfig,
+    ...(maxRunInputTokens === undefined ? {} : { maxRunInputTokens }),
+    ...(opts.maxIterations === undefined ? {} : { maxIterations: opts.maxIterations }),
+  };
   return {
     run: () =>
       engine.run(
@@ -62,6 +83,7 @@ function growingRun(maxRunInputTokens?: number) {
         tools,
       ),
     modelCalls: () => calls,
+    reminded,
     toolRuns,
     events,
   };
@@ -152,5 +174,59 @@ describe("AgentEngine run input cap", () => {
 
     expect(result.stopReason).toBe("complete");
     expect(result.usage.inputTokens).toBe(15_000);
+  });
+});
+
+describe("AgentEngine final-step reminder before the run input cap", () => {
+  // With a 6,500 cap: before call 2, 1,000 spent + 2 × 1,000 projected = 3,000
+  // fits; before call 3, 3,000 + 2 × 2,000 = 7,000 does not, so call 3 is the
+  // last one the cap is likely to allow and carries the reminder. Call 4
+  // (6,000 + 3,000 projected) would pass the cap outright.
+  it("adds the reminder on the call before the cap would stop the run, and on no earlier call", async () => {
+    const r = growingRun(6_500);
+    await r.run();
+
+    expect(r.reminded).toEqual([false, false, true]);
+  });
+
+  it("lets a model that heeds the reminder end the run complete, with its answer", async () => {
+    const r = growingRun(6_500, { answerOnReminder: true });
+    const result = await r.run();
+
+    expect(result.stopReason).toBe("complete");
+    expect(r.modelCalls()).toBe(3);
+    expect(result.output).toContain("partial: some items scored");
+    expect(result.usage.inputTokens).toBeLessThanOrEqual(6_500);
+  });
+
+  it("still stops with max_input_tokens when the model ignores the reminder", async () => {
+    const r = growingRun(6_500);
+    const result = await r.run();
+
+    expect(result.stopReason).toBe("max_input_tokens");
+    expect(r.modelCalls()).toBe(3);
+    expect(result.usage.inputTokens).toBe(6_000);
+  });
+
+  it("adds no reminder when no cap is set", async () => {
+    const r = growingRun();
+    await r.run();
+
+    expect(r.reminded).toEqual([false, false, false, false, false]);
+  });
+
+  it("adds no reminder when the cap is far above the run", async () => {
+    const r = growingRun(1_000_000);
+    await r.run();
+
+    expect(r.reminded.every((x) => !x)).toBe(true);
+  });
+
+  it("still adds the reminder on the last allowed iteration when the cap is far away", async () => {
+    const r = growingRun(1_000_000, { maxIterations: 3 });
+    const result = await r.run();
+
+    expect(result.stopReason).toBe("max_iterations");
+    expect(r.reminded).toEqual([false, false, true]);
   });
 });
