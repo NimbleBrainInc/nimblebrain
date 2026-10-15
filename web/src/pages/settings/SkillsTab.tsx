@@ -1087,8 +1087,8 @@ interface CreateDraft {
 /**
  * What will happen to this skill, stated while it is still being written.
  *
- * A skill's whole purpose is to load, and a skill that never loads looks like
- * every healthy one everywhere else, so the editor says which it is while the
+ * A skill's whole purpose is to load, so the editor says when this one will —
+ * every turn, with a tool, on a phrase, or only when the agent asks — while the
  * condition can still be changed. The mechanism and the token cost are both
  * derived through the runtime's own code, so the sentence here and the row's
  * after a save are the same verdict.
@@ -1117,13 +1117,8 @@ function LoadingVerdict({
   const sentence = skillLoadingSentence(mechanism, { toolAffinity, triggers });
   const tokens = approxTokens(body);
   return (
-    <div
-      className={cn(
-        "rounded-md border px-3.5 py-3 text-sm",
-        sentence.dead ? "border-destructive/40 bg-destructive/5" : "border-border bg-secondary/40",
-      )}
-    >
-      <p className={cn("font-medium", sentence.dead && "text-destructive")}>
+    <div className="rounded-md border border-border bg-secondary/40 px-3.5 py-3 text-sm">
+      <p className="font-medium">
         {sentence.text}
         {sentence.mono && (
           <>
@@ -1298,9 +1293,10 @@ function AdvancedDisclosure({
 /**
  * The create form's manifest fields, behind the prose.
  *
- * A `dynamic` skill with neither triggers nor tool-affinity is catalog-only,
- * and with a thin description it never loads. Offering the strategy is safe
- * because `LoadingVerdict` names that outcome the moment the form reaches it.
+ * A `dynamic` skill with neither triggers nor tool-affinity is catalog-only: it
+ * loads when the agent asks for it, which a thin description makes unlikely.
+ * Offering the strategy is safe because `LoadingVerdict` names that outcome the
+ * moment the form reaches it.
  */
 function CreateAdvancedSection({
   open,

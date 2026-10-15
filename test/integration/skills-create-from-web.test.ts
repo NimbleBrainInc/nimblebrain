@@ -13,9 +13,9 @@
  *     that reached disk would fail the loader's canonical validation, so the
  *     skill would be invisible to list/read (a silent orphan) and a retry
  *     would collide with "already exists". And with no `loading-strategy` the
- *     skill defaults to `dynamic` with no triggers — catalog-only, i.e. it
- *     never loads. These tests post that exact shape and assert the rule is
- *     created, visible, and actually loads — and that an empty description
+ *     skill defaults to `dynamic` with no triggers, loaded only when the model
+ *     asks for it. These tests post that exact shape and assert the rule is
+ *     created, visible, and loads every turn — and that an empty description
  *     is rejected with no orphan left behind.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -105,7 +105,6 @@ describe("skills__create — web 'rules' payload contract", () => {
     const listed = structuredOutput<SkillsListOutput>(list).skills.find((s) => s.id === id);
     expect(listed).toBeDefined();
     expect(listed?.loadingStrategy).toBe("always");
-    expect(listed?.loading?.wouldLoad).toBe(true);
     expect(listed?.loading?.mechanism).toBe("always");
 
     // Readable, with the title preserved as the description label.

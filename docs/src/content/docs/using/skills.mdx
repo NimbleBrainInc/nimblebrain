@@ -25,7 +25,7 @@ A `dynamic` skill activates through any of:
 3. **`triggers`** — auto-activates on an exact phrase, for deterministic "must-fire" cases (e.g. a compliance rule that must load whenever a regulated action is named).
 </Steps>
 
-A dynamic skill with no `tool-affinity` and no `triggers` loads only when the model activates it on its description.
+A dynamic skill with no `tool-affinity` and no `triggers` loads only when the model activates it on its description. Settings and `skills__list` call this loading **on request** (`on_request`).
 
 ### The skill catalog
 
@@ -164,7 +164,7 @@ Installing a connector can automatically apply a short **usage overlay** — cur
 Overlays differ from authored skills in three ways:
 
 - **Surfaced once into the conversation, not the system prompt.** A connector overlay appears in the conversation history exactly once, before the first call to a matching tool runs (that call is held until the overlay has been read, as for any [`tool-affinity`](#how-a-skill-loads--loading-strategy) skill), and then rides the cached, append-only history for the rest of the conversation. It is relevant (only when the connector's tools are used) and cache-friendly (it never re-varies the cached system prefix turn to turn).
-- **Bound to the connector's tools.** An overlay is bound to every tool of the connector it is installed for (`<server-name>__*`), or, when its frontmatter declares `metadata.nimblebrain.tool-affinity`, only to the tools it names, read the same way as for a [skill published by the server](#skills-published-by-an-mcp-server). The block needs nothing else: the other runtime fields are stamped on install, and an overlay always loads `dynamic`.
+- **Bound to the connector's tools.** An overlay is bound to every tool of the connector it is installed for (`<server-name>__*`), or, when its frontmatter declares `metadata.nimblebrain.tool-affinity`, only to the tools it names (or to none, for `[]`), read the same way as for a [skill published by the server](#skills-published-by-an-mcp-server). The block needs nothing else: the other runtime fields are stamped on install, and an overlay always loads `dynamic`.
 - **Stored separately.** Materialized overlays live in a `connector-skills/` store, distinct from authored `skills/`. They don't appear in the `skills__list` tool output; list them with the connector tool's `list_bound_skills` action instead, or see them under **From connectors** in a workspace's Settings → Skills.
 
 Resolution is **always on and fail-soft**: it fetches at a pinned repo version, records the fetched content hash, and treats a missing overlay (or any fetch error) as a no-op — a connector install never fails because its optional guidance couldn't be fetched, and there's nothing to enable (an overlay exists only if we've curated one). Override the repo / version with `CONNECTOR_SKILLS_REPO` and `CONNECTOR_SKILLS_VERSION`. When a connector has a curated overlay, the platform skips synthesizing the server's own `skill://<name>/SKILL.md` guidance so the model sees one set of instructions, not two.
@@ -194,7 +194,7 @@ The skill's name is its frontmatter `name`. When two skills on one server share 
 | `loading-strategy` | `always` composes it every turn; `dynamic` (the default when omitted) loads it on demand. |
 | `priority` | Ordering, same scale. Defaults to 60. |
 | `triggers` | Phrases that load it deterministically, whether or not the server's tools are in the active tool set. |
-| `tool-affinity` | The server's own tools the skill governs, as bare names or globs (`draft_email`, `draft_*`). The platform prefixes each with `<server-name>__`. Omitted, the skill is bound to every tool of the server (`<server-name>__*`). A skill bound to every tool of its server does not hold the first call to a tool the server annotates `readOnlyHint`: it is delivered right after that call instead. A skill that names its tools always holds. |
+| `tool-affinity` | The server's own tools the skill governs, as bare names or globs (`draft_email`, `draft_*`). The platform prefixes each with `<server-name>__`. Omitted, the skill is bound to every tool of the server (`<server-name>__*`). A skill bound to every tool of its server does not hold the first call to a tool the server annotates `readOnlyHint`: it is delivered right after that call instead. A skill that names its tools always holds. An explicit empty list (`tool-affinity: []`) binds it to no tool: the skill is listed in the catalog and loads only when the model asks for it, which suits reference material no single tool call needs. A value that is not a list, or a list of only blank entries, counts as omitted. |
 
 Two differences from an on-disk skill:
 

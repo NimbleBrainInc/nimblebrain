@@ -487,7 +487,7 @@ describe("skills__create — loading-strategy", () => {
     expect(parsed?.manifest.loadingStrategy).toBe("always");
   });
 
-  test("success message flags a catalog-only skill", async () => {
+  test("success message says a catalog-only skill loads on request", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -499,7 +499,7 @@ describe("skills__create — loading-strategy", () => {
       },
     });
     const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
-    expect(text).toMatch(/catalog-only/);
+    expect(text).toMatch(/on request/);
   });
 });
 
@@ -584,10 +584,10 @@ describe("a pasted SKILL.md in the body", () => {
       },
     });
     const out = result.structuredContent as {
-      loading?: { wouldLoad: boolean; mechanism: string };
+      loading?: { mechanism: string };
       frontmatterApplied?: string[];
     };
-    expect(out.loading).toEqual({ wouldLoad: true, mechanism: "tool_affinity" });
+    expect(out.loading).toEqual({ mechanism: "tool_affinity" });
     expect(out.frontmatterApplied).toEqual(["description", "loading-strategy", "tool-affinity"]);
   });
 

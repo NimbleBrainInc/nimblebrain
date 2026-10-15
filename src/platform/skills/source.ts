@@ -577,7 +577,7 @@ function skillToListed(skill: Skill): ListedSkill {
     ...(m.toolAffinity && m.toolAffinity.length > 0 ? { toolAffinity: m.toolAffinity } : {}),
     ...(m.triggers && m.triggers.length > 0 ? { triggers: m.triggers } : {}),
     priority: m.priority,
-    loading: { wouldLoad: mechanism !== "none", mechanism },
+    loading: { mechanism },
   };
 }
 
@@ -682,7 +682,7 @@ function buildAuthoringGuideEntry(authoringGuidePath: string): ListedSkill | nul
       ? { triggers: skill.manifest.triggers }
       : {}),
     priority: skill.manifest.priority,
-    loading: { wouldLoad: mechanism !== "none", mechanism },
+    loading: { mechanism },
   };
 }
 
@@ -1387,10 +1387,7 @@ function summarizeList(skills: ListedSkill[]): string {
     if (s.status && s.status !== "active") tags.push(s.status);
     const meta = `(${tags.join(" ")})`;
     const desc = s.description ? ` — ${s.description.slice(0, 100)}` : "";
-    // Flag dead skills (no strategy, no triggers, no tool affinity) so the
-    // zero-signal failure mode is visible in the model-facing content.
-    const warn = s.loading?.wouldLoad === false ? " ⚠ never loads" : "";
-    return `- ${s.id} ${meta}${desc}${warn}`;
+    return `- ${s.id} ${meta}${desc}`;
   });
   return `${header}\n${lines.join("\n")}`;
 }
@@ -1917,13 +1914,12 @@ function absorbPastedFrontmatter(
 }
 
 /**
- * How a written skill loads, said in a way a caller can act on. `none` is the
- * dead case, so it names the two signals that would revive it rather than
- * reporting a status word nothing follows from.
+ * How a written skill loads, said in a way a caller can act on. `on_request`
+ * names the signals that would make it load without the model asking.
  */
 function loadsNote(mechanism: SkillLoadingMechanism): string {
-  return mechanism === "none"
-    ? "catalog-only — won't auto-load yet; add a trigger or tool-affinity, or set loading-strategy: always"
+  return mechanism === "on_request"
+    ? "on request — the model loads it from the catalog when the job needs it; add tool-affinity or a trigger to load it without being asked"
     : mechanism;
 }
 
@@ -2038,7 +2034,7 @@ async function createSkill(
     name,
     scope,
     loadingStrategy: fullManifest.loadingStrategy,
-    loading: { wouldLoad: mechanism !== "none", mechanism },
+    loading: { mechanism },
     ...(pasted.applied?.length ? { frontmatterApplied: pasted.applied } : {}),
   };
   return {
@@ -2326,9 +2322,7 @@ function describeWrittenSkill(
 ): SkillsWriteOutput {
   const written = readSkill(dir, name);
   const mechanism = written ? resolveLoadingMechanism(written.manifest) : undefined;
-  const loading: SkillLoading | undefined = mechanism
-    ? { wouldLoad: mechanism !== "none", mechanism }
-    : undefined;
+  const loading: SkillLoading | undefined = mechanism ? { mechanism } : undefined;
   return {
     id,
     name,

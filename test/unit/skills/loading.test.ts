@@ -1,10 +1,10 @@
 /**
- * Tests for `resolveLoadingMechanism` / `wouldLoad` — the shared predicate
- * that decides how (or whether) a skill is reachable by a loader path.
+ * Tests for `resolveLoadingMechanism` — the shared predicate that decides how a
+ * skill reaches the model.
  */
 
 import { describe, expect, test } from "bun:test";
-import { resolveLoadingMechanism, wouldLoad } from "../../../src/skills/loading.ts";
+import { resolveLoadingMechanism } from "../../../src/skills/loading.ts";
 import type { SkillLoadingStrategy, SkillManifest } from "../../../src/skills/types.ts";
 
 interface ManifestOptions {
@@ -26,16 +26,19 @@ function makeManifest(opts: ManifestOptions = {}): SkillManifest {
 }
 
 describe("resolveLoadingMechanism", () => {
-  test("dynamic with no affinity or triggers is catalog-only (none)", () => {
+  test("dynamic with no affinity or triggers loads on request, from the catalog", () => {
     const m = makeManifest({ loadingStrategy: "dynamic" });
-    expect(resolveLoadingMechanism(m)).toBe("none");
-    expect(wouldLoad(m)).toBe(false);
+    expect(resolveLoadingMechanism(m)).toBe("on_request");
+  });
+
+  test("an explicit empty tool-affinity binds no tool, so it loads on request", () => {
+    const m = makeManifest({ loadingStrategy: "dynamic", toolAffinity: [] });
+    expect(resolveLoadingMechanism(m)).toBe("on_request");
   });
 
   test("dynamic + triggers loads via the matcher", () => {
     const m = makeManifest({ loadingStrategy: "dynamic", triggers: ["deploy the widget"] });
     expect(resolveLoadingMechanism(m)).toBe("trigger");
-    expect(wouldLoad(m)).toBe(true);
   });
 
   test("dynamic + tool-affinity resolves to tool affinity", () => {
@@ -46,7 +49,6 @@ describe("resolveLoadingMechanism", () => {
   test("always composes into the context channel", () => {
     const m = makeManifest({ loadingStrategy: "always" });
     expect(resolveLoadingMechanism(m)).toBe("always");
-    expect(wouldLoad(m)).toBe(true);
   });
 
   test("always wins over affinity/triggers (precedence)", () => {

@@ -119,15 +119,13 @@ export declare const SkillSource: import("@sinclair/typebox").TObject<{
 }>;
 export type SkillSource = Static<typeof SkillSource>;
 /**
- * Computed loading visibility: whether any loader path reaches a skill
- * (`wouldLoad`) and the mechanism by which it loads. `mechanism: "none"`
- * (`wouldLoad: false`) flags a dead skill — no strategy, no triggers, no tool
- * affinity — that would otherwise be silently inert. Derived by
+ * How a skill reaches the model: every turn (`always`), with the tools it is
+ * bound to (`tool_affinity`), on a trigger phrase (`trigger`), or when the model
+ * asks for it from the catalog (`on_request`). Derived by
  * `resolveLoadingMechanism`, not stored on disk.
  */
 export declare const SkillLoading: import("@sinclair/typebox").TObject<{
-    wouldLoad: import("@sinclair/typebox").TBoolean;
-    mechanism: import("@sinclair/typebox").TUnsafe<"always" | "none" | "tool_affinity" | "trigger">;
+    mechanism: import("@sinclair/typebox").TUnsafe<"always" | "on_request" | "tool_affinity" | "trigger">;
 }>;
 export type SkillLoading = Static<typeof SkillLoading>;
 /**
@@ -154,8 +152,7 @@ export declare const SkillSummary: import("@sinclair/typebox").TObject<{
     triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     loading: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        wouldLoad: import("@sinclair/typebox").TBoolean;
-        mechanism: import("@sinclair/typebox").TUnsafe<"always" | "none" | "tool_affinity" | "trigger">;
+        mechanism: import("@sinclair/typebox").TUnsafe<"always" | "on_request" | "tool_affinity" | "trigger">;
     }>>;
 }>;
 export type SkillSummary = Static<typeof SkillSummary>;
@@ -180,8 +177,7 @@ export declare const SkillsListOutput: import("@sinclair/typebox").TObject<{
         triggers: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         priority: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         loading: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            wouldLoad: import("@sinclair/typebox").TBoolean;
-            mechanism: import("@sinclair/typebox").TUnsafe<"always" | "none" | "tool_affinity" | "trigger">;
+            mechanism: import("@sinclair/typebox").TUnsafe<"always" | "on_request" | "tool_affinity" | "trigger">;
         }>>;
     }>>;
 }>;
@@ -317,8 +313,7 @@ export declare const SkillsWriteOutput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TString;
     loadingStrategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     loading: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        wouldLoad: import("@sinclair/typebox").TBoolean;
-        mechanism: import("@sinclair/typebox").TUnsafe<"always" | "none" | "tool_affinity" | "trigger">;
+        mechanism: import("@sinclair/typebox").TUnsafe<"always" | "on_request" | "tool_affinity" | "trigger">;
     }>>;
     /** Absent when the body carried no frontmatter, or when `frontmatter: "ignore"`. */
     frontmatterApplied: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
