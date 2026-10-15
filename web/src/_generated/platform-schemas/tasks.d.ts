@@ -28,7 +28,7 @@
 import { type Static } from "@sinclair/typebox";
 export declare const TasksCreateInput: import("@sinclair/typebox").TObject<{
     manifest: import("@sinclair/typebox").TObject<{
-        skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
@@ -97,7 +97,7 @@ export declare const TasksUpdateInput: import("@sinclair/typebox").TObject<{
             maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
         }>, import("@sinclair/typebox").TNull]>>;
         enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-        skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+        skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
         maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TNull]>>;
@@ -171,7 +171,7 @@ export declare const TasksRunInput: import("@sinclair/typebox").TObject<{
     taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     definition: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
@@ -227,7 +227,7 @@ export declare const TasksRunBatchInput: import("@sinclair/typebox").TObject<{
     taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     definition: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
@@ -696,6 +696,11 @@ export declare const TaskRunResultBody: import("@sinclair/typebox").TObject<{
     structured: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
     /** Why the run failed or did not start, as its record says. */
     error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    skillsDelivered: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        name: import("@sinclair/typebox").TString;
+        loadedBy: import("@sinclair/typebox").TUnsafe<"activation" | "before_call" | "declared" | "tool_use">;
+        status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"capped" | "fetch_failed" | "renamed_unheld">>;
+    }>>>;
 }>;
 export type TaskRunResultBody = Static<typeof TaskRunResultBody>;
 /**
@@ -781,6 +786,11 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
         error?: string | undefined;
         stopReason?: "complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit" | undefined;
         structured?: unknown;
+        skillsDelivered?: {
+            status?: "capped" | "fetch_failed" | "renamed_unheld" | undefined;
+            name: string;
+            loadedBy: "activation" | "before_call" | "declared" | "tool_use";
+        }[] | undefined;
         usage: {
             inputTokens: number;
             outputTokens: number;
@@ -915,7 +925,7 @@ export declare const TaskStatusDetail: import("@sinclair/typebox").TObject<{
     ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
-    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
     outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
@@ -992,7 +1002,7 @@ export declare const TasksStatusOutput: import("@sinclair/typebox").TObject<{
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
-        skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
         outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
@@ -1233,6 +1243,11 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         error?: string | undefined;
         stopReason?: "complete" | "content_filter" | "error" | "length" | "max_input_tokens" | "max_iterations" | "other" | "spend_limit" | undefined;
         structured?: unknown;
+        skillsDelivered?: {
+            status?: "capped" | "fetch_failed" | "renamed_unheld" | undefined;
+            name: string;
+            loadedBy: "activation" | "before_call" | "declared" | "tool_use";
+        }[] | undefined;
         usage: {
             inputTokens: number;
             outputTokens: number;
@@ -1464,7 +1479,7 @@ export declare const TaskRecord: import("@sinclair/typebox").TObject<{
         at: import("@sinclair/typebox").TString;
         outcome: import("@sinclair/typebox").TUnsafe<"missed" | "ran">;
     }>>;
-    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
     outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
@@ -1548,7 +1563,7 @@ export declare const TasksCreateOutput: import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
             outcome: import("@sinclair/typebox").TUnsafe<"missed" | "ran">;
         }>>;
-        skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
         outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
@@ -1632,7 +1647,7 @@ export declare const TasksUpdateOutput: import("@sinclair/typebox").TObject<{
             at: import("@sinclair/typebox").TString;
             outcome: import("@sinclair/typebox").TUnsafe<"missed" | "ran">;
         }>>;
-        skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
         outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;

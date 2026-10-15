@@ -154,9 +154,9 @@ export function draftFromDetail(d: TaskDetail): EditorDraft {
     ...inputOf(d.inputSchema),
     name: d.name,
     description: d.description ?? "",
-    doMode: d.skill && !d.prompt ? "skill" : "prompt",
+    doMode: d.skills?.length && !d.prompt ? "skill" : "prompt",
     prompt: d.prompt ?? "",
-    skill: d.skill ?? "",
+    skill: (d.skills ?? []).join(", "),
     criteria: fromCriteria(d.criteria),
     confidence: str(d.confidenceThreshold),
     outputJson: json(d.outputSchema),
@@ -213,7 +213,7 @@ function positive(text: string, what: string, problems: string[], min = 1): numb
 export interface BuiltDefinition {
   problems: string[];
   body: string;
-  skill?: string;
+  skills?: string[];
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   criteria?: ReturnType<typeof toCriteria>;
@@ -235,8 +235,12 @@ function readDoing(d: EditorDraft, out: BuiltDefinition): void {
     if (!out.body) out.problems.push("Say what the task should do.");
     return;
   }
-  if (!d.skill.trim()) out.problems.push("Name the skill to carry out.");
-  else out.skill = d.skill.trim();
+  const skills = d.skill
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (skills.length === 0) out.problems.push("Name the skill to carry out.");
+  else out.skills = skills;
 }
 
 function readSchemas(d: EditorDraft, out: BuiltDefinition): void {
@@ -343,7 +347,7 @@ export function buildDefinition(d: EditorDraft): BuiltDefinition {
 }
 
 const DEFINITION_KEYS = [
-  "skill",
+  "skills",
   "inputSchema",
   "outputSchema",
   "criteria",

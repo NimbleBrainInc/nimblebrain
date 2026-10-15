@@ -687,7 +687,7 @@ export function handleCreate(args: TasksCreateInput, ctx: ToolContext): TasksCre
       prompt: body,
       schedule: manifest.schedule,
       description: manifest.description,
-      skill: manifest.skill,
+      skills: manifest.skills,
       model: manifest.model,
       maxIterations: manifest.maxIterations,
       maxInputTokens: manifest.maxInputTokens,
@@ -1358,7 +1358,7 @@ export const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
  * (name, kind) or trigger (schedule, enabled).
  */
 export interface InlineManifest {
-  skill?: string;
+  skills?: string[];
   model?: string;
   allowedTools?: string[];
   maxIterations?: number;
@@ -1409,7 +1409,7 @@ function oneoffId(idSeed: string | undefined): string {
 /** The fields of a one-off that make up its definition, for comparing two of them. */
 const ONEOFF_DEFINITION_FIELDS = [
   "prompt",
-  "skill",
+  "skills",
   "model",
   "inputSchema",
   "outputSchema",
@@ -1461,15 +1461,12 @@ export function ensureOneoff(
   idSeed: string | undefined,
 ): Task {
   const manifest = def.manifest ?? {};
-  if (!def.body && !manifest.skill) {
-    throw new Error("A `definition` needs a `body` (the prompt), or a `manifest.skill`.");
+  if (!def.body && !manifest.skills?.length) {
+    throw new Error("A `definition` needs a `body` (the prompt), or `manifest.skills`.");
   }
   validateTaskFields(manifest);
   const id = oneoffId(idSeed);
-  const prompt =
-    def.body ||
-    `Carry out the "${manifest.skill}" skill on this run's input, and give its result as the deliverable.`;
-  const definition = { prompt, ...manifest };
+  const definition = { prompt: def.body ?? "", ...manifest };
 
   checkInput(id, manifest.inputSchema);
 

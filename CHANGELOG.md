@@ -115,6 +115,7 @@
 
 ### Changed
 
+- **A task names the skills its runs need.** `skills` (a list, replacing `skill`, which no run ever read) gives every run those skills in full before its first model call; an unknown name refuses the run, and each run's result reports `skillsDelivered`. `nb__use_skill` now passes any `allowedTools` list, so every run can open the skill catalog. A stored `skill` value is not read: set `skills` instead. [Docs](https://docs.nimblebrain.ai/using/tasks/).
 - **A skill bound to a tool reaches the model before that tool's first call.** The first call to a governed tool is held until its skill has been read, then re-issued, in chat and in task runs, and a workspace skill bound to a connector's tool arrives with the connector's own. `skills__loading_log` records `before_call` deliveries and any skill that did not arrive ([ADR-0053](adr/0053-a-bound-skill-reaches-the-model-before-its-tools-first-call.md)). [Docs](https://docs.nimblebrain.ai/using/skills/#how-a-skill-loads--loading-strategy).
 - **Uninstalling a static-auth connector removes its operator OAuth app** (client id and secret) when no other installed connector uses it, so a reinstall starts at Set up.
 - **Automations are now Tasks.** The source, its tools (`tasks__*`), the sidebar view (`/w/<slug>/tasks`) and storage (`workspaces/<wsId>/tasks/<ownerId>/`) take the name. A deployment on v0.34.x or earlier upgrades through v0.35.x, whose boot moves storage from `automations/`. [Docs](https://docs.nimblebrain.ai/using/tasks/).

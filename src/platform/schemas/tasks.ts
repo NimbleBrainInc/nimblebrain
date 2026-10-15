@@ -309,18 +309,23 @@ const AllowedToolsField = Type.Array(Type.String({ minLength: 1 }), {
     "Tools this task's runs may use, as names or globs: `gmail__*` for a workspace " +
     "connector's tools, `my_gmail__*` for your personal one, `files__read` for one tool. A " +
     "run cannot activate or call a tool outside the list, and a run is refused before it " +
-    "starts when an entry matches no tool it can reach. Only nb__search and nb__manage_tools " +
-    "pass without being listed, so name any other nb__ tool a run needs (nb__use_skill for " +
-    "skills, nb__read_resource for resources). Prefer a `<connector>__*` glob, since a " +
+    "starts when an entry matches no tool it can reach. nb__search, nb__manage_tools and " +
+    "nb__use_skill pass without being listed, so name any other nb__ tool a run needs " +
+    "(nb__read_resource for resources). Prefer a `<connector>__*` glob, since a " +
     "connector can rename its tools. Omit for every tool in the workspace; an empty list is " +
     "refused. Listing tasks__create, tasks__update, or tasks__delete is refused, and a run is " +
     "barred from tasks__run, tasks__run_batch, tasks__batch_control, and tasks__assess whatever " +
     "the list says.",
 });
 
-const SkillField = Type.String({
-  minLength: 1,
-  description: "A skill each run carries out, matched by name.",
+const SkillsField = Type.Array(Type.String({ minLength: 1 }), {
+  minItems: 1,
+  maxItems: 5,
+  description:
+    "Skills every run is given in full before its first model call, named as the skill " +
+    "catalog lists them (nb__use_skill takes the same names). A run is refused before it " +
+    "starts when a named skill is not available in the task's workspace. With no body, " +
+    "each run carries the skills out on its input.",
 });
 
 const ModelField = Type.String({
@@ -332,7 +337,7 @@ const ModelField = Type.String({
 // The definition fields every shape shares: create's manifest, update's patch
 // (each clearable), and an inline one-off's manifest.
 const DefinitionFields = {
-  skill: Type.Optional(SkillField),
+  skills: Type.Optional(SkillsField),
   model: Type.Optional(ModelField),
   allowedTools: Type.Optional(AllowedToolsField),
   maxIterations: Type.Optional(MaxIterationsField),
@@ -402,7 +407,7 @@ const UpdateManifest = Type.Object(
     enabled: Type.Optional(
       Type.Boolean({ description: "Whether its schedule or events fire it." }),
     ),
-    skill: clearable(SkillField, "Skill each run carries out, or null for none."),
+    skills: clearable(SkillsField, "Skills every run is given, or null for none."),
     model: clearable(ModelField, "Model for its runs, or null for the workspace default."),
     allowedTools: clearable(
       AllowedToolsField,
@@ -458,7 +463,7 @@ function inlineDefinition<T extends TProperties>(fields: T, what: string) {
       body: Type.Optional(
         Type.String({
           description:
-            "The prompt that opens each run (as tasks__create's body). Omit only with `manifest.skill`.",
+            "The prompt that opens each run (as tasks__create's body). Omit only with `manifest.skills`.",
         }),
       ),
     },
@@ -1264,6 +1269,21 @@ export const TaskRunResultBody = Type.Object({
   structured: Type.Optional(Type.Unknown()),
   /** Why the run failed or did not start, as its record says. */
   error: Type.Optional(Type.String()),
+  skillsDelivered: Type.Optional(
+    Type.Array(
+      Type.Object({
+        name: Type.String(),
+        loadedBy: StringEnum(["declared", "before_call", "tool_use", "activation"] as const),
+        status: Type.Optional(StringEnum(["fetch_failed", "capped", "renamed_unheld"] as const)),
+      }),
+      {
+        description:
+          "Every skill the run was given, or that missed it, in order: declared by the task, " +
+          "delivered before a held call or on a promotion, or loaded from the catalog. A " +
+          "`status` marks one that did not arrive.",
+      },
+    ),
+  ),
 });
 export type TaskRunResultBody = Static<typeof TaskRunResultBody>;
 
@@ -1316,7 +1336,7 @@ export const TaskStatusDetail = Type.Object({
   ownerId: Type.Optional(Type.String()),
   workspaceId: Type.Optional(Type.String()),
   model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-  skill: Type.Optional(Type.String()),
+  skills: Type.Optional(Type.Array(Type.String())),
   allowedTools: Type.Optional(Type.Array(Type.String())),
   inputSchema: Type.Optional(JsonObject),
   outputSchema: Type.Optional(JsonObject),
@@ -1485,7 +1505,7 @@ export const TaskRecord = Type.Object({
   schedule: Type.Optional(TaskScheduleSpec),
   kind: Type.Optional(TaskKindField),
   onceDone: Type.Optional(TaskOnceDone),
-  skill: Type.Optional(Type.String()),
+  skills: Type.Optional(Type.Array(Type.String())),
   allowedTools: Type.Optional(Type.Array(Type.String())),
   inputSchema: Type.Optional(JsonObject),
   outputSchema: Type.Optional(JsonObject),

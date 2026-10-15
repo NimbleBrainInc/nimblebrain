@@ -23,7 +23,14 @@ import {
   type RunSpendAccount,
   type TaskRunTrigger,
 } from "./scheduler.ts";
-import type { RunFileRef, RunToolCall, Task, TaskRun, TaskRunResult } from "./types.ts";
+import type {
+  RunFileRef,
+  RunSkillDelivery,
+  RunToolCall,
+  Task,
+  TaskRun,
+  TaskRunResult,
+} from "./types.ts";
 
 /** Max chars of the deliverable kept in the run-list `resultPreview`. The full
  *  output lives in the `TaskRunResult` sidecar. */
@@ -70,6 +77,8 @@ export interface TaskFnRequest {
    */
   spendAccounts?: RunSpendAccount[];
   allowedTools?: string[];
+  /** Skills the run is given in full before its first model call (`Task.skills`). */
+  skills?: string[];
   metadata?: Record<string, unknown>;
   /**
    * The task's workspace: tools scoped to it + identity tools, and
@@ -131,6 +140,8 @@ export interface TaskFnResult {
   finishReasonRaw?: string;
   /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
+  /** Every skill the run was given, or that missed it (runtime `TaskResult`). */
+  skillsDelivered?: RunSkillDelivery[];
   /**
    * The run's usage (runtime `TurnUsage`): `model` and the cache and reasoning
    * counts price it (`costUsd`).
@@ -159,6 +170,16 @@ export interface ExecutorContext {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The instruction a task with skills and no prompt runs on. The skills
+ * themselves reach the run in full ahead of it (`TaskRequest.skills`).
+ */
+function skillsOnlyInstruction(skills: string[] | undefined): string | undefined {
+  if (!skills?.length) return undefined;
+  const names = skills.map((s) => `"${s}"`).join(", ");
+  return `Carry out the ${names} skill${skills.length === 1 ? "" : "s"} on this run's input, and give the result as the deliverable.`;
+}
 
 /**
  * Recursive-call guard. A task whose `allowedTools` includes a
@@ -215,7 +236,7 @@ function buildRequest(
   const prompt = [
     input?.preamble,
     input?.data !== undefined ? renderRunInput(input.data) : undefined,
-    task.prompt,
+    task.prompt || skillsOnlyInstruction(task.skills),
     task.outputSchema ? renderOutputSchemaInstruction(task.outputSchema) : undefined,
   ]
     .filter((part): part is string => typeof part === "string" && part.length > 0)
@@ -245,6 +266,7 @@ function buildRequest(
   // An empty list means no narrowing, as the form shows it ("all"), not a run
   // with only the system tools.
   if (task.allowedTools?.length) req.allowedTools = task.allowedTools;
+  if (task.skills?.length) req.skills = task.skills;
   if (ctx?.workspaceId) req.workspaceId = ctx.workspaceId;
   if (ctx?.identity) req.identity = ctx.identity;
   return req;
@@ -780,6 +802,7 @@ export function buildRunResult(task: Task, data: TaskFnResult): TaskRunResult {
       iterations: data.usage.iterations,
     },
     stopReason: data.stopReason as TaskRun["stopReason"],
+    ...(data.skillsDelivered?.length ? { skillsDelivered: data.skillsDelivered } : {}),
   };
 }
 
