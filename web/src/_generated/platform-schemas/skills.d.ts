@@ -33,7 +33,7 @@ export type SkillsReadInput = Static<typeof SkillsReadInput>;
 export declare const SkillsLoadingLogInput: import("@sinclair/typebox").TObject<{
     conversation_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    loaded_by: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"activation" | "always" | "tool_affinity" | "tool_use" | "trigger">>;
+    loaded_by: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"activation" | "always" | "before_call" | "tool_affinity" | "tool_use" | "trigger">>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     until: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
@@ -264,7 +264,9 @@ export type SkillsReadOutput = Static<typeof SkillsReadOutput>;
  * from stored conversation logs, which keep the shape they were written in, so
  * this accepts every entry the log can hold: `skill` and `tokens` are absent on
  * an entry that recorded neither, and `loaded_by` is open beyond the current
- * vocabulary (`always`, `tool_affinity`, `trigger`, `tool_use`, `activation`).
+ * vocabulary (`always`, `tool_affinity`, `trigger`, `before_call`, `tool_use`,
+ * `activation`). A row with `status` is a bound skill that did NOT reach the
+ * model on that call, and says why.
  */
 export declare const SkillLoadRow: import("@sinclair/typebox").TObject<{
     ts: import("@sinclair/typebox").TString;
@@ -277,6 +279,7 @@ export declare const SkillLoadRow: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     tool_name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"capped" | "fetch_failed" | "renamed_unheld">>;
 }>;
 export declare const SkillsLoadingLogOutput: import("@sinclair/typebox").TObject<{
     loads: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
@@ -290,6 +293,7 @@ export declare const SkillsLoadingLogOutput: import("@sinclair/typebox").TObject
         scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         tool_name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"capped" | "fetch_failed" | "renamed_unheld">>;
     }>>;
 }>;
 export type SkillsLoadingLogOutput = Static<typeof SkillsLoadingLogOutput>;

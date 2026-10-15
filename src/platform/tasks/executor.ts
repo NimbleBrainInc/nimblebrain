@@ -112,6 +112,8 @@ export interface TaskFnToolCall {
   ms: number;
   /** Structured failure reason when `ok === false`. */
   errorReason?: string;
+  /** The engine held the call for guidance; it did not run. */
+  held?: true;
 }
 
 /** Minimal task result shape (matches runtime `TaskResult`). */
@@ -509,6 +511,27 @@ function unreachableConnectorCalls(toolCalls: TaskFnResult["toolCalls"]): string
 }
 
 /**
+ * The tool calls that tell what work happened, without the calls the engine
+ * held for guidance (`ToolCallRecord.held`). A held call ran nothing, so it is
+ * neither a failure nor a call. A model that re-issues it shows the outcome in
+ * the re-issue; one that, having read the guidance, rightly never re-issues it
+ * did no wrong. The exception is a run that stopped short (any stop but
+ * `complete`) before re-issuing a held call: there the work it asked for never
+ * happened and nothing else will say so, so it stays, as the failure it is.
+ */
+function withoutSettledHolds(
+  toolCalls: TaskFnResult["toolCalls"],
+  stopReason: TaskRun["stopReason"],
+): TaskFnResult["toolCalls"] {
+  if (!Array.isArray(toolCalls)) return toolCalls;
+  return toolCalls.filter((tc, i) => {
+    if (!tc.held) return true;
+    if (stopReason === "complete") return false;
+    return !toolCalls.slice(i + 1).some((later) => later.name === tc.name);
+  });
+}
+
+/**
  * What the tool calls say about a run the model called complete, or null when
  * they agree with it. Checked most-specific first; see `mapResultToRun`.
  */
@@ -638,6 +661,7 @@ function mapResultToRun(
 ): TaskRun {
   const stopReason = data.stopReason as TaskRun["stopReason"];
   let status: TaskRun["status"] = mapStopReasonToStatus(stopReason);
+  const accounted = withoutSettledHolds(data.toolCalls, stopReason);
 
   // De-mask the silently-failed run. `stopReason: "complete"` only says the
   // MODEL decided it was done, and a model that cannot do the work commonly
@@ -670,7 +694,7 @@ function mapResultToRun(
   // failure/timeout keeps its (stronger) status.
   let error: string | undefined;
   if (status === "success") {
-    const verdict = toolCallVerdict(data.toolCalls);
+    const verdict = toolCallVerdict(accounted);
     if (verdict) {
       status = verdict.status;
       error = verdict.error;
@@ -699,7 +723,7 @@ function mapResultToRun(
   error ??= unrecognizedStopError(status, stopReason, data);
   // Recorded whatever the status, and read without any criteria: the derived
   // label never reads Succeeded while part of the work did not happen.
-  const unrecovered = unresolvedFailures(data.toolCalls).map((u) => u.name);
+  const unrecovered = unresolvedFailures(accounted).map((u) => u.name);
   // Priced as the door debits a `usd` spend account: the run model's rates.
   const costUsd = data.usage.model ? estimateCost(data.usage.model, data.usage) : undefined;
 
@@ -713,7 +737,7 @@ function mapResultToRun(
     status,
     inputTokens: data.usage.inputTokens,
     outputTokens: data.usage.outputTokens,
-    toolCalls: Array.isArray(data.toolCalls) ? data.toolCalls.length : 0,
+    toolCalls: Array.isArray(data.toolCalls) ? data.toolCalls.filter((tc) => !tc.held).length : 0,
     iterations: data.usage.iterations,
     // Truncated preview for the run list; the full deliverable lives in the
     // TaskRunResult sidecar (see `buildRunResult`).
@@ -741,6 +765,7 @@ export function buildRunResult(task: Task, data: TaskFnResult): TaskRunResult {
     output: typeof tc.output === "string" ? tc.output : String(tc.output ?? ""),
     ok: tc.ok === true,
     ms: typeof tc.ms === "number" ? tc.ms : 0,
+    ...(tc.held === true ? { held: true as const } : {}),
   }));
   return {
     runId: data.runId,

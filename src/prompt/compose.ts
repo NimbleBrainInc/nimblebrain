@@ -1036,10 +1036,18 @@ function formatSkillCatalogSection(entries: SkillCatalogEntry[]): string {
  * is rewritten to `&lt;/connector-skill>` so an overlay author can't break out
  * of containment. Name/scope ride a sanitized provenance line.
  */
-export function formatConnectorSkillBlock(name: string, scope: string, body: string): string {
+export function formatConnectorSkillBlock(
+  name: string,
+  scope: string,
+  body: string,
+  heldCall = false,
+): string {
   const safeName = sanitizeLineField(name);
   const safeScope = sanitizeLineField(scope);
-  const provenance = `_${safeName}_ — scope: ${safeScope}; surfaced on first matching connector tool call`;
+  const how = heldCall
+    ? "governs the call held above; call it again once read"
+    : "surfaced on first matching connector tool call";
+  const provenance = `_${safeName}_ — scope: ${safeScope}; ${how}`;
   return `${provenance}\n\n${wrapContained("connector-skill", body)}`;
 }
 

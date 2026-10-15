@@ -1441,6 +1441,8 @@ function renderRead(skill: ReadResult): string {
 
 function summarizeLog(rows: SkillLoadRow[]): string {
   if (rows.length === 0) return "No skill loads match the filters.";
+  const missed = rows.filter((r) => r.status !== undefined).length;
+  const missedNote = missed > 0 ? `; ${missed} bound skill(s) did not arrive (see status)` : "";
   const conversations = new Set(rows.map((r) => r.conv_id)).size;
   // Channel breakdown is the point of the ledger — a channel that never fires
   // should be legible as a missing key, not inferred from a total.
@@ -1452,7 +1454,7 @@ function summarizeLog(rows: SkillLoadRow[]): string {
     .join(", ");
   const plural = rows.length === 1 ? "" : "s";
   const convPlural = conversations === 1 ? "" : "s";
-  return `${rows.length} skill load${plural} across ${conversations} conversation${convPlural} (${breakdown})`;
+  return `${rows.length} skill load${plural} across ${conversations} conversation${convPlural} (${breakdown})${missedNote}`;
 }
 
 // ── Mutation handlers ────────────────────────────────────────────────────

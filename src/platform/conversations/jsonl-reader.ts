@@ -160,6 +160,8 @@ interface ToolDoneEvent {
   output: string;
   resourceUri?: string;
   resourceLinks?: DisplayResourceLink[];
+  /** The call did not run: the engine held it for its tool's guidance. */
+  held?: true;
 }
 
 /**
@@ -632,7 +634,11 @@ function buildRunBlocks(
     if (text) blocks.push({ type: "text", text });
 
     // Tool-call content — one tool block per llm.response that has tool-calls.
-    const toolCallParts = llm.content.filter((c) => c.type === "tool-call");
+    // A call the engine held for guidance ran nothing, and its re-issue is the
+    // call the person sees, so it is left out of the display.
+    const toolCallParts = llm.content.filter(
+      (c) => c.type === "tool-call" && toolDones.get(c.toolCallId ?? "")?.held !== true,
+    );
     if (toolCallParts.length > 0) {
       const tools = toolCallParts.map((tc) => buildToolCall(tc, toolDones, toolInputs));
       blocks.push({ type: "tool", toolCalls: tools });

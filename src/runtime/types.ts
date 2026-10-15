@@ -391,6 +391,8 @@ export interface ChatResult {
     ms: number;
     /** Structured failure reason when `ok === false`. See ToolCallRecord.errorReason. */
     errorReason?: string;
+    /** The call did not run; it waited for its tool's guidance. See ToolCallRecord.held. */
+    held?: true;
   }>;
   stopReason: string;
   /** Detailed usage breakdown for this turn. */
@@ -545,6 +547,8 @@ export interface TaskResult {
     ms: number;
     /** Structured failure reason when `ok === false`. See ToolCallRecord.errorReason. */
     errorReason?: string;
+    /** The call did not run; it waited for its tool's guidance. See ToolCallRecord.held. */
+    held?: true;
   }>;
   stopReason: string;
   /**

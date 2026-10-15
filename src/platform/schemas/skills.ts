@@ -145,12 +145,16 @@ export const SkillsLoadingLogInput = Type.Object({
     }),
   ),
   loaded_by: Type.Optional(
-    StringEnum(["always", "tool_affinity", "trigger", "tool_use", "activation"] as const, {
-      description:
-        "Filter to one loading channel. `always`/`tool_affinity`/`trigger` composed into " +
-        "the system prompt; `tool_use` is a surface-once overlay firing on a matching tool " +
-        "call; `activation` is the model loading a Skill Catalog entry by name.",
-    }),
+    StringEnum(
+      ["always", "tool_affinity", "trigger", "before_call", "tool_use", "activation"] as const,
+      {
+        description:
+          "Filter to one loading channel. `always`/`tool_affinity`/`trigger` composed into " +
+          "the system prompt; `before_call` is a skill bound to a tool, delivered while the " +
+          "first call to that tool was held; `tool_use` is one delivered after a call that ran " +
+          "or on a promotion; `activation` is the model loading a Skill Catalog entry by name.",
+      },
+    ),
   ),
   since: Type.Optional(Type.String({ description: "ISO 8601 lower bound (inclusive)." })),
   until: Type.Optional(Type.String({ description: "ISO 8601 upper bound (inclusive)." })),
@@ -450,7 +454,9 @@ export type SkillsReadOutput = Static<typeof SkillsReadOutput>;
  * from stored conversation logs, which keep the shape they were written in, so
  * this accepts every entry the log can hold: `skill` and `tokens` are absent on
  * an entry that recorded neither, and `loaded_by` is open beyond the current
- * vocabulary (`always`, `tool_affinity`, `trigger`, `tool_use`, `activation`).
+ * vocabulary (`always`, `tool_affinity`, `trigger`, `before_call`, `tool_use`,
+ * `activation`). A row with `status` is a bound skill that did NOT reach the
+ * model on that call, and says why.
  */
 export const SkillLoadRow = Type.Object({
   ts: Type.String(),
@@ -463,6 +469,13 @@ export const SkillLoadRow = Type.Object({
   scope: Type.Optional(Type.String()),
   connector: Type.Optional(Type.String()),
   tool_name: Type.Optional(Type.String()),
+  status: Type.Optional(
+    StringEnum(["fetch_failed", "capped", "renamed_unheld"] as const, {
+      description:
+        "The skill did not reach the model: its body could not be fetched, a held call's " +
+        "size cap left it out, or a policy hook renamed the call past the hold.",
+    }),
+  ),
 });
 
 export const SkillsLoadingLogOutput = Type.Object({ loads: Type.Array(SkillLoadRow) });
