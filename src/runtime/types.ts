@@ -487,7 +487,7 @@ export interface TaskRequest {
   /** Glob patterns filtering which tools are available. Matches use the same logic as chat. */
   allowedTools?: string[];
   /**
-   * Skills, by catalog name, the run is given in full in its opening message,
+   * Skills, by catalog name, the run is given in full in its system prompt,
    * before its first model call. A name the workspace does not offer refuses the
    * run (`DeclaredSkillsUnavailableError`).
    */

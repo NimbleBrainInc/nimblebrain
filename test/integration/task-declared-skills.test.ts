@@ -3,8 +3,9 @@
  * before its first model call — never left to the model choosing to load them.
  *
  * Covers the run-start door (`executeTask` with `skills`): the body rides the
- * opening message, a declared skill the turn already composes reaches the model
- * once and is not held for again, an unknown name or an unreadable body fails
+ * stable, cached system prompt that runs with different inputs share, a
+ * declared skill the turn already composes reaches the model once and is not
+ * held for again, an unknown name or an unreadable body fails
  * the run before any model call, and the run reports what it was given
  * (`skillsDelivered`). Also: a run limited by `allowedTools` can still open the
  * skill catalog.
@@ -195,7 +196,7 @@ afterAll(async () => {
 });
 
 describe("a task's declared skills", () => {
-  it("reach the model in the opening message, before its first model call", async () => {
+  it("reach the model in the system prompt, before its first model call", async () => {
     prompts = [];
     executed = 0;
     const result = await runtime.executeTask({
@@ -217,6 +218,37 @@ describe("a task's declared skills", () => {
     expect(prompts.some((p) => promptText(p).includes(`Not run: ${RECORD}`))).toBe(false);
     expect(executed).toBe(1);
     expect(result.skillsDelivered).toEqual([{ name: "ledger-runbook", loadedBy: "declared" }]);
+  });
+
+  it("sit in the cached system prefix, shared by runs with different inputs", async () => {
+    // A batch runs one task over many inputs. The declared bodies are the same
+    // every run, so they belong in the prefix the system breakpoint caches,
+    // not in the opening message, whose only breakpoint falls after the run's
+    // own input and so is never matched by another run.
+    const firstCall = async (prompt: string) => {
+      prompts = [];
+      await runtime.executeTask({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        prompt,
+        allowedTools: [RECORD],
+        skills: ["ledger-runbook"],
+      });
+      return prompts[0] ?? [];
+    };
+    const a = await firstCall("Record the entry for account one.");
+    const b = await firstCall("Record the entry for account two.");
+
+    const systemOf = (p: LanguageModelV4CallOptions["prompt"]) =>
+      p.find((m) => m.role === "system");
+    const sysA = systemOf(a);
+    const sysB = systemOf(b);
+    expect(sysA?.content).toContain(RUNBOOK_MARKER);
+    expect(sysA?.content).toBe(sysB?.content as string);
+    expect(sysA?.providerOptions?.anthropic?.cacheControl).toBeDefined();
+    // One copy: the opening message carries the input, not the body again.
+    const opening = a.findLast((m) => m.role === "user");
+    expect(promptText(opening ? [opening] : [])).not.toContain(RUNBOOK_MARKER);
   });
 
   it("refuse the run before any model call when one is not offered", async () => {
