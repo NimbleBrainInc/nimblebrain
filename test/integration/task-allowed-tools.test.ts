@@ -198,9 +198,9 @@ describe("an unattended run's allowedTools and the nb__ tools", () => {
     expect(shown.some((n) => n.startsWith("files__"))).toBe(true);
   });
 
-  // The skill catalog is opened only through `nb__use_skill`, so a run whose
-  // list does not name that tool is not offered one.
-  it("offers the skill catalog only when the list allows nb__use_skill", async () => {
+  // `nb__use_skill` passes any list, so every run is offered the catalog and
+  // can open it, whether or not its list names the tool.
+  it("offers the skill catalog whatever the list names", async () => {
     const systemPromptOf = async (allowedTools: string[]) => {
       recorded.calls.length = 0;
       await nbRuntime.executeTask({
@@ -215,7 +215,7 @@ describe("an unattended run's allowedTools and the nb__ tools", () => {
     const catalogInstruction = "When a task matches a listed skill, load it with `nb__use_skill`";
 
     expect(await systemPromptOf(["files__*", "nb__use_skill"])).toContain(catalogInstruction);
-    expect(await systemPromptOf(["files__*"])).not.toContain(catalogInstruction);
+    expect(await systemPromptOf(["files__*"])).toContain(catalogInstruction);
   });
 });
 

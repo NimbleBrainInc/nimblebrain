@@ -90,13 +90,13 @@ function WhatToDo({ d, set, editing }: { d: EditorDraft; set: Patch; editing: bo
       {d.doMode === "skill" && (
         <div className="field">
           <label className="field-label" htmlFor={`${id}-skill`}>
-            Skill
+            Skills
           </label>
           <input
             id={`${id}-skill`}
             className="inline-edit-input"
             value={d.skill}
-            placeholder="skill name"
+            placeholder="skill name (separate several with commas)"
             onChange={(e) => set({ skill: e.target.value })}
           />
         </div>

@@ -126,7 +126,7 @@ export declare const PlatformToolCatalog: {
         readonly create: {
             readonly input: import("@sinclair/typebox").TObject<{
                 manifest: import("@sinclair/typebox").TObject<{
-                    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                    skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">>;
                     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
@@ -197,7 +197,7 @@ export declare const PlatformToolCatalog: {
                         maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
                     }>, import("@sinclair/typebox").TNull]>>;
                     enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-                    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+                    skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
                     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
                     thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">, import("@sinclair/typebox").TNull]>>;
                     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
@@ -266,7 +266,7 @@ export declare const PlatformToolCatalog: {
                 taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 definition: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                     manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-                        skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">>;
                         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;

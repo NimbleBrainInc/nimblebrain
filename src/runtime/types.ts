@@ -480,6 +480,12 @@ export interface TaskRequest {
   /** Glob patterns filtering which tools are available. Matches use the same logic as chat. */
   allowedTools?: string[];
   /**
+   * Skills, by catalog name, the run is given in full in its opening message,
+   * before its first model call. A name the workspace does not offer refuses the
+   * run (`DeclaredSkillsUnavailableError`).
+   */
+  skills?: string[];
+  /**
    * Arbitrary metadata. The tasks executor stamps `source` and
    * `taskId` here so the run is correlated to its task in logs
    * and audit. Pass-through; the runtime does not persist a conversation.
@@ -567,4 +573,15 @@ export interface TaskResult {
   /** The account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
   usage: TurnUsage;
+  /**
+   * Every skill the run was given, or that missed it, in order: the ones it
+   * declared, the ones delivered before a held call or after a promotion, and
+   * the ones it loaded from the catalog. A task run has no conversation log, so
+   * this is where its skill loads are read back.
+   */
+  skillsDelivered?: Array<{
+    name: string;
+    loadedBy: "declared" | "before_call" | "tool_use" | "activation";
+    status?: "fetch_failed" | "capped" | "renamed_unheld";
+  }>;
 }

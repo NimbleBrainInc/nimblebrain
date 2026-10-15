@@ -75,11 +75,16 @@ export function toolNameMatchesPattern(toolName: string, pattern: string): boole
 /**
  * The tools a run limited to `allowedTools` reaches whatever its list says:
  * search and activation, which are how it finds and promotes the tools it is
- * allowed. Every other `nb__` tool reads or changes something beyond those
- * tools (a connector's resources, the owner's preferences, a skill's body), so
+ * allowed, and the skill catalog's loader, which only reads guidance the
+ * workspace already offers every run. Every other `nb__` tool reads or changes
+ * something beyond those (a connector's resources, the owner's preferences), so
  * it passes only when the list names it.
  */
-const RUN_DISCOVERY_TOOLS: ReadonlySet<string> = new Set(["nb__search", "nb__manage_tools"]);
+const RUN_DISCOVERY_TOOLS: ReadonlySet<string> = new Set([
+  "nb__search",
+  "nb__manage_tools",
+  "nb__use_skill",
+]);
 
 /** Whether a run limited to `allowedTools` may reach `toolName`. */
 export function isToolAllowedForRun(toolName: string, allowedTools: string[]): boolean {

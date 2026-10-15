@@ -54,6 +54,13 @@ One name, one skill, one delivery.
 Disabled skills are dropped at collection: the catalog must not offer something
 an operator muted.
 
+**Every run that has a catalog can open it.** `nb__use_skill` passes any
+`allowedTools` list, beside `nb__search` and `nb__manage_tools`, because loading
+guidance the workspace already offers reaches nothing the list exists to
+bound. A task that must not depend on the model choosing to load a skill names
+it in `skills`, and every run is given it before its first model call
+(ADR-0053).
+
 ## Consequences
 
 - Guidance the author could not anticipate a trigger for still reaches the model,

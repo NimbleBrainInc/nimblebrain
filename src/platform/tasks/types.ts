@@ -61,8 +61,11 @@ export interface Task {
    */
   onceDone?: OnceDone;
 
-  /** Force a specific skill match (bypass trigger/keyword matching). */
-  skill?: string;
+  /**
+   * Skills every run is given in full, in its opening message, before its first
+   * model call, by catalog name. The run is refused when one is not available.
+   */
+  skills?: string[];
 
   /** Tool allowlist (glob patterns) for this task's runs. Empty or absent: every tool. */
   allowedTools?: string[];
@@ -634,6 +637,25 @@ export interface TaskRunResult {
   structured?: unknown;
   /** Why the run failed or did not start, as its record says. */
   error?: string;
+  /**
+   * Every skill the run was given, or that missed it, in order. Absent when the
+   * run loaded none.
+   */
+  skillsDelivered?: RunSkillDelivery[];
+}
+
+/** One skill reaching (or missing) a run. See the runtime's `SkillDelivery`. */
+export interface RunSkillDelivery {
+  name: string;
+  /**
+   * `declared`: in the opening message, because the task names it.
+   * `before_call`: delivered while the first call to its tool was held.
+   * `tool_use`: delivered on a promotion or after a call that ran.
+   * `activation`: the run loaded it from the catalog.
+   */
+  loadedBy: "declared" | "before_call" | "tool_use" | "activation";
+  /** Set when a skill bound to a called tool did not arrive, and why. */
+  status?: "fetch_failed" | "capped" | "renamed_unheld";
 }
 
 // ---------------------------------------------------------------------------
@@ -678,7 +700,7 @@ export type UpdateTaskInput = Partial<
     | "description"
     | "prompt"
     | "schedule"
-    | "skill"
+    | "skills"
     | "allowedTools"
     | "inputSchema"
     | "outputSchema"

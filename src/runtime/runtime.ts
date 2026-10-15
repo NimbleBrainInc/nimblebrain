@@ -174,7 +174,7 @@ import type {
   Layer3SkillEntry,
   PromptAppInfo,
 } from "../prompt/compose.ts";
-import { composeSystemSegments } from "../prompt/compose.ts";
+import { composeSystemSegments, formatDeclaredSkillBlock } from "../prompt/compose.ts";
 import {
   type ActivatableSkill,
   collectActivatableSkills,
@@ -274,6 +274,7 @@ import {
   ConversationAccessDeniedError,
   ConversationNotFoundError,
   ConversationWorkspaceAccessDeniedError,
+  DeclaredSkillsUnavailableError,
   DeclaredToolsUnavailableError,
   ModelNotAllowedError,
   RunInProgressError,
@@ -288,10 +289,12 @@ import {
 } from "./request-context.ts";
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
 import type {
+  DeclaredSkill,
   RunComposition,
   RunConversationBinding,
   RunHandle,
   RunSpec,
+  SkillDelivery,
   UserResourceLinkPart,
   UserTextPart,
 } from "./run-spec.ts";
@@ -1550,6 +1553,7 @@ export class Runtime {
         content: [{ type: "text", text: request.prompt }],
         userId: requestIdentity.id,
         ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
+        ...(request.skills?.length ? { skills: request.skills } : {}),
       },
       budget: {
         ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
@@ -1575,6 +1579,7 @@ export class Runtime {
       stopReason: handle.stopReason,
       ...stopDetail(handle),
       usage: handle.usage,
+      skillsDelivered: handle.skillsDelivered,
     };
   }
 
@@ -1708,10 +1713,13 @@ export class Runtime {
     // unless the prompt carries file refs, run for shape consistency with the
     // engine's message contract.
     const fileStore = this.getWorkspaceFileStore(spec.workspaceId, ownerId);
-    const messages = await rehydrateUserResources(effectiveHistory, fileStore, {
-      model: spec.model,
-      maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
-    });
+    const messages = withDeclaredSkills(
+      await rehydrateUserResources(effectiveHistory, fileStore, {
+        model: spec.model,
+        maxExtractedTextSize: this.getFilesConfig().maxExtractedTextSize,
+      }),
+      composed.declaredSkills,
+    );
 
     const perRequestHooks = this.buildRunHooks(spec, binding, messageBudget.budget);
 
@@ -1757,14 +1765,19 @@ export class Runtime {
       // From the UN-rehydrated history — this is what makes surface-ONCE hold
       // across turns. A fresh one-shot run has a single user message and no
       // prior history, so its set is empty.
-      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(effectiveHistory),
+      // A declared skill is in the opening message, so no channel delivers it again.
+      alreadyInjectedConnectorSkills: [
+        ...this.collectInjectedConnectorSkills(effectiveHistory),
+        ...composed.declaredSkills.map((s) => s.name),
+      ],
       signal: spec.signal,
     });
 
     // The per-run usage accumulator is joined to the sink chain only where an
     // abort must still report — see {@link createPartialRunAccumulator}.
     const partial = createPartialRunAccumulator();
-    const sinks = this.buildRunSinks(spec, binding, partial.sink);
+    const deliveries = createSkillDeliveryLog(composed.declaredSkills);
+    const sinks = [...this.buildRunSinks(spec, binding, partial.sink), deliveries.sink];
 
     // ── The engine ──────────────────────────────────────────────────────────
     // The engine's tool router is identity-bound but WALLED to one workspace.
@@ -1845,6 +1858,7 @@ export class Runtime {
         toolCalls: partial.toolCalls,
         stopReason: "aborted",
         usage: partial.usage(spec.model),
+        skillsDelivered: deliveries.list,
       };
     } finally {
       releaseSpend();
@@ -1865,6 +1879,7 @@ export class Runtime {
         llmMs: result.llmMs,
         iterations: result.iterations,
       },
+      skillsDelivered: deliveries.list,
     };
   }
 
@@ -2109,18 +2124,18 @@ export class Runtime {
       this.loadConnectorSkillCandidates(spec.workspaceId),
       suppressed,
     );
-    // The catalog is loaded through `nb__use_skill`, so a run whose list does
-    // not name that tool gets no catalog rather than one it cannot open.
-    const skillCatalog =
-      runAllowedTools && !isToolAllowedForRun("nb__use_skill", runAllowedTools)
-        ? []
-        : toCatalogEntries(
-            collectActivatableSkills({
-              fsCapability: poolCapability,
-              connectorCapability,
-              connectorCandidates: connectorOverlayCandidates,
-            }),
-          );
+    // Every run can open the catalog: `nb__use_skill` passes any `allowedTools`
+    // (`isToolAllowedForRun`), so the catalog is never offered unopenable.
+    const activatable = collectActivatableSkills({
+      fsCapability: poolCapability,
+      connectorCapability,
+      connectorCandidates: connectorOverlayCandidates,
+    });
+    const skillCatalog = toCatalogEntries(activatable);
+    const declaredSkills = await resolveDeclaredSkills(spec.input.skills, activatable, [
+      ...requestContextSkills.map((s) => s.manifest.name),
+      ...composedSkillNames(selectedLayer3, skill),
+    ]);
 
     // Task mode prepends TASK_IDENTITY so an unattended run produces a
     // deliverable rather than a conversational reply. The runtime owns that
@@ -2156,6 +2171,7 @@ export class Runtime {
         overlays: connectorOverlayCandidates,
         alreadyComposed: composedSkillNames(selectedLayer3, skill),
       }),
+      declaredSkills,
       stableSystem,
       volatileHead,
       systemPrompt,
@@ -6267,6 +6283,57 @@ function isReportableAbort(spec: RunSpec, signal: AbortSignal | undefined): bool
   return spec.onAbort === "partial" && signal?.aborted === true;
 }
 
+/**
+ * Prepend the run's declared skills to the message it opens on, each in the
+ * containment an activated skill uses, so the run reads them before its job.
+ * The opening message is the last one: a run that declares skills is
+ * unattended and has no history.
+ */
+function withDeclaredSkills(
+  messages: LanguageModelV4Message[],
+  declared: DeclaredSkill[],
+): LanguageModelV4Message[] {
+  const last = messages[messages.length - 1];
+  if (declared.length === 0 || last?.role !== "user") return messages;
+  const blocks = declared.map((s) => ({
+    type: "text" as const,
+    text: formatDeclaredSkillBlock(s.name, s.scope, s.body),
+  }));
+  return [...messages.slice(0, -1), { ...last, content: [...blocks, ...last.content] }];
+}
+
+/**
+ * Record every skill a run is given, and every bound skill that missed it, for
+ * a caller with no conversation log to read the events back from. A sink in
+ * the run's chain, so it holds what happened before an abort as well.
+ */
+function createSkillDeliveryLog(declared: DeclaredSkill[]): {
+  sink: EventSink;
+  list: SkillDelivery[];
+} {
+  const list: SkillDelivery[] = declared.map((s) => ({ name: s.name, loadedBy: "declared" }));
+  const sink: EventSink = {
+    emit(event) {
+      if (event.type === "connector.skill.injected") {
+        const { skillName, heldToolCallId } = event.data;
+        list.push({
+          name: skillName,
+          loadedBy: heldToolCallId !== undefined ? "before_call" : "tool_use",
+        });
+      } else if (event.type === "skill.activated") {
+        list.push({ name: event.data.skillName, loadedBy: "activation" });
+      } else if (event.type === "skill.not_delivered") {
+        list.push({
+          name: event.data.skillName,
+          loadedBy: "before_call",
+          status: event.data.reason,
+        });
+      }
+    },
+  };
+  return { sink, list };
+}
+
 /** The user message a run opens on, in stored form. */
 function buildOpeningMessage(input: RunSpec["input"]): StoredMessage {
   return {
@@ -6419,6 +6486,40 @@ function buildWorkspaceContext(
 }
 
 /** A skill body loader as the engine's surface-once channel takes it: the body, or `null`. */
+/**
+ * The skills an unattended run declared, resolved to the bodies its opening
+ * message carries. A name the turn already composes into its system prompt
+ * (`composedNames`: the `always` skills, tool-affinity selection, and the trigger
+ * match) needs no delivery. A name the workspace does not offer refuses the
+ * run before its first model call (`DeclaredSkillsUnavailableError`), as an
+ * unreachable declared tool does: the owner named it as the run's job. A body
+ * that cannot be fetched fails the run as an ordinary failure, and the task's
+ * next run tries again.
+ */
+async function resolveDeclaredSkills(
+  names: string[] | undefined,
+  activatable: ActivatableSkill[],
+  composedNames: string[],
+): Promise<DeclaredSkill[]> {
+  if (!names?.length) return [];
+  const composed = new Set(composedNames);
+  const byName = new Map(activatable.map((s) => [s.name, s]));
+  const wanted = [...new Set(names)].filter((n) => !composed.has(n));
+  const unavailable = wanted.filter((n) => !byName.has(n));
+  if (unavailable.length > 0) throw new DeclaredSkillsUnavailableError(unavailable);
+  return Promise.all(
+    wanted.map(async (name) => {
+      const skill = byName.get(name) as ActivatableSkill;
+      const loaded = skill.loadBody
+        ? await skill.loadBody()
+        : { ok: true as const, body: skill.body };
+      if (!loaded.ok)
+        throw new Error(`Declared skill "${name}" could not be fetched (${loaded.reason}).`);
+      return { name, scope: skill.scope, body: loaded.body };
+    }),
+  );
+}
+
 /** The skills a turn composed into its prompt: tool-affinity selection and the trigger match. */
 function composedSkillNames(selected: SelectedSkill[], matched: Skill | null): string[] {
   const names = selected.map((s) => s.skill.manifest.name);
