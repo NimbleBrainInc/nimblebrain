@@ -24,6 +24,7 @@
  * See `src/platform/AGENTS.md` § 1.4 for the cross-cutting rule.
  */
 
+import type { ThinkingEffort } from "../../engine/types.ts";
 import { requireQualifiedModelId } from "../../model/model-id.ts";
 import { parseModelSlotRef } from "../../model/slots.ts";
 import { computeBudgetResetAt, computeNextRunAt, setNextRunAt } from "./scheduler.ts";
@@ -121,6 +122,7 @@ export interface DomainCreateInput {
   description?: string;
   skills?: string[];
   model?: string;
+  thinkingEffort?: ThinkingEffort;
   maxIterations?: number;
   maxInputTokens?: number;
   maxRunDurationMs?: number;
@@ -151,6 +153,8 @@ export interface DomainUpdatePatch {
   skills?: string[] | null;
   /** `null` removes it: runs use the workspace default model. */
   model?: string | null;
+  /** `null` removes it: runs reason at the workspace setting. */
+  thinkingEffort?: ThinkingEffort | null;
   maxIterations?: number | null;
   maxInputTokens?: number | null;
   maxRunDurationMs?: number | null;
@@ -289,6 +293,7 @@ export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): Cr
     maxInputTokens: input.maxInputTokens,
     maxRunDurationMs: input.maxRunDurationMs,
     model: input.model,
+    ...(input.thinkingEffort ? { thinkingEffort: input.thinkingEffort } : {}),
     tokenBudget: input.tokenBudget,
     enabled: input.enabled ?? true,
     source: input.source ?? "agent",
@@ -347,6 +352,7 @@ const UPDATABLE_FIELDS = [
   "maxInputTokens",
   "maxRunDurationMs",
   "model",
+  "thinkingEffort",
   "enabled",
   "tokenBudget",
 ] as const satisfies readonly (keyof DomainUpdatePatch)[];

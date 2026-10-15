@@ -1563,6 +1563,7 @@ export class Runtime {
         ...(request.spendAccounts ? { spendAccounts: request.spendAccounts } : {}),
       },
       model: this.resolveRequestModelString(request.model),
+      ...(request.thinkingEffort ? { thinkingEffort: request.thinkingEffort } : {}),
       ...(request.signal ? { signal: request.signal } : {}),
       ...(request.runId ? { runId: request.runId } : {}),
       ...(requestSink ? { sink: requestSink } : {}),
@@ -1681,7 +1682,7 @@ export class Runtime {
     });
     const resolvedThinking = resolveThinking({
       configMode: this.config.thinking,
-      configEffort: this.config.thinkingEffort,
+      configEffort: spec.thinkingEffort ?? this.config.thinkingEffort,
       configBudgetTokens: this.config.thinkingBudgetTokens,
       model: spec.model,
     });

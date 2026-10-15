@@ -33,6 +33,7 @@
 
 ### Added
 
+- **A task sets its own reasoning depth.** `thinkingEffort` on `tasks__create` / `tasks__update` (`null` clears it) replaces the instance's `thinkingEffort` for that task's runs, so a frequent, mechanical task can reason less without changing chat. An operator `thinking` of `off` or `adaptive` still wins. [Docs](https://docs.nimblebrain.ai/using/tasks/#limiting-spend-and-tools).
 - **Apps and the agent open things by URI.** `ai.nimblebrain/open { uri }` and `nb__open_app { uri }` open a conversation (`conversation://<id>`), an app's home (its `ui://` resource), or the record of whichever app advertises a resource template matching the URI; the host answers whether it opened. `ai.nimblebrain/open-connector-settings` opens the sender's own settings. Needs `@nimblebrain/synapse` 0.33.0 ([ADR-0052](adr/0052-a-view-opens-what-it-names-by-uri.md)). [Docs](https://docs.nimblebrain.ai/apps/bridge/#ainimblebrainopen).
 - **Platform tools declare their output.** Every tool of the built-in apps (skills, files, conversations, tasks, notifications, usage, hooks, compose), and `nb__use_skill`, publishes an `outputSchema` on `tools/list` and returns matching `structuredContent`, so a client, `/mcp/<wsId>` included, reads a result without parsing text.
 - **A connector's prompt can ask an outside client for input.** `prompts/get` through `/mcp/<wsId>` relays a connector's `input_required` answer as `tools/call` does. [Docs](https://docs.nimblebrain.ai/mcp/protocol-support/#as-a-server-to-external-clients).

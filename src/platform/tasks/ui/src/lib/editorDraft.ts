@@ -3,7 +3,7 @@
  * stored task, and the create / update / inline-run arguments it makes.
  */
 import type { ScheduleSpec } from "../components/SchedulePicker.tsx";
-import type { OnPoorResult, TaskDetail } from "../types.ts";
+import type { OnPoorResult, TaskDetail, ThinkingEffort } from "../types.ts";
 import {
   type CriterionDraft,
   draftsValid,
@@ -48,6 +48,8 @@ export interface EditorDraft {
   enabled: boolean;
   allowedTools: string;
   model: string;
+  /** Carried from the stored task unedited; the form has no control for it. */
+  thinkingEffort?: ThinkingEffort;
   maxIterations: string;
   maxRunDurationSec: string;
   maxInputTokens: string;
@@ -165,6 +167,7 @@ export function draftFromDetail(d: TaskDetail): EditorDraft {
     enabled: d.enabled,
     allowedTools: (d.allowedTools ?? []).join(", "),
     model: d.model ?? "",
+    ...(d.thinkingEffort ? { thinkingEffort: d.thinkingEffort } : {}),
     maxIterations: str(d.maxIterations),
     maxRunDurationSec: d.maxRunDurationMs ? String(d.maxRunDurationMs / 1000) : "",
     maxInputTokens: str(d.maxInputTokens),
@@ -222,6 +225,7 @@ export interface BuiltDefinition {
   onPoorResult?: OnPoorResult;
   allowedTools?: string[];
   model?: string;
+  thinkingEffort?: ThinkingEffort;
   maxIterations?: number;
   maxRunDurationMs?: number;
   maxInputTokens?: number;
@@ -295,6 +299,7 @@ function readLimits(d: EditorDraft, out: BuiltDefinition): void {
   const tools = parseToolList(d.allowedTools);
   if (tools.length > 0) out.allowedTools = tools;
   if (d.model.trim()) out.model = d.model.trim();
+  if (d.thinkingEffort) out.thinkingEffort = d.thinkingEffort;
   out.maxIterations = positive(d.maxIterations, "Max steps", out.problems);
   const secs = positive(d.maxRunDurationSec, "The time limit", out.problems, 10);
   if (secs !== undefined) out.maxRunDurationMs = Math.round(secs * 1000);
@@ -356,6 +361,7 @@ const DEFINITION_KEYS = [
   "onPoorResult",
   "allowedTools",
   "model",
+  "thinkingEffort",
   "maxIterations",
   "maxRunDurationMs",
   "maxInputTokens",

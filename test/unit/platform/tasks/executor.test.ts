@@ -263,6 +263,28 @@ describe("createDirectExecutor — the run input cap", () => {
   });
 });
 
+describe("createDirectExecutor — the run's thinking effort", () => {
+  async function requestFor(overrides: Partial<Task>) {
+    let seen: Parameters<TaskFn>[0] | undefined;
+    const taskFn: TaskFn = async (req) => {
+      seen = req;
+      return makeDirectTaskFn()(req);
+    };
+    await createDirectExecutor(taskFn, () => ({}))(makeTask(overrides));
+    return seen;
+  }
+
+  test("a task's thinkingEffort reaches the runtime as the run's depth", async () => {
+    const req = await requestFor({ thinkingEffort: "low" });
+    expect(req?.thinkingEffort).toBe("low");
+  });
+
+  test("a task without thinkingEffort leaves the depth to the runtime", async () => {
+    expect((await requestFor({}))?.thinkingEffort).toBeUndefined();
+    expect((await requestFor({ thinkingEffort: null }))?.thinkingEffort).toBeUndefined();
+  });
+});
+
 describe("createDirectExecutor — per-run ceilings", () => {
   const ceilings = resolveTasksConfig({
     maxRunIterations: 10,

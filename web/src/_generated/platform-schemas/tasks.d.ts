@@ -30,6 +30,7 @@ export declare const TasksCreateInput: import("@sinclair/typebox").TObject<{
     manifest: import("@sinclair/typebox").TObject<{
         skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
         maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
@@ -99,6 +100,7 @@ export declare const TasksUpdateInput: import("@sinclair/typebox").TObject<{
         enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+        thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">, import("@sinclair/typebox").TNull]>>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
         maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TNull]>>;
         maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TNull]>>;
@@ -173,6 +175,7 @@ export declare const TasksRunInput: import("@sinclair/typebox").TObject<{
         manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">>;
             allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
             maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
@@ -229,6 +232,7 @@ export declare const TasksRunBatchInput: import("@sinclair/typebox").TObject<{
         manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
             skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">>;
             allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
             maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
             maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
@@ -925,6 +929,7 @@ export declare const TaskStatusDetail: import("@sinclair/typebox").TObject<{
     ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+    thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">, import("@sinclair/typebox").TNull]>>;
     skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
@@ -1002,6 +1007,7 @@ export declare const TasksStatusOutput: import("@sinclair/typebox").TObject<{
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+        thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">, import("@sinclair/typebox").TNull]>>;
         skills: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
@@ -1502,6 +1508,7 @@ export declare const TaskRecord: import("@sinclair/typebox").TObject<{
     maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+    thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">, import("@sinclair/typebox").TNull]>>;
     enabled: import("@sinclair/typebox").TBoolean;
     ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -1586,6 +1593,7 @@ export declare const TasksCreateOutput: import("@sinclair/typebox").TObject<{
         maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+        thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">, import("@sinclair/typebox").TNull]>>;
         enabled: import("@sinclair/typebox").TBoolean;
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -1670,6 +1678,7 @@ export declare const TasksUpdateOutput: import("@sinclair/typebox").TObject<{
         maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+        thinkingEffort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"high" | "low" | "max" | "medium" | "xhigh">, import("@sinclair/typebox").TNull]>>;
         enabled: import("@sinclair/typebox").TBoolean;
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;

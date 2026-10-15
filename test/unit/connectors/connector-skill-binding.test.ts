@@ -63,7 +63,7 @@ function manager(
 }
 
 const gmailUrl =
-  "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.4.0/gmail/SKILL.md";
+  "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.5.0/gmail/SKILL.md";
 
 function connectorSkillsDir(wd: string): string {
   return new WorkspaceContext({ wsId: WS_ID, workDir: wd }).getDataPath(CONNECTOR_SKILLS_SUBDIR);
@@ -77,7 +77,7 @@ describe("ConnectorLifecycleManager.syncBoundSkills (P4)", () => {
     const lock = await m.syncBoundSkills("gmail", "gmail", WS_ID, wd);
     expect(lock).toHaveLength(1);
     expect(lock[0]!.identity).toBe("gmail");
-    expect(lock[0]!.version).toBe("v0.4.0");
+    expect(lock[0]!.version).toBe("v0.5.0");
     expect(lock[0]!.sha).toMatch(/^[0-9a-f]{64}$/);
     expect(Object.keys(lock[0]!).sort()).toEqual(["identity", "sha", "version"]);
     expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(true);

@@ -17,7 +17,12 @@
 
 import type { EventSourcedConversationStore } from "../conversation/event-sourced-store.ts";
 import type { Conversation } from "../conversation/types.ts";
-import type { ConnectorSkillCandidate, EventSink, ToolSchema } from "../engine/types.ts";
+import type {
+  ConnectorSkillCandidate,
+  EventSink,
+  ThinkingEffort,
+  ToolSchema,
+} from "../engine/types.ts";
 import type { FileReference } from "../files/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import type { SkillMatch } from "../skills/matcher.ts";
@@ -178,6 +183,13 @@ export interface RunSpec {
    * conversation runs on the model it was born with for its whole life.
    */
   model: string;
+  /**
+   * Reasoning depth for this run, in place of the configured
+   * `thinkingEffort`. It stands where that tier does in `resolveThinking`, so
+   * an operator's `thinking` of `off` or `adaptive` still wins and a model
+   * that does not reason gets none. Absent = the configured depth.
+   */
+  thinkingEffort?: ThinkingEffort;
   /** Cancellation, threaded into the engine and down to every tool call. */
   signal?: AbortSignal;
   /** The run's id, when the caller minted it ahead of the run; absent, the door mints one. */

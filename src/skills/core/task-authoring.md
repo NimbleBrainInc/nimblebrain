@@ -203,6 +203,10 @@ runs the task when a connector reports something. Tell the person:
   someone re-enables it. Suggest a daily budget for a task that runs more than a
   few times a day, and a budget for any task on an expensive model.
 - A batch: `budgetUsd` on `tasks__run_batch`.
+- Reasoning depth: `thinkingEffort` (`low`, `medium`, `high`, `xhigh`, `max`;
+  unset, the workspace setting applies). Lower it for a task that runs often
+  and mostly gathers and formats; reasoning is billed as output. It does
+  nothing when the operator turned thinking off or set it adaptive.
 
 ## When things go wrong
 
