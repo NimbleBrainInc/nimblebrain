@@ -715,25 +715,27 @@ function resolveCallPrompt(config: EngineConfig, systemPrompt: string): string {
 }
 
 /**
- * On the final allowed iteration, append the wrap-up system-reminder as a TAIL
+ * On the run's final step, append the wrap-up system-reminder as a TAIL
  * message, not by appending to the system prompt: mutating the system block
  * would bust its (1-hour) cache breakpoint — and the whole message prefix after
  * it — on the final call of every run. As a tail message the reminder rides the
  * volatile (5-minute) region and leaves the stable prefix byte-identical, so the
  * final call still reads it from cache. Merge into a trailing user turn when
  * present to avoid consecutive user messages; otherwise append a fresh one.
- * No-op on any earlier iteration.
+ * No-op when `isFinalStep` is false.
+ *
+ * The wording names no audience and no format: the same reminder ends a chat
+ * turn and a task run whose answer must match an output schema.
  */
 function appendFinalStepReminder(
   callMessages: LanguageModelV4Message[],
-  iteration: number,
-  maxIter: number,
+  isFinalStep: boolean,
 ): LanguageModelV4Message[] {
-  if (iteration !== maxIter - 1) return callMessages;
+  if (!isFinalStep) return callMessages;
   const finalStep =
     "<system-reminder>This is your final step. Do NOT call any more tools. " +
-    "Summarize what you have accomplished so far and clearly list what remains " +
-    "unfinished so the user can continue in a follow-up message.</system-reminder>";
+    "Give your final answer now with what you have; if anything remains " +
+    "unfinished, say so within that answer.</system-reminder>";
   const last = callMessages[callMessages.length - 1];
   if (last && last.role === "user" && Array.isArray(last.content)) {
     return [
@@ -742,6 +744,25 @@ function appendFinalStepReminder(
     ];
   }
   return [...callMessages, { role: "user", content: [{ type: "text", text: finalStep }] }];
+}
+
+/**
+ * Whether the run-wide input cap (`EngineConfig.maxRunInputTokens`) would
+ * likely refuse the call after this one: this call and one more of the same
+ * size would pass it. The call about to be sent is then the run's last
+ * chance to answer, so it carries the final-step reminder. Without it the
+ * model learns of the cap only when `checkBeforeCall` stops the run, and a run
+ * that writes its answer last ends with no deliverable. Calls grow as tool
+ * results accumulate, so the margin is a projection, not a guarantee; the
+ * hard stop in `checkBeforeCall` stays the backstop.
+ */
+function nearRunInputCap(
+  config: EngineConfig,
+  call: { spentInput: number; lastCallInputTokens: number; estimate: () => number },
+): boolean {
+  if (config.maxRunInputTokens === undefined) return false;
+  const projected = Math.max(call.lastCallInputTokens, call.estimate());
+  return call.spentInput + 2 * projected > config.maxRunInputTokens;
 }
 
 /**
@@ -1482,7 +1503,18 @@ export class AgentEngine {
         let callMessages = sanitizeMessages(windowed);
         const callPrompt = resolveCallPrompt(config, systemPrompt);
 
-        callMessages = appendFinalStepReminder(callMessages, iteration, maxIter);
+        const finalStep =
+          iteration === maxIter - 1 ||
+          nearRunInputCap(config, {
+            spentInput: cumulativeUsage.inputTokens,
+            lastCallInputTokens,
+            estimate: () =>
+              estimatePromptTokens(
+                [{ role: "system", content: callPrompt }, ...callMessages],
+                modelTools,
+              ),
+          });
+        callMessages = appendFinalStepReminder(callMessages, finalStep);
 
         // The run-wide input cap and the spend accounts, checked against the
         // prompt about to be sent, before it is sent.
