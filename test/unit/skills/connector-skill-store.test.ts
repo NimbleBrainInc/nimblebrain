@@ -32,6 +32,30 @@ Confirm the recipient before calling gmail__send.
 `;
 
 describe("materializeConnectorSkill", () => {
+  it("keeps an overlay's explicit empty tool-affinity through the file, so it binds no tool", () => {
+    const root = tmp();
+    const res = materializeConnectorSkill({
+      connectorSkillsDir: root,
+      serverName: "gmail",
+      overlayBody: `---
+name: gmail-reference
+description: Gmail reference material
+metadata:
+  nimblebrain:
+    tool-affinity: []
+---
+
+Label syntax reference.
+`,
+      source: "connector:gmail@v0.2.0",
+      now: "2026-01-01T00:00:00.000Z",
+    });
+    expect(res).not.toBeNull();
+    const [candidate] = readConnectorSkillCandidates(root);
+    expect(candidate?.toolAffinity).toEqual([]);
+    expect(listConnectorOverlays(root)[0]?.toolAffinity).toEqual([]);
+  });
+
   it("writes <server>/<skill>.md and re-stamps runtime fields + connector provenance", () => {
     const root = tmp();
     const res = materializeConnectorSkill({

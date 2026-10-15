@@ -368,15 +368,13 @@ export const SkillSource = Type.Object({
 export type SkillSource = Static<typeof SkillSource>;
 
 /**
- * Computed loading visibility: whether any loader path reaches a skill
- * (`wouldLoad`) and the mechanism by which it loads. `mechanism: "none"`
- * (`wouldLoad: false`) flags a dead skill — no strategy, no triggers, no tool
- * affinity — that would otherwise be silently inert. Derived by
+ * How a skill reaches the model: every turn (`always`), with the tools it is
+ * bound to (`tool_affinity`), on a trigger phrase (`trigger`), or when the model
+ * asks for it from the catalog (`on_request`). Derived by
  * `resolveLoadingMechanism`, not stored on disk.
  */
 export const SkillLoading = Type.Object({
-  wouldLoad: Type.Boolean(),
-  mechanism: StringEnum(["always", "tool_affinity", "trigger", "none"] as const),
+  mechanism: StringEnum(["always", "tool_affinity", "trigger", "on_request"] as const),
 });
 export type SkillLoading = Static<typeof SkillLoading>;
 

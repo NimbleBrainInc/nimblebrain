@@ -39,9 +39,9 @@ describe("skillMechanismLabel", () => {
     ).toEqual({ text: 'On trigger "cut a release"' });
   });
 
-  it("renders the honesty state for a skill no loader reaches", () => {
-    expect(skillMechanismLabel({ loading: { mechanism: "none" } })).toEqual({
-      text: "Won't auto-load yet",
+  it("says a catalog-only skill loads when the agent asks for it", () => {
+    expect(skillMechanismLabel({ loading: { mechanism: "on_request" } })).toEqual({
+      text: "When the agent asks for it",
     });
   });
 

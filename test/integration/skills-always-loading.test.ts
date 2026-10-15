@@ -125,10 +125,10 @@ describe("created strategy-less skill is catalog-only (not auto-loaded)", () => 
   });
 });
 
-describe("dead-state visibility", () => {
-  it("flags a hand-authored strategy-less, trigger-less skill in skills__list", async () => {
-    // Written directly to disk — never through the deriving handler — so it
-    // stays dead, exactly the population the visibility signal exists for.
+describe("catalog-only visibility", () => {
+  it("reports a strategy-less, trigger-less skill as loading on request, not dead", async () => {
+    // Written directly to disk, never through the deriving handler: a dynamic
+    // skill bound to nothing, which the catalog offers the model.
     const dir = join(testDir, "users", DEV_IDENTITY.id, "skills");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -142,14 +142,14 @@ metadata:
     priority: 50
 ---
 
-This skill can never load.
+This skill loads only when the model asks for it.
 `,
     );
 
     const list = await callToolAsDev("skills__list", { scope: "user" });
     expect(list.isError).toBe(false);
     expect(list.content).toContain(DEAD_SKILL_NAME);
-    expect(list.content).toContain("never loads");
+    expect(list.content).not.toContain("never loads");
   });
 });
 

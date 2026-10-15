@@ -69,7 +69,12 @@ declares nothing is `dynamic`, tool-affined to that server's own namespace. A
 tool-affined skill reaches the model before the first call to a tool it governs
 (ADR-0053). A server's skill bound to its whole namespace, declared or by
 default, is the one binding that a `readOnlyHint` on its own server's tool
-relaxes.
+relaxes. One rule covers every source: an absent `tool-affinity` binds a skill
+to its publisher's own namespace, and a filesystem skill's publisher has none,
+so it is catalog-only. A server that wants a catalog-only skill declares
+`tool-affinity: []`, which is kept distinct from absent through the reader, the
+overlay stamp and the synthesized manifest. A value that is not a list, or a
+list of only blank entries, reads as absent.
 
 **Reading is lenient where authoring is strict.** A discovered skill comes from
 an arbitrary server, so a malformed or absent `nimblebrain` block leaves the
