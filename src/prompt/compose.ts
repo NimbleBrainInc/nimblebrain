@@ -1028,11 +1028,12 @@ function formatSkillCatalogSection(entries: SkillCatalogEntry[]): string {
 
 /**
  * Wrap a connector-skill overlay body for surfacing into the conversation
- * history. Unlike Layer-3 skills, a connector overlay NEVER enters the
- * cached system prefix — it becomes the body of a synthetic message
- * the reconstructor emits on the first matching connector tool call, so the
- * guidance rides the append-only history rather than re-varying the prompt
- * prefix every turn.
+ * history. Unlike Layer-3 skills, a connector overlay delivered automatically
+ * never enters the cached system prefix — it becomes the body of a synthetic
+ * message the reconstructor emits on the first matching connector tool call,
+ * so the guidance rides the append-only history rather than re-varying the
+ * prompt prefix every turn. An overlay a task declares by name is the
+ * exception: it joins Layer 3, where it is identical across the task's runs.
  *
  * Containment is the same per-prompt defense `formatLayer3SkillsSection`
  * applies (connector trust is install-time; this is the per-prompt guard): the

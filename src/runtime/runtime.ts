@@ -6479,10 +6479,10 @@ function buildWorkspaceContext(
 
 /** A skill body loader as the engine's surface-once channel takes it: the body, or `null`. */
 /**
- * The skills an unattended run declared, resolved to the bodies its opening
- * message carries. A name the turn already composes into its system prompt
- * (`composedNames`: the `always` skills, tool-affinity selection, and the trigger
- * match) needs no delivery. A name the workspace does not offer refuses the
+ * The skills an unattended run declared, resolved to the bodies its system
+ * prompt carries in the Layer 3 skills section. A name the turn already
+ * composes into its system prompt (`composedNames`: the `always` skills,
+ * tool-affinity selection, and the trigger match) needs no delivery. A name the workspace does not offer refuses the
  * run before its first model call (`DeclaredSkillsUnavailableError`), as an
  * unreachable declared tool does: the owner named it as the run's job. A body
  * that cannot be fetched fails the run as an ordinary failure, and the task's
