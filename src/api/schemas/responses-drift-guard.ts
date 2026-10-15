@@ -58,8 +58,11 @@ export type DriftChatToolCall = AssertTrue<
 >;
 
 // `ChatResponse` is `ChatResult` with top-level token counts and a priced
-// `usage`. A field added to `ChatResult` must be added to the response too.
-export type DriftChatResultKeys = AssertNever<Exclude<keyof ChatResult, keyof Wire.ChatResponse>>;
+// `usage`, which carries `ChatResult.costUsd`. A field added to `ChatResult`
+// must be added to the response too.
+export type DriftChatResultKeys = AssertNever<
+  Exclude<keyof ChatResult, keyof Wire.ChatResponse | "costUsd">
+>;
 
 // The MCP SDK's content union must fit the loose wire block (one direction:
 // the wire type is a deliberate widening of an external union).

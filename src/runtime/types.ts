@@ -357,10 +357,11 @@ export interface ChatRequest {
  * Detailed usage breakdown for a single chat turn.
  *
  * Carries the canonical TokenUsage plus runtime-added fields. NO costUsd —
- * cost is a derived value computed at the API boundary from
- * `cost(model, usage)`. Storing it here would invite the same drift bug
- * that double-billed cache tokens (issue #140): a stored derived value
- * that consumers forgot to refresh when its inputs changed.
+ * a turn's cost is `ChatResult.costUsd`, priced call by call, because a sum
+ * of calls' tokens does not determine their price once a model has
+ * prompt-length rate cards. Storing it here would also invite the drift bug
+ * that double-billed cache tokens (issue #140): a stored derived value that
+ * consumers forgot to refresh when its inputs changed.
  */
 export interface TurnUsage extends TokenUsage {
   model: string;
@@ -397,6 +398,12 @@ export interface ChatResult {
   stopReason: string;
   /** Detailed usage breakdown for this turn. */
   usage: TurnUsage;
+  /**
+   * The run's cost in USD: each model call priced on its own rate card, then
+   * summed. Not derivable from `usage`, which sums the calls' tokens, once a
+   * model's price depends on prompt length.
+   */
+  costUsd: number;
 }
 
 /**
@@ -573,6 +580,8 @@ export interface TaskResult {
   /** The account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
   usage: TurnUsage;
+  /** The run's cost in USD; see `ChatResult.costUsd`. */
+  costUsd: number;
   /**
    * Every skill the run was given, or that missed it, in order: the ones it
    * declared, the ones delivered before a held call or after a promotion, and

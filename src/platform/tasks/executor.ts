@@ -14,7 +14,6 @@ import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/tasks.
 import type { ThinkingEffort } from "../../engine/types.ts";
 import { wrapContained } from "../../prompt/compose.ts";
 import type { AdmissionLease } from "../../runtime/admission.ts";
-import { estimateCost } from "../../usage/cost.ts";
 import { checkAgainstSchema, parseJsonDeliverable } from "./json-schema.ts";
 import {
   BATCH_ACCOUNT_PREFIX,
@@ -143,12 +142,11 @@ export interface TaskFnResult {
   finishReasonRaw?: string;
   /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
+  /** The run's cost in USD, each call priced on its own card (runtime `TaskResult.costUsd`). */
+  costUsd?: number;
   /** Every skill the run was given, or that missed it (runtime `TaskResult`). */
   skillsDelivered?: RunSkillDelivery[];
-  /**
-   * The run's usage (runtime `TurnUsage`): `model` and the cache and reasoning
-   * counts price it (`costUsd`).
-   */
+  /** The run's usage (runtime `TurnUsage`). */
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -750,8 +748,8 @@ function mapResultToRun(
   // Recorded whatever the status, and read without any criteria: the derived
   // label never reads Succeeded while part of the work did not happen.
   const unrecovered = unresolvedFailures(accounted).map((u) => u.name);
-  // Priced as the door debits a `usd` spend account: the run model's rates.
-  const costUsd = data.usage.model ? estimateCost(data.usage.model, data.usage) : undefined;
+  // Priced as the door debits a `usd` spend account: each call on its own card.
+  const costUsd = data.costUsd;
 
   return {
     // Adopt the runtime's runId verbatim — the run, its index summary, and its

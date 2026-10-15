@@ -113,6 +113,7 @@ beforeEach(async () => {
       toolCalls: [],
       stopReason: "complete",
       usage: { inputTokens: 1, outputTokens: 1, model: "echo", llmMs: 1, iterations: 1 },
+      costUsd: 0,
     };
   };
 });

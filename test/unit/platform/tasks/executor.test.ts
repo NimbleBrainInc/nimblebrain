@@ -241,6 +241,17 @@ describe("createDirectExecutor — a task's declared skills", () => {
   });
 });
 
+describe("createDirectExecutor — the run's cost", () => {
+  test("records the runtime's per-call costUsd, not a price of the summed usage", async () => {
+    const executor = createDirectExecutor(
+      async (req) => ({ ...(await makeDirectTaskFn()(req)), costUsd: 1.2345 }),
+      () => ({}),
+    );
+    const { run } = await executor(makeTask());
+    expect(run.costUsd).toBe(1.2345);
+  });
+});
+
 describe("createDirectExecutor — the run input cap", () => {
   async function requestFor(overrides: Partial<Task>) {
     let seen: Parameters<TaskFn>[0] | undefined;

@@ -244,6 +244,8 @@ export interface RunHandle {
   /** The account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
   usage: TurnUsage;
+  /** The run's cost in USD; see `ChatResult.costUsd`. */
+  costUsd: number;
   /** Every skill the run was given, or that missed it, in order. */
   skillsDelivered: SkillDelivery[];
 }

@@ -1952,6 +1952,27 @@ describe("AgentEngine", () => {
         expect(po.anthropic?.effort).toBe("xhigh");
       });
 
+      it("sends Haiku 5.5 adaptive thinking with an effort tier, never a budget", async () => {
+        // Haiku 5.5 rejects `thinking.type=enabled` with a 400, so even the
+        // budget-shaped `enabled` mode reaches it as adaptive + effort.
+        const effort = await providerOptionsFor("anthropic:claude-haiku-5-5", {
+          mode: "effort",
+          effort: "low",
+          source: "operator",
+        });
+        expect(effort.anthropic?.thinking).toEqual({ type: "adaptive", display: "summarized" });
+        expect(effort.anthropic?.effort).toBe("low");
+
+        const enabled = await providerOptionsFor("anthropic:claude-haiku-5-5", {
+          mode: "enabled",
+          budgetTokens: 4096,
+          effort: "medium",
+          source: "operator",
+        });
+        expect(enabled.anthropic?.thinking).toEqual({ type: "adaptive", display: "summarized" });
+        expect(enabled.anthropic?.effort).toBe("medium");
+      });
+
       it("sizes a budget from the tier for budget-shaped Anthropic models", async () => {
         // Sonnet 4.6 takes `enabled` + a token budget. The tier is converted
         // here, not upstream, so the resolver stays provider-neutral.

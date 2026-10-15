@@ -115,4 +115,38 @@ describe("buildProviderModels", () => {
     );
     expect(models["grok-big"].limits.output).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
   });
+
+  it("keeps context tiers as prompt-length rate cards, ascending", () => {
+    const models = buildProviderModels(
+      "anthropic",
+      provider({
+        m: raw({
+          cost: {
+            input: 1,
+            output: 5,
+            cache_read: 0.1,
+            tiers: [
+              { input: 4, output: 20, tier: { type: "context", size: 500_000 } },
+              { input: 2, output: 10, cache_read: 0.2, tier: { type: "context", size: 200_000 } },
+              { input: 9, output: 9, tier: { type: "batch" } },
+            ],
+          },
+        }),
+      }),
+    );
+    expect(models.m?.cost).toEqual({
+      input: 1,
+      output: 5,
+      cacheRead: 0.1,
+      tiers: [
+        { aboveInputTokens: 200_000, input: 2, output: 10, cacheRead: 0.2 },
+        { aboveInputTokens: 500_000, input: 4, output: 20 },
+      ],
+    });
+  });
+
+  it("omits tiers for a model with one rate card", () => {
+    const models = buildProviderModels("anthropic", provider({ m: raw() }));
+    expect(models.m?.cost).toEqual({ input: 3, output: 15 });
+  });
 });

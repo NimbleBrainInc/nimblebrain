@@ -53,6 +53,23 @@ export interface UsageRates {
   cacheWrite5m: number;
   cacheWrite1h: number;
   reasoning?: number;
+  /**
+   * Rate cards for longer prompts, ascending by `aboveInputTokens`, flattened
+   * the same way as the base rates. Stored with the line so a replay picks the
+   * card the call was billed on. Absent for a model with one rate card.
+   */
+  tiers?: UsageRateTier[];
+}
+
+/** One prompt-length rate card; see `ModelCostTier` in the model catalog. */
+export interface UsageRateTier {
+  aboveInputTokens: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite5m: number;
+  cacheWrite1h: number;
+  reasoning?: number;
 }
 
 /**
