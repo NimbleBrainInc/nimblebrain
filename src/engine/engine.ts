@@ -2191,6 +2191,8 @@ export class AgentEngine {
       Promise.all(claims.map(({ claim }) => claim.body)),
       ctx.config.signal,
     );
+    // A cancelled run ends here: the call neither runs nor waits for its guidance.
+    throwIfAborted(ctx.config.signal);
     if (bodies === null) return null;
 
     const delivered: string[] = [];

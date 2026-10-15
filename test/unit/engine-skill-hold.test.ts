@@ -192,6 +192,24 @@ describe("engine: a bound skill reaches the model before its tool's first call r
     expect(gaps[0]?.data).toMatchObject({ skillName: DRAFTING.name, reason: "fetch_failed" });
   });
 
+  it("ends a run cancelled while guidance loads, without running the call", async () => {
+    const controller = new AbortController();
+    const r = run({
+      turns: [[{ id: "c1", name: "outreach__draft_email" }]],
+      candidates: [
+        {
+          ...DRAFTING,
+          body: "",
+          loadBody: () => new Promise<string | null>((done) => setTimeout(() => done("late"), 300)),
+        },
+      ],
+      extra: { signal: controller.signal },
+    });
+    setTimeout(() => controller.abort(), 20);
+    await expect(r.result).rejects.toThrow();
+    expect(r.executed).toEqual([]);
+  });
+
   it("caps one hold's guidance and names what it left out", async () => {
     const big = (n: number): ConnectorSkillCandidate => ({
       ...DRAFTING,
