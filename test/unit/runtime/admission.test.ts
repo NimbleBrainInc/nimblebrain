@@ -366,6 +366,7 @@ describe("Runtime.executeTask — admission at the door", () => {
         toolCalls: [],
         stopReason: "complete",
         usage: { inputTokens: 0, outputTokens: 0, model: "test:model", llmMs: 0, iterations: 1 },
+        skillsDelivered: [],
       };
     };
     return { runtime: rt, gates, specs };

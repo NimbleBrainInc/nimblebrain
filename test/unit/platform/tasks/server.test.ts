@@ -1792,7 +1792,7 @@ describe("the tool surface an agent reads", () => {
         { type: "interval", intervalMs: 60_000 },
         {
           description: "d",
-          skill: "s",
+          skills: ["s"],
           model: "anthropic:claude-haiku-4-5",
           allowedTools: ["web__*"],
           maxIterations: 10,
@@ -1805,7 +1805,7 @@ describe("the tool surface an agent reads", () => {
     );
     const cleared = [
       "description",
-      "skill",
+      "skills",
       "model",
       "allowedTools",
       "maxIterations",
