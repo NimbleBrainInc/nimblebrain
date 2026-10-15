@@ -86,7 +86,7 @@ export interface LedgerSkill {
   connector?: string;
   scope: LedgerSkillScope;
   tokens: number;
-  loadedBy: "always" | "tool_affinity" | "trigger";
+  loadedBy: "always" | "tool_affinity" | "trigger" | "task";
   reason: string;
 }
 

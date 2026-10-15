@@ -1006,6 +1006,30 @@ describe("Scheduler — backoff", () => {
     expect(defOf(scheduler, auto.id)!.consecutiveErrors).toBe(4);
   });
 
+  it("records a run refused for unavailable declared skills as a failure", async () => {
+    const auto = makeTask({
+      consecutiveErrors: 3,
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    const defs = new Map<string, Task>();
+    defs.set(auto.id, auto);
+    seedDefs(tmpDir, defs);
+
+    const refused = Object.assign(
+      new Error("Declared skill unavailable: invoice-runbook. The run did not start."),
+      { code: "declared_skills_unavailable" },
+    );
+    const scheduler = new Scheduler(createThrowingExecutor(refused), { workDir: tmpDir });
+    scheduler.start();
+    const run = await scheduler.runNow(WS, OWNER, auto.id);
+    scheduler.stop();
+
+    expect(run?.status).toBe("failure");
+    expect(run?.error).toContain("invoice-runbook");
+    expect(run?.transient).toBe(false);
+    expect(defOf(scheduler, auto.id)!.consecutiveErrors).toBe(4);
+  });
+
   it("after 1 failure, next run delayed by 30s", async () => {
     const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),

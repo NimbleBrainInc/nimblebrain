@@ -73,8 +73,8 @@ export declare const AssembledContextSkill: import("@sinclair/typebox").TObject<
     connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     scope: import("@sinclair/typebox").TString;
     tokens: import("@sinclair/typebox").TNumber;
-    /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
-    loadedBy: import("@sinclair/typebox").TUnsafe<"always" | "tool_affinity" | "trigger">;
+    /** The loading mechanism: always-on context, tool-affinity, trigger match, or named by the task. */
+    loadedBy: import("@sinclair/typebox").TUnsafe<"always" | "task" | "tool_affinity" | "trigger">;
     reason: import("@sinclair/typebox").TString;
 }>;
 export type AssembledContextSkill = Static<typeof AssembledContextSkill>;
@@ -147,8 +147,8 @@ export declare const ComposeAssembledContextOutput: import("@sinclair/typebox").
         connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         scope: import("@sinclair/typebox").TString;
         tokens: import("@sinclair/typebox").TNumber;
-        /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
-        loadedBy: import("@sinclair/typebox").TUnsafe<"always" | "tool_affinity" | "trigger">;
+        /** The loading mechanism: always-on context, tool-affinity, trigger match, or named by the task. */
+        loadedBy: import("@sinclair/typebox").TUnsafe<"always" | "task" | "tool_affinity" | "trigger">;
         reason: import("@sinclair/typebox").TString;
     }>>;
     /** Present only when the run recorded them (not emitted on current runs). */

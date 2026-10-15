@@ -23,7 +23,15 @@ import {
   type RunSpendAccount,
   type TaskRunTrigger,
 } from "./scheduler.ts";
-import type { RunFileRef, RunToolCall, Task, TaskRun, TaskRunResult } from "./types.ts";
+import {
+  type RunFileRef,
+  type RunToolCall,
+  skillOnlyPrompt,
+  type Task,
+  type TaskRun,
+  type TaskRunResult,
+  taskSkillNames,
+} from "./types.ts";
 
 /** Max chars of the deliverable kept in the run-list `resultPreview`. The full
  *  output lives in the `TaskRunResult` sidecar. */
@@ -61,6 +69,11 @@ export interface TaskFnRequest {
    */
   trigger?: "schedule" | "manual" | "event";
   model?: string;
+  /**
+   * Skills the run carries from its first model call, by name (`Task.skill`):
+   * composed into its cached system prompt rather than loaded by a tool call.
+   */
+  skills?: string[];
   maxIterations?: number;
   maxRunInputTokens?: number;
   /**
@@ -212,10 +225,14 @@ function buildRequest(
   // not reach a cached prefix. The task's own instruction stays last, so
   // the thing the agent is being asked to do is the thing it reads last; an
   // output schema's instruction follows it, since it shapes the answer.
+  // A skill-only task (the editor's "a skill" mode) stores no prompt; its run is
+  // still told what to do, the same instruction an inline one-off gets.
+  const skills = taskSkillNames(task.skill);
+  const instruction = task.prompt || (skills.length > 0 ? skillOnlyPrompt(skills) : "");
   const prompt = [
     input?.preamble,
     input?.data !== undefined ? renderRunInput(input.data) : undefined,
-    task.prompt,
+    instruction,
     task.outputSchema ? renderOutputSchemaInstruction(task.outputSchema) : undefined,
   ]
     .filter((part): part is string => typeof part === "string" && part.length > 0)
@@ -235,6 +252,7 @@ function buildRequest(
     },
   };
   if (task.model != null) req.model = task.model;
+  if (skills.length > 0) req.skills = skills;
   // Already clamped to the operator's per-run ceilings (see
   // `effectiveRunLimits`). Iterations are always capped; input tokens only when
   // the definition or the operator sets a cap.

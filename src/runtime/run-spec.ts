@@ -111,6 +111,11 @@ export interface RunInput {
    * activate and call.
    */
   allowedTools?: string[];
+  /**
+   * Skills the run's definition names, composed into the stable prompt prefix
+   * from the first call. Unattended only; a name nothing resolves refuses the run.
+   */
+  skills?: string[];
   /** Scopes the run to one app's briefing and tool surface. Chat only. */
   appContext?: AppContext;
 }

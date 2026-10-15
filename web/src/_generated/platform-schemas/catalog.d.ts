@@ -38,7 +38,7 @@ export declare const PlatformToolCatalog: {
             readonly input: import("@sinclair/typebox").TObject<{
                 conversation_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                loaded_by: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"activation" | "always" | "before_call" | "tool_affinity" | "tool_use" | "trigger">>;
+                loaded_by: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"activation" | "always" | "before_call" | "task" | "tool_affinity" | "tool_use" | "trigger">>;
                 since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 until: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
@@ -126,7 +126,7 @@ export declare const PlatformToolCatalog: {
         readonly create: {
             readonly input: import("@sinclair/typebox").TObject<{
                 manifest: import("@sinclair/typebox").TObject<{
-                    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
                     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
@@ -196,7 +196,7 @@ export declare const PlatformToolCatalog: {
                         maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
                     }>, import("@sinclair/typebox").TNull]>>;
                     enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-                    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+                    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>, import("@sinclair/typebox").TNull]>>;
                     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
                     allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
                     maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TNull]>>;
@@ -264,7 +264,7 @@ export declare const PlatformToolCatalog: {
                 taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 definition: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                     manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-                        skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
                         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                         maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;

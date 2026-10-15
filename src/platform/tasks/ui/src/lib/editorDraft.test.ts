@@ -115,6 +115,44 @@ describe("updateArgs", () => {
   });
 });
 
+describe("a skill-mode task", () => {
+  const SKILLED: TaskDetail = {
+    ...DETAIL,
+    prompt: "",
+    skill: ["invoice-runbook", "close-checklist"],
+  };
+
+  test("reads a stored list into one comma-separated field", () => {
+    const d = draftFromDetail(SKILLED);
+    expect(d.doMode).toBe("skill");
+    expect(d.skill).toBe("invoice-runbook, close-checklist");
+  });
+
+  test("an unchanged list sends no manifest", () => {
+    const d = draftFromDetail(SKILLED);
+    expect(updateArgs("research", d, d).args).toEqual({ taskId: "research" });
+  });
+
+  test("one name saves as a string, several as a list", () => {
+    const one = {
+      ...emptyDraft(),
+      name: "One",
+      doMode: "skill" as const,
+      skill: " invoice-runbook ",
+    };
+    expect(createArgs(one).args?.manifest).toMatchObject({ skill: "invoice-runbook" });
+    const two = { ...one, skill: "invoice-runbook, close-checklist," };
+    expect(createArgs(two).args?.manifest).toMatchObject({
+      skill: ["invoice-runbook", "close-checklist"],
+    });
+  });
+
+  test("an empty skill field is refused", () => {
+    const d = { ...emptyDraft(), name: "None", doMode: "skill" as const, skill: " , " };
+    expect(createArgs(d).problems).toContain("Name the skill to carry out.");
+  });
+});
+
 describe("testRunArgs", () => {
   test("runs the draft inline with its input, recording verdicts only", () => {
     const d = draftFromDetail(DETAIL);

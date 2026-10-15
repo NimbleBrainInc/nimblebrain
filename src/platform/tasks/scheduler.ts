@@ -540,6 +540,11 @@ function classifyRunFailure(err: unknown): {
   if ((err as { code?: string })?.code === "declared_tools_unavailable") {
     return { status: "failure", error: errorMsg, transient: false };
   }
+  // A skill the task names that the workspace cannot give the run
+  // (`DeclaredSkillsUnavailableError`): the same failure, for the same reason.
+  if ((err as { code?: string })?.code === "declared_skills_unavailable") {
+    return { status: "failure", error: errorMsg, transient: false };
+  }
   if (errorMsg.includes("timed out")) {
     return {
       status: "timeout",

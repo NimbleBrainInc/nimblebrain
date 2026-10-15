@@ -98,6 +98,13 @@ export interface RequestContext {
    */
   unattended?: boolean;
   /**
+   * Skills the run's definition names (`TaskRequest.skills`), all composed into
+   * its system prompt before the first model call. Set once by the runtime for
+   * an unattended run that names any; `nb__use_skill` reads it to answer
+   * `already_loaded` instead of delivering a second copy.
+   */
+  taskSkills?: readonly string[];
+  /**
    * True when the call came from the first-party web shell: its REST
    * `tools/call`, or an app view's `/mcp` call under a first-party credential
    * (`isAppCall`). Set by those two doors only, never from caller input, and

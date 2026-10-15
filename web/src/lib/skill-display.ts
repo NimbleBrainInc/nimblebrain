@@ -183,10 +183,11 @@ export const MECHANISM_LABEL: Record<string, string> = {
   always: "Always on",
   tool_affinity: "Matched your tools",
   trigger: "Matched what you said",
+  task: "Named by the task",
 };
 
 /** Mechanisms in the order they are shown: unconditional first, then matched. */
-const MECHANISM_ORDER = ["always", "tool_affinity", "trigger"];
+const MECHANISM_ORDER = ["always", "task", "tool_affinity", "trigger"];
 
 /**
  * Group skills by why they loaded, so a list answers that once per group rather

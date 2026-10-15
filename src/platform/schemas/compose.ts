@@ -108,8 +108,8 @@ export const AssembledContextSkill = Type.Object({
   connector: Type.Optional(Type.String()),
   scope: Type.String(),
   tokens: Type.Number(),
-  /** The loading mechanism: always-on context, tool-affinity, or trigger match. */
-  loadedBy: StringEnum(["always", "tool_affinity", "trigger"] as const),
+  /** The loading mechanism: always-on context, tool-affinity, trigger match, or named by the task. */
+  loadedBy: StringEnum(["always", "tool_affinity", "trigger", "task"] as const),
   reason: Type.String(),
 });
 export type AssembledContextSkill = Static<typeof AssembledContextSkill>;

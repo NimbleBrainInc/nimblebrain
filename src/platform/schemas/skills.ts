@@ -146,13 +146,22 @@ export const SkillsLoadingLogInput = Type.Object({
   ),
   loaded_by: Type.Optional(
     StringEnum(
-      ["always", "tool_affinity", "trigger", "before_call", "tool_use", "activation"] as const,
+      [
+        "always",
+        "tool_affinity",
+        "trigger",
+        "task",
+        "before_call",
+        "tool_use",
+        "activation",
+      ] as const,
       {
         description:
-          "Filter to one loading channel. `always`/`tool_affinity`/`trigger` composed into " +
-          "the system prompt; `before_call` is a skill bound to a tool, delivered while the " +
-          "first call to that tool was held; `tool_use` is one delivered after a call that ran " +
-          "or on a promotion; `activation` is the model loading a Skill Catalog entry by name.",
+          "Filter to one loading channel. `always`/`tool_affinity`/`trigger`/`task` composed " +
+          "into the system prompt (`task`: named by the run's task definition); `before_call` " +
+          "is a skill bound to a tool, delivered while the first call to that tool was held; " +
+          "`tool_use` is one delivered after a call that ran or on a promotion; `activation` is " +
+          "the model loading a Skill Catalog entry by name.",
       },
     ),
   ),

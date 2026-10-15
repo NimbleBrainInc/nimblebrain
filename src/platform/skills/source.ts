@@ -1126,10 +1126,23 @@ async function handleUseSkill(
     };
   }
 
+  // A skill the run's task definition names is in its system prompt already
+  // (`RequestContext.taskSkills`, set by the runtime, never by a caller).
+  if (getRequestContext()?.taskSkills?.includes(name)) {
+    const out: SkillsUseOutput = { status: "already_loaded", name };
+    return {
+      content: textContent(
+        `Skill "${name}" is already loaded in this run — its guidance is in the system prompt; no need to load it again.`,
+      ),
+      structuredContent: out,
+      isError: false,
+    };
+  }
+
   // Already-delivered check against the CURRENT conversation (from request
   // context — never a caller-named id, so no ownership gate is needed).
-  // Task runs persist no conversation, so they skip the check and always
-  // deliver — a task is a single fresh run.
+  // Task runs persist no conversation, so they skip the check and deliver
+  // anything their definition did not already compose.
   const convId = getRequestContext()?.conversationId;
   if (convId) {
     const events = await readConvEvents(runtime, convId);

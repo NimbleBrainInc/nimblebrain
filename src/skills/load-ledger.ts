@@ -40,8 +40,9 @@ import { approxTokens } from "./tokens.ts";
 /**
  * How a skill reached the model, across every channel.
  *
- * The first three come from a `skills.loaded` entry's own `loadedBy` and name
- * the *selection* that put it in the prompt. The rest are whole channels:
+ * The first four come from a `skills.loaded` entry's own `loadedBy` and name
+ * the *selection* that put it in the prompt (`task`: the run's task definition
+ * named it). The rest are whole channels:
  * `before_call` is a bound skill delivered while the engine held the first
  * call to its tool, `tool_use` is one delivered after a call that ran or on a
  * promotion, and `activation` is the model asking for a catalog entry by name.
@@ -55,6 +56,7 @@ export type SkillLoadedBy =
   | "always"
   | "tool_affinity"
   | "trigger"
+  | "task"
   | "before_call"
   | "tool_use"
   | "activation";

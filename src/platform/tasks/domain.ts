@@ -119,7 +119,7 @@ export interface DomainCreateInput {
   schedule?: ScheduleSpec;
   kind?: TaskKind;
   description?: string;
-  skill?: string;
+  skill?: string | string[];
   model?: string;
   maxIterations?: number;
   maxInputTokens?: number;
@@ -148,7 +148,7 @@ export interface DomainUpdatePatch {
   /** `null` removes the schedule: nothing fires the task unattended. */
   schedule?: ScheduleSpec | null;
   prompt?: string;
-  skill?: string | null;
+  skill?: string | string[] | null;
   /** `null` removes it: runs use the workspace default model. */
   model?: string | null;
   maxIterations?: number | null;

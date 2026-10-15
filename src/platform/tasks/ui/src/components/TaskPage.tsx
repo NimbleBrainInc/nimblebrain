@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { StatusIcon } from "../icons.tsx";
 import { healthOf, type TaskHealth } from "../lib/attention.ts";
+import { skillNames } from "../lib/editorDraft.ts";
 import { inputSummary, runTime } from "../lib/plain.ts";
 import { readResult } from "../lib/runResult.ts";
 import type { TaskDetail, TaskRun, TaskRunResult, TaskStats, TaskSummary } from "../types.ts";
@@ -186,15 +187,16 @@ function Disclosure({
 
 /** How the task is set up, read-only and closed by default; editing is in the editor. */
 function DoesSection({ d }: { d: TaskDetail }) {
+  const skills = skillNames(d.skill);
   return (
     <Disclosure title="What it does" hint={d.scheduleHuman}>
-      {d.skill && (
+      {skills.length > 0 && (
         <p>
-          Carries out the skill <code>{d.skill}</code>.
+          Carries the skill{skills.length > 1 ? "s" : ""} <code>{skills.join(", ")}</code>.
         </p>
       )}
       {d.prompt && <p className="prose">{d.prompt}</p>}
-      {!d.prompt && !d.skill && <p className="muted">No prompt.</p>}
+      {!d.prompt && skills.length === 0 && <p className="muted">No prompt.</p>}
       {d.inputSchema && (
         <>
           <h3 className="sub-heading">Input</h3>

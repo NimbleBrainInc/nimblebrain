@@ -145,6 +145,12 @@ function inputOf(
     : { inputMode: "json", inputFields: [], inputJson: json(schema) };
 }
 
+/** A stored task's skill field as a list: one name, several, or none. */
+export function skillNames(skill: string | string[] | undefined): string[] {
+  if (skill === undefined) return [];
+  return typeof skill === "string" ? [skill] : skill;
+}
+
 /** The draft for a stored task. */
 export function draftFromDetail(d: TaskDetail): EditorDraft {
   return {
@@ -154,9 +160,9 @@ export function draftFromDetail(d: TaskDetail): EditorDraft {
     ...inputOf(d.inputSchema),
     name: d.name,
     description: d.description ?? "",
-    doMode: d.skill && !d.prompt ? "skill" : "prompt",
+    doMode: skillNames(d.skill).length > 0 && !d.prompt ? "skill" : "prompt",
     prompt: d.prompt ?? "",
-    skill: d.skill ?? "",
+    skill: skillNames(d.skill).join(", "),
     criteria: fromCriteria(d.criteria),
     confidence: str(d.confidenceThreshold),
     outputJson: json(d.outputSchema),
@@ -213,7 +219,7 @@ function positive(text: string, what: string, problems: string[], min = 1): numb
 export interface BuiltDefinition {
   problems: string[];
   body: string;
-  skill?: string;
+  skill?: string | string[];
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   criteria?: ReturnType<typeof toCriteria>;
@@ -235,8 +241,12 @@ function readDoing(d: EditorDraft, out: BuiltDefinition): void {
     if (!out.body) out.problems.push("Say what the task should do.");
     return;
   }
-  if (!d.skill.trim()) out.problems.push("Name the skill to carry out.");
-  else out.skill = d.skill.trim();
+  const names = d.skill
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
+  if (names.length === 0) out.problems.push("Name the skill to carry out.");
+  else out.skill = names.length === 1 ? names[0] : names;
 }
 
 function readSchemas(d: EditorDraft, out: BuiltDefinition): void {

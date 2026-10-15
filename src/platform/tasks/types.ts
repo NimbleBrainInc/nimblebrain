@@ -26,6 +26,23 @@ export function kindOf(task: Pick<Task, "kind">): TaskKind {
   return task.kind ?? "saved";
 }
 
+/** The skills a task's runs carry (see {@link Task.skill}), one name or many, as a list. */
+export function taskSkillNames(skill: string | string[] | undefined): string[] {
+  if (skill === undefined) return [];
+  return typeof skill === "string" ? [skill] : skill;
+}
+
+/**
+ * The instruction a run gets when its task names skills but has no prompt of
+ * its own, so a skill-only task still tells the run what to do.
+ */
+export function skillOnlyPrompt(names: readonly string[]): string {
+  const quoted = names.map((n) => `"${n}"`);
+  const list =
+    quoted.length > 1 ? `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1)}` : quoted[0];
+  return `Carry out the ${list} skill${names.length > 1 ? "s" : ""} on this run's input, and give its result as the deliverable.`;
+}
+
 export interface Task {
   /** Unique identifier. Kebab-case, derived from name. */
   id: string;
@@ -60,8 +77,13 @@ export interface Task {
    */
   onceDone?: OnceDone;
 
-  /** Force a specific skill match (bypass trigger/keyword matching). */
-  skill?: string;
+  /**
+   * The skill, or skills, every run carries: each named skill's body is composed
+   * into the run's cached system prompt before the first model call, so the run
+   * never spends a turn loading it. A name nothing in the workspace resolves
+   * refuses the run. With no prompt, a run is told to carry them out.
+   */
+  skill?: string | string[];
 
   /** Tool allowlist (glob patterns) for this task's runs. Empty or absent: every tool. */
   allowedTools?: string[];

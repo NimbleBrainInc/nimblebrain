@@ -318,9 +318,14 @@ const AllowedToolsField = Type.Array(Type.String({ minLength: 1 }), {
     "the list says.",
 });
 
-const SkillField = Type.String({
-  minLength: 1,
-  description: "A skill each run carries out, matched by name.",
+const SkillName = Type.String({ minLength: 1, maxLength: 128 });
+
+const SkillField = Type.Union([SkillName, Type.Array(SkillName, { minItems: 1, maxItems: 8 })], {
+  description:
+    "A skill name, or a list of them, that every run carries: each skill's text is in the " +
+    "run's prompt from its first step, so the run need not load it with nb__use_skill. A " +
+    "name the workspace has no skill for refuses the run before it starts. With no body, " +
+    "each run is told to carry the skills out on its input.",
 });
 
 const ModelField = Type.String({
@@ -402,7 +407,7 @@ const UpdateManifest = Type.Object(
     enabled: Type.Optional(
       Type.Boolean({ description: "Whether its schedule or events fire it." }),
     ),
-    skill: clearable(SkillField, "Skill each run carries out, or null for none."),
+    skill: clearable(SkillField, "Skill or skills every run carries, or null for none."),
     model: clearable(ModelField, "Model for its runs, or null for the workspace default."),
     allowedTools: clearable(
       AllowedToolsField,
@@ -1316,7 +1321,7 @@ export const TaskStatusDetail = Type.Object({
   ownerId: Type.Optional(Type.String()),
   workspaceId: Type.Optional(Type.String()),
   model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-  skill: Type.Optional(Type.String()),
+  skill: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
   allowedTools: Type.Optional(Type.Array(Type.String())),
   inputSchema: Type.Optional(JsonObject),
   outputSchema: Type.Optional(JsonObject),
@@ -1485,7 +1490,7 @@ export const TaskRecord = Type.Object({
   schedule: Type.Optional(TaskScheduleSpec),
   kind: Type.Optional(TaskKindField),
   onceDone: Type.Optional(TaskOnceDone),
-  skill: Type.Optional(Type.String()),
+  skill: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
   allowedTools: Type.Optional(Type.Array(Type.String())),
   inputSchema: Type.Optional(JsonObject),
   outputSchema: Type.Optional(JsonObject),

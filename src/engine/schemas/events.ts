@@ -78,6 +78,7 @@ export const SkillsLoadedEntry = Type.Object({
     Type.Literal("always"),
     Type.Literal("tool_affinity"),
     Type.Literal("trigger"),
+    Type.Literal("task"),
   ]),
   reason: Type.String(),
 });

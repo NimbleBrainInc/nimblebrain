@@ -67,7 +67,7 @@ export interface SkillsLoadedEntry {
   tokens: number;
   /** SHA-256 hex of the skill body composed into the prompt. */
   contentHash: string;
-  loadedBy: "always" | "tool_affinity" | "trigger";
+  loadedBy: "always" | "tool_affinity" | "trigger" | "task";
   reason: string;
 }
 

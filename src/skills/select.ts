@@ -20,11 +20,14 @@ import type { Skill } from "./types.ts";
  *     active tool (Layer 3, the conditional channel this module selects)
  *   - `trigger`       — `dynamic` skill whose trigger phrase matched the message
  *     (Layer 4, the `SkillMatcher`)
+ *   - `task`          — skill an unattended run's definition names, composed as
+ *     Layer 3 beside the tool-affinity selection (`selectTaskSkills`)
  *
- * `selectLayer3Skills` only ever produces `tool_affinity`; the other two are
- * stamped at the telemetry-collection site (`collectLoadedSkills`).
+ * `selectLayer3Skills` only ever produces `tool_affinity`; `task` comes from
+ * `selectTaskSkills`, and the other two are stamped at the telemetry-collection
+ * site (`collectLoadedSkills`).
  */
-export type LoadedBy = "always" | "tool_affinity" | "trigger";
+export type LoadedBy = "always" | "tool_affinity" | "trigger" | "task";
 
 export interface SelectedSkill {
   skill: Skill;

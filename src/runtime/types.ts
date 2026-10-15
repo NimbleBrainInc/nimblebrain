@@ -456,6 +456,13 @@ export interface TaskRequest {
    */
   workspaceId?: string;
   model?: string;
+  /**
+   * Skills, by name, composed into the run's cached system prompt before its
+   * first model call, resolved over the same workspace pool `nb__use_skill`
+   * serves. A name nothing resolves refuses the run
+   * (`DeclaredSkillsUnavailableError`).
+   */
+  skills?: string[];
   maxIterations?: number;
   /**
    * Input tokens the whole run may spend, summed over every model call. Before

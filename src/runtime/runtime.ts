@@ -217,6 +217,7 @@ import {
   type SkillEntry,
   verifySkillEntrypoint,
 } from "../skills/skills-extension.ts";
+import { selectTaskSkills } from "../skills/task-skills.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import { MAX_SKILL_BODY_CHARS, truncateMarkdownToBudget } from "../skills/truncate.ts";
 import type { Skill, SkillBodyLoad } from "../skills/types.ts";
@@ -274,6 +275,7 @@ import {
   ConversationAccessDeniedError,
   ConversationNotFoundError,
   ConversationWorkspaceAccessDeniedError,
+  DeclaredSkillsUnavailableError,
   DeclaredToolsUnavailableError,
   ModelNotAllowedError,
   RunInProgressError,
@@ -1550,6 +1552,7 @@ export class Runtime {
         content: [{ type: "text", text: request.prompt }],
         userId: requestIdentity.id,
         ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
+        ...(request.skills?.length ? { skills: request.skills } : {}),
       },
       budget: {
         ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
@@ -2078,11 +2081,22 @@ export class Runtime {
     // tool-affinity skills when selected. A body served from the digest cache
     // is byte-identical turn to turn, so the cached prefix holds. A skill whose
     // body cannot be fetched or verified drops out of this turn.
-    const [connectorContext, matchedSkill, selectedLayer3] = await Promise.all([
+    const [connectorContext, matchedSkill, affinityLayer3] = await Promise.all([
       hydrateSkills(connectorContextSelected),
       skill ? hydrateSkill(skill) : Promise.resolve(null),
       hydrateSelected(selectedLayer3Unloaded),
     ]);
+    // The skills the run's definition names join Layer 3, in the cached prefix,
+    // so a task's runs share that prefix across inputs and never spend a call
+    // loading them. Resolved over the pool `nb__use_skill` serves (filesystem
+    // tiers, then server-published skills); fail closed, like a declared tool.
+    const taskLayer3 = await this.resolveTaskSkills(spec.input.skills, {
+      alwaysOn: [...poolContext, ...connectorContextSelected],
+      alreadySelected: affinityLayer3,
+      capability: [...poolCapability, ...connectorCapability],
+    });
+    const selectedLayer3 = [...affinityLayer3, ...taskLayer3];
+    const taskSkillNames = new Set(taskLayer3.map((s) => s.skill.manifest.name));
     const composedMatch =
       skillMatch && matchedSkill ? { ...skillMatch, skill: matchedSkill } : null;
 
@@ -2118,7 +2132,7 @@ export class Runtime {
               fsCapability: poolCapability,
               connectorCapability,
               connectorCandidates: connectorOverlayCandidates,
-            }),
+            }).filter((s) => !taskSkillNames.has(s.name)),
           );
 
     // Task mode prepends TASK_IDENTITY so an unattended run produces a
@@ -2214,6 +2228,39 @@ export class Runtime {
    * against the router's set (`listToolsForWorkspace`), not `listRunTools`,
    * which leaves out granted personal connectors.
    */
+  /**
+   * The skills a run's definition names, ready to compose as Layer 3: resolved
+   * by {@link selectTaskSkills} and their bodies fetched. Any name that resolves
+   * to nothing, or to a server-published skill whose body cannot be fetched,
+   * refuses the run (`DeclaredSkillsUnavailableError`) before its first model
+   * call, so a task never runs without the guidance it declared.
+   */
+  private async resolveTaskSkills(
+    names: readonly string[] | undefined,
+    pools: Omit<Parameters<typeof selectTaskSkills>[0], "names">,
+  ): Promise<SelectedSkill[]> {
+    if (!names?.length) return [];
+    const { selected, missing } = selectTaskSkills({ names, ...pools });
+    const hydrated = await Promise.all(
+      selected.map(async (sel) => {
+        const sk = await hydrateSkill(sel.skill);
+        return sk
+          ? {
+              ...sel,
+              skill: { ...sk, body: truncateMarkdownToBudget(sk.body, MAX_SKILL_BODY_CHARS).body },
+            }
+          : null;
+      }),
+    );
+    const unfetched = selected
+      .filter((_, i) => hydrated[i] === null)
+      .map((sel) => sel.skill.manifest.name);
+    if (missing.length > 0 || unfetched.length > 0) {
+      throw new DeclaredSkillsUnavailableError([...missing, ...unfetched]);
+    }
+    return hydrated.filter((sel): sel is SelectedSkill => sel !== null);
+  }
+
   private async assertDeclaredToolsReachable(
     wsId: string,
     identityId: string,
@@ -6240,6 +6287,10 @@ function buildRunContext(
     // restamp, so the wall is enforced at the tasks source rather than
     // per-router-construction. See `createTasksSource`.
     ...(attended ? {} : { unattended: true }),
+    // The skills composition puts in this run's prompt because its definition
+    // names them; `nb__use_skill` answers `already_loaded` for them. A name
+    // composition cannot resolve refuses the run before any tool runs.
+    ...(spec.input.skills?.length ? { taskSkills: [...new Set(spec.input.skills)] } : {}),
   };
 }
 

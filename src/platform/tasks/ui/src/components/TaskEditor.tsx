@@ -90,7 +90,7 @@ function WhatToDo({ d, set, editing }: { d: EditorDraft; set: Patch; editing: bo
       {d.doMode === "skill" && (
         <div className="field">
           <label className="field-label" htmlFor={`${id}-skill`}>
-            Skill
+            Skill (several: separate with commas)
           </label>
           <input
             id={`${id}-skill`}

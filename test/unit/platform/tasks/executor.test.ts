@@ -231,6 +231,44 @@ describe("createDirectExecutor — the run input cap", () => {
   });
 });
 
+describe("createDirectExecutor — the skills a task names", () => {
+  async function requestFor(overrides: Partial<Task>) {
+    let seen: Parameters<TaskFn>[0] | undefined;
+    const taskFn: TaskFn = async (req) => {
+      seen = req;
+      return makeDirectTaskFn()(req);
+    };
+    await createDirectExecutor(taskFn, () => ({}))(makeTask(overrides));
+    return seen;
+  }
+
+  test("one name reaches the runtime as a one-skill list", async () => {
+    const req = await requestFor({ skill: "invoice-runbook" });
+    expect(req?.skills).toEqual(["invoice-runbook"]);
+  });
+
+  test("a list reaches the runtime in order", async () => {
+    const req = await requestFor({ skill: ["invoice-runbook", "close-checklist"] });
+    expect(req?.skills).toEqual(["invoice-runbook", "close-checklist"]);
+  });
+
+  test("a task with no skill sends none", async () => {
+    const req = await requestFor({});
+    expect(req?.skills).toBeUndefined();
+  });
+
+  test("a skill-only task with an empty prompt is told to carry the skill out", async () => {
+    const req = await requestFor({ skill: "invoice-runbook", prompt: "" });
+    expect(req?.prompt).toContain('Carry out the "invoice-runbook" skill');
+  });
+
+  test("a task's own prompt is kept when it names skills too", async () => {
+    const req = await requestFor({ skill: ["invoice-runbook"], prompt: "Reconcile March." });
+    expect(req?.prompt).toContain("Reconcile March.");
+    expect(req?.prompt).not.toContain("Carry out");
+  });
+});
+
 describe("createDirectExecutor — per-run ceilings", () => {
   const ceilings = resolveTasksConfig({
     maxRunIterations: 10,

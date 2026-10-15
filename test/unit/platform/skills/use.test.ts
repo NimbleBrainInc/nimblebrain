@@ -285,6 +285,34 @@ describe("nb__use_skill — already-delivered dedupe", () => {
   });
 });
 
+describe("nb__use_skill — skills a task run already carries", () => {
+  test("a skill the run's task named answers 'already loaded' with no body", async () => {
+    runtime.activatable = [RUNBOOK];
+    const src = await buildSource();
+
+    const result = await runWithRequestContext(
+      { identity: null, workspaceId: "ws_0076759dbbe19fcc", taskSkills: ["invoice-runbook"] },
+      () => src.execute("use_skill", { name: "invoice-runbook" }),
+    );
+    expect(result.isError).toBe(false);
+    expect(resultText(result)).toContain("already loaded");
+    expect(resultText(result)).not.toContain("<activated-skill>");
+    expect(result._meta?.[SKILL_ACTIVATED_META_KEY]).toBeUndefined();
+    expect((result.structuredContent as { status?: string }).status).toBe("already_loaded");
+  });
+
+  test("a skill the task did not name still delivers in a task run", async () => {
+    runtime.activatable = [RUNBOOK];
+    const src = await buildSource();
+
+    const result = await runWithRequestContext(
+      { identity: null, workspaceId: "ws_0076759dbbe19fcc", taskSkills: ["close-checklist"] },
+      () => src.execute("use_skill", { name: "invoice-runbook" }),
+    );
+    expect(resultText(result)).toContain("<activated-skill>");
+  });
+});
+
 describe("nb__use_skill — on-demand bodies", () => {
   const ON_DEMAND: ActivatableSkill = {
     name: "connector:srv:guide",

@@ -89,11 +89,13 @@ import {
   onceRetirement,
   type RunTicket,
   type ScheduleSpec,
+  skillOnlyPrompt,
   type Task,
   type TaskJudge,
   type TaskRun,
   type TaskRunResult,
   type TokenBudget,
+  taskSkillNames,
 } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -1358,7 +1360,7 @@ export const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
  * (name, kind) or trigger (schedule, enabled).
  */
 export interface InlineManifest {
-  skill?: string;
+  skill?: string | string[];
   model?: string;
   allowedTools?: string[];
   maxIterations?: number;
@@ -1466,9 +1468,7 @@ export function ensureOneoff(
   }
   validateTaskFields(manifest);
   const id = oneoffId(idSeed);
-  const prompt =
-    def.body ||
-    `Carry out the "${manifest.skill}" skill on this run's input, and give its result as the deliverable.`;
+  const prompt = def.body || skillOnlyPrompt(taskSkillNames(manifest.skill));
   const definition = { prompt, ...manifest };
 
   checkInput(id, manifest.inputSchema);

@@ -139,6 +139,9 @@ function buildPerCallContext(
     // run stays walled from the task-authoring surface. Dropping it here
     // would reopen the wall for anything below the top level.
     ...(outer?.unattended !== undefined ? { unattended: outer.unattended } : {}),
+    // `taskSkills` rides it so `nb__use_skill`, dispatched below the top level,
+    // still knows which skills the run's prompt already carries.
+    ...(outer?.taskSkills !== undefined ? { taskSkills: outer.taskSkills } : {}),
   };
 }
 
