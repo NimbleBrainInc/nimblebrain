@@ -38,7 +38,7 @@ export declare const PlatformToolCatalog: {
             readonly input: import("@sinclair/typebox").TObject<{
                 conversation_id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                loaded_by: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"activation" | "always" | "tool_affinity" | "tool_use" | "trigger">>;
+                loaded_by: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"activation" | "always" | "before_call" | "tool_affinity" | "tool_use" | "trigger">>;
                 since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 until: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;

@@ -2067,7 +2067,7 @@ export class Runtime {
       // No `excludeSkill` here: it only steers discovery, and discovery
       // already ran with it above. The entered app's exclusion is inherited from
       // `connectorPool` rather than restated as a second argument that has to agree
-      // with the first — the same reason `toConnectorSkillCandidates` takes a pool.
+      // with the first — the same reason `boundSkillCandidates` takes the pool.
       connectorPool,
     });
 
@@ -2149,10 +2149,12 @@ export class Runtime {
       skillMatch: composedMatch,
       selectedLayer3,
       alwaysOnSkills: requestContextSkills,
-      connectorSkillCandidates: [
-        ...connectorOverlayCandidates,
-        ...this.toConnectorSkillCandidates(connectorCapability, selectedLayer3),
-      ],
+      connectorSkillCandidates: boundSkillCandidates({
+        fsCapability: poolCapability,
+        connectorCapability,
+        overlays: connectorOverlayCandidates,
+        alreadyComposed: composedSkillNames(selectedLayer3, skill),
+      }),
       stableSystem,
       volatileHead,
       systemPrompt,
@@ -5362,52 +5364,6 @@ export class Runtime {
     return readConnectorSkillCandidates(dir);
   }
 
-  /** SEP-2640 connector skills as surface-once connector-skill candidates, so a server's
-   *  skill can be delivered mid-turn when its tools are progressively disclosed (not only
-   *  at turn-start via <layer3-skill>).
-   *
-   *  Takes the `capability` half of `selectRequestLayer3`'s partition rather than
-   *  discovering again: one discovery per turn, and the entered app's exclusion
-   *  (its PRIMARY skill rides <app-guide>, not this channel — the server's other
-   *  skills do ride it) is inherited from that call instead of being a second
-   *  `excludeSkill` argument that has to agree with the first.
-   *
-   *  Only skills this turn has NOT already composed ride this channel. Two
-   *  exclusions, one rule — a body already in the prompt must not be delivered
-   *  again:
-   *   - `always` connector skills, by taking the `capability` half: an `always`
-   *     skill is in the context channel every turn.
-   *   - `alreadyComposed`, the turn's Layer-3 selection: a `dynamic` skill whose
-   *     tools were active at turn start is already in `<layer3-skill>`.
-   *
-   *  The second is not a corner case. `selectLayer3Skills` matches the very
-   *  tool-affinity synthesis stamps on every published skill, so Layer 3 and
-   *  this candidate list select on identical criteria — leaving a selected
-   *  skill in the pool would re-deliver its body as a synthetic message on the
-   *  first call to a matching tool, where it would then ride the rest of the
-   *  conversation. A skill that declares no affinity is bound to its whole
-   *  server, so one such call would re-deliver every such skill that server
-   *  publishes.
-   *
-   *  What remains is what the channel is for: a skill whose tools were proxied
-   *  out of the active set at turn start, so Layer 3 could not select it, and
-   *  which becomes relevant when a tool is promoted mid-turn. */
-  private toConnectorSkillCandidates(
-    capability: Skill[],
-    alreadyComposed: SelectedSkill[],
-  ): ConnectorSkillCandidate[] {
-    const composed = new Set(alreadyComposed.map((s) => s.skill.manifest.name));
-    return capability
-      .filter((s) => !composed.has(s.manifest.name))
-      .map((s) => ({
-        name: s.manifest.name,
-        body: s.body,
-        ...(s.loadBody ? { loadBody: bodyOrNull(s.loadBody) } : {}),
-        scope: s.manifest.scope ?? PUBLISHED_SKILL_SCOPE,
-        toolAffinity: s.manifest.toolAffinity ?? [],
-      }));
-  }
-
   /**
    * Names of skills already DELIVERED into this conversation — connector
    * overlays surfaced by the engine (synthetic-message marker) and catalog
@@ -6355,7 +6311,9 @@ function createPartialRunAccumulator(): {
         // `stopReason: "aborted"` (never "complete"), so the tasks
         // de-masker's `status === "success"` guard never reads it. (The
         // `tool.done` event doesn't carry `errorReason` either — no point
-        // threading it through for a path that can't de-mask.)
+        // threading it through for a path that can't de-mask.) `held` is
+        // carried: the run's recorded unresolved failures read it on every
+        // path, this one included.
         toolCalls.push({
           id: data.id,
           name: data.name,
@@ -6363,6 +6321,7 @@ function createPartialRunAccumulator(): {
           output: data.output,
           ok: data.ok,
           ms: data.ms,
+          ...(data.held ? { held: data.held } : {}),
         });
       }
     },
@@ -6459,6 +6418,71 @@ function buildWorkspaceContext(
 }
 
 /** A skill body loader as the engine's surface-once channel takes it: the body, or `null`. */
+/** The skills a turn composed into its prompt: tool-affinity selection and the trigger match. */
+function composedSkillNames(selected: SelectedSkill[], matched: Skill | null): string[] {
+  const names = selected.map((s) => s.skill.manifest.name);
+  return matched ? [...names, matched.manifest.name] : names;
+}
+
+/**
+ * Every skill bound to a tool, from every source, as the engine's delivery
+ * candidates: the conversation tiers' `dynamic` skills (core, org, workspace,
+ * user), the workspace's server-published ones, and its curated overlays. One
+ * candidate set, so a tenant's skill bound to a connector's tool reaches the
+ * model on the same call as the connector's own.
+ *
+ * A skill with no `tool-affinity` is bound to nothing and is left to the
+ * catalog. A disabled skill is left out. So is any skill this turn already
+ * composed into the prompt (`alreadyComposed`: turn-start tool-affinity
+ * selection and the trigger match), because its body is in context and
+ * delivering it again would put it there twice. The `<app-guide>` skill never
+ * reaches the connector pool, so it needs no exclusion here.
+ *
+ * Names are unique, the first pool winning in catalog order (filesystem, then
+ * server-published, then overlay), so one name is one skill and one delivery.
+ */
+function boundSkillCandidates(pools: {
+  fsCapability: Skill[];
+  connectorCapability: Skill[];
+  overlays: ConnectorSkillCandidate[];
+  alreadyComposed: string[];
+}): ConnectorSkillCandidate[] {
+  const seen = new Set(pools.alreadyComposed);
+  const out: ConnectorSkillCandidate[] = [];
+  const add = (c: ConnectorSkillCandidate) => {
+    if (seen.has(c.name) || c.toolAffinity.length === 0) return;
+    seen.add(c.name);
+    out.push(c);
+  };
+  for (const s of [...pools.fsCapability, ...pools.connectorCapability]) {
+    if (s.manifest.status !== "active") continue;
+    add(boundSkillCandidate(s));
+  }
+  for (const c of pools.overlays) add(c);
+  return out;
+}
+
+/**
+ * One skill as a delivery candidate. A server's own skill bound to its whole
+ * namespace (`<server>__*`, declared or by default) is marked `implicitBinding`:
+ * only such a skill skips the hold on a tool its server annotates read-only.
+ */
+function boundSkillCandidate(s: Skill): ConnectorSkillCandidate {
+  const toolAffinity = s.manifest.toolAffinity ?? [];
+  const publisher = parseConnectorSkillName(s.manifest.name)?.connector;
+  const wholeServer =
+    publisher !== undefined && toolAffinity.length === 1 && toolAffinity[0] === `${publisher}__*`;
+  return {
+    name: s.manifest.name,
+    body: s.body,
+    ...(s.loadBody ? { loadBody: bodyOrNull(s.loadBody) } : {}),
+    scope: s.manifest.scope ?? PUBLISHED_SKILL_SCOPE,
+    toolAffinity,
+    priority: s.manifest.priority,
+    ...(wholeServer ? { implicitBinding: true } : {}),
+  };
+}
+
 function bodyOrNull(load: () => Promise<SkillBodyLoad>): () => Promise<string | null> {
   return async () => {
     const loaded = await load();

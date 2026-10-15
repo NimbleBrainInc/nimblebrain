@@ -65,7 +65,11 @@ frontmatter and stamped onto the synthesized manifest, so identical frontmatter
 means identical behaviour whichever way the document arrived. The synthesized
 skill then flows through `partitionSkillsByRole` like any other (ADR-0010): a
 declared `always` reaches the context channel, and the default when a server
-declares nothing is `dynamic`, tool-affined to that server's own namespace.
+declares nothing is `dynamic`, tool-affined to that server's own namespace. A
+tool-affined skill reaches the model before the first call to a tool it governs
+(ADR-0053). A server's skill bound to its whole namespace, declared or by
+default, is the one binding that a `readOnlyHint` on its own server's tool
+relaxes.
 
 **Reading is lenient where authoring is strict.** A discovered skill comes from
 an arbitrary server, so a malformed or absent `nimblebrain` block leaves the

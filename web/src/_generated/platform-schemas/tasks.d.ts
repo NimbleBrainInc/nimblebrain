@@ -654,6 +654,7 @@ export declare const RunToolCallRecord: import("@sinclair/typebox").TObject<{
     output: import("@sinclair/typebox").TString;
     ok: import("@sinclair/typebox").TBoolean;
     ms: import("@sinclair/typebox").TNumber;
+    held: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
 }>;
 export type RunToolCallRecord = Static<typeof RunToolCallRecord>;
 /** A ref to a file a run produced. Mirror of `RunFileRef`. */
@@ -679,6 +680,7 @@ export declare const TaskRunResultBody: import("@sinclair/typebox").TObject<{
         output: import("@sinclair/typebox").TString;
         ok: import("@sinclair/typebox").TBoolean;
         ms: import("@sinclair/typebox").TNumber;
+        held: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
     }>>;
     outputFiles: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         id: import("@sinclair/typebox").TString;
@@ -788,6 +790,7 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
         output: string;
         activityLog: {
             input?: unknown;
+            held?: true | undefined;
             name: string;
             id: string;
             output: string;
@@ -1239,6 +1242,7 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
         output: string;
         activityLog: {
             input?: unknown;
+            held?: true | undefined;
             name: string;
             id: string;
             output: string;

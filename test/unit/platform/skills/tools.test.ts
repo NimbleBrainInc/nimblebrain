@@ -544,7 +544,7 @@ describe("skills__list", () => {
       wouldLoad: true,
       mechanism: "trigger",
     });
-    // Layer-1 vendored authoring guide declares applies-to-tools (skills__*),
+    // Layer-1 vendored authoring guide declares applies-to-tools (the authoring tools),
     // so it resolves to tool_affinity — and is always loadable.
     expect(skills.find((s) => s.name === "authoring-guide")!.loading).toEqual({
       wouldLoad: true,

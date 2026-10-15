@@ -48,4 +48,38 @@ describe("onToolDone", () => {
       { id: "t1", name: "nb__open_app", ok: true, input: { uri: "files://f_1" } },
     ]);
   });
+
+  test("a held call is neither announced nor shown; its re-issue is", async () => {
+    const store = createChatStore();
+    store.ensureSlice("draft_2");
+    store.markActive("draft_2");
+    const done: FinishedToolCall[] = [];
+    store.onToolDone((call) => done.push(call));
+
+    await store.sendTurn("draft_2", { text: "write the email" });
+    emit("tool.start", { id: "h1", name: "outreach__draft_email", input: {} }, 1);
+    emit(
+      "tool.done",
+      {
+        id: "h1",
+        name: "outreach__draft_email",
+        ok: false,
+        ms: 0,
+        output: "Not run: outreach__draft_email is governed by guidance you have not read yet.",
+        held: true,
+      },
+      2,
+    );
+    emit("tool.start", { id: "r1", name: "outreach__draft_email", input: {} }, 3);
+    emit(
+      "tool.done",
+      { id: "r1", name: "outreach__draft_email", ok: true, ms: 4, output: "ok" },
+      4,
+    );
+
+    expect(done.map((d) => d.id)).toEqual(["r1"]);
+    const shown = JSON.stringify(store.getSnapshot("draft_2").messages);
+    expect(shown).toContain('"r1"');
+    expect(shown).not.toContain('"h1"');
+  });
 });

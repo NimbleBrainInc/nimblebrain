@@ -139,6 +139,8 @@ export interface ChatToolCall {
     ms: number;
     /** Structured failure reason when `ok === false`. */
     errorReason?: string;
+    /** The call did not run; it waited for guidance the model had not read yet. */
+    held?: true;
 }
 export interface HealthResponse {
     status: "ok";

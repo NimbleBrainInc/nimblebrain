@@ -1066,6 +1066,12 @@ export function createChatStore(): ChatStore {
 
   function handleToolDone(slice: ConversationSlice, data: unknown): void {
     const evt = data as ToolDoneEvent;
+    if (evt.held) {
+      // The engine held the call until its tool's guidance was read; it ran
+      // nothing, and the re-issue that follows is the call the person sees.
+      dropToolCall(slice, evt.id);
+      return;
+    }
     const updater = updateTool(evt);
     slice.toolCalls = slice.toolCalls.map(updater);
     for (const block of slice.blocks) {
@@ -1075,6 +1081,17 @@ export function createChatStore(): ChatStore {
     slice.streamingState = anyRunning ? "working" : "analyzing";
     flush(slice);
     announceToolDone(slice, evt);
+  }
+
+  function dropToolCall(slice: ConversationSlice, id: string): void {
+    slice.toolCalls = slice.toolCalls.filter((tc) => tc.id !== id);
+    for (const block of slice.blocks) {
+      if (block.type === "tool") block.toolCalls = block.toolCalls.filter((tc) => tc.id !== id);
+    }
+    slice.blocks = slice.blocks.filter((b) => b.type !== "tool" || b.toolCalls.length > 0);
+    const anyRunning = slice.toolCalls.some((tc) => tc.status === "running");
+    slice.streamingState = anyRunning ? "working" : "analyzing";
+    flush(slice);
   }
 
   // A finished tool call reaches `onToolDone` listeners only from a turn this

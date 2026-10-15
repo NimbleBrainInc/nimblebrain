@@ -839,6 +839,72 @@ describe("createDirectExecutor — degraded runs", () => {
   });
 });
 
+describe("createDirectExecutor — calls the engine held for guidance", () => {
+  const held = (id: string, name: string): TaskFnToolCall => ({
+    id,
+    name,
+    input: { to: "a@example.com" },
+    output: `Not run: ${name} is governed by guidance you have not read yet (drafting).`,
+    ok: false,
+    ms: 0,
+    errorReason: "skill_guidance_pending",
+    held: true,
+  });
+  const ran = (id: string, name: string, ok = true): TaskFnToolCall => ({
+    id,
+    name,
+    input: { to: "a@example.com" },
+    output: ok ? "{}" : "500",
+    ok,
+    ms: 10,
+  });
+
+  async function runWith(toolCalls: TaskFnToolCall[], stopReason = "complete"): Promise<TaskRun> {
+    const taskFn: TaskFn = async (): Promise<TaskFnResult> => ({
+      output: "Drafted.",
+      runId: "run_test000000",
+      toolCalls,
+      stopReason,
+      usage: { inputTokens: 10, outputTokens: 5, iterations: 2 },
+    });
+    const executor = createDirectExecutor(taskFn, () => ({}));
+    const { run } = await executor(makeTask());
+    return run;
+  }
+
+  test("a held call re-issued to success is neither a failure nor a counted call", async () => {
+    const run = await runWith([
+      held("c1", "outreach__draft_email"),
+      ran("c2", "outreach__draft_email"),
+    ]);
+    expect(run.status).toBe("success");
+    expect(run.unrecoveredToolFailures).toBeUndefined();
+    expect(run.toolCalls).toBe(1);
+  });
+
+  test("a held call the model rightly never re-issues does not mark a complete run", async () => {
+    const run = await runWith([held("c1", "outreach__draft_email")]);
+    expect(run.status).toBe("success");
+    expect(run.unrecoveredToolFailures).toBeUndefined();
+  });
+
+  test("a held call the run stopped before re-issuing is recorded as unrecovered", async () => {
+    const run = await runWith([held("c1", "outreach__draft_email")], "max_iterations");
+    expect(run.unrecoveredToolFailures).toEqual(["outreach__draft_email"]);
+  });
+
+  test("three holds then failures still read as a tool that never succeeded", async () => {
+    const run = await runWith([
+      held("c1", "records__create"),
+      ran("c2", "records__create", false),
+      ran("c3", "records__create", false),
+      ran("c4", "records__create", false),
+    ]);
+    expect(run.status).toBe("failure");
+    expect(run.error).toMatch(/never succeeded/);
+  });
+});
+
 describe("createDirectExecutor — aborted run preserves partial usage", () => {
   // Mirrors runtime.executeTask under signal-driven abort: wait for the
   // abort, then RETURN the work done so far tagged "aborted" instead of

@@ -761,7 +761,15 @@ function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMess
     // moves on both sides together.
     role: "user",
     content: [
-      { type: "text", text: formatConnectorSkillBlock(cs.skillName, cs.scope, cs.skillBody) },
+      {
+        type: "text",
+        text: formatConnectorSkillBlock(
+          cs.skillName,
+          cs.scope,
+          cs.skillBody,
+          cs.heldToolCallId !== undefined,
+        ),
+      },
     ],
     timestamp: cs.ts,
     metadata: { synthetic: CONNECTOR_SKILL_SYNTHETIC, skill: cs.skillName },

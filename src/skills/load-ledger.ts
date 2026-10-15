@@ -32,6 +32,7 @@ import type {
   ConnectorSkillInjectedEvent,
   ConversationEvent,
   SkillActivatedEvent,
+  SkillNotDeliveredEvent,
   SkillsLoadedEvent,
 } from "../conversation/types.ts";
 import { approxTokens } from "./tokens.ts";
@@ -40,16 +41,23 @@ import { approxTokens } from "./tokens.ts";
  * How a skill reached the model, across every channel.
  *
  * The first three come from a `skills.loaded` entry's own `loadedBy` and name
- * the *selection* that put it in the prompt. The last two are whole channels:
- * `tool_use` is the surface-once overlay firing on a matching tool call,
- * `activation` is the model asking for a catalog entry by name.
+ * the *selection* that put it in the prompt. The rest are whole channels:
+ * `before_call` is a bound skill delivered while the engine held the first
+ * call to its tool, `tool_use` is one delivered after a call that ran or on a
+ * promotion, and `activation` is the model asking for a catalog entry by name.
  *
  * Deliberately has no `forced` member. The design reserves a
  * catalog-activation forcing path (the harness auto-activating on a matched
  * phrase) but nothing emits it, and a vocabulary value no emitter produces
  * reads as coverage that does not exist.
  */
-export type SkillLoadedBy = "always" | "tool_affinity" | "trigger" | "tool_use" | "activation";
+export type SkillLoadedBy =
+  | "always"
+  | "tool_affinity"
+  | "trigger"
+  | "before_call"
+  | "tool_use"
+  | "activation";
 
 /** One skill reaching the model once. */
 export interface SkillLoadRow {
@@ -77,8 +85,14 @@ export interface SkillLoadRow {
   scope?: string;
   /** MCP server that published the skill, when one did. */
   connector?: string;
-  /** The tool call that triggered a `tool_use` load. */
+  /** The tool call that triggered a `before_call` or `tool_use` load. */
   tool_name?: string;
+  /**
+   * Set when a bound skill did NOT reach the model on that call: its body could
+   * not be fetched, a hold's size cap left it out, or a hook renamed the call
+   * past the hold. Such a row delivered nothing (`tokens` is 0).
+   */
+  status?: SkillNotDeliveredEvent["reason"];
 }
 
 /**
@@ -117,7 +131,7 @@ export function projectSkillLoads(convId: string, events: ConversationEvent[]): 
           ts: e.ts,
           conv_id: convId,
           skill: e.skillName,
-          loaded_by: "tool_use",
+          loaded_by: e.heldToolCallId !== undefined ? "before_call" : "tool_use",
           // The overlay body IS the delivery, so its size is the cost. The
           // event records no token count, so measure the body it carries —
           // through the same estimator `skills.loaded` counts with, so the
@@ -125,6 +139,20 @@ export function projectSkillLoads(convId: string, events: ConversationEvent[]): 
           tokens: approxTokens(e.skillBody),
           scope: e.scope,
           tool_name: e.toolName,
+        });
+        break;
+      }
+      case "skill.not_delivered": {
+        const e = ev as SkillNotDeliveredEvent;
+        rows.push({
+          ts: e.ts,
+          conv_id: convId,
+          run_id: e.runId,
+          skill: e.skillName,
+          loaded_by: "before_call",
+          tokens: 0,
+          tool_name: e.toolName,
+          status: e.reason,
         });
         break;
       }
