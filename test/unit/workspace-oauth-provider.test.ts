@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { refreshAuthorization } from "@modelcontextprotocol/client";
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/server";
 import { log } from "../../src/observability/log.ts";
 import { requireCredentialStore } from "../../src/tools/credential-store.ts";
@@ -478,6 +479,68 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
       },
     });
     expect(p.clientMetadata.token_endpoint_auth_method).toBe("client_secret_basic");
+  });
+
+  // The SDK chooses client auth from `clientInformation()` alone, so the method
+  // must be on it. A server advertising both methods otherwise gets
+  // `client_secret_basic`, which some reject on the refresh grant.
+  describe("static client refresh request, server advertises basic and post", () => {
+    const metadata = {
+      issuer: "https://as.example.com",
+      authorization_endpoint: "https://as.example.com/authorize",
+      token_endpoint: "https://as.example.com/token",
+      response_types_supported: ["code"],
+      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
+    };
+
+    async function refreshRequest(
+      staticClient: ConstructorParameters<typeof WorkspaceOAuthProvider>[0]["staticClient"],
+    ): Promise<{ headers: Headers; body: URLSearchParams }> {
+      const p = new WorkspaceOAuthProvider({
+        owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+        serverName: "vendor",
+        callbackUrl: CALLBACK,
+        staticClient,
+      });
+      const clientInformation = await p.clientInformation();
+      if (!clientInformation) throw new Error("static client returned no client information");
+      let sent: { headers: Headers; body: URLSearchParams } | undefined;
+      await refreshAuthorization("https://as.example.com", {
+        metadata,
+        clientInformation,
+        refreshToken: "rt-1",
+        fetchFn: async (_url, init) => {
+          sent = {
+            headers: new Headers(init?.headers),
+            body: new URLSearchParams(String(init?.body)),
+          };
+          return new Response(JSON.stringify({ access_token: "at-2", token_type: "Bearer" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        },
+      });
+      if (!sent) throw new Error("refresh sent no request");
+      return sent;
+    }
+
+    it("secret without an override sends client_id and client_secret in the body", async () => {
+      const { headers, body } = await refreshRequest({ clientId: "cid", clientSecret: "s3cret" });
+      expect(body.get("grant_type")).toBe("refresh_token");
+      expect(body.get("client_id")).toBe("cid");
+      expect(body.get("client_secret")).toBe("s3cret");
+      expect(headers.get("Authorization")).toBeNull();
+    });
+
+    it("explicit client_secret_basic sends HTTP Basic", async () => {
+      const { headers, body } = await refreshRequest({
+        clientId: "cid",
+        clientSecret: "s3cret",
+        tokenEndpointAuthMethod: "client_secret_basic",
+      });
+      expect(headers.get("Authorization")).toBe(`Basic ${btoa("cid:s3cret")}`);
+      expect(body.get("client_secret")).toBeNull();
+    });
   });
 
   it("constructor rejects reserved keys in additionalAuthorizationParams", () => {
