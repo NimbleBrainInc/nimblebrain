@@ -191,6 +191,14 @@ export interface Task {
   /** Consecutive failed runs (resets on success). Drives backoff. */
   consecutiveErrors: number;
 
+  /**
+   * The failed run whose notice stands for the current failing stretch. Set
+   * by the first run of the stretch that left no deliverable, cleared when the
+   * streak resets, so a task failing every few minutes raises one notice, not
+   * one per run.
+   */
+  failureNoticeRunId?: string;
+
   /** ISO timestamp when auto-disabled. */
   disabledAt?: string;
 
@@ -682,6 +690,7 @@ export type CreateTaskInput = Omit<
   | "updatedAt"
   | "runCount"
   | "consecutiveErrors"
+  | "failureNoticeRunId"
   | "lastRunAt"
   | "lastRunStatus"
   | "nextRunAt"
