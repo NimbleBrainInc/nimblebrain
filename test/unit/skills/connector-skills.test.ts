@@ -30,6 +30,33 @@ import {
 import type { SkillBodyLoad } from "../../../src/skills/types.ts";
 
 describe("discoveredSkillFromEntry", () => {
+  test("keeps an explicit empty tool-affinity, which synthesis binds to no tool", () => {
+    const entry = (affinity: unknown) =>
+      discoveredSkillFromEntry({
+        uri: "skill://acme/reference/SKILL.md",
+        frontmatter: {
+          name: "reference",
+          description: "Reference material",
+          metadata: { nimblebrain: { "tool-affinity": affinity } },
+        },
+        resources: "dynamic",
+      });
+    const empty = entry([]);
+    expect(empty.toolAffinity).toEqual([]);
+    const synthesized = synthesizeConnectorSkill({
+      serverName: "acme",
+      skillName: empty.name,
+      description: empty.description,
+      uri: empty.uri,
+      ...(empty.toolAffinity ? { toolAffinity: empty.toolAffinity } : {}),
+    });
+    expect(synthesized.manifest.toolAffinity).toEqual([]);
+    // Malformed values read as nothing declared: the whole-server default.
+    for (const malformed of ["draft_email", ["", " "], null]) {
+      expect(entry(malformed).toolAffinity).toBeUndefined();
+    }
+  });
+
   test("reads name, description, and loading config from the listing, with no body", () => {
     const skill = discoveredSkillFromEntry({
       uri: "skill://acme/capture/SKILL.md",
@@ -84,8 +111,11 @@ describe("connectorToolAffinity", () => {
 
   test("falls back to the whole server when nothing usable is declared", () => {
     expect(connectorToolAffinity("acme", undefined)).toEqual(["acme__*"]);
-    expect(connectorToolAffinity("acme", [])).toEqual(["acme__*"]);
     expect(connectorToolAffinity("acme", ["", "  "])).toEqual(["acme__*"]);
+  });
+
+  test("an explicit empty list binds the skill to no tool (catalog-only)", () => {
+    expect(connectorToolAffinity("acme", [])).toEqual([]);
   });
 
   test("keeps every declared pattern inside the server's namespace", () => {

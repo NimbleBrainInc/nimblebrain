@@ -761,7 +761,7 @@ export async function getInstalledConnector(
 }
 
 /** How a skill reaches the model, as the runtime's `resolveLoadingMechanism` decides it. */
-export type SkillLoadingMechanismName = "always" | "tool_affinity" | "trigger" | "none";
+export type SkillLoadingMechanismName = "always" | "tool_affinity" | "trigger" | "on_request";
 
 /**
  * A curated overlay materialized for a connector: surfaced into the

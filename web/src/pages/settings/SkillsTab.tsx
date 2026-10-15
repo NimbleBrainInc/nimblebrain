@@ -1117,13 +1117,8 @@ function LoadingVerdict({
   const sentence = skillLoadingSentence(mechanism, { toolAffinity, triggers });
   const tokens = approxTokens(body);
   return (
-    <div
-      className={cn(
-        "rounded-md border px-3.5 py-3 text-sm",
-        sentence.dead ? "border-destructive/40 bg-destructive/5" : "border-border bg-secondary/40",
-      )}
-    >
-      <p className={cn("font-medium", sentence.dead && "text-destructive")}>
+    <div className="rounded-md border border-border bg-secondary/40 px-3.5 py-3 text-sm">
+      <p className="font-medium">
         {sentence.text}
         {sentence.mono && (
           <>

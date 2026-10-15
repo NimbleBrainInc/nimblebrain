@@ -449,11 +449,11 @@ describe("skills__list", () => {
 
   // ── loading-visibility field (issue #391) ───────────────────────────────
 
-  test("dead type: skill (no strategy/triggers) reports loading.wouldLoad=false / mechanism=none", async () => {
+  test("a skill with no strategy, triggers or affinity loads on request", async () => {
     const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
-    // No loading-strategy, no triggers, no applies-to-tools → reaches no
-    // loader path. This is the silently-inert population issue #391 targets.
+    // No loading-strategy, no triggers, no tool-affinity → the catalog lists it
+    // and the model loads it when the job needs it.
     const dead = writeSkill(
       join(wsDir, "dead.md"),
       { name: "dead-skill", description: "inert", version: "1.0.0", type: "skill", priority: 50 },
@@ -469,17 +469,17 @@ describe("skills__list", () => {
     const skills = (result as { structuredContent?: { skills?: unknown[] } }).structuredContent
       ?.skills as Array<{
       name: string;
-      loading?: { wouldLoad: boolean; mechanism: string };
+      loading?: { mechanism: string };
     }>;
     const row = skills.find((s) => s.name === "dead-skill")!;
-    expect(row.loading).toEqual({ wouldLoad: false, mechanism: "none" });
+    expect(row.loading).toEqual({ mechanism: "on_request" });
 
-    // The model-visible content carries the warning marker.
+    // A skill the model can load on request is not reported as dead.
     const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
-    expect(text).toContain("⚠ never loads");
+    expect(text).not.toContain("never loads");
   });
 
-  test("loadable skill reports loading.wouldLoad=true with the correct mechanism", async () => {
+  test("an always skill reports its mechanism", async () => {
     const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
     const live = writeSkill(
@@ -504,13 +504,10 @@ describe("skills__list", () => {
     const skills = (result as { structuredContent?: { skills?: unknown[] } }).structuredContent
       ?.skills as Array<{
       name: string;
-      loading?: { wouldLoad: boolean; mechanism: string };
+      loading?: { mechanism: string };
     }>;
     const row = skills.find((s) => s.name === "live-skill")!;
-    expect(row.loading).toEqual({ wouldLoad: true, mechanism: "always" });
-
-    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
-    expect(text).not.toContain("⚠ never loads");
+    expect(row.loading).toEqual({ mechanism: "always" });
   });
 
   test("trigger skill reports mechanism=trigger; vendored guide reports always", async () => {
@@ -538,16 +535,14 @@ describe("skills__list", () => {
     const skills = (result as { structuredContent?: { skills?: unknown[] } }).structuredContent
       ?.skills as Array<{
       name: string;
-      loading?: { wouldLoad: boolean; mechanism: string };
+      loading?: { mechanism: string };
     }>;
     expect(skills.find((s) => s.name === "trigger-skill")!.loading).toEqual({
-      wouldLoad: true,
       mechanism: "trigger",
     });
-    // Layer-1 vendored authoring guide declares applies-to-tools (skills__*),
-    // so it resolves to tool_affinity — and is always loadable.
+    // Layer-1 vendored authoring guide declares tool-affinity, so it resolves
+    // to tool_affinity.
     expect(skills.find((s) => s.name === "authoring-guide")!.loading).toEqual({
-      wouldLoad: true,
       mechanism: "tool_affinity",
     });
   });
