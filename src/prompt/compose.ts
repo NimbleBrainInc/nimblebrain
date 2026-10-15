@@ -261,10 +261,14 @@ export interface PromptAppInfo {
 export interface Layer3SkillEntry {
   name: string;
   body: string;
-  scope: "org" | "workspace" | "user" | "provided";
+  /** Storage tier (`org` / `workspace` / `user`), `provided`, or `connector` for a curated overlay. */
+  scope: string;
   sourcePath?: string;
-  /** The loading mechanism, for the provenance annotation (display only). */
-  loadedBy: LoadedBy;
+  /**
+   * The loading mechanism, for the provenance annotation (display only).
+   * `declared` is a skill the run's task named.
+   */
+  loadedBy: LoadedBy | "declared";
   reason: string;
 }
 
@@ -1064,18 +1068,6 @@ export function formatActivatedSkillBlock(name: string, scope: string, body: str
   const safeName = sanitizeLineField(name);
   const safeScope = sanitizeLineField(scope);
   const provenance = `_${safeName}_ — scope: ${safeScope}; loaded from the skill catalog`;
-  return `${provenance}\n\n${wrapContained("activated-skill", body)}`;
-}
-
-/**
- * Wrap a skill an unattended run declared for delivery in its opening message.
- * Same containment as {@link formatActivatedSkillBlock}; the provenance says
- * the run was given it rather than asked for it.
- */
-export function formatDeclaredSkillBlock(name: string, scope: string, body: string): string {
-  const safeName = sanitizeLineField(name);
-  const safeScope = sanitizeLineField(scope);
-  const provenance = `_${safeName}_ — scope: ${safeScope}; given to this run by its task`;
   return `${provenance}\n\n${wrapContained("activated-skill", body)}`;
 }
 

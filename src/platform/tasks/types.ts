@@ -62,7 +62,7 @@ export interface Task {
   onceDone?: OnceDone;
 
   /**
-   * Skills every run is given in full, in its opening message, before its first
+   * Skills every run is given in full, in its system prompt, before its first
    * model call, by catalog name. The run is refused when one is not available.
    */
   skills?: string[];
@@ -648,7 +648,7 @@ export interface TaskRunResult {
 export interface RunSkillDelivery {
   name: string;
   /**
-   * `declared`: in the opening message, because the task names it.
+   * `declared`: in the system prompt, because the task names it.
    * `before_call`: delivered while the first call to its tool was held.
    * `tool_use`: delivered on a promotion or after a call that ran.
    * `activation`: the run loaded it from the catalog.
