@@ -985,7 +985,7 @@ describe("SkillsBrowser with surface='workspace' — the workspace-admin write g
 // once here and hold for every vantage.
 
 describe("SkillsBrowser authoring — the loading verdict and a pasted SKILL.md", () => {
-  test("a dynamic skill with no trigger and no tool pattern says it never loads", async () => {
+  test("a dynamic skill with no trigger and no tool pattern says it loads when the agent asks", async () => {
     // The condition the editor used to make unreachable by hardcoding
     // `always`, and which the CLI made silently. Exposing the control is only
     // safe because the verdict appears the instant the condition is created.
@@ -998,11 +998,11 @@ describe("SkillsBrowser authoring — the loading verdict and a pasted SKILL.md"
     ) as HTMLInputElement | null;
     await check(dynamic);
 
-    expect(mounted.container.textContent).toContain("Never loads");
+    expect(mounted.container.textContent).toContain("Loads when the agent asks for it");
 
     // Adding a signal clears it, without leaving the form.
     await typeInto(mounted.container.querySelector("#triggers"), "deploy to staging");
-    expect(mounted.container.textContent).not.toContain("Never loads");
+    expect(mounted.container.textContent).not.toContain("Loads when the agent asks for it");
     expect(mounted.container.textContent).toContain('Loads on "deploy to staging"');
   });
 
@@ -1270,13 +1270,13 @@ describe("SkillsBrowser — editing an existing skill", () => {
         await Promise.resolve();
       });
     }
-    expect(mounted.container.textContent).toContain("Never loads");
+    expect(mounted.container.textContent).toContain("Loads when the agent asks for it");
 
     // A trigger typed but not yet saved does not revive the verdict; the
     // verdict says what it leaves out.
     const triggers = mounted.container.querySelector("#triggers");
     await typeInto(triggers, "deploy to staging");
-    expect(mounted.container.textContent).toContain("Never loads");
+    expect(mounted.container.textContent).toContain("Loads when the agent asks for it");
     expect(mounted.container.textContent).toContain("not yet: trigger phrases");
 
     await blur(triggers);
