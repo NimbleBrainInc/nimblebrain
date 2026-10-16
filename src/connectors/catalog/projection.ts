@@ -212,14 +212,8 @@ export function validateServerDetailSafety(s: ServerDetail): string | null {
     }
   }
   const meta = getNimbleBrainConnectorMeta(s);
-  if (meta?.auth === "static" && !hasCompleteOAuthClientSetup(meta.oauthClientSetup)) {
-    return "auth='static' requires oauthClientSetup.{portalUrl,hint,clientSecretKey}";
-  }
-  if (meta?.oauthClientSetup) {
-    if (!isHttpUrl(meta.oauthClientSetup.portalUrl)) {
-      return `oauthClientSetup.portalUrl must be http(s): "${meta.oauthClientSetup.portalUrl}"`;
-    }
-  }
+  const setupError = oauthClientSetupViolation(meta);
+  if (setupError) return setupError;
   if (meta?.additionalAuthorizationParams) {
     try {
       validateAdditionalAuthorizationParams(meta.additionalAuthorizationParams);
@@ -233,9 +227,20 @@ export function validateServerDetailSafety(s: ServerDetail): string | null {
   return hostVersionViolation(s);
 }
 
-/** Whether a static entry names where to create its client and where its secret goes. */
-function hasCompleteOAuthClientSetup(setup: NimbleBrainConnectorMeta["oauthClientSetup"]): boolean {
-  return Boolean(setup?.portalUrl && setup.hint && setup.clientSecretKey);
+/**
+ * A static entry must say where its OAuth client is created and where the
+ * secret goes, or nothing could set it up; any entry's portal link must be
+ * http(s), because the Set up dialog renders it as a link.
+ */
+function oauthClientSetupViolation(meta: NimbleBrainConnectorMeta | undefined): string | null {
+  const setup = meta?.oauthClientSetup;
+  if (meta?.auth === "static" && !(setup?.portalUrl && setup.hint && setup.clientSecretKey)) {
+    return "auth='static' requires oauthClientSetup.{portalUrl,hint,clientSecretKey}";
+  }
+  if (setup && !isHttpUrl(setup.portalUrl)) {
+    return `oauthClientSetup.portalUrl must be http(s): "${setup.portalUrl}"`;
+  }
+  return null;
 }
 
 function hostVersionViolation(s: ServerDetail): string | null {
