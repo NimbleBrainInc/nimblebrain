@@ -5,8 +5,18 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
+import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
+import {
+  _resetInstanceOAuthClientsForTest,
+  bindInstanceOAuthClients,
+} from "../../src/connectors/runtime/instance-oauth-clients.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import type { ConnectorRef, OAuthClientConfig } from "../../src/connectors/runtime/types.ts";
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import type { UserStore } from "../../src/identity/user.ts";
 import type { LifecycleNotifyDeps } from "../../src/lifecycle/notify.ts";
@@ -16,6 +26,7 @@ import {
   createManageConnectorsTool,
   deriveConnectorStatus,
   type ManageConnectorsContext,
+  rotateInstalledOAuthClients,
 } from "../../src/tools/connector-tools.ts";
 import type { CredentialStore } from "../../src/tools/credential-store.ts";
 import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
@@ -190,6 +201,8 @@ function buildHarness(): Harness {
       }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
+    // No broker is configured here; the personal-catalog filter asks.
+    getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
     // The lifecycle notification the install and uninstall handlers make. No
     // connector here declares one, so both calls are no-ops — but the getter
     // has to exist: `handleUninstall` reads it before any teardown, and a stub
@@ -250,6 +263,11 @@ interface StructuredResult {
   errors?: Array<{ file: string; message: string }>;
   key?: string;
   keys?: Array<{ key: string; updatedAt: string }>;
+}
+
+/** A ref's own client id; undefined for no client or one naming an instance OAuth client. */
+function registeredClientId(client: OAuthClientConfig | undefined): string | undefined {
+  return client && "clientId" in client ? client.clientId : undefined;
 }
 
 function structured(result: { structuredContent?: unknown }): StructuredResult {
@@ -718,10 +736,9 @@ describe("manage_connectors.install (static-auth)", () => {
       (b): b is Extract<ConnectorRef, { url: string }> => "url" in b && b.url === DROPBOX_URL,
     );
     expect(installed).toBeDefined();
-    expect(installed?.oauthClient?.clientId).toBe("cid-public");
-    expect(installed?.oauthClient?.clientSecret).toEqual({
-      ref: "credential",
-      key: DROPBOX_SECRET_KEY,
+    expect(installed?.oauthClient).toEqual({
+      clientId: "cid-public",
+      clientSecret: { ref: "credential", key: DROPBOX_SECRET_KEY },
     });
   });
 });
@@ -781,8 +798,10 @@ describe("manage_connectors.setup_operator on an installed connector", () => {
     });
     expect(result.isError).toBe(false);
 
-    expect((await installedRef())?.oauthClient?.clientId).toBe("cid-new");
-    expect(h.lifecycle.getInstance(SERVER, h.wsId)?.ref?.oauthClient?.clientId).toBe("cid-new");
+    expect(registeredClientId((await installedRef())?.oauthClient)).toBe("cid-new");
+    expect(registeredClientId(h.lifecycle.getInstance(SERVER, h.wsId)?.ref?.oauthClient)).toBe(
+      "cid-new",
+    );
   });
 
   test("a new client id drops the old sign-in and asks for a new one", async () => {
@@ -806,7 +825,7 @@ describe("manage_connectors.setup_operator on an installed connector", () => {
       clientSecret: "sec-new",
     });
 
-    expect((await installedRef())?.oauthClient?.clientId).toBe("cid-old");
+    expect(registeredClientId((await installedRef())?.oauthClient)).toBe("cid-old");
     expect((await oauthKeys()).sort()).toEqual([
       `mcp-oauth.${SERVER}.identity`,
       `mcp-oauth.${SERVER}.tokens`,
@@ -1849,5 +1868,151 @@ describe("manage_connectors workspace secrets", () => {
     const result = await tool.handler({ action: "list_secret_keys" });
     expect(result.isError).toBe(true);
     expect((result.content?.[0] as { text?: string })?.text).toMatch(/names no workspace/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Instance OAuth clients — the pre-registered OAuth client declared once for the instance
+// ─────────────────────────────────────────────────────────────────────
+
+/** Declare an instance OAuth client for Dropbox and bind it against the fixture catalog. */
+async function declareDropboxInstanceClient(): Promise<void> {
+  setConnectorsConfig({
+    oauthClients: { [DROPBOX_ID]: { clientId: "inst-cid", clientSecret: "inst-sec" } },
+  });
+  await bindInstanceOAuthClients(() =>
+    new ConnectorCatalog(CONNECTOR_FIXTURE_DIR).catalogByIdMap(),
+  );
+}
+
+describe("manage_connectors with an instance OAuth client", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+  });
+
+  afterEach(() => {
+    _resetConnectorsConfigForTest();
+    _resetInstanceOAuthClientsForTest();
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  test("Browse reports the entry configured with no workspace setup", async () => {
+    await declareDropboxInstanceClient();
+    const result = await buildTool(h, ADMIN_USER).handler({ action: "list_directory" });
+    const dropbox = (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID);
+    expect(dropbox?.operatorConfigured).toBe(true);
+  });
+
+  test("install writes a ref naming the instance OAuth client, with no client id or secret on it", async () => {
+    await declareDropboxInstanceClient();
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "install",
+      entry: dropboxEntry(),
+      wsId: h.wsId,
+    });
+    expect(result.isError).toBe(false);
+    const ws = await h.workspaceStore.get(h.wsId);
+    const installed = ws?.connectors.find((b) => "url" in b && b.url === DROPBOX_URL);
+    expect(installed?.oauthClient).toEqual({ instanceClient: DROPBOX_ID });
+    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]).toBeUndefined();
+  });
+
+  test("the instance OAuth client wins over a workspace's own setup for the same entry", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    await tool.handler({
+      action: "setup_operator",
+      catalogId: DROPBOX_ID,
+      clientId: "ws-cid",
+      clientSecret: "ws-sec",
+    });
+    await declareDropboxInstanceClient();
+
+    await tool.handler({ action: "install", entry: dropboxEntry(), wsId: h.wsId });
+    const ws = await h.workspaceStore.get(h.wsId);
+    const installed = ws?.connectors.find((b) => "url" in b && b.url === DROPBOX_URL);
+    expect(installed?.oauthClient).toEqual({ instanceClient: DROPBOX_ID });
+  });
+
+  test("setup_operator is refused: the client is the operator's", async () => {
+    await declareDropboxInstanceClient();
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "setup_operator",
+      catalogId: DROPBOX_ID,
+      clientId: "ws-cid",
+      clientSecret: "ws-sec",
+    });
+    expect(result.isError).toBe(true);
+    const ws = await h.workspaceStore.get(h.wsId);
+    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]).toBeUndefined();
+    expect(
+      await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, {
+        caller: "test",
+        purpose: "assert setup wrote nothing",
+      }),
+    ).toBeNull();
+  });
+
+  test("an install naming another URL lands at the catalog's, the one the client serves", async () => {
+    await declareDropboxInstanceClient();
+    const forged = dropboxEntry();
+    if (forged.install.kind === "remote-oauth") forged.install.url = "https://evil.example/mcp";
+    await buildTool(h, ADMIN_USER).handler({ action: "install", entry: forged, wsId: h.wsId });
+    const ws = await h.workspaceStore.get(h.wsId);
+    const urls = (ws?.connectors ?? []).map((b) => ("url" in b ? b.url : undefined));
+    expect(urls).toEqual([DROPBOX_URL]);
+  });
+
+  test("a personal install is accepted and names the instance OAuth client", async () => {
+    await declareDropboxInstanceClient();
+    const result = await buildTool(h, NON_ADMIN_USER).handler({
+      action: "install",
+      scope: "identity",
+      entry: dropboxEntry(),
+    });
+    expect(result.isError).toBe(false);
+    expect(structured(result).scope).toBe("identity");
+    const ref = await new IdentityConnectorStore({ workDir: h.workDir }).get(
+      NON_ADMIN_USER.id,
+      "com-dropbox-mcp",
+    );
+    expect(ref && "url" in ref ? ref.oauthClient : undefined).toEqual({
+      instanceClient: DROPBOX_ID,
+    });
+  });
+
+  test("a personal install of a static entry is refused without an instance OAuth client", async () => {
+    const result = await buildTool(h, NON_ADMIN_USER).handler({
+      action: "install",
+      scope: "identity",
+      entry: dropboxEntry(),
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  test("the personal catalog offers a static entry only when the instance holds its client", async () => {
+    const tool = buildTool(h, NON_ADMIN_USER);
+    const ids = async () =>
+      (
+        (await tool.handler({ action: "list_personal_catalog" })).structuredContent as {
+          catalog: Array<{ id: string }>;
+        }
+      ).catalog.map((e) => e.id);
+    expect(await ids()).not.toContain(DROPBOX_ID);
+    await declareDropboxInstanceClient();
+    expect(await ids()).toContain(DROPBOX_ID);
+  });
+
+  test("rotating a workspace client leaves refs that name the instance OAuth client alone", () => {
+    const instanceRef: ConnectorRef = {
+      url: DROPBOX_URL,
+      serverName: "com-dropbox-mcp",
+      oauthClient: { instanceClient: DROPBOX_ID },
+    };
+    const rotated = rotateInstalledOAuthClients([instanceRef], DROPBOX_URL, "new-cid");
+    expect(rotated.refs).toHaveLength(0);
+    expect(rotated.connectors[0]).toBe(instanceRef);
   });
 });

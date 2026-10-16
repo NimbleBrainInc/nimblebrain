@@ -224,11 +224,17 @@ export interface BrokeredRef {
 
 /**
  * Config for a pre-registered OAuth client (Track A — alternative to DCR).
- * Lives on the URL connector ref. The provider reads `clientId` directly
- * and resolves `clientSecret` per-request via `CredentialStore` (the
- * value is never inline in `workspace.json`).
+ * Lives on the URL connector ref, in one of two forms: the client itself
+ * (a workspace's own Set up), or the name of an instance OAuth client.
  */
-export interface OAuthClientConfig {
+export type OAuthClientConfig = RegisteredOAuthClientConfig | InstanceOAuthClientRef;
+
+/**
+ * A client carried on the ref. The provider reads `clientId` directly and
+ * resolves `clientSecret` per-request via `CredentialStore` (the value is never
+ * inline in `workspace.json`).
+ */
+export interface RegisteredOAuthClientConfig {
   /** OAuth `client_id` from the vendor's developer portal. */
   clientId: string;
   /**
@@ -246,6 +252,32 @@ export interface OAuthClientConfig {
    * falls back to the SDK's choice among those it does.
    */
   tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
+}
+
+/**
+ * The instance OAuth client declared for a catalog id
+ * (`connectors.oauthClients`). The ref names it and carries neither its id nor
+ * its secret, so the operator's current values apply on every connect. It
+ * resolves only for the URL the catalog publishes for that id; see
+ * `instance-oauth-clients.ts`.
+ */
+export interface InstanceOAuthClientRef {
+  /** The catalog id the client is declared under. */
+  instanceClient: string;
+}
+
+/** Whether a ref's OAuth client names an instance OAuth client. */
+export function isInstanceOAuthClientRef(
+  client: OAuthClientConfig | undefined,
+): client is InstanceOAuthClientRef {
+  return client !== undefined && "instanceClient" in client;
+}
+
+/** The workspace secret reference a ref's OAuth client carries, if any. */
+export function oauthClientSecretRef(
+  client: OAuthClientConfig | undefined,
+): CredentialRef | undefined {
+  return client && !isInstanceOAuthClientRef(client) ? client.clientSecret : undefined;
 }
 
 /** Host manifest metadata at _meta["ai.nimblebrain/host"]. */

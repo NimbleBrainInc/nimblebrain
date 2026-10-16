@@ -39,6 +39,7 @@ import {
 } from "../connectors/runtime/catalog-ui.ts";
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
+import { bindInstanceOAuthClients } from "../connectors/runtime/instance-oauth-clients.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
@@ -761,6 +762,12 @@ export class Runtime {
     // a built-in registered above — registration overwrites by name. The guard
     // is the reserved-name list in the gateway module, not this ordering.
     registerGatewayCredentialProviders();
+
+    // Instance OAuth clients, bound to the URL the catalog publishes for each id
+    // before any connector starts: every connect resolves its client through this
+    // bind, and it is what keeps the operator's secret on the catalog's server.
+    // Throws on a declared client with no client id or secret.
+    await bindInstanceOAuthClients(() => new ConnectorCatalog(catalogPath()).catalogByIdMap());
 
     // Derive the override-file path when the caller supplied a configPath
     // but not an explicit override path. The CLI's loadConfig already
