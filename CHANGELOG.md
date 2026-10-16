@@ -384,6 +384,7 @@
 
 ### Removed
 
+- **`providers.anthropic.promptCaching`.** No code ever read it: prompt caching is always on for Anthropic. A config that still sets it boots with an `Unknown key … (ignored)` warning.
 - **`filePath` on `conversations__list` rows.** It named the server's storage path, which no reader needs; address a conversation by `id`.
 - **Readers for historic conversation and usage-ledger shapes:** `skills.loaded` entries without a `name`, `context.assembled` rows counting `turns`, `llm.response` events without `usage` or `finishReason`, `tool.done` events without `output`, conversation headers without a bound `model` (now refused as `conversation_corrupted`), usage-ledger lines carrying `sessionId` / `parentRunId` / `delegated`, and the web parser for `ws_<id>-` tool names. No converter ships: a deployment that holds any of these shapes must convert them before upgrading, or they are not read.
 - **Four legacy config aliases.** `COMPOSIO_MONITOR_INTERVAL_SECONDS` is no longer read; set `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` ([#727](https://github.com/NimbleBrainInc/nimblebrain/issues/727)). The minted credential and the artifacts reader no longer derive the authorizer token endpoint from `NB_FLEET_AUTHORIZER_ISSUER` or a connection's `issuer`; set `NB_FLEET_AUTHORIZER_TOKEN_URL`. The WorkOS `redirectUri` in `instance.json` is ignored; the sign-in callback is always `<public origin>/v1/auth/callback`. `home.userName` no longer falls back for `preferences.displayName`.

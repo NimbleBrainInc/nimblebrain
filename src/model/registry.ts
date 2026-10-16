@@ -15,7 +15,7 @@ import { requireQualifiedModelId } from "./model-id.ts";
 
 export interface ProvidersConfig {
   providers?: {
-    anthropic?: { apiKey?: string; promptCaching?: boolean; models?: string[] };
+    anthropic?: { apiKey?: string; models?: string[] };
     openai?: { apiKey?: string; baseURL?: string; organization?: string; models?: string[] };
     google?: { apiKey?: string; models?: string[] };
     greenpt?: { apiKey?: string; baseURL?: string; models?: string[] };
@@ -175,6 +175,26 @@ export function buildRegistry(config: ProvidersConfig): Provider {
   }
 
   return createProviderRegistry(providers);
+}
+
+/**
+ * Each configured provider's model allowlist (`providers.<id>.models`), the one
+ * provider field `buildRegistry` does not read. With no `providers` block it
+ * reports `{ anthropic: {} }`, the provider the registry builds by default.
+ *
+ * `buildRegistry` and this function are the only readers of a provider's
+ * config, which `test/unit/model-provider-config.test.ts` holds against the
+ * config schema: a declared field neither reads fails the build.
+ */
+export function providerModelAllowlists(
+  config: ProvidersConfig,
+): Record<string, { models?: string[] }> {
+  if (!config.providers) return { anthropic: {} };
+  const result: Record<string, { models?: string[] }> = {};
+  for (const [id, cfg] of Object.entries(config.providers)) {
+    result[id] = { models: cfg?.models };
+  }
+  return result;
 }
 
 /**

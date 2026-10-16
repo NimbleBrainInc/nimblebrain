@@ -26,7 +26,6 @@
               "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
               "description": "Provider API key. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
             },
-            "promptCaching": { "type": "boolean", "default": true },
             "models": {
               "type": "array",
               "items": { "type": "string" },
