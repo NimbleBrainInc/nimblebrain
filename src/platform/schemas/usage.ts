@@ -10,7 +10,6 @@ import { StringEnum } from "./_shared.ts";
 export const USAGE_GROUP_BYS = [
   "day",
   "conversation",
-  "turn",
   "model",
   "user",
   "origin",
@@ -21,7 +20,7 @@ export const USAGE_GROUP_BYS = [
 /**
  * The dimensions a `day` row can be split by (`stackBy`). Only the
  * low-cardinality ones: a day row carries one entry per key, so an id-keyed
- * dimension (`conversation`, `turn`) would multiply the row count by the
+ * dimension (`conversation`) would multiply the row count by the
  * tenant's whole history.
  */
 export const USAGE_STACK_BYS = ["model", "user", "origin", "provider", "workspace"] as const;
@@ -32,11 +31,10 @@ export const USAGE_ORIGINS = ["chat", "task", "system"] as const;
 const UsageGroupBy = StringEnum(USAGE_GROUP_BYS, {
   description:
     "Group breakdown. Default: day. `user` buckets by the caller (org scope); " +
-    "`origin` splits interactive chat from task runs; `turn` buckets by a single " +
-    "assistant turn and is the finest grain here, so narrow the period before reaching for " +
-    "it; `provider` buckets by " +
-    "the model string's provider prefix; `workspace` buckets by the workspace the call was " +
-    'bound to (`"none"` for a call bound to none).',
+    "`origin` splits interactive chat from task runs; `conversation` buckets chat calls by " +
+    "conversation, and leaves task runs and background jobs out of its rows (their cost " +
+    "per task is in `tasks__stats`); `provider` buckets by the model string's provider " +
+    "prefix; `workspace` buckets by the workspace the call was bound to.",
 });
 
 export const UsageReportInput = Type.Object({
@@ -77,7 +75,7 @@ export const UsageReportInput = Type.Object({
   workspaceId: Type.Optional(
     Type.String({
       minLength: 1,
-      description: 'Only calls bound to this workspace. `"none"` selects calls bound to none.',
+      description: "Only calls bound to this workspace.",
     }),
   ),
   userId: Type.Optional(

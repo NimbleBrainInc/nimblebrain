@@ -24,6 +24,7 @@
  * and increments, and knows nothing about request scoping.
  */
 import { type LlmUsageSource, recordLlmUsage } from "../api/metrics.ts";
+import { log } from "../observability/log.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
 import { resolveRates } from "./cost.ts";
 import type { UsageLedger } from "./ledger.ts";
@@ -69,9 +70,11 @@ export function clearUsageLedger(owned: UsageLedger): void {
  * `system` rather than `chat` — but the flag is the direct question and does not
  * depend on which other fields a context happens to hold.
  *
- * `system` is the honest answer for a call with no request scope — a detached
- * fast-slot call, or a background job. It is not a fallback for "we could not
- * tell"; the three sources of scope are exhaustive.
+ * `system` is the honest answer for a call in a workspace with no conversation
+ * and no task run — a background job. A call with no scope at all also reads
+ * `system`, but only the counters see it: the ledger refuses it (see
+ * `recordLlmCall`). It is not a fallback for "we could not tell"; the three
+ * sources of scope are exhaustive.
  */
 export function originOf(): LlmCallOrigin {
   const ctx = getRequestContext();
@@ -99,6 +102,11 @@ export function originOf(): LlmCallOrigin {
  *
  * Fans out to both halves of the chokepoint: the process-local Prometheus
  * counters, and the durable ledger that survives the process.
+ *
+ * Every model call is spent in a workspace on behalf of a user, so a ledger line
+ * always names both. A call whose scope lacks either is a call that escaped its
+ * request context: it is logged as an error and kept off the ledger rather than
+ * written with an owner made up, and the counters still count it.
  */
 export function recordLlmCall(args: {
   source: LlmUsageSource;
@@ -112,6 +120,17 @@ export function recordLlmCall(args: {
   if (!ledger) return;
 
   const ctx = getRequestContext();
+  const userId = ctx?.identity?.id;
+  const workspaceId = ctx?.workspaceId;
+  if (!userId || !workspaceId) {
+    log.error("[usage] model call outside a workspace and user scope; not recorded", {
+      source: args.source,
+      model: args.model,
+      hasUser: Boolean(userId),
+      hasWorkspace: Boolean(workspaceId),
+    });
+    return;
+  }
   // Rates are resolved at write time so a past call keeps costing what it cost.
   // Absent when the catalog does not know the model, which the reader reports
   // as unpriced rather than as zero.
@@ -123,14 +142,14 @@ export function recordLlmCall(args: {
     model: args.model,
     usage: args.usage,
     llmMs: args.llmMs ?? 0,
-    ...(ctx?.identity?.id ? { userId: ctx.identity.id } : {}),
-    ...(ctx?.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
+    userId,
+    workspaceId,
     // Each id under its own name, so no reader has to consult `origin` to learn
     // what it is holding. `runId` is the engine's, and it is the only one of the
     // three that is per-TURN, so it is what makes "what did this turn cost"
     // answerable at all.
-    ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
-    ...(ctx?.runId ? { taskRunId: ctx.runId } : {}),
+    ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {}),
+    ...(ctx.runId ? { taskRunId: ctx.runId } : {}),
     ...(typeof args.event?.runId === "string" ? { runId: args.event.runId } : {}),
     ...(rates ? { rates } : {}),
   };

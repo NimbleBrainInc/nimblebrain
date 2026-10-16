@@ -32,6 +32,8 @@ function entry(over: Partial<UsageLedgerEntry> = {}): UsageLedgerEntry {
     model: "anthropic:claude-sonnet-4-5-20250929",
     usage: { inputTokens: 10, outputTokens: 5 },
     llmMs: 1,
+    userId: "usr_test",
+    workspaceId: "ws_0076759dbbe19fcc",
     ...over,
   };
 }

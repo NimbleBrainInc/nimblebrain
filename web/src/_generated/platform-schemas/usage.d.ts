@@ -9,11 +9,11 @@ import { type Static, type TOptional } from "@sinclair/typebox";
  * guard (`src/usage/aggregate.ts`) all derive from this array
  * so a new dimension is added in exactly one place.
  */
-export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "turn", "model", "user", "origin", "provider", "workspace"];
+export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "model", "user", "origin", "provider", "workspace"];
 /**
  * The dimensions a `day` row can be split by (`stackBy`). Only the
  * low-cardinality ones: a day row carries one entry per key, so an id-keyed
- * dimension (`conversation`, `turn`) would multiply the row count by the
+ * dimension (`conversation`) would multiply the row count by the
  * tenant's whole history.
  */
 export declare const USAGE_STACK_BYS: readonly ["model", "user", "origin", "provider", "workspace"];
@@ -24,7 +24,7 @@ export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
     period: TOptional<import("@sinclair/typebox").TUnsafe<"all" | "day" | "month" | "week">>;
     from: TOptional<import("@sinclair/typebox").TString>;
     to: TOptional<import("@sinclair/typebox").TString>;
-    groupBy: TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"conversation" | "day" | "model" | "origin" | "provider" | "turn" | "user" | "workspace">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"conversation" | "day" | "model" | "origin" | "provider" | "turn" | "user" | "workspace">>]>>;
+    groupBy: TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"conversation" | "day" | "model" | "origin" | "provider" | "user" | "workspace">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"conversation" | "day" | "model" | "origin" | "provider" | "user" | "workspace">>]>>;
     stackBy: TOptional<import("@sinclair/typebox").TUnsafe<"model" | "origin" | "provider" | "user" | "workspace">>;
     workspaceId: TOptional<import("@sinclair/typebox").TString>;
     userId: TOptional<import("@sinclair/typebox").TString>;
@@ -168,7 +168,7 @@ export declare const UsageReportOutput: import("@sinclair/typebox").TObject<{
         cacheHitRate: TOptional<import("@sinclair/typebox").TNumber>;
         stack: TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TNumber>>;
     }>>;
-    breakdowns: import("@sinclair/typebox").TObject<Record<"conversation" | "day" | "model" | "origin" | "provider" | "turn" | "user" | "workspace", TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+    breakdowns: import("@sinclair/typebox").TObject<Record<"conversation" | "day" | "model" | "origin" | "provider" | "user" | "workspace", TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
         key: import("@sinclair/typebox").TString;
         tokens: import("@sinclair/typebox").TObject<{
             /** Non-cached input tokens. */
@@ -191,7 +191,7 @@ export declare const UsageReportOutput: import("@sinclair/typebox").TObject<{
         cacheHitRate: TOptional<import("@sinclair/typebox").TNumber>;
         stack: TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TNumber>>;
     }>>>>>;
-    truncatedBreakdowns: TOptional<import("@sinclair/typebox").TObject<Record<"conversation" | "day" | "model" | "origin" | "provider" | "turn" | "user" | "workspace", TOptional<import("@sinclair/typebox").TObject<{
+    truncatedBreakdowns: TOptional<import("@sinclair/typebox").TObject<Record<"conversation" | "day" | "model" | "origin" | "provider" | "user" | "workspace", TOptional<import("@sinclair/typebox").TObject<{
         returned: import("@sinclair/typebox").TInteger;
         total: import("@sinclair/typebox").TInteger;
     }>>>>>;

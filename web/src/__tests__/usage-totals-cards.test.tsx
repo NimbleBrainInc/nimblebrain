@@ -37,7 +37,7 @@ const { OrgUsageBody, UsageFilterBar, reportArgs, rangeFor, labelFor, seriesFor 
 );
 const { OVERFLOW_COLOR } = await import("../components/charts/CostChart");
 type UsageFilterState = Parameters<typeof UsageFilterBar>[0]["filters"];
-const NO_LABELS = { users: new Map(), workspaces: new Map() };
+const NO_LABELS = { users: new Map(), workspaces: new Map(), deletedWorkspaces: new Map() };
 interface Mounted {
   container: HTMLDivElement;
   unmount(): void;
@@ -272,19 +272,26 @@ describe("the per-user breakdown row carries the same two signals", () => {
 });
 
 describe("the table follows the group-by dimension", () => {
-  test("workspace rows resolve names from the roster, and unknown ids read as deleted", () => {
+  test("workspace rows resolve names from the roster, then from deleted workspaces' archives", () => {
     const labels = {
       users: new Map(),
       workspaces: new Map([
         ["ws_003335b14591adb0", { id: "ws_003335b14591adb0", name: "Acme Ops" }],
       ]),
+      deletedWorkspaces: new Map([["ws_00aa11bb22cc33dd", "Old Pilot"]]),
     };
-    expect(labelFor("workspace", "ws_003335b14591adb0", labels).name).toBe("Acme Ops");
+    expect(labelFor("workspace", "ws_003335b14591adb0", labels)).toEqual({
+      name: "Acme Ops",
+      detail: null,
+    });
+    expect(labelFor("workspace", "ws_00aa11bb22cc33dd", labels)).toEqual({
+      name: "Old Pilot",
+      detail: "Deleted workspace",
+    });
     expect(labelFor("workspace", "ws_003bdf4cf2ed3a6e", labels)).toEqual({
       name: "ws_003bdf4cf2ed3a6e",
       detail: "Deleted workspace",
     });
-    expect(labelFor("workspace", "none", labels).name).toBe("No workspace");
     expect(labelFor("origin", "task", labels).name).toBe("Task");
   });
 });
@@ -405,6 +412,7 @@ describe("the filter bar", () => {
   const labels = {
     users: new Map([["usr_a", { id: "usr_a", email: "a@example.com", displayName: "Ada" }]]),
     workspaces: new Map([["ws_003335b14591adb0", { id: "ws_003335b14591adb0", name: "Acme Ops" }]]),
+    deletedWorkspaces: new Map(),
   };
 
   function bar(filters: UsageFilterState, onChange: (f: UsageFilterState) => void = () => {}) {

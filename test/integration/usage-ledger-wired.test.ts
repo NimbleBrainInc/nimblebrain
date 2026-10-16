@@ -107,7 +107,7 @@ test("a chat turn counts as a conversation, and both land in one report", async 
   expect(byOrigin.task).toBeGreaterThan(0);
 });
 
-test("ownerFilter fails closed on a line with no userId", async () => {
+test("ownerFilter reads only the owner's own lines", async () => {
   const rt = await start();
   await rt.chat({
     identity: TEST_IDENTITY,
@@ -118,8 +118,7 @@ test("ownerFilter fails closed on a line with no userId", async () => {
   const mine = await aggregateUsage(workDir, "month", "day", { ownerFilter: TEST_IDENTITY.id });
   expect(mine.totals.llmCalls).toBeGreaterThan(0);
 
-  // Someone else's view must not see it, and neither must a filtered read see a
-  // line whose owner is unknown — the case the predicate has to fail closed on.
+  // Someone else's view must not see it.
   const theirs = await aggregateUsage(workDir, "month", "day", { ownerFilter: "usr_someone_else" });
   expect(theirs.totals.llmCalls).toBe(0);
 });
@@ -127,20 +126,21 @@ test("ownerFilter fails closed on a line with no userId", async () => {
 test("an unpriced line reports its tokens and is counted, not billed as zero", async () => {
   await start();
 
-  // Unpriced lines arise from backfill, not from live writes: the writer
-  // resolves rates whenever the catalog knows the model, and a backfilled
-  // task run has no model recorded at all. So this writes the shape
-  // backfill produces and reads it back, which is where the distinction has to
-  // hold — the reader is what decides whether "no price" reads as "free".
+  // The writer stores rates whenever the catalog knows the model, so an
+  // unpriced line is one for a model the catalog has never known. This writes
+  // that shape and reads it back, which is where the distinction has to hold —
+  // the reader is what decides whether "no price" reads as "free".
   const month = usageMonthOf(new Date());
   mkdirSync(usageMonthDir(workDir, month), { recursive: true });
   const line: UsageLedgerEntry = {
     ts: new Date().toISOString(),
     source: "main",
     origin: "task",
-    model: "unknown",
+    model: "acme:uncatalogued-model",
     usage: { inputTokens: 1_000_000, outputTokens: 500_000 },
     llmMs: 0,
+    userId: TEST_IDENTITY.id,
+    workspaceId: TEST_WORKSPACE_ID,
   };
   writeFileSync(join(usageMonthDir(workDir, month), "backfill.jsonl"), `${JSON.stringify(line)}\n`);
 

@@ -21,6 +21,7 @@ import {
 } from "../../components/ui/table";
 import { formatTokens, formatUsd } from "../../lib/format";
 import { Section, SettingsDashboardPage } from "./components";
+import type { Archive } from "./OrgArchivesTab";
 import {
   type DateRange,
   DIMENSION_OPTIONS,
@@ -45,8 +46,9 @@ import {
 // split (for the chat / task cards) in one scan.
 //
 // The report returns ids. The user and workspace rosters resolve them to
-// names here, the same way for both, and an id neither roster knows (a
-// deleted user or workspace) is shown raw so the row stays auditable.
+// names here. A deleted workspace keeps its name in its archive; an id no list
+// knows (a deleted user, or a workspace whose archive was purged) is shown raw
+// so the row stays auditable.
 
 interface UserRow {
   id: string;
@@ -63,6 +65,8 @@ interface WorkspaceRow {
 export interface UsageLabels {
   users: Map<string, UserRow>;
   workspaces: Map<string, WorkspaceRow>;
+  /** Deleted workspaces' names, by id, from their archives. */
+  deletedWorkspaces: Map<string, string>;
 }
 
 /** The filter bar's state. `"all"` means the filter is not applied. */
@@ -89,14 +93,12 @@ export function labelFor(
   switch (dimension) {
     case "user": {
       const u = labels.users.get(key);
-      if (u) return { name: u.displayName, detail: u.email };
-      // Unknown owner — deleted user, dev-mode id, or a call with no identity.
-      return { name: key === "unknown" ? "Unknown" : key, detail: null };
+      return u ? { name: u.displayName, detail: u.email } : { name: key, detail: null };
     }
     case "workspace": {
-      if (key === "none") return { name: "No workspace", detail: null };
       const w = labels.workspaces.get(key);
-      return w ? { name: w.name, detail: null } : { name: key, detail: "Deleted workspace" };
+      if (w) return { name: w.name, detail: null };
+      return { name: labels.deletedWorkspaces.get(key) ?? key, detail: "Deleted workspace" };
     }
     case "origin":
       return { name: ORIGIN_LABELS[key] ?? key, detail: null };
@@ -140,7 +142,11 @@ export function OrgUsageTab() {
   // the filter: a refetch keeps the last report on screen, and its breakdowns
   // and day stacks are keyed by the dimension it was asked for.
   const [reportGroupBy, setReportGroupBy] = useState<UsageDimension>("model");
-  const [labels, setLabels] = useState<UsageLabels>({ users: new Map(), workspaces: new Map() });
+  const [labels, setLabels] = useState<UsageLabels>({
+    users: new Map(),
+    workspaces: new Map(),
+    deletedWorkspaces: new Map(),
+  });
   // The model list the filter offers. Taken from a report with no model
   // filter, so choosing a model does not shrink the list to that one model.
   const [models, setModels] = useState<string[]>([]);
@@ -156,15 +162,26 @@ export function OrgUsageTab() {
     Promise.all([
       callToolWithoutWorkspace("nb", "manage_users", { action: "list" }).catch(() => null),
       callToolWithoutWorkspace("nb", "manage_workspaces", { action: "list" }).catch(() => null),
-    ]).then(([usersRes, workspacesRes]) => {
+      callToolWithoutWorkspace("nb", "manage_workspaces", { action: "list_archives" }).catch(
+        () => null,
+      ),
+    ]).then(([usersRes, workspacesRes, archivesRes]) => {
       if (cancelled) return;
       const users = usersRes ? (parseToolResult<{ users: UserRow[] }>(usersRes).users ?? []) : [];
       const workspaces = workspacesRes
         ? (parseToolResult<{ workspaces: WorkspaceRow[] }>(workspacesRes).workspaces ?? [])
         : [];
+      const archives = archivesRes
+        ? (parseToolResult<{ archives: Archive[] }>(archivesRes).archives ?? [])
+        : [];
       setLabels({
         users: new Map(users.map((u) => [u.id, u])),
         workspaces: new Map(workspaces.map((w) => [w.id, w])),
+        deletedWorkspaces: new Map(
+          archives.flatMap((a) =>
+            a.workspaceId && a.workspaceName ? [[a.workspaceId, a.workspaceName] as const] : [],
+          ),
+        ),
       });
     });
     return () => {

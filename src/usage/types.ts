@@ -24,8 +24,8 @@ import type { LanguageModelV4Usage } from "@ai-sdk/provider";
  *
  * Derived from the request context, never asserted by a caller: `task` when the
  * context is unattended, `chat` when it carries a conversation, `system` for a
- * call with no request scope at all (a detached fast-slot call or a background
- * job). Lives here rather than beside the counters so `api/metrics.ts` can name
+ * call in a workspace with neither (a background job such as the briefing
+ * refresh). Lives here rather than beside the counters so `api/metrics.ts` can name
  * the label type without importing the module that derives it.
  */
 export type LlmCallOrigin = "chat" | "task" | "system";
@@ -95,12 +95,12 @@ export interface UsageLedgerEntry {
   usage: TokenUsage;
   llmMs: number;
   /** `identity.id` from the request context. */
-  userId?: string;
+  userId: string;
   /** The one workspace the call was bound to. */
-  workspaceId?: string;
+  workspaceId: string;
   /**
    * The chat thread this call belongs to. Absent for a task run (which has no
-   * conversation) and for a detached background call.
+   * conversation) and for a background job.
    */
   conversationId?: string;
   /**

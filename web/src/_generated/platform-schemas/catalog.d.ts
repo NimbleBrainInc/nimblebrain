@@ -98,7 +98,7 @@ export declare const PlatformToolCatalog: {
                 period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "day" | "month" | "week">>;
                 from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"conversation" | "day" | "model" | "origin" | "provider" | "turn" | "user" | "workspace">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"conversation" | "day" | "model" | "origin" | "provider" | "turn" | "user" | "workspace">>]>>;
+                groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"conversation" | "day" | "model" | "origin" | "provider" | "user" | "workspace">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"conversation" | "day" | "model" | "origin" | "provider" | "user" | "workspace">>]>>;
                 stackBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"model" | "origin" | "provider" | "user" | "workspace">>;
                 workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 userId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
