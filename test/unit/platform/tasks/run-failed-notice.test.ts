@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type TaskDomainContext, updateTask } from "../../../../src/platform/tasks/domain.ts";
 import {
   MAX_CONSECUTIVE_ERRORS,
   type RequestedRun,
@@ -16,7 +17,7 @@ import {
   Scheduler,
 } from "../../../../src/platform/tasks/scheduler.ts";
 import { runFailedEnvelope } from "../../../../src/platform/tasks/source.ts";
-import { loadTask, saveTask } from "../../../../src/platform/tasks/store.ts";
+import { loadOwnerTasks, loadTask, saveTask } from "../../../../src/platform/tasks/store.ts";
 import type { Task, TaskRun, TaskRunResult } from "../../../../src/platform/tasks/types.ts";
 import { createRunAdmission } from "../../../../src/runtime/admission.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
@@ -191,6 +192,46 @@ describe("a run that ends with no deliverable", () => {
     const notified = start(["ok", "ok"]);
     await runTimes(2);
     expect(notified).toHaveLength(0);
+  });
+});
+
+describe("an edit that resets the streak re-arms the notice", () => {
+  const ctx: TaskDomainContext = {
+    definitions: () => loadOwnerTasks(workDir, WS, OWNER),
+    save: (map) => {
+      for (const task of map.values()) saveTask(workDir, WS, OWNER, task);
+    },
+    reloadScheduler: () => {},
+    defaultTimezone: "UTC",
+  };
+
+  it("test_reenable_clears_notice_next_failure_notifies", async () => {
+    makeTask({
+      enabled: false,
+      consecutiveErrors: MAX_CONSECUTIVE_ERRORS,
+      failureNoticeRunId: "run_earlier00001",
+    });
+    updateTask(TASK_ID, { enabled: true }, ctx);
+    expect(loadTask(workDir, WS, OWNER, TASK_ID)?.failureNoticeRunId).toBeUndefined();
+    const notified = start(["failed"]);
+    const [run] = await runTimes(1);
+    expect(notified.map((n) => n.run.id)).toEqual([run?.id ?? ""]);
+  });
+
+  it("test_once_rearm_clears_notice_next_failure_notifies", async () => {
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    makeTask({
+      schedule: { type: "once", at: past },
+      onceDone: { at: past, outcome: "ran" },
+      consecutiveErrors: 1,
+      failureNoticeRunId: "run_earlier00001",
+    });
+    const at = new Date(Date.now() + 3_600_000).toISOString();
+    updateTask(TASK_ID, { schedule: { type: "once", at } }, ctx);
+    expect(loadTask(workDir, WS, OWNER, TASK_ID)?.failureNoticeRunId).toBeUndefined();
+    const notified = start(["failed"]);
+    const [run] = await runTimes(1);
+    expect(notified.map((n) => n.run.id)).toEqual([run?.id ?? ""]);
   });
 });
 
