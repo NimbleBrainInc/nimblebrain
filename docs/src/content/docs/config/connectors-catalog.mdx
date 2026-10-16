@@ -29,10 +29,10 @@ Add the entry to your deployment's catalog directory — the one [`NB_CURATED_CA
 
 The kinds and what each asks of a *user* are documented once, in [Connectors → the auth kinds](/using/connectors/#the-auth-kinds). What matters when **authoring** an entry is which to reach for:
 
-- **Prefer `dcr`.** If the vendor exposes `/.well-known/oauth-authorization-server` with `registration_endpoint` set, use it — zero operator setup, no third party in the trust path. (Granola, Notion, Linear, Stripe.) Verify the claim before shipping the entry with the [rot detector](#catalog-rot-detection).
-- **Use `static`** when the vendor requires a pre-registered OAuth app. Costs a workspace-admin setup step, per workspace. (Asana, HubSpot, Zoom.)
+- **Prefer `dcr`.** If the vendor exposes `/.well-known/oauth-authorization-server` with `registration_endpoint` set, use it — zero OAuth client setup, no third party in the trust path. (Granola, Notion, Linear, Stripe.) Verify the claim before shipping the entry with the [rot detector](#catalog-rot-detection).
+- **Use `static`** when the vendor requires a pre-registered OAuth client. Costs a workspace-admin setup step, per workspace. (Asana, HubSpot, Zoom.)
 - **Use a brokered kind** when the vendor's API needs app verification you don't hold — `composio` for OAuth aggregation (Gmail, Outlook), `smithery` for a server already published to the Smithery registry, which brokers the connection *and* hosts the session. Either costs a platform-wide [provider configuration](/config/connector-providers/).
-- **`provider`** names a credential provider that supplies the transport credential server-side, with no user or operator OAuth. Two things use it: the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a **gateway** you hold one account key for — see [gateway endpoints](#auth-provider-for-a-gateway-endpoint) below.
+- **`provider`** names a credential provider that supplies the transport credential server-side, with no user or OAuth client. Two things use it: the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a **gateway** you hold one account key for — see [gateway endpoints](#auth-provider-for-a-gateway-endpoint) below.
 
 <Aside type="caution">
   The in-image catalog (`src/connectors/catalog/curated/`) ships **DCR entries only** — it exists so a fresh install has a non-empty Browse with nothing to configure. Everything else, including `auth: static` and brokered entries, belongs in the directory `NB_CURATED_CATALOG_DIR` points at.
@@ -118,7 +118,7 @@ servers:
 
 The `url` is a placeholder — the install replaces it with the brokered session URL. A Smithery qualified name is global, so the entry is complete on its own and only the platform-wide `SMITHERY_API_KEY` and the declared `connectors.providers.smithery.namespace` are deployment state. There is no tool allowlist either; the connection exposes the server's own surface.
 
-For `auth: static`, also include `operatorSetup`:
+For `auth: static`, also include `oauthClientSetup`:
 
 ```yaml
 servers:
@@ -136,9 +136,9 @@ servers:
       ai.nimblebrain/connector:
         defaultScope: workspace
         auth: static
-        operatorSetup:
+        oauthClientSetup:
           portalUrl: https://app.asana.com/0/my-apps
-          hint: Create an OAuth app in Asana developer portal, copy client_id + client_secret
+          hint: Create an OAuth client in Asana developer portal, copy client_id + client_secret
           clientSecretKey: asana.client_secret
         tags: [tasks, projects]
 ```
@@ -165,7 +165,7 @@ NimbleBrain-specific fields under `_meta["ai.nimblebrain/connector"]`:
 | `auth` | required for `remotes[]` | `"dcr"`, `"static"` or `"provider"` (the runtime-native kinds), or the id of a configured brokered provider — `"composio"` / `"smithery"` today. See [auth kinds](/using/connectors/#the-auth-kinds). Defaults to `dcr`. A brokered entry carries that provider's config **under a key of the same name** (`composio:`, `smithery:`), which is how the platform hands a provider its own coordinates without knowing their shape. |
 | `requiredScopes` | no | OAuth scopes the connection requests. When set, they are exactly the scopes on the authorize request, even where the server advertises more — use it to hold a connector to a narrower grant (read-only, no deletes). Pinning `offline_access` also asks for consent. A `dcr` client is still registered with the scopes the server advertises, so pin only scopes from that set against a server that enforces registered scope. The pin also blocks step-up: a tool the server refuses for insufficient scope fails, and on a connection holding no refresh token it sends the connector to reauthorization, where reconnecting grants the same pin. Omit it to request the scopes the server names in its challenge or advertises; a server that names none gets no `scope` at all. |
 | `additionalAuthorizationParams` | no | Extra authorize-URL params (e.g. Google's `access_type: offline`). Reserved keys (`client_id`, `state`, `redirect_uri`, `response_type`, `code_challenge`, `code_challenge_method`, `scope`, etc.) are rejected. |
-| `operatorSetup` | required when `auth: static` | `{ portalUrl, hint, clientSecretKey }`. |
+| `oauthClientSetup` | required when `auth: static` | `{ portalUrl, hint, clientSecretKey }`. Its earlier name, `operatorSetup`, is still read for one more release; when an entry has both, `oauthClientSetup` wins. |
 | `secretHeaders` | no, `auth: provider` only | Header name → `{ ref: credential, key, label?, help? }`, for a connection that must present the *workspace's* own secret as well as its own credential. Resolved on every request at that workspace's scope. Only references are accepted — a literal is refused at install, naming the header. The install dialog asks the user for each value, using `label` / `help` when the entry sets them and a label derived from the key's last segment otherwise; both are display-only and never reach the transport. Nothing carries the field on any other auth kind, where it is silently ignored. See [per-workspace credentials](/config/secrets/#when-the-connection-also-has-to-say-who-is-calling). |
 | `composio` | required when `auth: composio` | `{ toolkit, tools?, authScheme?, fields? }`. `toolkit` is Composio's slug for the upstream, and doubles as the key your deployment's [`connectors.providers.composio.authConfigs`](/gateways/composio/#3-create-one-auth-config-per-toolkit-in-composio) is looked up under — the catalog itself carries no deployment-specific ids. `tools` is an optional allowlist of upstream tool names — strongly recommended to keep agent context bounded. `authScheme` defaults to `OAUTH2` (the redirect flow); set it to `API_KEY` for toolkits that authenticate by key (see below). `fields` is required for `API_KEY` — the inputs collected from the user at connect. |
 | `account` | no | `{ tool, arguments?, field }`. How to ask the service which account a connection is signed in as, when its sign-in does not say. See [Showing the connected account](#showing-the-connected-account). |
@@ -289,7 +289,7 @@ The runtime calls that tool once, the first time the connected connector is list
 
 ### 3. Register the OAuth redirect URI
 
-The vendor's OAuth app must allow this exact callback URL:
+The vendor's OAuth client must allow this exact callback URL:
 
 ```
 {NB_PUBLIC_ORIGIN}/v1/mcp-auth/callback
@@ -300,7 +300,7 @@ Where `NB_PUBLIC_ORIGIN` is the canonical public origin of the deployment. For t
 The Set up modal in the UI shows the resolved redirect URI with a Copy button so admins can register it without guessing.
 
 <Aside type="caution">
-  A `redirect_uri does not match` error from the vendor at sign-in time means the URL registered with the vendor's OAuth app doesn't match what NimbleBrain sends. Double-check `NB_PUBLIC_ORIGIN` matches the app's actual public origin (not `localhost`, not the internal cluster service name).
+  A `redirect_uri does not match` error from the vendor at sign-in time means the URL registered with the vendor's OAuth client doesn't match what NimbleBrain sends. Double-check `NB_PUBLIC_ORIGIN` matches the app's actual public origin (not `localhost`, not the internal cluster service name).
 </Aside>
 
 ### 4. Test it
@@ -318,7 +318,7 @@ The new entry appears on Settings → Connectors → Browse. Walk through the in
 
 If anything is off, check the API server logs for `[static-source]` / `[connector-directory]` warnings — invalid entries are dropped with a logged reason.
 
-To replace a static-auth connector's OAuth app, open its detail page and edit the **OAuth client**. A new `client_id` reaches the installed connector at once and signs it out, because the vendor does not accept the old client's tokens from the new one, so click **Connect** again. Saving the same `client_id` with a new `client_secret` keeps the connection signed in.
+To replace a static-auth connector's OAuth client, open its detail page and edit the **OAuth client**. A new `client_id` reaches the installed connector at once and signs it out, because the vendor does not accept the old client's tokens from the new one, so click **Connect** again. Saving the same `client_id` with a new `client_secret` keeps the connection signed in.
 
 ## Catalog file format
 
@@ -396,7 +396,7 @@ Every `ServerDetail` is validated when its file is read and again when the catal
 |--------|-----|
 | `name must match pattern "^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$"` | Use the reverse-DNS form (`io.asana/mcp`), not a bare slug. |
 | `icon src must be http(s)` | Drop `data:` / `javascript:` / `file:` schemes. |
-| `auth='static' requires operatorSetup.{portalUrl,hint,clientSecretKey}` | Add the `operatorSetup` block under `_meta["ai.nimblebrain/connector"]`. |
+| `auth='static' requires oauthClientSetup.{portalUrl,hint,clientSecretKey}` | Add the `oauthClientSetup` block under `_meta["ai.nimblebrain/connector"]`. |
 | `additionalAuthorizationParams cannot include reserved keys` | Remove `client_id`, `redirect_uri`, `state`, `code_challenge`, `code_challenge_method`, `scope`, etc. — these are filled by the OAuth provider. |
 | `duplicate name "<id>"` | Each entry's `name` must be unique within a single static source. |
 | `refused — its server name "<slug>" is also the server name of "<id>"` | Two names slugify to one server name (`a.b/c` and `a/b.c` are both `a-b-c`), so neither loads. Rename one. Logged as an error. |
@@ -449,7 +449,7 @@ In this repo it is a **manual CLI** — deliberately, since the catalog it needs
 
 ## Where the secrets live
 
-The catalog never contains secrets. For `auth: static` entries, the workspace admin sets `client_id` (which lives in `workspace.json` under `oauthOperatorApps[<id>].clientId`) and `client_secret` (which lives in the workspace credential store under the key declared by `operatorSetup.clientSecretKey`).
+The catalog never contains secrets. For `auth: static` entries, the workspace admin sets `client_id` (which lives in `workspace.json` under `oauthClients[<id>].clientId`) and `client_secret` (which lives in the workspace credential store under the key declared by `oauthClientSetup.clientSecretKey`).
 
 Both are keyed by the connector's reverse-DNS `name` (e.g. `io.asana/mcp`), not a short slug.
 
@@ -459,9 +459,9 @@ Both are set through the UI:
 Settings → Connectors → <connector> → Set up
 ```
 
-The modal writes the public `client_id` into `workspace.json → oauthOperatorApps[<id>].clientId` and stores the `client_secret` in the workspace credential store under `operatorSetup.clientSecretKey`. There is no flag-based headless command for an operator OAuth secret — use the Set up modal (or the `manage_connectors` tool action it calls).
+The modal writes the public `client_id` into `workspace.json → oauthClients[<id>].clientId` and stores the `client_secret` in the workspace credential store under `oauthClientSetup.clientSecretKey`. There is no flag-based headless command for an OAuth client secret — use the Set up modal (or the `manage_connectors` tool action it calls).
 
-The two halves go together. Uninstalling the last connector in the workspace that uses the app removes both the `oauthOperatorApps` record and the `client_secret`, and the uninstall result lists the secret's key with the connector's other removed secrets. The entry then shows **Set up** again, so a reinstall asks for the client id and secret. While another installed connector still uses the app, uninstalling keeps both.
+The two halves go together. Uninstalling the last connector in the workspace that uses the client removes both the `oauthClients` record and the `client_secret`, and the uninstall result lists the secret's key with the connector's other removed secrets. The entry then shows **Set up** again, so a reinstall asks for the client id and secret. While another installed connector still uses the app, uninstalling keeps both.
 
 ### An OAuth client for the whole instance
 
@@ -494,12 +494,12 @@ Startup fails when a declared client has no `clientId` or no secret. An id the c
 Operators upgrading from a release before the `ServerDetail` alignment landed should be aware of these one-time migrations:
 
 - **`NB_CATALOG_PATH` and `NB_STDIO_CATALOG_PATH` removed.** Point `NB_CURATED_CATALOG_DIR` at a directory of `ServerDetail` YAML / JSON files.
-- **Catalog id format.** A catalog listing's `id` (and `InstalledConnector.catalogId`) is now the reverse-DNS `ServerDetail.name` (`io.asana/mcp`) instead of a bare slug (`asana`). Catalog-keyed state — `workspace.json#oauthOperatorApps[<id>]` and the matching `<clientSecretKey>` credential entries — must be rekeyed to the reverse-DNS form before existing static-auth connectors will resolve. There's no auto-migration; rekey workspace by workspace through the admin Connectors UI.
+- **Catalog id format.** A catalog listing's `id` (and `InstalledConnector.catalogId`) is now the reverse-DNS `ServerDetail.name` (`io.asana/mcp`) instead of a bare slug (`asana`). Catalog-keyed state — `workspace.json#oauthClients[<id>]` and the matching `<clientSecretKey>` credential entries — must be rekeyed to the reverse-DNS form before existing static-auth connectors will resolve. There's no auto-migration; rekey workspace by workspace through the admin Connectors UI.
 - **Connector `serverName` slug.** A catalog install persists a slugified canonical reverse-DNS form (`com-canva-mcp`), and every connector entry carries its `serverName`.
 - **`packages[]`-only entries are not installable.** The runtime does not acquire or spawn a server's code, so a catalog entry advertising only `packages[]` never appears in Browse. Publish the server behind a URL and give the entry a `remotes[]` endpoint.
 
 ## Related
 
 - [Environment Variables](/config/environment/) — `NB_PUBLIC_ORIGIN`, `NB_CURATED_CATALOG_DIR`.
-- [Workspace JSON](/config/workspace-json/) — `oauthOperatorApps`, `connectorsAllowList`.
+- [Workspace JSON](/config/workspace-json/) — `oauthClients`, `connectorsAllowList`.
 - [Credentials](/config/credentials/) — where a connector's credentials live and who can read them.

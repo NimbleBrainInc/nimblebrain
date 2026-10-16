@@ -11,7 +11,7 @@ import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { ComposioApiKeyModal } from "./ComposioApiKeyModal";
 import { ConnectorIcon } from "./ConnectorIcon";
-import { OperatorSetupModal, type OperatorSetupTarget } from "./OperatorSetupModal";
+import { OAuthClientSetupModal, type OAuthClientSetupTarget } from "./OAuthClientSetupModal";
 
 /**
  * The header of every connector's settings page. One structure for all of them:
@@ -36,7 +36,7 @@ import { OperatorSetupModal, type OperatorSetupTarget } from "./OperatorSetupMod
  * tone: nothing is wrong, but Connect is still the one thing to do here.
  *
  * Owns the primary CTA dispatch:
- *   - needs_setup + missing operator OAuth → OperatorSetupModal
+ *   - needs_setup + missing OAuth client → OAuthClientSetupModal
  *   - not_connected                         → initiateMcpOAuth (Connect)
  *   - needs_auth                            → initiateMcpOAuth (Reconnect)
  *   - failed                                → initiateMcpOAuth (same as Reconnect)
@@ -61,18 +61,18 @@ export function ConnectorHeader({
 }) {
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [operatorModalOpen, setOperatorModalOpen] = useState(false);
+  const [oauthClientModalOpen, setOAuthClientModalOpen] = useState(false);
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
 
   const cat = installed.catalog;
   const name = installed.displayName;
 
-  // The OAuth-app target for OperatorSetupModal, present only for a static-auth
+  // The OAuth-app target for OAuthClientSetupModal, present only for a static-auth
   // entry that declares one. Null is also the "no Set up CTA" signal below.
-  const operatorTarget = useMemo<OperatorSetupTarget | null>(() => {
-    if (cat?.auth !== "static" || !cat.operatorSetup) return null;
-    return { id: cat.id, name: cat.name, operatorSetup: cat.operatorSetup };
+  const oauthClientTarget = useMemo<OAuthClientSetupTarget | null>(() => {
+    if (cat?.auth !== "static" || !cat.oauthClientSetup) return null;
+    return { id: cat.id, name: cat.name, oauthClientSetup: cat.oauthClientSetup };
   }, [cat]);
 
   // A composio API-key connector has no redirect: its auth CTA opens the key
@@ -93,7 +93,7 @@ export function ConnectorHeader({
     cat?.auth === "composio" &&
     cat.composio?.authScheme === "API_KEY" &&
     (installed.state === "reauth_required" || installed.status === "failed");
-  const action = resolveAction(installed, !!operatorTarget, authRotatesSharedCredential);
+  const action = resolveAction(installed, !!oauthClientTarget, authRotatesSharedCredential);
 
   /** Surface an unknown error's message on the hero. */
   const reportError = (err: unknown) => setError(err instanceof Error ? err.message : String(err));
@@ -149,8 +149,8 @@ export function ConnectorHeader({
     if (!action) return;
     setError(null);
     switch (action.kind) {
-      case "open-operator-modal":
-        setOperatorModalOpen(true);
+      case "open-oauth-client-modal":
+        setOAuthClientModalOpen(true);
         return;
       case "cancel":
         await cancelConnect();
@@ -202,13 +202,13 @@ export function ConnectorHeader({
           onDisconnected={onChanged}
         />
       )}
-      {operatorModalOpen && operatorTarget && (
-        <OperatorSetupModal
-          entry={operatorTarget}
-          open={operatorModalOpen}
-          onClose={() => setOperatorModalOpen(false)}
+      {oauthClientModalOpen && oauthClientTarget && (
+        <OAuthClientSetupModal
+          entry={oauthClientTarget}
+          open={oauthClientModalOpen}
+          onClose={() => setOAuthClientModalOpen(false)}
           onSaved={() => {
-            setOperatorModalOpen(false);
+            setOAuthClientModalOpen(false);
             onChanged();
           }}
         />
@@ -532,8 +532,8 @@ function StatusBlock({
        * shows in the same situation. */}
       {blocked && (
         <span className="shrink-0 text-xs text-muted-foreground">
-          {action?.kind === "open-operator-modal"
-            ? "Operator setup required"
+          {action?.kind === "open-oauth-client-modal"
+            ? "Needs an OAuth client"
             : "Workspace admin required"}
         </span>
       )}
@@ -607,7 +607,7 @@ export function statusLabel(status: InstalledConnector["status"]): string {
 // ── Primary CTA resolution ──────────────────────────────────────────
 
 type PrimaryAction =
-  | { kind: "open-operator-modal"; label: string; adminOnly: true }
+  | { kind: "open-oauth-client-modal"; label: string; adminOnly: true }
   // `oauth` is admin-only when it rotates a shared credential and ungated
   // otherwise — conditional rather than fixed by kind.
   //
@@ -637,13 +637,13 @@ type PrimaryAction =
  * mechanism ("save credentials", "initiate OAuth flow").
  *
  * Returns null when no CTA applies — `ready` (nothing to do), or
- * `needs_setup` with no operator catalog entry to configure. A connector
+ * `needs_setup` with no static-auth catalog entry to configure. A connector
  * that's `connecting` / `starting` gets a Cancel CTA so a wedged OAuth
  * isn't a dead end.
  */
 function resolveAction(
   installed: InstalledConnector,
-  hasOperatorEntry: boolean,
+  hasOAuthClientEntry: boolean,
   /** True when the auth CTA rotates a credential the server admin-gates —
    *  `handleConnectApiKey`, once a connected account exists. See the `oauth`
    *  note on `PrimaryAction` for why the other auth paths stay ungated. */
@@ -670,10 +670,10 @@ function resolveAction(
 
     case "needs_setup": {
       // The only setup gate left: a static-auth catalog match without a
-      // configured operator OAuth client can't proceed until an admin
+      // configured OAuth client client can't proceed until an admin
       // registers one.
-      if (installed.missingOperatorSetup && hasOperatorEntry) {
-        return { kind: "open-operator-modal", label: "Set up OAuth", adminOnly: true };
+      if (installed.missingOAuthClient && hasOAuthClientEntry) {
+        return { kind: "open-oauth-client-modal", label: "Set up OAuth", adminOnly: true };
       }
       return null;
     }

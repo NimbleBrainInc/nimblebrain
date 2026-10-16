@@ -43,12 +43,12 @@ Every connector declares how it authenticates. As a user you rarely need to care
 | Kind | What it means | What you do | Who sets it up |
 |------|---------------|-------------|----------------|
 | **dcr** | Dynamic Client Registration. The platform registers an OAuth client with the vendor on the fly. | Click **Install**, sign in. | None |
-| **static** | The vendor requires a pre-registered OAuth app. | An admin clicks **Set up**; after that everyone connects with **Install**. Uninstalling the last connector that uses the app removes the setup too, so a reinstall starts at **Set up**. When the operator [declares the OAuth client for the whole instance](/config/connectors-catalog/#an-oauth-client-for-the-whole-instance), there is no **Set up**: click **Install**. | Workspace admin, per workspace; or the operator, once |
+| **static** | The vendor requires a pre-registered OAuth client. | An admin clicks **Set up**; after that everyone connects with **Install**. Uninstalling the last connector that uses the client removes the setup too, so a reinstall starts at **Set up**. When the operator [declares the OAuth client for the whole instance](/config/connectors-catalog/#an-oauth-client-for-the-whole-instance), there is no **Set up**: click **Install**. | Workspace admin, per workspace; or the operator, once |
 | **composio** | Brokered through Composio, a [managed-connector provider](/config/connector-providers/). | Click **Install**. OAuth toolkits send you through the vendor's sign-in; API-key toolkits open a short form for the service's API key. | Operator, platform-wide |
 | **smithery** | Brokered through Smithery, a [managed-connector provider](/config/connector-providers/) that also hosts the MCP session. | Click **Install**. A server needing no account connects immediately; one needing sign-in or configuration reports that on the install attempt, with a link to a Smithery-hosted setup page to complete first. | Operator, platform-wide |
-| **provider** | A connector whose credential is supplied server-side by a named credential provider — no vendor sign-in, no operator OAuth app, no per-user secret. Covers both the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a [hosted gateway](/config/connector-providers/#hosted-mcp-gateways) you hold one account key for. | Click **Install**. Usually there is nothing to enter; an entry marked *Needs a credential* asks for one first (see below). | Operator — the catalog entry, plus the fleet-authorizer environment or the gateway's declared key |
+| **provider** | A connector whose credential is supplied server-side by a named credential provider — no vendor sign-in, no OAuth client, no per-user secret. Covers both the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a [hosted gateway](/config/connector-providers/#hosted-mcp-gateways) you hold one account key for. | Click **Install**. Usually there is nothing to enter; an entry marked *Needs a credential* asks for one first (see below). | Operator — the catalog entry, plus the fleet-authorizer environment or the gateway's declared key |
 
-For a **static** connector that hasn't been set up yet, non-admins see "Operator setup required" until an admin completes the **Set up** step.
+For a **static** connector that hasn't been set up yet, non-admins see "Needs an OAuth client" until an admin completes the **Set up** step.
 
 ### Connectors that need a credential only you hold
 
@@ -83,7 +83,7 @@ Because credentials are workspace-scoped, connecting a service in one workspace 
 Two workspace settings gate the connector catalog:
 
 - **`connectorsAllowList`** — when set, only the listed connector IDs appear in Browse and can be installed in that workspace. Leave it unset to allow the full catalog.
-- **`oauthOperatorApps`** — records the per-workspace OAuth client configuration for **static**-auth connectors (the "Set up" step writes here, and uninstalling the last connector that uses it removes it).
+- **`oauthClients`** — records the per-workspace OAuth client configuration for **static**-auth connectors (the "Set up" step writes here, and uninstalling the last connector that uses it removes it).
 
 See [Workspace configuration](/config/workspace-json) for the field reference.
 
@@ -123,4 +123,4 @@ When you install a connector, the platform can automatically apply a short **usa
 - [Skills](/using/skills/#connector-skill-overlays) — connector skill overlays
 - [Connector Configuration](/config/connectors/) — the entry a connector writes to `workspace.json`
 - [Credentials](/config/credentials/) — how secrets are stored
-- [Workspace configuration](/config/workspace-json) — `connectorsAllowList` and `oauthOperatorApps`
+- [Workspace configuration](/config/workspace-json) — `connectorsAllowList` and `oauthClients`

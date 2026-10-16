@@ -667,16 +667,16 @@ export interface InstalledConnector {
   catalog?: ConnectorCatalogEntry;
   authorizationUrl?: string;
   identity?: { email?: string; name?: string };
-  missingOperatorSetup?: boolean;
+  missingOAuthClient?: boolean;
   /** Last connection error for crashed / dead / reauth_required states. */
   lastError?: string;
   /**
-   * Operator OAuth client config — present only for static-auth
+   * OAuth client client config — present only for static-auth
    * connectors the workspace has configured. The Configure page reads
    * this to render the audit line + Edit affordance. Secret never
    * appears here.
    */
-  operatorOAuth?: {
+  workspaceOAuthClient?: {
     clientId: string;
     configuredAt: string;
     configuredBy: string;
@@ -689,7 +689,7 @@ export interface InstalledConnector {
    * detail-page hero, and any future surface read one value.
    *
    *   ready          — works
-   *   needs_setup    — admin must configure the operator OAuth client
+   *   needs_setup    — admin must configure the OAuth client client
    *   not_connected  — installed, no connection (never connected, or
    *                     disconnected): at rest, not an error
    *   needs_auth     — a working connection broke (credential revoked or
@@ -1096,22 +1096,22 @@ export async function listDirectory(): Promise<DirectoryResult> {
 }
 
 /**
- * Configure the workspace's OAuth app for a static-auth catalog
+ * Configure the workspace's OAuth client for a static-auth catalog
  * connector. Upsert — calling this on an already-configured connector
  * rotates both pieces. ws_admin gated.
  */
-export async function setupConnectorOperator(
+export async function setConnectorOAuthClient(
   catalogId: string,
   clientId: string,
   clientSecret: string,
 ): Promise<{ ok: boolean; catalogId: string; clientId: string }> {
   const result = await callTool("nb", "manage_connectors", {
-    action: "setup_operator",
+    action: "set_oauth_client",
     catalogId,
     clientId,
     clientSecret,
   });
-  return unwrapStructured(result, "setup_operator");
+  return unwrapStructured(result, "set_oauth_client");
 }
 
 /**
@@ -1135,8 +1135,8 @@ export async function connectComposioApiKey(
 
 /**
  * The exact redirect URI the platform sends to vendor OAuth servers.
- * OperatorSetupModal shows this to admins so they can register the
- * same value in the vendor's OAuth app config; a mismatch yields a
+ * OAuthClientSetupModal shows this to admins so they can register the
+ * same value in the vendor's OAuth client config; a mismatch yields a
  * vendor-side `redirect_uri does not match` error after the user is
  * already redirected away.
  */

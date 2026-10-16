@@ -8,7 +8,7 @@
  *   - `serverDetailToCatalogEntry` — the flat catalog record the
  *     Configure detail page renders for an *installed* connector
  *     matched back to its catalog entry, plus the lookup shape the
- *     setup_operator / remove_operator_setup tool actions consume.
+ *     set_oauth_client / remove_oauth_client tool actions consume.
  *
  * Both are pure functions over `ServerDetail` + its
  * `_meta["ai.nimblebrain/connector"]` extension. The directory facade
@@ -45,7 +45,7 @@ import type { CatalogListing, ConnectorCatalogEntry } from "./types.ts";
  * they diverged once (#462) and nothing structural stopped it. Spreading
  * this single result into both call sites makes drift impossible: there is
  * one derivation, so the directory and the catalog can never disagree on
- * `auth` / scopes / params / operatorSetup / the brokered block / providerAuth.
+ * `auth` / scopes / params / oauthClientSetup / the brokered block / providerAuth.
  *
  * The catalog-only fields (`tags`, `interactive`, `docsUrl`) are NOT here:
  * they don't belong on the directory entry's `install` action (the
@@ -59,7 +59,7 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
   auth: ConnectorAuthKind;
   requiredScopes?: string[];
   additionalAuthorizationParams?: Record<string, string>;
-  operatorSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
+  oauthClientSetup?: { portalUrl: string; hint: string; clientSecretKey: string };
   composio?: ComposioConnectorConfig;
   smithery?: SmitheryConnectorConfig;
   providerAuth?: { provider: string; config: Record<string, unknown> };
@@ -77,7 +77,7 @@ function connectorMetaAuthFields(meta: NimbleBrainConnectorMeta | undefined): {
     ...(meta?.additionalAuthorizationParams
       ? { additionalAuthorizationParams: meta.additionalAuthorizationParams }
       : {}),
-    ...(meta?.operatorSetup ? { operatorSetup: meta.operatorSetup } : {}),
+    ...(meta?.oauthClientSetup ? { oauthClientSetup: meta.oauthClientSetup } : {}),
     ...(brokered ? { [auth]: brokered } : {}),
     ...(meta?.providerAuth ? { providerAuth: meta.providerAuth } : {}),
     ...(meta?.secretHeaders ? { secretHeaders: meta.secretHeaders } : {}),
@@ -195,7 +195,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
  *
  * Catches:
  *   - icons[].src non-http(s) (would XSS the Browse `<img src>`)
- *   - operatorSetup.portalUrl non-http(s) (clickable in Set-up modal)
+ *   - oauthClientSetup.portalUrl non-http(s) (clickable in Set-up modal)
  *   - docsUrl non-http(s) (clickable in Configure page hero)
  *   - additionalAuthorizationParams reserved-key smuggling (RFC 6749
  *     params client_id, redirect_uri, state, etc. — would let a
@@ -210,9 +210,9 @@ export function validateServerDetailSafety(s: ServerDetail): string | null {
     }
   }
   const meta = getNimbleBrainConnectorMeta(s);
-  if (meta?.operatorSetup) {
-    if (!isHttpUrl(meta.operatorSetup.portalUrl)) {
-      return `operatorSetup.portalUrl must be http(s): "${meta.operatorSetup.portalUrl}"`;
+  if (meta?.oauthClientSetup) {
+    if (!isHttpUrl(meta.oauthClientSetup.portalUrl)) {
+      return `oauthClientSetup.portalUrl must be http(s): "${meta.oauthClientSetup.portalUrl}"`;
     }
   }
   if (meta?.additionalAuthorizationParams) {

@@ -145,7 +145,7 @@ describe("ConnectorCatalog.list", () => {
     expect(result.entries[0]?.description).toBe("first");
   });
 
-  test("operatorConfigured probe runs only for static-auth entries with operatorSetup", async () => {
+  test("oauthClientConfigured probe runs only for static-auth entries with oauthClientSetup", async () => {
     const catalogDir = freshCatalog();
     writeStaticCatalog([
       {
@@ -157,9 +157,9 @@ describe("ConnectorCatalog.list", () => {
         _meta: {
           "ai.nimblebrain/connector": {
             auth: "static",
-            operatorSetup: {
+            oauthClientSetup: {
               portalUrl: "https://app.asana.com/0/developer-console",
-              hint: "Create OAuth app",
+              hint: "Create OAuth client",
               clientSecretKey: "asana.client_secret",
             },
           },
@@ -177,11 +177,11 @@ describe("ConnectorCatalog.list", () => {
       },
     ]);
     const probe = mock(async () => true);
-    const result = await new ConnectorCatalog(catalogDir).list({ isOperatorConfigured: probe });
-    // Only Asana (static-auth + operatorSetup) gets probed; Granola (dcr) doesn't.
+    const result = await new ConnectorCatalog(catalogDir).list({ isOAuthClientConfigured: probe });
+    // Only Asana (static-auth + oauthClientSetup) gets probed; Granola (dcr) doesn't.
     expect(probe).toHaveBeenCalledTimes(1);
     const asana = result.entries.find((e) => e.id === "io.asana/mcp");
-    expect(asana?.operatorConfigured).toBe(true);
+    expect(asana?.oauthClientConfigured).toBe(true);
   });
 
   test("a packages-only entry is dropped — this runtime installs no downloaded code", async () => {
@@ -287,13 +287,13 @@ describe("ConnectorCatalog safety scrub (XSS via _meta extension URLs)", () => {
     expect(result.entries).toEqual([]);
   });
 
-  test("drops an entry whose _meta.operatorSetup.portalUrl carries a non-http(s) scheme", async () => {
+  test("drops an entry whose _meta.oauthClientSetup.portalUrl carries a non-http(s) scheme", async () => {
     const result = await listWith(
       remoteServer({
         _meta: {
           "ai.nimblebrain/connector": {
             auth: "static",
-            operatorSetup: {
+            oauthClientSetup: {
               portalUrl: "javascript:fetch('https://evil')",
               hint: "x",
               clientSecretKey: "x.client_secret",

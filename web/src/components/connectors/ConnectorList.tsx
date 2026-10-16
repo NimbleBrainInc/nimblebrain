@@ -156,7 +156,7 @@ function ConnectorRow({
  * something for non-ready states — clean rows stay clean (just name
  * + chevron). Action verbs lead the user to the right next step:
  *
- *   needs_setup + missingOperatorSetup → "Set up"
+ *   needs_setup + missingOAuthClient → "Set up"
  *   not_connected → "Not connected" (neutral — at rest, nothing is broken)
  *   needs_auth → "Reconnect" (a working connection broke)
  *   failed → "Failed" (no verb — admin investigates on the detail page)
@@ -176,7 +176,7 @@ function listSummary(installed: InstalledConnector): {
     case "ready":
       return null;
     case "needs_setup": {
-      const verb = installed.missingOperatorSetup ? "Set up" : "Configure";
+      const verb = installed.missingOAuthClient ? "Set up" : "Configure";
       return { label: verb, tone: "text-amber-600", dot: true, dotColor: "bg-amber-500" };
     }
     case "not_connected":

@@ -63,9 +63,9 @@ const SERVER_NAME = slugifyServerName(ENTRY_ID);
 const DIRECT_ID = "com.acme/db-direct";
 const DIRECT_URL = "https://mcp.acme.test/direct/mcp";
 const DIRECT_SERVER_NAME = slugifyServerName(DIRECT_ID);
-/** The static-auth sibling naming the same key as its OAuth app's client secret. */
-const OPERATOR_ID = "com.acme/db-operator";
-const OPERATOR_URL = "https://mcp.acme.test/operator/mcp";
+/** The static-auth sibling naming the same key as its OAuth client's client secret. */
+const STATIC_ID = "com.acme/db-static";
+const STATIC_URL = "https://mcp.acme.test/static/mcp";
 
 const ADMIN: UserIdentity = {
   id: "usr_admin_secret_headers",
@@ -137,18 +137,18 @@ function directEntry(): CatalogListing {
   };
 }
 
-/** The static-auth entry whose operator app secret lives at `KEY`. */
-function operatorEntry(): CatalogListing {
+/** The static-auth entry whose OAuth client secret lives at `KEY`. */
+function staticEntry(): CatalogListing {
   return {
-    id: OPERATOR_ID,
-    name: "Acme DB Operator App",
-    description: "Connects through the workspace's own registered OAuth app",
+    id: STATIC_ID,
+    name: "Acme DB Static Client",
+    description: "Connects through the workspace's own registered OAuth client",
     install: {
       kind: "remote-oauth",
-      url: OPERATOR_URL,
+      url: STATIC_URL,
       transportType: "streamable-http",
       auth: "static",
-      operatorSetup: {
+      oauthClientSetup: {
         portalUrl: "https://acme.test/developers",
         hint: "Create an app, paste the client id and secret",
         clientSecretKey: KEY,
@@ -490,19 +490,19 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
 
   test("a key a static-auth sibling's client secret names is kept", async () => {
     // The third declaration site: an `oauthClient.clientSecret` key goes only
-    // with its operator app, on the uninstall of that app's last user, and it
+    // with its OAuth client, on the uninstall of that app's last user, and it
     // is still a reason not to delete it on someone else's uninstall. Without
     // the referrer read, uninstalling the header connector takes the operator
     // app's secret with it and the static connector can no longer complete a
     // token exchange, on a value nothing returns.
     const tool = toolFor("ws_00741647fd740fac");
     await tool.handler({
-      action: "setup_operator",
-      catalogId: OPERATOR_ID,
+      action: "set_oauth_client",
+      catalogId: STATIC_ID,
       clientId: "acme-client-id",
       clientSecret: "operator-app-secret",
     });
-    await tool.handler({ action: "install", entry: operatorEntry() });
+    await tool.handler({ action: "install", entry: staticEntry() });
     await tool.handler({ action: "install", entry: entry() });
 
     const result = await tool.handler({ action: "uninstall", serverName: SERVER_NAME });

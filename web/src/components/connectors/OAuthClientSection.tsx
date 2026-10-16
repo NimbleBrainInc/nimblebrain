@@ -1,21 +1,21 @@
 import { useMemo, useState } from "react";
 import type { InstalledConnector } from "../../api/client";
 import { Button } from "../ui/button";
-import { OperatorSetupModal, type OperatorSetupTarget } from "./OperatorSetupModal";
+import { OAuthClientSetupModal, type OAuthClientSetupTarget } from "./OAuthClientSetupModal";
 
 /**
- * Operator-supplied OAuth client config for a static-auth connector
+ * Admin-supplied OAuth client config for a static-auth connector
  * (Asana, HubSpot, Gmail, etc.). Renders only when:
  *   - The installed connector matches a catalog entry, AND
  *   - That catalog entry uses static auth, AND
- *   - The workspace has already configured the OAuth app (operatorOAuth populated).
+ *   - The workspace has already configured the OAuth client (workspaceOAuthClient populated).
  *
  * For first-time setup the affordance lives on Browse; once installed,
- * rotation lives here. The Edit button reuses `OperatorSetupModal` with
+ * rotation lives here. The Edit button reuses `OAuthClientSetupModal` with
  * the existing clientId pre-filled — same submit path as Browse, just
  * a different mount point.
  */
-export function OperatorOAuthSection({
+export function OAuthClientSection({
   installed,
   canManage,
   onChanged,
@@ -26,15 +26,15 @@ export function OperatorOAuthSection({
 }) {
   const [editing, setEditing] = useState(false);
   const cat = installed.catalog;
-  const op = installed.operatorOAuth;
+  const op = installed.workspaceOAuthClient;
 
   // What the setup modal needs of this connector — the catalog carries all three.
-  const operatorTarget = useMemo<OperatorSetupTarget | null>(() => {
-    if (cat?.auth !== "static" || !cat.operatorSetup) return null;
-    return { id: cat.id, name: cat.name, operatorSetup: cat.operatorSetup };
+  const oauthClientTarget = useMemo<OAuthClientSetupTarget | null>(() => {
+    if (cat?.auth !== "static" || !cat.oauthClientSetup) return null;
+    return { id: cat.id, name: cat.name, oauthClientSetup: cat.oauthClientSetup };
   }, [cat]);
 
-  if (cat?.auth !== "static" || !op || !operatorTarget) return null;
+  if (cat?.auth !== "static" || !op || !oauthClientTarget) return null;
 
   return (
     <section className="space-y-2">
@@ -65,13 +65,13 @@ export function OperatorOAuthSection({
             className="shrink-0"
             onClick={() => setEditing(true)}
           >
-            Edit OAuth app
+            Edit OAuth client
           </Button>
         )}
       </div>
       {editing && (
-        <OperatorSetupModal
-          entry={operatorTarget}
+        <OAuthClientSetupModal
+          entry={oauthClientTarget}
           initialClientId={op.clientId}
           open={editing}
           onClose={() => setEditing(false)}

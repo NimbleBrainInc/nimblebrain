@@ -12,7 +12,7 @@
  * future HTTP-backed source reads the same shape natively. Consumers always
  * see one type. The `_meta` extension
  * `ai.nimblebrain/connector` carries our platform-specific fields
- * (auth, operatorSetup, etc.) without polluting upstream-defined slots.
+ * (auth, oauthClientSetup, etc.) without polluting upstream-defined slots.
  *
  * Validated at every system boundary so an invalid entry is dropped
  * at the source it came from, never reaching the UI / agent. Each
@@ -179,7 +179,7 @@ export interface SecretHeaderRef extends CredentialRef {
 /**
  * NimbleBrain-specific extension carried inside `ServerDetail._meta`
  * under the key `ai.nimblebrain/connector`. Holds the platform-specific
- * fields that don't fit upstream slots: OAuth flow type, operator-setup
+ * fields that don't fit upstream slots: OAuth flow type, OAuth client setup
  * pointers, recommended scope, search tags, and UI hints.
  *
  * Authored on entries we curate (loaded by the catalog read from the
@@ -194,11 +194,12 @@ export interface NimbleBrainConnectorMeta {
      *
      * Runtime-native ({@link RUNTIME_NATIVE_AUTH_KINDS}):
      * - `dcr`: dynamic client registration (RFC 7591). Provider issues
-     *   a client at first use; no operator setup.
-     * - `static`: pre-registered OAuth client. Operator provides
-     *   `clientId` + `clientSecret` from the vendor's developer portal.
+     *   a client at first use; no OAuth client setup.
+     * - `static`: pre-registered OAuth client. A workspace admin provides
+     *   `clientId` + `clientSecret` from the vendor's developer portal, or the
+     *   instance declares them once (`connectors.oauthClients`).
      * - `provider`: a platform-managed connector whose credential is produced
-     *   server-side by a named credential provider (no user/operator OAuth, no
+     *   server-side by a named credential provider (no user/OAuth client, no
      *   per-user secret). Required: the `providerAuth` block below.
      *
      * Anything else names a **brokered** provider (`composio`, `smithery`) — a
@@ -215,8 +216,12 @@ export interface NimbleBrainConnectorMeta {
      * we ship, not an enumeration the runtime enforces.
      */
     auth?: ConnectorAuthKind;
-    /** Required for `auth: "static"`: where the operator creates the OAuth app. */
-    operatorSetup?: {
+    /**
+     * Required for `auth: "static"`: where a workspace admin creates the OAuth
+     * client and which credential key holds its secret. Read under its earlier
+     * name, `operatorSetup`, too (see {@link getNimbleBrainConnectorMeta}).
+     */
+    oauthClientSetup?: {
         portalUrl: string;
         hint: string;
         clientSecretKey: string;
@@ -314,6 +319,8 @@ export interface ServerDetail {
 export declare const NIMBLEBRAIN_CONNECTOR_META_KEY = "ai.nimblebrain/connector";
 /** Convenience accessor with the right type narrowing. */
 export declare function getNimbleBrainConnectorMeta(s: ServerDetail): NimbleBrainConnectorMeta | undefined;
+/** Whether an entry declares the setup block under both its names (the catalog logs it). */
+export declare function declaresBothSetupNames(s: ServerDetail): boolean;
 /**
  * Reverse-DNS namespace key for the host-integration `_meta` extension —
  * how a server declares its UI placement in the NimbleBrain host shell.
