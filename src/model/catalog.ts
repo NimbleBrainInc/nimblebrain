@@ -613,3 +613,82 @@ export function xaiSupportedEfforts(modelString: string): ReadonlySet<XAIWireEff
   const { modelId } = parseModelString(modelString);
   return XAI_EFFORT_SUPPORT[modelId];
 }
+
+/** GreenPT's effort ladder as the platform can express it, ascending. */
+export const GREENPT_EFFORTS = ["low", "medium", "high"] as const;
+export type GreenptEffort = (typeof GREENPT_EFFORTS)[number];
+
+/**
+ * Every tier GreenPT accepts on the wire. `none` and `minimal` sit below the
+ * ladder, the same split as xAI's `none` and OpenAI's `minimal`: reachable only
+ * by a caller naming them, never by stepping down from a requested depth.
+ * `none` suppresses reasoning (measured on `glm-5.2` and `kimi-k3`: no
+ * reasoning deltas), so it implements `thinking: "off"` where a model takes it.
+ */
+export type GreenptWireEffort = GreenptEffort | "none" | "minimal";
+
+const GREENPT_FULL: ReadonlySet<GreenptWireEffort> = new Set([
+  ...GREENPT_EFFORTS,
+  "none",
+  "minimal",
+]);
+
+/**
+ * Effort ladder per GreenPT model, measured against `POST /v1/chat/completions`.
+ * GreenPT answers an unaccepted `reasoning_effort` with a 400 that names the
+ * values the model takes, so each row is that list.
+ *
+ * Fail-closed, like xAI's table: an id absent here gets no reasoning options.
+ * The ladders differ per model, and no tier is accepted by all of them —
+ * `mistral-medium-3.5-128b` takes only `none` and `high` — so a provider-wide
+ * default would 400 on some model.
+ *
+ * Only reasoning-capable models belong here, for the reason given on
+ * `XAI_EFFORT_SUPPORT`.
+ */
+const GREENPT_EFFORT_SUPPORT: Record<string, ReadonlySet<GreenptWireEffort>> = {
+  "deepseek-v4-flash-0731": GREENPT_FULL,
+  "deepseek-v4.1-flash": GREENPT_FULL,
+  gemma4: GREENPT_FULL,
+  "glm-5.2": GREENPT_FULL,
+  "glm-5.3": GREENPT_FULL,
+  "glm-5.3-flash": GREENPT_FULL,
+  "gpt-oss-120b": new Set(GREENPT_EFFORTS),
+  "green-r": new Set(GREENPT_EFFORTS),
+  "green-r-raw": new Set(GREENPT_EFFORTS),
+  "kimi-k2.6": GREENPT_FULL,
+  "kimi-k2.7-code": GREENPT_FULL,
+  "kimi-k3": GREENPT_FULL,
+  "minimax-m2.5": new Set([...GREENPT_EFFORTS, "minimal"]),
+  "mistral-medium-3.5-128b": new Set(["none", "high"]),
+  "qwen3.5-397b-a17b": GREENPT_FULL,
+  "qwen3.6-35b-a3b": GREENPT_FULL,
+};
+
+/**
+ * Catalog GreenPT reasoning models nobody has measured. Non-empty means
+ * `sync-models` added one; it gets no reasoning options until measured.
+ */
+export function greenptUnmeasuredReasoningModels(): string[] {
+  const models = data.greenpt?.models ?? {};
+  return Object.entries(models)
+    .filter(([id, m]) => m.capabilities.reasoning && !(id in GREENPT_EFFORT_SUPPORT))
+    .map(([id]) => id)
+    .sort();
+}
+
+/** The model ids this table classifies. Exposed so tests can check each one is real. */
+export function greenptEffortModelIds(): string[] {
+  return Object.keys(GREENPT_EFFORT_SUPPORT);
+}
+
+/**
+ * Which effort tiers this GreenPT model accepts, or `undefined` when there is
+ * no measured answer — in which case the engine sends nothing.
+ */
+export function greenptSupportedEfforts(
+  modelString: string,
+): ReadonlySet<GreenptWireEffort> | undefined {
+  const { modelId } = parseModelString(modelString);
+  return GREENPT_EFFORT_SUPPORT[modelId];
+}

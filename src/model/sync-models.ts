@@ -3,7 +3,7 @@
  * Sync model catalog from models.dev.
  *
  * Fetches the full API, filters to supported providers (anthropic, openai,
- * google, xai), normalizes the data, and writes catalog-data.json.
+ * google, xai, greenpt), normalizes the data, and writes catalog-data.json.
  *
  * Run: bun run sync-models
  */
@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { DEFAULT_MAX_OUTPUT_TOKENS } from "../limits.ts";
 
 const API_URL = "https://models.dev/api.json";
-const SUPPORTED_PROVIDERS = ["anthropic", "openai", "google", "xai"];
+const SUPPORTED_PROVIDERS = ["anthropic", "openai", "google", "xai", "greenpt"];
 const OUTPUT_PATH = join(dirname(new URL(import.meta.url).pathname), "catalog-data.json");
 
 // Models present upstream that the platform deliberately does not surface —
@@ -35,6 +35,28 @@ const MANUAL_EXCLUSIONS = new Set<string>([
   // to xAI, so this model is unreachable rather than merely limited — upstream's
   // `tool_call: false` understates it.
   "xai:grok-4.20-multi-agent-0309",
+  // GreenPT's response-style variants of glm-5.2: the same model and price under
+  // a house writing style. A style is a prompt concern, not a model choice, and
+  // nine of them would crowd the picker around the one model they share.
+  "greenpt:glm-5.2-caveman",
+  "greenpt:glm-5.2-caveman-lite",
+  "greenpt:glm-5.2-caveman-ultra",
+  "greenpt:glm-5.2-honey",
+  "greenpt:glm-5.2-honey-lite",
+  "greenpt:glm-5.2-honey-ultra",
+  "greenpt:glm-5.2-ponytail",
+  "greenpt:glm-5.2-ponytail-lite",
+  "greenpt:glm-5.2-ponytail-ultra",
+  // Listed and priced upstream, but GreenPT's Chat Completions endpoint answers
+  // `400 Unsupported model` for each, and none is in its `/v1/models` listing.
+  "greenpt:devstral-2-123b-instruct-2512",
+  "greenpt:gemma-3-27b-it",
+  "greenpt:glm-5.1",
+  "greenpt:holo2-30b-a3b",
+  "greenpt:kimi-k2.6-fast",
+  "greenpt:pixtral-12b-2409",
+  "greenpt:qwen3-coder-30b-a3b-instruct",
+  "greenpt:voxtral-small-24b-2507",
 ]);
 
 // Upstream reports each model's maximum limits, but some maxima are only

@@ -13,8 +13,11 @@ import { applyCachePolicy } from "../model/cache-policy.ts";
 import {
   GOOGLE_THINKING_LEVELS,
   type GoogleThinkingLevel,
+  GREENPT_EFFORTS,
+  type GreenptEffort,
   getProviderFromModel,
   googleThinkingSupport,
+  greenptSupportedEfforts,
   OPENAI_EFFORTS,
   openaiSupportedEfforts,
   supportsEnabledThinking,
@@ -178,6 +181,14 @@ function toGoogleLevel(effort: ThinkingEffort): GoogleThinkingLevel {
   return effort === "xhigh" || effort === "max" ? "high" : effort;
 }
 
+/**
+ * GreenPT's ladder tops out at `high`, so the two tiers above it clamp: every
+ * measured model rejects `max`, including `kimi-k3`, whose launch post lists it.
+ */
+function toGreenptEffort(effort: ThinkingEffort): GreenptEffort {
+  return effort === "xhigh" || effort === "max" ? "high" : effort;
+}
+
 /** xAI's ladder tops out at `high`, so the two tiers above it clamp. */
 function toXaiEffort(effort: ThinkingEffort): XAIEffort {
   return effort === "xhigh" || effort === "max" ? "high" : effort;
@@ -212,7 +223,7 @@ const warnedTierDivergence = new Set<string>();
 
 /**
  * Which tier to actually send, for any dialect carrying a per-model tier set.
- * Google, OpenAI, and xAI tiers obey the same three-part rule:
+ * Google, OpenAI, xAI, and GreenPT tiers obey the same three-part rule:
  *
  *   - the model offers what was asked for → send it
  *   - it doesn't, and the tier is the platform's own fallback rather than
@@ -339,6 +350,43 @@ function buildOpenAIThinkingOptions(
         thinking,
       );
       return tier ? { openai: { reasoningEffort: tier } } : {};
+    }
+  }
+}
+
+/**
+ * Build GreenPT's options.
+ *
+ * Same wire parameter as OpenAI (`reasoning_effort`) under the `greenpt` key,
+ * which is what `createOpenAICompatible` reads for the instance the registry
+ * names `greenpt`; an `openai` key reaches the wire as nothing.
+ *
+ * Support is per-model and fail-closed, like xAI: the ladders differ across
+ * GreenPT's catalog and an unaccepted value 400s the call, so a model with no
+ * measured row gets nothing. `off` sends `none` where the model accepts it.
+ */
+function buildGreenptThinkingOptions(
+  model: string,
+  thinking: ResolvedThinking,
+): SharedV4ProviderOptions {
+  const supported = greenptSupportedEfforts(model);
+
+  switch (thinking.mode) {
+    case "off":
+      return supported?.has("none") ? { greenpt: { reasoningEffort: "none" } } : {};
+    case "adaptive":
+      // No adaptive equivalent; the model applies its own per-call default.
+      return {};
+    case "effort":
+    case "enabled": {
+      const tier = pickTier(
+        model,
+        toGreenptEffort(thinking.effort),
+        supported,
+        GREENPT_EFFORTS,
+        thinking,
+      );
+      return tier ? { greenpt: { reasoningEffort: tier } } : {};
     }
   }
 }
@@ -539,6 +587,8 @@ function buildThinkingProviderOptions(
       return buildAnthropicThinkingOptions(model, thinking, maxOutputTokens);
     case "openai":
       return buildOpenAIThinkingOptions(model, thinking);
+    case "greenpt":
+      return buildGreenptThinkingOptions(model, thinking);
     case "nebius":
       return buildNebiusThinkingOptions(thinking);
     case "xai":

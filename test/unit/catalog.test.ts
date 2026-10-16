@@ -8,6 +8,9 @@ import {
   getProviderName,
   googleThinkingModelIds,
   googleThinkingSupport,
+  greenptEffortModelIds,
+  greenptSupportedEfforts,
+  greenptUnmeasuredReasoningModels,
   isModelAllowed,
   isModelInPolicy,
   listModels,
@@ -28,13 +31,23 @@ describe("Model Catalog", () => {
     expect(providers).toContain("anthropic");
     expect(providers).toContain("openai");
     expect(providers).toContain("google");
+    expect(providers).toContain("greenpt");
   });
 
   it("getProviderName returns display names", () => {
     expect(getProviderName("anthropic")).toBe("Anthropic");
     expect(getProviderName("openai")).toBe("OpenAI");
     expect(getProviderName("google")).toBe("Google");
+    expect(getProviderName("greenpt")).toBe("GreenPT");
     expect(getProviderName("unknown")).toBe("unknown");
+  });
+
+  it("includes GreenPT's chat models without its response-style variants", () => {
+    const ids = listModels("greenpt").map((model) => model.id);
+    expect(ids).toEqual(expect.arrayContaining(["glm-5.2", "kimi-k2.7-code", "kimi-k3"]));
+    expect(ids.some((id) => /^glm-5\.2-(caveman|honey|ponytail)/.test(id))).toBe(false);
+    expect(getModel("greenpt", "glm-5.2")?.limits.context).toBe(1_000_000);
+    expect(getModel("greenpt", "kimi-k3")?.capabilities.attachment).toBe(true);
   });
 
   it("getModel returns model metadata", () => {
@@ -99,6 +112,10 @@ describe("findProviderForModelId", () => {
 
   it("returns the owning provider for a known openai id", () => {
     expect(findProviderForModelId("gpt-4o")).toBe("openai");
+  });
+
+  it("returns greenpt for a GreenPT flagship model id", () => {
+    expect(findProviderForModelId("glm-5.2")).toBe("greenpt");
   });
 
   it("returns null for an unknown model id", () => {
@@ -520,6 +537,31 @@ describe("OpenAI effort support", () => {
     // CI instead. Note the guard cannot be "every -pro id has a row":
     // o3-pro is -pro, was measured, and correctly takes the full ladder.
     expect(openaiUnmeasuredReasoningModels()).toEqual([]);
+  });
+});
+
+describe("greenpt effort support", () => {
+  it("classifies only real catalog models", () => {
+    for (const id of greenptEffortModelIds()) {
+      expect(getModel("greenpt", id), `${id} is not in the catalog`).toBeDefined();
+    }
+  });
+
+  it("has measured every catalog reasoning model", () => {
+    // Fail-closed, so an unmeasured model gets no reasoning options rather
+    // than a 400. Measure a newly synced one: GreenPT's 400 for an unaccepted
+    // `reasoning_effort` lists the values the model takes.
+    expect(greenptUnmeasuredReasoningModels()).toEqual([]);
+  });
+
+  it("gives an unlisted model no options at all", () => {
+    expect(greenptSupportedEfforts("greenpt:not-a-model")).toBeUndefined();
+  });
+
+  it("records no model accepting max", () => {
+    for (const id of greenptEffortModelIds()) {
+      expect([...(greenptSupportedEfforts(`greenpt:${id}`) ?? [])]).not.toContain("max");
+    }
   });
 });
 
