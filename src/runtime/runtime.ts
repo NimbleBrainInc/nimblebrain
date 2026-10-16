@@ -805,13 +805,6 @@ export class Runtime {
     const instanceConfig = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
-    // Finish moving stored OAuth client records to their current key before
-    // anything reads a workspace: identity, connectors, the scheduler and the
-    // server all read `oauthClients` only.
-    const oauthClientRecords = await workspaceStore.reconcileOAuthClientRecords();
-    if (oauthClientRecords.moved > 0 || oauthClientRecords.failed > 0) {
-      log.info("[runtime] OAuth client records reconciled", oauthClientRecords);
-    }
     // The runtime is the one owner of the identity provider: the server
     // authenticates with this one, and every permission check here judges the
     // identity it verified. There is no runtime without one: no `instance.json`

@@ -339,44 +339,6 @@ export class WorkspaceStore {
   }
 
   /**
-   * Move each workspace's OAuth client records off `oauthOperatorApps`, the
-   * name they were stored under before, onto `oauthClients`. Runs once at boot,
-   * before anything reads a workspace (`Runtime.start`).
-   *
-   * The release before copied the records and kept the old key for a rollback;
-   * this one deletes it. A workspace with the old key and no `oauthClients`
-   * (one that skipped that release) gets the copy first, so nothing is lost
-   * either way. Upgrade floor for the delete: v0.49.0, the copying release.
-   *
-   * Best-effort per workspace: one that cannot be written is logged and the
-   * rest go on, and the count of failures is returned so boot can say so.
-   */
-  async reconcileOAuthClientRecords(): Promise<{ moved: number; failed: number }> {
-    let moved = 0;
-    let failed = 0;
-    for (const ws of await this.list()) {
-      const { oauthOperatorApps: legacy, ...current } = ws as Workspace & {
-        oauthOperatorApps?: Workspace["oauthClients"];
-      };
-      if (!legacy) continue;
-      try {
-        await this.atomicWrite(this.wsPath(ws.id), {
-          ...current,
-          oauthClients: current.oauthClients ?? { ...legacy },
-        });
-        moved++;
-      } catch (err) {
-        failed++;
-        log.warn("[workspace-store] could not move OAuth client records", {
-          wsId: ws.id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    return { moved, failed };
-  }
-
-  /**
    * Delete a workspace — **archive-then-cascade, not hard `rm`**.
    *
    * A workspace owns its data subtree (`workspaces/<wsId>/`: the workspace
