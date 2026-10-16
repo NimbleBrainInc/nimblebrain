@@ -34,7 +34,7 @@ import {
   type JudgePort,
   judgeWarnings,
 } from "./judge.ts";
-import { countsAsEventFire, isOpenRun, Scheduler } from "./scheduler.ts";
+import { countsAsEventFire, isOpenRun, type RunFailedNotice, Scheduler } from "./scheduler.ts";
 import { type TaskToolName, TOOL_SCHEMAS } from "./schemas.ts";
 import {
   handleAssess,
@@ -216,6 +216,55 @@ export function poorResultEnvelope(task: Task, run: TaskRun): NotificationEnvelo
 }
 
 /**
+ * The inbox item for a run that ended with no deliverable, or whose failure
+ * auto-disabled its task. Generic for the same reason as a poor result (see
+ * `poorResultEnvelope`): the run's id, its owner's id, and whether the task was
+ * disabled, never the task's name or the run's error, which can quote a
+ * connector's or tool's name and stays on the run for its owner to read.
+ */
+export function runFailedEnvelope(
+  task: Task,
+  run: TaskRun,
+  { disabled }: RunFailedNotice,
+): NotificationEnvelope {
+  return {
+    eventId: `${disabled ? "task-disabled" : "run-failed"}:${run.id}`,
+    name: disabled ? "task.disabled" : "task.run.failed",
+    timestamp: new Date().toISOString(),
+    data: { runId: run.id, ownerId: task.ownerId ?? null, disabled },
+    _meta: {
+      "ai.nimblebrain/notification": {
+        level: "attention",
+        title: disabled ? "A task was turned off after repeated failures" : "A task run failed",
+        body: disabled
+          ? `Its schedule is off until its owner turns it back on. The owner can read run ${run.id} in Tasks.`
+          : `It ended without a result. The owner can read run ${run.id} in Tasks.`,
+      },
+    },
+  };
+}
+
+/** Put a failed run in its task's workspace inbox. Best-effort, like a poor result. */
+function notifyRunFailed(
+  runtime: Runtime,
+  task: Task,
+  run: TaskRun,
+  notice: RunFailedNotice,
+): void {
+  const wsId = task.workspaceId;
+  if (!wsId) return;
+  try {
+    runtime.getNotificationStore(wsId).append("tasks", runFailedEnvelope(task, run, notice));
+  } catch (err) {
+    log.warn("[tasks] could not write a run-failed notification", {
+      taskId: task.id,
+      runId: run.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * The inbox item for a batch that paused on its own: its budget ran out or its
  * stop rule fired. Generic for the same reason as a poor result (see
  * `poorResultEnvelope`): the batch id, its owner's id, why it paused, and its
@@ -330,6 +379,7 @@ export async function createTasksSource(
     onRunRecorded: (owner) => runtime.announceIdentitySourceChange("tasks", owner),
     assess: (task, run, result) => assessRun(task, run, result, { port: judgePort }),
     notifyPoorResult: (task, run) => notifyPoorResult(runtime, task, run),
+    notifyRunFailed: (task, run, notice) => notifyRunFailed(runtime, task, run, notice),
   });
   scheduler.start();
 

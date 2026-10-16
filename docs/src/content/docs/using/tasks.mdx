@@ -299,6 +299,10 @@ Accept or Reject on a run in the Tasks panel, or `tasks__assess` with `{ runId, 
 
 An `uncertain` run sets off nothing, including one the judge could not answer; it reads Needs review until you accept or reject it.
 
+### After a failed run
+
+A run that ends Failed (no deliverable, such as a run refused because a connector it lists is not connected) writes a `task.run.failed` notification to the workspace inbox. It is written once per failing stretch: the first failed run after a success notifies, and the runs that keep failing after it do not, so a task that fails every few minutes raises one notification. When ten failures in a row turn the task off, a `task.disabled` notification follows. Like a poor result, both name only the run's id, never the task or its error. Route them with the workspace's [notification routes](/using/notifications) to hear about a broken job the day it breaks.
+
 ## Batches
 
 A batch runs one task over many inputs: one run per item, under one concurrency limit, one budget, and one stop rule. Start one with `tasks__run_batch`; it answers at once with the batch, and the runs go on in the background.
