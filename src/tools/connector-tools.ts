@@ -1330,16 +1330,19 @@ function workspaceInstallAdmission(
  * PERSONAL connector on the caller's own identity (`users/<id>/connectors.json`),
  * not into any workspace. The identity-plane sibling of `handleInstallRemoteOAuth`.
  *
- * DCR and interactive-connect brokered connectors install here. `dcr` (standard
- * dynamic-client-registration OAuth) authenticates via the interactive Connect
- * flow (`POST /v1/mcp-auth/initiate-identity` → `startIdentityAuth`). A brokered
+ * DCR, instance-client static, and interactive-connect brokered connectors
+ * install here. `dcr` (standard dynamic-client-registration OAuth) authenticates
+ * via the interactive Connect flow (`POST /v1/mcp-auth/initiate-identity` →
+ * `startIdentityAuth`). `static` installs only when the instance declares an
+ * OAuth client for the entry (`connectors.oauthClients`): the ref names that
+ * client and authenticates through the same Connect flow. A brokered
  * connector binds the broker-side identity to the caller (`{type:"user"}`, not a
  * workspace); its only owner-scoped state is the provider's namespaced user id
  * plus an opaque connection pointer (the broker credential is platform-global),
  * and the connect round-trip runs through the provider's own callback routes.
- * `static` reads an operator client secret from the workspace credential store
- * and `provider` carries a platform/fleet auth class — both workspace/platform-
- * bound and rejected here (their identity variants are a separate slice).
+ * `static` without an instance client reads a workspace's own client secret
+ * from that workspace's credential store, and `provider` carries a
+ * platform/fleet auth class — both workspace/platform-bound and rejected here.
  */
 async function handleInstallIdentity(
   ctx: ManageConnectorsContext,
@@ -1474,8 +1477,9 @@ async function handleInstallIdentity(
   await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).add(callerId, ref);
 
   // No eager-start: a connector has no live credentials until the user completes
-  // the interactive Connect flow — DCR via `POST /v1/mcp-auth/initiate-identity`
-  // (`startIdentityAuth`), a brokered one via that provider's own initiate route.
+  // the interactive Connect flow — DCR and instance-client static via
+  // `POST /v1/mcp-auth/initiate-identity` (`startIdentityAuth`), a brokered one
+  // via that provider's own initiate route.
   // Both callbacks start the source into the user registry
   // (`getIdentityConnectorSource`) when the browser returns. Install only persists
   // the record.
