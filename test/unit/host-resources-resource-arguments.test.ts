@@ -261,7 +261,7 @@ describe("createResourceArgumentsResolver", () => {
     ).resolve(declared("crm://signals/1", "crm://signals/2", "crm://signals/3"));
     expect(entries["crm://signals/1"]).toHaveProperty("contents");
     expect(entries["crm://signals/2"]).toHaveProperty("contents");
-    expect(entries["crm://signals/3"]).toMatchObject({ error: { code: "too_large" } });
+    expect(entries["crm://signals/3"]).toMatchObject({ error: { code: "over_limit" } });
     expect(crm.reads).toEqual(["crm://signals/1", "crm://signals/2"]);
     expect(() => rateLimit.check(WS_A, "outbound")).not.toThrow();
   });
@@ -275,7 +275,7 @@ describe("createResourceArgumentsResolver", () => {
       declared("crm://signals/1", "crm://signals/2"),
     );
     expect(entries["crm://signals/1"]).toHaveProperty("contents");
-    expect(entries["crm://signals/2"]).toMatchObject({ error: { code: "too_many" } });
+    expect(entries["crm://signals/2"]).toMatchObject({ error: { code: "over_limit" } });
     expect(crm.reads).toEqual(["crm://signals/1"]);
   });
 

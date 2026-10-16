@@ -118,14 +118,18 @@ export function collectResourceArgumentUris(
   return [...seen].map(([uri, declared]) => ({ uri, declared }));
 }
 
-/** Why the host could not hand a URI's contents to the tool. */
+/**
+ * Why the host could not hand a URI's contents to the tool. `too_large` is the
+ * resource's own (over `maxChars`: drop the citation); `over_limit` is the
+ * call's (too many URIs, or past the per-call size budget: split the call).
+ */
 export type ResourceArgumentErrorCode =
   | "scheme_not_declared"
   | "not_found"
   | "ambiguous"
   | "not_text"
   | "too_large"
-  | "too_many"
+  | "over_limit"
   | "rate_limited";
 
 /** One URI's text contents, as the serving server's `resources/read` returned them. */
@@ -338,15 +342,19 @@ export function createResourceArgumentsResolver(
       } else if (admitted.length >= limits.maxUris) {
         refused.set(
           uri,
-          outcome(uri, "too_many", `A call resolves at most ${limits.maxUris} URIs.`),
+          outcome(
+            uri,
+            "over_limit",
+            `This call is over its limits: it resolves at most ${limits.maxUris} URIs. Split the call.`,
+          ),
         );
       } else if (reserved + reservation > limits.maxSize) {
         refused.set(
           uri,
           outcome(
             uri,
-            "too_large",
-            `The resolved contents of one call are capped at ${limits.maxSize} bytes.`,
+            "over_limit",
+            `This call is over its limits: its resolved contents are capped at ${limits.maxSize} bytes. Split the call.`,
           ),
         );
       } else {

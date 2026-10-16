@@ -1,6 +1,6 @@
 ---
 title: Resource Arguments
-description: The ai.nimblebrain/resource-arguments extension lets a tool take another server's resource URIs as arguments and receive their contents with the call, read by the host from the server in the same workspace that serves them.
+description: The ai.nimblebrain/resource-arguments extension lets a tool take URIs of resources served in its workspace as arguments and receive their contents with the call, read by the host from the server that serves them.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -11,14 +11,16 @@ import { Aside } from '@astrojs/starlight/components';
 | **Declaration** | `_meta["ai.nimblebrain/resource-arguments"]` on a tool in your `tools/list` result |
 | **Delivery** | `_meta["ai.nimblebrain/resource-arguments"]` on the `tools/call` request, one entry per URI |
 | **Eras** | Both. Nothing travels from your server to the host |
-| **Schemas** | Each resolved entry carries the specification's `ReadResourceResult.contents`, unchanged |
+| **Schemas** | Each resolved entry has the shape of the specification's `ReadResourceResult`, holding its text contents |
 | **Fallback** | The tool treats the URI as an opaque reference, or asks for the content inline |
 
 ## Why it exists
 
+A tool sometimes needs a resource that is served in its workspace, not one it was handed inline: a record, a document, an entry another server keeps. The host can read it and hand it over with the call. The case that motivates this is a record another server owns.
+
 A server sometimes has to act on a record that another server owns. An outbound tool stores citations such as `crm://signals/42`, and before it sends anything it has to check the cited record: refuse a citation whose event is too old, or quote its exact wording. Without help from the host it has two options, and neither is acceptable. It can call the other server directly, which couples two services that should know nothing about each other. Or it can trust whatever the agent copied into its arguments, which is exactly what it is trying to verify.
 
-With this extension, your tool declares that an argument holds resource URIs. Before the host sends the `tools/call`, it reads each URI from the server in the same workspace that serves it, and puts the contents in the call's `_meta`. Your tool gets the record as its owner returned it, not as the model retold it. The two servers never address each other.
+With this extension, your tool declares that an argument holds resource URIs. "Arguments" here means the `tools/call` arguments, not the URI-template arguments the specification's completion API refers to. Before the host sends the `tools/call`, it reads each URI from the server in the same workspace that serves it, and puts the contents in the call's `_meta`. Your tool gets the record as its owner returned it, not as the model retold it. The two servers never address each other.
 
 Nothing in this extension is a request from your server to the host, so it works on a `2026-07-28` connection as well as a 2025-era one. That is the difference from [host resources](/extensions/host-resources/), whose methods `2026-07-28` cannot carry.
 
@@ -139,7 +141,7 @@ The host reads a URI from the one server in the calling connection's workspace w
 
 - **One workspace.** Only the servers installed in the same workspace as your connection are consulted. A server in another workspace is never read, whatever it serves.
 - **One owner.** When two servers in the workspace claim the URI, the host reads neither and answers `ambiguous`. It does not guess.
-- **The host's own schemes are not served this way.** `files://`, `ui://`, `skill://`, `artifact://`, `conversation://` and `app://` URIs are never resolved through this extension, whatever a server advertises. Workspace files are read with [host resources](/extensions/host-resources/).
+- **The host's own schemes are not resolved yet.** This extension does not yet resolve `files://`, `ui://`, `skill://`, `artifact://`, `conversation://` or `app://` URIs, and no server can answer for them by advertising a matching template. For now, workspace files are read with [host resources](/extensions/host-resources/).
 
 ## What your tool can receive
 
@@ -159,8 +161,8 @@ Each resolution is recorded on the host's trace of the tool call: one `resource_
 | `not_found` | No server in the workspace serves the URI, or its server returned nothing or failed. These are one code on purpose, as in [host resources](/extensions/host-resources/#scope-which-files-a-server-can-see): a read tells your server nothing about what exists beyond the contents it is handed. |
 | `ambiguous` | More than one server in the workspace serves the URI. A workspace admin resolves it by removing one. |
 | `not_text` | The resource's contents include a non-text (`blob`) entry. The host hands on text only. |
-| `too_large` | The resource has more than `maxChars` characters of text, or reading it would take the call past `maxSize`. URIs are admitted in argument order, so the first ones that fit are read; a URI refused for the call's size is not read. |
-| `too_many` | The call names more than `maxUris` distinct URIs with declared schemes; the rest are not read. |
+| `too_large` | The resource has more than `maxChars` characters of text. Permanent: the same resource is refused on every call, so drop the citation. |
+| `over_limit` | This call is over its limits: it names more than `maxUris` distinct URIs with declared schemes, or reading the URI would take the call past `maxSize`. URIs are admitted in argument order, so the first ones that fit are read; a URI refused here is not read. Retry by splitting the call. |
 | `rate_limited` | Your server's resource budget in this workspace is spent. Reads made here and [host-resources](/extensions/host-resources/) requests share one budget per server per workspace. |
 
 The `message` is for people. Match on `code`.
