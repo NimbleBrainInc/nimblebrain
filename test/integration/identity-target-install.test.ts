@@ -310,7 +310,7 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     }
   });
 
-  test("rejects a static remote-oauth entry — static is workspace-bound", async () => {
+  test("rejects a static remote-oauth entry without an instance operator app", async () => {
     const staticEntry = composioEntry();
     staticEntry.id = "com.dropbox/mcp";
     staticEntry.name = "Dropbox";
@@ -324,7 +324,7 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
       scope: "identity",
     });
     expect(result.isError).toBe(true);
-    expect(resultText(result)).toMatch(/isn't supported for personal connectors yet/i);
+    expect(resultText(result)).toMatch(/isn't supported for personal connectors here/i);
   });
 
   describe("a personal connector and a workspace install coexist (both install directions)", () => {
