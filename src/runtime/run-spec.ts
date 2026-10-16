@@ -26,7 +26,6 @@ import type {
 import type { FileReference } from "../files/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import type { SkillMatch } from "../skills/matcher.ts";
-import type { SelectedSkill } from "../skills/select.ts";
 import type { Skill } from "../skills/types.ts";
 import type { RequestContext } from "./request-context.ts";
 import type { SpendAccount } from "./spend.ts";
@@ -266,8 +265,6 @@ export interface RunComposition {
   skill: Skill | null;
   /** The match itself, which also carries the phrase, for load telemetry. */
   skillMatch: SkillMatch | null;
-  /** Tool-affinity Layer 3 selections. */
-  selectedLayer3: SelectedSkill[];
   /** The always-on context channel — every tier's `always` skills + persona. */
   alwaysOnSkills: Skill[];
   /** Overlays the engine may surface once into history mid-run. */

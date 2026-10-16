@@ -182,7 +182,7 @@ describe("compose__effective_context", () => {
     expect(composed.runId).toBeUndefined();
   });
 
-  test("live mode returns an installed app and a tool-affinity skill as sub-items", async () => {
+  test("live mode lists an installed app but not a bound skill, which composes at its tool's first call", async () => {
     await source.stop();
     source = createComposeSource(
       makeRuntime({
@@ -218,7 +218,8 @@ describe("compose__effective_context", () => {
     const result = await exec("effective_context", { conversation_id: CONV_ID });
     const composed = succeeded<ComposeEffectiveContextOutput>(result);
     const subItems = composed.layers.flatMap((l) => l.subItems ?? []);
-    expect(subItems.map((s) => s.kind).sort()).toEqual(["app", "layer3_skill"]);
+    expect(subItems.map((s) => s.kind)).toEqual(["app"]);
+    expect(composed.text).not.toContain("Search before you create.");
   });
 
   test("historical mode returns the recorded skills layer with its sub-items", async () => {

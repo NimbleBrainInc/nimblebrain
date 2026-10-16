@@ -13,7 +13,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildSkillsLoadedPayload } from "../../../src/runtime/skills-loaded-payload.ts";
 import { synthesizeConnectorSkill } from "../../../src/skills/connector-skills.ts";
-import { selectLayer3Skills } from "../../../src/skills/select.ts";
 
 describe("skills.loaded payload — connector skill entry", () => {
   test("synthesized connector skill produces a well-formed payload entry", () => {
@@ -24,13 +23,9 @@ describe("skills.loaded payload — connector skill entry", () => {
       body: "# How to use Collateral\n\nBody.",
       uri: "skill://collateral/SKILL.md",
     });
-    const selected = selectLayer3Skills({
-      skills: [skill],
-      activeTools: ["synapse-collateral__patch_source"],
-    });
-    expect(selected).toHaveLength(1);
-
-    const payload = buildSkillsLoadedPayload(selected);
+    const payload = buildSkillsLoadedPayload([
+      { skill, loadedBy: "trigger", reason: 'trigger matched "collateral"' },
+    ]);
     expect(payload.skills).toHaveLength(1);
 
     const entry = payload.skills[0]!;
@@ -39,12 +34,10 @@ describe("skills.loaded payload — connector skill entry", () => {
     expect(entry.id).toBe("skill://collateral/SKILL.md");
     // `scope: connector` so web (amber chip) and loading_log filtering work.
     expect(entry.scope).toBe("provided");
-    // Layer 3 — selected via tool affinity, not vendored Layer 1.
-    expect(entry.layer).toBe(3);
-    // Provenance: `tool_affinity` is the observable label
-    // (manifest field is `tool_affined`; emitted as `tool_affinity`).
-    expect(entry.loadedBy).toBe("tool_affinity");
-    expect(entry.reason).toContain("synapse-collateral__*");
+    // The mechanism layer follows loadedBy (trigger = 4).
+    expect(entry.layer).toBe(4);
+    expect(entry.loadedBy).toBe("trigger");
+    expect(entry.reason).toContain("collateral");
     // Tokens approximated for total-budget telemetry.
     expect(entry.tokens).toBeGreaterThan(0);
     // Content hash present so mutation detection works.
@@ -68,11 +61,9 @@ describe("skills.loaded payload — connector skill entry", () => {
       body: "beta body",
       uri: "skill://b/SKILL.md",
     });
-    const selected = selectLayer3Skills({
-      skills: [a, b],
-      activeTools: ["a__tool", "b__tool"],
-    });
-    const payload = buildSkillsLoadedPayload(selected);
+    const payload = buildSkillsLoadedPayload(
+      [a, b].map((skill) => ({ skill, loadedBy: "trigger" as const, reason: "r" })),
+    );
     expect(payload.skills).toHaveLength(2);
     const sum = payload.skills.reduce((s, e) => s + e.tokens, 0);
     expect(payload.totalTokens).toBe(sum);

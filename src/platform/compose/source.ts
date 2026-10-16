@@ -44,7 +44,6 @@ import { filterAdmittedTools } from "../../permissions/admin-tools.ts";
 import {
   type ComposedPrompt,
   composeSystemPromptTraced,
-  type Layer3SkillEntry,
   type TracedLayer,
   type TracedSubItem,
   type WorkspaceContext,
@@ -55,7 +54,7 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
 import { collectActivatableSkills, toCatalogEntries } from "../../skills/catalog.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
-import { partitionSkillsByRole, selectLayer3Skills } from "../../skills/select.ts";
+import { partitionSkillsByRole } from "../../skills/select.ts";
 import {
   defineInProcessApp,
   type InProcessTool,
@@ -229,9 +228,9 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  *     tier.
  *   - `apps` = `runtime.buildAppsList(wsId)` — workspace-scoped, includes
  *     each connector's `app://instructions` overlay.
- *   - `layer3Skills` = `loadConversationSkills` ∩ `selectLayer3Skills`
- *     against the role-filtered active tool set, less the skills this
- *     conversation has muted.
+ *   - no Layer 3 skills: a skill bound to a tool reaches the model before
+ *     that tool's first call, never at turn start (ADR-0053), and declared
+ *     skills belong to task runs.
  *   - `prefs` = identity preferences.
  *
  * Skipped vs. `runtime.chat()` (request-scoped, no signal in a debug
@@ -269,8 +268,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   // matches reality:
   //   1. Read the workspace registry's full tool list.
   //   2. Filter by `isToolVisibleToRole(toolName, identity?.orgRole)` —
-  //      runtime.chat skips tools the caller's role can't see, and L3
-  //      tool-affinity skills match against that filtered set.
+  //      runtime.chat skips tools the caller's role can't see.
   //   3. Run `surfaceTools` to split the result into `direct` (in the
   //      LLM's tool list) and `proxied` (discoverable via `nb__search`).
   //      The apps section's prompt body changes based on
@@ -284,26 +282,11 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   const allTools = filterAdmittedTools(await registry.availableTools(), admission).filter((t) =>
     isToolVisibleToRole(t.name, identity?.orgRole),
   );
-  const { direct: directTools, proxied } = surfaceTools(allTools, null, {});
-  const activeToolNames = directTools.map((t) => t.name);
-
-  const selectedLayer3 = selectLayer3Skills({
-    skills: poolCapability,
-    activeTools: activeToolNames,
-  });
-  const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
-    name: s.skill.manifest.name,
-    body: s.skill.body,
-    scope: s.skill.manifest.scope ?? "org",
-    ...(s.skill.sourcePath ? { sourcePath: s.skill.sourcePath } : {}),
-    loadedBy: s.loadedBy,
-    reason: s.reason,
-  }));
+  const { proxied } = surfaceTools(allTools, null, {});
 
   // Skill catalog — same projection `runtime.chat()` composes. Connector-skill
-  // discovery is async-registry work this trace doesn't perform (matching the
-  // Layer-3 selection above, which also runs over the filesystem pool only),
-  // so the catalog here carries the filesystem + connector-overlay entries.
+  // discovery is async-registry work this trace doesn't perform, so the catalog
+  // here carries the filesystem + connector-overlay entries.
   const skillCatalog = toCatalogEntries(
     collectActivatableSkills({
       fsCapability: poolCapability,
@@ -332,7 +315,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
       : undefined,
     proxied.length > 0,
     workspaceContext,
-    layer3Entries,
+    [],
     "chat",
     skillCatalog,
   );

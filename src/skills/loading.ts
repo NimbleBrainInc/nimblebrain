@@ -17,7 +17,8 @@
  * The precedence below mirrors the real loader/selector/matcher behavior:
  *   - `loading-strategy: always` → the always-on context channel
  *     (`select.ts` `partitionSkillsByRole`).
- *   - `dynamic` + tool-affinity → Layer 3 (`select.ts` `selectLayer3Skills`).
+ *   - `dynamic` + tool-affinity → before its bound tool's first call (the
+ *     engine's hold, ADR-0053).
  *   - `dynamic` + triggers → the per-request matcher (`matcher.ts`).
  *   - otherwise on request — the skill catalog lists it, and the model loads it
  *     with `nb__use_skill` when the job needs it.
@@ -57,7 +58,7 @@ export function resolveLoadingMechanism(manifest: LoadingSignals): SkillLoadingM
   if (manifest.loadingStrategy === "always") return "always";
 
   // `dynamic` skills reach the prompt via one of two signals today:
-  // 2. Tool-affinity (Layer 3, `selectLayer3Skills`).
+  // 2. Tool-affinity: delivered before the bound tool's first call.
   if (manifest.toolAffinity && manifest.toolAffinity.length > 0) return "tool_affinity";
 
   // 3. Trigger phrases (the matcher, Layer 4).

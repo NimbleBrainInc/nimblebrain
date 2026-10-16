@@ -62,8 +62,12 @@ skill with `tool-affinity`:
 - curated overlays.
 
 A tenant's skill bound to a bundle's tool is held for on the same call as the
-bundle's own skill. A skill the turn already composed is left out: one picked by
-turn-start selection, one the trigger matched, or the `<app-guide>` skill.
+bundle's own skill. A skill the turn already composed is left out: one the
+trigger matched, one the run's task declared, or the `<app-guide>` skill.
+
+**Nothing bound is composed at turn start.** A bound skill reaches the model
+only through this rule, whether its tool is direct or proxied. The system
+prompt carries no section that depends on the turn's tool set (ADR-0018).
 
 **What a hold is, in every record.** A held call ran nothing, and no record may
 say otherwise.
@@ -121,10 +125,13 @@ The load ledger reads a held delivery as `before_call` and a gap as a row with
 - The platform's own `authoring-guide` binds `skills__create` and
   `skills__update`, not `skills__*`, so muting or reading a skill is not held
   for the authoring guide.
-- Turn-start selection now only duplicates this rule, for tools that happen to
-  be direct. Removing it (#949) empties the stable prefix of job bodies and
-  settles ADR-0018. It is gated on a staging reading of how often models
-  re-issue a held call.
+- A turn that calls no bound tool pays nothing for bound skills. A greeting in
+  a focused app composes the `always` skills, the catalog and the app guide.
+- A direct tool's first call is held where turn-start composition used to
+  cover it, so a drafting turn in a focused app costs one more model call than
+  it did. Before turn-start composition was removed, Haiku, Sonnet and Opus
+  were run against a fixture bundle: every held call was re-issued, and every
+  first `draft_email` ran under its guidance.
 
 ## Alternatives considered
 

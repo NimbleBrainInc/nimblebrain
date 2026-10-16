@@ -575,13 +575,13 @@ describe("runtime.executeTask", () => {
       { tool: "tasks__run", input: { taskId: "target" } },
     ];
     for (const { tool, input } of forbiddenCalls) {
+      // `task-authoring` binds `tasks__*`, so the first call may be held for it;
+      // the re-issue is the call the source refuses.
+      const call = { toolName: tool, input: JSON.stringify(input) };
       runtime = await bootRuntime({
         responses: [
-          {
-            toolCalls: [
-              { toolCallId: `call_${tool}`, toolName: tool, input: JSON.stringify(input) },
-            ],
-          },
+          { toolCalls: [{ toolCallId: `call_${tool}`, ...call }] },
+          { toolCalls: [{ toolCallId: `call_${tool}_again`, ...call }] },
           { text: "done" },
         ],
       });
@@ -593,9 +593,10 @@ describe("runtime.executeTask", () => {
         identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       });
 
-      expect(result.toolCalls[0]?.name).toBe(tool);
-      expect(result.toolCalls[0]?.ok).toBe(false);
-      expect(result.toolCalls[0]?.output).toMatch(/unattended task run/i);
+      const refused = result.toolCalls.at(-1);
+      expect(refused?.name).toBe(tool);
+      expect(refused?.ok).toBe(false);
+      expect(refused?.output).toMatch(/unattended task run/i);
 
       await runtime.shutdown();
       runtime = null;
@@ -649,7 +650,7 @@ describe("runtime.executeTask", () => {
     expect(convo).toBeNull();
   });
 
-  it("loads the focused workspace's `always` skill into Layer 3 (parity with chat path)", async () => {
+  it("loads the focused workspace's `always` skill (parity with chat path)", async () => {
     // Regression guard for the executeTask analog of the chat-path bug
     // PR #315 fixed in `_chatInner`. Before this fix,
     // `loadConversationSkills(sessionWsId, ...)` at runtime.ts:1703
@@ -671,9 +672,7 @@ describe("runtime.executeTask", () => {
     mkdirSync(sharedSkillsDir, { recursive: true });
     writeFileSync(
       join(sharedSkillsDir, `${SKILL_NAME}.md`),
-      // dynamic + tool-affinity (nb__* is always surfaced) → Layer 3, where this
-      // asserts task/chat parity for focused-workspace skill loading.
-      `---\nname: ${SKILL_NAME}\ndescription: workflow for the shared workspace\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    tool-affinity: ["nb__*"]\n    priority: 30\n---\n\nAlways answer in plain English.\n`,
+      `---\nname: ${SKILL_NAME}\ndescription: workflow for the shared workspace\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n    priority: 30\n---\n\nAlways answer in plain English.\n`,
     );
 
     // A task writes no conversation, so the `skills.loaded` telemetry is
@@ -702,6 +701,6 @@ describe("runtime.executeTask", () => {
     const entry = payload.skills.find((s) => s.id === expectedPath);
     expect(entry).toBeDefined();
     expect(entry?.scope).toBe("workspace");
-    expect(entry?.loadedBy).toBe("tool_affinity");
+    expect(entry?.loadedBy).toBe("always");
   });
 });

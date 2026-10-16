@@ -21,7 +21,7 @@ A `dynamic` skill activates through any of:
 <Steps>
 
 1. **Its `description`** — the model sees every skill's name + description in a catalog and activates the relevant one. This is the default path, so write the description to say *what the skill does and when to use it* (include the words a user would say). Always available — no extra field needed.
-2. **`tool-affinity`** — the skill governs the tools its globs match, and reaches the model before the first call to one of them in a conversation. When a matching tool is in the active set at turn start, the skill is composed into the prompt for that turn. Otherwise it is delivered into the conversation when the tool is promoted, or, when the model calls the tool first, that call is held: it does not run, the model is told why, the skill follows it, and the model calls the tool again. A held call is not shown in the chat and does not count against a task run. Every source binds this way, so a workspace skill bound to a connector's tool arrives on the same call as the connector's own skill.
+2. **`tool-affinity`** — the skill governs the tools its globs match, and reaches the model before the first call to one of them in a conversation. It is never composed into the system prompt, so a turn that calls none of its tools pays nothing for it and the cached prompt prefix stays the same whatever tools a turn starts with. It is delivered into the conversation when the tool is promoted, or, when the model calls the tool first, that call is held: it does not run, the model is told why, the skill follows it, and the model calls the tool again. A held call is not shown in the chat and does not count against a task run. Every source binds this way, so a workspace skill bound to a connector's tool arrives on the same call as the connector's own skill.
 3. **`triggers`** — auto-activates on an exact phrase, for deterministic "must-fire" cases (e.g. a compliance rule that must load whenever a regulated action is named).
 </Steps>
 
@@ -97,7 +97,7 @@ Keep a skill to one job. When it outgrows the limit, fold each new rule into the
 | `loading-strategy` | `always` \| `dynamic` | Yes | How the skill loads (see above). |
 | `priority` | number | No | Selection / ordering priority, 11–99 (0–10 reserved for core). Default 50. |
 | `status` | `active` \| `disabled` | No | Default `active`. |
-| `tool-affinity` | string[] | No | Globs; a `dynamic` skill auto-loads when a matching tool is active (e.g. `granola__*`). |
+| `tool-affinity` | string[] | No | Globs; a `dynamic` skill reaches the model before the first call to a matching tool (e.g. `granola__*`). |
 | `triggers` | string[] | No | Exact phrases; a `dynamic` skill auto-loads on a case-insensitive substring match. |
 
 <Aside type="note">
@@ -184,7 +184,7 @@ To publish skills, a server must:
 
 How the platform uses them:
 
-- **Discovery reads the listing only.** The catalog and each skill's loading rules come from the listed frontmatter; no `SKILL.md` is fetched until the skill is needed. An `always` skill is fetched when a turn composes it, a `dynamic` skill when tool-affinity or a trigger selects it or when the agent activates it with `nb__use_skill`.
+- **Discovery reads the listing only.** The catalog and each skill's loading rules come from the listed frontmatter; no `SKILL.md` is fetched until the skill is needed. An `always` skill is fetched when a turn composes it, a `dynamic` skill when a call to a tool it is bound to, a trigger, or the agent's `nb__use_skill` needs it.
 - **Every fetched `SKILL.md` is verified.** Its bytes must match the listed digest and size, and its frontmatter the listed frontmatter, or the skill does not load that turn. A verified body is cached by digest, so an unchanged skill is not fetched again; a server that updates a skill lists the new digest.
 
 The skill's name is its frontmatter `name`. When two skills on one server share a name, each is named by its full skill path instead (`acme/billing/refunds`). The platform reads the **same** `metadata.nimblebrain.*` block documented above off that published frontmatter, so a published skill loads by the rules its author writes rather than a fixed convention:
@@ -199,7 +199,7 @@ The skill's name is its frontmatter `name`. When two skills on one server share 
 Two differences from an on-disk skill:
 
 - **Reading is lenient, not strict.** A malformed or absent `metadata.nimblebrain` block leaves the fields unset and the defaults apply — an unrecognized value never rejects the skill. (An on-disk skill with bad frontmatter is skipped and logged.) Blank trigger phrases are dropped: an empty phrase would match every message.
-- **`tool-affinity` is scoped to the publishing server.** A server cannot know the name it is installed under, so it declares its tools bare and the platform binds them to that install. Matching is anchored after the prefix, so a declared pattern can only narrow within the server's own tools: `*` means all of them, and no declared value reaches another connector's tools. A `dynamic` skill loads, and is delivered when a tool is promoted or called mid-turn, only when a tool it names is involved, so a server that publishes several workflow skills should give each one the tools it governs. A declared pattern that matches none of the tools the connector advertises is logged as a warning (`skills.tool_affinity.unmatched`, naming the connector, the skill, and the patterns); the same check applies to an overlay's patterns. `allowed-tools` is not read from the server.
+- **`tool-affinity` is scoped to the publishing server.** A server cannot know the name it is installed under, so it declares its tools bare and the platform binds them to that install. Matching is anchored after the prefix, so a declared pattern can only narrow within the server's own tools: `*` means all of them, and no declared value reaches another connector's tools. A `dynamic` skill is delivered, when a tool is promoted or called, only when a tool it names is involved, so a server that publishes several workflow skills should give each one the tools it governs. A declared pattern that matches none of the tools the connector advertises is logged as a warning (`skills.tool_affinity.unmatched`, naming the connector, the skill, and the patterns); the same check applies to an overlay's patterns. `allowed-tools` is not read from the server.
 
   ```yaml
   ---
@@ -245,7 +245,7 @@ Ask the agent and it reports the summary — how many loads, across how many con
 | `loaded_by` | Meaning |
 |---|---|
 | `always` | Composed into the system prompt because the skill declares `loading-strategy: always`. |
-| `tool_affinity` | Composed in because a tool matching its globs was in the active set. |
+| `tool_affinity` | Appears on older recorded runs only: a bound skill composed into the prompt at turn start. A bound skill loads `before_call` or `tool_use`. |
 | `trigger` | Composed in because an exact trigger phrase appeared. |
 | `before_call` | A bound skill delivered while the first call to its tool was held. |
 | `tool_use` | A bound skill delivered when its tool was promoted, or after a call that ran. |

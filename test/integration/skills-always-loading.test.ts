@@ -158,11 +158,9 @@ This skill loads only when the model asks for it.
  * SkillsBrowser sends `type: "context"`; the loader derives
  * `loading-strategy: always`). It rides the always-on CONTEXT channel — the
  * `contextSkills` argument to `composeSystemPrompt`, sourced from the boot
- * cache — which compose injects verbatim with NO status check; the disable
- * filter otherwise lives only on the Layer-3 path (`selectLayer3Skills`). So a
- * rule toggled Off kept being injected: present in output, absent from the
- * Layer-3 `skills.loaded` set (the "Active skills" popover). This pins that the
- * Off toggle now removes the body from the prompt entirely.
+ * cache — which compose injects verbatim with NO status check of its own; the
+ * disable filter lives in `partitionSkillsByRole`. This pins that the Off
+ * toggle removes the body from the prompt entirely.
  *
  * Toggling goes through `skills__deactivate` (not a raw file edit) because the
  * context channel reads `this.contextSkills`, refreshed by `reloadSkills()` on

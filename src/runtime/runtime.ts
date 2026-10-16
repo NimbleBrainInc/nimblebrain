@@ -211,7 +211,7 @@ import {
   partitionSkills,
 } from "../skills/loader.ts";
 import { type SkillMatch, SkillMatcher } from "../skills/matcher.ts";
-import { partitionSkillsByRole, type SelectedSkill, selectLayer3Skills } from "../skills/select.ts";
+import { partitionSkillsByRole } from "../skills/select.ts";
 import {
   listedSkillFiles,
   parseSkillEntry,
@@ -1737,7 +1737,6 @@ export class Runtime {
     // (persona + org/workspace/user + connector always-on; vendored core excluded).
     const skillsLoaded = buildSkillsLoadedPayload(
       collectLoadedSkills({
-        toolAffinity: composed.selectedLayer3,
         trigger: composed.skillMatch,
         alwaysOn: composed.alwaysOnSkills,
       }),
@@ -1943,7 +1942,7 @@ export class Runtime {
     const binding = spec.conversation;
 
     // Conversation-scoped skill suppression, applied to the POOLS rather than
-    // to the channel routers. `partitionSkillsByRole` and `selectLayer3Skills`
+    // to the channel routers. `partitionSkillsByRole` and the engine's hold
     // read the durable `manifest.status` and that logic is correct — a skill the
     // operator retired stays off everywhere. This is the other axis: "not for
     // this task", held in one conversation's own event log, so it steers that
@@ -2000,7 +1999,7 @@ export class Runtime {
     // always-on Layer 0/1 channel; `capability` skills feed the conditional
     // channels (keyword matcher + tool-affinity Layer 3). Disjoint by `type`,
     // so nothing is injected twice — no downstream de-dup. Computed ONCE and
-    // threaded into `selectRequestLayer3` below, so the disk read happens a
+    // threaded into the catalog and bound-skill candidates below, so the disk read happens a
     // single time per run.
     const userId = identity.id;
     const { context: poolContext, capability: poolCapability } = partitionSkillsByRole(
@@ -2014,7 +2013,7 @@ export class Runtime {
     // skill feeds `surfaceTools`, whose output is the active toolset that
     // tool-affinity selection needs. Splitting discovery (registry only) from
     // selection (needs the toolset) breaks it. The partition is threaded into
-    // `selectRequestLayer3` below, so discovery still happens once per run.
+    // the catalog and candidates below, so discovery still happens once per run.
     const connectorPoolRaw = await this.discoverConnectorSkillsByRole(spec.workspaceId, {
       // Exclude only the ONE skill `<app-guide>` carries, resolved above — not
       // the entered server (its other skills must still route by strategy), and
@@ -2079,21 +2078,7 @@ export class Runtime {
     // briefing / apps / overlay surfaces. Both precomputed pools are threaded
     // in — the skill disk read and the connector discovery each happen once per
     // run, not twice.
-    const {
-      context: connectorContextSelected,
-      capability: connectorCapability,
-      layer3: selectedLayer3Unloaded,
-    } = await this.selectRequestLayer3({
-      wsId: spec.workspaceId,
-      userId,
-      activeToolNames: tools.map((t) => t.name),
-      capabilityPool: poolCapability,
-      // No `excludeSkill` here: it only steers discovery, and discovery
-      // already ran with it above. The entered app's exclusion is inherited from
-      // `connectorPool` rather than restated as a second argument that has to agree
-      // with the first — the same reason `boundSkillCandidates` takes the pool.
-      connectorPool,
-    });
+    const { context: connectorContextSelected, capability: connectorCapability } = connectorPool;
 
     // Server-published skills carry no body until one is needed (the MCP Skills
     // Extension forbids fetching a skill's files ahead of need). Every skill
@@ -2102,10 +2087,9 @@ export class Runtime {
     // tool-affinity skills when selected. A body served from the digest cache
     // is byte-identical turn to turn, so the cached prefix holds. A skill whose
     // body cannot be fetched or verified drops out of this turn.
-    const [connectorContext, matchedSkill, selectedLayer3] = await Promise.all([
+    const [connectorContext, matchedSkill] = await Promise.all([
       hydrateSkills(connectorContextSelected),
       skill ? hydrateSkill(skill) : Promise.resolve(null),
-      hydrateSelected(selectedLayer3Unloaded),
     ]);
     const composedMatch =
       skillMatch && matchedSkill ? { ...skillMatch, skill: matchedSkill } : null;
@@ -2113,14 +2097,9 @@ export class Runtime {
     // Always-on context channel: the `always` skills across every tier
     // (core/builtin/org + workspace + user) plus the always-on connector skills.
     const requestContextSkills = [...poolContext, ...connectorContext];
-    const layer3Entries: Layer3SkillEntry[] = selectedLayer3.map((s) => ({
-      name: s.skill.manifest.name,
-      body: s.skill.body,
-      scope: s.skill.manifest.scope ?? "org",
-      ...(s.skill.sourcePath ? { sourcePath: s.skill.sourcePath } : {}),
-      loadedBy: s.loadedBy,
-      reason: s.reason,
-    }));
+    // The trigger-matched skill is already in the prompt this turn, so no
+    // other channel delivers it again.
+    const composedNames = skill ? [skill.manifest.name] : [];
 
     // Skill catalog + surface-once candidates share one read of the workspace's
     // connector-overlay store — the pools are all computed above on this path
@@ -2142,22 +2121,20 @@ export class Runtime {
     const skillCatalog = toCatalogEntries(activatable);
     const declaredSkills = await resolveDeclaredSkills(spec.input.skills, activatable, [
       ...requestContextSkills.map((s) => s.manifest.name),
-      ...composedSkillNames(selectedLayer3, skill),
+      ...composedNames,
     ]);
 
     // Declared bodies join the stable Layer 3 section, not the opening message:
     // they are the same on every run of the task, and only the system prefix
     // is cached across runs (the opening message's breakpoint falls after the
     // run's own input, which differs run to run).
-    layer3Entries.push(
-      ...declaredSkills.map((s) => ({
-        name: s.name,
-        body: s.body,
-        scope: s.scope,
-        loadedBy: "declared" as const,
-        reason: "named by the run's task",
-      })),
-    );
+    const layer3Entries: Layer3SkillEntry[] = declaredSkills.map((s) => ({
+      name: s.name,
+      body: s.body,
+      scope: s.scope,
+      loadedBy: "declared" as const,
+      reason: "named by the run's task",
+    }));
 
     // Task mode prepends TASK_IDENTITY so an unattended run produces a
     // deliverable rather than a conversational reply. The runtime owns that
@@ -2185,13 +2162,12 @@ export class Runtime {
       hasProxiedTools: proxied.length > 0,
       skill: matchedSkill,
       skillMatch: composedMatch,
-      selectedLayer3,
       alwaysOnSkills: requestContextSkills,
       connectorSkillCandidates: boundSkillCandidates({
         fsCapability: poolCapability,
         connectorCapability,
         overlays: connectorOverlayCandidates,
-        alreadyComposed: composedSkillNames(selectedLayer3, skill),
+        alreadyComposed: composedNames,
       }),
       declaredSkills,
       stableSystem,
@@ -3283,10 +3259,10 @@ export class Runtime {
    * honoring the loading strategy the skill declares in its frontmatter. A
    * `dynamic` skill (the default when none is declared) tool-affines to the
    * server's tools it declares, or to `<serverName>__*` when it declares none
-   * (`connectorToolAffinity`), and loads via `selectLayer3Skills` when a
-   * matching tool is in the active toolset; an `always` skill routes to the context
-   * channel. Callers partition the returned pool by role (see
-   * `selectRequestLayer3`) — no `appContext` required.
+   * (`connectorToolAffinity`), and reaches the model before the first call to a
+   * matching tool (ADR-0053); an `always` skill routes to the context channel.
+   * Callers partition the returned pool by role (`partitionSkillsByRole`); no
+   * `appContext` required.
    *
    * Use case: a workspace-level chat where the model needs the server's
    * workflow guidance but isn't "entered" into the app. Without this, the
@@ -5556,7 +5532,7 @@ export class Runtime {
 
   /**
    * Discover the FOCUSED workspace's server-published skills and route them by
-   * the strategy each DECLARES — the discovery half of {@link selectRequestLayer3},
+   * the strategy each DECLARES — the discovery half of the request's composition,
    * split out because it is the half that has no dependency on the active
    * toolset.
    *
@@ -5580,140 +5556,42 @@ export class Runtime {
   }
 
   /**
-   * Build the Layer-3 skill pool for a request and run the selection.
+   * The skills the CURRENT request composes every turn, plus the skills bound
+   * to tools, for `nb__status scope:skills`.
    *
-   * Single source of truth for both prompt composition (`chat`) and the
-   * `nb__status scope:skills` reporter (`describeRequestSkills`). Keeping the
-   * pool construction in one place is deliberate: the bug this method exists to
-   * prevent was status and composition reading skills through two divergent
-   * paths, so the status surface reported only boot-time skills while the
-   * prompt received the workspace/user-tier set.
-   *
-   * The pool merges per-conversation tier skills (org + workspace + user, via
-   * {@link loadConversationSkills}) with server-published skills from the
-   * focused workspace only — a connector installed there whose
-   * tools land in the workspace's tool list must also surface its workflow
-   * guidance, else the model gets the namespaced tool name with no
-   * instructions. A connector in another workspace never contributes here.
-   *
-   * Discovered connector skills are routed by the strategy they DECLARE, exactly
-   * like filesystem skills: `partitionSkillsByRole` splits them so a `dynamic`
-   * connector skill feeds `selectLayer3Skills` (tool-affinity, `layer3`) while an
-   * `always` connector skill is returned in `context` for the caller to compose
-   * into the always-on channel every turn. Conversation-tier context skills are
-   * NOT returned here — the caller already partitioned those; `context` and
-   * `capability` carry only the *connector* skills the caller couldn't see.
-   *
-   * Both halves of that partition are returned, not just the one Layer 3 keeps.
-   * A turn also needs the `dynamic` half as surface-once candidates, and
-   * discovery is the expensive part — re-deriving it would mean walking the
-   * registry and re-synthesizing every skill a second time for the same turn.
-   */
-  async selectRequestLayer3(params: {
-    /**
-     * Focused workspace (or session/personal in home mode) — the ONLY workspace
-     * whose workspace-tier AND connector skills are in scope. Skills never cross a
-     * workspace boundary.
-     */
-    wsId: string;
-    /** Identity for user-tier skills; null in non-identity-bound paths. */
-    userId: string | null;
-    /** Names of tools in the set tool-affinity is evaluated against. */
-    activeToolNames: string[];
-    /** Skip the ONE skill already injected via `<app-guide>`, by publisher + URI. */
-    excludeSkill?: { serverName: string; uri: string };
-    /**
-     * Precomputed CAPABILITY skills (`type: skill`) from the conversation pool —
-     * the output of `partitionSkillsByRole(...).capability`. When the caller
-     * already partitioned for the per-request matcher / context channel, thread
-     * it through so the disk read isn't repeated. Omitted callers (e.g.
-     * `describeRequestSkills`) load + partition internally. Context skills are
-     * NOT in this set — they compose into Layer 0/1 by role, never Layer 3.
-     */
-    capabilityPool?: Skill[];
-    /**
-     * Precomputed connector partition from {@link discoverConnectorSkillsByRole}. Pass
-     * it when the caller already ran discovery — the chat path must, because the
-     * `dynamic` half feeds the phrase matcher that runs before the active
-     * toolset exists. Omitted callers discover here. Either way discovery
-     * happens exactly once per turn.
-     */
-    connectorPool?: { context: Skill[]; capability: Skill[] };
-  }): Promise<{ context: Skill[]; capability: Skill[]; layer3: SelectedSkill[] }> {
-    const capabilityPool =
-      params.capabilityPool ??
-      partitionSkillsByRole(this.loadConversationSkills(params.wsId, params.userId)).capability;
-    // Connector skills come from the FOCUSED workspace only — a connector installed
-    // in another workspace must not inject its usage skill here (the wall).
-    // Routed by their DECLARED strategy: `always` skills go to the context
-    // channel (composed every turn), `dynamic` skills join the tool-affinity
-    // capability pool that `selectLayer3Skills` filters.
-    const { context: connectorContext, capability: connectorCapability } =
-      params.connectorPool ??
-      (await this.discoverConnectorSkillsByRole(params.wsId, {
-        ...(params.excludeSkill ? { excludeSkill: params.excludeSkill } : {}),
-      }));
-    const layer3 = selectLayer3Skills({
-      skills: [...capabilityPool, ...connectorCapability],
-      activeTools: params.activeToolNames,
-    });
-    return { context: connectorContext, capability: connectorCapability, layer3 };
-  }
-
-  /**
-   * The Layer-3 skills the CURRENT request would compose into the prompt, plus
-   * the boot-time context skills — for `nb__status scope:skills`.
-   *
-   * Reports through {@link selectRequestLayer3} (the same path `chat` composes
-   * with) so the status surface reflects the workspace- and user-tier skills
-   * actually loaded, not the boot-time cache. Identity and the focused
-   * workspace come from the active request context.
-   *
-   * Active-tool input is the focused workspace's *available* tools. Under
-   * progressive disclosure the live run's active subset may be smaller, but for
-   * a status view "loads when this installed tool is active" is the signal a
-   * reader wants — and it never under-reports an always-loaded skill.
+   * Reads through the same loaders and partition `chat` composes with, so the
+   * status surface reflects the workspace- and user-tier skills actually in
+   * scope, not the boot-time cache. Identity and the focused workspace come
+   * from the active request context. A bound skill is not in the prompt: it
+   * reaches the model before the first call to a tool it names (ADR-0053).
    */
   async describeRequestSkills(
     wsId: string,
-  ): Promise<{ context: readonly Skill[]; layer3: readonly SelectedSkill[] }> {
+  ): Promise<{ context: readonly Skill[]; bound: readonly Skill[] }> {
     const identity = getRequestContext()?.identity ?? undefined;
     const ownerId = this.resolveRequestUserId(identity);
     const userId = identity?.id ?? ownerId;
-    const registry = await this.ensureWorkspaceRegistry(wsId);
-    const activeToolNames = (await registry.availableTools()).map((t) => t.name);
-    // Partition the same way compose does, so the status surface matches the
-    // prompt exactly: `context` (every tier, active only) is the Layer 0/1 set;
-    // `capability` feeds Layer 3. Reading the raw boot-time `this.contextSkills`
-    // would both miss workspace/user-tier context skills and show toggled-Off
-    // rules as active — the divergence this reporter exists to kill.
+    await this.ensureWorkspaceRegistry(wsId);
     // The conversation's mutes apply here too. This reporter exists to stop the
     // status surface and the prompt diverging, and a muted skill still listed
-    // as loaded is that divergence — an operator asking "did my mute take?" is
-    // told it did not.
+    // is that divergence: an operator asking "did my mute take?" is told it
+    // did not.
     const suppressed = await this.suppressedSkillNamesFor(getRequestContext()?.conversationId);
     const { context, capability } = partitionSkillsByRole(
       withoutSuppressed(this.loadConversationSkills(wsId, userId), suppressed),
     );
-    const { context: connectorContext, layer3 } = await this.selectRequestLayer3({
-      wsId,
-      userId,
-      activeToolNames,
-      capabilityPool: capability,
-    });
-    // Include always-on connector skills in the reported context so the status
-    // surface matches what the prompt actually composes. They compose every
-    // turn, so their bodies (which the always-on cost reads) are needed anyway
-    // and come from the digest cache the turn fills.
+    const connector = await this.discoverConnectorSkillsByRole(wsId);
+    // Always-on connector skills compose every turn, so their bodies (which the
+    // always-on cost reads) are needed anyway and come from the digest cache.
     const loadedConnectorContext = await hydrateSkills(
-      withoutSuppressed(connectorContext, suppressed),
+      withoutSuppressed(connector.context, suppressed),
     );
-    // Layer 3 is returned unfetched: the overview lists names only, and the
-    // detail view fetches the one body it prints.
-    return {
-      context: [...context, ...loadedConnectorContext],
-      layer3: layer3.filter((sel) => !suppressed.has(sel.skill.manifest.name)),
-    };
+    // Bound skills are returned unfetched: the overview lists names only, and
+    // the detail view fetches the one body it prints.
+    const bound = withoutSuppressed([...capability, ...connector.capability], suppressed).filter(
+      (s) => s.manifest.status === "active" && (s.manifest.toolAffinity?.length ?? 0) > 0,
+    );
+    return { context: [...context, ...loadedConnectorContext], bound };
   }
 
   /** Get the path to the nimblebrain.json config file (Helm-managed seed). */
@@ -6532,12 +6410,6 @@ async function resolveDeclaredSkills(
   );
 }
 
-/** The skills a turn composed into its prompt: tool-affinity selection and the trigger match. */
-function composedSkillNames(selected: SelectedSkill[], matched: Skill | null): string[] {
-  const names = selected.map((s) => s.skill.manifest.name);
-  return matched ? [...names, matched.manifest.name] : names;
-}
-
 /**
  * Every skill bound to a tool, from every source, as the engine's delivery
  * candidates: the conversation tiers' `dynamic` skills (core, org, workspace,
@@ -6608,17 +6480,6 @@ function bodyOrNull(load: () => Promise<SkillBodyLoad>): () => Promise<string | 
 async function hydrateSkills(skills: Skill[]): Promise<Skill[]> {
   const loaded = await Promise.all(skills.map(hydrateSkill));
   return loaded.filter((sk): sk is Skill => sk !== null);
-}
-
-/** {@link hydrateSkills} over a selection, keeping each entry's selection facts. */
-async function hydrateSelected(selected: SelectedSkill[]): Promise<SelectedSkill[]> {
-  const loaded = await Promise.all(
-    selected.map(async (sel) => {
-      const sk = await hydrateSkill(sel.skill);
-      return sk ? { ...sel, skill: sk } : null;
-    }),
-  );
-  return loaded.filter((sel): sel is SelectedSkill => sel !== null);
 }
 
 /** Entries a bounded runtime map (skill body caches, overlay checks) holds before evicting its oldest. */

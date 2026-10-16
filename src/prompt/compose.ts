@@ -251,7 +251,8 @@ export interface PromptAppInfo {
 }
 
 /**
- * Layer 3 skill picked by `selectLayer3Skills` for the current turn.
+ * A skill composed into the Layer 3 section: one an unattended run declared
+ * (`TaskRequest.skills`), cached with the system prompt.
  *
  * The compose layer renders the body inside a `<layer3-skill>` containment
  * tag with a provenance heading naming the source path so a debug reader
