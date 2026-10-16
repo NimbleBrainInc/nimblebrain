@@ -214,6 +214,8 @@ export interface ToolDoneEvent {
     supervisorTripped?: true;
     trippedTool?: string;
     consecutiveRepeats?: number;
+    /** The call did not run; it waits for guidance the model has not read yet. */
+    held?: true;
     /** The workspace the call ran in. */
     workspaceId?: string;
 }

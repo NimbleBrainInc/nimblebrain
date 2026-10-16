@@ -96,9 +96,14 @@ type WorstRates = { input: number; output: number } | null;
  * projection is never below what the same tokens can cost.
  */
 function worstRates(rates: UsageRates): NonNullable<WorstRates> {
+  // A longer prompt can move the call onto a dearer card, so every card counts.
+  const cards = [rates, ...(rates.tiers ?? [])];
   return {
-    input: Math.max(rates.input, rates.cacheRead, rates.cacheWrite5m, rates.cacheWrite1h) / 1e6,
-    output: Math.max(rates.output, rates.reasoning ?? 0) / 1e6,
+    input:
+      Math.max(
+        ...cards.map((c) => Math.max(c.input, c.cacheRead, c.cacheWrite5m, c.cacheWrite1h)),
+      ) / 1e6,
+    output: Math.max(...cards.map((c) => Math.max(c.output, c.reasoning ?? 0))) / 1e6,
   };
 }
 

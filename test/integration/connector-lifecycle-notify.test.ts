@@ -11,6 +11,7 @@ import type { HookReconcileDeps } from "../../src/hooks/reconcile.ts";
 import { ensureHooks } from "../../src/hooks/reconcile.ts";
 import type { HookIdentity } from "../../src/hooks/token.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { UserStore } from "../../src/identity/user.ts";
 import type { LifecycleNotifyDeps } from "../../src/lifecycle/notify.ts";
 import {
   notifyReady,
@@ -18,6 +19,7 @@ import {
   resetReadyNotifications,
 } from "../../src/lifecycle/notify.ts";
 import type { LifecycleBinding } from "../../src/lifecycle/types.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { LIFECYCLE_EXTENSION_ID } from "../../src/services/lifecycle-extension.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
@@ -31,6 +33,7 @@ import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
+import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /**
@@ -173,37 +176,37 @@ async function buildHarness(
   };
 
   const uninstall = lifecycle.uninstall.bind(lifecycle);
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
-    getLifecycle: () => ({
-      ...lifecycle,
-      getInstance: lifecycle.getInstance.bind(lifecycle),
-      getInstances: lifecycle.getInstances.bind(lifecycle),
-      seedInstance: lifecycle.seedInstance.bind(lifecycle),
-      notifyInstalled: lifecycle.notifyInstalled.bind(lifecycle),
-      syncBoundSkills: lifecycle.syncBoundSkills.bind(lifecycle),
-      setConnectorSkillFetch: lifecycle.setConnectorSkillFetch.bind(lifecycle),
-      // Wrapped so the ORDER of the notification and the teardown is
-      // observable. "Before teardown" is the whole contract: after it there is
-      // no source to call.
-      uninstall: async (...args: Parameters<typeof uninstall>) => {
-        trace.push("uninstall");
-        return uninstall(...args);
-      },
-    }),
+    getLifecycle: () =>
+      stub<ConnectorLifecycleManager>({
+        ...lifecycle,
+        getInstance: lifecycle.getInstance.bind(lifecycle),
+        getInstances: lifecycle.getInstances.bind(lifecycle),
+        seedInstance: lifecycle.seedInstance.bind(lifecycle),
+        notifyInstalled: lifecycle.notifyInstalled.bind(lifecycle),
+        syncBoundSkills: lifecycle.syncBoundSkills.bind(lifecycle),
+        setConnectorSkillFetch: lifecycle.setConnectorSkillFetch.bind(lifecycle),
+        // Wrapped so the ORDER of the notification and the teardown is
+        // observable. "Before teardown" is the whole contract: after it there is
+        // no source to call.
+        uninstall: async (...args: Parameters<typeof uninstall>) => {
+          trace.push("uninstall");
+          return uninstall(...args);
+        },
+      }),
     getRegistryForWorkspace: () => workspaceRegistry,
-    getPermissionStore: () => ({ deleteConnector: async () => {} }),
-    getUserStore: () => ({ get: async () => null }),
-    getUserConnectorStore: () => ({ get: async () => null }),
+    getPermissionStore: () => stub<PermissionStore>({ deleteConnector: async () => {} }),
+    getUserStore: () => stub<UserStore>({ get: async () => null }),
     getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
     getHookReconcileDeps: () => hookDeps,
     getLifecycleNotifyDeps: () => lifecycleDeps,
-  } as unknown as Runtime;
+  });
 
   const ctx: ManageConnectorsContext = {
     runtime,

@@ -156,6 +156,7 @@ export function readConnectorSkillCandidates(
       body: skill.body,
       scope: CONNECTOR_SKILL_SCOPE,
       toolAffinity: affinity,
+      priority: skill.manifest.priority,
     });
   }
   return out;
@@ -220,11 +221,12 @@ export function listConnectorOverlays(connectorSkillsDir: string): ConnectorOver
 }
 
 /**
- * A materialized overlay's tool-affinity: the one stamped at materialize, or
- * `<server>__*` for a file that carries none.
+ * A materialized overlay's tool-affinity: the one stamped at materialize (an
+ * empty list for an overlay bound to no tool), or `<server>__*` for a file that
+ * carries none.
  */
 function boundAffinity(serverName: string, stamped: string[] | undefined): string[] {
-  return stamped?.length ? stamped : [`${serverName}__*`];
+  return stamped ?? [`${serverName}__*`];
 }
 
 function safeReadDir(dir: string) {

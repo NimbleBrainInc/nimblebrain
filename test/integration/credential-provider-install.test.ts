@@ -31,6 +31,8 @@ import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { UserStore } from "../../src/identity/user.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import { _resetCredentialProvidersForTest } from "../../src/tools/credential-provider.ts";
@@ -47,6 +49,8 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { resolveTransportCredential } from "../../src/tools/remote-transport.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
+import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const CATALOG_DIR = join(import.meta.dir, "..", "fixtures", "connectors-credential");
@@ -85,7 +89,7 @@ function entry(): CatalogListing {
 function toolFor(sessionWsId: string) {
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getCredentialStore: () => store,
     getEventSink: () => new NoopEventSink(),
@@ -94,11 +98,11 @@ function toolFor(sessionWsId: string) {
     getConnectorCatalog: () => new ConnectorCatalog(CATALOG_DIR),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
-    getPermissionStore: () => ({ deleteConnector: async () => {} }),
-    getUserStore: () => ({ get: async () => null }),
+    getPermissionStore: () => stub<PermissionStore>({ deleteConnector: async () => {} }),
+    getUserStore: () => stub<UserStore>({ get: async () => null }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
-  } as unknown as Runtime;
+  });
   return createManageConnectorsTool({
     runtime,
     getIdentity: () => ADMIN,
@@ -199,10 +203,10 @@ describe("installing a `credential` provider entry", () => {
     );
 
     const sent: string[] = [];
-    globalThis.fetch = (async (_input: string, init?: RequestInit) => {
+    globalThis.fetch = fakeFetch(async (_input, init) => {
       sent.push(new Headers(init?.headers).get("Authorization") ?? "");
       return new Response("{}", { status: 200 });
-    }) as unknown as typeof fetch;
+    });
 
     for (const wsId of ["ws_00741647fd740fac", "ws_0075ad1326581881"]) {
       const { fetch: authed } = await resolveTransportCredential(

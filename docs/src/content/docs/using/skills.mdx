@@ -21,11 +21,11 @@ A `dynamic` skill activates through any of:
 <Steps>
 
 1. **Its `description`** — the model sees every skill's name + description in a catalog and activates the relevant one. This is the default path, so write the description to say *what the skill does and when to use it* (include the words a user would say). Always available — no extra field needed.
-2. **`tool-affinity`** — auto-activates when a tool in the active set matches one of its globs. For skills bound to specific tools.
+2. **`tool-affinity`** — the skill governs the tools its globs match, and reaches the model before the first call to one of them in a conversation. When a matching tool is in the active set at turn start, the skill is composed into the prompt for that turn. Otherwise it is delivered into the conversation when the tool is promoted, or, when the model calls the tool first, that call is held: it does not run, the model is told why, the skill follows it, and the model calls the tool again. A held call is not shown in the chat and does not count against a task run. Every source binds this way, so a workspace skill bound to a connector's tool arrives on the same call as the connector's own skill.
 3. **`triggers`** — auto-activates on an exact phrase, for deterministic "must-fire" cases (e.g. a compliance rule that must load whenever a regulated action is named).
 </Steps>
 
-A dynamic skill with no `tool-affinity` and no `triggers` loads only when the model activates it on its description.
+A dynamic skill with no `tool-affinity` and no `triggers` loads only when the model activates it on its description. Settings and `skills__list` call this loading **on request** (`on_request`).
 
 ### The skill catalog
 
@@ -163,8 +163,8 @@ Installing a connector can automatically apply a short **usage overlay** — cur
 
 Overlays differ from authored skills in three ways:
 
-- **Surfaced once into the conversation, not the system prompt.** An authored `dynamic` + `tool-affinity` skill composes into the system prompt for the turn. A connector overlay instead appears in the conversation history exactly once — on the first call to a matching tool — and then rides the (cached, append-only) history for the rest of the conversation. It's relevant (only when the connector's tools are actually used) and cache-friendly (it never re-varies the cached system prefix turn to turn). The tradeoff of this reactive model: the overlay surfaces *after* the first matching tool call, so guidance whose value is preemptive (e.g. "confirm before sending") does not gate that very first call. It does reach the model before its next action in the same turn, so it governs every call after the one that triggered it. For hard preconditions, prefer an authored `always` skill or a tool-side guard.
-- **Bound to the connector's tools.** An overlay is bound to every tool of the connector it is installed for (`<server-name>__*`), or, when its frontmatter declares `metadata.nimblebrain.tool-affinity`, only to the tools it names, read the same way as for a [skill published by the server](#skills-published-by-an-mcp-server). The block needs nothing else: the other runtime fields are stamped on install, and an overlay always loads `dynamic`.
+- **Surfaced once into the conversation, not the system prompt.** A connector overlay appears in the conversation history exactly once, before the first call to a matching tool runs (that call is held until the overlay has been read, as for any [`tool-affinity`](#how-a-skill-loads--loading-strategy) skill), and then rides the cached, append-only history for the rest of the conversation. It is relevant (only when the connector's tools are used) and cache-friendly (it never re-varies the cached system prefix turn to turn).
+- **Bound to the connector's tools.** An overlay is bound to every tool of the connector it is installed for (`<server-name>__*`), or, when its frontmatter declares `metadata.nimblebrain.tool-affinity`, only to the tools it names (or to none, for `[]`), read the same way as for a [skill published by the server](#skills-published-by-an-mcp-server). The block needs nothing else: the other runtime fields are stamped on install, and an overlay always loads `dynamic`.
 - **Stored separately.** Materialized overlays live in a `connector-skills/` store, distinct from authored `skills/`. They don't appear in the `skills__list` tool output; list them with the connector tool's `list_bound_skills` action instead, or see them under **From connectors** in a workspace's Settings → Skills.
 
 Resolution is **always on and fail-soft**: it fetches at a pinned repo version, records the fetched content hash, and treats a missing overlay (or any fetch error) as a no-op — a connector install never fails because its optional guidance couldn't be fetched, and there's nothing to enable (an overlay exists only if we've curated one). Override the repo / version with `CONNECTOR_SKILLS_REPO` and `CONNECTOR_SKILLS_VERSION`. When a connector has a curated overlay, the platform skips synthesizing the server's own `skill://<name>/SKILL.md` guidance so the model sees one set of instructions, not two.
@@ -194,7 +194,7 @@ The skill's name is its frontmatter `name`. When two skills on one server share 
 | `loading-strategy` | `always` composes it every turn; `dynamic` (the default when omitted) loads it on demand. |
 | `priority` | Ordering, same scale. Defaults to 60. |
 | `triggers` | Phrases that load it deterministically, whether or not the server's tools are in the active tool set. |
-| `tool-affinity` | The server's own tools the skill governs, as bare names or globs (`draft_email`, `draft_*`). The platform prefixes each with `<server-name>__`. Omitted, the skill is bound to every tool of the server (`<server-name>__*`). |
+| `tool-affinity` | The server's own tools the skill governs, as bare names or globs (`draft_email`, `draft_*`). The platform prefixes each with `<server-name>__`. Omitted, the skill is bound to every tool of the server (`<server-name>__*`). A skill bound to every tool of its server does not hold the first call to a tool the server annotates `readOnlyHint`: it is delivered right after that call instead. A skill that names its tools always holds. An explicit empty list (`tool-affinity: []`) binds it to no tool: the skill is listed in the catalog and loads only when the model asks for it, which suits reference material no single tool call needs. A value that is not a list, or a list of only blank entries, counts as omitted. |
 
 Two differences from an on-disk skill:
 
@@ -247,10 +247,11 @@ Ask the agent and it reports the summary — how many loads, across how many con
 | `always` | Composed into the system prompt because the skill declares `loading-strategy: always`. |
 | `tool_affinity` | Composed in because a tool matching its globs was in the active set. |
 | `trigger` | Composed in because an exact trigger phrase appeared. |
-| `tool_use` | A connector overlay delivered on the first matching tool call. |
+| `before_call` | A bound skill delivered while the first call to its tool was held. |
+| `tool_use` | A bound skill delivered when its tool was promoted, or after a call that ran. |
 | `activation` | The model loaded a Skill Catalog entry by name with `nb__use_skill`. |
 
-Filter by `conversation_id`, `skill` (name or id), `loaded_by`, or a `since`/`until` window. This is the way to answer questions the catalog alone can't — whether a skill is reaching the model at all, and whether it gets there because the model chose it or because a tool call forced it.
+A row with a `status` is a bound skill that did **not** reach the model on that call: `fetch_failed` (its body could not be fetched, so the call ran without it), `capped` (one held call delivers at most about three skills' worth of guidance; the rest are named for the model to load), or `renamed_unheld` (a policy hook renamed the call after the check). Filter by `conversation_id`, `skill` (name or id), `loaded_by`, or a `since`/`until` window. This is the way to answer questions the catalog alone can't — whether a skill is reaching the model at all, and whether it gets there because the model chose it or because a tool call forced it.
 
 ## Creating a custom skill
 

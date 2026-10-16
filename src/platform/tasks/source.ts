@@ -9,7 +9,14 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import type { TaskRequest } from "../../runtime/types.ts";
 import { coreSkillBody } from "../../skills/loader.ts";
 import { isTaskForbiddenIdentityTool } from "../../tools/identity-sources.ts";
-import { defineInProcessApp, type InProcessTool, typedTool } from "../../tools/in-process-app.ts";
+import {
+  defineInProcessApp,
+  type InProcessTool,
+  type OutputSchema,
+  type ToolErrorResult,
+  type ToolSuccessResult,
+  typedTool,
+} from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { unmatchedAllowedTools } from "../../tools/tool-pattern.ts";
 import { ledgerCostByTaskRun } from "../../usage/aggregate.ts";
@@ -27,7 +34,7 @@ import {
   type JudgePort,
   judgeWarnings,
 } from "./judge.ts";
-import { countsAsEventFire, isOpenRun, Scheduler } from "./scheduler.ts";
+import { countsAsEventFire, isOpenRun, type RunFailedNotice, Scheduler } from "./scheduler.ts";
 import { type TaskToolName, TOOL_SCHEMAS } from "./schemas.ts";
 import {
   handleAssess,
@@ -64,6 +71,9 @@ import {
 import { createTaskRunSource } from "./task-source.ts";
 import type { Batch, RunTicket, Task, TaskRun } from "./types.ts";
 import { TASKS_PANEL_HTML } from "./ui-resource.ts";
+
+/** What a tool's handler answers: the static type of its output schema. */
+type ToolOutput<K extends TaskToolName> = Static<(typeof TOOL_SCHEMAS)[K]["outputSchema"]>;
 
 /**
  * Resolve WHO a task run acts as: the task's owner, focused on the
@@ -206,6 +216,55 @@ export function poorResultEnvelope(task: Task, run: TaskRun): NotificationEnvelo
 }
 
 /**
+ * The inbox item for a run that ended with no deliverable, or whose failure
+ * auto-disabled its task. Generic for the same reason as a poor result (see
+ * `poorResultEnvelope`): the run's id, its owner's id, and whether the task was
+ * disabled, never the task's name or the run's error, which can quote a
+ * connector's or tool's name and stays on the run for its owner to read.
+ */
+export function runFailedEnvelope(
+  task: Task,
+  run: TaskRun,
+  { disabled }: RunFailedNotice,
+): NotificationEnvelope {
+  return {
+    eventId: `${disabled ? "task-disabled" : "run-failed"}:${run.id}`,
+    name: disabled ? "task.disabled" : "task.run.failed",
+    timestamp: new Date().toISOString(),
+    data: { runId: run.id, ownerId: task.ownerId ?? null, disabled },
+    _meta: {
+      "ai.nimblebrain/notification": {
+        level: "attention",
+        title: disabled ? "A task was turned off after repeated failures" : "A task run failed",
+        body: disabled
+          ? `Its schedule is off until its owner turns it back on. The owner can read run ${run.id} in Tasks.`
+          : `It ended without a result. The owner can read run ${run.id} in Tasks.`,
+      },
+    },
+  };
+}
+
+/** Put a failed run in its task's workspace inbox. Best-effort, like a poor result. */
+function notifyRunFailed(
+  runtime: Runtime,
+  task: Task,
+  run: TaskRun,
+  notice: RunFailedNotice,
+): void {
+  const wsId = task.workspaceId;
+  if (!wsId) return;
+  try {
+    runtime.getNotificationStore(wsId).append("tasks", runFailedEnvelope(task, run, notice));
+  } catch (err) {
+    log.warn("[tasks] could not write a run-failed notification", {
+      taskId: task.id,
+      runId: run.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * The inbox item for a batch that paused on its own: its budget ran out or its
  * stop rule fired. Generic for the same reason as a poor result (see
  * `poorResultEnvelope`): the batch id, its owner's id, why it paused, and its
@@ -320,6 +379,7 @@ export async function createTasksSource(
     onRunRecorded: (owner) => runtime.announceIdentitySourceChange("tasks", owner),
     assess: (task, run, result) => assessRun(task, run, result, { port: judgePort }),
     notifyPoorResult: (task, run) => notifyPoorResult(runtime, task, run),
+    notifyRunFailed: (task, run, notice) => notifyRunFailed(runtime, task, run, notice),
   });
   scheduler.start();
 
@@ -526,6 +586,7 @@ export async function createTasksSource(
     createTaskRunSource({
       toolContext: getToolContext,
       readTicket: currentTicket,
+      readTask: (wsId, owner, id) => loadTask(workDir, wsId, owner, id),
       readResult: (wsId, owner, id, runId) => readRunResult(workDir, wsId, owner, id, runId),
       runEnded: (runId) => scheduler.runEnded(runId),
       cancelRun: (wsId, owner, runId) => scheduler.cancelRunById(wsId, owner, runId),
@@ -533,15 +594,21 @@ export async function createTasksSource(
     }),
   );
 
-  /** Shared error handler — catches, formats, returns isError result. */
-  function withErrorHandling<I>(
-    fn: (input: I) => Promise<object> | object,
-  ): (input: I) => Promise<{ content: ReturnType<typeof textContent>; isError: boolean }> {
+  /**
+   * Run a handler and shape its answer: a success is the answer as JSON text,
+   * which is what the model reads, and the same object as `structuredContent`,
+   * which the SDK client checks against the tool's output schema; a throw is an
+   * error result naming the message.
+   */
+  function withErrorHandling<I, O>(
+    fn: (input: I) => Promise<O> | O,
+  ): (input: I) => Promise<ToolSuccessResult<O> | ToolErrorResult> {
     return async (input) => {
       try {
         const result = await fn(input);
         return {
           content: textContent(JSON.stringify(result, null, 2)),
+          structuredContent: result,
           isError: false,
         };
       } catch (err) {
@@ -599,13 +666,13 @@ export async function createTasksSource(
   }
 
   // Every handler, keyed by tool name. The mapped type types each one's input
-  // from its own entry in `TOOL_SCHEMAS`, and a tool missing here fails to
-  // compile.
+  // and answer from its own entry in `TOOL_SCHEMAS`, and a tool missing here
+  // fails to compile.
   const handlers: {
     [K in TaskToolName]: (
       input: Static<(typeof TOOL_SCHEMAS)[K]["inputSchema"]>,
       ctx: ToolContext,
-    ) => Promise<object> | object;
+    ) => Promise<ToolOutput<K>> | ToolOutput<K>;
   } = {
     create: (input, ctx) => warnAboutTask(handleCreate(input, ctx)),
     update: (input, ctx) => warnAboutTask(handleUpdate(input, ctx)),
@@ -636,8 +703,17 @@ export async function createTasksSource(
 
   function registerTool<K extends TaskToolName>(name: K): InProcessTool {
     const handle = handlers[name];
+    // `handlers` holds each tool's answer to its own output schema; here every
+    // tool is registered through one generic body, which reads the schema as
+    // the general `OutputSchema` it publishes.
+    const { description, inputSchema, annotations } = TOOL_SCHEMAS[name];
+    const outputSchema: OutputSchema = TOOL_SCHEMAS[name].outputSchema;
     return typedTool({
-      ...TOOL_SCHEMAS[name],
+      name,
+      description,
+      inputSchema,
+      outputSchema,
+      annotations,
       handler: withErrorHandling((input) => {
         // Unattended-run wall. A task must not reach the
         // task-authoring surface (create/update/delete/run, and any authoring

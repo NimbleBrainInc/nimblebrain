@@ -30,11 +30,12 @@
 
 import { type Static, Type } from "@sinclair/typebox";
 import {
-  ACTION_METHOD,
   KEYDOWN_METHOD,
   LOCATION_METHOD,
   NAVIGATE_METHOD,
   NOTIFY_METHOD,
+  OPEN_CONNECTOR_SETTINGS_METHOD,
+  OPEN_METHOD,
   REQUEST_FILE_METHOD,
   UPLOAD_FILES_METHOD,
 } from "./extensions";
@@ -219,16 +220,21 @@ export type ExtAppsRequestTeardownNotification = Static<typeof ExtAppsRequestTea
 
 // ── App → Host messages (NimbleBrain extensions) ─────────────────────────
 
-export const UiActionMessage = Type.Object({
+export const UiOpenMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
-  method: Type.Literal(ACTION_METHOD),
-  id: Type.Optional(RequestId),
-  params: Type.Intersect([
-    Type.Object({ action: Type.String() }),
-    Type.Record(Type.String(), Type.Unknown()),
-  ]),
+  method: Type.Literal(OPEN_METHOD),
+  id: RequestId,
+  params: Type.Object({ uri: Type.String() }),
 });
-export type UiActionMessage = Static<typeof UiActionMessage>;
+export type UiOpenMessage = Static<typeof UiOpenMessage>;
+
+export const UiOpenConnectorSettingsMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal(OPEN_CONNECTOR_SETTINGS_METHOD),
+  id: RequestId,
+  params: Type.Optional(UnknownRecord),
+});
+export type UiOpenConnectorSettingsMessage = Static<typeof UiOpenConnectorSettingsMessage>;
 
 /**
  * Spec `ui/download-file` — the standard way an app hands the user a file.
@@ -392,7 +398,8 @@ export const AppToHostMessage = Type.Union([
   UiOpenLinkMessage,
   UiSizeChangedMessage,
   UiUpdateModelContextMessage,
-  UiActionMessage,
+  UiOpenMessage,
+  UiOpenConnectorSettingsMessage,
   UiDownloadFileSpecMessage,
   UiRequestDisplayModeMessage,
   LoggingMessageNotification,

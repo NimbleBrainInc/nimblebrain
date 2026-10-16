@@ -67,7 +67,7 @@ describe("reserved server names", () => {
   });
 
   test("an ordinary source name is not reserved", () => {
-    for (const name of ["crm", "gmail", "granola", "ai-bassethound-mcp", "precision_outbound"]) {
+    for (const name of ["crm", "gmail", "granola", "ai-bassethound-mcp", "acme_outbound"]) {
       expect(isReservedServerName(name)).toBe(false);
       expect(() => validateServerName(name)).not.toThrow();
     }

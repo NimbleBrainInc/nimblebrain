@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { _clearAll } from "../../src/tools/oauth-flow-registry.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 // The redirect-probe is a headless-only optimization. For a normal
 // interactive provider (Granola, Claude.ai, …) it MUST NOT run: fetching
@@ -45,7 +46,7 @@ describe("WorkspaceOAuthProvider — redirect-probe is gated on headlessAuthProb
 
   it("interactive (default, headlessAuthProbe=false): does NOT fetch /authorize; goes straight to the interactive branch", async () => {
     const fetchSpy = mock(async () => new Response("login page", { status: 200 }));
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fakeFetch(fetchSpy);
 
     let capturedUrl = "";
     const p = makeProvider(false, (u) => {
@@ -64,7 +65,7 @@ describe("WorkspaceOAuthProvider — redirect-probe is gated on headlessAuthProb
 
   it("headless (headlessAuthProbe=true): DOES probe /authorize server-side", async () => {
     const fetchSpy = mock(async () => new Response("login page", { status: 200 }));
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    globalThis.fetch = fakeFetch(fetchSpy);
 
     const p = makeProvider(true, () => {});
     p.state();

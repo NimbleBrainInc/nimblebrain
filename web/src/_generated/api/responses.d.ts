@@ -37,6 +37,17 @@ export interface ModelCost {
     cacheRead?: number;
     cacheWrite?: number;
     reasoning?: number;
+    /** Rate cards for longer prompts, ascending by `aboveInputTokens`. */
+    tiers?: ModelCostTier[];
+}
+/** Mirrors `ModelCostTier` (`src/model/catalog.ts`). */
+export interface ModelCostTier {
+    aboveInputTokens: number;
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    reasoning?: number;
 }
 /** Mirrors `ModelLimits` (`src/model/catalog.ts`). */
 export interface ModelLimits {
@@ -139,6 +150,8 @@ export interface ChatToolCall {
     ms: number;
     /** Structured failure reason when `ok === false`. */
     errorReason?: string;
+    /** The call did not run; it waited for guidance the model had not read yet. */
+    held?: true;
 }
 export interface HealthResponse {
     status: "ok";

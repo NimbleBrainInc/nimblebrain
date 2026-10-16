@@ -25,7 +25,7 @@ import {
 } from "../../runtime/admission.ts";
 import { runDetached } from "../../runtime/request-context.ts";
 import { WorkspaceRootMissingError } from "../../workspace/context.ts";
-import { isAssessable, retryGuidance } from "./assessment.ts";
+import { executionOf, isAssessable, retryGuidance } from "./assessment.ts";
 import {
   appendRun,
   loadAllTasks,
@@ -292,6 +292,16 @@ export interface SchedulerConfig {
   assess?: (task: Task, run: TaskRun, result: TaskRunResult | null) => Promise<RunAssessment>;
   /** Tell the task's owner a run's assessment failed (`onPoorResult: "notify"`). */
   notifyPoorResult?: (task: Task, run: TaskRun) => void;
+  /**
+   * Tell the task's owner a run ended with no deliverable (the first such run
+   * of a failing stretch), or that a run's failure auto-disabled the task.
+   */
+  notifyRunFailed?: (task: Task, run: TaskRun, notice: RunFailedNotice) => void;
+}
+
+/** What a run-failed notice reports beyond the run: whether it disabled the task. */
+export interface RunFailedNotice {
+  disabled: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -537,7 +547,8 @@ function classifyRunFailure(err: unknown): {
   // FAILURE, never skipped: it feeds consecutiveErrors so a connector that
   // stays gone backs the task off and disables it, saying why. Not transient:
   // a retry minutes later meets the same missing connector.
-  if ((err as { code?: string })?.code === "declared_tools_unavailable") {
+  const code = (err as { code?: string })?.code;
+  if (code === "declared_tools_unavailable" || code === "declared_skills_unavailable") {
     return { status: "failure", error: errorMsg, transient: false };
   }
   if (errorMsg.includes("timed out")) {
@@ -576,6 +587,7 @@ function resolveLastRunStatus(status: TaskRun["status"]): NonNullable<Task["last
 function applyConsecutiveErrors(auto: Task, run: TaskRun, now: number): void {
   if (run.status === "success" || run.status === "degraded") {
     auto.consecutiveErrors = 0;
+    delete auto.failureNoticeRunId;
     return;
   }
   if (run.status !== "failure" && run.status !== "timeout") return;
@@ -588,6 +600,29 @@ function applyConsecutiveErrors(auto: Task, run: TaskRun, now: number): void {
     auto.disabledAt = new Date(now).toISOString();
     auto.disabledReason = `Auto-disabled after ${auto.consecutiveErrors} consecutive failures. Last error: ${(run.error ?? "unknown").slice(0, 200)}`;
   }
+}
+
+/**
+ * Count the run toward the task's error streak and say whether it raises a
+ * run-failed notice, claiming the failing stretch's one notice on `auto` when
+ * it does. A batch item answers to its batch: its failures are the batch's to
+ * count (the stop rule, `rerun_failed`), never the task's own streak, which
+ * would back off and then disable the task's schedule, and it raises no
+ * notice. A run that left no deliverable raises the notice when no earlier run
+ * of the stretch has; a run whose failure auto-disabled the task raises it
+ * regardless. A run that stopped with a deliverable (`incomplete`) is the
+ * judge's to report, so it neither notifies nor claims the notice. Called
+ * before the once retirement, since a retired once is disabled too and is not
+ * a failure.
+ */
+function applyStreak(auto: Task, run: TaskRun, now: number): RunFailedNotice | null {
+  if (run.batchId) return null;
+  const wasEnabled = auto.enabled;
+  applyConsecutiveErrors(auto, run, now);
+  const disabled = wasEnabled && !auto.enabled;
+  const first = executionOf(run) === "failed" && !auto.failureNoticeRunId;
+  if (first) auto.failureNoticeRunId = run.id;
+  return first || disabled ? { disabled } : null;
 }
 
 /**
@@ -2286,10 +2321,7 @@ export class Scheduler {
     auto.cumulativeInputTokens = (auto.cumulativeInputTokens ?? 0) + run.inputTokens;
     auto.cumulativeOutputTokens = (auto.cumulativeOutputTokens ?? 0) + run.outputTokens;
 
-    // A batch item answers to its batch: its failures are the batch's to count
-    // (the stop rule, `rerun_failed`), never the task's own streak, which
-    // would back off and then disable the task's schedule.
-    if (!run.batchId) applyConsecutiveErrors(auto, run, now);
+    const notice = applyStreak(auto, run, now);
     if (!isOnceSchedule(auto.schedule)) {
       applyNextRunAt(auto, now, this.config.defaultTimezone);
     } else if ((trigger ?? run.trigger) === "scheduled" && auto.schedule?.at === firedOnceAt) {
@@ -2313,6 +2345,7 @@ export class Scheduler {
     }
     saveTask(this.config.workDir, wsId, ownerId, auto);
     this.definitions.set(Scheduler.keyOf(auto), auto);
+    if (notice) this.config.notifyRunFailed?.(auto, run, notice);
   }
 
   /**

@@ -11,9 +11,9 @@
  */
 
 import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/tasks.ts";
+import type { ThinkingEffort } from "../../engine/types.ts";
 import { wrapContained } from "../../prompt/compose.ts";
 import type { AdmissionLease } from "../../runtime/admission.ts";
-import { estimateCost } from "../../usage/cost.ts";
 import { checkAgainstSchema, parseJsonDeliverable } from "./json-schema.ts";
 import {
   BATCH_ACCOUNT_PREFIX,
@@ -23,7 +23,14 @@ import {
   type RunSpendAccount,
   type TaskRunTrigger,
 } from "./scheduler.ts";
-import type { RunFileRef, RunToolCall, Task, TaskRun, TaskRunResult } from "./types.ts";
+import type {
+  RunFileRef,
+  RunSkillDelivery,
+  RunToolCall,
+  Task,
+  TaskRun,
+  TaskRunResult,
+} from "./types.ts";
 
 /** Max chars of the deliverable kept in the run-list `resultPreview`. The full
  *  output lives in the `TaskRunResult` sidecar. */
@@ -61,6 +68,8 @@ export interface TaskFnRequest {
    */
   trigger?: "schedule" | "manual" | "event";
   model?: string;
+  /** The task's reasoning depth; absent, the operator's applies. */
+  thinkingEffort?: ThinkingEffort;
   maxIterations?: number;
   maxRunInputTokens?: number;
   /**
@@ -70,6 +79,8 @@ export interface TaskFnRequest {
    */
   spendAccounts?: RunSpendAccount[];
   allowedTools?: string[];
+  /** Skills the run is given in full before its first model call (`Task.skills`). */
+  skills?: string[];
   metadata?: Record<string, unknown>;
   /**
    * The task's workspace: tools scoped to it + identity tools, and
@@ -112,6 +123,8 @@ export interface TaskFnToolCall {
   ms: number;
   /** Structured failure reason when `ok === false`. */
   errorReason?: string;
+  /** The engine held the call for guidance; it did not run. */
+  held?: true;
 }
 
 /** Minimal task result shape (matches runtime `TaskResult`). */
@@ -129,10 +142,11 @@ export interface TaskFnResult {
   finishReasonRaw?: string;
   /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
-  /**
-   * The run's usage (runtime `TurnUsage`): `model` and the cache and reasoning
-   * counts price it (`costUsd`).
-   */
+  /** The run's cost in USD, each call priced on its own card (runtime `TaskResult.costUsd`). */
+  costUsd?: number;
+  /** Every skill the run was given, or that missed it (runtime `TaskResult`). */
+  skillsDelivered?: RunSkillDelivery[];
+  /** The run's usage (runtime `TurnUsage`). */
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -157,6 +171,16 @@ export interface ExecutorContext {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The instruction a task with skills and no prompt runs on. The skills
+ * themselves reach the run in full ahead of it (`TaskRequest.skills`).
+ */
+function skillsOnlyInstruction(skills: string[] | undefined): string | undefined {
+  if (!skills?.length) return undefined;
+  const names = skills.map((s) => `"${s}"`).join(", ");
+  return `Carry out the ${names} skill${skills.length === 1 ? "" : "s"} on this run's input, and give the result as the deliverable.`;
+}
 
 /**
  * Recursive-call guard. A task whose `allowedTools` includes a
@@ -213,7 +237,7 @@ function buildRequest(
   const prompt = [
     input?.preamble,
     input?.data !== undefined ? renderRunInput(input.data) : undefined,
-    task.prompt,
+    task.prompt || skillsOnlyInstruction(task.skills),
     task.outputSchema ? renderOutputSchemaInstruction(task.outputSchema) : undefined,
   ]
     .filter((part): part is string => typeof part === "string" && part.length > 0)
@@ -233,6 +257,7 @@ function buildRequest(
     },
   };
   if (task.model != null) req.model = task.model;
+  if (task.thinkingEffort != null) req.thinkingEffort = task.thinkingEffort;
   // Already clamped to the operator's per-run ceilings (see
   // `effectiveRunLimits`). Iterations are always capped; input tokens only when
   // the definition or the operator sets a cap.
@@ -243,6 +268,7 @@ function buildRequest(
   // An empty list means no narrowing, as the form shows it ("all"), not a run
   // with only the system tools.
   if (task.allowedTools?.length) req.allowedTools = task.allowedTools;
+  if (task.skills?.length) req.skills = task.skills;
   if (ctx?.workspaceId) req.workspaceId = ctx.workspaceId;
   if (ctx?.identity) req.identity = ctx.identity;
   return req;
@@ -509,6 +535,27 @@ function unreachableConnectorCalls(toolCalls: TaskFnResult["toolCalls"]): string
 }
 
 /**
+ * The tool calls that tell what work happened, without the calls the engine
+ * held for guidance (`ToolCallRecord.held`). A held call ran nothing, so it is
+ * neither a failure nor a call. A model that re-issues it shows the outcome in
+ * the re-issue; one that, having read the guidance, rightly never re-issues it
+ * did no wrong. The exception is a run that stopped short (any stop but
+ * `complete`) before re-issuing a held call: there the work it asked for never
+ * happened and nothing else will say so, so it stays, as the failure it is.
+ */
+function withoutSettledHolds(
+  toolCalls: TaskFnResult["toolCalls"],
+  stopReason: TaskRun["stopReason"],
+): TaskFnResult["toolCalls"] {
+  if (!Array.isArray(toolCalls)) return toolCalls;
+  return toolCalls.filter((tc, i) => {
+    if (!tc.held) return true;
+    if (stopReason === "complete") return false;
+    return !toolCalls.slice(i + 1).some((later) => later.name === tc.name);
+  });
+}
+
+/**
  * What the tool calls say about a run the model called complete, or null when
  * they agree with it. Checked most-specific first; see `mapResultToRun`.
  */
@@ -638,6 +685,7 @@ function mapResultToRun(
 ): TaskRun {
   const stopReason = data.stopReason as TaskRun["stopReason"];
   let status: TaskRun["status"] = mapStopReasonToStatus(stopReason);
+  const accounted = withoutSettledHolds(data.toolCalls, stopReason);
 
   // De-mask the silently-failed run. `stopReason: "complete"` only says the
   // MODEL decided it was done, and a model that cannot do the work commonly
@@ -670,7 +718,7 @@ function mapResultToRun(
   // failure/timeout keeps its (stronger) status.
   let error: string | undefined;
   if (status === "success") {
-    const verdict = toolCallVerdict(data.toolCalls);
+    const verdict = toolCallVerdict(accounted);
     if (verdict) {
       status = verdict.status;
       error = verdict.error;
@@ -699,9 +747,9 @@ function mapResultToRun(
   error ??= unrecognizedStopError(status, stopReason, data);
   // Recorded whatever the status, and read without any criteria: the derived
   // label never reads Succeeded while part of the work did not happen.
-  const unrecovered = unresolvedFailures(data.toolCalls).map((u) => u.name);
-  // Priced as the door debits a `usd` spend account: the run model's rates.
-  const costUsd = data.usage.model ? estimateCost(data.usage.model, data.usage) : undefined;
+  const unrecovered = unresolvedFailures(accounted).map((u) => u.name);
+  // Priced as the door debits a `usd` spend account: each call on its own card.
+  const costUsd = data.costUsd;
 
   return {
     // Adopt the runtime's runId verbatim — the run, its index summary, and its
@@ -713,7 +761,7 @@ function mapResultToRun(
     status,
     inputTokens: data.usage.inputTokens,
     outputTokens: data.usage.outputTokens,
-    toolCalls: Array.isArray(data.toolCalls) ? data.toolCalls.length : 0,
+    toolCalls: Array.isArray(data.toolCalls) ? data.toolCalls.filter((tc) => !tc.held).length : 0,
     iterations: data.usage.iterations,
     // Truncated preview for the run list; the full deliverable lives in the
     // TaskRunResult sidecar (see `buildRunResult`).
@@ -741,6 +789,7 @@ export function buildRunResult(task: Task, data: TaskFnResult): TaskRunResult {
     output: typeof tc.output === "string" ? tc.output : String(tc.output ?? ""),
     ok: tc.ok === true,
     ms: typeof tc.ms === "number" ? tc.ms : 0,
+    ...(tc.held === true ? { held: true as const } : {}),
   }));
   return {
     runId: data.runId,
@@ -755,6 +804,7 @@ export function buildRunResult(task: Task, data: TaskFnResult): TaskRunResult {
       iterations: data.usage.iterations,
     },
     stopReason: data.stopReason as TaskRun["stopReason"],
+    ...(data.skillsDelivered?.length ? { skillsDelivered: data.skillsDelivered } : {}),
   };
 }
 

@@ -43,6 +43,7 @@
     "includes": [
       "src/**",
       "web/src/**",
+      "web/test/**",
       "instrument/**",
       "scripts/**",
       "test/**/*.ts",
@@ -54,35 +55,22 @@
   },
   "overrides": [
     {
+      "includes": ["scripts/**", "src/**", "web/src/**", "test/**", "web/test/**"],
+      "plugins": ["./biome-plugins/double-cast.grit"]
+    },
+    {
       "includes": [
         "scripts/**",
         "src/**",
         "web/src/**",
-        "test/conformance/**",
-        "test/eval/**",
-        "test/fixtures/**",
-        "test/helpers/**",
-        "test/integration/api/**",
-        "test/integration/identity/**",
-        "test/integration/security/**",
-        "test/scripts/**",
-        "test/unit/__golden__/**",
-        "test/unit/brand/**",
-        "test/unit/bridge/**",
-        "test/unit/docs/**",
-        "test/unit/engine/**",
-        "test/unit/fixtures/**",
-        "test/unit/lifecycle/**",
-        "test/unit/middleware/**",
-        "test/unit/oauth/**",
-        "test/unit/orchestrator/**",
-        "test/unit/platform/compose/**",
-        "test/unit/scripts/**",
-        "test/unit/services/**",
-        "test/unit/usage/**",
-        "test/unit/util/**"
+        "web/test/**",
+        "test/**"
       ],
-      "plugins": ["./biome-plugins/double-cast.grit"]
+      "plugins": ["./biome-plugins/never-cast.grit"]
+    },
+    {
+      "includes": ["src/**/*.ts", "!src/api/app.ts"],
+      "plugins": ["./biome-plugins/router-use.grit"]
     },
     {
       "includes": ["src/**/*.ts"],
@@ -211,7 +199,7 @@
       ]
     },
     {
-      "includes": ["test/**"],
+      "includes": ["test/**", "web/test/**"],
       "linter": {
         "rules": {
           "complexity": { "noExcessiveCognitiveComplexity": "off" },

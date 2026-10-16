@@ -1,4 +1,4 @@
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, type TInteger, Type } from "@sinclair/typebox";
 import { StringEnum } from "./_shared.ts";
 
 /** The coarse kinds `files__list` filters and counts by, from a file's MIME type. */
@@ -124,22 +124,6 @@ export const FilesReadPdfPagesInput = Type.Object(
 );
 export type FilesReadPdfPagesInput = Static<typeof FilesReadPdfPagesInput>;
 
-export interface FilesReadPdfPagesOutput {
-  id: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-  totalPages: number;
-  requestedPages: number[];
-  missingPages: number[];
-  pages: Array<{
-    page: number;
-    text: string;
-    truncated: boolean;
-    empty: boolean;
-  }>;
-}
-
 export const FilesCreateInput = Type.Object(
   {
     manifest: Type.Object(
@@ -253,50 +237,67 @@ export const FilesDeleteFolderInput = Type.Object(
 );
 export type FilesDeleteFolderInput = Static<typeof FilesDeleteFolderInput>;
 
-// ── Output types ────────────────────────────────────────────────────────
+// ── Output schemas ──────────────────────────────────────────────────────
+//
+// Each tool publishes one of these as its `outputSchema` (src/platform/AGENTS.md
+// §2.1). The record schemas require only the fields every stored registry or
+// folder entry carries; a field added later is optional on the record type.
+
+const NullableString = Type.Union([Type.String(), Type.Null()]);
 
 /**
  * A file's registry entry, as `files__list`, `files__search`, and
  * `files__info` return it. Mirror of `FileEntry` (`src/files/types.ts`),
  * held to it by `src/platform/files/output-types-drift-guard.ts`.
  */
-export interface FileRecord {
-  id: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-  tags: string[];
-  source: FileSource;
-  conversationId: string | null;
-  runId?: string | null;
-  createdAt: string;
-  description: string | null;
-  folderId?: string | null;
-  ownerId?: string;
-  workspaceId?: string;
-  visibility?: "private" | "shared";
-  deleted?: true;
-  deletedAt?: string;
-}
+export const FileRecord = Type.Object({
+  id: Type.String(),
+  filename: Type.String(),
+  mimeType: Type.String(),
+  size: Type.Number(),
+  tags: Type.Array(Type.String()),
+  source: StringEnum(FILE_SOURCES),
+  conversationId: NullableString,
+  runId: Type.Optional(NullableString),
+  createdAt: Type.String(),
+  description: NullableString,
+  folderId: Type.Optional(NullableString),
+  ownerId: Type.Optional(Type.String()),
+  workspaceId: Type.Optional(Type.String()),
+  visibility: Type.Optional(StringEnum(["private", "shared"] as const)),
+  deleted: Type.Optional(Type.Literal(true)),
+  deletedAt: Type.Optional(Type.String()),
+});
+export type FileRecord = Static<typeof FileRecord>;
 
 /**
  * A folder record. Mirror of `FolderEntry` (`src/files/types.ts`), held to it
  * by `src/platform/files/output-types-drift-guard.ts`.
  */
-export interface FolderRecord {
-  id: string;
-  name: string;
-  parentId: string | null;
-  createdAt: string;
-  deleted?: true;
-  deletedAt?: string;
-}
+export const FolderRecord = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  parentId: NullableString,
+  createdAt: Type.String(),
+  deleted: Type.Optional(Type.Literal(true)),
+  deletedAt: Type.Optional(Type.String()),
+});
+export type FolderRecord = Static<typeof FolderRecord>;
 
 /** A listed file, with the '/'-separated path of its folder ("" at the top level). */
-export type ListedFile = FileRecord & { folderPath: string };
+export const ListedFile = Type.Composite([FileRecord, Type.Object({ folderPath: Type.String() })]);
+export type ListedFile = Static<typeof ListedFile>;
 
 /** A listed folder, with its own '/'-separated path. */
-export type ListedFolder = FolderRecord & { path: string };
+export const ListedFolder = Type.Composite([FolderRecord, Type.Object({ path: Type.String() })]);
+export type ListedFolder = Static<typeof ListedFolder>;
+
+/** A count for each of `keys`, every one present. */
+function CountsBy<const T extends readonly string[]>(keys: T) {
+  return Type.Object(
+    Object.fromEntries(keys.map((k) => [k, Type.Integer()])) as Record<T[number], TInteger>,
+  );
+}
 
 /**
  * What `files__list` returns.
@@ -311,56 +312,93 @@ export type ListedFolder = FolderRecord & { path: string };
  * - `facets`: how many matches each kind and source has, each counted with
  *   every filter but its own, so a count says what choosing it would show.
  */
-export interface FilesListOutput {
-  files: ListedFile[];
-  total: number;
-  folders: ListedFolder[];
-  breadcrumb: Array<{ id: string; name: string }>;
-  facets: {
-    kinds: Record<FileKind, number>;
-    sources: Record<FileSource, number>;
-  };
-}
-
-/** What `files__move` returns: the moved files' ids and their folder. */
-export interface FilesMoveOutput {
-  ids: string[];
-  folderId: string | null;
-}
-
-/** What `files__create_folder` and `files__update_folder` return. */
-export type FilesFolderOutput = ListedFolder;
-
-/** What `files__delete_folder` returns. */
-export interface FilesDeleteFolderOutput {
-  deleted: true;
-}
+export const FilesListOutput = Type.Object({
+  files: Type.Array(ListedFile),
+  total: Type.Integer(),
+  folders: Type.Array(ListedFolder),
+  breadcrumb: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
+  facets: Type.Object({
+    kinds: CountsBy(FILE_KINDS),
+    sources: CountsBy(FILE_SOURCES),
+  }),
+});
+export type FilesListOutput = Static<typeof FilesListOutput>;
 
 /** What `files__search` returns: the newest matches up to `limit`, and the count of all matches. */
-export interface FilesSearchOutput {
-  files: FileRecord[];
-  total: number;
-}
+export const FilesSearchOutput = Type.Object({
+  files: Type.Array(FileRecord),
+  total: Type.Integer(),
+});
+export type FilesSearchOutput = Static<typeof FilesSearchOutput>;
 
-/** What `files__create` returns: the stored file's id, its filename, and its size in bytes. */
-export interface FilesCreateOutput {
-  id: string;
-  filename: string;
-  size: number;
-  /** The stored file's folder, or `null` at the top level. */
-  folderId: string | null;
-}
+/**
+ * What `files__read` returns: the file's identity, and its extracted text when
+ * its type is extractable and extraction succeeded (`null` otherwise).
+ */
+export const FilesReadOutput = Type.Object({
+  id: Type.String(),
+  filename: Type.String(),
+  mimeType: Type.String(),
+  size: Type.Number(),
+  extractedText: NullableString,
+  truncated: Type.Boolean(),
+});
+export type FilesReadOutput = Static<typeof FilesReadOutput>;
+
+/** What `files__read_pdf_pages` returns: the requested pages' text, and which of them the PDF lacks. */
+export const FilesReadPdfPagesOutput = Type.Object({
+  id: Type.String(),
+  filename: Type.String(),
+  mimeType: Type.String(),
+  size: Type.Number(),
+  totalPages: Type.Integer(),
+  requestedPages: Type.Array(Type.Integer()),
+  missingPages: Type.Array(Type.Integer()),
+  pages: Type.Array(
+    Type.Object({
+      page: Type.Integer(),
+      text: Type.String(),
+      truncated: Type.Boolean(),
+      empty: Type.Boolean(),
+    }),
+  ),
+});
+export type FilesReadPdfPagesOutput = Static<typeof FilesReadPdfPagesOutput>;
+
+/** What `files__create` returns: the stored file's id, filename, size in bytes, and folder. */
+export const FilesCreateOutput = Type.Object({
+  id: Type.String(),
+  filename: Type.String(),
+  size: Type.Number(),
+  folderId: Type.Union([Type.String(), Type.Null()], {
+    description: "The stored file's folder, or `null` at the top level.",
+  }),
+});
+export type FilesCreateOutput = Static<typeof FilesCreateOutput>;
 
 /** What `files__info` returns: the file's registry entry. */
+export const FilesInfoOutput = FileRecord;
 export type FilesInfoOutput = FileRecord;
 
 /** What `files__tag` returns: the file's tags after the change. */
-export interface FilesTagOutput {
-  id: string;
-  tags: string[];
-}
+export const FilesTagOutput = Type.Object({ id: Type.String(), tags: Type.Array(Type.String()) });
+export type FilesTagOutput = Static<typeof FilesTagOutput>;
 
 /** What `files__delete` returns. */
-export interface FilesDeleteOutput {
-  deleted: true;
-}
+export const FilesDeleteOutput = Type.Object({ deleted: Type.Literal(true) });
+export type FilesDeleteOutput = Static<typeof FilesDeleteOutput>;
+
+/** What `files__move` returns: the moved files' ids and their folder. */
+export const FilesMoveOutput = Type.Object({
+  ids: Type.Array(Type.String()),
+  folderId: NullableString,
+});
+export type FilesMoveOutput = Static<typeof FilesMoveOutput>;
+
+/** What `files__create_folder` and `files__update_folder` return. */
+export const FilesFolderOutput = ListedFolder;
+export type FilesFolderOutput = ListedFolder;
+
+/** What `files__delete_folder` returns. */
+export const FilesDeleteFolderOutput = Type.Object({ deleted: Type.Literal(true) });
+export type FilesDeleteFolderOutput = Static<typeof FilesDeleteFolderOutput>;

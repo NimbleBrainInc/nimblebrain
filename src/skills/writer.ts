@@ -56,7 +56,9 @@ function nimblebrainToFrontmatter(manifest: SkillManifest): Record<string, unkno
     priority: manifest.priority,
     status: manifest.status,
   };
-  if (manifest.toolAffinity && manifest.toolAffinity.length > 0) {
+  // Written even when empty: `[]` binds a connector skill to no tool, which an
+  // absent field would read back as its whole server.
+  if (manifest.toolAffinity) {
     nb["tool-affinity"] = manifest.toolAffinity;
   }
   if (manifest.triggers && manifest.triggers.length > 0) {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
+  callTool,
   callToolWithoutWorkspace,
   logout,
   setAuthToken,
@@ -43,7 +44,14 @@ import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
-import { type AppRouteState, isOpenAppCall, resolveAppRouteIn } from "./lib/open-app";
+import {
+  type AppRouteState,
+  destinationFrom,
+  isOpenAppCall,
+  type OpenDestination,
+  provideShellOpener,
+  resolveAppRouteIn,
+} from "./lib/open-app";
 import { routablePlacements } from "./lib/routable-placements";
 import {
   landingTab,
@@ -51,6 +59,7 @@ import {
   PROFILE_TABS,
   WORKSPACE_SETTINGS_TABS,
 } from "./lib/settings-tabs";
+import { parseToolResponse } from "./lib/tool-response";
 import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
@@ -254,8 +263,8 @@ function BootstrappedShell({
  * ChatContext (streaming). This prevents the entire shell from re-rendering
  * on every text delta during chat streaming.
  *
- * Action handling (which needs sendMessage from ChatContext) is isolated in
- * ActionBridge, a non-rendering child component.
+ * Opening what apps and the agent ask for is isolated in OpenBridge, a
+ * non-rendering child component that consumes the chat panel context.
  */
 function AuthenticatedAppContent({
   forSlot,
@@ -380,9 +389,9 @@ function AuthenticatedAppContent({
 
   return (
     <ShellProvider value={{ forSlot, mainRoutes, shellWorkspaceId }}>
-      {/* ActionBridge handles iframe action events. It consumes ChatContext
-          (streaming) but renders nothing, so its re-renders are free. */}
-      <ActionBridge
+      {/* OpenBridge puts on screen what apps and the agent open. It consumes
+          the chat panel context but renders nothing, so its re-renders are free. */}
+      <OpenBridge
         handleNavigate={handleNavigate}
         resolveAppRoute={resolveAppRoute}
         activeSlug={activeSlug}
@@ -566,11 +575,12 @@ function AuthenticatedAppContent({
 }
 
 /**
- * Non-rendering component that handles iframe action events (nb:action).
- * Isolated here so that consuming the chat panel context doesn't re-render
- * the shell layout.
+ * Non-rendering component that puts on screen what apps and the agent open:
+ * the shell's opener for `ai.nimblebrain/open` and `open-connector-settings`,
+ * and the agent's `nb__open_app`. Isolated here so that
+ * consuming the chat panel context doesn't re-render the shell layout.
  */
-function ActionBridge({
+function OpenBridge({
   handleNavigate,
   resolveAppRoute,
   activeSlug,
@@ -593,59 +603,66 @@ function ActionBridge({
   slugRef.current = activeSlug;
 
   useEffect(() => {
-    // Dispatch table keyed by action name. Each handler reads current state
-    // through the refs, so the listener registers once and unknown actions
-    // no-op. Params carry the event detail (`id`, `name`, and the bridge's
-    // `serverName`).
-    const actions: Record<string, (params: Record<string, unknown>) => void> = {
-      openConversation(params) {
-        if (params.id) chatPanelRef.current.openPanel(params.id as string);
-      },
-      // `target` is a view inside the app (its stable address); the routed
-      // app view hands it to the app as `ai.nimblebrain/navigate`.
-      openApp(params) {
-        const name = params.name as string | undefined;
-        if (!name) return;
-        const route = resolveRef.current(name);
-        if (!route) return;
-        const target = typeof params.target === "string" ? params.target : undefined;
-        navigateRef.current(route, target ? { appTarget: target } : undefined);
-      },
-      // The sending connector's own settings page. The connector is the one the
-      // bridge names, never a param, so an app can open only its own. Identity
-      // apps have no workspace settings page, so they no-op.
-      openConnectorSettings(params) {
-        const serverName = params.serverName as string | undefined;
-        if (!serverName) return;
-        const path = connectorSettingsPath(slugRef.current, serverName);
-        if (path) navigateRef.current(path);
-      },
-    };
-
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (!detail?.action) return;
-      // Own-key guard so an inherited name (constructor/__proto__) on the event
-      // detail can't resolve to an Object.prototype member; unknown actions no-op.
-      const action = detail.action as string;
-      if (Object.hasOwn(actions, action)) {
-        actions[action]?.(detail as Record<string, unknown>);
+    // Put a resolved destination on screen. Reads current state through the
+    // refs, so the listeners register once. Throws the reason an app is told
+    // when the app it names has no route here.
+    const show = (dest: OpenDestination): void => {
+      if ("conversationId" in dest) {
+        chatPanelRef.current.openPanel(dest.conversationId);
+        return;
       }
+      const route = resolveRef.current(dest.app);
+      if (!route) throw new Error(`${dest.name} cannot be opened here`);
+      // `target` is a view inside the app (its stable address); the routed app
+      // view hands it to the app as `ai.nimblebrain/navigate`.
+      navigateRef.current(route, dest.target ? { appTarget: dest.target } : undefined);
     };
 
-    window.addEventListener("nb:action", handler);
+    // The sending connector's own settings page. The connector is the one the
+    // bridge names, never a param, so an app can open only its own. Identity
+    // apps have no workspace settings page.
+    const openConnectorSettings = (serverName: string): void => {
+      const path = connectorSettingsPath(slugRef.current, serverName);
+      if (!path) throw new Error("This connector has no settings page");
+      navigateRef.current(path);
+    };
 
-    // The agent's `nb__open_app`, once it finishes in a turn this tab sent: the
-    // same `openApp` an app asks for. The store never reports a call from
-    // history, a resumed stream, or another tab, so only the screen of the
-    // person who asked moves.
+    // Where `nb__open_app` puts this input, answered by the server (ADR-0052),
+    // or `null` when it refuses.
+    const resolveOpen = async (input: Record<string, unknown>): Promise<OpenDestination | null> =>
+      destinationFrom(parseToolResponse<unknown>(await callTool("nb", "open_app", input)));
+
+    // An app's `ai.nimblebrain/open`: the server resolves the URI, as it does
+    // for the agent, and the shell shows the answer.
+    const offOpener = provideShellOpener({
+      async open(uri) {
+        const dest = await resolveOpen({ uri });
+        if (!dest) throw new Error(`Nothing in this workspace opens ${uri}.`);
+        show(dest);
+      },
+      async openConnectorSettings(serverName) {
+        openConnectorSettings(serverName);
+      },
+    });
+
+    // The agent's `nb__open_app`, once it finishes in a turn this tab sent. The
+    // stream carries only the call's input, so the shell asks the same resolver
+    // with it. The store never reports a call from history, a resumed stream,
+    // or another tab, so only the screen of the person who asked moves.
     const offToolDone = chatStore.onToolDone((call) => {
       if (!call.ok || !isOpenAppCall(call.name)) return;
-      actions.openApp?.({ name: call.input.app, target: call.input.target });
+      resolveOpen(call.input)
+        .then((dest) => {
+          if (dest) show(dest);
+        })
+        .catch(() => {
+          // The model was already told the app is opening; a destination this
+          // shell cannot show leaves the screen where it was.
+        });
     });
 
     return () => {
-      window.removeEventListener("nb:action", handler);
+      offOpener();
       offToolDone();
     };
   }, []); // Stable — all dependencies are refs

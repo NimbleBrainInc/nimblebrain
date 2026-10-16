@@ -13,7 +13,10 @@ import {
 } from "../../api/client";
 import { ComposioApiKeyModal } from "../../components/connectors/ComposioApiKeyModal";
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
-import { OperatorSetupModal } from "../../components/connectors/OperatorSetupModal";
+import {
+  OperatorSetupModal,
+  type OperatorSetupTarget,
+} from "../../components/connectors/OperatorSetupModal";
 import { SecretHeadersModal } from "../../components/connectors/SecretHeadersModal";
 import { Button } from "../../components/ui/button";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
@@ -55,7 +58,7 @@ export function ConnectorBrowsePage() {
   // a card the user just installed into the Installed section.
   const [justInstalled, setJustInstalled] = useState<ReadonlyMap<string, string>>(new Map());
   const [query, setQuery] = useState("");
-  const [setupModalEntry, setSetupModalEntry] = useState<CatalogListing | null>(null);
+  const [setupModalEntry, setSetupModalEntry] = useState<OperatorSetupTarget | null>(null);
   // API-key Composio connector: after install we collect the key fields in a
   // modal (no OAuth redirect), then call connect_api_key. Holds the entry +
   // its installed serverName so success can route to Configure.
@@ -311,7 +314,7 @@ export function ConnectorBrowsePage() {
               canManage={canManage}
               configurePath={configurePath}
               onInstall={() => onInstall(entry)}
-              onSetUp={() => setSetupModalEntry(entry)}
+              onSetUp={() => setSetupModalEntry(operatorSetupTarget(entry))}
             />
           )}
           configurePathFor={(entry) => {
@@ -422,6 +425,19 @@ function DirectoryResults({
       )}
     </>
   );
+}
+
+/**
+ * What Set up hands the operator dialog. A catalog listing carries the vendor
+ * portal and secret key under `install`, only on a remote-OAuth install; the
+ * dialog reads a top-level `operatorSetup` and renders nothing without one.
+ */
+export function operatorSetupTarget(entry: CatalogListing): OperatorSetupTarget {
+  return {
+    id: entry.id,
+    name: entry.name,
+    operatorSetup: entry.install.kind === "remote-oauth" ? entry.install.operatorSetup : undefined,
+  };
 }
 
 /**

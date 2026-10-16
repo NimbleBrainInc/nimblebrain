@@ -280,6 +280,7 @@ describe("supportsEnabledThinking", () => {
     expect(supportsEnabledThinking("anthropic:claude-opus-4-8")).toBe(false);
     expect(supportsEnabledThinking("anthropic:claude-opus-5")).toBe(false);
     expect(supportsEnabledThinking("anthropic:claude-sonnet-5")).toBe(false);
+    expect(supportsEnabledThinking("anthropic:claude-haiku-5-5")).toBe(false);
   });
 
   it("returns true for Anthropic models that accept the enabled shape", () => {

@@ -78,7 +78,9 @@ const TWO_DECLARED: CatalogEntry["secretHeaders"] = {
 type CatalogEntry = NonNullable<InstalledConnector["catalog"]>;
 
 function installed(
-  overrides: Partial<Pick<CatalogEntry, "auth" | "secretHeaders" | "providerAuth">>,
+  overrides: Partial<
+    Pick<CatalogEntry, "auth" | "secretHeaders" | "providerAuth" | "operatorSetup">
+  >,
 ): InstalledConnector {
   return {
     serverName: "com-acme-db-query",
@@ -99,6 +101,7 @@ function installed(
       auth: overrides.auth ?? "provider",
       ...(overrides.secretHeaders ? { secretHeaders: overrides.secretHeaders } : {}),
       ...(overrides.providerAuth ? { providerAuth: overrides.providerAuth } : {}),
+      ...(overrides.operatorSetup ? { operatorSetup: overrides.operatorSetup } : {}),
     },
   };
 }
@@ -245,6 +248,23 @@ describe("UninstallConnectorDialog — what it names", () => {
       }),
     );
     expect(popup()?.textContent).not.toContain("will be deleted");
+  });
+
+  test("a static-auth connector names its operator client secret", async () => {
+    listResult = async () => ({ keys: [{ key: "acme.client_secret", updatedAt: HOUR_AGO }] });
+    mounted = await open(
+      installed({
+        auth: "static",
+        operatorSetup: {
+          portalUrl: "https://developer.acme.test",
+          hint: "Register an app",
+          clientSecretKey: "acme.client_secret",
+        },
+      }),
+    );
+    const text = popup()?.textContent ?? "";
+    expect(text).toContain("will be deleted");
+    expect(text).toContain("acme.client_secret");
   });
 
   test("a non-provider connector declaring secretHeaders names nothing", async () => {

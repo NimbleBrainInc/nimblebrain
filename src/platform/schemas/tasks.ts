@@ -1,5 +1,5 @@
 /**
- * Tool input schemas for the tasks app. Imported by both the
+ * Tool input and output schemas for the tasks app. Imported by both the
  * in-process source (`src/platform/tasks/source.ts`) and the tool
  * handlers beside it (`src/platform/tasks/server.ts`) so the two
  * consumers always agree on the wire shape.
@@ -23,8 +23,8 @@
  */
 
 import { type Static, type TProperties, Type } from "@sinclair/typebox";
-import { clearable, StringEnum } from "./_shared.ts";
-import { NotificationRouteMatch } from "./notifications.ts";
+import { clearable, ObjectUnion, StringEnum } from "./_shared.ts";
+import { NOTIFICATION_LEVELS, NotificationRouteMatch } from "./notifications.ts";
 
 // ── Shared sub-schemas ───────────────────────────────────────────────────
 
@@ -309,18 +309,23 @@ const AllowedToolsField = Type.Array(Type.String({ minLength: 1 }), {
     "Tools this task's runs may use, as names or globs: `gmail__*` for a workspace " +
     "connector's tools, `my_gmail__*` for your personal one, `files__read` for one tool. A " +
     "run cannot activate or call a tool outside the list, and a run is refused before it " +
-    "starts when an entry matches no tool it can reach. Only nb__search and nb__manage_tools " +
-    "pass without being listed, so name any other nb__ tool a run needs (nb__use_skill for " +
-    "skills, nb__read_resource for resources). Prefer a `<connector>__*` glob, since a " +
+    "starts when an entry matches no tool it can reach. nb__search, nb__manage_tools and " +
+    "nb__use_skill pass without being listed, so name any other nb__ tool a run needs " +
+    "(nb__read_resource for resources). Prefer a `<connector>__*` glob, since a " +
     "connector can rename its tools. Omit for every tool in the workspace; an empty list is " +
     "refused. Listing tasks__create, tasks__update, or tasks__delete is refused, and a run is " +
     "barred from tasks__run, tasks__run_batch, tasks__batch_control, and tasks__assess whatever " +
     "the list says.",
 });
 
-const SkillField = Type.String({
-  minLength: 1,
-  description: "A skill each run carries out, matched by name.",
+const SkillsField = Type.Array(Type.String({ minLength: 1 }), {
+  minItems: 1,
+  maxItems: 5,
+  description:
+    "Skills every run is given in full before its first model call, named as the skill " +
+    "catalog lists them (nb__use_skill takes the same names). A run is refused before it " +
+    "starts when a named skill is not available in the task's workspace. With no body, " +
+    "each run carries the skills out on its input.",
 });
 
 const ModelField = Type.String({
@@ -329,11 +334,20 @@ const ModelField = Type.String({
     "Model for this task's runs, as provider:model-id (e.g. anthropic:claude-sonnet-4-6) or a slot name (fast). Omit to use the workspace default.",
 });
 
+// Mirrors `ThinkingEffort` (`src/engine/types.ts`); this tree cannot import it.
+const ThinkingEffortField = StringEnum(["low", "medium", "high", "xhigh", "max"] as const, {
+  description:
+    "How hard this task's runs reason, when the model reasons: low, medium, high, xhigh, or max. " +
+    "Omit to use the workspace setting. Has no effect when the operator turned thinking off or " +
+    "set it adaptive, or on a model that does not reason.",
+});
+
 // The definition fields every shape shares: create's manifest, update's patch
 // (each clearable), and an inline one-off's manifest.
 const DefinitionFields = {
-  skill: Type.Optional(SkillField),
+  skills: Type.Optional(SkillsField),
   model: Type.Optional(ModelField),
+  thinkingEffort: Type.Optional(ThinkingEffortField),
   allowedTools: Type.Optional(AllowedToolsField),
   maxIterations: Type.Optional(MaxIterationsField),
   maxInputTokens: Type.Optional(MaxInputTokensField),
@@ -402,8 +416,12 @@ const UpdateManifest = Type.Object(
     enabled: Type.Optional(
       Type.Boolean({ description: "Whether its schedule or events fire it." }),
     ),
-    skill: clearable(SkillField, "Skill each run carries out, or null for none."),
+    skills: clearable(SkillsField, "Skills every run is given, or null for none."),
     model: clearable(ModelField, "Model for its runs, or null for the workspace default."),
+    thinkingEffort: clearable(
+      ThinkingEffortField,
+      "Reasoning depth for its runs, or null for the workspace setting.",
+    ),
     allowedTools: clearable(
       AllowedToolsField,
       "Tools its runs may use (see tasks__create), or null to allow every tool.",
@@ -458,7 +476,7 @@ function inlineDefinition<T extends TProperties>(fields: T, what: string) {
       body: Type.Optional(
         Type.String({
           description:
-            "The prompt that opens each run (as tasks__create's body). Omit only with `manifest.skill`.",
+            "The prompt that opens each run (as tasks__create's body). Omit only with `manifest.skills`.",
         }),
       ),
     },
@@ -883,35 +901,52 @@ export const TasksBatchesInput = Type.Object(
 );
 export type TasksBatchesInput = Static<typeof TasksBatchesInput>;
 
-// ── Tool output types ────────────────────────────────────────────────────
+// ── Tool output schemas ──────────────────────────────────────────────────
 //
-// These are TYPE-ONLY exports — no TypeBox runtime schema. The handler in
-// `src/platform/tasks/server.ts` is the authority on output shape;
-// these types track it for consumers (CLI, integration tests, web client,
-// any future caller) so a single change point catches drift at compile
-// time instead of at agent-confusion time.
+// Each tool publishes one of these as its `outputSchema` (src/platform/AGENTS.md
+// §2.1): `tools/list` carries it to every client, and the SDK client checks
+// each success result against it. They stay open (no
+// `additionalProperties: false`), so a field added later never fails a call.
 //
-// Why no runtime schema for outputs: we don't validate outputs at the
-// MCP boundary — the handler's TypeScript return type already constrains
-// it, and Pydantic-style runtime checks would just duplicate that
-// constraint at the cost of an extra serialization round-trip. Outputs
-// are checked at the seams that matter (per-call-site, via these types).
+// The record schemas (`TaskRecord`, `TaskRunRecord`, `TaskRunResultBody`,
+// `TaskBatchRecord`) describe what the store returns verbatim, so each admits
+// every shape a deployment can hold on disk, not only the one written today.
 //
-// Why these are self-contained (not imported from
-// `src/platform/tasks/types.ts`): the codegen at
-// `scripts/codegen-web-platform-schemas.ts`
-// emits .d.ts files for the web package with `rootDir` pinned to
-// `schemas/`. Cross-tree imports break that boundary. Drift between
-// these types and the canonical `Task` / `TaskRun` is
-// guarded at COMPILE time by
-// `src/platform/tasks/output-types-drift-guard.ts`, which
-// `bun run check` validates as part of the standard CI gate. When you
-// change `Task` or `TaskRun`, that file's type-level
-// constraints fail to compile against the corresponding mirror here —
-// the build error points at the field that drifted.
-//
-// When you change a handler return shape, update the matching output
-// type here in the same commit. The output type is the contract.
+// They are self-contained (not imported from `src/platform/tasks/types.ts`):
+// the codegen at `scripts/codegen-web-platform-schemas.ts` emits .d.ts files
+// for the web package with `rootDir` pinned to `schemas/`, and a cross-tree
+// import breaks that boundary. Drift between these and the canonical `Task` /
+// `TaskRun` / `Batch` is caught at compile time by
+// `src/platform/tasks/output-types-drift-guard.ts`, which `bun run check`
+// validates. When you change a handler's return shape, change its output schema
+// here in the same commit.
+
+const JsonObject = Type.Record(Type.String(), Type.Unknown());
+
+/**
+ * Why a run's engine loop stopped, as the record stores it. Typed as the values
+ * the executor writes; published as any string, because the executor copies the
+ * engine's own stop reason onto the record without narrowing it.
+ */
+const StopReason = Type.Unsafe<
+  | "complete"
+  | "max_iterations"
+  | "max_input_tokens"
+  | "spend_limit"
+  | "length"
+  | "content_filter"
+  | "error"
+  | "other"
+>({
+  type: "string",
+  description:
+    "complete, max_iterations, max_input_tokens, spend_limit, length, content_filter, error, " +
+    "or other.",
+});
+
+const RUN_TRIGGERS = ["scheduled", "manual", "event"] as const;
+
+const ASSESSMENT_VERDICTS = ["pass", "fail", "uncertain", "not_assessed"] as const;
 
 /**
  * Status of the most recent task run, as exposed via the list/
@@ -919,43 +954,126 @@ export type TasksBatchesInput = Static<typeof TasksBatchesInput>;
  * — the list view shows the most recent COMPLETED run's outcome, never
  * one in flight.
  */
-export type TaskLastRunStatus = "success" | "degraded" | "failure" | "timeout" | "skipped";
+export const TaskLastRunStatus = StringEnum([
+  "success",
+  "degraded",
+  "failure",
+  "timeout",
+  "skipped",
+] as const);
+export type TaskLastRunStatus = Static<typeof TaskLastRunStatus>;
+
+/** How a once schedule's occurrence ended, and when. Mirror of `OnceDone`. */
+export const TaskOnceDone = Type.Object({
+  at: Type.String(),
+  outcome: StringEnum(["ran", "missed"] as const),
+});
+export type TaskOnceDone = Static<typeof TaskOnceDone>;
+
+/**
+ * Token budget block on a stored task. Mirror of the `TokenBudget` interface;
+ * kept here to avoid a cross-tree import (see top-of-section comment).
+ */
+export const TaskTokenBudget = Type.Object({
+  maxInputTokens: Type.Optional(Type.Number()),
+  maxOutputTokens: Type.Optional(Type.Number()),
+  period: Type.Optional(StringEnum(["daily", "monthly"] as const)),
+});
+export type TaskTokenBudget = Static<typeof TaskTokenBudget>;
+
+/** An event schedule's match, as stored. Mirror of `NotificationRouteMatch`, kept open. */
+const TaskRouteMatch = Type.Object({
+  source: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
+  level: Type.Optional(StringEnum(NOTIFICATION_LEVELS)),
+});
+
+/** Schedule spec block on a stored task. Mirror of `ScheduleSpec`. */
+export const TaskScheduleSpec = Type.Object({
+  type: StringEnum(["cron", "interval", "event", "once"] as const),
+  expression: Type.Optional(Type.String()),
+  timezone: Type.Optional(Type.String()),
+  at: Type.Optional(Type.String()),
+  intervalMs: Type.Optional(Type.Number()),
+  match: Type.Optional(TaskRouteMatch),
+  debounceMs: Type.Optional(Type.Number()),
+  maxFiresPerHour: Type.Optional(Type.Number()),
+});
+export type TaskScheduleSpec = Static<typeof TaskScheduleSpec>;
+
+/** One acceptance criterion. Mirror of `Criterion`. */
+export const TaskCriterion = Type.Object({
+  id: Type.String(),
+  rule: Type.String(),
+  type: StringEnum(["boolean", "score", "choice"] as const),
+  levels: Type.Optional(Type.Array(Type.String())),
+  options: Type.Optional(Type.Array(Type.String())),
+  pass: Type.Optional(
+    Type.Union([Type.Boolean(), Type.Number(), Type.String(), Type.Array(Type.String())]),
+  ),
+});
+export type TaskCriterion = Static<typeof TaskCriterion>;
+
+/** Which judge answers a task's criteria. Mirror of `TaskJudge`. */
+export const TaskJudgeSpec = Type.Object({
+  server: Type.Optional(Type.String()),
+  id: Type.Optional(Type.String()),
+  options: Type.Optional(JsonObject),
+});
+export type TaskJudgeSpec = Static<typeof TaskJudgeSpec>;
+
+const OnPoorResult = StringEnum(["record", "notify", "retry_once"] as const);
+/**
+ * Who made a task. Typed as the values written today; published with `bundle`
+ * too, which a stored task an installed bundle declared still carries.
+ */
+const TaskSourceField = Type.Unsafe<"user" | "agent">({
+  type: "string",
+  enum: ["user", "agent", "bundle"],
+});
+const TaskKindField = StringEnum(["saved", "oneoff"] as const);
 
 /**
  * Summary row returned per task by `handleList`. Subset of the stored `Task`
  * shape plus the schedule in words. Times are ISO-8601.
  */
-export interface TaskSummary {
-  id: string;
-  name: string;
-  description?: string;
-  /** Human-readable trigger, e.g. "Weekdays at 8:00 AM HST", "Once at …", "Manual only". */
-  schedule: string;
-  /** The schedule's type, or `none` when nothing fires it unattended. */
-  scheduleType: "cron" | "interval" | "event" | "once" | "none";
-  kind: "saved" | "oneoff";
+export const TaskSummary = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  description: Type.Optional(Type.String()),
+  schedule: Type.String({
+    description:
+      'Human-readable trigger, e.g. "Weekdays at 8:00 AM HST", "Once at …", "Manual only".',
+  }),
+  scheduleType: StringEnum(["cron", "interval", "event", "once", "none"] as const, {
+    description: "The schedule's type, or `none` when nothing fires it unattended.",
+  }),
+  kind: TaskKindField,
   /** Set when a once schedule has fired or missed its time; the task is inert until re-armed. */
-  onceDone?: TaskOnceDone;
-  enabled: boolean;
-  source: "user" | "agent";
-  runCount: number;
-  lastRunStatus: TaskLastRunStatus | null;
-  lastRunAt: string | null;
-  /** When its schedule next fires; null when nothing will (no timed schedule, or disabled). */
-  nextRunAt: string | null;
-  disabledAt: string | null;
-  disabledReason: string | null;
-  estimatedCostPerDay: number;
+  onceDone: Type.Optional(TaskOnceDone),
+  enabled: Type.Boolean(),
+  source: TaskSourceField,
+  runCount: Type.Number(),
+  lastRunStatus: Type.Union([TaskLastRunStatus, Type.Null()]),
+  lastRunAt: Type.Union([Type.String(), Type.Null()]),
+  nextRunAt: Type.Union([Type.String(), Type.Null()], {
+    description:
+      "When its schedule next fires; null when nothing will (no timed schedule, or disabled).",
+  }),
+  disabledAt: Type.Union([Type.String(), Type.Null()]),
+  disabledReason: Type.Union([Type.String(), Type.Null()]),
+  estimatedCostPerDay: Type.Number(),
   /** The task's input schema, when it has one: a caller can ask for the input before it runs. */
-  inputSchema?: Record<string, unknown>;
-}
+  inputSchema: Type.Optional(JsonObject),
+});
+export type TaskSummary = Static<typeof TaskSummary>;
 
-export interface TasksListOutput {
-  tasks: TaskSummary[];
+export const TasksListOutput = Type.Object({
+  tasks: Type.Array(TaskSummary),
   /** Matches for the given filters BEFORE the page cap — not `tasks.length`. */
-  total: number;
+  total: Type.Integer(),
   /** How many are in this response. */
-  returned: number;
+  returned: Type.Integer(),
   /**
    * Pass as `cursor` to get the next page; `null` when this is the last one.
    *
@@ -965,8 +1083,8 @@ export interface TasksListOutput {
    * shifted past the boundary. Anchoring to the last id read means a deletion
    * behind the cursor cannot move the records ahead of it.
    */
-  nextCursor: string | null;
-  hasMore: boolean;
+  nextCursor: Type.Union([Type.String(), Type.Null()]),
+  hasMore: Type.Boolean(),
   /**
    * Present only when the page cap hid matches. Prose rather than a flag alone
    * because the consumer is a model reading the payload: a bare `hasMore: true`
@@ -974,139 +1092,138 @@ export interface TasksListOutput {
    * not. Coverage that silently shrinks is worse than an error — the caller
    * concludes "no match found" from a set it never saw.
    */
-  truncated?: string;
-}
-
-/** One acceptance criterion. Mirror of `Criterion`. */
-export interface TaskCriterion {
-  id: string;
-  rule: string;
-  type: "boolean" | "score" | "choice";
-  levels?: string[];
-  options?: string[];
-  pass?: boolean | number | string | string[];
-}
-
-/** Which judge answers a task's criteria. Mirror of `TaskJudge`. */
-export interface TaskJudgeSpec {
-  server?: string;
-  id?: string;
-  options?: Record<string, unknown>;
-}
+  truncated: Type.Optional(Type.String()),
+});
+export type TasksListOutput = Static<typeof TasksListOutput>;
 
 /** One criterion as judged and decided. Mirror of `CriterionResult`. */
-export interface TaskCriterionResult {
-  id: string;
-  answer: boolean | number | string;
-  passed: boolean;
-  confidence: number;
-  probabilities?: Record<string, number>;
-  rationale?: string;
-}
+export const TaskCriterionResult = Type.Object({
+  id: Type.String(),
+  answer: Type.Union([Type.Boolean(), Type.Number(), Type.String()]),
+  passed: Type.Boolean(),
+  confidence: Type.Number(),
+  probabilities: Type.Optional(Type.Record(Type.String(), Type.Number())),
+  rationale: Type.Optional(Type.String()),
+});
+export type TaskCriterionResult = Static<typeof TaskCriterionResult>;
 
 /** A person's verdict on a run. Mirror of `HumanVerdict`. */
-export interface TaskHumanVerdict {
-  verdict: "pass" | "fail";
-  note?: string;
-  by: string;
-  via: "ui" | "remote";
-  at: string;
-}
+export const TaskHumanVerdict = Type.Object({
+  verdict: StringEnum(["pass", "fail"] as const),
+  note: Type.Optional(Type.String()),
+  by: Type.String(),
+  via: StringEnum(["ui", "remote"] as const),
+  at: Type.String(),
+});
+export type TaskHumanVerdict = Static<typeof TaskHumanVerdict>;
 
 /** Whether a run's deliverable is acceptable. Mirror of `RunAssessment`. */
-export interface TaskRunAssessment {
-  verdict: "pass" | "fail" | "uncertain" | "not_assessed";
-  reason?: { code: string; message: string };
-  schema?: { valid: boolean; errors?: string[] };
-  criteria?: TaskCriterionResult[];
-  judge?: { server: string; id: string; version?: string; calibrated: boolean };
-  usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
-  stateTruncated?: boolean;
-  assessedAt: string;
-  human?: TaskHumanVerdict;
-}
+export const TaskRunAssessment = Type.Object({
+  verdict: StringEnum(ASSESSMENT_VERDICTS),
+  reason: Type.Optional(Type.Object({ code: Type.String(), message: Type.String() })),
+  schema: Type.Optional(
+    Type.Object({ valid: Type.Boolean(), errors: Type.Optional(Type.Array(Type.String())) }),
+  ),
+  criteria: Type.Optional(Type.Array(TaskCriterionResult)),
+  judge: Type.Optional(
+    Type.Object({
+      server: Type.String(),
+      id: Type.String(),
+      version: Type.Optional(Type.String()),
+      calibrated: Type.Boolean(),
+    }),
+  ),
+  usage: Type.Optional(
+    Type.Object({
+      inputTokens: Type.Optional(Type.Number()),
+      outputTokens: Type.Optional(Type.Number()),
+      costUsd: Type.Optional(Type.Number()),
+    }),
+  ),
+  stateTruncated: Type.Optional(Type.Boolean()),
+  assessedAt: Type.String(),
+  human: Type.Optional(TaskHumanVerdict),
+});
+export type TaskRunAssessment = Static<typeof TaskRunAssessment>;
 
 /** How a run ended (ADR-0045), derived from its record. Mirror of `RunExecution`. */
-export type TaskRunExecution =
-  | "queued"
-  | "running"
-  | "skipped"
-  | "completed"
-  | "incomplete"
-  | "failed"
-  | "cancelled";
+export const TaskRunExecution = StringEnum([
+  "queued",
+  "running",
+  "skipped",
+  "completed",
+  "incomplete",
+  "failed",
+  "cancelled",
+] as const);
+export type TaskRunExecution = Static<typeof TaskRunExecution>;
 
 /** The one label a run reads as, derived and never stored. Mirror of `RunLabel`. */
-export type TaskRunLabel =
-  | "Succeeded"
-  | "Poor result"
-  | "Needs review"
-  | "Failed"
-  | "Skipped"
-  | "Cancelled"
-  | "Queued"
-  | "Running";
+export const TaskRunLabel = StringEnum([
+  "Succeeded",
+  "Poor result",
+  "Needs review",
+  "Failed",
+  "Skipped",
+  "Cancelled",
+  "Queued",
+  "Running",
+] as const);
+export type TaskRunLabel = Static<typeof TaskRunLabel>;
 
 /**
- * Structural mirror of a single TaskRun record as returned by
- * the handlers. Kept in sync with `TaskRun` in
- * `platform/tasks/types.ts` via the assertion test referenced
- * above. New fields added there MUST also appear here.
+ * A single run record as the store holds it and the handlers return it.
+ * Mirror of `TaskRun` in `platform/tasks/types.ts`, held to it by the drift
+ * guard. New fields added there MUST also appear here.
  */
-export interface TaskRunRecord {
-  id: string;
-  taskId: string;
-  startedAt: string;
-  completedAt?: string;
-  status:
-    | "queued"
-    | "running"
-    | "success"
-    | "degraded"
-    | "failure"
-    | "timeout"
-    | "cancelled"
-    | "skipped";
-  inputTokens: number;
-  outputTokens: number;
-  toolCalls: number;
-  iterations: number;
-  error?: string;
-  transient?: boolean;
-  trigger?: "scheduled" | "manual" | "event";
-  resultPreview?: string;
-  stopReason?:
-    | "complete"
-    | "max_iterations"
-    | "max_input_tokens"
-    | "spend_limit"
-    | "length"
-    | "content_filter"
-    | "error"
-    | "other";
+export const TaskRunRecord = Type.Object({
+  id: Type.String(),
+  taskId: Type.String(),
+  startedAt: Type.String(),
+  completedAt: Type.Optional(Type.String()),
+  status: StringEnum([
+    "queued",
+    "running",
+    "success",
+    "degraded",
+    "failure",
+    "timeout",
+    "cancelled",
+    "skipped",
+  ] as const),
+  inputTokens: Type.Number(),
+  outputTokens: Type.Number(),
+  toolCalls: Type.Number(),
+  iterations: Type.Number(),
+  error: Type.Optional(Type.String()),
+  transient: Type.Optional(Type.Boolean()),
+  trigger: Type.Optional(StringEnum(RUN_TRIGGERS)),
+  resultPreview: Type.Optional(Type.String()),
+  stopReason: Type.Optional(StopReason),
   /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
-  spendAccountId?: string;
+  spendAccountId: Type.Optional(Type.String()),
   /** The JSON input the run was given. */
-  input?: unknown;
+  input: Type.Optional(Type.Unknown()),
   /** The idempotency key the run was requested with. */
-  idempotencyKey?: string;
+  idempotencyKey: Type.Optional(Type.String()),
   /** Whether the deliverable matched the task's outputSchema; absent without one. */
-  outputSchemaValid?: boolean;
+  outputSchemaValid: Type.Optional(Type.Boolean()),
   /** Why the deliverable did not match the outputSchema. */
-  outputSchemaErrors?: string[];
+  outputSchemaErrors: Type.Optional(Type.Array(Type.String())),
   /** Tools whose failed calls no later call made good. */
-  unrecoveredToolFailures?: string[];
+  unrecoveredToolFailures: Type.Optional(Type.Array(Type.String())),
   /** Whether the deliverable is acceptable; absent until assessed. */
-  assessment?: TaskRunAssessment;
+  assessment: Type.Optional(TaskRunAssessment),
   /** The run this one retries. */
-  retryOf?: string;
+  retryOf: Type.Optional(Type.String()),
   /** The batch this run is an item of. */
-  batchId?: string;
+  batchId: Type.Optional(Type.String()),
   /** The item's index in its batch. */
-  batchIndex?: number;
+  batchIndex: Type.Optional(Type.Number()),
   /** What the run's model calls cost, in USD. */
-  costUsd?: number;
-}
+  costUsd: Type.Optional(Type.Number()),
+});
+export type TaskRunRecord = Static<typeof TaskRunRecord>;
 
 /**
  * A run record as the run surfaces return it (`tasks__runs`,
@@ -1114,30 +1231,35 @@ export interface TaskRunRecord {
  * its derived execution and label, which are computed on read and never
  * stored.
  */
-export type TaskRunView = TaskRunRecord & {
-  execution: TaskRunExecution;
-  label: TaskRunLabel;
-};
+export const TaskRunView = Type.Composite([
+  TaskRunRecord,
+  Type.Object({ execution: TaskRunExecution, label: TaskRunLabel }),
+]);
+export type TaskRunView = Static<typeof TaskRunView>;
 
-/**
- * One tool call from a run's activity log. Mirror of `RunToolCall` in
- * `platform/tasks/types.ts` (kept here to avoid a cross-tree import;
- * see the top-of-section note).
- */
-export interface RunToolCallRecord {
-  id: string;
-  name: string;
-  input: unknown;
-  output: string;
-  ok: boolean;
-  ms: number;
-}
+/** One tool call from a run's activity log. Mirror of `RunToolCall`. */
+export const RunToolCallRecord = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  /** Absent when the call carried no input: JSON drops an undefined value. */
+  input: Type.Optional(Type.Unknown()),
+  output: Type.String(),
+  ok: Type.Boolean(),
+  ms: Type.Number(),
+  held: Type.Optional(
+    Type.Literal(true, {
+      description: "The call did not run: it waited for guidance the model had not read yet.",
+    }),
+  ),
+});
+export type RunToolCallRecord = Static<typeof RunToolCallRecord>;
 
 /** A ref to a file a run produced. Mirror of `RunFileRef`. */
-export interface RunFileRefRecord {
-  id: string;
-  filename: string;
-}
+export const RunFileRefRecord = Type.Object({
+  id: Type.String(),
+  filename: Type.String(),
+});
+export type RunFileRefRecord = Static<typeof RunFileRefRecord>;
 
 /**
  * A run's full deliverable: the untruncated final output, the activity log,
@@ -1145,81 +1267,64 @@ export interface RunFileRefRecord {
  * `TaskRunResult` in `platform/tasks/types.ts`, less the ids the run record
  * beside it carries. A run is not a conversation.
  */
-export interface TaskRunResultBody {
-  completedAt: string;
-  output: string;
-  activityLog: RunToolCallRecord[];
-  outputFiles: RunFileRefRecord[];
-  usage: { inputTokens: number; outputTokens: number; iterations: number };
-  stopReason?:
-    | "complete"
-    | "max_iterations"
-    | "max_input_tokens"
-    | "spend_limit"
-    | "length"
-    | "content_filter"
-    | "error"
-    | "other";
+export const TaskRunResultBody = Type.Object({
+  completedAt: Type.String(),
+  output: Type.String(),
+  activityLog: Type.Array(RunToolCallRecord),
+  outputFiles: Type.Array(RunFileRefRecord),
+  usage: Type.Object({
+    inputTokens: Type.Number(),
+    outputTokens: Type.Number(),
+    iterations: Type.Number(),
+  }),
+  stopReason: Type.Optional(StopReason),
   /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
-  structured?: unknown;
+  structured: Type.Optional(Type.Unknown()),
   /** Why the run failed or did not start, as its record says. */
-  error?: string;
-}
+  error: Type.Optional(Type.String()),
+  skillsDelivered: Type.Optional(
+    Type.Array(
+      Type.Object({
+        name: Type.String(),
+        loadedBy: StringEnum(["declared", "before_call", "tool_use", "activation"] as const),
+        status: Type.Optional(StringEnum(["fetch_failed", "capped", "renamed_unheld"] as const)),
+      }),
+      {
+        description:
+          "Every skill the run was given, or that missed it, in order: declared by the task, " +
+          "delivered before a held call or on a promotion, or loaded from the catalog. A " +
+          "`status` marks one that did not arrive.",
+      },
+    ),
+  ),
+});
+export type TaskRunResultBody = Static<typeof TaskRunResultBody>;
 
 /**
  * `tasks__run_result`: one run by id, whatever state it is in. `status` says
  * whether it has ended; a run still queued or running is an answer, not an
  * error, so a caller polls by calling again.
  */
-export type TasksRunResultOutput =
-  | {
-      status: "queued" | "running";
-      run: TaskRunView;
-      /** Queued only: 1 is next to start. */
-      position?: number;
-      message: string;
-    }
-  | {
-      status: "ended";
-      run: TaskRunView;
-      /**
-       * Every recorded run has one: a run that failed before the engine
-       * returned, or never started, has an empty output and activity log and
-       * its `error`. Absent only when it cannot be read.
-       */
-      result?: TaskRunResultBody;
-    };
-
-/**
- * Token budget block on a stored task. Mirror of the
- * `TokenBudget` interface; kept here to avoid a cross-tree import
- * (see top-of-section comment).
- */
-export interface TaskTokenBudget {
-  maxInputTokens?: number;
-  maxOutputTokens?: number;
-  period?: "daily" | "monthly";
-}
-
-/** How a once schedule's occurrence ended, and when. Mirror of `OnceDone`. */
-export interface TaskOnceDone {
-  at: string;
-  outcome: "ran" | "missed";
-}
-
-/**
- * Schedule spec block on a stored task. Mirror of `ScheduleSpec`.
- */
-export interface TaskScheduleSpec {
-  type: "cron" | "interval" | "event" | "once";
-  expression?: string;
-  timezone?: string;
-  at?: string;
-  intervalMs?: number;
-  match?: NotificationRouteMatch;
-  debounceMs?: number;
-  maxFiresPerHour?: number;
-}
+export const TasksRunResultOutput = ObjectUnion([
+  Type.Object({
+    status: StringEnum(["queued", "running"] as const),
+    run: TaskRunView,
+    /** Queued only: 1 is next to start. */
+    position: Type.Optional(Type.Integer()),
+    message: Type.String(),
+  }),
+  Type.Object({
+    status: Type.Literal("ended"),
+    run: TaskRunView,
+    /**
+     * Every recorded run has one: a run that failed before the engine
+     * returned, or never started, has an empty output and activity log and
+     * its `error`. Absent only when it cannot be read.
+     */
+    result: Type.Optional(TaskRunResultBody),
+  }),
+]);
+export type TasksRunResultOutput = Static<typeof TasksRunResultOutput>;
 
 /**
  * Task detail returned by `handleStatus`. Spreads the stored
@@ -1228,67 +1333,71 @@ export interface TaskScheduleSpec {
  * and undefined→null coercion on optional fields (`tokenBudget`,
  * `budgetResetAt`) so JSON consumers see a consistent shape per field.
  */
-export interface TaskStatusDetail {
-  id: string;
-  name: string;
-  description?: string;
-  prompt: string;
-  schedule?: TaskScheduleSpec;
-  kind?: "saved" | "oneoff";
-  onceDone?: TaskOnceDone;
-  scheduleHuman: string;
+export const TaskStatusDetail = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  description: Type.Optional(Type.String()),
+  prompt: Type.String(),
+  schedule: Type.Optional(TaskScheduleSpec),
+  kind: Type.Optional(TaskKindField),
+  onceDone: Type.Optional(TaskOnceDone),
+  scheduleHuman: Type.String(),
   /** The IANA timezone its schedule is read in: the schedule's own, else this instance's. */
-  timezone: string;
-  enabled: boolean;
-  source: "user" | "agent";
-  ownerId?: string;
-  workspaceId?: string;
-  model?: string | null;
-  skill?: string;
-  allowedTools?: string[];
-  inputSchema?: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
-  criteria?: TaskCriterion[];
-  confidenceThreshold?: number;
-  judge?: TaskJudgeSpec;
-  onPoorResult?: "record" | "notify" | "retry_once";
-  maxIterations?: number;
-  maxInputTokens?: number;
-  maxRunDurationMs?: number;
-  runCount: number;
-  consecutiveErrors: number;
-  cumulativeInputTokens: number;
-  cumulativeOutputTokens: number;
-  tokenBudget: TaskTokenBudget | null;
-  budgetResetAt: string | null;
-  lastRunAt?: string;
-  lastRunStatus?: TaskLastRunStatus;
-  nextRunAt?: string;
-  disabledAt?: string;
-  disabledReason?: string;
-  createdAt: string;
-  updatedAt: string;
-  estimatedCostPerRun: number;
-  estimatedCostPerDay: number;
-  estimatedCostPerMonth: number;
-}
+  timezone: Type.String(),
+  enabled: Type.Boolean(),
+  source: TaskSourceField,
+  ownerId: Type.Optional(Type.String()),
+  workspaceId: Type.Optional(Type.String()),
+  model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  thinkingEffort: Type.Optional(Type.Union([ThinkingEffortField, Type.Null()])),
+  skills: Type.Optional(Type.Array(Type.String())),
+  allowedTools: Type.Optional(Type.Array(Type.String())),
+  inputSchema: Type.Optional(JsonObject),
+  outputSchema: Type.Optional(JsonObject),
+  criteria: Type.Optional(Type.Array(TaskCriterion)),
+  confidenceThreshold: Type.Optional(Type.Number()),
+  judge: Type.Optional(TaskJudgeSpec),
+  onPoorResult: Type.Optional(OnPoorResult),
+  maxIterations: Type.Optional(Type.Number()),
+  maxInputTokens: Type.Optional(Type.Number()),
+  maxRunDurationMs: Type.Optional(Type.Number()),
+  runCount: Type.Number(),
+  consecutiveErrors: Type.Number(),
+  cumulativeInputTokens: Type.Number(),
+  cumulativeOutputTokens: Type.Number(),
+  tokenBudget: Type.Union([TaskTokenBudget, Type.Null()]),
+  budgetResetAt: Type.Union([Type.String(), Type.Null()]),
+  lastRunAt: Type.Optional(Type.String()),
+  lastRunStatus: Type.Optional(TaskLastRunStatus),
+  nextRunAt: Type.Optional(Type.String()),
+  disabledAt: Type.Optional(Type.String()),
+  disabledReason: Type.Optional(Type.String()),
+  createdAt: Type.String(),
+  updatedAt: Type.String(),
+  estimatedCostPerRun: Type.Number(),
+  estimatedCostPerDay: Type.Number(),
+  estimatedCostPerMonth: Type.Number(),
+});
+export type TaskStatusDetail = Static<typeof TaskStatusDetail>;
 
-export interface TasksStatusOutput {
-  task: TaskStatusDetail;
-  recentRuns: TaskRunView[];
-}
+export const TasksStatusOutput = Type.Object({
+  task: TaskStatusDetail,
+  recentRuns: Type.Array(TaskRunView),
+});
+export type TasksStatusOutput = Static<typeof TasksStatusOutput>;
 
-export interface TasksRunsOutput {
-  runs: TaskRunView[];
-  total: number;
+export const TasksRunsOutput = Type.Object({
+  runs: Type.Array(TaskRunView),
+  total: Type.Integer(),
   /**
    * Pass as `before` for the next older page, of one task's history or of
    * every task's; absent when nothing older remains. A first page read without
    * `before` reads only the hot indexes, so across every task it reports more
    * only when the hot indexes hold more.
    */
-  nextBefore?: string;
-}
+  nextBefore: Type.Optional(Type.String()),
+});
+export type TasksRunsOutput = Static<typeof TasksRunsOutput>;
 
 /**
  * A warning a write returns about the task it saved, which it saved anyway.
@@ -1299,10 +1408,18 @@ export interface TasksRunsOutput {
  * none named, or the named one is not a connected judge), so its runs are
  * `uncertain` (Needs review) until one is connected or named.
  */
-export interface TaskWarning {
-  code: "no_judge" | "judge_ambiguous" | "judge_not_found" | "allowed_tool_unavailable";
-  message: string;
-}
+export const TaskWarning = Type.Object({
+  code: StringEnum([
+    "no_judge",
+    "judge_ambiguous",
+    "judge_not_found",
+    "allowed_tool_unavailable",
+  ] as const),
+  message: Type.String(),
+});
+export type TaskWarning = Static<typeof TaskWarning>;
+
+const Warnings = Type.Optional(Type.Array(TaskWarning));
 
 /**
  * `handleRun` returns one of three shapes:
@@ -1324,6 +1441,9 @@ export interface TaskWarning {
  * `tasks__cancel` (runId) stops them. Only an error response means nothing
  * was asked for (an unknown task, bad input, a bad definition).
  *
+ * A call made through the tasks extension (`/mcp`) answers once the run has
+ * ended, so its result is always the first shape, carrying `result` as well.
+ *
  * `enabled` is the task's own flag. Run now runs a disabled task, because it
  * is a deliberate act and the create form's test run depends on it; a
  * disabled task is not fired by its schedule or by events, and `message`
@@ -1332,88 +1452,105 @@ export interface TaskWarning {
  * Consumers MUST narrow before dereferencing `run.*` (`"run" in out`), never
  * `as { run: ... }`.
  */
-export type TasksRunOutput =
-  | { run: TaskRunView; enabled: boolean; message?: string; warnings?: TaskWarning[] }
-  | {
-      status: "dispatched";
-      taskId: string;
-      /** The run's id: read its result with tasks__run_result. */
-      runId: string;
-      startedAt: string;
-      enabled: boolean;
-      message: string;
-      warnings?: TaskWarning[];
-    }
-  | {
-      status: "queued";
-      taskId: string;
-      /** The run's id: read its result with tasks__run_result. */
-      runId: string;
-      /** 1 is next to start. */
-      position: number;
-      queuedAt: string;
-      enabled: boolean;
-      message: string;
-      warnings?: TaskWarning[];
-    };
+export const TasksRunOutput = ObjectUnion([
+  Type.Object({
+    run: TaskRunView,
+    enabled: Type.Boolean(),
+    message: Type.Optional(Type.String()),
+    warnings: Warnings,
+    /**
+     * The run's result, on a call made through the tasks extension (`/mcp`
+     * `tasks/result`), which answers once the run has ended; `null` when it
+     * cannot be read. An inline call reads it with `tasks__run_result`.
+     */
+    result: Type.Optional(Type.Union([TaskRunResultBody, Type.Null()])),
+  }),
+  Type.Object({
+    status: Type.Literal("dispatched"),
+    taskId: Type.String(),
+    /** The run's id: read its result with tasks__run_result. */
+    runId: Type.String(),
+    startedAt: Type.String(),
+    enabled: Type.Boolean(),
+    message: Type.String(),
+    warnings: Warnings,
+  }),
+  Type.Object({
+    status: Type.Literal("queued"),
+    taskId: Type.String(),
+    /** The run's id: read its result with tasks__run_result. */
+    runId: Type.String(),
+    /** 1 is next to start. */
+    position: Type.Integer(),
+    queuedAt: Type.String(),
+    enabled: Type.Boolean(),
+    message: Type.String(),
+    warnings: Warnings,
+  }),
+]);
+export type TasksRunOutput = Static<typeof TasksRunOutput>;
 
 /** `tasks__assess`: the run's record with its new assessment, as it now reads. */
-export interface TasksAssessOutput {
-  run: TaskRunView;
-  message: string;
-}
+export const TasksAssessOutput = Type.Object({
+  run: TaskRunView,
+  message: Type.String(),
+});
+export type TasksAssessOutput = Static<typeof TasksAssessOutput>;
 
-export interface TasksCancelOutput {
-  cancelled: boolean;
-  runId: string;
+export const TasksCancelOutput = Type.Object({
+  cancelled: Type.Boolean(),
+  runId: Type.String(),
   /** The run's task, when the run was found. */
-  taskId?: string;
-  message: string;
-}
+  taskId: Type.Optional(Type.String()),
+  message: Type.String(),
+});
+export type TasksCancelOutput = Static<typeof TasksCancelOutput>;
 
 /**
  * A stored task, as `tasks__create` and `tasks__update`
  * return it. Mirror of `Task` (`src/platform/tasks/types.ts`),
  * held to it by `src/platform/tasks/output-types-drift-guard.ts`.
  */
-export interface TaskRecord {
-  id: string;
-  name: string;
-  description?: string;
-  prompt: string;
-  schedule?: TaskScheduleSpec;
-  kind?: "saved" | "oneoff";
-  onceDone?: TaskOnceDone;
-  skill?: string;
-  allowedTools?: string[];
-  inputSchema?: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
-  criteria?: TaskCriterion[];
-  confidenceThreshold?: number;
-  judge?: TaskJudgeSpec;
-  onPoorResult?: "record" | "notify" | "retry_once";
-  maxIterations?: number;
-  maxInputTokens?: number;
-  maxRunDurationMs?: number;
-  model?: string | null;
-  enabled: boolean;
-  ownerId?: string;
-  workspaceId?: string;
-  source: "user" | "agent";
-  createdAt: string;
-  updatedAt: string;
-  lastRunAt?: string;
-  lastRunStatus?: TaskLastRunStatus;
-  nextRunAt?: string;
-  runCount: number;
-  consecutiveErrors: number;
-  disabledAt?: string;
-  disabledReason?: string;
-  cumulativeInputTokens: number;
-  cumulativeOutputTokens: number;
-  tokenBudget?: TaskTokenBudget;
-  budgetResetAt?: string;
-}
+export const TaskRecord = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  description: Type.Optional(Type.String()),
+  prompt: Type.String(),
+  schedule: Type.Optional(TaskScheduleSpec),
+  kind: Type.Optional(TaskKindField),
+  onceDone: Type.Optional(TaskOnceDone),
+  skills: Type.Optional(Type.Array(Type.String())),
+  allowedTools: Type.Optional(Type.Array(Type.String())),
+  inputSchema: Type.Optional(JsonObject),
+  outputSchema: Type.Optional(JsonObject),
+  criteria: Type.Optional(Type.Array(TaskCriterion)),
+  confidenceThreshold: Type.Optional(Type.Number()),
+  judge: Type.Optional(TaskJudgeSpec),
+  onPoorResult: Type.Optional(OnPoorResult),
+  maxIterations: Type.Optional(Type.Number()),
+  maxInputTokens: Type.Optional(Type.Number()),
+  maxRunDurationMs: Type.Optional(Type.Number()),
+  model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  thinkingEffort: Type.Optional(Type.Union([ThinkingEffortField, Type.Null()])),
+  enabled: Type.Boolean(),
+  ownerId: Type.Optional(Type.String()),
+  workspaceId: Type.Optional(Type.String()),
+  source: TaskSourceField,
+  createdAt: Type.String(),
+  updatedAt: Type.String(),
+  lastRunAt: Type.Optional(Type.String()),
+  lastRunStatus: Type.Optional(TaskLastRunStatus),
+  nextRunAt: Type.Optional(Type.String()),
+  runCount: Type.Number(),
+  consecutiveErrors: Type.Number(),
+  disabledAt: Type.Optional(Type.String()),
+  disabledReason: Type.Optional(Type.String()),
+  cumulativeInputTokens: Type.Number(),
+  cumulativeOutputTokens: Type.Number(),
+  tokenBudget: Type.Optional(TaskTokenBudget),
+  budgetResetAt: Type.Optional(Type.String()),
+});
+export type TaskRecord = Static<typeof TaskRecord>;
 
 /**
  * The caps a run of the task executes under: each cap the definition
@@ -1422,236 +1559,271 @@ export interface TaskRecord {
  * has no input-token cap (neither the definition nor the runtime sets one).
  * `message` names any cap that was lowered.
  */
-export interface TaskEffectiveLimits {
-  maxIterations: number;
-  maxInputTokens?: number;
-  maxRunDurationMs: number;
-}
+export const TaskEffectiveLimits = Type.Object({
+  maxIterations: Type.Number(),
+  maxInputTokens: Type.Optional(Type.Number()),
+  maxRunDurationMs: Type.Number(),
+});
+export type TaskEffectiveLimits = Static<typeof TaskEffectiveLimits>;
 
-export interface TasksCreateOutput {
-  task: TaskRecord;
-  message: string;
-  effectiveLimits: TaskEffectiveLimits;
-  /** The IANA timezone its schedule is read in: the schedule's own, else this instance's. */
-  timezone: string;
+const ScheduleTimezone = Type.String({
+  description:
+    "The IANA timezone its schedule is read in: the schedule's own, else this instance's.",
+});
+
+export const TasksCreateOutput = Type.Object({
+  task: TaskRecord,
+  message: Type.String(),
+  effectiveLimits: TaskEffectiveLimits,
+  timezone: ScheduleTimezone,
   /** About the saved task, which was saved anyway. */
-  warnings?: TaskWarning[];
-}
+  warnings: Warnings,
+});
+export type TasksCreateOutput = Static<typeof TasksCreateOutput>;
 
-export interface TasksUpdateOutput {
-  task: TaskRecord;
-  updated: boolean;
-  message: string;
-  effectiveLimits: TaskEffectiveLimits;
-  /** The IANA timezone its schedule is read in: the schedule's own, else this instance's. */
-  timezone: string;
+export const TasksUpdateOutput = Type.Object({
+  task: TaskRecord,
+  updated: Type.Boolean(),
+  message: Type.String(),
+  effectiveLimits: TaskEffectiveLimits,
+  timezone: ScheduleTimezone,
   /** About the saved task, which was saved anyway. */
-  warnings?: TaskWarning[];
-}
+  warnings: Warnings,
+});
+export type TasksUpdateOutput = Static<typeof TasksUpdateOutput>;
 
-export interface TasksDeleteOutput {
-  deleted: boolean;
-  id: string;
-  message: string;
-}
+export const TasksDeleteOutput = Type.Object({
+  deleted: Type.Boolean(),
+  id: Type.String(),
+  message: Type.String(),
+});
+export type TasksDeleteOutput = Static<typeof TasksDeleteOutput>;
 
 // ── Batch outputs ────────────────────────────────────────────────────────
 
 /** How many of a batch's items are in each state. Mirror of `BatchCounts`. */
-export interface TaskBatchCounts {
-  pending: number;
-  queued: number;
-  running: number;
-  pass: number;
-  fail: number;
-  uncertain: number;
-  not_assessed: number;
-  failed: number;
-  skipped: number;
-  cancelled: number;
-}
+export const TaskBatchCounts = Type.Object({
+  pending: Type.Number(),
+  queued: Type.Number(),
+  running: Type.Number(),
+  pass: Type.Number(),
+  fail: Type.Number(),
+  uncertain: Type.Number(),
+  not_assessed: Type.Number(),
+  failed: Type.Number(),
+  skipped: Type.Number(),
+  cancelled: Type.Number(),
+});
+export type TaskBatchCounts = Static<typeof TaskBatchCounts>;
 
 /** A stored batch. Mirror of `Batch` (`src/platform/tasks/types.ts`). */
-export interface TaskBatchRecord {
-  id: string;
-  taskId: string;
-  workspaceId: string;
-  ownerId: string;
-  items: number;
-  concurrency: number;
-  budgetUsd?: number;
-  stopWhen?: { minPassRate: number; afterItems: number };
-  stopRuleDisarmed?: boolean;
-  state: "running" | "paused" | "completed" | "cancelled";
-  pause?: {
-    reason: "manual" | "budget" | "pass_rate" | "unavailable";
-    message: string;
-    at: string;
-  };
-  counts: TaskBatchCounts;
-  costUsd: number;
-  idempotencyKey?: string;
-  createdAt: string;
-  updatedAt: string;
-  completedAt?: string;
-  createdBy: string;
-}
+export const TaskBatchRecord = Type.Object({
+  id: Type.String(),
+  taskId: Type.String(),
+  workspaceId: Type.String(),
+  ownerId: Type.String(),
+  items: Type.Number(),
+  concurrency: Type.Number(),
+  budgetUsd: Type.Optional(Type.Number()),
+  stopWhen: Type.Optional(Type.Object({ minPassRate: Type.Number(), afterItems: Type.Number() })),
+  stopRuleDisarmed: Type.Optional(Type.Boolean()),
+  state: StringEnum(["running", "paused", "completed", "cancelled"] as const),
+  pause: Type.Optional(
+    Type.Object({
+      reason: StringEnum(["manual", "budget", "pass_rate", "unavailable"] as const),
+      message: Type.String(),
+      at: Type.String(),
+    }),
+  ),
+  counts: TaskBatchCounts,
+  costUsd: Type.Number(),
+  idempotencyKey: Type.Optional(Type.String()),
+  createdAt: Type.String(),
+  updatedAt: Type.String(),
+  completedAt: Type.Optional(Type.String()),
+  createdBy: Type.String(),
+});
+export type TaskBatchRecord = Static<typeof TaskBatchRecord>;
 
 /** A batch as the batch tools return it: the record plus figures derived on read. */
-export type TaskBatchView = TaskBatchRecord & {
-  /** Items with an outcome. */
-  done: number;
-  /** pass / (pass + fail); null before either. Uncertain is excluded. */
-  passRate: number | null;
-};
+export const TaskBatchView = Type.Composite([
+  TaskBatchRecord,
+  Type.Object({
+    /** Items with an outcome. */
+    done: Type.Number(),
+    /** pass / (pass + fail); null before either. Uncertain is excluded. */
+    passRate: Type.Union([Type.Number(), Type.Null()]),
+  }),
+]);
+export type TaskBatchView = Static<typeof TaskBatchView>;
 
 /** One item's result row (`tasks__batch` with `results: true`). */
-export interface TaskBatchItemView {
-  index: number;
+export const TaskBatchItemView = Type.Object({
+  index: Type.Number(),
   /** The item's input as JSON, cut to a short preview. */
-  inputSummary: string;
-  state: "pending" | "queued" | "running" | "done";
-  runId?: string;
-  previousRunIds?: string[];
-  execution?: TaskRunExecution;
-  verdict?: "pass" | "fail" | "uncertain" | "not_assessed";
+  inputSummary: Type.String(),
+  state: StringEnum(["pending", "queued", "running", "done"] as const),
+  runId: Type.Optional(Type.String()),
+  previousRunIds: Type.Optional(Type.Array(Type.String())),
+  execution: Type.Optional(TaskRunExecution),
+  verdict: Type.Optional(StringEnum(ASSESSMENT_VERDICTS)),
   /** The label the item's run reads as, from its execution and verdict. */
-  label?: TaskRunLabel;
-  costUsd?: number;
-  error?: string;
+  label: Type.Optional(TaskRunLabel),
+  costUsd: Type.Optional(Type.Number()),
+  error: Type.Optional(Type.String()),
   /** The top-level scalar fields of the run's structured output, when it has one. */
-  output?: Record<string, string | number | boolean | null>;
-}
+  output: Type.Optional(
+    Type.Record(
+      Type.String(),
+      Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]),
+    ),
+  ),
+});
+export type TaskBatchItemView = Static<typeof TaskBatchItemView>;
 
-export interface TasksRunBatchOutput {
-  batch: TaskBatchView;
+export const TasksRunBatchOutput = Type.Object({
+  batch: TaskBatchView,
   /** True when an earlier call with the same idempotencyKey made this batch. */
-  existing: boolean;
-  message: string;
-  warnings?: TaskWarning[];
-}
+  existing: Type.Boolean(),
+  message: Type.String(),
+  warnings: Warnings,
+});
+export type TasksRunBatchOutput = Static<typeof TasksRunBatchOutput>;
 
-export interface TasksBatchOutput {
-  batch: TaskBatchView;
+export const TasksBatchOutput = Type.Object({
+  batch: TaskBatchView,
   /** With `results: true`: one page of items, in index order. */
-  results?: TaskBatchItemView[];
+  results: Type.Optional(Type.Array(TaskBatchItemView)),
   /** Pass as `cursor` for the next page; absent on the last. */
-  nextCursor?: number;
-}
+  nextCursor: Type.Optional(Type.Integer()),
+});
+export type TasksBatchOutput = Static<typeof TasksBatchOutput>;
 
-export interface TasksBatchControlOutput {
-  batch: TaskBatchView;
-  message: string;
+export const TasksBatchControlOutput = Type.Object({
+  batch: TaskBatchView,
+  message: Type.String(),
   /** Items the action touched. */
-  affected: number;
-}
+  affected: Type.Integer(),
+});
+export type TasksBatchControlOutput = Static<typeof TasksBatchControlOutput>;
 
-export interface TasksBatchesOutput {
-  batches: TaskBatchView[];
-}
+export const TasksBatchesOutput = Type.Object({
+  batches: Type.Array(TaskBatchView),
+});
+export type TasksBatchesOutput = Static<typeof TasksBatchesOutput>;
 
 // ── Views: what runs next, run statistics, judges ────────────────────────
 
 /** A run that holds a run slot or waits for one (`tasks__upcoming`). */
-export interface TaskUpcomingRun {
-  taskId: string;
+export const TaskUpcomingRun = Type.Object({
+  taskId: Type.String(),
   /** Absent when the task's definition is gone. */
-  taskName?: string;
-  runId?: string;
-  state: "running" | "queued";
+  taskName: Type.Optional(Type.String()),
+  runId: Type.Optional(Type.String()),
+  state: StringEnum(["running", "queued"] as const),
   /** Queued only: 1 is next (the numbering of tasks__run's queued answer). */
-  position?: number;
+  position: Type.Optional(Type.Integer()),
   /** Running only. */
-  startedAt?: string;
+  startedAt: Type.Optional(Type.String()),
   /** Queued only: when the run was asked for, when it has a ticket. */
-  queuedAt?: string;
-  trigger?: "scheduled" | "manual" | "event";
-  batchId?: string;
-  batchIndex?: number;
-}
+  queuedAt: Type.Optional(Type.String()),
+  trigger: Type.Optional(StringEnum(RUN_TRIGGERS)),
+  batchId: Type.Optional(Type.String()),
+  batchIndex: Type.Optional(Type.Number()),
+});
+export type TaskUpcomingRun = Static<typeof TaskUpcomingRun>;
 
 /** One coming fire of a timed schedule. */
-export interface TaskUpcomingFire {
-  taskId: string;
-  taskName: string;
-  at: string;
+export const TaskUpcomingFire = Type.Object({
+  taskId: Type.String(),
+  taskName: Type.String(),
+  at: Type.String(),
   /** Human-readable schedule. */
-  schedule: string;
-  scheduleType: "cron" | "interval" | "once";
+  schedule: Type.String(),
+  scheduleType: StringEnum(["cron", "interval", "once"] as const),
   /** Past the window: the task's next fire, shown so a rare schedule is not missing. */
-  beyondWindow?: boolean;
-}
+  beyondWindow: Type.Optional(Type.Boolean()),
+});
+export type TaskUpcomingFire = Static<typeof TaskUpcomingFire>;
 
 /**
  * A schedule that fires more often than the panel lists one by one: one row
  * with how many times it fires in the window, and its first and last fire.
  */
-export interface TaskUpcomingFrequent {
-  taskId: string;
-  taskName: string;
-  schedule: string;
-  scheduleType: "cron" | "interval";
+export const TaskUpcomingFrequent = Type.Object({
+  taskId: Type.String(),
+  taskName: Type.String(),
+  schedule: Type.String(),
+  scheduleType: StringEnum(["cron", "interval"] as const),
   /** Fires within the window; a floor when `countCapped`. */
-  count: number;
+  count: Type.Integer(),
   /**
    * True when a cron was counted only until it was known to be frequent, so
    * `count` is a floor (shown as "25+"). An interval is always counted exactly.
    */
-  countCapped?: boolean;
-  first: string;
+  countCapped: Type.Optional(Type.Boolean()),
+  first: Type.String(),
   /** The last fire in the window; absent when `countCapped`. */
-  last?: string;
-}
+  last: Type.Optional(Type.String()),
+});
+export type TaskUpcomingFrequent = Static<typeof TaskUpcomingFrequent>;
 
 /** A task an event fires, with its fire ceiling and how much of it the last hour used. */
-export interface TaskUpcomingEventTask {
-  taskId: string;
-  taskName: string;
-  schedule: string;
-  enabled: boolean;
-  maxFiresPerHour: number;
-  firesLastHour: number;
-}
+export const TaskUpcomingEventTask = Type.Object({
+  taskId: Type.String(),
+  taskName: Type.String(),
+  schedule: Type.String(),
+  enabled: Type.Boolean(),
+  maxFiresPerHour: Type.Number(),
+  firesLastHour: Type.Integer(),
+});
+export type TaskUpcomingEventTask = Static<typeof TaskUpcomingEventTask>;
 
-export interface TasksUpcomingOutput {
-  running: TaskUpcomingRun[];
-  queued: TaskUpcomingRun[];
+export const TasksUpcomingOutput = Type.Object({
+  running: Type.Array(TaskUpcomingRun),
+  queued: Type.Array(TaskUpcomingRun),
   /** The window's length in days. */
-  days: number;
+  days: Type.Number(),
   /** Where the window ends. */
-  windowEnd: string;
+  windowEnd: Type.String(),
   /** Fires within the window, soonest first, then each task's next fire past it. */
-  scheduled: TaskUpcomingFire[];
+  scheduled: Type.Array(TaskUpcomingFire),
   /** Schedules firing more than the listing threshold in the window, one row each, by first fire. */
-  frequent: TaskUpcomingFrequent[];
-  events: TaskUpcomingEventTask[];
-}
+  frequent: Type.Array(TaskUpcomingFrequent),
+  events: Type.Array(TaskUpcomingEventTask),
+});
+export type TasksUpcomingOutput = Static<typeof TasksUpcomingOutput>;
 
 /** One task's runs since a time (`tasks__stats`). */
-export interface TaskRunStats {
-  taskId: string;
+export const TaskRunStats = Type.Object({
+  taskId: Type.String(),
   /** Run records started on or after `since`, batch runs included. */
-  runs: number;
+  runs: Type.Integer(),
   /** Verdicts over those runs; a person's verdict replaces the judge's. */
-  pass: number;
-  fail: number;
-  uncertain: number;
+  pass: Type.Integer(),
+  fail: Type.Integer(),
+  uncertain: Type.Integer(),
   /** pass / (pass + fail); null when both are 0. */
-  passRate: number | null;
+  passRate: Type.Union([Type.Number(), Type.Null()]),
   /** What those runs cost, in USD (runs with no recorded cost count 0). */
-  costUsd: number;
+  costUsd: Type.Number(),
   /** The newest run, whenever it started. */
-  lastRun?: { id: string; startedAt: string; label: TaskRunLabel };
-}
+  lastRun: Type.Optional(
+    Type.Object({ id: Type.String(), startedAt: Type.String(), label: TaskRunLabel }),
+  ),
+});
+export type TaskRunStats = Static<typeof TaskRunStats>;
 
-export interface TasksStatsOutput {
-  since: string;
-  tasks: TaskRunStats[];
-}
+export const TasksStatsOutput = Type.Object({
+  since: Type.String(),
+  tasks: Type.Array(TaskRunStats),
+});
+export type TasksStatsOutput = Static<typeof TasksStatsOutput>;
 
 /** The judge servers connected in the workspace (`tasks__judges`). */
-export interface TasksJudgesOutput {
-  servers: string[];
+export const TasksJudgesOutput = Type.Object({
+  servers: Type.Array(Type.String()),
   /** Why a task naming no judge server would not be judged: none connected, or several. */
-  warning?: TaskWarning;
-}
+  warning: Type.Optional(TaskWarning),
+});
+export type TasksJudgesOutput = Static<typeof TasksJudgesOutput>;

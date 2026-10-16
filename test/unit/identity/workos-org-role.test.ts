@@ -18,6 +18,14 @@ import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.t
 import type { OrgRole } from "../../../src/identity/types.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import { log } from "../../../src/observability/log.ts";
+import {
+  stubWorkosUserManagement,
+  workosAuthentication,
+  workosMembership,
+  workosMembershipList,
+  workosUser,
+  workosUserManagement,
+} from "../../helpers/workos-sdk.ts";
 
 let workDir: string;
 let userStore: UserStore;
@@ -44,40 +52,24 @@ afterEach(() => {
  */
 function makeProvider(memberships: Map<string, string>, configOverride?: Partial<WorkosAuth>) {
   const provider = new WorkosIdentityProvider({ ...BASE_CONFIG, ...configOverride }, userStore);
-  const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-  workos.userManagement = {
-    getUser: async (userId: string) => ({
-      id: userId,
-      email: `${userId}@test.com`,
-      firstName: "Test",
-      lastName: "User",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }),
-    listOrganizationMemberships: async (opts: { userId: string; organizationId: string }) => {
-      const slug = memberships.get(opts.userId);
-      if (!slug) return { data: [] };
-      return {
-        data: [
-          {
-            id: "om_test",
-            userId: opts.userId,
-            organizationId: opts.organizationId,
-            role: { slug },
-            status: "active",
-          },
-        ],
-      };
+  stubWorkosUserManagement(provider, {
+    getUser: async (userId) =>
+      workosUser({ id: userId, email: `${userId}@test.com`, firstName: "Test", lastName: "User" }),
+    listOrganizationMemberships: async (opts) => {
+      const slug = opts.userId ? memberships.get(opts.userId) : undefined;
+      if (!slug) return workosMembershipList([]);
+      return workosMembershipList([
+        workosMembership({ userId: opts.userId, organizationId: opts.organizationId, slug }),
+      ]);
     },
-  };
+  });
   return provider;
 }
 
-/** Invoke the private `resolveOrgRole` (mirrors the cast in workos-provisioning.test.ts). */
+/** Invoke the private `resolveOrgRole`. */
 function resolveOrgRole(provider: WorkosIdentityProvider, userId: string): Promise<OrgRole | null> {
-  return (
-    provider as unknown as { resolveOrgRole: (id: string) => Promise<OrgRole | null> }
-  ).resolveOrgRole.call(provider, userId);
+  // biome-ignore lint/complexity/useLiteralKeys: resolveOrgRole is private; bracket access is TypeScript's typed path to it
+  return provider["resolveOrgRole"](userId);
 }
 
 /** Invoke the private `resolveUser` to inspect the live session identity it builds. */
@@ -85,9 +77,8 @@ function resolveUser(
   provider: WorkosIdentityProvider,
   userId: string,
 ): Promise<UserIdentity | null> {
-  return (
-    provider as unknown as { resolveUser: (id: string) => Promise<UserIdentity | null> }
-  ).resolveUser.call(provider, userId);
+  // biome-ignore lint/complexity/useLiteralKeys: resolveUser is private; bracket access is TypeScript's typed path to it
+  return provider["resolveUser"](userId);
 }
 
 describe("WorkOS resolveOrgRole slug mapping", () => {
@@ -216,12 +207,15 @@ describe("WorkOS syncLocalProfile role sync", () => {
     });
 
     const provider = makeProvider(new Map([["user_member", "admin"]]));
-    const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-    (workos.userManagement as Record<string, unknown>).authenticateWithCode = async () => ({
-      accessToken: "tok",
-      refreshToken: "ref",
-      user: { id: "user_member", email: "member@test.com", firstName: "Member", lastName: "" },
-    });
+    workosUserManagement(provider).authenticateWithCode = async () =>
+      workosAuthentication({
+        user: workosUser({
+          id: "user_member",
+          email: "member@test.com",
+          firstName: "Member",
+          lastName: "",
+        }),
+      });
 
     await provider.exchangeCode("code");
 

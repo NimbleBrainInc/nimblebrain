@@ -60,7 +60,10 @@ mock.module("@composio/core", () => ({
   },
 }));
 
+import type { AuthMiddlewareOptions } from "../../src/api/auth-middleware.ts";
 import type { AppContext, AppEnv } from "../../src/api/types.ts";
+import type { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   _clearAllConnectFlows,
@@ -79,16 +82,24 @@ import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
+import type { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
+import type { EventSink } from "../../src/engine/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
-import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT, type IdentityProvider } from "../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
-import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
+import type { Runtime } from "../../src/runtime/runtime.ts";
+import type { ToolSource } from "../../src/tools/types.ts";
+import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { stub } from "../helpers/stub.ts";
+import { makeWorkspace, seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 /** Auth that verifies every request as the dev user, as the `dev` provider does. */
-const DEV_AUTH = {
-  provider: { verifyRequest: async () => ({ ...DEV_IDENTITY, grant: FIRST_PARTY_GRANT }) },
-  eventSink: { emit: () => {} },
+const DEV_AUTH: AuthMiddlewareOptions = {
+  provider: stub<IdentityProvider>({
+    verifyRequest: async () => ({ ...DEV_IDENTITY, grant: FIRST_PARTY_GRANT }),
+  }),
+  eventSink: stub<EventSink>({ emit: () => {} }),
 };
 
 function sha256Hex(input: string): string {
@@ -142,7 +153,7 @@ const DEV_USER_ID = "usr_default";
 
 function stubCtx(
   workDir: string,
-  catalogEntry: ReturnType<typeof composioEntry> | null,
+  catalogEntry: ConnectorCatalogEntry | null,
   options: {
     ensureSourceRegisteredError?: Error;
     getIdentityConnectorSourceError?: Error;
@@ -153,7 +164,7 @@ function stubCtx(
     recordConnectionStateChange: { lastCall: null, callCount: 0 },
     getIdentityConnectorSource: { lastCall: null, callCount: 0 },
   };
-  const lifecycle = {
+  const lifecycle = stub<ConnectorLifecycleManager>({
     recordConnectionStateChange(
       serverName: string,
       wsId: string,
@@ -177,21 +188,22 @@ function stubCtx(
     // Identity-plane source holder: starts + registers a personal connector
     // into the user's registry from its persisted record. The real method
     // returns a source; the route only awaits it (ignores the return), so the
-    // stub captures the call and resolves.
-    async getIdentityConnectorSource(userId: string, serverName: string): Promise<void> {
+    // stub captures the call and resolves to an empty source.
+    async getIdentityConnectorSource(userId: string, serverName: string): Promise<ToolSource> {
       calls.getIdentityConnectorSource.lastCall = { userId, serverName };
       calls.getIdentityConnectorSource.callCount++;
       if (options.getIdentityConnectorSourceError) {
         throw options.getIdentityConnectorSourceError;
       }
+      return stub<ToolSource>({ name: serverName });
     },
-  };
-  const runtime = {
+  });
+  const runtime = stub<Runtime>({
     getConnectorCatalog() {
-      return {
+      return stub<ConnectorCatalog>({
         catalogById: async (id: string) =>
           catalogEntry && catalogEntry.id === id ? catalogEntry : null,
-      };
+      });
     },
     getWorkDir() {
       return workDir;
@@ -210,22 +222,24 @@ function stubCtx(
     getIdentityProvider() {
       return null;
     },
-  } as unknown as AppContext["runtime"];
+  });
 
   return {
-    runtime,
-    workspaceStore: {
-      get: async (id: string) =>
-        id === STUB_MEMBER_WS
-          ? { id, members: [{ userId: DEV_USER_ID, role: "admin" }] }
-          : id === STUB_FOREIGN_WS
-            ? { id, members: [{ userId: "usr_someone_else", role: "admin" }] }
-            : null,
-    } as unknown as AppContext["workspaceStore"],
-    authOptions: {} as AppContext["authOptions"],
-    secureCookies: false,
+    ...stub<AppContext>({
+      runtime,
+      workspaceStore: stub<WorkspaceStore>({
+        get: async (id: string) =>
+          id === STUB_MEMBER_WS
+            ? makeWorkspace({ id, members: [{ userId: DEV_USER_ID, role: "admin" }] })
+            : id === STUB_FOREIGN_WS
+              ? makeWorkspace({ id, members: [{ userId: "usr_someone_else", role: "admin" }] })
+              : null,
+      }),
+      authOptions: stub<AuthMiddlewareOptions>({}),
+      secureCookies: false,
+    }),
     __lifecycleCalls: calls,
-  } as unknown as AppContext & { __lifecycleCalls: StubLifecycleCalls };
+  };
 }
 
 function composioEntry(id: string) {
@@ -665,14 +679,14 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
    * `requireAuth(authOptions)` passes in dev mode, and
    * `requireWorkspace(ctx)` admits the dev user to `WS_ID`.
    */
-  function makeApp(catalogEntry: ReturnType<typeof composioEntry> | null): {
+  function makeApp(catalogEntry: ConnectorCatalogEntry | null): {
     app: Hono<AppEnv>;
     ctx: ReturnType<typeof stubCtx>;
   } {
     const ctx = stubCtx("/tmp/nb-initiate-test", catalogEntry);
     // Auth that verifies every request as the dev user, as the `dev`
     // provider does, so requireAuth admits it.
-    (ctx as unknown as { authOptions: unknown }).authOptions = DEV_AUTH;
+    ctx.authOptions = DEV_AUTH;
     const app = new Hono<AppEnv>();
     app.route("/", composioAuthRoutes(ctx));
     return { app, ctx };
@@ -730,7 +744,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
     try {
       const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
-      (ctx as unknown as { authOptions: unknown }).authOptions = DEV_AUTH;
+      ctx.authOptions = DEV_AUTH;
       const app = new Hono<AppEnv>();
       app.route("/", composioAuthRoutes(ctx));
 
@@ -787,7 +801,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
       const ctx = stubCtx(dir, composioEntry("com.google/gmail"), {
         ensureSourceRegisteredError: new Error("startConnectorSource refused"),
       });
-      (ctx as unknown as { authOptions: unknown }).authOptions = DEV_AUTH;
+      ctx.authOptions = DEV_AUTH;
       const app = new Hono<AppEnv>();
       app.route("/", composioAuthRoutes(ctx));
 
@@ -870,7 +884,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
       url: "https://mcp.example.com/mcp",
       auth: "dcr" as const,
     };
-    const { app } = makeApp(entry as unknown as ReturnType<typeof composioEntry>);
+    const { app } = makeApp(entry);
     const res = await app.request(INITIATE_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1014,12 +1028,12 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
   });
 
   async function makeIdentityApp(
-    catalogEntry: ReturnType<typeof composioEntry> | null,
+    catalogEntry: ConnectorCatalogEntry | null,
     dir = "/tmp/nb-initiate-identity-test",
     opts: { seedInstall?: boolean } = {},
   ): Promise<{ app: Hono<AppEnv>; ctx: ReturnType<typeof stubCtx> }> {
     const ctx = stubCtx(dir, catalogEntry, { userId: USER_ID });
-    (ctx as unknown as { authOptions: unknown }).authOptions = DEV_AUTH;
+    ctx.authOptions = DEV_AUTH;
     // A personal connector must be installed on the identity before it can be
     // connected; seed the install ref so the route's precheck passes (skip it to
     // exercise the not-installed path).

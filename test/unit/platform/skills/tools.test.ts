@@ -25,11 +25,17 @@ import type {
   ConversationAccessContext,
   ConversationListResult,
   ListOptions,
+  SkillsLoadedEvent,
 } from "../../../../src/conversation/types.ts";
+import type { IdentityProvider, UserIdentity } from "../../../../src/identity/provider.ts";
 import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import { parseSkillFile } from "../../../../src/skills/loader.ts";
 import type { Skill } from "../../../../src/skills/types.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 // SHA-256 hex placeholder. Tests in this file exercise event projection /
 // filtering / dispatch — none verify hash math, so the actual value just
@@ -79,11 +85,11 @@ class FakeRuntime {
   getWorkDir(): string {
     return this.workDir;
   }
-  getCurrentIdentity(): FakeIdentity | null {
-    return this.identity;
+  getCurrentIdentity(): UserIdentity | null {
+    return this.identity && makeIdentity(this.identity);
   }
-  getIdentityProvider(): object | null {
-    return this.hasIdentityProvider ? ({} as object) : null;
+  getIdentityProvider(): IdentityProvider | null {
+    return this.hasIdentityProvider ? stub<IdentityProvider>({}) : null;
   }
   requireWorkspaceId(): string {
     if (!this.wsId) throw new Error("no workspace");
@@ -97,7 +103,7 @@ class FakeRuntime {
       dir: workspaceConversationsDir(this.workDir, loc.wsId, loc.ownerId ?? ""),
     });
   }
-  async findConversation(id: string, access?: ConversationAccessContext): Promise<unknown> {
+  async findConversation(id: string, access?: ConversationAccessContext) {
     const store = await this.resolveConversationStore(id);
     if (!store) return null;
     return store.load(id, access);
@@ -113,9 +119,9 @@ class FakeRuntime {
     // Tests that exercise the cross-workspace path supply this directly
     // by patching it. Default returns null for everything → access
     // checks fail gracefully when a test forgets to set up membership.
-    return {
+    return stub<WorkspaceStore>({
       get: async (_id: string) => null,
-    };
+    });
   }
   getContextSkills(): Skill[] {
     return this.contextSkills;
@@ -220,8 +226,11 @@ afterEach(async () => {
 });
 
 async function buildSource(): Promise<McpSource> {
-  source = createSkillsSource(runtime as unknown as never, new NoopEventSink());
+  source = createSkillsSource(stub<Runtime>(runtime), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 
@@ -440,11 +449,11 @@ describe("skills__list", () => {
 
   // ── loading-visibility field (issue #391) ───────────────────────────────
 
-  test("dead type: skill (no strategy/triggers) reports loading.wouldLoad=false / mechanism=none", async () => {
+  test("a skill with no strategy, triggers or affinity loads on request", async () => {
     const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
-    // No loading-strategy, no triggers, no applies-to-tools → reaches no
-    // loader path. This is the silently-inert population issue #391 targets.
+    // No loading-strategy, no triggers, no tool-affinity → the catalog lists it
+    // and the model loads it when the job needs it.
     const dead = writeSkill(
       join(wsDir, "dead.md"),
       { name: "dead-skill", description: "inert", version: "1.0.0", type: "skill", priority: 50 },
@@ -460,17 +469,17 @@ describe("skills__list", () => {
     const skills = (result as { structuredContent?: { skills?: unknown[] } }).structuredContent
       ?.skills as Array<{
       name: string;
-      loading?: { wouldLoad: boolean; mechanism: string };
+      loading?: { mechanism: string };
     }>;
     const row = skills.find((s) => s.name === "dead-skill")!;
-    expect(row.loading).toEqual({ wouldLoad: false, mechanism: "none" });
+    expect(row.loading).toEqual({ mechanism: "on_request" });
 
-    // The model-visible content carries the warning marker.
+    // A skill the model can load on request is not reported as dead.
     const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
-    expect(text).toContain("⚠ never loads");
+    expect(text).not.toContain("never loads");
   });
 
-  test("loadable skill reports loading.wouldLoad=true with the correct mechanism", async () => {
+  test("an always skill reports its mechanism", async () => {
     const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
     const live = writeSkill(
@@ -495,13 +504,10 @@ describe("skills__list", () => {
     const skills = (result as { structuredContent?: { skills?: unknown[] } }).structuredContent
       ?.skills as Array<{
       name: string;
-      loading?: { wouldLoad: boolean; mechanism: string };
+      loading?: { mechanism: string };
     }>;
     const row = skills.find((s) => s.name === "live-skill")!;
-    expect(row.loading).toEqual({ wouldLoad: true, mechanism: "always" });
-
-    const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
-    expect(text).not.toContain("⚠ never loads");
+    expect(row.loading).toEqual({ mechanism: "always" });
   });
 
   test("trigger skill reports mechanism=trigger; vendored guide reports always", async () => {
@@ -529,16 +535,14 @@ describe("skills__list", () => {
     const skills = (result as { structuredContent?: { skills?: unknown[] } }).structuredContent
       ?.skills as Array<{
       name: string;
-      loading?: { wouldLoad: boolean; mechanism: string };
+      loading?: { mechanism: string };
     }>;
     expect(skills.find((s) => s.name === "trigger-skill")!.loading).toEqual({
-      wouldLoad: true,
       mechanism: "trigger",
     });
-    // Layer-1 vendored authoring guide declares applies-to-tools (skills__*),
-    // so it resolves to tool_affinity — and is always loadable.
+    // Layer-1 vendored authoring guide declares tool-affinity, so it resolves
+    // to tool_affinity.
     expect(skills.find((s) => s.name === "authoring-guide")!.loading).toEqual({
-      wouldLoad: true,
       mechanism: "tool_affinity",
     });
   });
@@ -708,7 +712,7 @@ describe("skills__loading_log", () => {
       .create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     runtime.store().setActiveConversation(conv.id);
 
-    const events = [
+    const events: Array<Omit<SkillsLoadedEvent, "type">> = [
       {
         runId: "r1",
         ts: "2026-01-01T00:00:00.000Z",
@@ -776,7 +780,7 @@ describe("skills__loading_log", () => {
       },
     ];
     for (const e of events) {
-      runtime.store().appendEvent(conv.id, { type: "skills.loaded", ...e } as never);
+      runtime.store().appendEvent(conv.id, { type: "skills.loaded", ...e });
     }
 
     const src = await buildSource();
@@ -836,7 +840,7 @@ describe("skills__loading_log", () => {
       skillName: "gmail-usage",
       skillBody: "Use the send tool carefully.",
       scope: "connector",
-    } as never);
+    });
     runtime.store().appendEvent(conv.id, {
       type: "skill.activated",
       ts: "2026-01-01T00:01:00.000Z",
@@ -845,7 +849,7 @@ describe("skills__loading_log", () => {
       skillName: "invoice-runbook",
       scope: "workspace",
       tokens: 300,
-    } as never);
+    });
 
     const src = await buildSource();
     const client = src.getClient()!;
@@ -886,6 +890,7 @@ describe("skills__loading_log", () => {
       skills: [
         {
           id: "/skills/a.md",
+          name: "a",
           layer: 3,
           scope: "org",
           version: "",
@@ -896,7 +901,7 @@ describe("skills__loading_log", () => {
         },
       ],
       totalTokens: 10,
-    } as never);
+    });
     runtime.store().appendEvent(conv2.id, {
       type: "skills.loaded",
       ts: "2026-02-01T00:00:00.000Z",
@@ -904,6 +909,7 @@ describe("skills__loading_log", () => {
       skills: [
         {
           id: "/skills/a.md",
+          name: "a",
           layer: 3,
           scope: "org",
           version: "",
@@ -914,7 +920,7 @@ describe("skills__loading_log", () => {
         },
       ],
       totalTokens: 10,
-    } as never);
+    });
 
     // A conversation the same owner has in a DIFFERENT workspace. The scan
     // must not reach it: skills are workspace-tiered, so "which skills loaded"
@@ -937,6 +943,7 @@ describe("skills__loading_log", () => {
       skills: [
         {
           id: "/skills/a.md",
+          name: "a",
           layer: 3,
           scope: "org",
           version: "",
@@ -947,7 +954,7 @@ describe("skills__loading_log", () => {
         },
       ],
       totalTokens: 10,
-    } as never);
+    });
 
     // The enumeration branch needs an active workspace — it is scoped, not
     // owner-wide, so the caller must be in one.

@@ -38,8 +38,8 @@ import {
   type ConversationEvent,
   type SkillsLoadedEvent,
 } from "../../conversation/types.ts";
-import { structuredContent, textContent } from "../../engine/content-helpers.ts";
-import type { EventSink, ToolResult } from "../../engine/types.ts";
+import { textContent } from "../../engine/content-helpers.ts";
+import type { EventSink } from "../../engine/types.ts";
 import { filterAdmittedTools } from "../../permissions/admin-tools.ts";
 import {
   type ComposedPrompt,
@@ -56,16 +56,23 @@ import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
 import { collectActivatableSkills, toCatalogEntries } from "../../skills/catalog.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../skills/select.ts";
-import type { InProcessTool } from "../../tools/in-process-app.ts";
-import { defineInProcessApp, typedTool } from "../../tools/in-process-app.ts";
+import {
+  defineInProcessApp,
+  type InProcessTool,
+  type ToolErrorResult,
+  type ToolSuccessResult,
+  type TypedToolResult,
+  typedTool,
+} from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { surfaceTools } from "../../tools/surfacing.ts";
 import {
   type AssembledContextSkill,
   type AssembledContextSource,
   ComposeAssembledContextInput,
-  type ComposeAssembledContextOutput,
+  ComposeAssembledContextOutput,
   ComposeEffectiveContextInput,
+  ComposeEffectiveContextOutput,
 } from "../schemas/compose.ts";
 
 const COMPOSE_SOURCE_NAME = "compose";
@@ -80,7 +87,8 @@ const COMPOSE_DESCRIPTION =
   "for that run from the calling workspace's conv jsonl and verifies each " +
   "layer-3 skill's `contentHash` against its current source, flagging drift. " +
   "Pass `connector` to filter the response to that connector's contributions " +
-  "(the apps section and its focused-app section). Read-only. " +
+  "(in live mode, its app entry; in historical mode, the skills it published " +
+  "that loaded in the run). Read-only. " +
   "Use this to answer 'what's in the agent's prompt right now' or 'what was " +
   "in the prompt for run X'. " +
   "`totalTokens` is the size of the composed system prompt, in both modes — " +
@@ -101,25 +109,14 @@ const ASSEMBLED_CONTEXT_DESCRIPTION =
   "recomposition. Read-only. Use this to answer 'what entered this turn's " +
   "context, and how big was each part?'";
 
-/** Exported for unit testing. */
-export interface ComposeResponse {
-  mode: "live" | "historical";
-  conversationId: string;
-  runId?: string;
-  /**
-   * Size of the composed system prompt — this tool's subject, and the same
-   * quantity in both modes so the two are comparable. Live sums the composed
-   * layers; historical reads the run's recorded `system_prompt` row.
-   *
-   * NOT the size of the context window: tool descriptions and history are not
-   * part of the prompt. `compose__assembled_context` answers that, as
-   * `windowTokens`.
-   */
-  totalTokens: number;
-  text: string;
+/**
+ * The `compose__effective_context` result as the handler builds it: the output
+ * schema's shape, with each layer kept as the runtime `TracedLayer` the
+ * `connector` filter reads. Exported for unit testing.
+ */
+export type ComposeResponse = Omit<ComposeEffectiveContextOutput, "layers"> & {
   layers: TracedLayer[];
-  warnings: string[];
-}
+};
 
 /**
  * Build the platform source. One tool, one resource is implied (the source
@@ -132,7 +129,8 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
       name: "effective_context",
       description: COMPOSE_DESCRIPTION,
       inputSchema: ComposeEffectiveContextInput,
-      handler: async (args): Promise<ToolResult> => {
+      outputSchema: ComposeEffectiveContextOutput,
+      handler: async (args): Promise<TypedToolResult<typeof ComposeEffectiveContextOutput>> => {
         try {
           // Resolve conv id — explicit arg wins; fall back to the current
           // conversation in scope (set by `runtime.chat()` via RequestContext).
@@ -166,11 +164,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
             applyConnectorFilter(response, args.connector);
           }
 
-          return {
-            content: textContent(formatTextSummary(response)),
-            structuredContent: structuredContent(response),
-            isError: false,
-          };
+          return ok(formatTextSummary(response), response);
         } catch (err) {
           return errorResult(errorMessage(err));
         }
@@ -180,7 +174,8 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
       name: "assembled_context",
       description: ASSEMBLED_CONTEXT_DESCRIPTION,
       inputSchema: ComposeAssembledContextInput,
-      handler: async (args): Promise<ToolResult> => {
+      outputSchema: ComposeAssembledContextOutput,
+      handler: async (args): Promise<TypedToolResult<typeof ComposeAssembledContextOutput>> => {
         try {
           const convId = resolveConvId(args);
           if (!convId) {
@@ -195,11 +190,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
             );
           }
           const digest = await readAssembledContext(runtime, convId, args.run_id);
-          return {
-            content: textContent(formatAssembledSummary(digest)),
-            structuredContent: structuredContent(digest),
-            isError: false,
-          };
+          return ok(formatAssembledSummary(digest), digest);
         } catch (err) {
           return errorResult(errorMessage(err));
         }
@@ -500,7 +491,7 @@ function findLatestContextAssembled(
 ): ContextAssembledEvent | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if (e?.type === "context.assembled") return e as ContextAssembledEvent;
+    if (e?.type === "context.assembled") return e;
   }
   return undefined;
 }
@@ -654,6 +645,7 @@ function auditToSubItem(
     kind: "layer3_skill",
     id: entry.id,
     source: audit.body !== null ? entry.id : `${entry.id} (body unavailable)`,
+    ...(entry.connector ? { connector: entry.connector } : {}),
     metadata: {
       scope: entry.scope,
       loadedBy: entry.loadedBy,
@@ -903,7 +895,15 @@ export function applyConnectorFilter(response: ComposeResponse, connector: strin
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-function errorResult(message: string): ToolResult {
+/**
+ * A success: the model reads `summary` (in-process results reach it as
+ * `content` only), and the SDK checks `data` against the tool's output schema.
+ */
+function ok<T>(summary: string, data: T): ToolSuccessResult<T> {
+  return { content: textContent(summary), structuredContent: data, isError: false };
+}
+
+function errorResult(message: string): ToolErrorResult {
   return { content: textContent(message), isError: true };
 }
 

@@ -53,7 +53,7 @@ export interface SkillMechanismLabel {
 
 /** The subset of a skill summary that determines its loading mechanism. */
 export interface SkillMechanismInput {
-  loading?: { mechanism: "always" | "tool_affinity" | "trigger" | "none" };
+  loading?: { mechanism: "always" | "tool_affinity" | "trigger" | "on_request" };
   toolAffinity?: string[];
   triggers?: string[];
 }
@@ -84,8 +84,8 @@ export function skillMechanismLabel(skill: SkillMechanismInput): SkillMechanismL
         ? { text: `On trigger ${phrases.map((p) => `"${p}"`).join(", ")}` }
         : { text: "On trigger" };
     }
-    case "none":
-      return { text: "Won't auto-load yet" };
+    case "on_request":
+      return { text: "When the agent asks for it" };
     default:
       return null;
   }
@@ -95,16 +95,15 @@ export function skillMechanismLabel(skill: SkillMechanismInput): SkillMechanismL
  * The full sentence form of a loading mechanism, for the authoring editor.
  *
  * `skillMechanismLabel` above is the catalog row's compact grammar; this one
- * answers the question the editor is actually being asked — *will this skill
- * ever reach the agent, and on what?* — so it names the signal and, for the
- * dead case, says so as a warning rather than a status. Both read the same
+ * answers the question the editor is actually being asked — *when will this
+ * skill reach the agent, and on what?* — so it names the signal. Both read the same
  * mechanism value, so the two surfaces cannot disagree about the verdict, only
  * about how much room they have to say it.
  */
 export function skillLoadingSentence(
-  mechanism: "always" | "tool_affinity" | "trigger" | "none",
+  mechanism: "always" | "tool_affinity" | "trigger" | "on_request",
   signals: { toolAffinity?: string[]; triggers?: string[] },
-): { text: string; mono?: string; dead?: boolean } {
+): { text: string; mono?: string } {
   switch (mechanism) {
     case "always":
       return { text: "Loads on every turn — the agent reads it in every conversation." };
@@ -116,23 +115,29 @@ export function skillLoadingSentence(
       const phrases = (signals.triggers ?? []).filter(Boolean);
       return { text: `Loads on ${phrases.map((p) => `"${p}"`).join(", ")}` };
     }
-    case "none":
+    case "on_request":
       return {
         text:
-          "Never loads. Nothing activates it — a skill that loads on demand needs " +
-          "a trigger phrase or a tool pattern.",
-        dead: true,
+          "Loads when the agent asks for it. The agent sees its description in the skill " +
+          "catalog; add a tool pattern or a trigger phrase to load it without being asked.",
       };
   }
 }
 
+/**
+ * A map with an entry for every tier this build knows, read by the recorded
+ * tier string. A recorded row can name a tier outside the union (see
+ * `skillProvenanceLabel`), so a lookup may miss and callers fall back.
+ */
+type ScopeMap = Readonly<Record<string, string | undefined>>;
+
 /** Token-driven scope color class (defined in index.css; no raw palette values). */
-export const SCOPE_CLASS: Record<SkillScope, string> = {
+export const SCOPE_CLASS: ScopeMap = {
   org: "ledger-scope--org",
   workspace: "ledger-scope--workspace",
   user: "ledger-scope--user",
   provided: "ledger-scope--connector",
-};
+} satisfies Record<SkillScope, string>;
 
 /**
  * What a reader is shown for a skill's tier.
@@ -145,16 +150,17 @@ export const SCOPE_CLASS: Record<SkillScope, string> = {
  * built-in authoring guide, and labels it "System". The map is per-surface for
  * that reason, not because either label is the wire value's real name.
  */
-export const SCOPE_LABEL: Record<SkillScope, string> = {
+export const SCOPE_LABEL: ScopeMap = {
   org: "org",
   workspace: "workspace",
   user: "user",
   provided: "connector",
-};
+} satisfies Record<SkillScope, string>;
 
 /** The subset of a ledger skill that identifies where it came from. */
 export interface SkillProvenanceInput {
-  scope: SkillScope;
+  /** The recorded tier: a `SkillScope`, or a tier name an older run recorded. */
+  scope: string;
   connector?: string;
 }
 

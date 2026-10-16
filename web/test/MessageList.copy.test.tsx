@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
-import type { ChatMessage } from "../src/hooks/chat-store.ts";
 import { MessageList } from "../src/components/MessageList.tsx";
+import type { ChatMessage } from "../src/hooks/chat-store.ts";
 
 /**
  * Locks in the message-level copy button's success and failure feedback.
@@ -12,163 +12,162 @@ import { MessageList } from "../src/components/MessageList.tsx";
  */
 
 const assistantMsg: ChatMessage = {
-	role: "assistant",
-	content: "hello world",
+  role: "assistant",
+  content: "hello world",
 };
 
 let originalClipboard: PropertyDescriptor | undefined;
 
 beforeEach(() => {
-	originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+  originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
 });
 
 afterEach(() => {
-	if (originalClipboard) {
-		Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
-	} else {
-		// happy-dom's navigator may not have clipboard by default; remove what we set
-		// biome-ignore lint/performance/noDelete: cleanup of test mock
-		delete (globalThis.navigator as { clipboard?: unknown }).clipboard;
-	}
+  if (originalClipboard) {
+    Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
+  } else {
+    // happy-dom's navigator may not have clipboard by default; remove what we set
+    Reflect.deleteProperty(globalThis.navigator, "clipboard");
+  }
 });
 
 function findCopyButton(container: HTMLElement): HTMLButtonElement {
-	const btns = container.getElementsByTagName("button");
-	for (const b of Array.from(btns)) {
-		const label = b.getAttribute("aria-label");
-		if (label === "Copy message" || label === "Copy failed") return b as HTMLButtonElement;
-	}
-	throw new Error("CopyButton not found");
+  const btns = container.getElementsByTagName("button");
+  for (const b of Array.from(btns)) {
+    const label = b.getAttribute("aria-label");
+    if (label === "Copy message" || label === "Copy failed") return b as HTMLButtonElement;
+  }
+  throw new Error("CopyButton not found");
 }
 
 function hasIcon(container: HTMLElement, className: string): boolean {
-	const svgs = container.getElementsByTagName("svg");
-	for (const svg of Array.from(svgs)) {
-		if ((svg.getAttribute("class") ?? "").split(/\s+/).includes(className)) return true;
-	}
-	return false;
+  const svgs = container.getElementsByTagName("svg");
+  for (const svg of Array.from(svgs)) {
+    if ((svg.getAttribute("class") ?? "").split(/\s+/).includes(className)) return true;
+  }
+  return false;
 }
 
 function setClipboard(impl: { writeText: (text: string) => Promise<void> } | null) {
-	Object.defineProperty(globalThis.navigator, "clipboard", {
-		value: impl,
-		configurable: true,
-		writable: true,
-	});
+  Object.defineProperty(globalThis.navigator, "clipboard", {
+    value: impl,
+    configurable: true,
+    writable: true,
+  });
 }
 
 describe("MessageList CopyButton feedback", () => {
-	it("shows the success state after a successful copy", async () => {
-		let captured = "";
-		setClipboard({
-			writeText: async (text: string) => {
-				captured = text;
-			},
-		});
+  it("shows the success state after a successful copy", async () => {
+    let captured = "";
+    setClipboard({
+      writeText: async (text: string) => {
+        captured = text;
+      },
+    });
 
-		const { container } = render(
-			<MessageList
-				messages={[assistantMsg]}
-				isStreaming={false}
-				streamingState={null}
-				displayDetail="balanced"
-			/>,
-		);
+    const { container } = render(
+      <MessageList
+        messages={[assistantMsg]}
+        isStreaming={false}
+        streamingState={null}
+        displayDetail="balanced"
+      />,
+    );
 
-		const btn = findCopyButton(container);
-		await act(async () => {
-			fireEvent.click(btn);
-		});
+    const btn = findCopyButton(container);
+    await act(async () => {
+      fireEvent.click(btn);
+    });
 
-		expect(captured).toBe("hello world");
-		// Success path renders the Check icon (lucide-react adds class "lucide-check").
-		await waitFor(() => {
-			expect(hasIcon(container, "lucide-check")).toBe(true);
-		});
-	});
+    expect(captured).toBe("hello world");
+    // Success path renders the Check icon (lucide-react adds class "lucide-check").
+    await waitFor(() => {
+      expect(hasIcon(container, "lucide-check")).toBe(true);
+    });
+  });
 
-	it("shows the failure state when writeText rejects", async () => {
-		setClipboard({
-			writeText: async () => {
-				throw new Error("denied");
-			},
-		});
+  it("shows the failure state when writeText rejects", async () => {
+    setClipboard({
+      writeText: async () => {
+        throw new Error("denied");
+      },
+    });
 
-		const { container } = render(
-			<MessageList
-				messages={[assistantMsg]}
-				isStreaming={false}
-				streamingState={null}
-				displayDetail="balanced"
-			/>,
-		);
+    const { container } = render(
+      <MessageList
+        messages={[assistantMsg]}
+        isStreaming={false}
+        streamingState={null}
+        displayDetail="balanced"
+      />,
+    );
 
-		const btn = findCopyButton(container);
-		await act(async () => {
-			fireEvent.click(btn);
-		});
+    const btn = findCopyButton(container);
+    await act(async () => {
+      fireEvent.click(btn);
+    });
 
-		await waitFor(() => {
-			// Failure path renders the AlertCircle icon and updates aria-label.
-			expect(hasIcon(container, "lucide-circle-alert")).toBe(true);
-			expect(btn.getAttribute("aria-label")).toBe("Copy failed");
-		});
-	});
+    await waitFor(() => {
+      // Failure path renders the AlertCircle icon and updates aria-label.
+      expect(hasIcon(container, "lucide-circle-alert")).toBe(true);
+      expect(btn.getAttribute("aria-label")).toBe("Copy failed");
+    });
+  });
 
-	it("shows the failure state when the Clipboard API is unavailable", async () => {
-		setClipboard(null);
+  it("shows the failure state when the Clipboard API is unavailable", async () => {
+    setClipboard(null);
 
-		const { container } = render(
-			<MessageList
-				messages={[assistantMsg]}
-				isStreaming={false}
-				streamingState={null}
-				displayDetail="balanced"
-			/>,
-		);
+    const { container } = render(
+      <MessageList
+        messages={[assistantMsg]}
+        isStreaming={false}
+        streamingState={null}
+        displayDetail="balanced"
+      />,
+    );
 
-		const btn = findCopyButton(container);
-		await act(async () => {
-			fireEvent.click(btn);
-		});
+    const btn = findCopyButton(container);
+    await act(async () => {
+      fireEvent.click(btn);
+    });
 
-		await waitFor(() => {
-			expect(hasIcon(container, "lucide-circle-alert")).toBe(true);
-			expect(btn.getAttribute("aria-label")).toBe("Copy failed");
-		});
-	});
+    await waitFor(() => {
+      expect(hasIcon(container, "lucide-circle-alert")).toBe(true);
+      expect(btn.getAttribute("aria-label")).toBe("Copy failed");
+    });
+  });
 });
 
 describe("MessageList usage chip", () => {
-	// Real numbers from the conv that prompted this: 400k "input" was almost
-	// all cached re-reads. The chip must show the fresh work inline
-	// (16.4k new · 225.3k cached), never the 401k raw sum.
-	const usageMsg: ChatMessage = {
-		role: "assistant",
-		content: "done",
-		usage: {
-			inputTokens: 400304,
-			outputTokens: 870,
-			cacheReadTokens: 225328,
-			cacheWriteTokens: 158550,
-			model: "anthropic:claude-opus-4-7",
-			llmMs: 1240,
-		},
-	};
+  // Real numbers from the conv that prompted this: 400k "input" was almost
+  // all cached re-reads. The chip must show the fresh work inline
+  // (16.4k new · 225.3k cached), never the 401k raw sum.
+  const usageMsg: ChatMessage = {
+    role: "assistant",
+    content: "done",
+    usage: {
+      inputTokens: 400304,
+      outputTokens: 870,
+      cacheReadTokens: 225328,
+      cacheWriteTokens: 158550,
+      model: "anthropic:claude-opus-4-7",
+      llmMs: 1240,
+    },
+  };
 
-	it("shows fresh tokens + cached inline, not the cache-inflated input sum", () => {
-		const { container } = render(
-			<MessageList
-				messages={[usageMsg]}
-				isStreaming={false}
-				streamingState={null}
-				displayDetail="balanced"
-			/>,
-		);
+  it("shows fresh tokens + cached inline, not the cache-inflated input sum", () => {
+    const { container } = render(
+      <MessageList
+        messages={[usageMsg]}
+        isStreaming={false}
+        streamingState={null}
+        displayDetail="balanced"
+      />,
+    );
 
-		const text = container.textContent ?? "";
-		expect(text).toContain("16.4k new");
-		expect(text).toContain("225.3k cached");
-		expect(text).not.toContain("401");
-	});
+    const text = container.textContent ?? "";
+    expect(text).toContain("16.4k new");
+    expect(text).toContain("225.3k cached");
+    expect(text).not.toContain("401");
+  });
 });

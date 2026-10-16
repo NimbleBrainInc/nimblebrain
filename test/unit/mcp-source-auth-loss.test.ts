@@ -1,9 +1,11 @@
 import { describe, expect, it, mock } from "bun:test";
-import { UnauthorizedError } from "@modelcontextprotocol/client";
+import { type Client, UnauthorizedError } from "@modelcontextprotocol/client";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { McpTransportMode } from "../../src/tools/mcp-source.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import { mcpSourceInternals } from "../helpers/mcp-source-internals.ts";
+import { stub } from "../helpers/stub.ts";
 
 // Detect-on-use: a remote tool call that throws UnauthorizedError means the
 // connection's refresh token was rejected (expired / revoked). The execute()
@@ -13,7 +15,7 @@ import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-pro
 // (a restart can't fix a dead credential, and would escalate toward `dead`).
 
 function startedRemoteSource(opts: {
-  callTool: () => Promise<unknown>;
+  callTool: Client["callTool"];
   // Omit to model a static-auth remote (e.g. a Composio x-api-key connector)
   // that has no OAuth provider — the reauth branch must NOT fire for it.
   notifyAuthLost?: () => void;
@@ -21,7 +23,7 @@ function startedRemoteSource(opts: {
   const authProvider =
     opts.notifyAuthLost === undefined
       ? undefined
-      : ({ notifyAuthLost: opts.notifyAuthLost } as unknown as WorkspaceOAuthProvider);
+      : stub<WorkspaceOAuthProvider>({ notifyAuthLost: opts.notifyAuthLost });
 
   const mode: McpTransportMode = {
     type: "remote",
@@ -34,14 +36,10 @@ function startedRemoteSource(opts: {
   // No real transport — we exercise the catch branch in isolation. `close`
   // is stubbed so the non-auth crash path's stop() doesn't blow up, and
   // `start` is neutralized so tryRestart never reaches the network.
-  const internal = source as unknown as {
-    client: { callTool: () => Promise<unknown>; close: () => Promise<void> };
-    dead: boolean;
-    start: () => Promise<void>;
-  };
-  internal.client = { callTool: opts.callTool, close: () => Promise.resolve() };
+  const internal = mcpSourceInternals(source);
+  internal.client = stub<Client>({ callTool: opts.callTool, close: () => Promise.resolve() });
   internal.dead = false;
-  internal.start = () => Promise.resolve();
+  source.start = () => Promise.resolve();
   return source;
 }
 

@@ -276,7 +276,11 @@ describe("fleet hook — SDK client-auth parity (step 1)", () => {
     setEnv(undefined, undefined); // step 1 only; no tenant assertion
   });
 
-  function hookWithStaticClient(staticClient: { clientId: string; clientSecret?: string }) {
+  function hookWithStaticClient(staticClient: {
+    clientId: string;
+    clientSecret?: string;
+    tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
+  }) {
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "fleet-srv",
@@ -302,14 +306,14 @@ describe("fleet hook — SDK client-auth parity (step 1)", () => {
     expect(p.get("client_secret")).toBeNull();
   });
 
-  it("confidential client, no server metadata → HTTP Basic (method 'client_secret_basic')", async () => {
+  it("confidential client configured for client_secret_basic, no server metadata → HTTP Basic", async () => {
     const headers = new Headers();
     const p = tokenParams();
-    await hookWithStaticClient({ clientId: "cid", clientSecret: "s3cret" })(
-      headers,
-      p,
-      `${FLEET_ISSUER}/token`,
-    );
+    await hookWithStaticClient({
+      clientId: "cid",
+      clientSecret: "s3cret",
+      tokenEndpointAuthMethod: "client_secret_basic",
+    })(headers, p, `${FLEET_ISSUER}/token`);
     expect(headers.get("Authorization")).toBe(`Basic ${btoa("cid:s3cret")}`);
     // Basic auth carries the id in the header, NOT the body.
     expect(p.get("client_id")).toBeNull();
@@ -321,6 +325,24 @@ describe("fleet hook — SDK client-auth parity (step 1)", () => {
     const metadata = {
       issuer: FLEET_ISSUER,
       token_endpoint_auth_methods_supported: ["client_secret_post"],
+    } as AuthorizationServerMetadata;
+    await hookWithStaticClient({ clientId: "cid", clientSecret: "s3cret" })(
+      headers,
+      p,
+      `${FLEET_ISSUER}/token`,
+      metadata,
+    );
+    expect(p.get("client_id")).toBe("cid");
+    expect(p.get("client_secret")).toBe("s3cret");
+    expect(headers.get("Authorization")).toBeNull();
+  });
+
+  it("confidential client without a configured method, server advertises basic and post → id+secret in body", async () => {
+    const headers = new Headers();
+    const p = new URLSearchParams({ grant_type: "refresh_token" });
+    const metadata = {
+      issuer: FLEET_ISSUER,
+      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
     } as AuthorizationServerMetadata;
     await hookWithStaticClient({ clientId: "cid", clientSecret: "s3cret" })(
       headers,

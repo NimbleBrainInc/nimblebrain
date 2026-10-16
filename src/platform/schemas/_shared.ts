@@ -26,7 +26,14 @@
 // One-line rule: **schemas validated by AJV → StringEnum; schemas
 // validated by TypeBox `Value.Check` → Union-of-Literal.**
 
-import { type TSchema, Type } from "@sinclair/typebox";
+import {
+  type Static,
+  type TObject,
+  type TSchema,
+  type TUnion,
+  type TUnsafe,
+  Type,
+} from "@sinclair/typebox";
 
 export function StringEnum<T extends string>(
   values: readonly T[],
@@ -45,4 +52,17 @@ export function NumberEnum<T extends number>(
 /** An optional field an update clears with `null` (src/platform/AGENTS.md §1.3). */
 export function clearable<T extends TSchema>(schema: T, description: string) {
   return Type.Optional(Type.Union([schema, Type.Null()], { description }));
+}
+
+/**
+ * A tool output that is one of several object shapes. MCP's 2025-11-25 revision
+ * requires an output schema whose root is `type: "object"`, and the SDK server
+ * rewraps any other root as `{ result: … }`, which the handler's
+ * `structuredContent` then fails to match. The root `type` keeps the union
+ * unwrapped on every revision.
+ */
+export function ObjectUnion<T extends TObject[]>(
+  members: [...T],
+): TUnsafe<Static<TUnion<T>>> & { type: "object" } {
+  return { ...Type.Unsafe<Static<TUnion<T>>>({ anyOf: members }), type: "object" as const };
 }

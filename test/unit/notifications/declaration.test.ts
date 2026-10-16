@@ -24,6 +24,7 @@ import {
 
 /** A `HostManifestMeta` carrying whatever the caller wants under `notifications`. */
 function metaWith(notifications: unknown): HostManifestMeta {
+  // biome-ignore lint/plugin/double-cast: an unvalidated manifest block whose `notifications` is any JSON, claimed as HostManifestMeta as the catalog's unchecked read claims it
   return { host_version: "1.3", notifications } as unknown as HostManifestMeta;
 }
 
@@ -124,13 +125,14 @@ describe("isOutboxResource", () => {
 
 describe("the catalog carries the declaration to the install path", () => {
   /** A `ServerDetail` with the host extension the operator published. */
-  function detail(hostMeta: Record<string, unknown>): ServerDetail {
+  function detail(hostMeta: HostManifestMeta): ServerDetail {
     return {
       name: "test.acme/mcp",
       description: "Acme",
+      version: "1.0.0",
       remotes: [{ type: "streamable-http", url: "https://acme.test/mcp" }],
       _meta: { "ai.nimblebrain/host": hostMeta },
-    } as unknown as ServerDetail;
+    };
   }
 
   test("a declared outbox lands on the catalog entry", () => {

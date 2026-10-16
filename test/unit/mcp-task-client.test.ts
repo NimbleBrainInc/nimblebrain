@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, type Mock, spyOn } from "bun:test";
 import { log } from "../../src/observability/log.ts";
 import { cancelTask, type TaskWire } from "../../src/tools/mcp-task-client.ts";
+import { stub } from "../helpers/stub.ts";
 
 /**
  * A wire whose every request answers with `answer`. `TaskWire` attaches only to
@@ -8,7 +9,7 @@ import { cancelTask, type TaskWire } from "../../src/tools/mcp-task-client.ts";
  * `request`, so the double carries those two.
  */
 function wireAnswering(answer: () => Promise<Record<string, unknown>>): TaskWire {
-  return { source: "research", request: answer } as unknown as TaskWire;
+  return stub<TaskWire>({ source: "research", request: answer });
 }
 
 describe("cancelTask", () => {

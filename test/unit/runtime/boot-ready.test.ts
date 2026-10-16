@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { WorkspaceMembershipRevokedError } from "../../../src/runtime/errors.ts";
 import type { RunSpec } from "../../../src/runtime/run-spec.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
 /**
  * The run doors wait for `start()` to finish assembling the workspace
@@ -24,30 +25,29 @@ function bootingRuntime(): Probe {
   const rt = Object.create(Runtime.prototype) as Runtime;
   const boot = Promise.withResolvers<void>();
   let reached = false;
-  const fields = rt as unknown as {
-    _bootReady: PromiseWithResolvers<void>;
-    isPrincipalWorkspaceMember: () => Promise<boolean>;
-  };
-  fields._bootReady = boot;
+  // A prototype-built Runtime has no fields; define the readonly barrier the
+  // constructor would have.
+  Object.defineProperty(rt, "_bootReady", { value: boot });
   // The first thing `startRun` does past the barrier. Answering "not a member"
   // ends the run there with a typed refusal, so the test needs nothing else.
-  fields.isPrincipalWorkspaceMember = async () => {
+  // biome-ignore lint/complexity/useLiteralKeys: isPrincipalWorkspaceMember is private; bracket access is TypeScript's typed path to it
+  rt["isPrincipalWorkspaceMember"] = async () => {
     reached = true;
     return false;
   };
   return { runtime: rt, boot, reached: () => reached };
 }
 
-const scheduledRun = {
+const scheduledRun: RunSpec = {
   trigger: "schedule",
-  principal: { identity: { id: "user-a" }, ownerId: "user-a" },
+  principal: { identity: makeIdentity({ id: "user-a" }), ownerId: "user-a" },
   workspaceId: "ws_00079598e311c160",
   briefingWorkspaceId: "ws_00079598e311c160",
   input: { content: [{ type: "text", text: "go" }], userId: "user-a" },
   budget: {},
   model: "test:model",
   onAbort: "partial",
-} as unknown as RunSpec;
+};
 
 describe("Runtime run doors — boot barrier", () => {
   it("test_startRun_beforeBootCompletes_waitsForBoot", async () => {

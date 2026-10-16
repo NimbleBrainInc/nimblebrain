@@ -1168,8 +1168,24 @@ export async function handleEvents(
   });
 }
 
-/** Handle POST /v1/auth/logout — clear all session cookies. */
-export function handleLogout(): Response {
+/**
+ * Handle POST /v1/auth/logout — end the identity provider's session, then clear
+ * all session cookies. The cookies are cleared even when ending the provider's
+ * session fails: the browser is signed out of this instance either way.
+ */
+export async function handleLogout(
+  request: Request,
+  provider: IdentityProvider,
+): Promise<Response> {
+  if (provider.endSession) {
+    try {
+      await provider.endSession(request);
+    } catch (err) {
+      log.error("[nimblebrain] Sign-out could not end the identity provider session", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
   const res = json<AuthOkResponse>({ ok: true });
   // Clear nb_session for both SameSite modes (covers Strict and Lax)
   res.headers.append("Set-Cookie", "nb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");

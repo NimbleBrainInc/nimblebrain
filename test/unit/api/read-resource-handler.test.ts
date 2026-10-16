@@ -10,18 +10,27 @@ import {
   setArtifactResolver,
 } from "../../../src/host-resources/artifacts/index.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
-import type { ResourceData } from "../../../src/tools/types.ts";
+import type { ToolRegistry } from "../../../src/tools/registry.ts";
+import type { ResourceData, ToolSource } from "../../../src/tools/types.ts";
 import { bytesToBase64 } from "../../../src/util/base64.ts";
+import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { readJson } from "../../helpers/http.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
+import { stub } from "../../helpers/stub.ts";
+import { makeWorkspace } from "../../helpers/test-workspace.ts";
 
 /**
  * Inject a fake `artifact://` resolver whose `read` runs `impl`. Only `read` is
- * exercised by the handler, so a partial cast is the whole seam.
+ * exercised by the handler, so a stub with `read` alone is the whole seam.
  */
-function stubArtifactResolver(impl: (uri: string, ws: string) => unknown): void {
-  setArtifactResolver({
-    read: async (uri: string, ws: string) => impl(uri, ws),
-  } as unknown as ArtifactResolver);
+function stubArtifactResolver(
+  impl: (uri: string, ws: string) => Awaited<ReturnType<ArtifactResolver["read"]>>,
+): void {
+  setArtifactResolver(
+    stub<ArtifactResolver>({
+      read: async (uri: string, ws: string) => impl(uri, ws),
+    }),
+  );
 }
 
 interface StubOptions {
@@ -45,12 +54,13 @@ function makeStubRuntime(opts: StubOptions = {}): Runtime {
   const identitySources = new Set(opts.identitySources ?? []);
   const memberOf = opts.memberOf ?? [];
   const recoverable = new Set(opts.recoverable ?? []);
-  const registry = {
+  const registry = stub<ToolRegistry>({
     hasSource: (name: string) => sources.has(name),
     hasEstablishedSource: (name: string) => sources.has(name),
-  };
-  return {
-    getIdentitySource: (name: string) => (identitySources.has(name) ? { name } : undefined),
+  });
+  return stub<Runtime>({
+    getIdentitySource: (name: string) =>
+      identitySources.has(name) ? stub<ToolSource>({ name }) : undefined,
     ensureWorkspaceRegistry: async () => registry,
     // Mirrors the real contract: true when already registered, otherwise a
     // best-effort re-spawn reporting whether the source is registered after it.
@@ -60,9 +70,10 @@ function makeStubRuntime(opts: StubOptions = {}): Runtime {
       sources.add(name);
       return true;
     },
-    getWorkspaceStore: () => ({
-      getWorkspacesForUser: async () => memberOf.map((id) => ({ id })),
-    }),
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({
+        getWorkspacesForUser: async () => memberOf.map((id) => makeWorkspace({ id })),
+      }),
     readAppResource: async (server: string, uri: string, workspaceId: string) => {
       opts.captureCall?.({ server, uri, workspaceId });
       return opts.resource === undefined ? null : opts.resource;
@@ -71,7 +82,7 @@ function makeStubRuntime(opts: StubOptions = {}): Runtime {
       opts.captureIdentityCall?.({ server, uri });
       return opts.resource === undefined ? null : opts.resource;
     },
-  } as unknown as Runtime;
+  });
 }
 
 function req(body: unknown): Request {
@@ -246,7 +257,7 @@ describe("handleReadResource", () => {
     const res = await handleReadResource(
       req({ server: "ws_0073c806fc50dc07-synapse-collateral", uri: "collateral://exports/e.pdf" }),
       runtime,
-      { workspaceId: "ws_007dc0488ce56f9e", identity: { id: "u1" } as never },
+      { workspaceId: "ws_007dc0488ce56f9e", identity: makeIdentity({ id: "u1" }) },
     );
     expect(res.status).toBe(400);
     const body = await readJson<ApiErrorBody>(res);
@@ -270,7 +281,7 @@ describe("handleReadResource", () => {
     const res = await handleReadResource(
       req({ server: "synapse-collateral", uri: "collateral://exports/e.pdf" }),
       runtime,
-      { workspaceId: "ws_0073c806fc50dc07", identity: { id: "u1" } as never },
+      { workspaceId: "ws_0073c806fc50dc07", identity: makeIdentity({ id: "u1" }) },
     );
     expect(res.status).toBe(200);
     expect(calls).toEqual([

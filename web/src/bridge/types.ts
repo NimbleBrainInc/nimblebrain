@@ -33,7 +33,6 @@ export type {
   SynapseRequestFileMessage,
   SynapseUploadFilesMessage,
   ToolsCallMessage,
-  UiActionMessage,
   UiKeydownMessage,
   UiMessageMessage,
   UiOpenLinkMessage,
@@ -62,8 +61,19 @@ export interface BridgeCallbacks {
   onChat?: (message: string) => void;
   /** Called when the iframe requests a resize (inline views). */
   onResize?: (height: number) => void;
-  /** Called when the iframe requests a semantic action. `params.serverName` is the sending view's server, set by the bridge. */
-  onAction?: (action: string, params: Record<string, unknown>) => void;
+  /**
+   * Called when the app asks to open what a URI names (`ai.nimblebrain/open`).
+   * Resolves once the destination is on screen; rejects with the reason the
+   * app is told when nothing shows it.
+   */
+  onOpen?: (uri: string) => Promise<void>;
+  /**
+   * Called when the app asks to open its connector's settings
+   * (`ai.nimblebrain/open-connector-settings`). `serverName` is the sending
+   * view's server, set by the bridge, so an app opens only its own. Rejects when
+   * the connector has no settings page.
+   */
+  onOpenConnectorSettings?: (serverName: string) => Promise<void>;
   /** Called when the iframe confirms handshake complete. */
   onInitialized?: () => void;
   /**

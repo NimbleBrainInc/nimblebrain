@@ -18,14 +18,14 @@
  * Placements: sidebar files link at priority 3
  */
 
-import { structuredContent, textContent } from "../../engine/content-helpers.ts";
-import type { ContentBlock, EventSink, ToolResult } from "../../engine/types.ts";
+import { textContent } from "../../engine/content-helpers.ts";
+import type { ContentBlock, EventSink } from "../../engine/types.ts";
 import { extractPdfPages, extractText } from "../../files/extract.ts";
 import { IMAGE_TYPES, isExtractable, PDF_TYPES } from "../../files/ingest.ts";
 import { isTextMime, resolveMimeType } from "../../files/mime.ts";
 import type { FileStore } from "../../files/store.ts";
 import type { FileEntry } from "../../files/types.ts";
-import { fileIdToUri, uriToFileId } from "../../files/uri.ts";
+import { FILE_URI_SCHEME, fileIdToUri, uriToFileId } from "../../files/uri.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import {
@@ -34,31 +34,35 @@ import {
   type InProcessResource,
   type InProcessTool,
   MCP_APP_MIME_TYPE,
+  type ToolErrorResult,
+  type ToolSuccessResult,
+  type TypedToolResult,
   typedTool,
 } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import {
   FilesCreateFolderInput,
   FilesCreateInput,
-  type FilesCreateOutput,
+  FilesCreateOutput,
   FilesDeleteFolderInput,
-  type FilesDeleteFolderOutput,
+  FilesDeleteFolderOutput,
   FilesDeleteInput,
-  type FilesDeleteOutput,
-  type FilesFolderOutput,
+  FilesDeleteOutput,
+  FilesFolderOutput,
   FilesInfoInput,
-  type FilesInfoOutput,
+  FilesInfoOutput,
   FilesListInput,
-  type FilesListOutput,
+  FilesListOutput,
   FilesMoveInput,
-  type FilesMoveOutput,
+  FilesMoveOutput,
   FilesReadInput,
+  FilesReadOutput,
   FilesReadPdfPagesInput,
-  type FilesReadPdfPagesOutput,
+  FilesReadPdfPagesOutput,
   FilesSearchInput,
-  type FilesSearchOutput,
+  FilesSearchOutput,
   FilesTagInput,
-  type FilesTagOutput,
+  FilesTagOutput,
   FilesUpdateFolderInput,
 } from "../schemas/files.ts";
 import {
@@ -107,6 +111,30 @@ async function handleSearch(store: FileStore, args: FilesSearchInput): Promise<F
   return { files: files.slice(0, limit), total: files.length };
 }
 
+/**
+ * A success: the model reads `data` as JSON text, and the SDK checks
+ * `structuredContent` against the tool's output schema.
+ */
+function ok<T>(data: T): ToolSuccessResult<T> {
+  return {
+    content: textContent(JSON.stringify(data, null, 2)),
+    structuredContent: data,
+    isError: false,
+  };
+}
+
+function fail(message: string): ToolErrorResult {
+  return { content: textContent(JSON.stringify({ error: message })), isError: true };
+}
+
+function notFound(id: string): ToolErrorResult {
+  return fail(`File not found: ${id}`);
+}
+
+function failure(err: unknown): ToolErrorResult {
+  return fail(err instanceof Error ? err.message : String(err));
+}
+
 function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1_048_576) return `${Math.round(bytes / 1024)} KB`;
@@ -130,17 +158,11 @@ function humanSize(bytes: number): string {
 async function handleRead(
   store: FileStore,
   maxExtractedTextSize: number,
-  args: { id: string },
-): Promise<ToolResult> {
-  // `findEntry` so a missing id is a clean "not found" without touching
-  // bytes. Mirrors the prior behavior of the pre-change `readFile` throw.
+  args: FilesReadInput,
+): Promise<TypedToolResult<typeof FilesReadOutput>> {
+  // `findEntry` so a missing id is a clean "not found" without touching bytes.
   const entry = await store.findEntry(args.id);
-  if (!entry) {
-    return {
-      content: textContent(JSON.stringify({ error: `File not found: ${args.id}` })),
-      isError: true,
-    };
-  }
+  if (!entry) return notFound(args.id);
 
   const sizeText = humanSize(entry.size);
   const intro = `Read ${entry.filename} (${sizeText}, ${entry.mimeType}).`;
@@ -161,7 +183,7 @@ async function handleRead(
     description: sizeText,
   } as ContentBlock;
 
-  const structured: Record<string, unknown> = {
+  const structured: FilesReadOutput = {
     id: entry.id,
     filename: entry.filename,
     mimeType: entry.mimeType,
@@ -222,35 +244,18 @@ async function handleRead(
 async function handleReadPdfPages(
   store: FileStore,
   args: FilesReadPdfPagesInput,
-): Promise<ToolResult> {
+): Promise<TypedToolResult<typeof FilesReadPdfPagesOutput>> {
   const entry = await store.findEntry(args.id);
-  if (!entry) {
-    return {
-      content: textContent(JSON.stringify({ error: `File not found: ${args.id}` })),
-      isError: true,
-    };
-  }
+  if (!entry) return notFound(args.id);
 
   if (!PDF_TYPES.has(entry.mimeType)) {
-    return {
-      content: textContent(
-        JSON.stringify({ error: `File is not a PDF: ${entry.filename} (${entry.mimeType})` }),
-      ),
-      isError: true,
-    };
+    return fail(`File is not a PDF: ${entry.filename} (${entry.mimeType})`);
   }
 
   const requestedPages = Array.from(new Set(args.pages)).sort((a, b) => a - b);
   const read = await store.readFile(args.id);
   const extracted = await extractPdfPages(read.data, requestedPages);
-  if (!extracted) {
-    return {
-      content: textContent(
-        JSON.stringify({ error: `PDF page text extraction failed: ${entry.id}` }),
-      ),
-      isError: true,
-    };
-  }
+  if (!extracted) return fail(`PDF page text extraction failed: ${entry.id}`);
 
   const sizeText = humanSize(entry.size);
   const link: ContentBlock = {
@@ -289,7 +294,7 @@ async function handleReadPdfPages(
 
   return {
     content: [link, { type: "text", text }],
-    structuredContent: structuredContent(out),
+    structuredContent: out,
     isError: false,
   };
 }
@@ -390,7 +395,7 @@ async function handleCreate(
   return { id: saved.id, filename: manifest.filename, size: saved.size, folderId };
 }
 
-async function handleInfo(store: FileStore, args: { id: string }): Promise<FilesInfoOutput> {
+async function handleInfo(store: FileStore, args: FilesInfoInput): Promise<FilesInfoOutput> {
   const entry = await store.findEntry(args.id);
   if (!entry) {
     throw new Error(`File not found: ${args.id}`);
@@ -415,7 +420,7 @@ async function handleTag(store: FileStore, args: FilesTagInput): Promise<FilesTa
   return { id: args.id, tags: newTags };
 }
 
-async function handleDelete(store: FileStore, args: { id: string }): Promise<FilesDeleteOutput> {
+async function handleDelete(store: FileStore, args: FilesDeleteInput): Promise<FilesDeleteOutput> {
   const entry = await store.findEntry(args.id);
   if (!entry) {
     throw new Error(`File not found: ${args.id}`);
@@ -475,14 +480,6 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     return run;
   }
 
-  function ok(data: object): ToolResult {
-    return { content: textContent(JSON.stringify(data, null, 2)), isError: false };
-  }
-
-  function fail(message: string): ToolResult {
-    return { content: textContent(JSON.stringify({ error: message })), isError: true };
-  }
-
   const tools: InProcessTool[] = [
     typedTool({
       name: "list",
@@ -491,12 +488,13 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
         "filtered by text, kind, source, conversation, run, creation time, tags, or MIME type, " +
         "sorted and paged. Each file carries its folder path, and the result counts matches by kind and source.",
       inputSchema: FilesListInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesListOutput,
+      handler: async (input) => {
         try {
           const out: FilesListOutput = await listFiles(getStore(), input);
           return ok(out);
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -505,11 +503,12 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       description:
         "Search files by keyword. Case-insensitive substring match on filename, description, and tags.",
       inputSchema: FilesSearchInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesSearchOutput,
+      handler: async (input) => {
         try {
           return ok(await handleSearch(getStore(), input));
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -523,11 +522,12 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
         "is returned — images attached to a user message are delivered to the model via native " +
         "file input on the next turn, not through this tool.",
       inputSchema: FilesReadInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesReadOutput,
+      handler: async (input) => {
         try {
           return await handleRead(getStore(), runtime.getFilesConfig().maxExtractedTextSize, input);
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -538,11 +538,12 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
         "Use this for oversized PDFs or when the user asks about pages beyond the truncated attachment preview. " +
         "Returns bounded per-page text only, never the whole PDF or base64 bytes. Max 10 pages per call.",
       inputSchema: FilesReadPdfPagesInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesReadPdfPagesOutput,
+      handler: async (input) => {
         try {
           return await handleReadPdfPages(getStore(), input);
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -552,7 +553,8 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
         "Create a new file in your file store. `manifest` is the file metadata; `body` is the content — " +
         'base64 by default, or written verbatim when you pass encoding: "text" (use that for markdown, code, or anything else you are composing yourself).',
       inputSchema: FilesCreateInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesCreateOutput,
+      handler: async (input) => {
         try {
           return ok(
             await handleCreate(getStore(), input, (path) =>
@@ -560,7 +562,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
             ),
           );
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -568,11 +570,12 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       name: "info",
       description: "Get file metadata by ID (no file content returned).",
       inputSchema: FilesInfoInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesInfoOutput,
+      handler: async (input) => {
         try {
           return ok(await handleInfo(getStore(), input));
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -580,11 +583,12 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       name: "tag",
       description: "Add or remove tags on a file.",
       inputSchema: FilesTagInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesTagOutput,
+      handler: async (input) => {
         try {
           return ok(await handleTag(getStore(), input));
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -593,11 +597,12 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       description:
         "Delete a file by ID. Removes the file from disk and marks it as deleted in the registry.",
       inputSchema: FilesDeleteInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesDeleteOutput,
+      handler: async (input) => {
         try {
           return ok(await handleDelete(getStore(), input));
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -606,7 +611,8 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       description:
         'Move files into a folder, by id; "root" is the top level. Every id must name one of your files, or none moves.',
       inputSchema: FilesMoveInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesMoveOutput,
+      handler: async (input) => {
         try {
           const { ids, folderId } = input;
           const out: FilesMoveOutput = {
@@ -615,7 +621,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
           };
           return ok(out);
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -624,7 +630,8 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       description:
         "Create a folder, at the top level or inside `parentId`. A name must be unique among the folders beside it. To put a new file in a folder by path, pass `manifest.folder` to `create` instead; it creates missing folders.",
       inputSchema: FilesCreateFolderInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesFolderOutput,
+      handler: async (input) => {
         try {
           const { manifest } = input;
           const out: FilesFolderOutput = await folderWrite((store) =>
@@ -632,7 +639,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
           );
           return ok(out);
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -641,7 +648,8 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       description:
         'Rename a folder (`manifest.name`) or move it (`manifest.parentId`; "root" is the top level). Its files and folders go with it.',
       inputSchema: FilesUpdateFolderInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesFolderOutput,
+      handler: async (input) => {
         try {
           const { id, manifest } = input;
           const out: FilesFolderOutput = await folderWrite((store) =>
@@ -649,7 +657,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
           );
           return ok(out);
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -658,14 +666,15 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       description:
         "Delete an empty folder. A folder that holds files or folders is refused; move or delete what is inside first.",
       inputSchema: FilesDeleteFolderInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: FilesDeleteFolderOutput,
+      handler: async (input) => {
         try {
           const { id } = input;
           await folderWrite((store) => deleteFolder(store, id));
           const out: FilesDeleteFolderOutput = { deleted: true };
           return ok(out);
         } catch (err) {
-          return fail(err instanceof Error ? err.message : String(err));
+          return failure(err);
         }
       },
     }),
@@ -717,6 +726,9 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       resources,
       listResources: listResourcesFn,
       resourceHandler,
+      // The shape the handler above serves, advertised so `open` can find the
+      // app that shows a `files://` URI (ADR-0052).
+      templates: [{ uriTemplate: `${FILE_URI_SCHEME}://{id}`, name: "file" }],
       placements: [
         {
           slot: "sidebar",

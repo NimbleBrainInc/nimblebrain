@@ -6,7 +6,12 @@
  * real `McpSource` and handshake.
  */
 
-import { InMemoryTransport, Server, type ServerCapabilities } from "@modelcontextprotocol/server";
+import {
+  InMemoryTransport,
+  type Resource,
+  Server,
+  type ServerCapabilities,
+} from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { FACETS_EXTENSION_ID } from "../../src/services/facets-extension.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
@@ -26,7 +31,7 @@ export interface FacetsServerOptions {
   /** Whether the server advertises the extension. Default: true. */
   advertises?: boolean;
   /** The `resources/list` entries, read on each request so a test can change them. */
-  resources: () => unknown[];
+  resources: () => Resource[];
   /** The text a read of `uri` returns, read on each request. May wait or throw. */
   read: (uri: string) => string | Promise<string>;
 }
@@ -50,7 +55,7 @@ export async function startFacetsSource(
         const server = new Server({ name, version: "1.0.0" }, { capabilities });
         server.setRequestHandler("resources/list", async () => {
           listCount++;
-          return { resources: opts.resources() as never[] };
+          return { resources: opts.resources() };
         });
         server.setRequestHandler("resources/read", async (request) => {
           reads.push(request.params.uri);

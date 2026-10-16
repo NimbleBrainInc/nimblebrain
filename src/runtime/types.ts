@@ -357,10 +357,11 @@ export interface ChatRequest {
  * Detailed usage breakdown for a single chat turn.
  *
  * Carries the canonical TokenUsage plus runtime-added fields. NO costUsd —
- * cost is a derived value computed at the API boundary from
- * `cost(model, usage)`. Storing it here would invite the same drift bug
- * that double-billed cache tokens (issue #140): a stored derived value
- * that consumers forgot to refresh when its inputs changed.
+ * a turn's cost is `ChatResult.costUsd`, priced call by call, because a sum
+ * of calls' tokens does not determine their price once a model has
+ * prompt-length rate cards. Storing it here would also invite the drift bug
+ * that double-billed cache tokens (issue #140): a stored derived value that
+ * consumers forgot to refresh when its inputs changed.
  */
 export interface TurnUsage extends TokenUsage {
   model: string;
@@ -391,10 +392,18 @@ export interface ChatResult {
     ms: number;
     /** Structured failure reason when `ok === false`. See ToolCallRecord.errorReason. */
     errorReason?: string;
+    /** The call did not run; it waited for its tool's guidance. See ToolCallRecord.held. */
+    held?: true;
   }>;
   stopReason: string;
   /** Detailed usage breakdown for this turn. */
   usage: TurnUsage;
+  /**
+   * The run's cost in USD: each model call priced on its own rate card, then
+   * summed. Not derivable from `usage`, which sums the calls' tokens, once a
+   * model's price depends on prompt length.
+   */
+  costUsd: number;
 }
 
 /**
@@ -454,6 +463,11 @@ export interface TaskRequest {
    */
   workspaceId?: string;
   model?: string;
+  /**
+   * Reasoning depth for this run, in place of `RuntimeConfig.thinkingEffort`.
+   * Absent = the configured depth. See `RunSpec.thinkingEffort`.
+   */
+  thinkingEffort?: ThinkingEffort;
   maxIterations?: number;
   /**
    * Input tokens the whole run may spend, summed over every model call. Before
@@ -472,6 +486,12 @@ export interface TaskRequest {
   spendAccounts?: SpendAccount[];
   /** Glob patterns filtering which tools are available. Matches use the same logic as chat. */
   allowedTools?: string[];
+  /**
+   * Skills, by catalog name, the run is given in full in its system prompt,
+   * before its first model call. A name the workspace does not offer refuses the
+   * run (`DeclaredSkillsUnavailableError`).
+   */
+  skills?: string[];
   /**
    * Arbitrary metadata. The tasks executor stamps `source` and
    * `taskId` here so the run is correlated to its task in logs
@@ -545,6 +565,8 @@ export interface TaskResult {
     ms: number;
     /** Structured failure reason when `ok === false`. See ToolCallRecord.errorReason. */
     errorReason?: string;
+    /** The call did not run; it waited for its tool's guidance. See ToolCallRecord.held. */
+    held?: true;
   }>;
   stopReason: string;
   /**
@@ -558,4 +580,17 @@ export interface TaskResult {
   /** The account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
   usage: TurnUsage;
+  /** The run's cost in USD; see `ChatResult.costUsd`. */
+  costUsd: number;
+  /**
+   * Every skill the run was given, or that missed it, in order: the ones it
+   * declared, the ones delivered before a held call or after a promotion, and
+   * the ones it loaded from the catalog. A task run has no conversation log, so
+   * this is where its skill loads are read back.
+   */
+  skillsDelivered?: Array<{
+    name: string;
+    loadedBy: "declared" | "before_call" | "tool_use" | "activation";
+    status?: "fetch_failed" | "capped" | "renamed_unheld";
+  }>;
 }

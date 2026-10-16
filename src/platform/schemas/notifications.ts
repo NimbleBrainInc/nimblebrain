@@ -1,5 +1,5 @@
 import { type Static, Type } from "@sinclair/typebox";
-import { StringEnum } from "./_shared.ts";
+import { ObjectUnion, StringEnum } from "./_shared.ts";
 
 /**
  * Canonical urgency vocabulary, ordered least to most urgent. Single source of
@@ -105,7 +105,11 @@ export const NotificationsMarkReadInput = Type.Object(
 );
 export type NotificationsMarkReadInput = Static<typeof NotificationsMarkReadInput>;
 
-// -- Output types (AGENTS.md 2.1) -----------------------------------------
+// -- Output schemas (AGENTS.md 2.1) ---------------------------------------
+//
+// Every output here stays open (no `additionalProperties: false`) and carries
+// no length or pattern bound: the inbox and the delivery ledger are read back
+// from disk, and a stored value an input bound would refuse must still list.
 
 /**
  * Where one route target stands for one notification.
@@ -131,13 +135,18 @@ export type NotificationsMarkReadInput = Static<typeof NotificationsMarkReadInpu
  * window lives only in the memory of the process that opened it. There is no
  * queue anywhere else holding either fact.
  */
-export type DeliveryOutcome =
-  | "pending"
-  | "delivered"
-  | "deferred"
-  | "denied"
-  | "skipped"
-  | "failed";
+export const DELIVERY_OUTCOMES = [
+  "pending",
+  "delivered",
+  "deferred",
+  "denied",
+  "skipped",
+  "failed",
+] as const;
+export type DeliveryOutcome = (typeof DELIVERY_OUTCOMES)[number];
+
+/** Which kind of target a route's `deliver` entry names. */
+export const DELIVERY_TARGET_KINDS = ["tool", "agent"] as const;
 
 /**
  * How one route target fared for one notification.
@@ -157,37 +166,42 @@ export type DeliveryOutcome =
  * It lives in this directory rather than in `src/notifications/` because it
  * crosses to the web on `NotificationView`, and this is the one directory the
  * web codegen compiles; the domain re-exports it.
+ *
+ * Every row the ledger has ever held carries the required fields: the
+ * delivery writer that introduced the ledger stamps all of them, and nothing
+ * wrote a row before it.
  */
-export interface DeliveryRecord {
+export const DeliveryRecord = Type.Object({
   /** The route that matched, from the workspace record. */
-  routeId: string;
+  routeId: Type.String(),
   /** What the route aimed at — a tool name, or a task id. */
-  target: string;
+  target: Type.String(),
   /** Position in the route's `deliver` list. Part of the row's identity. */
-  index: number;
+  index: Type.Number(),
   /** Which kind of target `target` names. */
-  kind: "tool" | "agent";
-  attempts: number;
-  lastError?: string;
-  outcome: DeliveryOutcome;
+  kind: StringEnum(DELIVERY_TARGET_KINDS),
+  attempts: Type.Number(),
+  lastError: Type.Optional(Type.String()),
+  outcome: StringEnum(DELIVERY_OUTCOMES),
   /**
    * Why, for a non-`delivered` outcome — the dispatch's own classification
    * (`owner_not_member`, `timeout`, `tool_error`, …), or `awaiting_wake` for a
    * deferred agent target. Opaque to the browser, which renders it as text.
    */
-  classification?: string;
+  classification: Type.Optional(Type.String()),
   /** ISO 8601 instant this row last changed. */
-  updatedAt: string;
+  updatedAt: Type.String(),
   /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
-  nextAttemptAt?: string;
+  nextAttemptAt: Type.Optional(Type.String()),
   /**
    * The task run this notification's batch started. Agent targets only,
    * and present only once a run actually started — which is exactly the
    * question an operator asks of a route that wakes a task, and the
    * answer `tasks__run_result` is addressed with.
    */
-  runId?: string;
-}
+  runId: Type.Optional(Type.String()),
+});
+export type DeliveryRecord = Static<typeof DeliveryRecord>;
 
 /**
  * The wire shape of one inbox item — what `notifications__list` returns, and
@@ -202,17 +216,17 @@ export interface DeliveryRecord {
  * tool result's `structuredContent` does, and carries exactly as much
  * authority: it is data a connector wrote, not an instruction.
  */
-export interface NotificationView {
+export const NotificationView = Type.Object({
   /** `<source>:<eventId>`. What `notifications__mark_read` is addressed with. */
-  id: string;
+  id: Type.String(),
   /** Monotonic position in this workspace's inbox. */
-  seq: number;
+  seq: Type.Number(),
   /** The connector that emitted it, stamped by the runtime. */
-  source: string;
+  source: Type.String(),
   /** The server's own event name. */
-  name: string;
+  name: Type.String(),
   /** The level the emitting connector chose. */
-  level: NotificationLevel;
+  level: StringEnum(NOTIFICATION_LEVELS),
   /**
    * The level routes were matched against, when the workspace's ceiling for
    * this source held it below {@link level}. Absent when nothing was clamped,
@@ -224,15 +238,15 @@ export interface NotificationView {
    * what explains why one did or did not fire. Lowering a ceiling afterwards
    * does not rewrite history.
    */
-  effectiveLevel?: NotificationLevel;
-  title: string;
-  subject?: string;
-  body?: string;
-  link?: { resource: string };
+  effectiveLevel: Type.Optional(StringEnum(NOTIFICATION_LEVELS)),
+  title: Type.String(),
+  subject: Type.Optional(Type.String()),
+  body: Type.Optional(Type.String()),
+  link: Type.Optional(Type.Object({ resource: Type.String() })),
   /** When the emitting server says the fact happened. */
-  timestamp: string;
+  timestamp: Type.String(),
   /** When this runtime wrote it. */
-  receivedAt: string;
+  receivedAt: Type.String(),
   /**
    * When somebody marked it read. **Read state is shared across the
    * workspace**, deliberately: a notification is authored by a connector, not
@@ -241,48 +255,51 @@ export interface NotificationView {
    * which is the field that keeps the choice visible in the record instead of
    * implied by its absence.
    */
-  readAt?: string;
+  readAt: Type.Optional(Type.String()),
   /** The member who marked it read. Absent while unread. */
-  readBy?: string;
+  readBy: Type.Optional(Type.String()),
   /**
    * One row per route target that matched. Absent while none has — an empty
    * ledger is not a fact worth rendering, and omitting it keeps every item in
    * a routeless workspace one field smaller.
    */
-  deliveries?: DeliveryRecord[];
-  data: Record<string, unknown>;
-}
+  deliveries: Type.Optional(Type.Array(DeliveryRecord)),
+  data: Type.Record(Type.String(), Type.Unknown()),
+});
+export type NotificationView = Static<typeof NotificationView>;
 
-export interface NotificationsListOutput {
-  notifications: NotificationView[];
+export const NotificationsListOutput = Type.Object({
+  notifications: Type.Array(NotificationView),
   /**
    * Items nobody has marked read in this workspace's whole inbox, whatever
    * the filters. A page is capped, so its own unread rows are not this count.
    */
-  unread: number;
+  unread: Type.Number(),
   /**
    * Whether more items match these filters beyond this page, in the direction
    * it was read. Newest first, that means a `before` read would return more.
    */
-  hasMore: boolean;
+  hasMore: Type.Boolean(),
   /**
    * Highest `seq` in this page, absent when the page is empty. Pass it back as
    * `after` to continue — forward through a backlog under `order: "asc"`, or
    * as a "what has arrived since" mark under the default newest-first order,
    * which does not walk backwards.
    */
-  cursor?: number;
-}
+  cursor: Type.Optional(Type.Number()),
+});
+export type NotificationsListOutput = Static<typeof NotificationsListOutput>;
 
-export interface NotificationsMarkReadOutput {
+export const NotificationsMarkReadOutput = Type.Object({
   /** Ids that were unread in this workspace and are now read. */
-  marked: string[];
+  marked: Type.Array(Type.String()),
   /**
    * Ids that named nothing markable here — unknown, already read, malformed,
    * or belonging to another workspace, which this session cannot reach.
    */
-  skipped: string[];
-}
+  skipped: Type.Array(Type.String()),
+});
+export type NotificationsMarkReadOutput = Static<typeof NotificationsMarkReadOutput>;
 
 // -- The settings surface: source ceilings and routes ----------------------
 
@@ -510,36 +527,38 @@ export type NotificationsSendTestInput = Static<typeof NotificationsSendTestInpu
  * ceiling writes no ledger row at all, which from the outside is
  * indistinguishable from a route that fired and delivered nothing.
  */
-export interface NotificationsSendTestOutput {
+export const NotificationsSendTestOutput = Type.Object({
   /** `<source>:<eventId>` of the item written to the inbox. */
-  notificationId: string;
+  notificationId: Type.String(),
   /** The source it was attributed to, and whose ceiling therefore applied. */
-  source: string;
+  source: Type.String(),
   /** The level the item was stored at, after the ceiling clamped it. */
-  effectiveLevel: NotificationLevel;
+  effectiveLevel: StringEnum(NOTIFICATION_LEVELS),
   /** Whether the route matched the test item at all. */
-  matched: boolean;
+  matched: Type.Boolean(),
   /** Why not, when `matched` is false — operator-facing prose. */
-  reason?: string;
+  reason: Type.Optional(Type.String()),
   /** Each target's ledger row, as it stood when the dispatch returned. */
-  deliveries: DeliveryRecord[];
-}
+  deliveries: Type.Array(DeliveryRecord),
+});
+export type NotificationsSendTestOutput = Static<typeof NotificationsSendTestOutput>;
 
 // -- Settings output ------------------------------------------------------
 
 /** One connector that declares an outbox, and the ceiling it is held to. */
-export interface NotificationSourceView {
+export const NotificationSourceView = Type.Object({
   /** The connector's server name — what the runtime stamps on an item's `source`. */
-  source: string;
+  source: Type.String(),
   /** Display name from the catalog, falling back to the server name. */
-  label: string;
+  label: Type.String(),
   /** What the connector says its outbox carries. Operator-facing prose. */
-  description?: string;
+  description: Type.Optional(Type.String()),
   /** The effective ceiling: what an admin set, or {@link DEFAULT_SOURCE_MAX_LEVEL}. */
-  maxLevel: NotificationLevel;
+  maxLevel: StringEnum(NOTIFICATION_LEVELS),
   /** False while the source is still at the default — nobody has raised it. */
-  configured: boolean;
-}
+  configured: Type.Boolean(),
+});
+export type NotificationSourceView = Static<typeof NotificationSourceView>;
 
 /**
  * Why a route is dormant, written by the runtime rather than by an admin.
@@ -550,42 +569,76 @@ export interface NotificationSourceView {
  * the author is a member again — the same self-healing-on-re-add a scheduled
  * run gets — so it is a report, not a setting.
  */
-export interface NotificationRouteDisabled {
+export const NotificationRouteDisabled = Type.Object({
   /** One line an admin can act on. */
-  reason: string;
+  reason: Type.String(),
   /**
    * ISO 8601 instant the runtime FIRST observed the condition since the note
    * was last cleared. Re-observing it does not move the timestamp: the note is
    * re-derived on every matching notification, and rewriting the operator
    * record each time would put it on the delivery path.
    */
-  at: string;
-}
+  at: Type.String(),
+});
+export type NotificationRouteDisabled = Static<typeof NotificationRouteDisabled>;
+
+/**
+ * A stored route's match, as the settings read returns it: the same fields as
+ * {@link NotificationRouteMatch}, open and without the write-time bounds, so a
+ * route stored under an older bound still lists.
+ */
+const NotificationRouteMatchView = Type.Object({
+  source: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
+  level: Type.Optional(StringEnum(NOTIFICATION_LEVELS)),
+});
+
+/**
+ * A stored route's target, as the settings read returns it: the shapes of
+ * {@link NotificationDeliverTarget}, open and without the write-time bounds.
+ *
+ * An `agent` target names its task as `task`. Targets stored under the
+ * `automation` key are rewritten by the v0.35.x boot, which a deployment
+ * holding them upgrades through, so no store this runtime reads holds one.
+ */
+const NotificationDeliverTargetView = ObjectUnion([
+  Type.Object({
+    kind: Type.Literal("tool"),
+    tool: Type.String(),
+    input: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  }),
+  Type.Object({
+    kind: Type.Literal("agent"),
+    task: Type.String(),
+  }),
+]);
 
 /** One stored route, with the principal it dispatches under. */
-export interface NotificationRouteView {
-  id: string;
+export const NotificationRouteView = Type.Object({
+  id: Type.String(),
   /** The admin who last wrote this route. Stamped server-side; never sent. */
-  createdBy: string;
-  match: NotificationRouteMatch;
-  deliver: NotificationDeliverTarget[];
+  createdBy: Type.String(),
+  match: NotificationRouteMatchView,
+  deliver: Type.Array(NotificationDeliverTargetView),
   /** Present while the runtime is refusing to dispatch this route. */
-  disabled?: NotificationRouteDisabled;
-}
+  disabled: Type.Optional(NotificationRouteDisabled),
+});
+export type NotificationRouteView = Static<typeof NotificationRouteView>;
 
 /**
  * Everything the workspace settings surface needs to render and validate the
- * notifications configuration, in one read.
+ * notifications configuration, in one read. `set_source_level` and
+ * `set_routes` return it too, re-read after the write.
  *
  * The pickers and the validator are fed from the same call deliberately: a
  * route the editor could offer but the handler would refuse is the drift this
  * shape exists to prevent.
  */
-export interface NotificationsSettingsOutput {
-  sources: NotificationSourceView[];
-  routes: NotificationRouteView[];
+export const NotificationsSettingsOutput = Type.Object({
+  sources: Type.Array(NotificationSourceView),
+  routes: Type.Array(NotificationRouteView),
   /** Tool names a `kind: "tool"` target may name — this workspace's installed set. */
-  deliverableTools: string[];
+  deliverableTools: Type.Array(Type.String()),
   /**
    * Tasks the caller owns in this workspace, for a `kind: "agent"`
    * target, with whether each one is actually wakeable.
@@ -594,9 +647,11 @@ export interface NotificationsSettingsOutput {
    * refuse every item it is sent, so the editor can say so at write time rather
    * than leaving an operator to find it in the ledger.
    */
-  tasks: { id: string; name: string; eventScheduled: boolean }[];
+  tasks: Type.Array(
+    Type.Object({ id: Type.String(), name: Type.String(), eventScheduled: Type.Boolean() }),
+  ),
   /** The placeholders a tool input may carry. */
-  placeholders: readonly string[];
+  placeholders: Type.Array(Type.String()),
   /**
    * Whether a matching route's targets actually run. True for both kinds: a
    * tool target dispatches, and an agent target wakes the task it names.
@@ -606,5 +661,6 @@ export interface NotificationsSettingsOutput {
    * that has to know the answer from its own version is a client that gets it
    * wrong after a rollback.
    */
-  routesExecuted: boolean;
-}
+  routesExecuted: Type.Boolean(),
+});
+export type NotificationsSettingsOutput = Static<typeof NotificationsSettingsOutput>;

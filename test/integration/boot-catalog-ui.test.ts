@@ -71,19 +71,17 @@ afterEach(() => {
 describe("boot takes an installed connector's host UI from the catalog", () => {
   test("registers a settings placement the catalog gained after install", async () => {
     // The record as the install left it: the sidebar placement only.
-    const installed = {
+    const installed: ConnectorRef = {
       url: UNREACHABLE,
       serverName: slugifyServerName(ID),
       transport: { type: "streamable-http", auth: { type: "bearer", token: "test-token" } },
       oauthScope: "workspace",
       ui: {
-        name: "Outbound",
-        icon: "crosshair",
         placements: [
           { slot: "sidebar.apps", resourceUri: "ui://outbound/main", route: "outbound" },
         ],
       },
-    } as unknown as ConnectorRef;
+    };
     const store = new WorkspaceStore(workDir);
     const ws = await store.create("Fleet");
     await store.update(ws.id, { connectors: [installed] });

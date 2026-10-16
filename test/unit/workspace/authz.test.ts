@@ -88,6 +88,7 @@ describe("canWriteWorkspaceScoped", () => {
   test("fails closed when members is not an array (undefined)", () => {
     // Malformed workspace record: `members` missing. Must deny rather
     // than throw — fail-closed posture for an authorization helper.
+    // biome-ignore lint/plugin/double-cast: a stored workspace record with no members, claimed as a Workspace, which requires them
     const ws = { id: "ws-acme", name: "Acme" } as unknown as Workspace;
     const decision = canWriteWorkspaceScoped(identity("u1", "admin"), ws);
 
@@ -141,6 +142,7 @@ describe("canReadWorkspaceMembers", () => {
     expect(canReadWorkspaceMembers(identity("u3"), ws).allowed).toBe(false);
     expect(canReadWorkspaceMembers(null, ws).allowed).toBe(false);
     expect(canReadWorkspaceMembers(identity("u1"), null).allowed).toBe(false);
+    // biome-ignore lint/plugin/double-cast: a stored workspace record with no members, claimed as a Workspace, which requires them
     const malformed = { ...ws, members: undefined } as unknown as Workspace;
     expect(canReadWorkspaceMembers(identity("u1"), malformed).allowed).toBe(false);
   });

@@ -8,16 +8,11 @@
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 import { realClient } from "./setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+defineHappyDomErrorClasses();
 
 interface Call {
   tool: string;
@@ -53,7 +48,10 @@ mock.module("../src/api/client", () => ({
       return { structuredContent: { workspaceId: "ws_a", members: ROSTER }, isError: false };
     }
     if (args.action === "add_member") {
-      return { structuredContent: { added: { userId: "usr_cy", role: args.role } }, isError: false };
+      return {
+        structuredContent: { added: { userId: "usr_cy", role: args.role } },
+        isError: false,
+      };
     }
     return { structuredContent: { workspace: { id: "ws_a" } }, isError: false };
   },
@@ -122,7 +120,7 @@ async function mount(
   return container;
 }
 
-const win = () => (globalThis as unknown as { window: Window & typeof globalThis }).window;
+const win = () => window;
 
 async function type(el: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(win().HTMLInputElement.prototype, "value")?.set;

@@ -1,5 +1,10 @@
 import { Check, Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import type {
+  HooksListOutput,
+  HooksRotateOutput,
+  HookWebhook as Webhook,
+} from "../../_generated/platform-schemas/hooks";
 import { callTool } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Button } from "../../components/ui/button";
@@ -30,17 +35,6 @@ import {
  * whether the URL is returned at all. Only the second is a control — a hidden
  * tab is a hidden tab, not a permission.
  */
-
-interface Webhook {
-  connector: string;
-  vendor: string;
-  route: string;
-  /** Null when the registration predates delivery ids; rotating mints one. */
-  url: string | null;
-  createdAt: string;
-  rotatedAt: string | null;
-  previousStillValid: boolean;
-}
 
 /**
  * The URL with its last path segment, the delivery id that makes it a
@@ -168,12 +162,12 @@ function WebhookRow({
         connector: hook.connector,
         vendor: hook.vendor,
       });
-      const out = parseToolResult<{ registered?: boolean; error?: string | null }>(res);
+      const out = parseToolResult<HooksRotateOutput>(res);
       // A mint the connector did not register is NOT a failure to report as one:
       // the new URL works at the door, and the vendor is still on the old one,
       // which the grace window is holding open. It IS the case that ends with
       // deliveries stopping if nobody acts, so it has to outlive the panel.
-      if (out && out.registered === false) {
+      if (!out.registered) {
         setError(
           `Rotated, but ${appName} did not register the new URL with ${hook.vendor}. ` +
             "The previous URL keeps working until its grace window closes — rotate again once " +
@@ -261,8 +255,7 @@ export function WorkspaceWebhooksTab() {
   const load = useCallback(async () => {
     try {
       const res = await callTool("hooks", "list_webhooks", {});
-      const out = parseToolResult<{ webhooks?: Webhook[] }>(res);
-      setHooks(out?.webhooks ?? []);
+      setHooks(parseToolResult<HooksListOutput>(res).webhooks);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not read this workspace's webhooks");

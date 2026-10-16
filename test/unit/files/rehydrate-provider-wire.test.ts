@@ -4,6 +4,9 @@ import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { StoredMessage } from "../../../src/conversation/types.ts";
 import { rehydrateUserResources } from "../../../src/files/rehydrate.ts";
 import type { FileStore } from "../../../src/files/store.ts";
+import type { FileEntry } from "../../../src/files/types.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import { stub } from "../../helpers/stub.ts";
 
 // Every other test in the suite hands the engine a hand-written mock model, so
 // no real provider converter ever runs. That is why an attachment could stop
@@ -17,15 +20,18 @@ import type { FileStore } from "../../../src/files/store.ts";
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 function storeWith(id: string, data: Buffer, mimeType: string, filename: string): FileStore {
-  const entry = {
+  const entry: FileEntry = {
     id,
     filename,
     mimeType,
     size: data.length,
     tags: [],
+    source: "manual",
+    conversationId: null,
     createdAt: "2026-05-07T00:00:00.000Z",
+    description: null,
   };
-  return {
+  return stub<FileStore>({
     saveFile: () => Promise.reject(new Error("not used")),
     readFile: async (wanted) => {
       if (wanted !== id) throw new Error(`File not found: ${wanted}`);
@@ -34,21 +40,24 @@ function storeWith(id: string, data: Buffer, mimeType: string, filename: string)
     resolveFilePath: () => Promise.reject(new Error("not used")),
     appendRegistry: () => Promise.reject(new Error("not used")),
     readRegistry: () => Promise.reject(new Error("not used")),
-    findEntry: async (wanted) => (wanted === id ? (entry as never) : null),
-    readSidecar: async () => null,
-    writeSidecar: async () => {},
-  } as unknown as FileStore;
+    findEntry: async (wanted) => (wanted === id ? entry : null),
+  });
+}
+
+/** The part of an Anthropic Messages request body these tests read. */
+interface AnthropicRequestBody {
+  messages: Array<{ role: string; content: Array<{ type: string; [k: string]: unknown }> }>;
 }
 
 /** Runs one prompt through the real Anthropic adapter, returning the request body it would send. */
-async function anthropicRequestBody(prompt: LanguageModelV4Message[]): Promise<{
-  messages: Array<{ role: string; content: Array<{ type: string; [k: string]: unknown }> }>;
-}> {
+async function anthropicRequestBody(
+  prompt: LanguageModelV4Message[],
+): Promise<AnthropicRequestBody> {
   let captured: unknown;
   const model = createAnthropic({
     apiKey: "sk-test",
-    fetch: (async (_url: string, init: { body: string }) => {
-      captured = JSON.parse(init.body);
+    fetch: fakeFetch(async (_url, init) => {
+      captured = JSON.parse(String(init?.body));
       return new Response(
         JSON.stringify({
           id: "msg_test",
@@ -61,13 +70,11 @@ async function anthropicRequestBody(prompt: LanguageModelV4Message[]): Promise<{
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
-    }) as unknown as typeof fetch,
+    }),
   }).languageModel("claude-sonnet-4-5");
 
-  await (model as unknown as { doGenerate: (o: unknown) => Promise<unknown> }).doGenerate({
-    prompt,
-  });
-  return captured as never;
+  await model.doGenerate({ prompt });
+  return captured as AnthropicRequestBody;
 }
 
 describe("rehydrated file parts survive a real provider converter", () => {

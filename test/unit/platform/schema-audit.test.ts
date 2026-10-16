@@ -1,16 +1,13 @@
 /**
  * Platform app schema audit.
  *
- * Since InlineSource now validates every tool call against its declared
- * inputSchema, a malformed schema in any app would cause AJV compilation
- * to throw at runtime on the first call — turning a silent bug in one
- * app into a visible failure.
+ * The in-process gate validates every platform tool call against its declared
+ * inputSchema, and refuses every call to a tool whose schema does not compile:
+ * one malformed schema makes that tool unusable.
  *
  * This audit catches that at test time: it iterates every platform app
- * factory, constructs the source, pulls its advertised tools, and forces
- * schema compilation by running validateToolInput against an empty input.
- * We don't care whether validation passes — we care that compilation
- * succeeds (no throw).
+ * factory, constructs the source, pulls its advertised tools, and compiles
+ * each schema under its declared dialect. It must not throw.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -23,7 +20,8 @@ import { createFilesSource } from "../../../src/platform/files/source.ts";
 import { createUsageSource } from "../../../src/platform/usage/source.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
-import { validateToolInput } from "../../../src/tools/validate-input.ts";
+import { compileJsonSchema } from "../../../src/util/json-schema-dialect.ts";
+import { stub } from "../../helpers/stub.ts";
 
 /**
  * Minimal runtime stub sufficient for every synchronous / lazy platform
@@ -37,15 +35,17 @@ import { validateToolInput } from "../../../src/tools/validate-input.ts";
  * `InlineSource` an optional onStop callback factories can wire through.
  */
 function makeRuntime(workDir: string): Runtime {
-  return {
+  return stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceScopedDir: () => workDir,
     getCurrentWorkspaceId: () => "ws_001b7d589bde72e7",
     getCurrentIdentity: () => null,
     getDefaultModel: () => "claude-sonnet-4-6",
     getWorkspaceStore: () => null,
-    chat: async () => ({ content: [], usage: { inputTokens: 0, outputTokens: 0 } }),
-  } as unknown as Runtime;
+    chat: async () => {
+      throw new Error("the schema audit lists tools and runs no chat");
+    },
+  });
 }
 
 async function auditSource(source: McpSource): Promise<void> {
@@ -54,9 +54,7 @@ async function auditSource(source: McpSource): Promise<void> {
     const tools = await source.tools();
     expect(tools.length).toBeGreaterThan(0);
     for (const tool of tools) {
-      // If AJV can't compile the schema, this throws synchronously.
-      // The return value (valid/invalid against {}) is irrelevant here.
-      expect(() => validateToolInput({}, tool.inputSchema)).not.toThrow();
+      expect(() => compileJsonSchema(tool.inputSchema)).not.toThrow();
     }
   } finally {
     await source.stop();

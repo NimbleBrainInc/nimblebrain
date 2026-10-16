@@ -318,6 +318,8 @@ The new entry appears on Settings → Connectors → Browse. Walk through the in
 
 If anything is off, check the API server logs for `[static-source]` / `[connector-directory]` warnings — invalid entries are dropped with a logged reason.
 
+To replace a static-auth connector's OAuth app, open its detail page and edit the **OAuth client**. A new `client_id` reaches the installed connector at once and signs it out, because the vendor does not accept the old client's tokens from the new one, so click **Connect** again. Saving the same `client_id` with a new `client_secret` keeps the connection signed in.
+
 ## Catalog file format
 
 Each file in the catalog directory is a YAML or JSON document with one of these shapes:
@@ -458,6 +460,34 @@ Settings → Connectors → <connector> → Set up
 ```
 
 The modal writes the public `client_id` into `workspace.json → oauthOperatorApps[<id>].clientId` and stores the `client_secret` in the workspace credential store under `operatorSetup.clientSecretKey`. There is no flag-based headless command for an operator OAuth secret — use the Set up modal (or the `manage_connectors` tool action it calls).
+
+The two halves go together. Uninstalling the last connector in the workspace that uses the app removes both the `oauthOperatorApps` record and the `client_secret`, and the uninstall result lists the secret's key with the connector's other removed secrets. The entry then shows **Set up** again, so a reinstall asks for the client id and secret. While another installed connector still uses the app, uninstalling keeps both.
+
+### An OAuth client for the whole instance
+
+When the vendor relationship belongs to the deployment rather than to each workspace, declare the pre-registered OAuth client once in `nimblebrain.json` instead. Use this when one customer's client serves every workspace on their instance, for example a vendor whose client is tied to that customer's account:
+
+```json title="nimblebrain.json"
+{
+  "connectors": {
+    "oauthClients": {
+      "com.example/mcp": {
+        "clientId": "abc123",
+        "clientSecret": { "ref": "credential", "key": "example.client_secret" }
+      }
+    }
+  }
+}
+```
+
+The key is the catalog id of an `auth: static` entry. `clientSecret` takes a literal or an [instance-scope reference](/config/secrets/#instance-scope); left out, it is read from `<CATALOG_ID>_CLIENT_SECRET`, the id upper-cased with each run of other characters turned into `_` (`COM_EXAMPLE_MCP_CLIENT_SECRET` here). With an instance OAuth client declared:
+
+- The entry installs in every workspace with no **Set up** step, and **Set up** is refused for it. A workspace's own record for that id is ignored.
+- It can be a [personal connector](/using/personal-connectors/), so each person signs in with their own account. Flag the entry `personal: true` to offer it there.
+- The installed connector names the client and copies neither its id nor its secret, so changing either is a config change and a restart. Connectors already installed with a workspace's own Set up keep using it.
+- The client is used only for the URL the catalog publishes for its id. A connector at any other URL fails to connect rather than send the secret elsewhere.
+
+Startup fails when a declared client has no `clientId` or no secret. An id the catalog does not publish as `auth: static` is logged and unused.
 
 ## Migrating from a pre-alignment install
 

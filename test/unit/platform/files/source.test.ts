@@ -15,15 +15,22 @@ import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { ContentBlock, ToolResult } from "../../../../src/engine/types.ts";
 import { workspaceFilesDir } from "../../../../src/files/paths.ts";
 import { createFileStore } from "../../../../src/files/store.ts";
+import { DEFAULT_FILE_CONFIG } from "../../../../src/files/types.ts";
 import { createFilesSource } from "../../../../src/platform/files/source.ts";
 import type {
   FilesCreateOutput,
+  FilesInfoOutput,
   FilesReadPdfPagesOutput,
+  FilesSearchOutput,
+  FilesTagOutput,
 } from "../../../../src/platform/schemas/files.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
+import { structuredOutput } from "../../../helpers/tool-result.ts";
 
 /** The owner and focused workspace every handler call in this file runs as. */
 const OWNER_ID = "usr_test";
@@ -51,14 +58,7 @@ function findResourceLink(result: ToolResult): {
   size?: number;
 } {
   for (const block of result.content as ContentBlock[]) {
-    if ((block as { type?: string }).type === "resource_link") {
-      return block as unknown as {
-        uri: string;
-        name: string;
-        mimeType?: string;
-        size?: number;
-      };
-    }
+    if (block.type === "resource_link") return block;
   }
   throw new Error("expected a resource_link block in tool result");
 }
@@ -69,13 +69,13 @@ function makeRuntime(workDir: string): Runtime {
   // where the workspace comes from the request context (see `exec`) and the owner
   // from the current identity. The mock roots each store at the matching workspace
   // partition so the on-disk round-trip is exercised faithfully.
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? OWNER_ID,
     getWorkspaceFileStore: (wsId: string, ownerId: string) =>
       createFileStore(workspaceFilesDir(workDir, wsId, ownerId)),
-    getFilesConfig: () => ({ maxExtractedTextSize: 204_800 }),
-  } as unknown as Runtime;
+    getFilesConfig: () => DEFAULT_FILE_CONFIG,
+  });
 }
 
 /**
@@ -138,6 +138,9 @@ beforeEach(async () => {
   seedWorkspaceRoot(workDir, WS_ID);
   source = createFilesSource(makeRuntime(workDir), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {
@@ -349,6 +352,57 @@ describe("files app", () => {
     expect(parseFirst(created)).toMatchObject({ size: 0 });
   });
 
+  test("search returns matching files and the match count", async () => {
+    const created = await exec("create", {
+      manifest: { filename: "quarterly-report.txt", mimeType: "text/plain" },
+      body: "q3 numbers",
+      encoding: "text",
+    });
+    const { id } = parseFirst(created) as FilesCreateOutput;
+    await exec("create", {
+      manifest: { filename: "unrelated.txt", mimeType: "text/plain" },
+      body: "other",
+      encoding: "text",
+    });
+
+    const result = await exec("search", { query: "quarterly" });
+    expect(result.isError).toBe(false);
+    const structured = structuredOutput<FilesSearchOutput>(result);
+    expect(structured.total).toBe(1);
+    expect(structured.files.map((f) => f.id)).toEqual([id]);
+  });
+
+  test("info returns the file's record", async () => {
+    const created = await exec("create", {
+      manifest: { filename: "notes.md", mimeType: "text/markdown" },
+      body: "# Notes",
+      encoding: "text",
+    });
+    const { id } = parseFirst(created) as FilesCreateOutput;
+
+    const result = await exec("info", { id });
+    expect(result.isError).toBe(false);
+    expect(structuredOutput<FilesInfoOutput>(result)).toMatchObject({
+      id,
+      filename: "notes.md",
+      mimeType: "text/markdown",
+    });
+  });
+
+  test("tag adds and removes tags and returns the result", async () => {
+    const created = await exec("create", {
+      manifest: { filename: "tagged.txt", mimeType: "text/plain" },
+      body: "tag me",
+      encoding: "text",
+    });
+    const { id } = parseFirst(created) as FilesCreateOutput;
+
+    await exec("tag", { id, add: ["draft", "finance"] });
+    const result = await exec("tag", { id, remove: ["draft"] });
+    expect(result.isError).toBe(false);
+    expect(structuredOutput<FilesTagOutput>(result)).toEqual({ id, tags: ["finance"] });
+  });
+
   test("read of nonexistent id surfaces a clean message (not a raw fs error)", async () => {
     const result = await exec("read", { id: "fl_doesnotexist" });
     expect(result.isError).toBe(true);
@@ -387,7 +441,7 @@ describe("files app", () => {
     expect(text).not.toContain("page three should stay hidden");
     expect(JSON.stringify(result)).not.toContain(pdf.toString("base64"));
 
-    const structured = result.structuredContent as unknown as FilesReadPdfPagesOutput;
+    const structured = structuredOutput<FilesReadPdfPagesOutput>(result);
     expect(structured).toMatchObject({
       id,
       filename: "report.pdf",
@@ -423,7 +477,7 @@ describe("files app", () => {
     expect(text).toContain("only page");
     expect(text).toContain("Missing pages: 99 (PDF has 1 page).");
 
-    const structured = result.structuredContent as unknown as FilesReadPdfPagesOutput;
+    const structured = structuredOutput<FilesReadPdfPagesOutput>(result);
     expect(structured.requestedPages).toEqual([1, 99]);
     expect(structured.missingPages).toEqual([99]);
     expect(structured.pages.map((page) => page.page)).toEqual([1]);

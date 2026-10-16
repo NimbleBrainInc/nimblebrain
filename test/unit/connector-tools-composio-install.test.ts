@@ -101,6 +101,8 @@ import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycl
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { UserStore } from "../../src/identity/user.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -112,6 +114,7 @@ import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 // ── Catalog fixture ─────────────────────────────────────────────────
@@ -196,7 +199,7 @@ function buildHarness(): Harness {
   });
   const workspaceRegistry = new ToolRegistry();
 
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
@@ -205,16 +208,17 @@ function buildHarness(): Harness {
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,
     getEventSink: () => new NoopEventSink(),
-    getPermissionStore: () => ({
-      deleteConnector: async () => {},
-      listConnectorGrants: async () => ({}),
-      getConnectorGrants: async () => [],
-      revokeConnector: async () => {},
-    }),
-    getUserStore: () => ({ get: async () => null }),
+    getPermissionStore: () =>
+      stub<PermissionStore>({
+        deleteConnector: async () => {},
+        listConnectorGrants: async () => ({}),
+        getConnectorGrants: async () => [],
+        revokeConnector: async () => {},
+      }),
+    getUserStore: () => stub<UserStore>({ get: async () => null }),
     getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
-  } as unknown as Runtime;
+  });
 
   return { workDir, wsId, workspaceStore, workspaceRegistry, runtime };
 }
@@ -472,10 +476,10 @@ describe("manage_connectors.install (composio-auth)", () => {
     const identities: string[] = [];
     const lifecycle = h.runtime.getLifecycle();
     const realSync = lifecycle.syncBoundSkills.bind(lifecycle);
-    lifecycle.syncBoundSkills = (async (identity: string, ...rest: unknown[]) => {
-      identities.push(identity);
-      return (realSync as unknown as (...a: unknown[]) => Promise<unknown>)(identity, ...rest);
-    }) as typeof lifecycle.syncBoundSkills;
+    lifecycle.syncBoundSkills = async (...args: Parameters<typeof realSync>) => {
+      identities.push(args[0]);
+      return realSync(...args);
+    };
 
     try {
       const forged = {
@@ -488,7 +492,7 @@ describe("manage_connectors.install (composio-auth)", () => {
           auth: "dcr",
           composio: { toolkit: "../../../evil-org/evil-repo/main/payload" },
         },
-      } as unknown as import("../../src/connectors/catalog/types.ts").CatalogListing;
+      };
 
       await buildTool(h).handler({ action: "install", entry: forged, wsId: h.wsId });
 

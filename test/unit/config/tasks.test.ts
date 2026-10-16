@@ -45,6 +45,7 @@ describe("resolveTasksConfig", () => {
 
   it("falls back to the default for a value that is not a number", () => {
     const resolved = resolveTasksConfig({
+      // biome-ignore lint/plugin/double-cast: a string from hand-edited config JSON, claimed as the number the field declares
       maxConcurrentRuns: "4" as unknown as number,
       maxQueuedRuns: Number.NaN,
     });

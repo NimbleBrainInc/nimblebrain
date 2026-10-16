@@ -14,7 +14,16 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  type CallToolRequest,
+  type Client,
+  type ElicitResult,
+  type GetPromptRequest,
+  type InputRequiredResult,
+  type InputResponses,
+  isInputRequiredResult,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import {
   CLIENT_CAPABILITIES_META_KEY,
   createMcpHandler,
@@ -53,7 +62,7 @@ const CATALOGED_TITLE = "Example Mail";
 
 /** The connector's own state, which the client must never hold as it is. */
 const CONNECTOR_STATE = "connector-state-1";
-const ANSWER = { action: "accept", content: { yes: true } };
+const ANSWER: ElicitResult = { action: "accept", content: { yes: true } };
 
 /**
  * The connector under test: one tool that asks in form mode, one that asks in
@@ -81,7 +90,7 @@ function buildConnector(): Server {
           },
         },
         requestState: CONNECTOR_STATE,
-      } as never;
+      };
     }
     const state = ctx.mcpReq.requestState<string>();
     return {
@@ -128,7 +137,7 @@ function buildConnector(): Server {
               },
             },
             requestState: CONNECTOR_STATE,
-          } as never;
+          };
         }
         const state = ctx.mcpReq.requestState<string>();
         return {
@@ -151,7 +160,7 @@ function buildConnector(): Server {
               },
             },
           },
-        } as never;
+        };
       case "needs_sampling":
         if (!capabilities?.sampling) {
           throw new MissingRequiredClientCapabilityError(
@@ -260,7 +269,7 @@ async function client(
   if (opts.elicitation) {
     c.setRequestHandler("elicitation/create", async (request) => {
       asked.push(request.params.message);
-      return ANSWER as never;
+      return ANSWER;
     });
   }
   await c.connect(
@@ -276,16 +285,48 @@ function text(result: { content?: unknown }): string {
   return (result.content as Array<{ text?: string }>)[0]?.text ?? "";
 }
 
+/** A request's `input_required` answer, or a failure naming what came back instead. */
+function inputRequired(result: unknown): InputRequiredResult {
+  if (!isInputRequiredResult(result)) {
+    throw new Error(`expected an input_required result, got ${JSON.stringify(result)}`);
+  }
+  return result;
+}
+
+/** The elicitation a first round asks for under `ok`. */
+function elicitation(round: InputRequiredResult) {
+  const request = round.inputRequests?.ok;
+  if (request?.method !== "elicitation/create") {
+    throw new Error(`expected an elicitation under "ok", got ${JSON.stringify(request)}`);
+  }
+  return request.params;
+}
+
 /** A connector's first-round `input_required` answer, as the client receives it. */
 async function firstRound(
   c: Client,
   name = "fixture__confirm",
   args: Record<string, unknown> = {},
-): Promise<{
+): Promise<InputRequiredResult> {
+  return inputRequired(await c.callTool({ name, arguments: args }, { allowInputRequired: true }));
+}
+
+/**
+ * The fields a manual retry adds to a request's params. The SDK's requester
+ * param types leave them out, so a retry goes through `retryTool` or
+ * `retryPrompt`, whose params are the SDK's own type plus these two fields.
+ */
+interface RetryFields {
+  inputResponses?: InputResponses;
   requestState?: string;
-  inputRequests?: Record<string, { params: { message: string; url?: string } }>;
-}> {
-  return (await c.callTool({ name, arguments: args }, { allowInputRequired: true })) as never;
+}
+
+function retryTool(c: Client, params: CallToolRequest["params"] & RetryFields) {
+  return c.callTool(params);
+}
+
+function retryPrompt(c: Client, params: GetPromptRequest["params"] & RetryFields) {
+  return c.getPrompt(params);
 }
 
 describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
@@ -314,8 +355,8 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
     const c = await client({ elicitation: true });
     try {
       const url = "https://confirm.example.com/send/1";
-      const { inputRequests } = await firstRound(c, "fixture__confirm_url", { url });
-      expect(inputRequests?.ok?.params).toMatchObject({
+      const round = await firstRound(c, "fixture__confirm_url", { url });
+      expect(elicitation(round)).toMatchObject({
         message: "fixture: Open the page to confirm",
         url,
       });
@@ -327,12 +368,10 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
   it("names a cataloged connector by its catalog title", async () => {
     const c = await client({ elicitation: true });
     try {
-      const { inputRequests } = await firstRound(c, `${CATALOGED}__confirm_url`, {
+      const round = await firstRound(c, `${CATALOGED}__confirm_url`, {
         url: "https://confirm.example.com/send/1",
       });
-      expect(inputRequests?.ok?.params.message).toBe(
-        `${CATALOGED_TITLE}: Open the page to confirm`,
-      );
+      expect(elicitation(round).message).toBe(`${CATALOGED_TITLE}: Open the page to confirm`);
     } finally {
       await c.close();
     }
@@ -366,12 +405,12 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
     try {
       const { requestState } = await firstRound(here);
       await expect(
-        there.callTool({
+        retryTool(there, {
           name: "fixture__confirm",
           arguments: {},
           inputResponses: { ok: ANSWER },
           requestState,
-        } as never),
+        }),
       ).rejects.toMatchObject({ code: -32602 });
     } finally {
       await Promise.all([here.close(), there.close()]);
@@ -384,12 +423,12 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
     try {
       const { requestState } = await firstRound(owner);
       await expect(
-        other.callTool({
+        retryTool(other, {
           name: "fixture__confirm",
           arguments: {},
           inputResponses: { ok: ANSWER },
           requestState,
-        } as never),
+        }),
       ).rejects.toMatchObject({ code: -32602 });
     } finally {
       await Promise.all([owner.close(), other.close()]);
@@ -401,7 +440,7 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
     try {
       const { requestState } = await firstRound(c);
       await expect(
-        c.callTool({ name: "fixture__count", arguments: {}, requestState } as never),
+        retryTool(c, { name: "fixture__count", arguments: {}, requestState }),
       ).rejects.toMatchObject({ code: -32602 });
     } finally {
       await c.close();
@@ -413,12 +452,12 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
     try {
       const { requestState } = await firstRound(c, "fixture__confirm", { to: "a@example.com" });
       await expect(
-        c.callTool({
+        retryTool(c, {
           name: "fixture__confirm",
           arguments: { to: "b@example.com" },
           inputResponses: { ok: ANSWER },
           requestState,
-        } as never),
+        }),
       ).rejects.toMatchObject({ code: -32602 });
     } finally {
       await c.close();
@@ -431,12 +470,12 @@ describe("/mcp/<wsId> carries the caller's side of a connector call", () => {
       const { requestState } = await firstRound(c);
       setSystemTime(new Date(Date.now() + 11 * 60 * 1000));
       await expect(
-        c.callTool({
+        retryTool(c, {
           name: "fixture__confirm",
           arguments: {},
           inputResponses: { ok: ANSWER },
           requestState,
-        } as never),
+        }),
       ).rejects.toMatchObject({ code: -32602 });
     } finally {
       setSystemTime();
@@ -476,14 +515,13 @@ describe("/mcp/<wsId> carries the caller's side of a prompts/get", () => {
   async function firstPromptRound(
     c: Client,
     args: Record<string, string> = {},
-  ): Promise<{
-    requestState?: string;
-    inputRequests?: Record<string, { params: { message: string } }>;
-  }> {
-    return (await c.getPrompt(
-      { name: "fixture__confirm", arguments: args },
-      { allowInputRequired: true },
-    )) as never;
+  ): Promise<InputRequiredResult> {
+    return inputRequired(
+      await c.getPrompt(
+        { name: "fixture__confirm", arguments: args },
+        { allowInputRequired: true },
+      ),
+    );
   }
 
   it("relays the connector's input request naming the connector, and the answer and state back", async () => {
@@ -519,14 +557,12 @@ describe("/mcp/<wsId> carries the caller's side of a prompts/get", () => {
       const { requestState } = await firstPromptRound(c, { topic: "a" });
       const retry = { name: "fixture__confirm", inputResponses: { ok: ANSWER }, requestState };
       await expect(
-        other.getPrompt({ ...retry, arguments: { topic: "a" } } as never),
+        retryPrompt(other, { ...retry, arguments: { topic: "a" } }),
       ).rejects.toMatchObject({ code: -32602 });
-      await expect(
-        c.getPrompt({ ...retry, arguments: { topic: "b" } } as never),
-      ).rejects.toMatchObject({ code: -32602 });
-      await expect(
-        c.callTool({ ...retry, arguments: { topic: "a" } } as never),
-      ).rejects.toMatchObject({
+      await expect(retryPrompt(c, { ...retry, arguments: { topic: "b" } })).rejects.toMatchObject({
+        code: -32602,
+      });
+      await expect(retryTool(c, { ...retry, arguments: { topic: "a" } })).rejects.toMatchObject({
         code: -32602,
       });
     } finally {
@@ -540,11 +576,11 @@ describe("/mcp/<wsId> carries the caller's side of a prompts/get", () => {
     try {
       const { requestState } = await firstRound(c);
       await expect(
-        c.getPrompt({
+        retryPrompt(c, {
           name: "fixture__confirm",
           inputResponses: { ok: ANSWER },
           requestState,
-        } as never),
+        }),
       ).rejects.toMatchObject({ code: -32602 });
     } finally {
       await c.close();

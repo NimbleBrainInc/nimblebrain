@@ -24,13 +24,15 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { textContent } from "../../src/engine/content-helpers.ts";
-import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import type { EngineEvent, EventSink, ThinkingEffort } from "../../src/engine/types.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { firstPayloadOf } from "../helpers/engine-events.ts";
 import { makeIdentity } from "../helpers/identity.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
@@ -163,6 +165,62 @@ describe("runtime.executeTask", () => {
 
     expect(result.stopReason).toBe("max_input_tokens");
     expect(result.usage.inputTokens).toBe(0);
+  });
+
+  describe("a task's thinkingEffort", () => {
+    // Sonnet 5 is effort-shaped: the tier reaches the wire as
+    // `providerOptions.anthropic.effort`, so the call options show which depth won.
+    const MODEL = "anthropic:claude-sonnet-5";
+
+    async function effortSent(
+      config: { thinking?: "off" | "adaptive" | "enabled"; thinkingEffort?: ThinkingEffort },
+      taskEffort: ThinkingEffort | undefined,
+    ): Promise<unknown> {
+      const sent: Array<LanguageModelV4CallOptions["providerOptions"]> = [];
+      const echo = createEchoModel({ responses: [{ text: "done" }] });
+      const languageModel: LanguageModelV4 = {
+        ...echo,
+        doStream: (options) => {
+          sent.push(options.providerOptions);
+          return echo.doStream(options);
+        },
+      };
+      workDir = mkdtempSync(join(tmpdir(), "nb-exec-task-"));
+      runtime = await Runtime.start({
+        identityProvider: devProvider,
+        languageModel,
+        logging: { disabled: true },
+        workDir,
+        ...config,
+      });
+      const { defaultWsId } = await provisionWorkspaces(runtime);
+      await runtime.executeTask({
+        workspaceId: defaultWsId,
+        prompt: "score the items",
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+        model: MODEL,
+        ...(taskEffort ? { thinkingEffort: taskEffort } : {}),
+      });
+      expect(sent.length).toBeGreaterThan(0);
+      const anthropic = sent[0]?.anthropic as { effort?: unknown } | undefined;
+      return anthropic?.effort;
+    }
+
+    it("is the depth the run reasons at, over the operator's", async () => {
+      expect(await effortSent({ thinkingEffort: "high" }, "low")).toBe("low");
+    });
+
+    it("leaves the operator's depth in place when unset", async () => {
+      expect(await effortSent({ thinkingEffort: "high" }, undefined)).toBe("high");
+    });
+
+    it("does not reach past an operator's thinking off", async () => {
+      expect(await effortSent({ thinking: "off" }, "low")).toBeUndefined();
+    });
+
+    it("does not reach past an operator's thinking adaptive", async () => {
+      expect(await effortSent({ thinking: "adaptive" }, "low")).toBeUndefined();
+    });
   });
 
   it("ends the run with spend_limit, naming the account, before a call that would overrun it", async () => {
@@ -637,12 +695,9 @@ describe("runtime.executeTask", () => {
       captureSink,
     );
 
-    const skillsLoaded = captured.find((e) => e.type === "skills.loaded");
-    expect(skillsLoaded).toBeDefined();
+    const payload = firstPayloadOf(captured, "skills.loaded");
+    expect(payload).toBeDefined();
 
-    const payload = skillsLoaded!.data as unknown as {
-      skills: Array<{ id: string; scope: string; loadedBy: string }>;
-    };
     const expectedPath = join(sharedSkillsDir, `${SKILL_NAME}.md`);
     const entry = payload.skills.find((s) => s.id === expectedPath);
     expect(entry).toBeDefined();

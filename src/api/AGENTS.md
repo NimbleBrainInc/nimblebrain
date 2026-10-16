@@ -61,7 +61,7 @@ SSE events follow the same rule. `schemas/events.ts` declares every frame each s
 
 ## Router middleware is chained per route
 
-A router (`routes/*.ts`, a provider's `routes`) chains `requireAuth`, `errorLog` and any other middleware on each of its routes and never calls `.use()`. Every router is mounted at "/", and Hono turns a sub-app's `.use("*")` into a `/*` matcher on the parent, so it would run for every request the app handles: another router's routes and paths no router registered. Mount order in `app.ts` therefore decides nothing about auth. Only `app.ts` mounts app-wide middleware (tracing, metrics, CORS, security headers, the cross-site guard). `check:route-middleware` enforces this (CODE_STYLE.md), and `test/integration/route-middleware-scope.test.ts` walks the route table.
+A router (`routes/*.ts`, a provider's `routes`) chains `requireAuth`, `errorLog` and any other middleware on each of its routes and never calls `.use()`. Every router is mounted at "/", and Hono turns a sub-app's `.use("*")` into a `/*` matcher on the parent, so it would run for every request the app handles: another router's routes and paths no router registered. Mount order in `app.ts` therefore decides nothing about auth. Only `app.ts` mounts app-wide middleware (tracing, metrics, CORS, security headers, the cross-site guard). The Biome plugin `biome-plugins/router-use.grit` enforces this (CODE_STYLE.md), and `test/integration/route-middleware-scope.test.ts` walks the route table.
 
 ## Browser writes from another origin
 

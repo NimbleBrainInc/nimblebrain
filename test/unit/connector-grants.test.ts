@@ -14,13 +14,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { AccountLookup } from "../../src/connectors/catalog/account-lookup.ts";
+import type { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
 import {
   readComposioConnection,
   saveComposioConnection,
 } from "../../src/connectors/providers/composio/connection.ts";
 import { createComposioProvider } from "../../src/connectors/providers/composio/provider.ts";
+import type { ManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
+import type { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
+import type { ConnectorInstance } from "../../src/connectors/runtime/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
@@ -30,12 +34,14 @@ import {
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
 import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
+import type { ToolRegistry } from "../../src/tools/registry.ts";
 import type { ToolSource } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ALICE: UserIdentity = {
@@ -116,44 +122,51 @@ async function buildHarness(opts: {
   }
   const composio = createComposioProvider();
 
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
-    getManagedConnectorRegistry: () => ({
-      get: (id: string) => (id === "composio" ? composio : undefined),
-    }),
+    getManagedConnectorRegistry: () =>
+      stub<ManagedConnectorRegistry>({
+        get: (id: string) => (id === "composio" ? composio : undefined),
+      }),
     getPermissionStore: () => store,
     getWorkspaceStore: () => workspaceStore,
     // list_personal_connectors enriches display metadata from the catalog; an
     // empty catalog is fine here (the assertions key on serverName + grants).
-    getConnectorCatalog: () => ({ catalogEntries: async () => opts.catalog ?? [] }),
+    getConnectorCatalog: () =>
+      stub<ConnectorCatalog>({ catalogEntries: async () => opts.catalog ?? [] }),
     // Same-pod connection-state probe — nothing warm in this unit context, so
     // every connector reports the resting state.
-    getLifecycle: () => ({
-      isIdentityConnectorRunning: () => opts.connectorRunning === true,
-      lookUpAccount: async (_owner: unknown, serverName: string, lookup: AccountLookup) =>
-        (await opts.lookUpAccount?.(serverName, lookup)) ?? null,
-      getInstance: (serverName: string, wsId: string) =>
-        opts.workspaceInstalls?.[serverName]?.includes(wsId) ? { serverName } : undefined,
-    }),
+    getLifecycle: () =>
+      stub<ConnectorLifecycleManager>({
+        isIdentityConnectorRunning: () => opts.connectorRunning === true,
+        lookUpAccount: async (_owner, serverName: string, lookup: AccountLookup) =>
+          (await opts.lookUpAccount?.(serverName, lookup)) ?? null,
+        getInstance: (serverName: string, wsId: string) =>
+          opts.workspaceInstalls?.[serverName]?.includes(wsId)
+            ? stub<ConnectorInstance>({ serverName })
+            : undefined,
+      }),
     // A workspace source runs only where `workspaceTools` names one; otherwise
     // tool listings take the installed-but-not-running path.
-    getRegistryForWorkspace: () => ({
-      getSource: (serverName: string) => fakeSource(serverName, opts.workspaceTools?.[serverName]),
-    }),
+    getRegistryForWorkspace: () =>
+      stub<ToolRegistry>({
+        getSource: (serverName: string) =>
+          fakeSource(serverName, opts.workspaceTools?.[serverName]),
+      }),
     getIdentityConnectorSource: async (userId: string, serverName: string) => {
       const tools = opts.identityTools?.[serverName];
       if (tools === "fails") throw new Error("not authenticated");
       if (tools === "unstarted") {
-        return {
+        return stub<ToolSource>({
           name: serverName,
           tools: async () => {
             throw new Error(`McpSource "${serverName}" not started`);
           },
-        } as unknown as ToolSource;
+        });
       }
       return userId === ALICE.id ? fakeSource(serverName, tools) : undefined;
     },
-  } as unknown as Runtime;
+  });
 
   const ctx: ManageConnectorsContext = {
     runtime,
@@ -166,15 +179,16 @@ async function buildHarness(opts: {
 /** A running source that lists `tools` under the registry's `<server>__` prefix. */
 function fakeSource(serverName: string, tools: string[] | undefined): ToolSource | undefined {
   if (!tools) return undefined;
-  return {
+  return stub<ToolSource>({
     name: serverName,
     tools: async () =>
       tools.map((t) => ({
         name: `${serverName}__${t}`,
         description: t,
         inputSchema: { type: "object" },
+        source: `mcp:${serverName}`,
       })),
-  } as unknown as ToolSource;
+  });
 }
 
 function sc(result: { structuredContent?: unknown }): {
@@ -187,7 +201,7 @@ function sc(result: { structuredContent?: unknown }): {
     identity?: Record<string, unknown>;
   }>;
 } {
-  return (result.structuredContent ?? {}) as never;
+  return result.structuredContent ?? {};
 }
 
 describe("manage_connectors — personal-connector grants", () => {

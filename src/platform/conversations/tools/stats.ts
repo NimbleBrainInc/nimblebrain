@@ -6,7 +6,11 @@
  * tool data.
  */
 
-import type { ConversationsStatsInput } from "../../schemas/conversations.ts";
+import type {
+  ConversationModelStats,
+  ConversationsStatsInput,
+  ConversationsStatsOutput,
+} from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex, WorkspaceScope } from "../index-cache.ts";
 import {
   type ConversationFile,
@@ -15,25 +19,8 @@ import {
   readConversation,
 } from "../jsonl-reader.ts";
 
-interface ModelStats {
-  inputTokens: number;
-  outputTokens: number;
-  conversations: number;
-}
-
-interface ToolEntry {
-  name: string;
-  callCount: number;
-}
-
-interface StatsResult {
-  period: { since: string; until: string };
-  totalConversations: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  byModel: Record<string, ModelStats>;
-  topTools: ToolEntry[];
-}
+type ModelStats = ConversationModelStats;
+type ToolEntry = ConversationsStatsOutput["topTools"][number];
 
 /**
  * Calculate the start of the date range based on the period.
@@ -52,27 +39,32 @@ function periodToSince(period: "day" | "week" | "month" | "all", now: Date): Dat
   }
 }
 
-/** Mutable running totals a single stats pass folds each conversation into. */
+/**
+ * Mutable running totals a single stats pass folds each conversation into.
+ * Keyed by model and tool names read from stored logs, so the counts are Maps:
+ * a name such as `toString` or `constructor` would read an inherited member of
+ * a plain object.
+ */
 interface StatsAccumulator {
   totalInputTokens: number;
   totalOutputTokens: number;
-  byModel: Record<string, ModelStats>;
-  toolCounts: Record<string, number>;
+  byModel: Map<string, ModelStats>;
+  toolCounts: Map<string, number>;
 }
 
 /** Get or create the per-model stats bucket for a model. */
-function ensureModelStats(byModel: Record<string, ModelStats>, model: string): ModelStats {
-  const existing = byModel[model];
+function ensureModelStats(byModel: Map<string, ModelStats>, model: string): ModelStats {
+  const existing = byModel.get(model);
   if (existing) return existing;
   const created: ModelStats = { inputTokens: 0, outputTokens: 0, conversations: 0 };
-  byModel[model] = created;
+  byModel.set(model, created);
   return created;
 }
 
 /** Increment call counts for each tool call in an assistant turn. */
-function recordToolCalls(toolCounts: Record<string, number>, toolCalls: DisplayToolCall[]): void {
+function recordToolCalls(toolCounts: Map<string, number>, toolCalls: DisplayToolCall[]): void {
   for (const tc of toolCalls) {
-    toolCounts[tc.name] = (toolCounts[tc.name] ?? 0) + 1;
+    toolCounts.set(tc.name, (toolCounts.get(tc.name) ?? 0) + 1);
   }
 }
 
@@ -109,7 +101,7 @@ function accumulateConversation(conv: ConversationFile, acc: StatsAccumulator): 
   }
 
   for (const model of modelsInConv) {
-    acc.byModel[model]!.conversations += 1;
+    ensureModelStats(acc.byModel, model).conversations += 1;
   }
 }
 
@@ -118,7 +110,7 @@ export async function handleStats(
   index: ConversationIndex,
   scope: WorkspaceScope,
   access?: AccessContext,
-): Promise<StatsResult> {
+): Promise<ConversationsStatsOutput> {
   const period = input.period ?? "week";
   const now = new Date();
   const since = periodToSince(period, now);
@@ -144,8 +136,8 @@ export async function handleStats(
   const acc: StatsAccumulator = {
     totalInputTokens: 0,
     totalOutputTokens: 0,
-    byModel: {},
-    toolCounts: {},
+    byModel: new Map(),
+    toolCounts: new Map(),
   };
 
   for (const entry of listResult.conversations) {
@@ -155,7 +147,7 @@ export async function handleStats(
   }
 
   // Sort tools by callCount descending
-  const topTools: ToolEntry[] = Object.entries(acc.toolCounts)
+  const topTools: ToolEntry[] = Array.from(acc.toolCounts)
     .map(([name, callCount]) => ({ name, callCount }))
     .sort((a, b) => b.callCount - a.callCount);
 
@@ -164,7 +156,7 @@ export async function handleStats(
     totalConversations: listResult.conversations.length,
     totalInputTokens: acc.totalInputTokens,
     totalOutputTokens: acc.totalOutputTokens,
-    byModel: acc.byModel,
+    byModel: Object.fromEntries(acc.byModel),
     topTools,
   };
 }

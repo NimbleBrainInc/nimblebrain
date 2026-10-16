@@ -8,19 +8,12 @@
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 import { realClient } from "./setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// The DOM shim builds its own errors off `window`; without these, a failed
-// `querySelectorAll` throws about a missing constructor instead of reporting.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 const CATALOG_MAX_OUTPUT = 128000;
 const PINNED_MAX_OUTPUT = 16384;
@@ -38,7 +31,11 @@ const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
 
 mock.module("../src/api/client", () => ({
   ...realClient,
-  callToolWithoutWorkspace: async (_server: string, tool: string, args: Record<string, unknown>) => {
+  callToolWithoutWorkspace: async (
+    _server: string,
+    tool: string,
+    args: Record<string, unknown>,
+  ) => {
     calls.push({ tool, args });
     if (tool === "get_config") {
       if (refreshFails && calls.some((c) => c.tool === "set_model_config")) {
@@ -104,12 +101,14 @@ async function mount(): Promise<HTMLElement> {
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
-    root.render(React.createElement(
+    root.render(
+      React.createElement(
         NoticeProvider,
         null,
         React.createElement(NoticeViewport),
         React.createElement(ModelTab),
-      ));
+      ),
+    );
   });
   await flush();
   unmount = () => {
@@ -119,11 +118,13 @@ async function mount(): Promise<HTMLElement> {
   return container;
 }
 
-const win = () =>
-  (globalThis as unknown as { window: Window & typeof globalThis }).window;
+const win = () => window;
 
 const field = <T extends HTMLElement>(c: HTMLElement, id: string) =>
-  c.querySelector<T>(`#${id}`) ?? (() => { throw new Error(`#${id} not found`); })();
+  c.querySelector<T>(`#${id}`) ??
+  (() => {
+    throw new Error(`#${id} not found`);
+  })();
 
 /** Type into a controlled input the way a user does: the native setter, then `input`. */
 async function type(el: HTMLInputElement, value: string) {

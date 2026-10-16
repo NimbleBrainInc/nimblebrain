@@ -18,6 +18,12 @@ import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import {
+  stubWorkosUserManagement,
+  workosMembership,
+  workosMembershipList,
+  workosUser,
+} from "../../helpers/workos-sdk.ts";
 
 // ── Key generation helpers ──────────────────────────────────────
 
@@ -107,32 +113,24 @@ function createProvider(configOverrides?: Partial<WorkosAuth>): {
   const provider = new WorkosIdentityProvider(config, undefined);
 
   // Mock the WorkOS SDK to handle resolveUser internals
-  const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
-  workos.userManagement = {
-    getUser: async (userId: string) => ({
-      id: userId,
-      email: `${userId}@test.com`,
-      firstName: "Test",
-      lastName: "AuthKit",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }),
-    listOrganizationMemberships: async (opts: { userId: string; organizationId: string }) => ({
-      data: [
-        {
-          id: "om_test",
+  stubWorkosUserManagement(provider, {
+    getUser: async (userId) =>
+      workosUser({
+        id: userId,
+        email: `${userId}@test.com`,
+        firstName: "Test",
+        lastName: "AuthKit",
+      }),
+    listOrganizationMemberships: async (opts) =>
+      workosMembershipList([
+        workosMembership({
           userId: opts.userId,
           organizationId: opts.organizationId,
-          role: { slug: "member" },
-          status: "active",
-        },
-      ],
-    }),
+          slug: "member",
+        }),
+      ]),
     getAuthorizationUrl: () => "https://fake.workos.com/authorize",
-    listUsers: async () => ({ data: [] }),
-    createUser: async () => ({}),
-    deleteUser: async () => {},
-  };
+  });
 
   // Mock fetcher to serve JWKS endpoints
   provider.fetcher = fakeFetch(async (input) => {

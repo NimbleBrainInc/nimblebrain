@@ -342,6 +342,7 @@ describe("planMidTurnFold", () => {
     // call was folded away, which the provider rejects.
     const bare: LanguageModelV4Message = {
       role: "tool",
+      // biome-ignore lint/plugin/never-cast: a text part where a tool message holds tool results, which is the malformed message under test
       content: [{ type: "text", text: "x".repeat(2_000) }] as never,
     };
     const history: LanguageModelV4Message[] = [

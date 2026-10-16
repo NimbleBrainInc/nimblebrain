@@ -20,6 +20,7 @@ import type {
 import { brokeredRef } from "../connectors/runtime/brokered.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../connectors/runtime/connection.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
+import { instanceOAuthClient } from "../connectors/runtime/instance-oauth-clients.ts";
 import {
   isReservedServerName,
   matchesServerName,
@@ -27,11 +28,14 @@ import {
   slugifyServerName,
 } from "../connectors/runtime/paths.ts";
 import { startConnectorSource } from "../connectors/runtime/startup.ts";
-import type {
-  BrokeredRef,
-  ConnectorInstance,
-  ConnectorRef,
-  RemoteTransportConfig,
+import {
+  type BrokeredRef,
+  type ConnectorInstance,
+  type ConnectorRef,
+  isInstanceOAuthClientRef,
+  type OAuthClientConfig,
+  oauthClientSecretRef,
+  type RemoteTransportConfig,
 } from "../connectors/runtime/types.ts";
 import { uninstallWorkspaceConnector } from "../connectors/runtime/uninstall.ts";
 import { textContent } from "../engine/content-helpers.ts";
@@ -108,15 +112,22 @@ function providerFor(
 /**
  * Whether a connector with this auth kind can install on the identity plane.
  *
- * The rule is a capability, not a vendor list: DCR, or a brokered connector
- * whose provider brokers an interactive connect (`initiate`) and can therefore
- * complete auth for one user. `static` reads a workspace-scoped operator secret
- * and `provider` mints a platform credential; both are workspace/platform-bound,
- * and their identity variants are a separate slice.
+ * The rule is a capability, not a vendor list: the caller must be able to
+ * complete auth for one user without a workspace. That is DCR; a brokered
+ * connector whose provider brokers an interactive connect (`initiate`); or a
+ * `static` one whose OAuth client the instance operator declared, since that client
+ * belongs to no workspace. A `static` entry without one reads a
+ * workspace-scoped operator secret, and `provider` mints a platform credential;
+ * both are workspace/platform-bound.
  *
  * The install gate and the picker's filter both call this, so they cannot drift.
  */
-function identityInstallableAuth(ctx: ManageConnectorsContext, auth: string): boolean {
+function identityInstallableAuth(
+  ctx: ManageConnectorsContext,
+  auth: string,
+  catalogId: string,
+): boolean {
+  if (auth === "static") return instanceOAuthClient(catalogId) !== undefined;
   return auth === "dcr" || providerFor(ctx, auth)?.initiate !== undefined;
 }
 
@@ -595,6 +606,7 @@ async function handleListDirectory(
   const isOperatorConfigured =
     wsId && ws && credStore
       ? async (catalogId: string, clientSecretKey: string): Promise<boolean> => {
+          if (instanceOAuthClient(catalogId)) return true;
           if (!ws.oauthOperatorApps?.[catalogId]?.clientId) return false;
           const secret = await credStore.get({ kind: "workspace", wsId }, clientSecretKey, {
             caller: "connector-tools:list_directory",
@@ -855,10 +867,14 @@ async function applyRemoteConnectionState(
   const conn = instance.connections?.get("_workspace") ?? null;
   if (conn?.authorizationUrl) entry.authorizationUrl = conn.authorizationUrl;
   if (conn?.lastError) entry.lastError = conn.lastError;
-  const oauthClient = (ref as { oauthClient?: { clientSecret?: { key: string } } }).oauthClient;
-  if (oauthClient?.clientSecret) {
+  if (isInstanceOAuthClientRef(ref.oauthClient)) {
+    if (!instanceOAuthClient(ref.oauthClient.instanceClient)) entry.missingOperatorSetup = true;
+    return;
+  }
+  const clientSecret = oauthClientSecretRef(ref.oauthClient);
+  if (clientSecret) {
     // A presence probe, not a use: `get` without a `reveal` writes no audit line.
-    const wrapped = await credStore.get({ kind: "workspace", wsId }, oauthClient.clientSecret.key, {
+    const wrapped = await credStore.get({ kind: "workspace", wsId }, clientSecret.key, {
       caller: "connector-tools:list_installed",
       purpose: "report whether operator OAuth setup is complete",
     });
@@ -877,7 +893,11 @@ async function applyOperatorOAuth(
   ws: Workspace | null,
   resolveUserLabel: (userId: string) => Promise<string | undefined>,
 ): Promise<void> {
-  const op = cat?.auth === "static" ? ws?.oauthOperatorApps?.[cat.id] : undefined;
+  // An instance OAuth client is the operator's: there is no workspace record to show or edit.
+  const op =
+    cat?.auth === "static" && !instanceOAuthClient(cat.id)
+      ? ws?.oauthOperatorApps?.[cat.id]
+      : undefined;
   if (!op) return;
   const label = await resolveUserLabel(op.configuredBy);
   entry.operatorOAuth = {
@@ -1310,16 +1330,19 @@ function workspaceInstallAdmission(
  * PERSONAL connector on the caller's own identity (`users/<id>/connectors.json`),
  * not into any workspace. The identity-plane sibling of `handleInstallRemoteOAuth`.
  *
- * DCR and interactive-connect brokered connectors install here. `dcr` (standard
- * dynamic-client-registration OAuth) authenticates via the interactive Connect
- * flow (`POST /v1/mcp-auth/initiate-identity` → `startIdentityAuth`). A brokered
+ * DCR, instance-client static, and interactive-connect brokered connectors
+ * install here. `dcr` (standard dynamic-client-registration OAuth) authenticates
+ * via the interactive Connect flow (`POST /v1/mcp-auth/initiate-identity` →
+ * `startIdentityAuth`). `static` installs only when the instance declares an
+ * OAuth client for the entry (`connectors.oauthClients`): the ref names that
+ * client and authenticates through the same Connect flow. A brokered
  * connector binds the broker-side identity to the caller (`{type:"user"}`, not a
  * workspace); its only owner-scoped state is the provider's namespaced user id
  * plus an opaque connection pointer (the broker credential is platform-global),
  * and the connect round-trip runs through the provider's own callback routes.
- * `static` reads an operator client secret from the workspace credential store
- * and `provider` carries a platform/fleet auth class — both workspace/platform-
- * bound and rejected here (their identity variants are a separate slice).
+ * `static` without an instance client reads a workspace's own client secret
+ * from that workspace's credential store, and `provider` carries a
+ * platform/fleet auth class — both workspace/platform-bound and rejected here.
  */
 async function handleInstallIdentity(
   ctx: ManageConnectorsContext,
@@ -1342,29 +1365,29 @@ async function handleInstallIdentity(
   // interactive connect (`initiate`) — the capability, not a vendor name, so a
   // third provider that brokers OAuth qualifies without editing this line and
   // one that does not (Smithery, whose setup lives on its own hosted page) is
-  // refused. `static` reads a workspace-scoped operator secret and `provider`
-  // mints a platform credential; both are workspace/platform-bound. Fail fast,
-  // before any wiring.
+  // refused. `static` qualifies only with an instance OAuth client, since a
+  // workspace's own client is that workspace's; `provider` mints a platform
+  // credential. Fail fast, before any wiring.
   // An unconfigured broker is a deploy problem, not an unsupported plane —
   // say which before the capability gate turns it into "not supported here".
   const brokerProvider = providerFor(ctx, entry.install.auth);
   if (isBrokeredAuthKind(entry.install.auth) && !brokerProvider) {
     return errResult(brokerNotConfiguredMessage(entry.name, entry.install.auth));
   }
-  if (!identityInstallableAuth(ctx, entry.install.auth)) {
+  if (!identityInstallableAuth(ctx, entry.install.auth, entry.id)) {
     return errResult(
       `"${entry.name}" uses "${entry.install.auth}" auth, which isn't supported for personal ` +
-        `connectors yet — only standard OAuth (DCR) and brokered connectors that support an ` +
-        `interactive connect can install on your identity today. Install it into a shared ` +
-        `workspace instead.`,
+        `connectors here — only standard OAuth (DCR), brokered connectors that support an ` +
+        `interactive connect, and connectors whose OAuth client this instance's operator ` +
+        `configured can install on your identity. Install it into a shared workspace instead.`,
     );
   }
 
   // `validateRemoteOAuthInstall` re-resolves a brokered entry's block from the
   // trusted catalog — the same bound the workspace path applies, and the reason
-  // the caller's own block never reaches `createSession`. static/provider are
-  // already rejected above. The action shape is validated upstream by
-  // `parseCatalogListing`.
+  // the caller's own block never reaches `createSession`. `provider`, and
+  // `static` without an instance OAuth client, are already rejected above. The action
+  // shape is validated upstream by `parseCatalogListing`.
   const validated = await validateRemoteOAuthInstall(ctx, entry, entry.install);
   if ("error" in validated) return errResult(validated.error);
   const action = validated.action;
@@ -1434,7 +1457,16 @@ async function handleInstallIdentity(
   // location in `connectors.json`, and carries no scope field (see
   // `IdentityConnectorStore`). The brokered marker, when present, rides the ref
   // so the Connect route and list handler key on it.
-  const ref = buildRemoteConnectorRef(action, serverName, trustedUi, brokeredWiring, undefined);
+  // A static entry signs in with the instance OAuth client, bound to the
+  // catalog's URL for it. The gate above guarantees one is declared.
+  let oauthClient: OAuthClientConfig | undefined;
+  if (action.auth === "static") {
+    const instanceClient = instanceOAuthClientFor(entry, action);
+    if (!instanceClient) return errResult(`"${entry.name}" has no instance OAuth client.`);
+    if ("__err" in instanceClient) return errResult(instanceClient.__err);
+    oauthClient = instanceClient;
+  }
+  const ref = buildRemoteConnectorRef(action, serverName, trustedUi, brokeredWiring, oauthClient);
   delete (ref as { oauthScope?: "workspace" }).oauthScope;
 
   // The connector-skill overlay (`syncBoundSkills`) is workspace-keyed; the
@@ -1445,8 +1477,9 @@ async function handleInstallIdentity(
   await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).add(callerId, ref);
 
   // No eager-start: a connector has no live credentials until the user completes
-  // the interactive Connect flow — DCR via `POST /v1/mcp-auth/initiate-identity`
-  // (`startIdentityAuth`), a brokered one via that provider's own initiate route.
+  // the interactive Connect flow — DCR and instance-client static via
+  // `POST /v1/mcp-auth/initiate-identity` (`startIdentityAuth`), a brokered one
+  // via that provider's own initiate route.
   // Both callbacks start the source into the user registry
   // (`getIdentityConnectorSource`) when the browser returns. Install only persists
   // the record.
@@ -2221,7 +2254,8 @@ async function buildBrokeredWiring(
 }
 
 /**
- * Static-auth wiring: the workspace's configured operator OAuth clientId + the
+ * Static-auth wiring: the instance OAuth client when the operator declared one
+ * for this entry, else the workspace's configured operator OAuth clientId + the
  * credential-store key holding its client_secret. Gated post-dedup so a
  * duplicate-install click doesn't read the operator credential from disk.
  * Returns `__err` when setup is incomplete.
@@ -2232,10 +2266,13 @@ async function loadStaticOAuthClient(
   ws: Workspace,
   entry: CatalogListing,
   action: RemoteOAuthInstall,
-): Promise<{ clientId: string; clientSecretKey: string } | { __err: string }> {
+): Promise<OAuthClientConfig | { __err: string }> {
   if (action.auth !== "static" || !action.operatorSetup) {
     return { __err: "static-auth wiring requested for non-static install" };
   }
+  // A client the operator declared for the instance wins over this workspace's own.
+  const instanceClient = instanceOAuthClientFor(entry, action);
+  if (instanceClient) return instanceClient;
   const setup = action.operatorSetup;
   const operatorApp = ws.oauthOperatorApps?.[entry.id];
   if (!operatorApp?.clientId) {
@@ -2253,7 +2290,44 @@ async function loadStaticOAuthClient(
       __err: `Operator client_secret for "${entry.name}" is missing — re-run Set up to seed it.`,
     };
   }
-  return { clientId: operatorApp.clientId, clientSecretKey: setup.clientSecretKey };
+  return {
+    clientId: operatorApp.clientId,
+    clientSecret: { ref: "credential", key: setup.clientSecretKey },
+  };
+}
+
+/**
+ * The OAuth client naming the instance OAuth client for a static-auth entry, or
+ * `undefined` when the operator declared none for its id.
+ *
+ * The client is bound, at boot, to the URL the catalog published for the id then.
+ * `validateRemoteOAuthInstall` has already replaced the caller's URL with the
+ * catalog's current one, so the two differ only when the catalog moved the
+ * entry since boot; the install is refused until a restart rebinds the client.
+ * The resolver checks the same binding on every connect
+ * (`resolveStaticOAuthClient`), which is what keeps the operator's secret on the
+ * server the catalog named.
+ */
+function instanceOAuthClientFor(
+  entry: CatalogListing,
+  action: RemoteOAuthInstall,
+): OAuthClientConfig | { __err: string } | undefined {
+  const client = instanceOAuthClient(entry.id);
+  if (!client) return undefined;
+  if (action.url !== client.url) {
+    return {
+      __err: `"${entry.name}" moved to ${action.url} in the catalog; the instance OAuth client serves ${client.url} until a restart.`,
+    };
+  }
+  return { instanceClient: entry.id };
+}
+
+/** Why a workspace cannot set up its own client for an entry the operator declared one for. */
+function instanceClientOwnsSetupMessage(name: string): string {
+  return (
+    `"${name}" uses the OAuth client this instance's operator configured, so there is ` +
+    "nothing to set up here. Install it and sign in."
+  );
 }
 
 /**
@@ -2266,7 +2340,7 @@ function buildRemoteConnectorRef(
   serverName: string,
   trustedUi: ConnectorCatalogEntry["ui"],
   brokeredWiring: BrokeredWiring | undefined,
-  staticOAuthClient: { clientId: string; clientSecretKey: string } | undefined,
+  oauthClient: OAuthClientConfig | undefined,
 ): ConnectorRef {
   return {
     url: brokeredWiring?.url ?? action.url,
@@ -2307,14 +2381,7 @@ function buildRemoteConnectorRef(
     ...(action.additionalAuthorizationParams
       ? { additionalAuthorizationParams: action.additionalAuthorizationParams }
       : {}),
-    ...(staticOAuthClient
-      ? {
-          oauthClient: {
-            clientId: staticOAuthClient.clientId,
-            clientSecret: { ref: "credential", key: staticOAuthClient.clientSecretKey },
-          },
-        }
-      : {}),
+    ...(oauthClient ? { oauthClient } : {}),
     // Brokered marker: who brokered this install, which catalog entry it came
     // from (the persisted url is a per-install session URL, so a url→catalog
     // lookup misses), and the provider's own opaque coordinates for its probe
@@ -2408,7 +2475,7 @@ async function resolveInstallWiring(
 ): Promise<
   | {
       brokeredWiring?: BrokeredWiring;
-      staticOAuthClient?: { clientId: string; clientSecretKey: string };
+      staticOAuthClient?: OAuthClientConfig;
     }
   | { error: string }
 > {
@@ -2583,13 +2650,17 @@ async function handleDisconnect(
  *     `docs/config/secrets.mdx`), so reading only the headers would miss its
  *     one credential entirely.
  *
- * A THIRD site names a workspace key and is deliberately not here:
+ * A THIRD site names a workspace key and is not here:
  * `oauthClient.clientSecret`, which `resolveStaticOAuthClient` dereferences
- * against this same store. That key is the workspace's OAuth app setup for a
- * whole vendor rather than this connector's own credential — `setup_operator`
- * writes it and `remove_operator_setup` takes it away — so an uninstall must
- * not delete it. It is still a reason not to delete SOMEONE ELSE's key, which
- * is why `deletableSecretKeys` reads it on the referrer side only.
+ * against this same store. That key is half of the workspace's operator OAuth
+ * app for a static-auth catalog entry, and the other half is
+ * `workspace.json#oauthOperatorApps[catalogId]`. The two go together or not at
+ * all, so an uninstall decides on them as a pair in `operatorAppOf` and removes
+ * both when it takes out the app's last user. Here it would delete the secret
+ * and strand the record, which reads as configured and installs a connector
+ * that cannot complete a token exchange. It is still a reason not to delete
+ * SOMEONE ELSE's key, which is why `deletableSecretKeys` reads it on the
+ * referrer side.
  *
  * Read from the PERSISTED REF rather than the catalog entry, deliberately. The
  * ref is what the transport resolves on the next request, so it is the honest
@@ -2646,15 +2717,56 @@ function deletableSecretKeys(ws: Workspace, serverName: string, ownRef: Connecto
   for (const other of ws.connectors) {
     if (matchesServerName(other, serverName)) continue;
     for (const key of workspaceKeysNamedBy(other)) stillNamed.add(key);
-    // The third site. Owned by `setup_operator` rather than by this connector,
-    // so it is a referrer and never a deletion — see `workspaceKeysNamedBy`.
-    const clientSecretKey = other.oauthClient?.clientSecret?.key;
+    // The third site. The operator app's secret, which goes only with its
+    // record (`operatorAppOf`), so here it is a referrer and never a deletion.
+    const clientSecretKey = oauthClientSecretRef(other.oauthClient)?.key;
     if (clientSecretKey) stillNamed.add(clientSecretKey);
   }
   return {
     deletable: own.filter((k) => !stillNamed.has(k)),
     retained: own.filter((k) => stillNamed.has(k)),
   };
+}
+
+/**
+ * The operator OAuth app the uninstalled connector is built on, and whether
+ * another installed connector still uses it.
+ *
+ * A ref carries no catalog id, so the app is found the way install made it:
+ * the catalog entry at the ref's `url` (the relation `rotateInstalledOAuthClients`
+ * and `remove_operator_setup` use) that is static-auth, has a recorded app in
+ * this workspace, and declares the very key the ref's `oauthClient.clientSecret`
+ * names. A ref that names no client secret, or whose entry has left the
+ * catalog, has no app to release.
+ *
+ * In use means another ref at the same `url`, or one that resolves the same
+ * key through any of the three sites. Either keeps BOTH halves: the record and
+ * the secret go together, so a key a sibling resolves keeps the record too.
+ */
+async function operatorAppOf(
+  ctx: ManageConnectorsContext,
+  ws: Workspace,
+  serverName: string,
+  ref: ConnectorRef | undefined,
+): Promise<{ catalogId: string; clientSecretKey: string; inUse: boolean } | undefined> {
+  const secret = oauthClientSecretRef(ref?.oauthClient);
+  if (!ref?.url || !isCredentialRef(secret)) return undefined;
+  const entry = (await ctx.runtime.getConnectorCatalog().catalogByUrl()).get(ref.url);
+  if (
+    entry?.auth !== "static" ||
+    entry.operatorSetup?.clientSecretKey !== secret.key ||
+    !ws.oauthOperatorApps?.[entry.id]
+  ) {
+    return undefined;
+  }
+  const inUse = ws.connectors.some(
+    (other) =>
+      !matchesServerName(other, serverName) &&
+      (other.url === ref.url ||
+        oauthClientSecretRef(other.oauthClient)?.key === secret.key ||
+        workspaceKeysNamedBy(other).includes(secret.key)),
+  );
+  return { catalogId: entry.id, clientSecretKey: secret.key, inUse };
 }
 
 /**
@@ -2680,6 +2792,15 @@ function deletableSecretKeys(ws: Workspace, serverName: string, ownRef: Connecto
  * The keys come from the connector's own declaration, read here rather than
  * from the call: a caller-named key would be a delete primitive pointed at any
  * secret in the workspace.
+ *
+ * A static-auth connector's operator OAuth app goes with its last user. Set up
+ * and uninstall are both workspace-admin actions and nothing outside this file
+ * reads the app, so keeping it past the last install buys nothing: a reinstall
+ * would silently reuse a client id and secret the admin meant to remove, with
+ * no surface to clear them. Removing it puts the entry back to Set up, and the
+ * secret is reported with the connector's own deleted keys. While another
+ * installed connector still uses the app (see `operatorAppOf`), both halves
+ * stay and the key is reported as retained.
  *
  * Workspace connectors only — a personal (identity-owned) connector is removed
  * via `handleDisconnectIdentity` (the dispatcher routes `scope:"identity"` there).
@@ -2721,18 +2842,18 @@ async function handleUninstall(
   // Resolved BEFORE the uninstall, off the workspace record as it stands now:
   // `lifecycle.uninstall` drops the instance and `stripUninstalledConnectorEntry`
   // drops the row, and both are inputs here.
-  const { deletable: secretKeys, retained: retainedKeys } = deletableSecretKeys(
-    ws,
-    serverName,
-    instance.ref,
-  );
+  const { deletable: secretKeys, retained } = deletableSecretKeys(ws, serverName, instance.ref);
+  const operatorApp = await operatorAppOf(ctx, ws, serverName, instance.ref);
+  const retainedKeys = operatorApp?.inUse ? [...retained, operatorApp.clientSecretKey] : retained;
 
   const outcome = await uninstallWorkspaceConnector(ctx.runtime, wsId, serverName, {
     secretKeys,
   });
   if (!outcome.ok) return errResult(outcome.error ?? "Uninstall failed.");
 
-  const { secrets } = outcome;
+  // After the teardown, like the connector's own keys: a connector that is
+  // still installed still has the app it signs in with.
+  const secrets = await releaseOperatorApp(ctx, wsId, operatorApp, outcome.secrets);
   return {
     content: textContent(
       `Uninstalled "${serverName}" from workspace.${describeSecretOutcome(secrets, retainedKeys)}`,
@@ -2754,6 +2875,33 @@ async function handleUninstall(
     },
     isError: false,
   };
+}
+
+/**
+ * Remove the uninstalled connector's operator app when nothing else uses it,
+ * folding its secret into the uninstall's secret outcome: deleted when it went,
+ * failed when it is still stored (including when the record write threw before
+ * the secret was tried). An app still in use, or none, leaves the outcome as is.
+ */
+async function releaseOperatorApp(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  app: { catalogId: string; clientSecretKey: string; inUse: boolean } | undefined,
+  secrets: { deleted: string[]; failed: string[]; error?: string },
+): Promise<{ deleted: string[]; failed: string[]; error?: string }> {
+  if (!app || app.inUse) return secrets;
+  const key = app.clientSecretKey;
+  try {
+    const { deleteError } = await removeOperatorApp(ctx, wsId, app.catalogId, key);
+    if (deleteError === undefined) return { ...secrets, deleted: [...secrets.deleted, key] };
+    return { ...secrets, failed: [...secrets.failed, key], error: secrets.error ?? deleteError };
+  } catch (err) {
+    return {
+      ...secrets,
+      failed: [...secrets.failed, key],
+      error: secrets.error ?? (err instanceof Error ? err.message : String(err)),
+    };
+  }
 }
 
 /**
@@ -3186,7 +3334,7 @@ async function handleListPersonalCatalog(
       e.personal === true &&
       e.install.kind === "remote-oauth" &&
       // Lockstep with handleInstallIdentity's gate — offered ⊆ acceptable.
-      identityInstallableAuth(ctx, e.install.auth) &&
+      identityInstallableAuth(ctx, e.install.auth, e.id) &&
       !installedServerNames.has(slugifyServerName(e.id)),
   );
 
@@ -3488,6 +3636,7 @@ async function handleSetupOperator(
   if (entry.auth !== "static") {
     return errResult(`"${entry.name}" is a DCR connector — operator setup not required.`);
   }
+  if (instanceOAuthClient(catalogId)) return errResult(instanceClientOwnsSetupMessage(entry.name));
   const clientSecretKey = entry.operatorSetup?.clientSecretKey;
   if (!clientSecretKey) {
     return errResult(
@@ -3515,13 +3664,63 @@ async function handleSetupOperator(
     configuredAt: new Date().toISOString(),
     configuredBy: identity.id,
   };
-  await persistOperatorApp(ctx, wsId, apps, credStore, clientSecretKey, hadPriorSecret);
+  const rotated = rotateInstalledOAuthClients(ws.connectors, entry.url, clientId.trim());
+  await persistOperatorApp(
+    ctx,
+    wsId,
+    {
+      oauthOperatorApps: apps,
+      ...(rotated.refs.length > 0 ? { connectors: rotated.connectors } : {}),
+    },
+    credStore,
+    clientSecretKey,
+    hadPriorSecret,
+  );
+  // The install copied the client id onto its ref, and every connection reads
+  // its client from there. A new client invalidates whatever the old one signed
+  // in, so each rotated connection drops its OAuth records and asks for sign-in.
+  for (const ref of rotated.refs) {
+    await ctx.runtime.getLifecycle().replaceOAuthClient(ref.serverName, wsId, ref);
+  }
 
   return {
     content: textContent(`Configured OAuth app for "${entry.name}".`),
     structuredContent: { ok: true, catalogId, clientId: apps[catalogId]?.clientId },
     isError: false,
   };
+}
+
+/**
+ * The installed connectors of a static-auth catalog entry whose pre-registered
+ * client is not `clientId`, rewritten to it.
+ *
+ * Install copies the operator app's client id onto the connector's ref, because
+ * the ref is what boot and `startAuth` build the connection from, and neither
+ * reaches the workspace record. Setup is the only writer of the operator app, so
+ * it rewrites the copies in the same write: the copy and its source never
+ * disagree. The secret needs no rewrite; the ref holds a reference to it.
+ */
+export function rotateInstalledOAuthClients(
+  connectors: readonly ConnectorRef[],
+  url: string,
+  clientId: string,
+): { connectors: ConnectorRef[]; refs: ConnectorRef[] } {
+  const refs: ConnectorRef[] = [];
+  const next = connectors.map((ref) => {
+    // An instance-client ref names the operator's client, which this setup does not own.
+    if (
+      ref.url !== url ||
+      !ref.oauthClient ||
+      isInstanceOAuthClientRef(ref.oauthClient) ||
+      ref.oauthClient.clientId === clientId
+    ) {
+      return ref;
+    }
+    const rotated: ConnectorRef = { ...ref, oauthClient: { ...ref.oauthClient, clientId } };
+    refs.push(rotated);
+    return rotated;
+  });
+  return { connectors: next, refs };
 }
 
 /**
@@ -3534,13 +3733,13 @@ async function handleSetupOperator(
 async function persistOperatorApp(
   ctx: ManageConnectorsContext,
   wsId: string,
-  apps: NonNullable<Workspace["oauthOperatorApps"]>,
+  patch: Pick<Workspace, "oauthOperatorApps"> & Partial<Pick<Workspace, "connectors">>,
   credStore: CredentialStore,
   clientSecretKey: string,
   hadPriorSecret: boolean,
 ): Promise<void> {
   try {
-    await ctx.runtime.getWorkspaceStore().update(wsId, { oauthOperatorApps: apps });
+    await ctx.runtime.getWorkspaceStore().update(wsId, patch);
   } catch (err) {
     if (!hadPriorSecret) {
       try {
@@ -3598,24 +3797,49 @@ async function handleRemoveOperatorSetup(
     );
   }
 
-  const apps = { ...(ws.oauthOperatorApps ?? {}) };
-  if (!apps[catalogId]) {
+  if (!ws.oauthOperatorApps?.[catalogId]) {
     return errResult(`No operator setup configured for "${entry.name}".`);
   }
-  delete apps[catalogId];
-  await ctx.runtime.getWorkspaceStore().update(wsId, { oauthOperatorApps: apps });
-
-  const clientSecretKey = entry.operatorSetup?.clientSecretKey;
-  if (clientSecretKey) {
-    const credStore = ctx.runtime.getCredentialStore();
-    await credStore.delete({ kind: "workspace", wsId }, clientSecretKey).catch(() => {});
-  }
+  await removeOperatorApp(ctx, wsId, catalogId, entry.operatorSetup?.clientSecretKey);
 
   return {
     content: textContent(`Removed OAuth app config for "${entry.name}".`),
     structuredContent: { ok: true, catalogId },
     isError: false,
   };
+}
+
+/**
+ * Remove both halves of a workspace's operator OAuth app: the
+ * `oauthOperatorApps` record, then the client secret. The record goes first, so
+ * a failed secret delete leaves an unreferenced secret rather than a record
+ * that reads as configured. The workspace is read fresh because an uninstall
+ * calls this after its own writes to the record.
+ *
+ * Throws when the record write fails; returns the secret delete's error when it
+ * fails.
+ */
+async function removeOperatorApp(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  catalogId: string,
+  clientSecretKey: string | undefined,
+): Promise<{ deleteError?: string }> {
+  const store = ctx.runtime.getWorkspaceStore();
+  const ws = await store.get(wsId);
+  if (ws?.oauthOperatorApps?.[catalogId]) {
+    const apps = { ...ws.oauthOperatorApps };
+    delete apps[catalogId];
+    await store.update(wsId, { oauthOperatorApps: apps });
+  }
+  if (!clientSecretKey) return {};
+  return ctx.runtime
+    .getCredentialStore()
+    .delete({ kind: "workspace", wsId }, clientSecretKey)
+    .then(
+      () => ({}),
+      (err: unknown) => ({ deleteError: err instanceof Error ? err.message : String(err) }),
+    );
 }
 
 // ── Workspace secrets ───────────────────────────────────────────────

@@ -33,6 +33,7 @@ import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import type { SkillsLoadedEntry } from "../../src/conversation/types.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
@@ -40,6 +41,7 @@ import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
+import { firstStoredEvent } from "../helpers/stored-events.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** Reverse-DNS slug, like a real fleet connector — never the skill's own name. */
@@ -157,18 +159,12 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 /** The `skills.loaded` entries persisted for a conversation's latest turn. */
-async function loadedSkills(
-  conversationId: string,
-): Promise<Array<{ id: string; loadedBy: string; reason: string; layer: number }>> {
+async function loadedSkills(conversationId: string): Promise<SkillsLoadedEntry[]> {
   const store = await runtime.resolveConversationStore(conversationId);
   const events = await store!.readEvents(conversationId);
-  const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+  const skillsLoaded = firstStoredEvent(events, "skills.loaded");
   expect(skillsLoaded).toBeDefined();
-  return (
-    skillsLoaded as unknown as {
-      skills: Array<{ id: string; loadedBy: string; reason: string; layer: number }>;
-    }
-  ).skills;
+  return skillsLoaded.skills;
 }
 
 const testDir = join(tmpdir(), `nimblebrain-connector-skill-triggers-${Date.now()}`);

@@ -18,6 +18,7 @@ import type {
   VerifiedIdentity,
 } from "../../../src/identity/provider.ts";
 import { FIRST_PARTY_GRANT, TransientAuthError } from "../../../src/identity/provider.ts";
+import { stub } from "../../helpers/stub.ts";
 
 const IDENTITY: UserIdentity = {
   id: "user_1",
@@ -33,12 +34,11 @@ function recordingSink(): { sink: EventSink; events: EngineEvent[] } {
   return { sink: { emit: (e: EngineEvent) => events.push(e) }, events };
 }
 
-function optionsWith(verify: () => Promise<VerifiedIdentity | null>, sink: EventSink) {
-  const provider = { verifyRequest: verify } as unknown as IdentityProvider;
-  return {
-    provider,
-    eventSink: sink,
-  } as unknown as AuthMiddlewareOptions;
+function optionsWith(
+  verify: () => Promise<VerifiedIdentity | null>,
+  sink: EventSink,
+): AuthMiddlewareOptions {
+  return { provider: stub<IdentityProvider>({ verifyRequest: verify }), eventSink: sink };
 }
 
 const req = () => new Request("https://example.test/v1/bootstrap");

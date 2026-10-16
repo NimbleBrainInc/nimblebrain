@@ -65,8 +65,9 @@ export function wrapContained(tag: ContainmentTag, body: string): string {
  * `subItems` is populated for sections that aggregate multiple operator-
  * authored entries (apps, layer3 skills). It lets debug tools render per-
  * item attribution and detect content drift on a per-skill basis without
- * re-parsing the section text; the apps entries also carry the connector
- * the `connector` filter matches on.
+ * re-parsing the section text; an app entry, and a skill entry rebuilt from a
+ * recorded `skills.loaded` event, also carry the connector the `connector`
+ * filter matches on.
  */
 export interface TracedLayer {
   kind: TracedLayerKind;
@@ -89,9 +90,8 @@ export interface TracedLayer {
   /** Approximate tokens for `text`. */
   tokens: number;
   /**
-   * Connector attribution, when applicable — the apps section and the
-   * focused-app section. Used by the compose-effective-context tool's
-   * `connector` filter.
+   * Connector attribution of a whole section (the focused-app section). Used
+   * by the compose-effective-context tool's `connector` filter.
    */
   connector?: string;
   /**
@@ -261,10 +261,14 @@ export interface PromptAppInfo {
 export interface Layer3SkillEntry {
   name: string;
   body: string;
-  scope: "org" | "workspace" | "user" | "provided";
+  /** Storage tier (`org` / `workspace` / `user`), `provided`, or `connector` for a curated overlay. */
+  scope: string;
   sourcePath?: string;
-  /** The loading mechanism, for the provenance annotation (display only). */
-  loadedBy: LoadedBy;
+  /**
+   * The loading mechanism, for the provenance annotation (display only).
+   * `declared` is a skill the run's task named.
+   */
+  loadedBy: LoadedBy | "declared";
   reason: string;
 }
 
@@ -1024,11 +1028,12 @@ function formatSkillCatalogSection(entries: SkillCatalogEntry[]): string {
 
 /**
  * Wrap a connector-skill overlay body for surfacing into the conversation
- * history. Unlike Layer-3 skills, a connector overlay NEVER enters the
- * cached system prefix — it becomes the body of a synthetic message
- * the reconstructor emits on the first matching connector tool call, so the
- * guidance rides the append-only history rather than re-varying the prompt
- * prefix every turn.
+ * history. Unlike Layer-3 skills, a connector overlay delivered automatically
+ * never enters the cached system prefix — it becomes the body of a synthetic
+ * message the reconstructor emits on the first matching connector tool call,
+ * so the guidance rides the append-only history rather than re-varying the
+ * prompt prefix every turn. An overlay a task declares by name is the
+ * exception: it joins Layer 3, where it is identical across the task's runs.
  *
  * Containment is the same per-prompt defense `formatLayer3SkillsSection`
  * applies (connector trust is install-time; this is the per-prompt guard): the
@@ -1036,10 +1041,18 @@ function formatSkillCatalogSection(entries: SkillCatalogEntry[]): string {
  * is rewritten to `&lt;/connector-skill>` so an overlay author can't break out
  * of containment. Name/scope ride a sanitized provenance line.
  */
-export function formatConnectorSkillBlock(name: string, scope: string, body: string): string {
+export function formatConnectorSkillBlock(
+  name: string,
+  scope: string,
+  body: string,
+  heldCall = false,
+): string {
   const safeName = sanitizeLineField(name);
   const safeScope = sanitizeLineField(scope);
-  const provenance = `_${safeName}_ — scope: ${safeScope}; surfaced on first matching connector tool call`;
+  const how = heldCall
+    ? "governs the call held above; call it again once read"
+    : "surfaced on first matching connector tool call";
+  const provenance = `_${safeName}_ — scope: ${safeScope}; ${how}`;
   return `${provenance}\n\n${wrapContained("connector-skill", body)}`;
 }
 

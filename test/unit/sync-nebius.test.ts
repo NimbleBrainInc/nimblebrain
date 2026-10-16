@@ -4,9 +4,11 @@ import {
   buildNebiusCatalog,
   DEFAULT_OUTPUT_LIMIT,
   MIN_USABLE_CONTEXT,
+  nebiusCost,
   probeModel,
   type RawNebiusModel,
 } from "../../src/model/sync-nebius.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 describe("sync-nebius invariants", () => {
   it("keeps the context floor clear of the output default", () => {
@@ -92,20 +94,40 @@ describe("buildNebiusCatalog", () => {
   });
 });
 
+describe("nebiusCost", () => {
+  it("records a published cache-read price per 1M", () => {
+    const models = buildNebiusCatalog(
+      [
+        raw({
+          pricing: { prompt: "0.0000002", completion: "0.0000006", input_cache_read: "0.00000002" },
+        }),
+      ],
+      curated,
+    );
+    expect(models["org/Model-A"]!.cost).toEqual({ input: 0.2, output: 0.6, cacheRead: 0.02 });
+  });
+
+  it("omits cacheRead when the listing publishes none, so cached tokens bill at input", () => {
+    // The account lists `input_cache_read: null` while still reporting cached
+    // tokens in usage. Writing 0 here would price those tokens as free.
+    expect(
+      nebiusCost({ prompt: "0.0000002", completion: "0.0000006", input_cache_read: null }),
+    ).toEqual({ input: 0.2, output: 0.6 });
+    expect(nebiusCost({ prompt: "0.0000002", completion: "0.0000006" })).toEqual({
+      input: 0.2,
+      output: 0.6,
+    });
+  });
+});
+
 describe("probeModel", () => {
   const KEY = "test-key";
   const okBody = {
     choices: [{ message: { tool_calls: [{ id: "1", function: { name: "get_weather" } }] } }],
   };
 
-  function fetchReturning(body: unknown, init: { ok?: boolean; status?: number } = {}) {
-    return (async () =>
-      ({
-        ok: init.ok ?? true,
-        status: init.status ?? 200,
-        statusText: "",
-        json: async () => body,
-      }) as unknown as Response) as unknown as typeof fetch;
+  function fetchReturning(body: unknown, status = 200) {
+    return fakeFetch(async () => Response.json(body, { status }));
   }
 
   it("passes a model that returns a real tool call", async () => {
@@ -116,24 +138,19 @@ describe("probeModel", () => {
     // A fake fetch that ignores its arguments would keep a dropped header, a
     // malformed tool, or a shrunken budget green — and a shrunken budget is
     // what produces false negatives in the probe.
-    let seen: { url?: string; headers?: Record<string, string>; body?: Record<string, unknown> } =
-      {};
-    const capturing = (async (
-      url: string,
-      init: { headers: Record<string, string>; body: string },
-    ) => {
-      seen = { url, headers: init.headers, body: JSON.parse(init.body) };
-      return {
-        ok: true,
-        status: 200,
-        statusText: "",
-        json: async () => okBody,
-      } as unknown as Response;
-    }) as unknown as typeof fetch;
+    let seen: { url?: string; headers?: Headers; body?: Record<string, unknown> } = {};
+    const capturing = fakeFetch(async (url, init) => {
+      seen = {
+        url: String(url),
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body)),
+      };
+      return Response.json(okBody);
+    });
 
     await probeModel("org/Model-A", KEY, capturing);
     expect(seen.url).toContain("/chat/completions");
-    expect(seen.headers?.Authorization).toBe(`Bearer ${KEY}`);
+    expect(seen.headers?.get("Authorization")).toBe(`Bearer ${KEY}`);
     expect(seen.body?.model).toBe("org/Model-A");
     expect((seen.body?.tools as unknown[])?.length).toBe(1);
     // A reasoning model spends its trace against this budget before it can call.
@@ -153,15 +170,10 @@ describe("probeModel", () => {
     // which would send it to models the runtime's own gate excludes.
     const bodyFor = async (reasoning: boolean) => {
       let sent: Record<string, unknown> = {};
-      const capturing = (async (_url: string, init: { body: string }) => {
-        sent = JSON.parse(init.body);
-        return {
-          ok: true,
-          status: 200,
-          statusText: "",
-          json: async () => okBody,
-        } as unknown as Response;
-      }) as unknown as typeof fetch;
+      const capturing = fakeFetch(async (_url, init) => {
+        sent = JSON.parse(String(init?.body));
+        return Response.json(okBody);
+      });
       await probeModel("org/Model-A", KEY, capturing, 30_000, reasoning);
       return sent;
     };
@@ -193,14 +205,16 @@ describe("probeModel", () => {
     // Listed, priced, advertising `tools`, and every completion hangs with no
     // status. This is why the probe exists: without it the model ships and stalls
     // an agent run indefinitely.
-    const hangs = ((_url: string, init?: { signal?: AbortSignal }) =>
-      new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => {
-          const e = new Error("The operation was aborted.");
-          e.name = "AbortError";
-          reject(e);
-        });
-      })) as unknown as typeof fetch;
+    const hangs = fakeFetch(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            const e = new Error("The operation was aborted.");
+            e.name = "AbortError";
+            reject(e);
+          });
+        }),
+    );
 
     const outcome = await probeModel("org/Hangs", KEY, hangs, 25);
     expect(outcome.ok).toBe(false);
@@ -208,19 +222,15 @@ describe("probeModel", () => {
   });
 
   it("rejects on a non-2xx and carries the status", async () => {
-    const outcome = await probeModel(
-      "org/Gone",
-      KEY,
-      fetchReturning({}, { ok: false, status: 404 }),
-    );
+    const outcome = await probeModel("org/Gone", KEY, fetchReturning({}, 404));
     expect(outcome.ok).toBe(false);
     expect((outcome as { reason: string }).reason).toBe("http_error");
   });
 
   it("returns an outcome rather than throwing, so one bad model can't fail the sync", async () => {
-    const boom = (async () => {
+    const boom = fakeFetch(async () => {
       throw new Error("ECONNRESET");
-    }) as unknown as typeof fetch;
+    });
     const outcome = await probeModel("org/Broken", KEY, boom);
     expect(outcome.ok).toBe(false);
     expect((outcome as { detail?: string }).detail).toContain("ECONNRESET");

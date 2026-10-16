@@ -69,6 +69,7 @@ export interface RawModel {
     cache_read?: number;
     cache_write?: number;
     reasoning?: number;
+    tiers?: RawCostTier[];
   };
   limit?: {
     context?: number;
@@ -87,10 +88,29 @@ export interface RawModel {
   status?: string;
 }
 
+/** A prompt-length rate card; `tier.size` is the prompt length it applies above. */
+export interface RawCostTier {
+  input?: number;
+  output?: number;
+  cache_read?: number;
+  cache_write?: number;
+  reasoning?: number;
+  tier?: { type?: string; size?: number };
+}
+
 export interface RawProvider {
   id: string;
   name: string;
   models: Record<string, RawModel>;
+}
+
+interface CatalogCostTier {
+  aboveInputTokens: number;
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number;
 }
 
 interface CatalogModel {
@@ -103,6 +123,7 @@ interface CatalogModel {
     cacheRead?: number;
     cacheWrite?: number;
     reasoning?: number;
+    tiers?: CatalogCostTier[];
   };
   limits: {
     context: number;
@@ -122,14 +143,41 @@ interface CatalogModel {
   deprecated?: boolean;
 }
 
-/** Normalize a raw cost block into the catalog cost shape; optional rates are spread only when present. */
-function toCatalogCost(cost: RawModel["cost"]): CatalogModel["cost"] {
+/** The optional per-bucket rates of a raw rate card, spread only when present. */
+function optionalRates(cost: RawCostTier | undefined) {
   return {
-    input: cost?.input ?? 0,
-    output: cost?.output ?? 0,
     ...(cost?.cache_read != null ? { cacheRead: cost.cache_read } : {}),
     ...(cost?.cache_write != null ? { cacheWrite: cost.cache_write } : {}),
     ...(cost?.reasoning != null ? { reasoning: cost.reasoning } : {}),
+  };
+}
+
+/**
+ * The prompt-length rate cards, ascending. Only `context` tiers are kept: a
+ * `context` tier's `size` is the prompt length above which the whole call bills
+ * at that card, which is the one shape `costBreakdown` prices. Any other tier
+ * type is dropped rather than misread as one.
+ */
+function toCatalogTiers(tiers: RawCostTier[] | undefined): CatalogCostTier[] {
+  return (tiers ?? [])
+    .filter((t) => t.tier?.type === "context" && typeof t.tier.size === "number")
+    .map((t) => ({
+      aboveInputTokens: t.tier?.size ?? 0,
+      input: t.input ?? 0,
+      output: t.output ?? 0,
+      ...optionalRates(t),
+    }))
+    .sort((a, b) => a.aboveInputTokens - b.aboveInputTokens);
+}
+
+/** Normalize a raw cost block into the catalog cost shape; optional rates are spread only when present. */
+function toCatalogCost(cost: RawModel["cost"]): CatalogModel["cost"] {
+  const tiers = toCatalogTiers(cost?.tiers);
+  return {
+    input: cost?.input ?? 0,
+    output: cost?.output ?? 0,
+    ...optionalRates(cost),
+    ...(tiers.length ? { tiers } : {}),
   };
 }
 

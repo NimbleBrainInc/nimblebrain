@@ -38,8 +38,9 @@ import type {
 import type { EventWakeAck, EventWakeRequest } from "../../../src/platform/tasks/event-trigger.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { stub } from "../../helpers/stub.ts";
 
-const SOURCE = "precision-outbound";
+const SOURCE = "acme-outbound";
 const AUTHOR = "usr_admin";
 const TOOL = "slack__send_message";
 
@@ -104,7 +105,7 @@ function dispatcher(overrides: Partial<RouteDispatcherDeps> = {}): RouteDispatch
 
 /** Write the workspace's notifications block: ceilings and routes. */
 async function configure(block: Record<string, unknown>): Promise<void> {
-  await workspaceStore.update(wsId, { notifications: block } as never);
+  await workspaceStore.update(wsId, { notifications: block });
 }
 
 /** One route delivering to `TOOL`, with the match and input a test needs. */
@@ -528,13 +529,12 @@ describe("a retry whose attempt cannot even start", () => {
 
     let broken = false;
     const disp = dispatcher({
-      workspaceStore: {
-        ...workspaceStore,
+      workspaceStore: stub<WorkspaceStore>({
         get: async (id: string) => {
           if (broken) throw new Error("workspace record is unreadable");
           return workspaceStore.get(id);
         },
-      } as unknown as typeof workspaceStore,
+      }),
     });
     await disp.onItem(wsId, item);
     expect(ledger(item)[0]).toMatchObject({ outcome: "pending", attempts: 1 });

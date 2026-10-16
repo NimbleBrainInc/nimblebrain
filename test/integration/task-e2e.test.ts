@@ -213,7 +213,7 @@ describe("task e2e: create -> run -> verify", () => {
           name: "Weekly Report",
           schedule: { type: "interval", intervalMs: 3_600_000 },
           description: "Compiles weekly metrics",
-          skill: "reporting",
+          skills: ["reporting"],
           maxIterations: 8,
           maxInputTokens: 100_000,
           model: "anthropic:claude-sonnet-4-5-20250929",
@@ -230,7 +230,7 @@ describe("task e2e: create -> run -> verify", () => {
     expect(received.id).toBe("weekly-report");
     expect(received.name).toBe("Weekly Report");
     expect(received.prompt).toBe("Generate the weekly report");
-    expect(received.skill).toBe("reporting");
+    expect(received.skills).toEqual(["reporting"]);
     expect(received.maxIterations).toBe(8);
     expect(received.maxInputTokens).toBe(100_000);
     expect(received.model).toBe("anthropic:claude-sonnet-4-5-20250929");

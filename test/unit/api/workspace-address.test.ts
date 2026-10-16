@@ -14,8 +14,11 @@ import {
 } from "../../../src/api/workspace-address.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import type { Workspace } from "../../../src/workspace/types.ts";
 import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
+import { stub } from "../../helpers/stub.ts";
+import { makeWorkspace } from "../../helpers/test-workspace.ts";
 
 const ALICE: UserIdentity = makeIdentity({
   id: "usr_alice",
@@ -24,35 +27,30 @@ const ALICE: UserIdentity = makeIdentity({
   orgRole: "member",
 });
 
-interface StoredWorkspace {
-  id: string;
-  members: Array<{ userId: string; role: string }>;
-}
-
-const WORKSPACES: Record<string, StoredWorkspace> = {
-  ws_000f7ed6658f9d30: {
+const WORKSPACES: Record<string, Workspace> = {
+  ws_000f7ed6658f9d30: makeWorkspace({
     id: "ws_000f7ed6658f9d30",
     members: [{ userId: ALICE.id, role: "member" }],
-  },
-  ws_005820c54ca342ad: {
+  }),
+  ws_005820c54ca342ad: makeWorkspace({
     id: "ws_005820c54ca342ad",
     members: [{ userId: "usr_bob", role: "admin" }],
-  },
-  ws_002be648a4e7934d: {
+  }),
+  ws_002be648a4e7934d: makeWorkspace({
     id: "ws_002be648a4e7934d",
     members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
-  },
+  }),
 };
 
 /** A store that records every lookup, and resolves ids case-insensitively like a case-folding filesystem. */
 function makeStore(): { store: WorkspaceStore; lookups: string[] } {
   const lookups: string[] = [];
-  const store = {
+  const store = stub<WorkspaceStore>({
     get: async (id: string) => {
       lookups.push(id);
       return WORKSPACES[id.toLowerCase()] ?? null;
     },
-  } as unknown as WorkspaceStore;
+  });
   return { store, lookups };
 }
 
@@ -99,7 +97,7 @@ describe("isAddressedWorkspaceMember", () => {
 /** An app with one workspace-scoped route that echoes the workspace it was admitted to. */
 function makeApp(opts: { identity?: UserIdentity } = {}) {
   const { store } = makeStore();
-  const ctx = { workspaceStore: store } as unknown as AppContext;
+  const ctx = stub<AppContext>({ workspaceStore: store });
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {
     if (opts.identity) c.set("identity", opts.identity);

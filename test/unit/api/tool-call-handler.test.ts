@@ -1,10 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import { handleResourceProxy, handleToolCall } from "../../../src/api/handlers.ts";
 import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
-import type { ResolvedFeatures } from "../../../src/config/features.ts";
-import type { UserIdentity } from "../../../src/identity/provider.ts";
+import { resolveFeatures } from "../../../src/config/features.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
+import type { ToolRegistry } from "../../../src/tools/registry.ts";
+import type { Tool, ToolSource } from "../../../src/tools/types.ts";
+import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { readJson } from "../../helpers/http.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
+import { stub } from "../../helpers/stub.ts";
+import { makeWorkspace } from "../../helpers/test-workspace.ts";
 
 // On REST the workspace is the one in the URL path (ADR-0037). A qualified
 // `ws_<id>-<name>` server, app or tool is refused with a 400 — never routed to
@@ -12,8 +17,8 @@ import { readJson } from "../../helpers/http.ts";
 // name resolves in the URL's workspace. handleReadResource is covered in
 // read-resource-handler.test.ts.
 
-const features = {} as unknown as ResolvedFeatures; // our tool isn't feature-mapped → always enabled
-const identityU1 = { id: "u1", orgRole: "member" } as unknown as UserIdentity;
+const features = resolveFeatures(); // our tool isn't feature-mapped → always enabled
+const identityU1 = makeIdentity({ id: "u1", orgRole: "member" });
 
 // ── handleToolCall ──────────────────────────────────────────────────
 
@@ -36,12 +41,12 @@ function makeToolCallRuntime(opts: ToolCallStub = {}): {
   const toolNames = opts.toolNames ?? [`${sourceName}__preview`];
   const executed: string[] = [];
   const registryWs: string[] = [];
-  const source = {
+  const source = stub<ToolSource>({
     name: sourceName,
-    tools: async () => toolNames.map((name) => ({ name })),
-  };
+    tools: async () => toolNames.map((name) => stub<Tool>({ name })),
+  });
   const present = new Set(opts.recoverable ? [] : [sourceName]);
-  const registry = {
+  const registry = stub<ToolRegistry>({
     hasSource: (n: string) => present.has(n),
     hasEstablishedSource: (n: string) => present.has(n),
     getSources: () => [source],
@@ -49,12 +54,13 @@ function makeToolCallRuntime(opts: ToolCallStub = {}): {
       executed.push(call.name);
       return { content: [{ type: "text", text: "ok" }], structuredContent: {}, isError: false };
     },
-  };
-  const runtime = {
+  });
+  const runtime = stub<Runtime>({
     getIdentitySource: () => undefined,
-    getWorkspaceStore: () => ({
-      getWorkspacesForUser: async () => memberOf.map((id) => ({ id })),
-    }),
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({
+        getWorkspacesForUser: async () => memberOf.map((id) => makeWorkspace({ id })),
+      }),
     ensureWorkspaceRegistry: async (wsId: string) => {
       registryWs.push(wsId);
       return registry;
@@ -65,7 +71,7 @@ function makeToolCallRuntime(opts: ToolCallStub = {}): {
       present.add(name);
       return true;
     },
-  } as unknown as Runtime;
+  });
   return { runtime, executed, registryWs };
 }
 
@@ -170,10 +176,10 @@ describe("handleToolCall — the workspace is the one in the URL", () => {
     });
     const opts = { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 };
     // Both flags on, so a refusal here can only be the role gate's.
-    const enabled = {
+    const enabled = resolveFeatures({
       workspaceManagement: true,
       userManagement: true,
-    } as unknown as ResolvedFeatures;
+    });
 
     const listed = await handleToolCall(
       toolReq({ server: "nb", tool: "manage_workspaces", arguments: { action: "list_members" } }),
@@ -229,15 +235,16 @@ function makeProxyRuntime(opts: {
   const present = new Set(opts.recoverable ? [] : [sourceName]);
   const calls: Array<{ server: string; uri: string; wsId: string }> = [];
   const recoverCalls: Array<{ wsId: string; name: string }> = [];
-  const registry = {
+  const registry = stub<ToolRegistry>({
     hasSource: (n: string) => present.has(n),
     hasEstablishedSource: (n: string) => present.has(n),
-  };
-  const runtime = {
+  });
+  const runtime = stub<Runtime>({
     getIdentitySource: () => undefined,
-    getWorkspaceStore: () => ({
-      getWorkspacesForUser: async () => memberOf.map((id) => ({ id })),
-    }),
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({
+        getWorkspacesForUser: async () => memberOf.map((id) => makeWorkspace({ id })),
+      }),
     ensureWorkspaceRegistry: async () => registry,
     recoverWorkspaceSource: async (wsId: string, name: string) => {
       recoverCalls.push({ wsId, name });
@@ -250,7 +257,7 @@ function makeProxyRuntime(opts: {
       calls.push({ server, uri, wsId });
       return { text: "ok", mimeType: "text/plain" };
     },
-  } as unknown as Runtime;
+  });
   return { runtime, calls, recoverCalls };
 }
 

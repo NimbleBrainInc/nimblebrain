@@ -102,7 +102,7 @@ describe("loadConfig", () => {
     expect(configurable.filter((k) => !(k in samples))).toEqual([]);
 
     const configPath = writeTestConfig("every-key.json", samples);
-    const config = loadConfig({ config: configPath }) as unknown as Record<string, unknown>;
+    const config: Record<string, unknown> = { ...loadConfig({ config: configPath }) };
     loadBrand({});
     expect(configurable.filter((k) => config[k] === undefined)).toEqual([]);
     expect(config.usage).toEqual({ ledger: { retentionMonths: 6 } });
@@ -410,7 +410,7 @@ describe("config validation", () => {
 
       const spy = spyOn(console, "error").mockImplementation(() => {});
       try {
-        const config = loadConfig({ config: configPath }) as unknown as Record<string, unknown>;
+        const config: Record<string, unknown> = { ...loadConfig({ config: configPath }) };
         const warnings = spy.mock.calls.map((c) => c[0] as string);
         expect(warnings.some((w) => w.includes(`Unknown key "${key}"`))).toBe(true);
         expect(config[key]).toBeUndefined();

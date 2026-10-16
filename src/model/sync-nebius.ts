@@ -73,8 +73,7 @@ export const DEFAULT_OUTPUT_LIMIT = 16384;
  * mistake to make in a file whose thesis is fail-closed.
  *
  * This is the one failure class the probe structurally cannot see: a model with
- * an 8K window answers the probe's toy prompt perfectly. `Kimi-K2.7-Code` and
- * `Kimi-K3` are both served at 8000 on this account.
+ * an 8K window answers the probe's toy prompt perfectly.
  */
 export const MIN_USABLE_CONTEXT = 64_000;
 
@@ -102,16 +101,22 @@ interface CuratedModel {
 const CURATED: CuratedModel[] = [
   { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B", family: "gpt-oss" },
   { id: "Qwen/Qwen3-235B-A22B-Instruct-2507", name: "Qwen3 235B A22B Instruct", family: "qwen" },
-  { id: "Qwen/Qwen3-Next-80B-A3B-Thinking", name: "Qwen3 Next 80B A3B Thinking", family: "qwen" },
-  { id: "nvidia/Cosmos3-Super-Reasoner", name: "Cosmos3 Super Reasoner", family: "nvidia" },
+  { id: "Qwen/Qwen3.5-397B-A17B", name: "Qwen3.5 397B A17B", family: "qwen" },
+  { id: "deepseek-ai/DeepSeek-V4-Flash-0731", name: "DeepSeek V4 Flash", family: "deepseek" },
+  { id: "nvidia/Nemotron-3-Ultra-550b-a55b", name: "Nemotron 3 Ultra", family: "nvidia" },
   { id: "moonshotai/Kimi-K2.6", name: "Kimi K2.6", family: "kimi" },
-  { id: "zai-org/GLM-5.1", name: "GLM 5.1", family: "glm" },
+  { id: "zai-org/GLM-5.3", name: "GLM 5.3", family: "glm" },
 ];
 
 export interface RawNebiusModel {
   id: string;
   context_length?: number;
-  pricing?: { prompt?: string; completion?: string };
+  /**
+   * Per-token USD strings. `input_cache_read` is the price of a prompt token
+   * the provider served from its prefix cache; `null` means no cache rate is
+   * published, so a cached token bills at `prompt`.
+   */
+  pricing?: { prompt?: string; completion?: string; input_cache_read?: string | null };
   supported_features?: string[];
 }
 
@@ -119,7 +124,7 @@ interface CatalogModel {
   id: string;
   name: string;
   family: string;
-  cost: { input: number; output: number };
+  cost: { input: number; output: number; cacheRead?: number };
   limits: { context: number; output: number };
   capabilities: { toolCall: boolean; reasoning: boolean; attachment: boolean };
   modalities: { input: string[]; output: string[] };
@@ -128,6 +133,27 @@ interface CatalogModel {
 /** Nebius prices are per-token strings (e.g. "0.00000015"); convert to USD per 1M and drop float noise. */
 function perMillion(perToken: string | undefined): number {
   return Math.round(Number(perToken ?? 0) * 1_000_000 * 10_000) / 10_000;
+}
+
+/**
+ * Catalog cost from the listing's prices.
+ *
+ * Nebius reports prefix-cache hits in usage (`cached_tokens`) whether or not it
+ * discounts them, so the rate comes from the listing, never from the fact that
+ * tokens were cached. `cacheRead` is written only when `input_cache_read` is
+ * published; absent, the cost path prices a cached token at `input`, which is
+ * what the account bills.
+ */
+export function nebiusCost(pricing: RawNebiusModel["pricing"]): CatalogModel["cost"] {
+  const cost: CatalogModel["cost"] = {
+    input: perMillion(pricing?.prompt),
+    output: perMillion(pricing?.completion),
+  };
+  const cacheRead = pricing?.input_cache_read;
+  if (cacheRead != null && cacheRead !== "" && Number.isFinite(Number(cacheRead))) {
+    cost.cacheRead = perMillion(cacheRead);
+  }
+  return cost;
 }
 
 /**
@@ -295,7 +321,7 @@ export function buildNebiusCatalog(
       id,
       name,
       family,
-      cost: { input: perMillion(m.pricing?.prompt), output: perMillion(m.pricing?.completion) },
+      cost: nebiusCost(m.pricing),
       // The gate above guarantees `context >= MIN_USABLE_CONTEXT`, which is well
       // clear of the output default, so no clamp is needed to keep `max_tokens`
       // inside the window.

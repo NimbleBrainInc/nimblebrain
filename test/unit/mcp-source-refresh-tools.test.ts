@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { Client } from "@modelcontextprotocol/client";
 import type { EventSink } from "../../src/engine/types.ts";
 import {
   classifyConnectionFailure,
@@ -8,6 +9,8 @@ import {
 } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool } from "../../src/tools/types.ts";
+import { mcpSourceInternals, mockTryRestart } from "../helpers/mcp-source-internals.ts";
+import { stub } from "../helpers/stub.ts";
 
 /**
  * Freshness of a remote source's tool list. `cachedTools` is memoized with no
@@ -22,7 +25,10 @@ import type { Tool } from "../../src/tools/types.ts";
 
 const noopSink: EventSink = { emit: () => {} };
 
-type RawTool = { name: string; description?: string; inputSchema?: Record<string, unknown> };
+type ListToolsResult = Awaited<ReturnType<Client["listTools"]>>;
+type WireTool = ListToolsResult["tools"][number];
+/** A tool as a fixture lists it; the fake client fills in a bare object schema when it has none. */
+type RawTool = Pick<WireTool, "name" | "description"> & { inputSchema?: WireTool["inputSchema"] };
 
 /** A remote McpSource wired to a scripted `listTools` whose result can be
  *  swapped between calls (simulating an upstream redeploy) and whose
@@ -35,16 +41,16 @@ function buildRemoteSource(initial: RawTool[], name = "enrich") {
   );
   let current: RawTool[] = initial;
   let listCalls = 0;
-  const fakeClient = {
+  const fakeClient = stub<Client>({
     // A connected client: it has the server's capabilities from the handshake.
     getServerCapabilities: () => ({ tools: {} }),
     listTools: async () => {
       listCalls += 1;
-      return { tools: current };
+      return { tools: current.map((t) => ({ inputSchema: { type: "object" as const }, ...t })) };
     },
     close: async () => {},
-  };
-  (source as unknown as { client: unknown }).client = fakeClient;
+  });
+  mcpSourceInternals(source).client = fakeClient;
   return {
     source,
     setTools: (t: RawTool[]) => {
@@ -54,10 +60,16 @@ function buildRemoteSource(initial: RawTool[], name = "enrich") {
   };
 }
 
-const getFetchedAt = (s: McpSource) =>
-  (s as unknown as { toolsFetchedAt: number | null }).toolsFetchedAt;
+const getFetchedAt = (s: McpSource) => mcpSourceInternals(s).toolsFetchedAt;
 const setFetchedAt = (s: McpSource, v: number) => {
-  (s as unknown as { toolsFetchedAt: number }).toolsFetchedAt = v;
+  mcpSourceInternals(s).toolsFetchedAt = v;
+};
+
+/** Replace the fake client's `tools/list` answer. */
+const setListTools = (s: McpSource, fn: Client["listTools"]) => {
+  const client = mcpSourceInternals(s).client;
+  if (!client) throw new Error("the source has no client");
+  client.listTools = fn;
 };
 
 describe("McpSource tool-list freshness", () => {
@@ -142,10 +154,9 @@ describe("McpSource tool-list freshness", () => {
     const first = await source.tools();
 
     // Next tools/list throws; age the memo so the gate tries to refresh.
-    (source as unknown as { client: { listTools: () => Promise<unknown> } }).client.listTools =
-      async () => {
-        throw new Error("transport blip");
-      };
+    setListTools(source, async () => {
+      throw new Error("transport blip");
+    });
     setFetchedAt(source, Date.now() - 60_000);
 
     const served = await source.toolsWithMaxAge(30_000);
@@ -184,10 +195,7 @@ describe("McpSource tool-list freshness", () => {
 /** Age a source's memo past the max age, as if its last tools/list were long ago. */
 const ageMemo = (s: McpSource) => setFetchedAt(s, Date.now() - REMOTE_TOOL_LIST_MAX_AGE_MS - 1);
 const setWait = (s: McpSource, ms: number) => {
-  (s as unknown as { toolsRefreshWaitMs: number }).toolsRefreshWaitMs = ms;
-};
-const setListTools = (s: McpSource, fn: () => Promise<unknown>) => {
-  (s as unknown as { client: { listTools: () => Promise<unknown> } }).client.listTools = fn;
+  mcpSourceInternals(s).toolsRefreshWaitMs = ms;
 };
 
 describe("McpSource.tools() revalidates a stale remote memo", () => {
@@ -219,7 +227,7 @@ describe("McpSource.tools() revalidates a stale remote memo", () => {
     const { source } = buildRemoteSource([{ name: "validate_email" }]);
     const first = await source.tools();
     setWait(source, 5);
-    let release: (v: unknown) => void = () => {};
+    let release: (v: ListToolsResult) => void = () => {};
     let calls = 0;
     setListTools(source, () => {
       calls += 1;
@@ -234,7 +242,12 @@ describe("McpSource.tools() revalidates a stale remote memo", () => {
     expect(await source.tools()).toBe(first);
     expect(calls).toBe(1);
 
-    release({ tools: [{ name: "validate_email" }, { name: "domain_search" }] });
+    release({
+      tools: [
+        { name: "validate_email", inputSchema: { type: "object" } },
+        { name: "domain_search", inputSchema: { type: "object" } },
+      ],
+    });
     await new Promise((r) => setTimeout(r, 0));
 
     const after = await source.tools();
@@ -280,10 +293,10 @@ describe("McpSource.tools() revalidates a stale remote memo", () => {
     const lost = new Error("Session not found");
     expect(classifyConnectionFailure(lost)).toBe("session-lost");
     let restarts = 0;
-    (source as unknown as { tryRestart: () => Promise<boolean> }).tryRestart = async () => {
+    mockTryRestart(source).mockImplementation(async () => {
       restarts += 1;
       return true;
-    };
+    });
     setListTools(source, async () => {
       throw lost;
     });
@@ -297,7 +310,7 @@ describe("McpSource.tools() revalidates a stale remote memo", () => {
   it("drops a re-fetch answer that lands after stop() cleared it", async () => {
     const { source } = buildRemoteSource([{ name: "validate_email" }]);
     await source.tools();
-    let release: (v: unknown) => void = () => {};
+    let release: (v: ListToolsResult) => void = () => {};
     setListTools(
       source,
       () =>
@@ -308,11 +321,8 @@ describe("McpSource.tools() revalidates a stale remote memo", () => {
 
     const pending = source.refreshTools();
     await source.stop();
-    const internals = source as unknown as {
-      cachedTools: unknown;
-      toolsFetchedAt: number | null;
-    };
-    release({ tools: [{ name: "from_the_old_connection" }] });
+    const internals = mcpSourceInternals(source);
+    release({ tools: [{ name: "from_the_old_connection", inputSchema: { type: "object" } }] });
     await pending;
 
     expect(internals.cachedTools).toBeNull();
@@ -347,7 +357,7 @@ describe("McpSource.tools() revalidates a stale remote memo", () => {
     const memo: Tool[] = [
       { name: "local__x", description: "", inputSchema: {}, source: "mcp:local" },
     ];
-    (local as unknown as { cachedTools: Tool[] }).cachedTools = memo;
+    mcpSourceInternals(local).cachedTools = memo;
     ageMemo(local);
 
     // No client: a re-fetch would throw "not started".

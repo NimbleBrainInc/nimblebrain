@@ -20,7 +20,12 @@ const placement = (over: Partial<PlacementEntry>): PlacementEntry => ({
 });
 
 const PLACEMENTS = [
-  placement({ serverName: "conversations", slot: "sidebar", label: "Conversations", route: "conversations" }),
+  placement({
+    serverName: "conversations",
+    slot: "sidebar",
+    label: "Conversations",
+    route: "conversations",
+  }),
   placement({ serverName: "people", label: "People", route: "people" }),
   placement({ serverName: "tasks", route: "tasks" }),
 ];
@@ -43,7 +48,9 @@ describe("pageTitle", () => {
     expect(pageTitle("/w/000f7ed6658f9d30/settings/general", PLACEMENTS)).toBe("General");
     expect(pageTitle("/w/000f7ed6658f9d30/settings/members", PLACEMENTS)).toBe("Members");
     expect(pageTitle("/w/000f7ed6658f9d30/settings/connectors", PLACEMENTS)).toBe("Connectors");
-    expect(pageTitle("/w/000f7ed6658f9d30/settings/connectors/browse", PLACEMENTS)).toBe("Connectors");
+    expect(pageTitle("/w/000f7ed6658f9d30/settings/connectors/browse", PLACEMENTS)).toBe(
+      "Connectors",
+    );
   });
 
   test("a settings tab follows a crumb back to its area's first tab", () => {

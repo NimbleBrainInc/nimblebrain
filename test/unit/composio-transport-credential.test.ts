@@ -11,6 +11,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   COMPOSIO_CREDENTIAL_PROVIDER,
@@ -23,6 +24,7 @@ import {
 } from "../../src/connectors/providers/config.ts";
 import type { RemoteTransportConfig } from "../../src/connectors/runtime/types.ts";
 import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 const ENV_KEYS = ["COMPOSIO_API_KEY", "COMPOSIO_API_BASE_URL"] as const;
 let saved: Record<string, string | undefined>;
@@ -112,10 +114,10 @@ describe("registration happens at the composition root", () => {
     );
     const seen: Headers[] = [];
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+    globalThis.fetch = fakeFetch(async (_input, init) => {
       seen.push(new Headers(init?.headers));
       return new Response(null, { status: 202 });
-    }) as unknown as typeof fetch;
+    });
     try {
       await transport.send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" });
     } finally {
@@ -153,8 +155,12 @@ describe("the transport's own SSRF posture, not just the URL gate's", () => {
     const transport = await createRemoteTransport(new URL(IN_CLUSTER), {
       type: "streamable-http",
       auth: { type: "provider", provider, config: {} },
-    } as never);
-    return (transport as unknown as Record<string, (u: string) => Promise<unknown>>)._fetch;
+    });
+    if (!(transport instanceof StreamableHTTPClientTransport)) {
+      throw new Error("expected a streamable-http transport");
+    }
+    // biome-ignore lint/complexity/useLiteralKeys: `_fetch` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
+    return transport["_fetch"];
   }
 
   it("refuses an in-cluster plain-HTTP target for a brokered Composio session", async () => {

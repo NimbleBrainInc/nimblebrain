@@ -1,79 +1,32 @@
 /**
- * The runtime's outbound connection against servers built on old MCP SDKs.
+ * The runtime's outbound connection against a server on the 2025 era.
  *
- * Connectors the runtime reaches are third-party servers, and many are built on
- * an MCP TypeScript SDK long behind the one the runtime uses. An SDK upgrade on
- * this side must not drop them. Each case here is a real server from a pinned
- * old SDK (installed under an alias), reached through `McpSource` with the
- * transport a connector's config selects, and checked end to end: it connects,
- * negotiates a version the old server speaks, lists its tools, and calls one.
+ * Connectors the runtime reaches are third-party servers, and many still speak
+ * 2025-11-25 over an MCP TypeScript SDK v1 server, while the runtime is on SDK
+ * 2 and prefers 2026-07-28. The runtime must keep reaching them: it probes with
+ * `server/discover`, gets no 2026 answer, and falls back to `initialize`. The
+ * server here is a real SDK v1 release (installed under the `mcp-sdk-v1`
+ * alias), reached through `McpSource` with the transport a connector's config
+ * selects, and checked end to end: it connects, negotiates 2025-11-25, lists
+ * its tools, and calls one. Both transports are covered, because 2025-era
+ * connectors are still found on SSE as well as Streamable HTTP.
  *
- * - SDK 1.0.4: protocol 2024-11-05, SSE only (it predates Streamable HTTP).
- * - SDK 1.10.2: protocol 2024-11-05 still, with Streamable HTTP added beside SSE.
- * - SDK 1.13.3: protocol 2025-06-18, SSE and Streamable HTTP.
+ * The expected version is the point of the test, not an incidental pin: if a
+ * later SDK v1 release answers with another revision, this fails, and the
+ * alias is held at the last release that speaks 2025-11-25.
  */
 import { afterAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { Server as SdkServer } from "mcp-sdk-v1/server/index.js";
+import { SSEServerTransport } from "mcp-sdk-v1/server/sse.js";
+import { StreamableHTTPServerTransport } from "mcp-sdk-v1/server/streamableHttp.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "mcp-sdk-v1/types.js";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 
-interface OldSdk {
-  label: string;
-  /** The transports this SDK can serve; 1.0 predates Streamable HTTP. */
-  transports: ReadonlyArray<"sse" | "streamable">;
-  /** The protocol version the server answers with. */
-  version: string;
-  load: () => Promise<{
-    // biome-ignore lint/suspicious/noExplicitAny: each old SDK has its own Server and schema types
-    Server: any;
-    // biome-ignore lint/suspicious/noExplicitAny: as above
-    types: any;
-    // biome-ignore lint/suspicious/noExplicitAny: as above
-    SSEServerTransport: any;
-    // biome-ignore lint/suspicious/noExplicitAny: absent before SDK 1.10
-    Streamable: any | null;
-  }>;
-}
-
-const SDKS: OldSdk[] = [
-  {
-    label: "SDK 1.0.4",
-    transports: ["sse"],
-    version: "2024-11-05",
-    load: async () => ({
-      Server: (await import("mcp-sdk-v1-0/server/index.js")).Server,
-      types: await import("mcp-sdk-v1-0/types.js"),
-      SSEServerTransport: (await import("mcp-sdk-v1-0/server/sse.js")).SSEServerTransport,
-      Streamable: null,
-    }),
-  },
-  {
-    label: "SDK 1.10.2",
-    transports: ["sse", "streamable"],
-    version: "2024-11-05",
-    load: async () => ({
-      Server: (await import("mcp-sdk-v1-10/server/index.js")).Server,
-      types: await import("mcp-sdk-v1-10/types.js"),
-      SSEServerTransport: (await import("mcp-sdk-v1-10/server/sse.js")).SSEServerTransport,
-      Streamable: (await import("mcp-sdk-v1-10/server/streamableHttp.js"))
-        .StreamableHTTPServerTransport,
-    }),
-  },
-  {
-    label: "SDK 1.13.3",
-    transports: ["sse", "streamable"],
-    version: "2025-06-18",
-    load: async () => ({
-      Server: (await import("mcp-sdk-v1-13/server/index.js")).Server,
-      types: await import("mcp-sdk-v1-13/types.js"),
-      SSEServerTransport: (await import("mcp-sdk-v1-13/server/sse.js")).SSEServerTransport,
-      Streamable: (await import("mcp-sdk-v1-13/server/streamableHttp.js"))
-        .StreamableHTTPServerTransport,
-    }),
-  },
-];
+const ERA_2025 = "2025-11-25";
 
 const servers: Server[] = [];
 afterAll(() => {
@@ -83,10 +36,9 @@ afterAll(() => {
   }
 });
 
-// biome-ignore lint/suspicious/noExplicitAny: the loaded SDK's module shape
-function buildServer(sdk: any) {
-  const server = new sdk.Server({ name: "old", version: "1.0.0" }, { capabilities: { tools: {} } });
-  server.setRequestHandler(sdk.types.ListToolsRequestSchema, async () => ({
+function buildServer() {
+  const server = new SdkServer({ name: "old", version: "1.0.0" }, { capabilities: { tools: {} } });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
         name: "echo",
@@ -95,12 +47,9 @@ function buildServer(sdk: any) {
       },
     ],
   }));
-  server.setRequestHandler(
-    sdk.types.CallToolRequestSchema,
-    async (request: { params: { arguments?: { text?: string } } }) => ({
-      content: [{ type: "text", text: `echo:${request.params.arguments?.text ?? ""}` }],
-    }),
-  );
+  server.setRequestHandler(CallToolRequestSchema, async (request) => ({
+    content: [{ type: "text", text: `echo:${request.params.arguments?.text ?? ""}` }],
+  }));
   return server;
 }
 
@@ -111,24 +60,21 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   return body ? JSON.parse(body) : undefined;
 }
 
-/** Serve an old SDK over SSE (`GET /sse`, `POST /messages`) or Streamable HTTP (`/mcp`). */
-async function serve(
-  sdk: Awaited<ReturnType<OldSdk["load"]>>,
-  mode: "sse" | "streamable",
-): Promise<string> {
-  // biome-ignore lint/suspicious/noExplicitAny: the loaded SDK's transport
-  const transports = new Map<string, any>();
+/** Serve SDK v1 over SSE (`GET /sse`, `POST /messages`) or Streamable HTTP (`/mcp`). */
+async function serve(mode: "sse" | "streamable"): Promise<string> {
+  const sse = new Map<string, SSEServerTransport>();
+  const streamable = new Map<string, StreamableHTTPServerTransport>();
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (mode === "sse") {
       if (req.method === "GET" && url.pathname === "/sse") {
-        const transport = new sdk.SSEServerTransport("/messages", res);
-        transports.set(transport.sessionId, transport);
-        await buildServer(sdk).connect(transport);
+        const transport = new SSEServerTransport("/messages", res);
+        sse.set(transport.sessionId, transport);
+        await buildServer().connect(transport);
         return;
       }
       if (req.method === "POST" && url.pathname === "/messages") {
-        const transport = transports.get(url.searchParams.get("sessionId") ?? "");
+        const transport = sse.get(url.searchParams.get("sessionId") ?? "");
         if (!transport) {
           res.writeHead(404).end();
           return;
@@ -139,13 +85,16 @@ async function serve(
     } else if (url.pathname === "/mcp") {
       const body = req.method === "POST" ? await readJson(req) : undefined;
       const sid = req.headers["mcp-session-id"];
-      let transport = typeof sid === "string" ? transports.get(sid) : undefined;
+      let transport = typeof sid === "string" ? streamable.get(sid) : undefined;
       if (!transport) {
-        transport = new sdk.Streamable({
+        const created = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (id: string) => transports.set(id, transport),
+          onsessioninitialized: (id) => {
+            streamable.set(id, created);
+          },
         });
-        await buildServer(sdk).connect(transport);
+        await buildServer().connect(created);
+        transport = created;
       }
       await transport.handleRequest(req, res, body);
       return;
@@ -164,34 +113,31 @@ async function serve(
   return mode === "sse" ? `http://127.0.0.1:${port}/sse` : `http://127.0.0.1:${port}/mcp`;
 }
 
-describe("the runtime reaches servers on old MCP SDKs", () => {
-  for (const old of SDKS) {
-    for (const mode of old.transports) {
-      it(`${old.label} over ${mode === "sse" ? "SSE" : "Streamable HTTP"}`, async () => {
-        const sdk = await old.load();
-        const url = await serve(sdk, mode);
-        const source = new McpSource(
-          "old",
-          {
-            type: "remote",
-            url: new URL(url),
-            transportConfig: { type: mode === "sse" ? "sse" : "streamable-http" },
-            allowInsecure: true,
-          },
-          new NoopEventSink(),
-        );
-        try {
-          await source.start();
-          expect(source.getNegotiatedProtocolVersion()).toBe(old.version);
-          const tools = await source.tools();
-          expect(tools.map((t) => t.name)).toEqual(["old__echo"]);
-          const result = await source.execute("echo", { text: "hi" });
-          expect(result.isError).toBeFalsy();
-          expect(JSON.stringify(result.content)).toContain("echo:hi");
-        } finally {
-          await source.stop();
-        }
-      });
-    }
+describe("the runtime reaches a 2025-era server on MCP SDK v1", () => {
+  for (const mode of ["sse", "streamable"] as const) {
+    it(`over ${mode === "sse" ? "SSE" : "Streamable HTTP"}`, async () => {
+      const url = await serve(mode);
+      const source = new McpSource(
+        "old",
+        {
+          type: "remote",
+          url: new URL(url),
+          transportConfig: { type: mode === "sse" ? "sse" : "streamable-http" },
+          allowInsecure: true,
+        },
+        new NoopEventSink(),
+      );
+      try {
+        await source.start();
+        expect(source.getNegotiatedProtocolVersion()).toBe(ERA_2025);
+        const tools = await source.tools();
+        expect(tools.map((t) => t.name)).toEqual(["old__echo"]);
+        const result = await source.execute("echo", { text: "hi" });
+        expect(result.isError).toBeFalsy();
+        expect(JSON.stringify(result.content)).toContain("echo:hi");
+      } finally {
+        await source.stop();
+      }
+    });
   }
 });

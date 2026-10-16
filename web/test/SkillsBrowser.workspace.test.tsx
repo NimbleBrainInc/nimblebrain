@@ -16,19 +16,12 @@
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 import { realClient } from "./setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// happy-dom doesn't expose SyntaxError/TypeError on its Window stub;
-// any <select> render trips this. Same patch as the org-surface test.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 type CallToolArgs = {
   server: string;
@@ -195,9 +188,7 @@ const { act } = await import("react");
 const { MemoryRouter } = await import("react-router-dom");
 const { SkillsBrowser, SkillsTab } = await import("../src/pages/settings/SkillsTab");
 const { SessionProvider } = await import("../src/context/SessionContext");
-const { WorkspaceProvider, useWorkspaceContext } = await import(
-  "../src/context/WorkspaceContext"
-);
+const { WorkspaceProvider, useWorkspaceContext } = await import("../src/context/WorkspaceContext");
 const { NoticeProvider, NoticeViewport } = await import("../src/components/notices");
 
 /** Wrap an element in a session so `useScopedRole` resolves a real org role. */
@@ -335,7 +326,7 @@ function expanderFor(container: HTMLElement, text: string): HTMLButtonElement | 
 /** Set a controlled input/textarea's value the way a user typing would. */
 async function typeInto(el: Element | null, value: string): Promise<void> {
   expect(el).not.toBeNull();
-  const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+  const WindowEvent = window.Event;
   const proto =
     el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   await act(async () => {
@@ -347,9 +338,8 @@ async function typeInto(el: Element | null, value: string): Promise<void> {
 /** Leave a field, which is when the edit form commits a text field or textarea. */
 async function blur(el: Element | null): Promise<void> {
   expect(el).not.toBeNull();
-  const win = (globalThis as unknown as { window: { FocusEvent: typeof FocusEvent } }).window;
   await act(async () => {
-    el?.dispatchEvent(new win.FocusEvent("focusout", { bubbles: true }));
+    el?.dispatchEvent(new window.FocusEvent("focusout", { bubbles: true }));
   });
   for (let i = 0; i < 4; i++) {
     await act(async () => {
@@ -468,8 +458,7 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     expect(nameInput).not.toBeNull();
     expect(bodyInput).not.toBeNull();
 
-    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window
-      .Event;
+    const WindowEvent = window.Event;
     await act(async () => {
       const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       setVal?.call(nameInput, "new-ws-rule");
@@ -711,9 +700,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     // The toggle fired...
     // The durable toggle: `set_status`, not the agent's conversation-scoped
     // `activate`/`deactivate`.
-    const toggleCall = callToolCalls.find(
-      (c) => c.server === "skills" && c.tool === "set_status",
-    );
+    const toggleCall = callToolCalls.find((c) => c.server === "skills" && c.tool === "set_status");
     expect(toggleCall).toBeDefined();
     // ...and the row stayed collapsed.
     expect(
@@ -777,7 +764,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
     });
     const nameInput = mounted.container.querySelector("#rule-name") as HTMLInputElement | null;
     const bodyInput = mounted.container.querySelector("#rule-body") as HTMLTextAreaElement | null;
-    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+    const WindowEvent = window.Event;
     await act(async () => {
       const setVal = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       setVal?.call(nameInput, "brand-new");
@@ -803,9 +790,8 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
   });
 
   test("deleting the filtered tier's last skill recovers the list to All", async () => {
-    const realConfirm = (globalThis as unknown as { window: { confirm?: () => boolean } }).window
-      .confirm;
-    (globalThis as unknown as { window: { confirm: () => boolean } }).window.confirm = () => true;
+    const realConfirm = window.confirm;
+    window.confirm = () => true;
     try {
       mounted = await mountAsAdmin();
       // Filter to "Yours" — one deletable skill; deleting it empties the tier.
@@ -842,8 +828,7 @@ describe("SkillsBrowser with surface='workspace' — composition list", () => {
       expect(text).not.toContain("Workspace-tier rule.");
       expect(text).toContain("Personal skill A.");
     } finally {
-      (globalThis as unknown as { window: { confirm?: () => boolean } }).window.confirm =
-        realConfirm;
+      window.confirm = realConfirm;
     }
   });
 
@@ -956,7 +941,9 @@ describe("SkillsBrowser with surface='workspace' — the workspace-admin write g
       b.textContent?.includes("+ Add a skill"),
     );
     expect(add).toBeUndefined();
-    expect(mounted.container.textContent ?? "").toContain("Workspace · managed by workspace admins");
+    expect(mounted.container.textContent ?? "").toContain(
+      "Workspace · managed by workspace admins",
+    );
   });
 
   test("a non-member of the workspace is denied", async () => {
@@ -998,7 +985,7 @@ describe("SkillsBrowser with surface='workspace' — the workspace-admin write g
 // once here and hold for every vantage.
 
 describe("SkillsBrowser authoring — the loading verdict and a pasted SKILL.md", () => {
-  test("a dynamic skill with no trigger and no tool pattern says it never loads", async () => {
+  test("a dynamic skill with no trigger and no tool pattern says it loads when the agent asks", async () => {
     // The condition the editor used to make unreachable by hardcoding
     // `always`, and which the CLI made silently. Exposing the control is only
     // safe because the verdict appears the instant the condition is created.
@@ -1011,11 +998,11 @@ describe("SkillsBrowser authoring — the loading verdict and a pasted SKILL.md"
     ) as HTMLInputElement | null;
     await check(dynamic);
 
-    expect(mounted.container.textContent).toContain("Never loads");
+    expect(mounted.container.textContent).toContain("Loads when the agent asks for it");
 
     // Adding a signal clears it, without leaving the form.
     await typeInto(mounted.container.querySelector("#triggers"), "deploy to staging");
-    expect(mounted.container.textContent).not.toContain("Never loads");
+    expect(mounted.container.textContent).not.toContain("Loads when the agent asks for it");
     expect(mounted.container.textContent).toContain('Loads on "deploy to staging"');
   });
 
@@ -1283,13 +1270,13 @@ describe("SkillsBrowser — editing an existing skill", () => {
         await Promise.resolve();
       });
     }
-    expect(mounted.container.textContent).toContain("Never loads");
+    expect(mounted.container.textContent).toContain("Loads when the agent asks for it");
 
     // A trigger typed but not yet saved does not revive the verdict; the
     // verdict says what it leaves out.
     const triggers = mounted.container.querySelector("#triggers");
     await typeInto(triggers, "deploy to staging");
-    expect(mounted.container.textContent).toContain("Never loads");
+    expect(mounted.container.textContent).toContain("Loads when the agent asks for it");
     expect(mounted.container.textContent).toContain("not yet: trigger phrases");
 
     await blur(triggers);

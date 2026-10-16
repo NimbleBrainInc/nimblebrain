@@ -2,6 +2,7 @@
  * Type definitions for the tasks domain.
  */
 
+import type { ThinkingEffort } from "../../engine/types.ts";
 import type { NotificationRouteMatch } from "../schemas/notifications.ts";
 
 // ---------------------------------------------------------------------------
@@ -60,8 +61,11 @@ export interface Task {
    */
   onceDone?: OnceDone;
 
-  /** Force a specific skill match (bypass trigger/keyword matching). */
-  skill?: string;
+  /**
+   * Skills every run is given in full, in its system prompt, before its first
+   * model call, by catalog name. The run is refused when one is not available.
+   */
+  skills?: string[];
 
   /** Tool allowlist (glob patterns) for this task's runs. Empty or absent: every tool. */
   allowedTools?: string[];
@@ -135,6 +139,14 @@ export interface Task {
   /** Model override for this task. Null = workspace default. */
   model?: string | null;
 
+  /**
+   * Reasoning depth for this task's runs. Null = the operator's
+   * `thinkingEffort`, else the platform default. Ranks as the operator's own
+   * tier would, so it does not reach past an operator `thinking` of `off` or
+   * `adaptive`, nor onto a model that does not reason (`resolveThinking`).
+   */
+  thinkingEffort?: ThinkingEffort | null;
+
   /** Whether this task is active. */
   enabled: boolean;
 
@@ -178,6 +190,14 @@ export interface Task {
 
   /** Consecutive failed runs (resets on success). Drives backoff. */
   consecutiveErrors: number;
+
+  /**
+   * The failed run whose notice stands for the current failing stretch. Set
+   * by the first run of the stretch that left no deliverable, cleared when the
+   * streak resets, so a task failing every few minutes raises one notice, not
+   * one per run.
+   */
+  failureNoticeRunId?: string;
 
   /** ISO timestamp when auto-disabled. */
   disabledAt?: string;
@@ -587,6 +607,8 @@ export interface RunToolCall {
   output: string;
   ok: boolean;
   ms: number;
+  /** The call did not run: the engine held it until its tool's guidance was read. */
+  held?: true;
 }
 
 /** A reference to a file the run produced, resolvable in the workspace file store. */
@@ -623,6 +645,25 @@ export interface TaskRunResult {
   structured?: unknown;
   /** Why the run failed or did not start, as its record says. */
   error?: string;
+  /**
+   * Every skill the run was given, or that missed it, in order. Absent when the
+   * run loaded none.
+   */
+  skillsDelivered?: RunSkillDelivery[];
+}
+
+/** One skill reaching (or missing) a run. See the runtime's `SkillDelivery`. */
+export interface RunSkillDelivery {
+  name: string;
+  /**
+   * `declared`: in the system prompt, because the task names it.
+   * `before_call`: delivered while the first call to its tool was held.
+   * `tool_use`: delivered on a promotion or after a call that ran.
+   * `activation`: the run loaded it from the catalog.
+   */
+  loadedBy: "declared" | "before_call" | "tool_use" | "activation";
+  /** Set when a skill bound to a called tool did not arrive, and why. */
+  status?: "fetch_failed" | "capped" | "renamed_unheld";
 }
 
 // ---------------------------------------------------------------------------
@@ -649,6 +690,7 @@ export type CreateTaskInput = Omit<
   | "updatedAt"
   | "runCount"
   | "consecutiveErrors"
+  | "failureNoticeRunId"
   | "lastRunAt"
   | "lastRunStatus"
   | "nextRunAt"
@@ -667,7 +709,7 @@ export type UpdateTaskInput = Partial<
     | "description"
     | "prompt"
     | "schedule"
-    | "skill"
+    | "skills"
     | "allowedTools"
     | "inputSchema"
     | "outputSchema"
@@ -679,6 +721,7 @@ export type UpdateTaskInput = Partial<
     | "maxInputTokens"
     | "maxRunDurationMs"
     | "model"
+    | "thinkingEffort"
     | "enabled"
     | "tokenBudget"
   >

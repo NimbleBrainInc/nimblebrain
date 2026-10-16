@@ -21,7 +21,10 @@ import { createConversationsSource } from "../../../../src/platform/conversation
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
 import { conversationEventLines } from "../../../helpers/conversation-events.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 const OWNER_ID = "usr_test";
 const WS_ID = "ws_0017179cea048c8e";
@@ -131,30 +134,32 @@ function storedTitle(id: string): string | null {
 }
 
 function makeRuntime(): Runtime {
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: () => OWNER_ID,
-    getWorkspaceStore: () => ({ getWorkspacesDir: () => join(workDir, "workspaces") }),
-    onConversationsChanged: () => {},
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({ getWorkspacesDir: () => join(workDir, "workspaces") }),
+    onConversationsChanged: () => () => {},
     announceIdentitySourceChange: (name: string, userId: string) => {
       announced.push(`${name}:${userId}`);
     },
     isTurnActive: () => false,
-  } as unknown as Runtime;
+  });
 }
 
 /** Run a tool the way a chat does — with an ambient conversation in scope. */
 function inChat(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(
-    { identity: { id: OWNER_ID } as never, workspaceId: WS_ID, conversationId: CURRENT_ID },
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID, conversationId: CURRENT_ID },
     () => source.execute(tool, args),
   );
 }
 
 /** Run a tool the way a REST or `/mcp` caller does — no conversation in scope. */
 function outsideChat(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
-  return runWithRequestContext({ identity: { id: OWNER_ID } as never, workspaceId: WS_ID }, () =>
-    source.execute(tool, args),
+  return runWithRequestContext(
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID },
+    () => source.execute(tool, args),
   );
 }
 
@@ -166,7 +171,7 @@ function outsideChat(tool: string, args: Record<string, unknown>): Promise<ToolR
 function inTaskRun(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(
     {
-      identity: { id: OWNER_ID } as never,
+      identity: makeIdentity({ id: OWNER_ID }),
       workspaceId: WS_ID,
       runId: RUN_ID,
       unattended: true,
@@ -187,7 +192,7 @@ function withRunIdInConversationField(
 ): Promise<ToolResult> {
   return runWithRequestContext(
     {
-      identity: { id: OWNER_ID } as never,
+      identity: makeIdentity({ id: OWNER_ID }),
       workspaceId: WS_ID,
       conversationId: RUN_ID,
       unattended: true,
@@ -209,6 +214,9 @@ beforeEach(async () => {
   writeConversation(OTHER_ID, "Other", "something else entirely");
   source = await createConversationsSource(makeRuntime(), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {

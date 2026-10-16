@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4, SharedV4ProviderOptions } from "@ai-sdk/provider";
 import { ModelNotQualifiedError } from "../../src/model/model-id.ts";
 import { buildModelResolver, buildRegistry } from "../../src/model/registry.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 describe("buildRegistry", () => {
   it("creates a provider that resolves anthropic models with correct spec version", () => {
@@ -121,13 +122,13 @@ describe("nebius request shape", () => {
   ): Promise<Record<string, unknown>> {
     const realFetch = globalThis.fetch;
     let body: Record<string, unknown> = {};
-    globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
+    globalThis.fetch = fakeFetch(async (_url, init) => {
       body = JSON.parse(String(init?.body));
       return new Response(
         'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
         { status: 200, headers: { "content-type": "text/event-stream" } },
       );
-    }) as unknown as typeof fetch;
+    });
     try {
       await call(buildModelResolver({ providers: { nebius: { apiKey: "nb-test-key" } } }));
     } finally {
@@ -183,13 +184,13 @@ describe("anthropic request shape", () => {
   ): Promise<Record<string, unknown>> {
     const realFetch = globalThis.fetch;
     let body: Record<string, unknown> = {};
-    globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
+    globalThis.fetch = fakeFetch(async (_url, init) => {
       body = JSON.parse(String(init?.body));
       return new Response('event: message_stop\ndata: {"type":"message_stop"}\n\n', {
         status: 200,
         headers: { "content-type": "text/event-stream" },
       });
-    }) as unknown as typeof fetch;
+    });
     try {
       await buildModelResolver({ providers: { anthropic: { apiKey: "sk-test" } } })(
         "anthropic:claude-sonnet-4-6",

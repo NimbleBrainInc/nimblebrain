@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
 import type { ProbeTarget } from "../../src/connectors/runtime/connection-probe.ts";
+import { stub } from "../helpers/stub.ts";
 
 // Drive the probe through the `@composio/core` vendor seam — the same seam the
 // sibling composio suites mock — never the internal `sdk.ts`. `mock.module` is
@@ -51,9 +53,9 @@ const TOOLKIT = "teams";
 
 /** A catalog entry for TOOLKIT — the only shape entries carry. */
 function fakeDirectory(): ConnectorCatalog {
-  return {
-    catalogById: async () => ({ composio: { toolkit: TOOLKIT } }),
-  } as unknown as ConnectorCatalog;
+  return stub<ConnectorCatalog>({
+    catalogById: async () => stub<ConnectorCatalogEntry>({ composio: { toolkit: TOOLKIT } }),
+  });
 }
 
 function target(connectorId: string | undefined): ProbeTarget {

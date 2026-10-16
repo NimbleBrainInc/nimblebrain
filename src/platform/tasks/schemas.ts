@@ -1,44 +1,63 @@
 /**
- * Tool descriptions and annotations for the tasks source. The input schemas
- * live in `src/platform/schemas/tasks.ts`, the single source of truth the
- * in-process source and its handlers share; this file pairs each with its
- * description and spec annotations under its tool name, in the order the
- * source registers them. Each entry keeps its own schema's type, so the
- * source types each handler's input from it.
+ * Tool descriptions and annotations for the tasks source. The input and
+ * output schemas live in `src/platform/schemas/tasks.ts`, the single source of
+ * truth the in-process source and its handlers share; this file pairs each
+ * with its description and spec annotations under its tool name, in the order
+ * the source registers them. Each entry keeps its own schemas' types, so the
+ * source types each handler's input and result from them.
  */
 
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import type { TSchema } from "@sinclair/typebox";
+import type { OutputSchema } from "../../tools/in-process-app.ts";
 import {
   TasksAssessInput,
+  TasksAssessOutput,
   TasksBatchControlInput,
+  TasksBatchControlOutput,
   TasksBatchesInput,
+  TasksBatchesOutput,
   TasksBatchInput,
+  TasksBatchOutput,
   TasksCancelInput,
+  TasksCancelOutput,
   TasksCreateInput,
+  TasksCreateOutput,
   TasksDeleteInput,
+  TasksDeleteOutput,
   TasksJudgesInput,
+  TasksJudgesOutput,
   TasksListInput,
+  TasksListOutput,
   TasksRunBatchInput,
+  TasksRunBatchOutput,
   TasksRunInput,
+  TasksRunOutput,
   TasksRunResultInput,
+  TasksRunResultOutput,
   TasksRunsInput,
+  TasksRunsOutput,
   TasksStatsInput,
+  TasksStatsOutput,
   TasksStatusInput,
+  TasksStatusOutput,
   TasksUpcomingInput,
+  TasksUpcomingOutput,
   TasksUpdateInput,
+  TasksUpdateOutput,
 } from "../schemas/tasks.ts";
 
 export interface ToolSchema {
   name: string;
   description: string;
   inputSchema: TSchema;
+  outputSchema: OutputSchema;
   annotations: ToolAnnotations;
 }
 
 /**
- * Keeps each entry's own schema type, so the source types each handler's input
- * from it, and holds every entry's `name` to its key.
+ * Keeps each entry's own schema types, so the source types each handler's input
+ * and result from them, and holds every entry's `name` to its key.
  */
 function toolSchemas<T extends { [K in keyof T]: ToolSchema & { name: K } }>(schemas: T): T {
   return schemas;
@@ -62,6 +81,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "create a task that posts to a shared destination in the workspace where that connector " +
       "is. Runs stop while you are not a member of the workspace.",
     inputSchema: TasksCreateInput,
+    outputSchema: TasksCreateOutput,
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -77,6 +97,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "`enabled: false` pauses its schedule and events; `enabled: true` resumes it and clears an " +
       "automatic disable.",
     inputSchema: TasksUpdateInput,
+    outputSchema: TasksUpdateOutput,
     annotations: {
       readOnlyHint: false,
       destructiveHint: true,
@@ -88,6 +109,7 @@ export const TOOL_SCHEMAS = toolSchemas({
     name: "delete",
     description: "Delete a task by `taskId`. Removes the definition; its run history is kept.",
     inputSchema: TasksDeleteInput,
+    outputSchema: TasksDeleteOutput,
     annotations: {
       readOnlyHint: false,
       destructiveHint: true,
@@ -103,6 +125,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "by default, with `total` reporting every match — follow `nextCursor` before concluding a " +
       "task is absent.",
     inputSchema: TasksListInput,
+    outputSchema: TasksListOutput,
     annotations: READ,
   },
   status: {
@@ -112,6 +135,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "its state (enabled, why it was disabled, next fire, error streak, budget use), and its " +
       "most recent runs. For older runs or runs across tasks use tasks__runs.",
     inputSchema: TasksStatusInput,
+    outputSchema: TasksStatusOutput,
     annotations: READ,
   },
   runs: {
@@ -125,6 +149,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "History is kept indefinitely: pass the response's `nextBefore` back as `before` for " +
       "older runs. A filtered call reads at most 5000 runs, then answers with `nextBefore`.",
     inputSchema: TasksRunsInput,
+    outputSchema: TasksRunsOutput,
     annotations: READ,
   },
   run_result: {
@@ -138,6 +163,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "A run that never started, or failed before any work, has a `result` with an empty " +
       "output and its `error`; `result` is absent only when it cannot be read.",
     inputSchema: TasksRunResultInput,
+    outputSchema: TasksRunResultOutput,
     annotations: READ,
   },
   run: {
@@ -157,6 +183,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "response means nothing was started (unknown task, bad input, bad definition). " +
       "`warnings` say when the task's criteria cannot be judged.",
     inputSchema: TasksRunInput,
+    outputSchema: TasksRunOutput,
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -173,6 +200,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "(its `label`). Only a run that left a deliverable has an assessment. Find runs awaiting " +
       'a verdict with tasks__runs (label: "Needs review").',
     inputSchema: TasksAssessInput,
+    outputSchema: TasksAssessOutput,
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -192,6 +220,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "`idempotencyKey` makes the call safe to repeat. Follow it with tasks__batch; pause, " +
       "resume, cancel, or rerun failures with tasks__batch_control.",
     inputSchema: TasksRunBatchInput,
+    outputSchema: TasksRunBatchOutput,
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -208,6 +237,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "run id, label, verdict, cost, and the structured output's top-level fields. Page with " +
       "`nextCursor`. A run's whole deliverable is tasks__run_result (its runId).",
     inputSchema: TasksBatchInput,
+    outputSchema: TasksBatchOutput,
     annotations: READ,
   },
   batch_control: {
@@ -219,6 +249,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "rerun_failed: runs every failed, skipped, cancelled, or fail-judged item again as a new " +
       "run.",
     inputSchema: TasksBatchControlInput,
+    outputSchema: TasksBatchControlOutput,
     annotations: {
       readOnlyHint: false,
       destructiveHint: true,
@@ -232,6 +263,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "Your batches in this workspace, newest first, optionally by task or state, each with its " +
       "counts and pass rate. One batch's item results are tasks__batch.",
     inputSchema: TasksBatchesInput,
+    outputSchema: TasksBatchesOutput,
     annotations: READ,
   },
   upcoming: {
@@ -245,6 +277,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "`frequent` row with its count, and the tasks events fire (with each one's hourly fire " +
       "ceiling and how much of it the last hour used).",
     inputSchema: TasksUpcomingInput,
+    outputSchema: TasksUpcomingOutput,
     annotations: READ,
   },
   stats: {
@@ -255,6 +288,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "judge's), the pass rate pass / (pass + fail), what they cost in USD, and the newest " +
       "run's label. Every saved task, or one by `taskId`.",
     inputSchema: TasksStatsInput,
+    outputSchema: TasksStatsOutput,
     annotations: READ,
   },
   judges: {
@@ -265,6 +299,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "would not be judged (no judge server, or more than one). Check before giving a task " +
       "criteria.",
     inputSchema: TasksJudgesInput,
+    outputSchema: TasksJudgesOutput,
     annotations: READ,
   },
   cancel: {
@@ -275,6 +310,7 @@ export const TOOL_SCHEMAS = toolSchemas({
       "is. tasks__upcoming lists the runs queued or running. A whole batch is cancelled with " +
       "tasks__batch_control.",
     inputSchema: TasksCancelInput,
+    outputSchema: TasksCancelOutput,
     annotations: {
       readOnlyHint: false,
       destructiveHint: true,

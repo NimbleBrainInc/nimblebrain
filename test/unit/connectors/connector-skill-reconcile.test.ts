@@ -10,11 +10,12 @@ import type {
   ConnectorRef,
   ConnectorSkillLockEntry,
 } from "../../../src/connectors/runtime/types.ts";
+import { stub } from "../../helpers/stub.ts";
 
 const PIN = "v0.3.0";
 
 function lock(identity: string, version: string): ConnectorSkillLockEntry {
-  return { identity, version, sha: `sha-${version}`, path: `/ws/connector-skills/${identity}.md` };
+  return { identity, version, sha: `sha-${version}` };
 }
 
 function connector(fields: {
@@ -36,7 +37,9 @@ function connector(fields: {
 function catalog(
   entries: Record<string, Partial<ConnectorCatalogEntry>>,
 ): Map<string, ConnectorCatalogEntry> {
-  return new Map(Object.entries(entries)) as unknown as Map<string, ConnectorCatalogEntry>;
+  return new Map(
+    Object.entries(entries).map(([key, entry]) => [key, stub<ConnectorCatalogEntry>(entry)]),
+  );
 }
 
 interface Captured {
@@ -81,7 +84,7 @@ describe("reconcileConnectorSkills", () => {
       skillsLock: [lock("outlook", "v0.2.0")],
     });
     const current = connector({ serverName: "com-gmail-mcp", skillsLock: [lock("gmail", PIN)] });
-    // A pre-URL registry row as it sits on disk; ConnectorRef does not admit it.
+    // biome-ignore lint/plugin/double-cast: a pre-URL registry row as it sits on disk, claimed as a ConnectorRef, which does not admit it
     const registry = { name: "@nimblebraininc/synapse-crm" } as unknown as ConnectorRef;
     const { deps, cap } = buildDeps(
       [{ id: "ws_00079598e311c160", connectors: [stale, current, registry] }],

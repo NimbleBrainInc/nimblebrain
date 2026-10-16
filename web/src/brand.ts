@@ -10,7 +10,8 @@
  * the product shows itself:
  *
  *  - a `<style id="nb-brand">` redefining the shell's tokens, plus one
- *    `@font-face` per brand font file;
+ *    `@font-face` per brand font file, and the ground of a dark light-mode
+ *    sidebar ({@link useSidebarClass});
  *  - `document.title` and the favicon links;
  *  - the iframe token maps and the iframe font channel, so embedded apps paint
  *    the brand too;
@@ -25,7 +26,7 @@
 
 import { type BrandFontSpec, fontFaceRule, registerBrandFonts } from "./bridge/fonts";
 import { setThemePalette } from "./bridge/theme";
-import { mergePalette, type ResolvedBrand } from "./theme/brand";
+import { mergePalette, type Palette, type ResolvedBrand, sidebarIsIsland } from "./theme/brand";
 import { paletteToRootCss } from "./theme/projections";
 
 declare global {
@@ -39,6 +40,7 @@ declare global {
 export const DEFAULT_BRAND_NAME = "NimbleBrain";
 
 const STYLE_ID = "nb-brand";
+const ISLAND_CLASS = "nb-sidebar-island";
 
 let current: ResolvedBrand = {};
 
@@ -55,6 +57,16 @@ export function useBrand(): ResolvedBrand {
 /** The product name a person reads. */
 export function useBrandName(): string {
   return useBrand().name ?? DEFAULT_BRAND_NAME;
+}
+
+/**
+ * Classes for a sidebar surface. A brand whose light-mode sidebar is dark
+ * renders it as an island: `dark` puts everything inside under the dark
+ * palette (its `dark:` variants and the dark logo included), and the island
+ * rule {@link paint} writes gives it the brand's own ground in light mode.
+ */
+export function useSidebarClass(): string {
+  return sidebarIsIsland(useBrand()) ? `dark ${ISLAND_CLASS}` : "";
 }
 
 /** Apply the brand `/v1/brand.js` assigned, or canonical when there is none to apply. */
@@ -91,7 +103,7 @@ function paint(brand: ResolvedBrand): void {
       style.id = STYLE_ID;
     }
     const rules = faces.map((f) => fontFaceRule(f.family, f.url, f.weight));
-    style.textContent = [...rules, paletteToRootCss(palette)].join("\n");
+    style.textContent = [...rules, paletteToRootCss(palette), islandCss(palette)].join("\n");
     // Last in <head>, after the stylesheet it overrides: same selectors, later wins.
     document.head.appendChild(style);
   } else {
@@ -102,6 +114,14 @@ function paint(brand: ResolvedBrand): void {
   registerBrandFonts(faces);
   setTitle(brand.name);
   setFavicon(brand.favicon);
+}
+
+/** The light-mode ground of a sidebar island; in dark mode the island is the page's palette. */
+function islandCss(palette: Palette): string {
+  const island = palette.sidebarIsland;
+  if (!island) return "";
+  const decls = Object.entries(island).map(([token, value]) => `  --${token}: ${value};`);
+  return `:root:not(.dark) .${ISLAND_CLASS} {\n  color-scheme: dark;\n${decls.join("\n")}\n}\n`;
 }
 
 /** The `@font-face` each brand role with a file declares, one per distinct family, URL and weight. */

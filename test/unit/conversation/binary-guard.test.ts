@@ -89,6 +89,7 @@ describe("conversation stores reject binary-bearing messages (issue #54)", () =>
     const store = new EventSourcedConversationStore({ dir: makeDir() });
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
 
+    // biome-ignore lint/plugin/double-cast: a message with raw bytes inline in a content part, claimed as a StoredMessage, whose parts carry no bytes
     const poisoned = {
       role: "user",
       timestamp: "2026-05-18T00:00:00.000Z",

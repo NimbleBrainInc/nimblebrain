@@ -18,7 +18,7 @@
  * `loadedBy: "tool_affinity"`.
  */
 
-import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,6 +38,7 @@ import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
+import { firstStoredEvent } from "../helpers/stored-events.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** The synthesized name for the fixture connector's skill. */
@@ -198,20 +199,11 @@ describe("connector-skill adapter — end-to-end", () => {
     // Pull the conversation store and read the skills.loaded event.
     const store = await runtime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
+    expect(skillsLoaded.skills.length).toBeGreaterThan(0);
 
-    const payload = skillsLoaded as unknown as {
-      skills: Array<{
-        id: string;
-        scope: string;
-        loadedBy: string;
-        reason: string;
-      }>;
-    };
-    expect(payload.skills.length).toBeGreaterThan(0);
-
-    const connectorEntry = payload.skills.find((s) => s.id === "skill://test/SKILL.md");
+    const connectorEntry = skillsLoaded.skills.find((s) => s.id === "skill://test/SKILL.md");
     expect(connectorEntry).toBeDefined();
     expect(connectorEntry?.scope).toBe("provided");
     expect(connectorEntry?.loadedBy).toBe("tool_affinity");
@@ -233,13 +225,9 @@ describe("connector-skill adapter — end-to-end", () => {
 
     const store = await runtime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
-
-    const payload = skillsLoaded as unknown as {
-      skills: Array<{ id: string }>;
-    };
-    const connectorEntry = payload.skills.find((s) => s.id === "skill://test/SKILL.md");
+    const connectorEntry = skillsLoaded.skills.find((s) => s.id === "skill://test/SKILL.md");
     // The skill is gone from Layer 3 — `<app-guide>` is now its only home.
     expect(connectorEntry).toBeUndefined();
   });
@@ -276,13 +264,9 @@ describe("connector-skill adapter — end-to-end", () => {
 
     const store = await runtime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded");
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
-
-    const payload = skillsLoaded as unknown as {
-      skills: Array<{ id: string }>;
-    };
-    const connectorEntry = payload.skills.find((s) => s.id === "skill://test/SKILL.md");
+    const connectorEntry = skillsLoaded.skills.find((s) => s.id === "skill://test/SKILL.md");
     expect(connectorEntry).toBeUndefined();
   });
 
@@ -337,10 +321,11 @@ describe("connector-skill adapter — end-to-end", () => {
     // `skillResourceCache` absorbs the second discovery's `resources/list`, so
     // the waste is registry-walk and synthesis, invisible on the wire. The call
     // itself is the only honest probe.
-    const spy = spyOn(
-      runtime as unknown as { loadConnectorSkills: (...a: unknown[]) => unknown },
-      "loadConnectorSkills",
-    );
+    // biome-ignore lint/complexity/useLiteralKeys: loadConnectorSkills is private; bracket access is TypeScript's typed path to it
+    const discover = runtime["loadConnectorSkills"];
+    const spy = mock(discover.bind(runtime));
+    // biome-ignore lint/complexity/useLiteralKeys: loadConnectorSkills is private; bracket access is TypeScript's typed path to it
+    runtime["loadConnectorSkills"] = spy;
     try {
       await runtime.chat({
         identity: DEV_IDENTITY,
@@ -350,7 +335,8 @@ describe("connector-skill adapter — end-to-end", () => {
       });
       expect(spy).toHaveBeenCalledTimes(1);
     } finally {
-      spy.mockRestore();
+      // biome-ignore lint/complexity/useLiteralKeys: loadConnectorSkills is private; bracket access is TypeScript's typed path to it
+      runtime["loadConnectorSkills"] = discover;
     }
   });
 });
@@ -448,25 +434,19 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
 
     // Regression precondition: the connector skill did NOT load at turn start — its
     // tool wasn't active, so turn-start Layer-3 selection couldn't match it.
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded") as unknown as
-      | { skills: Array<{ id: string }> }
-      | undefined;
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     const turnStartConnector = skillsLoaded?.skills.find((s) => s.id === "skill://test/SKILL.md");
     expect(turnStartConnector).toBeUndefined();
 
     // The fixture tool was promoted mid-turn via nb__manage_tools (tool.promoted
     // itself is transient telemetry the store doesn't persist; the manage_tools
     // result is the persisted proof it went live).
-    const manageDone = events.find(
-      (e) => e.type === "tool.done" && (e as unknown as { name?: string }).name === MANAGE_TOOLS,
-    ) as unknown as { output?: string } | undefined;
+    const manageDone = firstStoredEvent(events, "tool.done", (e) => e.name === MANAGE_TOOLS);
     expect(manageDone?.output).toContain("Promoted 1/1");
 
     // The connector skill surfaced via the connector-skill channel ON PROMOTION —
     // this is the exact regression the fix closes.
-    const injected = events.find((e) => e.type === "connector.skill.injected") as unknown as
-      | { skillName: string; skillBody: string; scope: string; toolName: string }
-      | undefined;
+    const injected = firstStoredEvent(events, "connector.skill.injected");
     expect(injected).toBeDefined();
     expect(injected?.skillName).toBe("connector:ai-nimblebrain-test-mcp:test");
     expect(injected?.skillBody).toContain("How to use the test server");
@@ -641,9 +621,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     // context the user configured.
     const store = await multiRuntime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded") as unknown as
-      | { skills: Array<{ id: string; loadedBy: string; layer: number }> }
-      | undefined;
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     const always = skillsLoaded?.skills.find((s) => s.id === "skill://always-guide/SKILL.md");
     expect(always?.loadedBy).toBe("always");
     expect(always?.layer).toBe(0);
@@ -666,9 +644,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
 
     const store = await multiRuntime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
-    const skillsLoaded = events.find((e) => e.type === "skills.loaded") as unknown as
-      | { skills: Array<{ id: string; scope: string; loadedBy: string }> }
-      | undefined;
+    const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     // The dynamic skill loads via Layer-3 tool-affinity; the always skill via the
     // always-on channel — both now reported, distinguished by `loadedBy`.
     const dynamicEntry = skillsLoaded?.skills.find(
@@ -742,13 +718,16 @@ function createAffinityFixtureServer(tools: string[], skills: Record<string, str
 }
 
 function affinitySkill(name: string, affinity: string[]): string {
+  const declared =
+    affinity.length === 0
+      ? "    tool-affinity: []"
+      : `    tool-affinity:\n${affinity.map((a) => `      - ${a}`).join("\n")}`;
   return `---
 name: ${name}
 description: Guidance for ${name}.
 metadata:
   nimblebrain:
-    tool-affinity:
-${affinity.map((a) => `      - ${a}`).join("\n")}
+${declared}
 ---
 
 # ${name}`;
@@ -788,6 +767,7 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
       createAffinityFixtureServer(["draft_email", "send_email"], {
         writing: affinitySkill("writing", ["draft_email"]),
         outreach: affinitySkill("outreach", ["draft_emial", "send_*"]),
+        reference: affinitySkill("reference", []),
       }),
     );
 
@@ -808,7 +788,7 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
       {
         url: servers[1]!.url,
         serverName: OVERLAY_SERVER,
-        skillsLock: [{ identity: "pages", version: "v0.1.0", sha: "a1", path: "pages-usage.md" }],
+        skillsLock: [{ identity: "pages", version: "v0.1.0", sha: "a1" }],
       },
       undefined,
       TEST_WORKSPACE_ID,
@@ -868,9 +848,7 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
       });
       const store = await affinityRuntime.resolveConversationStore(chat.conversationId);
       const events = await store!.readEvents(chat.conversationId);
-      const loaded = events.find((e) => e.type === "skills.loaded") as unknown as
-        | { skills: Array<{ id: string }> }
-        | undefined;
+      const loaded = firstStoredEvent(events, "skills.loaded");
       return loaded?.skills.map((s) => s.id) ?? [];
     };
 
@@ -878,5 +856,20 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
     // be bound to every tool of the server and load for `send_email` too.
     expect(await loadedFor("draft_email")).toContain("skill://writing/SKILL.md");
     expect(await loadedFor("send_email")).not.toContain("skill://writing/SKILL.md");
+  });
+
+  it("never loads a published skill that declares an empty tool-affinity", async () => {
+    for (const tool of ["draft_email", "send_email"]) {
+      const chat = await affinityRuntime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "go",
+        allowedTools: [`${AFFINITY_SERVER}__${tool}`],
+      });
+      const store = await affinityRuntime.resolveConversationStore(chat.conversationId);
+      const events = await store!.readEvents(chat.conversationId);
+      const loaded = firstStoredEvent(events, "skills.loaded");
+      expect(loaded?.skills.map((s) => s.id) ?? []).not.toContain("skill://reference/SKILL.md");
+    }
   });
 });

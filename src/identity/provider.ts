@@ -209,6 +209,16 @@ export interface IdentityProvider {
    */
   refreshToken?(refreshToken: string): Promise<TokenResult>;
 
+  /**
+   * End the provider's own session behind the request's credential, so the
+   * next sign-in asks for credentials instead of resuming it. Clearing this
+   * instance's cookies ends only the local session. Called on sign-out, often
+   * with an access token that has expired. A provider that keeps no session of
+   * its own omits it. Throws on failure; the caller signs the browser out
+   * either way.
+   */
+  endSession?(req: Request): Promise<void>;
+
   // ── User management ──────────────────────────────────────────────
 
   /** List all users known to this provider. */

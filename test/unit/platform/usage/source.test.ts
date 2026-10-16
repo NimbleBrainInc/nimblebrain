@@ -20,9 +20,13 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { UsageReportOutput } from "../../../../src/platform/schemas/usage.ts";
 import { createUsageSource } from "../../../../src/platform/usage/source.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { MAX_BREAKDOWN_ROWS } from "../../../../src/usage/aggregate.ts";
 import { usageMonthDir, usageMonthOf } from "../../../../src/usage/paths.ts";
 import type { UsageLedgerEntry } from "../../../../src/usage/types.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -41,7 +45,7 @@ class FakeRuntime {
     return this.workDir;
   }
   getCurrentIdentity() {
-    return this.identity;
+    return this.identity && makeIdentity(this.identity);
   }
 }
 
@@ -101,8 +105,11 @@ afterEach(async () => {
 });
 
 async function buildSource(): Promise<McpSource> {
-  source = createUsageSource(runtime as unknown as never, new NoopEventSink());
+  source = createUsageSource(stub<Runtime>(runtime), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 
@@ -328,5 +335,58 @@ describe("usage source — filters", () => {
       arguments: { scope: "org", period: "all", origin: "batch" },
     });
     expect(result.isError).toBe(true);
+  });
+});
+
+describe("usage source — the report's optional fields", () => {
+  test("task runs, unpriced calls, a stacked day split, and a capped breakdown match the output schema", async () => {
+    // A task-run line on a model no catalog knows (`runs`, `unpricedCalls`),
+    // and enough conversations to cap that breakdown (`truncatedBreakdowns`).
+    const dir = usageMonthDir(workDir, usageMonthOf(AT));
+    const task: UsageLedgerEntry = {
+      ts: AT,
+      source: "main",
+      origin: "task",
+      model: "unknown",
+      usage: { inputTokens: 10, outputTokens: 5 },
+      llmMs: 0,
+      userId: "usr_alice",
+      taskRunId: "run_0000000000000001",
+    };
+    const chats = Array.from({ length: MAX_BREAKDOWN_ROWS }, (_, i) => ({
+      ts: AT,
+      source: "main",
+      origin: "chat",
+      model: "claude-sonnet-4-5-20250929",
+      usage: { inputTokens: 1, outputTokens: 1 },
+      llmMs: 1,
+      userId: "usr_alice",
+      conversationId: `conv_${String(i).padStart(16, "0")}`,
+    }));
+    await appendFile(
+      join(dir, "test.jsonl"),
+      [task, ...chats].map((e) => `${JSON.stringify(e)}\n`).join(""),
+    );
+
+    const src = await buildSource();
+    runtime.identity = { id: "usr_admin", orgRole: "admin" };
+    const result = await src.getClient()!.callTool({
+      name: "report",
+      arguments: {
+        scope: "org",
+        period: "all",
+        groupBy: ["day", "conversation"],
+        stackBy: "model",
+      },
+    });
+
+    // A success that failed its output schema would come back as an error.
+    expect(result.isError).toBeFalsy();
+    const report = result.structuredContent as UsageReportOutput;
+    expect(report).toEqual(parse(result as { content?: Array<{ type: string; text?: string }> }));
+    expect(report.totals.runs).toBe(1);
+    expect(report.totals.unpricedCalls).toBeGreaterThanOrEqual(1);
+    expect(report.breakdowns.day?.[0]?.stack).toBeDefined();
+    expect(report.truncatedBreakdowns?.conversation?.returned).toBe(MAX_BREAKDOWN_ROWS);
   });
 });

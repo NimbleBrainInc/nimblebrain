@@ -31,9 +31,9 @@
  * Run: `bun run codegen` (alias for this script — see package.json).
  */
 
-import { execSync } from "node:child_process";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import ts from "typescript";
 
 const REPO_ROOT = resolve(import.meta.dirname ?? __dirname, "..");
 const TMP_OUT = join(REPO_ROOT, ".tmp-codegen");
@@ -96,6 +96,121 @@ function injectHeaders(dir: string, treeRoot: string, sourceRoot: string): void 
     const body = readFileSync(full, "utf-8");
     writeFileSync(full, header(`${sourceRoot}/${relFromOutput}`) + body);
   }
+}
+
+/**
+ * Emits a `.d.ts` for every source file a tsconfig compiles (its roots and
+ * their imports), each from a program rooted at that file alone.
+ *
+ * Why not one `tsc -p`: the declaration printer writes a union in the order
+ * of its members' type ids, and a mapped type's properties in the order of
+ * its keys' ids. The checker interns a literal type once per program and
+ * numbers it when first seen, so in a shared program `"failed"` takes its id
+ * from whichever file mentions it first. A schema that adds a literal then
+ * reorders unions in files that never import it, and two schema changes in
+ * flight invalidate each other's generated files. A program rooted at one
+ * file holds only that file's import closure, so its `.d.ts` depends on that
+ * closure and nothing else.
+ *
+ * A file whose closure is every schema (`catalog.ts`) still inlines literal
+ * unions from modules it imports, so a literal one schema adds would reorder
+ * another schema's union there. `sortLiteralUnions` writes the literal
+ * members of every union the checker prints in value order, which no other
+ * file can move.
+ */
+function emitDeclarations(configPath: string): void {
+  const parsed = ts.getParsedCommandLineOfConfigFile(join(REPO_ROOT, configPath), undefined, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic: (d) => failOn([d]),
+  });
+  if (!parsed) throw new Error(`[codegen] could not read ${configPath}`);
+  failOn(parsed.errors);
+
+  const host = ts.createCompilerHost(parsed.options);
+  const whole = ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options, host });
+  failOn(ts.getPreEmitDiagnostics(whole));
+  const sources = whole
+    .getSourceFiles()
+    .filter((f) => !f.isDeclarationFile && !whole.isSourceFileFromExternalLibrary(f))
+    .map((f) => f.fileName)
+    .sort();
+
+  let previous: ts.Program = whole;
+  for (const file of sources) {
+    const program = ts.createProgram({
+      rootNames: [file],
+      options: parsed.options,
+      host,
+      oldProgram: previous,
+    });
+    previous = program;
+    const result = program.emit(program.getSourceFile(file), undefined, undefined, true, {
+      afterDeclarations: [sortLiteralUnions],
+    });
+    failOn(result.diagnostics);
+    if (result.emitSkipped) throw new Error(`[codegen] tsc skipped the emit of ${file}`);
+  }
+}
+
+/**
+ * Declaration transformer: reorders the literal members of each union the
+ * checker printed from a type by value (numbers ascending, then strings by
+ * code unit), leaving any other member (`null`, `string`, an object type) in
+ * its slot. A union copied from a source annotation is already in its author's
+ * order and is left alone. Union order carries no meaning to the type system;
+ * this only makes the printed order canonical.
+ */
+function sortLiteralUnions(context: ts.TransformationContext) {
+  const { factory } = context;
+  const visit = (node: ts.Node): ts.Node => {
+    const visited = ts.visitEachChild(node, visit, context);
+    if (!ts.isUnionTypeNode(visited) || ts.getParseTreeNode(node) !== undefined) return visited;
+    const slots = visited.types.flatMap((t, i) => (literalKey(t) === undefined ? [] : [i]));
+    if (slots.length < 2) return visited;
+    const sorted = slots
+      .map((i) => visited.types[i] as ts.TypeNode)
+      .sort((a, b) => compareKeys(literalKey(a) as LiteralKey, literalKey(b) as LiteralKey));
+    const types = [...visited.types];
+    slots.forEach((slot, k) => {
+      types[slot] = sorted[k] as ts.TypeNode;
+    });
+    return factory.updateUnionTypeNode(visited, factory.createNodeArray(types));
+  };
+  return <T extends ts.Node>(root: T): T => ts.visitNode(root, visit) as T;
+}
+
+type LiteralKey = { rank: 0; value: number } | { rank: 1; value: string };
+
+function literalKey(node: ts.TypeNode): LiteralKey | undefined {
+  if (!ts.isLiteralTypeNode(node)) return undefined;
+  const lit = node.literal;
+  if (ts.isNumericLiteral(lit)) return { rank: 0, value: Number(lit.text) };
+  if (
+    ts.isPrefixUnaryExpression(lit) &&
+    lit.operator === ts.SyntaxKind.MinusToken &&
+    ts.isNumericLiteral(lit.operand)
+  ) {
+    return { rank: 0, value: -Number(lit.operand.text) };
+  }
+  if (ts.isStringLiteral(lit)) return { rank: 1, value: lit.text };
+  return undefined;
+}
+
+function compareKeys(a: LiteralKey, b: LiteralKey): number {
+  if (a.rank !== b.rank) return a.rank - b.rank;
+  if (a.value === b.value) return 0;
+  return a.value < b.value ? -1 : 1;
+}
+
+function failOn(diagnostics: readonly ts.Diagnostic[]): void {
+  const errors = diagnostics.filter((d) => d.category === ts.DiagnosticCategory.Error);
+  if (errors.length === 0) return;
+  const text = ts.formatDiagnosticsWithColorAndContext(errors, {
+    getCanonicalFileName: (f) => f,
+    getCurrentDirectory: () => REPO_ROOT,
+    getNewLine: () => "\n",
+  });
+  throw new Error(`[codegen] tsc reported errors:\n${text}`);
 }
 
 // Mirrored string constants: a runtime `.ts` carrying a literal exported from
@@ -169,10 +284,7 @@ rmSync(WEB_DEST, { recursive: true, force: true });
 // Emit declarations only via the dedicated tsconfig. The dedicated config
 // keeps the generation independent of the project tsconfig (which uses
 // `noEmit` and other compile-time-only settings).
-execSync(`bunx tsc -p scripts/tsconfig.codegen-web.json`, {
-  cwd: REPO_ROOT,
-  stdio: "inherit",
-});
+emitDeclarations("scripts/tsconfig.codegen-web.json");
 
 // The tsc output preserves the source dir structure under `outDir`.
 // Move just the schemas tree into web/src/_generated/.
@@ -205,10 +317,7 @@ console.log("[codegen] connector-catalog → web/src/_generated/connector-catalo
 rmSync(CONNECTOR_TYPES_TMP, { recursive: true, force: true });
 rmSync(CONNECTOR_TYPES_DEST, { recursive: true, force: true });
 
-execSync(`bunx tsc -p scripts/tsconfig.codegen-web-connectors.json`, {
-  cwd: REPO_ROOT,
-  stdio: "inherit",
-});
+emitDeclarations("scripts/tsconfig.codegen-web-connectors.json");
 
 mkdirSync(dirname(CONNECTOR_TYPES_DEST), { recursive: true });
 cpSync(CONNECTOR_TYPES_TMP, CONNECTOR_TYPES_DEST, { recursive: true });
@@ -230,10 +339,7 @@ console.log("[codegen] api → web/src/_generated/api/");
 rmSync(API_TYPES_TMP, { recursive: true, force: true });
 rmSync(API_TYPES_DEST, { recursive: true, force: true });
 
-execSync(`bunx tsc -p scripts/tsconfig.codegen-web-api.json`, {
-  cwd: REPO_ROOT,
-  stdio: "inherit",
-});
+emitDeclarations("scripts/tsconfig.codegen-web-api.json");
 
 mkdirSync(dirname(API_TYPES_DEST), { recursive: true });
 cpSync(API_TYPES_TMP, API_TYPES_DEST, { recursive: true });

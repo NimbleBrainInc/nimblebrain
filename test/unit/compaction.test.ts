@@ -18,6 +18,7 @@ import type {
   HistoryCompactedEvent,
   StoredMessage,
 } from "../../src/conversation/types.ts";
+import { stub } from "../helpers/stub.ts";
 
 // --- builders --------------------------------------------------------------
 
@@ -39,11 +40,31 @@ function conversation(turns: number, charsPerMsg: number): StoredMessage[] {
   return msgs;
 }
 
+type GenerateResult = Awaited<ReturnType<LanguageModelV4["doGenerate"]>>;
+
+const NO_USAGE: GenerateResult["usage"] = {
+  inputTokens: {
+    total: undefined,
+    noCache: undefined,
+    cacheRead: undefined,
+    cacheWrite: undefined,
+  },
+  outputTokens: { total: undefined, text: undefined, reasoning: undefined },
+};
+
+/** A doGenerate result holding `text` as its one text block, or no content when `text` is empty. */
+function generated(text: string, usage: GenerateResult["usage"] = NO_USAGE): GenerateResult {
+  return {
+    content: text ? [{ type: "text", text }] : [],
+    finishReason: { unified: "stop", raw: undefined },
+    usage,
+    warnings: [],
+  };
+}
+
 /** Minimal fake model whose doGenerate returns a fixed text block. */
 function fakeModel(text: string): LanguageModelV4 {
-  return {
-    doGenerate: async () => ({ content: text ? [{ type: "text", text }] : [] }),
-  } as unknown as LanguageModelV4;
+  return stub<LanguageModelV4>({ doGenerate: async () => generated(text) });
 }
 
 // --- planCompaction --------------------------------------------------------
@@ -113,15 +134,13 @@ describe("summarizeMessages + runCompaction", () => {
   });
 
   test("summarizeMessages reports the call's usage via onUsage", async () => {
-    const model = {
-      doGenerate: async () => ({
-        content: [{ type: "text", text: "a dense summary" }],
-        usage: {
-          inputTokens: { total: 1200, cacheRead: 300, cacheWrite: 100 },
-          outputTokens: { total: 40 },
-        },
-      }),
-    } as unknown as LanguageModelV4;
+    const model = stub<LanguageModelV4>({
+      doGenerate: async () =>
+        generated("a dense summary", {
+          inputTokens: { total: 1200, noCache: undefined, cacheRead: 300, cacheWrite: 100 },
+          outputTokens: { total: 40, text: undefined, reasoning: undefined },
+        }),
+    });
     let seen:
       | {
           usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number };
@@ -149,12 +168,12 @@ describe("summarizeMessages + runCompaction", () => {
     // `[tool-call]` / `[tool-result]` placeholder, so the summarizer could not
     // honor its instruction to preserve "files/entities/tools touched".
     let captured = "";
-    const capturing = {
-      doGenerate: async (opts: { prompt: Array<{ role: string; content: unknown }> }) => {
+    const capturing = stub<LanguageModelV4>({
+      doGenerate: async (opts) => {
         captured = JSON.stringify(opts.prompt.find((p) => p.role === "user")?.content ?? "");
-        return { content: [{ type: "text", text: "summary" }] };
+        return generated("summary");
       },
-    } as unknown as LanguageModelV4;
+    });
 
     const msgs = [
       user("look up the weather", ts(0)),
@@ -192,12 +211,12 @@ describe("summarizeMessages + runCompaction", () => {
 
   test("runCompaction returns null below threshold (model never called)", async () => {
     let called = false;
-    const model = {
+    const model = stub<LanguageModelV4>({
       doGenerate: async () => {
         called = true;
-        return { content: [] };
+        return generated("");
       },
-    } as unknown as LanguageModelV4;
+    });
     const out = await runCompaction(model, conversation(2, 40), { budget: 100_000 });
     expect(out).toBeNull();
     expect(called).toBe(false);
@@ -218,26 +237,26 @@ describe("summarizeMessages + runCompaction", () => {
 
 /** Mimics the provider rejecting an over-context prompt, like the real API. */
 function contextLimitedModel(summaryText: string, contextTokens: number): LanguageModelV4 {
-  return {
-    doGenerate: async (opts: { prompt: unknown }) => {
+  return stub<LanguageModelV4>({
+    doGenerate: async (opts) => {
       const tokens = Math.ceil(JSON.stringify(opts.prompt).length / 4);
       if (tokens > contextTokens) {
         throw new Error(`prompt is too long: ${tokens} tokens > ${contextTokens} maximum`);
       }
-      return { content: [{ type: "text", text: summaryText }] };
+      return generated(summaryText);
     },
-  } as unknown as LanguageModelV4;
+  });
 }
 
 /** Records the prompt-token size the model was actually handed. */
 function sizeCapturingModel(): { model: LanguageModelV4; lastPromptTokens: () => number } {
   let last = 0;
-  const model = {
-    doGenerate: async (opts: { prompt: unknown }) => {
+  const model = stub<LanguageModelV4>({
+    doGenerate: async (opts) => {
       last = Math.ceil(JSON.stringify(opts.prompt).length / 4);
-      return { content: [{ type: "text", text: "s" }] };
+      return generated("s");
     },
-  } as unknown as LanguageModelV4;
+  });
   return { model, lastPromptTokens: () => last };
 }
 
@@ -305,12 +324,12 @@ describe("compactConversationMessages", () => {
   test("no-op below threshold: same reference, no event, model never called", async () => {
     const msgs = conversation(2, 40);
     let called = false;
-    const model = {
+    const model = stub<LanguageModelV4>({
       doGenerate: async () => {
         called = true;
-        return { content: [] };
+        return generated("");
       },
-    } as never;
+    });
     const events: HistoryCompactedEvent[] = [];
     const out = await compactConversationMessages(model, msgs, {
       budget: 100_000,
@@ -324,11 +343,11 @@ describe("compactConversationMessages", () => {
 
   test("best-effort: a summarizer failure falls back to full history, no event", async () => {
     const msgs = conversation(40, 800);
-    const model = {
+    const model = stub<LanguageModelV4>({
       doGenerate: async () => {
         throw new Error("model boom");
       },
-    } as never;
+    });
     const events: HistoryCompactedEvent[] = [];
     const out = await compactConversationMessages(model, msgs, {
       budget: 5000,

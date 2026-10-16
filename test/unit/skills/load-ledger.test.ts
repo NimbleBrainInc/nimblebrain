@@ -10,26 +10,28 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { ConversationEvent } from "../../../src/conversation/types.ts";
+import type {
+  ConnectorSkillInjectedEvent,
+  ConversationEvent,
+  SkillActivatedEvent,
+  SkillsLoadedEntry,
+  SkillsLoadedEvent,
+} from "../../../src/conversation/types.ts";
 import { projectSkillLoads } from "../../../src/skills/load-ledger.ts";
 
 const CONV = "conv_test";
 
-function skillsLoaded(
-  ts: string,
-  runId: string,
-  skills: Array<Record<string, unknown>>,
-): ConversationEvent {
+function skillsLoaded(ts: string, runId: string, skills: SkillsLoadedEntry[]): SkillsLoadedEvent {
   return {
     ts,
     type: "skills.loaded",
     runId,
     skills,
-    totalTokens: skills.reduce((n, s) => n + ((s.tokens as number) ?? 0), 0),
-  } as unknown as ConversationEvent;
+    totalTokens: skills.reduce((n, s) => n + s.tokens, 0),
+  };
 }
 
-function entry(over: Record<string, unknown> = {}): Record<string, unknown> {
+function entry(over: Partial<SkillsLoadedEntry> = {}): SkillsLoadedEntry {
   return {
     id: "/skills/voice.md",
     name: "voice",
@@ -44,7 +46,10 @@ function entry(over: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 
-function connectorInjected(ts: string, over: Record<string, unknown> = {}): ConversationEvent {
+function connectorInjected(
+  ts: string,
+  over: Partial<ConnectorSkillInjectedEvent> = {},
+): ConnectorSkillInjectedEvent {
   return {
     ts,
     type: "connector.skill.injected",
@@ -53,10 +58,10 @@ function connectorInjected(ts: string, over: Record<string, unknown> = {}): Conv
     skillBody: "x".repeat(400),
     scope: "connector",
     ...over,
-  } as unknown as ConversationEvent;
+  };
 }
 
-function activated(ts: string, over: Record<string, unknown> = {}): ConversationEvent {
+function activated(ts: string, over: Partial<SkillActivatedEvent> = {}): SkillActivatedEvent {
   return {
     ts,
     type: "skill.activated",
@@ -66,8 +71,40 @@ function activated(ts: string, over: Record<string, unknown> = {}): Conversation
     scope: "workspace",
     tokens: 300,
     ...over,
-  } as unknown as ConversationEvent;
+  };
 }
+
+describe("projectSkillLoads — held calls and gaps", () => {
+  test("a body delivered for a held call reads as before_call", () => {
+    const rows = projectSkillLoads(CONV, [
+      connectorInjected("2026-08-01T00:00:00Z", { heldToolCallId: "tc-held" }),
+      connectorInjected("2026-08-01T00:00:01Z", { skillName: "after-a-read" }),
+    ]);
+    expect(rows.map((r) => r.loaded_by)).toEqual(["before_call", "tool_use"]);
+  });
+
+  test("a bound skill that did not arrive is a row with its reason and no tokens", () => {
+    const rows = projectSkillLoads(CONV, [
+      {
+        ts: "2026-08-01T00:00:00Z",
+        type: "skill.not_delivered",
+        runId: "run-3",
+        toolName: "gmail__send",
+        skillName: "gmail-usage",
+        reason: "fetch_failed",
+      },
+    ]);
+    expect(rows).toEqual([
+      expect.objectContaining({
+        skill: "gmail-usage",
+        loaded_by: "before_call",
+        tokens: 0,
+        tool_name: "gmail__send",
+        status: "fetch_failed",
+      }),
+    ]);
+  });
+});
 
 describe("projectSkillLoads — channel coverage", () => {
   test("projects all three channels, each with its own loaded_by", () => {

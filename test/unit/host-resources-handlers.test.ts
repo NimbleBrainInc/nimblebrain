@@ -7,7 +7,6 @@ import type { ListResourcesResult, ReadResourceResult } from "@modelcontextproto
 import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import type { EventSink } from "../../src/engine/types.ts";
 import { createFileStore, type FileStore } from "../../src/files/store.ts";
-import type { FileEntry } from "../../src/files/types.ts";
 import {
   FileBackedHostResourcesResolver,
   HOST_RESOURCES_LIST_METHOD,
@@ -56,9 +55,11 @@ async function seedFile(
     mimeType: mime,
     size: saved.size,
     createdAt: new Date().toISOString(),
-    description: undefined,
+    description: null,
     tags,
-  } as unknown as FileEntry);
+    source: "manual",
+    conversationId: null,
+  });
   return saved.id;
 }
 

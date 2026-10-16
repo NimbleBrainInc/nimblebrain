@@ -19,14 +19,19 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import type { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
 import type { ConversationEvent } from "../../../../src/conversation/types.ts";
 import { SKILL_ACTIVATED_META_KEY } from "../../../../src/engine/types.ts";
+import type { UserIdentity } from "../../../../src/identity/provider.ts";
 import { createUseSkillToolDef } from "../../../../src/platform/skills/source.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { ActivatableSkill } from "../../../../src/skills/catalog.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
 import { defineInProcessApp } from "../../../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 // ── Fake Runtime ─────────────────────────────────────────────────────────
 
@@ -42,17 +47,17 @@ class FakeRuntime {
     if (!this.wsId) throw new Error("no workspace");
     return this.wsId;
   }
-  getCurrentIdentity(): { id: string } | null {
-    return this.identity;
+  getCurrentIdentity(): UserIdentity | null {
+    return this.identity && makeIdentity(this.identity);
   }
   async listActivatableSkills(wsId: string, userId: string | null): Promise<ActivatableSkill[]> {
     this.listCalls.push({ wsId, userId });
     return this.activatable;
   }
-  async resolveConversationStore(_convId: string): Promise<unknown> {
+  async resolveConversationStore(_convId: string): Promise<EventSourcedConversationStore | null> {
     if (this.conversationEvents === null) return null;
     const events = this.conversationEvents;
-    return { readEvents: async () => events };
+    return stub<EventSourcedConversationStore>({ readEvents: async () => events });
   }
 }
 
@@ -79,11 +84,14 @@ async function buildSource(): Promise<McpSource> {
     {
       name: "nb",
       version: "1.0.0",
-      tools: [createUseSkillToolDef(runtime as unknown as never)],
+      tools: [createUseSkillToolDef(stub<Runtime>(runtime))],
     },
     new NoopEventSink(),
   );
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 

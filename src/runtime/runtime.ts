@@ -39,6 +39,7 @@ import {
 } from "../connectors/runtime/catalog-ui.ts";
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
+import { bindInstanceOAuthClients } from "../connectors/runtime/instance-oauth-clients.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
@@ -260,7 +261,7 @@ import { createSystemTools } from "../tools/system-tools.ts";
 import { isToolAllowedForRun, unmatchedAllowedTools } from "../tools/tool-pattern.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { toToolSchema } from "../tools/types.ts";
-import { resolveRates } from "../usage/cost.ts";
+import { estimateCost, resolveRates } from "../usage/cost.ts";
 import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
 import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
@@ -274,6 +275,7 @@ import {
   ConversationAccessDeniedError,
   ConversationNotFoundError,
   ConversationWorkspaceAccessDeniedError,
+  DeclaredSkillsUnavailableError,
   DeclaredToolsUnavailableError,
   ModelNotAllowedError,
   RunInProgressError,
@@ -288,10 +290,12 @@ import {
 } from "./request-context.ts";
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
 import type {
+  DeclaredSkill,
   RunComposition,
   RunConversationBinding,
   RunHandle,
   RunSpec,
+  SkillDelivery,
   UserResourceLinkPart,
   UserTextPart,
 } from "./run-spec.ts";
@@ -758,6 +762,12 @@ export class Runtime {
     // a built-in registered above — registration overwrites by name. The guard
     // is the reserved-name list in the gateway module, not this ordering.
     registerGatewayCredentialProviders();
+
+    // Instance OAuth clients, bound to the URL the catalog publishes for each id
+    // before any connector starts: every connect resolves its client through this
+    // bind, and it is what keeps the operator's secret on the catalog's server.
+    // Throws on a declared client with no client id or secret.
+    await bindInstanceOAuthClients(() => new ConnectorCatalog(catalogPath()).catalogByIdMap());
 
     // Derive the override-file path when the caller supplied a configPath
     // but not an explicit override path. The CLI's loadConfig already
@@ -1466,6 +1476,7 @@ export class Runtime {
       toolCalls: handle.toolCalls,
       stopReason: handle.stopReason,
       usage: handle.usage,
+      costUsd: handle.costUsd,
     };
   }
 
@@ -1550,6 +1561,7 @@ export class Runtime {
         content: [{ type: "text", text: request.prompt }],
         userId: requestIdentity.id,
         ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
+        ...(request.skills?.length ? { skills: request.skills } : {}),
       },
       budget: {
         ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
@@ -1559,6 +1571,7 @@ export class Runtime {
         ...(request.spendAccounts ? { spendAccounts: request.spendAccounts } : {}),
       },
       model: this.resolveRequestModelString(request.model),
+      ...(request.thinkingEffort ? { thinkingEffort: request.thinkingEffort } : {}),
       ...(request.signal ? { signal: request.signal } : {}),
       ...(request.runId ? { runId: request.runId } : {}),
       ...(requestSink ? { sink: requestSink } : {}),
@@ -1574,6 +1587,8 @@ export class Runtime {
       stopReason: handle.stopReason,
       ...stopDetail(handle),
       usage: handle.usage,
+      costUsd: handle.costUsd,
+      skillsDelivered: handle.skillsDelivered,
     };
   }
 
@@ -1676,7 +1691,7 @@ export class Runtime {
     });
     const resolvedThinking = resolveThinking({
       configMode: this.config.thinking,
-      configEffort: this.config.thinkingEffort,
+      configEffort: spec.thinkingEffort ?? this.config.thinkingEffort,
       configBudgetTokens: this.config.thinkingBudgetTokens,
       model: spec.model,
     });
@@ -1756,14 +1771,19 @@ export class Runtime {
       // From the UN-rehydrated history — this is what makes surface-ONCE hold
       // across turns. A fresh one-shot run has a single user message and no
       // prior history, so its set is empty.
-      alreadyInjectedConnectorSkills: this.collectInjectedConnectorSkills(effectiveHistory),
+      // A declared skill is in the system prompt, so no channel delivers it again.
+      alreadyInjectedConnectorSkills: [
+        ...this.collectInjectedConnectorSkills(effectiveHistory),
+        ...composed.declaredSkills.map((s) => s.name),
+      ],
       signal: spec.signal,
     });
 
-    // The per-run usage accumulator is joined to the sink chain only where an
-    // abort must still report — see {@link createPartialRunAccumulator}.
+    // The per-run accumulator prices every run, and stands in for the engine's
+    // totals where an abort must still report — see {@link createPartialRunAccumulator}.
     const partial = createPartialRunAccumulator();
-    const sinks = this.buildRunSinks(spec, binding, partial.sink);
+    const deliveries = createSkillDeliveryLog(composed.declaredSkills);
+    const sinks = [...this.buildRunSinks(spec, binding, partial.sink), deliveries.sink];
 
     // ── The engine ──────────────────────────────────────────────────────────
     // The engine's tool router is identity-bound but WALLED to one workspace.
@@ -1844,6 +1864,8 @@ export class Runtime {
         toolCalls: partial.toolCalls,
         stopReason: "aborted",
         usage: partial.usage(spec.model),
+        costUsd: partial.costUsd(),
+        skillsDelivered: deliveries.list,
       };
     } finally {
       releaseSpend();
@@ -1864,6 +1886,8 @@ export class Runtime {
         llmMs: result.llmMs,
         iterations: result.iterations,
       },
+      costUsd: partial.costUsd(),
+      skillsDelivered: deliveries.list,
     };
   }
 
@@ -2067,7 +2091,7 @@ export class Runtime {
       // No `excludeSkill` here: it only steers discovery, and discovery
       // already ran with it above. The entered app's exclusion is inherited from
       // `connectorPool` rather than restated as a second argument that has to agree
-      // with the first — the same reason `toConnectorSkillCandidates` takes a pool.
+      // with the first — the same reason `boundSkillCandidates` takes the pool.
       connectorPool,
     });
 
@@ -2108,18 +2132,32 @@ export class Runtime {
       this.loadConnectorSkillCandidates(spec.workspaceId),
       suppressed,
     );
-    // The catalog is loaded through `nb__use_skill`, so a run whose list does
-    // not name that tool gets no catalog rather than one it cannot open.
-    const skillCatalog =
-      runAllowedTools && !isToolAllowedForRun("nb__use_skill", runAllowedTools)
-        ? []
-        : toCatalogEntries(
-            collectActivatableSkills({
-              fsCapability: poolCapability,
-              connectorCapability,
-              connectorCandidates: connectorOverlayCandidates,
-            }),
-          );
+    // Every run can open the catalog: `nb__use_skill` passes any `allowedTools`
+    // (`isToolAllowedForRun`), so the catalog is never offered unopenable.
+    const activatable = collectActivatableSkills({
+      fsCapability: poolCapability,
+      connectorCapability,
+      connectorCandidates: connectorOverlayCandidates,
+    });
+    const skillCatalog = toCatalogEntries(activatable);
+    const declaredSkills = await resolveDeclaredSkills(spec.input.skills, activatable, [
+      ...requestContextSkills.map((s) => s.manifest.name),
+      ...composedSkillNames(selectedLayer3, skill),
+    ]);
+
+    // Declared bodies join the stable Layer 3 section, not the opening message:
+    // they are the same on every run of the task, and only the system prefix
+    // is cached across runs (the opening message's breakpoint falls after the
+    // run's own input, which differs run to run).
+    layer3Entries.push(
+      ...declaredSkills.map((s) => ({
+        name: s.name,
+        body: s.body,
+        scope: s.scope,
+        loadedBy: "declared" as const,
+        reason: "named by the run's task",
+      })),
+    );
 
     // Task mode prepends TASK_IDENTITY so an unattended run produces a
     // deliverable rather than a conversational reply. The runtime owns that
@@ -2149,10 +2187,13 @@ export class Runtime {
       skillMatch: composedMatch,
       selectedLayer3,
       alwaysOnSkills: requestContextSkills,
-      connectorSkillCandidates: [
-        ...connectorOverlayCandidates,
-        ...this.toConnectorSkillCandidates(connectorCapability, selectedLayer3),
-      ],
+      connectorSkillCandidates: boundSkillCandidates({
+        fsCapability: poolCapability,
+        connectorCapability,
+        overlays: connectorOverlayCandidates,
+        alreadyComposed: composedSkillNames(selectedLayer3, skill),
+      }),
+      declaredSkills,
       stableSystem,
       volatileHead,
       systemPrompt,
@@ -2162,10 +2203,10 @@ export class Runtime {
   /**
    * The run's event-sink chain.
    *
-   * The engine returns cumulative usage and llmMs in its `EngineResult`, so the
-   * clean path needs no side-channel metrics collector; the partial accumulator
-   * joins only for a run whose caller must still be told what happened after an
-   * abort.
+   * The engine returns cumulative usage and llmMs in its `EngineResult`; the
+   * partial accumulator joins every run to price it call by call, and its
+   * totals replace the engine's only for a run whose caller must still be told
+   * what happened after an abort.
    */
   private buildRunSinks(
     spec: RunSpec,
@@ -2181,7 +2222,9 @@ export class Runtime {
       binding.store.setActiveConversation(binding.conversation.id);
       sinks.push(binding.store);
     }
-    if (spec.onAbort === "partial") sinks.push(partialSink);
+    // On every run: it prices the run. Its usage and tool calls stand in for
+    // the engine's only when a run with `onAbort: "partial"` aborts.
+    sinks.push(partialSink);
     return sinks;
   }
 
@@ -3345,7 +3388,7 @@ export class Runtime {
               ...(s.loadingStrategy ? { loadingStrategy: s.loadingStrategy } : {}),
               ...(s.priority !== undefined ? { priority: s.priority } : {}),
               ...(s.triggers?.length ? { triggers: s.triggers } : {}),
-              ...(s.toolAffinity?.length ? { toolAffinity: s.toolAffinity } : {}),
+              ...(s.toolAffinity !== undefined ? { toolAffinity: s.toolAffinity } : {}),
             }),
           );
         } catch {
@@ -5362,52 +5405,6 @@ export class Runtime {
     return readConnectorSkillCandidates(dir);
   }
 
-  /** SEP-2640 connector skills as surface-once connector-skill candidates, so a server's
-   *  skill can be delivered mid-turn when its tools are progressively disclosed (not only
-   *  at turn-start via <layer3-skill>).
-   *
-   *  Takes the `capability` half of `selectRequestLayer3`'s partition rather than
-   *  discovering again: one discovery per turn, and the entered app's exclusion
-   *  (its PRIMARY skill rides <app-guide>, not this channel — the server's other
-   *  skills do ride it) is inherited from that call instead of being a second
-   *  `excludeSkill` argument that has to agree with the first.
-   *
-   *  Only skills this turn has NOT already composed ride this channel. Two
-   *  exclusions, one rule — a body already in the prompt must not be delivered
-   *  again:
-   *   - `always` connector skills, by taking the `capability` half: an `always`
-   *     skill is in the context channel every turn.
-   *   - `alreadyComposed`, the turn's Layer-3 selection: a `dynamic` skill whose
-   *     tools were active at turn start is already in `<layer3-skill>`.
-   *
-   *  The second is not a corner case. `selectLayer3Skills` matches the very
-   *  tool-affinity synthesis stamps on every published skill, so Layer 3 and
-   *  this candidate list select on identical criteria — leaving a selected
-   *  skill in the pool would re-deliver its body as a synthetic message on the
-   *  first call to a matching tool, where it would then ride the rest of the
-   *  conversation. A skill that declares no affinity is bound to its whole
-   *  server, so one such call would re-deliver every such skill that server
-   *  publishes.
-   *
-   *  What remains is what the channel is for: a skill whose tools were proxied
-   *  out of the active set at turn start, so Layer 3 could not select it, and
-   *  which becomes relevant when a tool is promoted mid-turn. */
-  private toConnectorSkillCandidates(
-    capability: Skill[],
-    alreadyComposed: SelectedSkill[],
-  ): ConnectorSkillCandidate[] {
-    const composed = new Set(alreadyComposed.map((s) => s.skill.manifest.name));
-    return capability
-      .filter((s) => !composed.has(s.manifest.name))
-      .map((s) => ({
-        name: s.manifest.name,
-        body: s.body,
-        ...(s.loadBody ? { loadBody: bodyOrNull(s.loadBody) } : {}),
-        scope: s.manifest.scope ?? PUBLISHED_SKILL_SCOPE,
-        toolAffinity: s.manifest.toolAffinity ?? [],
-      }));
-  }
-
   /**
    * Names of skills already DELIVERED into this conversation — connector
    * overlays surfaced by the engine (synthetic-message marker) and catalog
@@ -6310,6 +6307,38 @@ function isReportableAbort(spec: RunSpec, signal: AbortSignal | undefined): bool
   return spec.onAbort === "partial" && signal?.aborted === true;
 }
 
+/**
+ * Record every skill a run is given, and every bound skill that missed it, for
+ * a caller with no conversation log to read the events back from. A sink in
+ * the run's chain, so it holds what happened before an abort as well.
+ */
+function createSkillDeliveryLog(declared: DeclaredSkill[]): {
+  sink: EventSink;
+  list: SkillDelivery[];
+} {
+  const list: SkillDelivery[] = declared.map((s) => ({ name: s.name, loadedBy: "declared" }));
+  const sink: EventSink = {
+    emit(event) {
+      if (event.type === "connector.skill.injected") {
+        const { skillName, heldToolCallId } = event.data;
+        list.push({
+          name: skillName,
+          loadedBy: heldToolCallId !== undefined ? "before_call" : "tool_use",
+        });
+      } else if (event.type === "skill.activated") {
+        list.push({ name: event.data.skillName, loadedBy: "activation" });
+      } else if (event.type === "skill.not_delivered") {
+        list.push({
+          name: event.data.skillName,
+          loadedBy: "before_call",
+          status: event.data.reason,
+        });
+      }
+    },
+  };
+  return { sink, list };
+}
+
 /** The user message a run opens on, in stored form. */
 function buildOpeningMessage(input: RunSpec["input"]): StoredMessage {
   return {
@@ -6332,13 +6361,18 @@ function buildOpeningMessage(input: RunSpec["input"]): StoredMessage {
  * — and retain them across the throw, so a timed-out task reports the work
  * it actually did instead of 0/0/0/0. Drops with the process: a real SIGKILL
  * still reports zero, and the persisted run result is the post-mortem.
+ *
+ * It also prices every run, aborted or not: each call on its own rate card,
+ * summed. Pricing the cumulative usage instead would bill a run of short
+ * prompts on a model's long-prompt card once their sum crossed its threshold.
  */
 function createPartialRunAccumulator(): {
   sink: EventSink;
   toolCalls: RunHandle["toolCalls"];
   usage: (model: string) => TurnUsage;
+  costUsd: () => number;
 } {
-  const totals = { inputTokens: 0, outputTokens: 0, iterations: 0, llmMs: 0 };
+  const totals = { inputTokens: 0, outputTokens: 0, iterations: 0, llmMs: 0, costUsd: 0 };
   const toolCalls: RunHandle["toolCalls"] = [];
   const sink: EventSink = {
     emit(event: EngineEvent): void {
@@ -6348,6 +6382,7 @@ function createPartialRunAccumulator(): {
         totals.llmMs += data.llmMs;
         totals.inputTokens += data.usage.inputTokens;
         totals.outputTokens += data.usage.outputTokens;
+        totals.costUsd += estimateCost(data.model, data.usage);
       } else if (event.type === "tool.done") {
         const { data } = event;
         // `errorReason` is intentionally absent here: this accumulator only
@@ -6355,7 +6390,9 @@ function createPartialRunAccumulator(): {
         // `stopReason: "aborted"` (never "complete"), so the tasks
         // de-masker's `status === "success"` guard never reads it. (The
         // `tool.done` event doesn't carry `errorReason` either — no point
-        // threading it through for a path that can't de-mask.)
+        // threading it through for a path that can't de-mask.) `held` is
+        // carried: the run's recorded unresolved failures read it on every
+        // path, this one included.
         toolCalls.push({
           id: data.id,
           name: data.name,
@@ -6363,6 +6400,7 @@ function createPartialRunAccumulator(): {
           output: data.output,
           ok: data.ok,
           ms: data.ms,
+          ...(data.held ? { held: data.held } : {}),
         });
       }
     },
@@ -6380,6 +6418,7 @@ function createPartialRunAccumulator(): {
       llmMs: totals.llmMs,
       iterations: totals.iterations,
     }),
+    costUsd: () => totals.costUsd,
   };
 }
 
@@ -6459,6 +6498,105 @@ function buildWorkspaceContext(
 }
 
 /** A skill body loader as the engine's surface-once channel takes it: the body, or `null`. */
+/**
+ * The skills an unattended run declared, resolved to the bodies its system
+ * prompt carries in the Layer 3 skills section. A name the turn already
+ * composes into its system prompt (`composedNames`: the `always` skills,
+ * tool-affinity selection, and the trigger match) needs no delivery. A name the workspace does not offer refuses the
+ * run before its first model call (`DeclaredSkillsUnavailableError`), as an
+ * unreachable declared tool does: the owner named it as the run's job. A body
+ * that cannot be fetched fails the run as an ordinary failure, and the task's
+ * next run tries again.
+ */
+async function resolveDeclaredSkills(
+  names: string[] | undefined,
+  activatable: ActivatableSkill[],
+  composedNames: string[],
+): Promise<DeclaredSkill[]> {
+  if (!names?.length) return [];
+  const composed = new Set(composedNames);
+  const byName = new Map(activatable.map((s) => [s.name, s]));
+  const wanted = [...new Set(names)].filter((n) => !composed.has(n));
+  const unavailable = wanted.filter((n) => !byName.has(n));
+  if (unavailable.length > 0) throw new DeclaredSkillsUnavailableError(unavailable);
+  return Promise.all(
+    wanted.map(async (name) => {
+      const skill = byName.get(name) as ActivatableSkill;
+      const loaded = skill.loadBody
+        ? await skill.loadBody()
+        : { ok: true as const, body: skill.body };
+      if (!loaded.ok)
+        throw new Error(`Declared skill "${name}" could not be fetched (${loaded.reason}).`);
+      return { name, scope: skill.scope, body: loaded.body };
+    }),
+  );
+}
+
+/** The skills a turn composed into its prompt: tool-affinity selection and the trigger match. */
+function composedSkillNames(selected: SelectedSkill[], matched: Skill | null): string[] {
+  const names = selected.map((s) => s.skill.manifest.name);
+  return matched ? [...names, matched.manifest.name] : names;
+}
+
+/**
+ * Every skill bound to a tool, from every source, as the engine's delivery
+ * candidates: the conversation tiers' `dynamic` skills (core, org, workspace,
+ * user), the workspace's server-published ones, and its curated overlays. One
+ * candidate set, so a tenant's skill bound to a connector's tool reaches the
+ * model on the same call as the connector's own.
+ *
+ * A skill with no `tool-affinity` is bound to nothing and is left to the
+ * catalog. A disabled skill is left out. So is any skill this turn already
+ * composed into the prompt (`alreadyComposed`: turn-start tool-affinity
+ * selection and the trigger match), because its body is in context and
+ * delivering it again would put it there twice. The `<app-guide>` skill never
+ * reaches the connector pool, so it needs no exclusion here.
+ *
+ * Names are unique, the first pool winning in catalog order (filesystem, then
+ * server-published, then overlay), so one name is one skill and one delivery.
+ */
+function boundSkillCandidates(pools: {
+  fsCapability: Skill[];
+  connectorCapability: Skill[];
+  overlays: ConnectorSkillCandidate[];
+  alreadyComposed: string[];
+}): ConnectorSkillCandidate[] {
+  const seen = new Set(pools.alreadyComposed);
+  const out: ConnectorSkillCandidate[] = [];
+  const add = (c: ConnectorSkillCandidate) => {
+    if (seen.has(c.name) || c.toolAffinity.length === 0) return;
+    seen.add(c.name);
+    out.push(c);
+  };
+  for (const s of [...pools.fsCapability, ...pools.connectorCapability]) {
+    if (s.manifest.status !== "active") continue;
+    add(boundSkillCandidate(s));
+  }
+  for (const c of pools.overlays) add(c);
+  return out;
+}
+
+/**
+ * One skill as a delivery candidate. A server's own skill bound to its whole
+ * namespace (`<server>__*`, declared or by default) is marked `implicitBinding`:
+ * only such a skill skips the hold on a tool its server annotates read-only.
+ */
+function boundSkillCandidate(s: Skill): ConnectorSkillCandidate {
+  const toolAffinity = s.manifest.toolAffinity ?? [];
+  const publisher = parseConnectorSkillName(s.manifest.name)?.connector;
+  const wholeServer =
+    publisher !== undefined && toolAffinity.length === 1 && toolAffinity[0] === `${publisher}__*`;
+  return {
+    name: s.manifest.name,
+    body: s.body,
+    ...(s.loadBody ? { loadBody: bodyOrNull(s.loadBody) } : {}),
+    scope: s.manifest.scope ?? PUBLISHED_SKILL_SCOPE,
+    toolAffinity,
+    priority: s.manifest.priority,
+    ...(wholeServer ? { implicitBinding: true } : {}),
+  };
+}
+
 function bodyOrNull(load: () => Promise<SkillBodyLoad>): () => Promise<string | null> {
   return async () => {
     const loaded = await load();

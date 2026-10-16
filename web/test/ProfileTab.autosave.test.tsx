@@ -8,19 +8,12 @@
  */
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 import { realClient } from "./setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// The DOM shim builds its own errors off `window`; without these, a failed
-// `querySelectorAll` throws about a missing constructor instead of reporting.
-{
-  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 type CallToolArgs = { server: string; tool: string; args: Record<string, unknown> };
 const callToolCalls: CallToolArgs[] = [];
@@ -148,7 +141,7 @@ async function flush() {
 const sets = () => callToolCalls.filter((c) => c.tool === "set_preferences").map((c) => c.args);
 
 /** The shim's own Event constructor — a global `Event` is a different class to it. */
-const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+const WindowEvent = window.Event;
 
 async function choose(el: HTMLSelectElement, value: string) {
   await act(async () => {
@@ -158,7 +151,7 @@ async function choose(el: HTMLSelectElement, value: string) {
   await flush();
 }
 
-const win = () => (globalThis as unknown as { window: Window & typeof globalThis }).window;
+const win = () => window;
 
 /** Type into a controlled input the way a user does, then leave the field. */
 async function typeAndLeave(el: HTMLInputElement, value: string) {

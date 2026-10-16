@@ -92,6 +92,7 @@ describe("buildProcessInventory", () => {
 
   it("skips a row that names no server", () => {
     const ws = makeWorkspace("ws_0061a3cbd4f78051", "Production", [
+      // biome-ignore lint/plugin/double-cast: a stored row with no serverName, claimed as a ConnectorRef, which requires one
       { url: "https://example.com/mcp" } as unknown as ConnectorRef,
     ]);
 
@@ -136,6 +137,7 @@ describe("buildProcessInventory", () => {
     // bad row: a row with no url, and a blank or unparseable url that
     // reached the store.
     const ws = makeWorkspace("ws_004ae1946ec2cba8", "Mixed", [
+      // biome-ignore lint/plugin/double-cast: a stored row with no url, claimed as a ConnectorRef, which requires one
       { serverName: "echo" } as unknown as ConnectorRef,
       { url: "", serverName: "echo" },
       { url: "   ", serverName: "echo" },

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { effectiveRunLimits, resolveTasksConfig } from "../../../../src/config/tasks.ts";
-import type { TasksCreateInput, TasksUpdateInput } from "../../../../src/platform/schemas/tasks.ts";
+import { TasksCreateInput, TasksUpdateInput } from "../../../../src/platform/schemas/tasks.ts";
 import type { RunNowTicket } from "../../../../src/platform/tasks/scheduler.ts";
 import {
   estimateRunsPerDay,
@@ -31,6 +31,7 @@ import {
   saveTask,
 } from "../../../../src/platform/tasks/store.ts";
 import type { Task, TaskRun } from "../../../../src/platform/tasks/types.ts";
+import { validateToolInput } from "../../../../src/tools/validate-input.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const WS = "ws_0076759dbbe19fcc";
@@ -682,6 +683,7 @@ describe("handleList filters", () => {
     const ctx = makeCtx();
     seedTasks(ctx);
     const defs = ctx.definitions();
+    // biome-ignore lint/plugin/never-cast: a stored source outside `TaskSource`, which is the record under test
     defs.get("active-agent")!.source = "retired-source" as never;
     ctx.save(defs);
 
@@ -1155,6 +1157,47 @@ describe("handleCreate — new fields", () => {
   });
 });
 
+describe("thinkingEffort", () => {
+  test("create stores it, update changes it, and null clears it", () => {
+    const ctx = makeCtx();
+    const created = handleCreate(
+      createArgs(
+        "Effort Test",
+        "test",
+        { type: "interval", intervalMs: 60_000 },
+        {
+          thinkingEffort: "low",
+        },
+      ),
+      ctx,
+    );
+    const id = (created.task as Task).id;
+    expect((created.task as Task).thinkingEffort).toBe("low");
+
+    const raised = handleUpdate(updateArgs(id, { thinkingEffort: "high" }), ctx);
+    expect((raised.task as Task).thinkingEffort).toBe("high");
+
+    const cleared = handleUpdate(updateArgs(id, { thinkingEffort: null }), ctx);
+    expect((cleared.task as Task).thinkingEffort).toBeUndefined();
+  });
+
+  test("the input schemas take a known depth and refuse any other", () => {
+    const create = (thinkingEffort: unknown) =>
+      validateToolInput({ manifest: { name: "x", thinkingEffort }, body: "test" }, TasksCreateInput)
+        .valid;
+    expect(create("low")).toBe(true);
+    expect(create("max")).toBe(true);
+    expect(create("extreme")).toBe(false);
+    expect(create(3)).toBe(false);
+
+    const update = (thinkingEffort: unknown) =>
+      validateToolInput({ taskId: "x", manifest: { thinkingEffort } }, TasksUpdateInput).valid;
+    expect(update("medium")).toBe(true);
+    expect(update(null)).toBe(true);
+    expect(update("none")).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // handleUpdate — re-enable clears disable state
 // ---------------------------------------------------------------------------
@@ -1524,11 +1567,11 @@ describe("task ownership", () => {
 // ---------------------------------------------------------------------------
 
 describe("event schedules", () => {
-  const match = { source: "precision-outbound", name: "reply.*" };
+  const match = { source: "acme-outbound", name: "reply.*" };
 
   test("format as the notifications they wait for", () => {
     expect(formatSchedule({ type: "event", match })).toBe(
-      "On notifications from precision-outbound, matching reply.*",
+      "On notifications from acme-outbound, matching reply.*",
     );
     expect(formatSchedule({ type: "event", match: { level: "urgent" } })).toBe(
       "On notifications at urgent or above",
@@ -1590,9 +1633,7 @@ describe("event schedules", () => {
       debounceMs: 60_000,
       maxFiresPerHour: 6,
     });
-    expect(status.task.scheduleHuman).toBe(
-      "On notifications from precision-outbound, matching reply.*",
-    );
+    expect(status.task.scheduleHuman).toBe("On notifications from acme-outbound, matching reply.*");
     expect(status.task.nextRunAt).toBeUndefined();
     expect(status.task.estimatedCostPerDay).toBe(0);
   });
@@ -1793,7 +1834,7 @@ describe("the tool surface an agent reads", () => {
         { type: "interval", intervalMs: 60_000 },
         {
           description: "d",
-          skill: "s",
+          skills: ["s"],
           model: "anthropic:claude-haiku-4-5",
           allowedTools: ["web__*"],
           maxIterations: 10,
@@ -1806,7 +1847,7 @@ describe("the tool surface an agent reads", () => {
     );
     const cleared = [
       "description",
-      "skill",
+      "skills",
       "model",
       "allowedTools",
       "maxIterations",
@@ -1815,7 +1856,7 @@ describe("the tool surface an agent reads", () => {
       "tokenBudget",
     ];
     handleUpdate(updateArgs("full", Object.fromEntries(cleared.map((k) => [k, null]))), ctx);
-    const stored = loadDefs().get("full") as unknown as Record<string, unknown>;
+    const stored = loadDefs().get("full")!;
     for (const key of cleared) expect(key in stored).toBe(false);
     expect("budgetResetAt" in stored).toBe(false);
   });

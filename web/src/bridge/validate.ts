@@ -25,10 +25,11 @@
 import type { TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import {
-  ACTION_METHOD,
   KEYDOWN_METHOD,
   LOCATION_METHOD,
   NOTIFY_METHOD,
+  OPEN_CONNECTOR_SETTINGS_METHOD,
+  OPEN_METHOD,
   REQUEST_FILE_METHOD,
   UPLOAD_FILES_METHOD,
 } from "./extensions";
@@ -43,13 +44,14 @@ import {
   SynapseRequestFileMessage,
   SynapseUploadFilesMessage,
   ToolsCallMessage,
-  UiActionMessage,
   UiDownloadFileSpecMessage,
   UiKeydownMessage,
   UiLocationMessage,
   UiMessageMessage,
   UiNotifyMessage,
+  UiOpenConnectorSettingsMessage,
   UiOpenLinkMessage,
+  UiOpenMessage,
   UiRequestDisplayModeMessage,
   UiSizeChangedMessage,
   UiUpdateModelContextMessage,
@@ -76,7 +78,8 @@ export const SCHEMA_BY_METHOD: Record<string, TSchema> = {
   "ui/initialize": ExtAppsInitializeRequest,
   "ui/notifications/initialized": ExtAppsInitializedNotification,
   "ui/notifications/request-teardown": ExtAppsRequestTeardownNotification,
-  [ACTION_METHOD]: UiActionMessage,
+  [OPEN_METHOD]: UiOpenMessage,
+  [OPEN_CONNECTOR_SETTINGS_METHOD]: UiOpenConnectorSettingsMessage,
   [REQUEST_FILE_METHOD]: SynapseRequestFileMessage,
   [UPLOAD_FILES_METHOD]: SynapseUploadFilesMessage,
   [KEYDOWN_METHOD]: UiKeydownMessage,

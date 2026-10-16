@@ -23,8 +23,10 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink } from "../../../../src/engine/types.ts";
 import { isModelVisible } from "../../../../src/engine/types.ts";
+import type { UserIdentity } from "../../../../src/identity/provider.ts";
 import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import { parseSkillContent } from "../../../../src/skills/loader.ts";
 import { selectLayer3Skills } from "../../../../src/skills/select.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
@@ -32,19 +34,14 @@ import { listSkillVersions } from "../../../../src/skills/versions.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { surfaceTools } from "../../../../src/tools/surfacing.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
+import type { Workspace } from "../../../../src/workspace/types.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
 import { skillEditPatch } from "../../../../web/src/pages/settings/skill-edit-patch.ts";
-import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
-
-interface FakeIdentity {
-  id: string;
-  email: string;
-  displayName: string;
-  orgRole: "admin" | "member";
-  preferences: { timezone: string; locale: string; theme: string };
-}
+import { stub } from "../../../helpers/stub.ts";
+import { makeWorkspace, seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 /** The dev user, as the `dev` provider verifies every request: org admin. */
-const DEV_USER: FakeIdentity = {
+const DEV_USER: UserIdentity = {
   id: "usr_default",
   email: "dev@localhost",
   displayName: "Developer",
@@ -53,12 +50,9 @@ const DEV_USER: FakeIdentity = {
 };
 
 class FakeRuntime {
-  identity: FakeIdentity | null = DEV_USER;
+  identity: UserIdentity | null = DEV_USER;
   wsId: string | null = null;
-  workspaces = new Map<
-    string,
-    { id: string; name: string; members: Array<{ userId: string; role: "admin" | "member" }> }
-  >();
+  workspaces = new Map<string, Workspace>();
 
   constructor(private workDir: string) {
     const convDir = join(workDir, "conversations");
@@ -70,7 +64,7 @@ class FakeRuntime {
   getWorkDir(): string {
     return this.workDir;
   }
-  getCurrentIdentity(): FakeIdentity | null {
+  getCurrentIdentity(): UserIdentity | null {
     return this.identity;
   }
   requireWorkspaceId(): string {
@@ -84,9 +78,9 @@ class FakeRuntime {
     return new WorkspaceContext({ wsId, workDir: this.workDir });
   }
   getWorkspaceStore() {
-    return {
+    return stub<WorkspaceStore>({
       get: async (id: string) => this.workspaces.get(id) ?? null,
-    };
+    });
   }
   getContextSkills() {
     return [];
@@ -108,7 +102,7 @@ class FakeRuntime {
   setMember(wsId: string, userId: string, role: "admin" | "member"): void {
     const ws = this.workspaces.get(wsId);
     if (!ws) {
-      this.workspaces.set(wsId, { id: wsId, name: wsId, members: [{ userId, role }] });
+      this.workspaces.set(wsId, makeWorkspace({ id: wsId, members: [{ userId, role }] }));
     } else {
       ws.members = [{ userId, role }];
     }
@@ -140,8 +134,11 @@ afterEach(async () => {
 });
 
 async function buildSource(): Promise<McpSource> {
-  source = createSkillsSource(runtime as unknown as never, sink ?? new NoopEventSink());
+  source = createSkillsSource(stub<Runtime>(runtime), sink ?? new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
   return source;
 }
 
@@ -490,7 +487,7 @@ describe("skills__create — loading-strategy", () => {
     expect(parsed?.manifest.loadingStrategy).toBe("always");
   });
 
-  test("success message flags a catalog-only skill", async () => {
+  test("success message says a catalog-only skill loads on request", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -502,7 +499,7 @@ describe("skills__create — loading-strategy", () => {
       },
     });
     const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
-    expect(text).toMatch(/catalog-only/);
+    expect(text).toMatch(/on request/);
   });
 });
 
@@ -548,7 +545,7 @@ describe("a pasted SKILL.md in the body", () => {
     );
     expect(written?.manifest.loadingStrategy).toBe("dynamic");
     expect(written?.manifest.priority).toBe(25);
-    expect(written?.manifest.toolAffinity).toEqual(["skills__*"]);
+    expect(written?.manifest.toolAffinity).toEqual(["skills__create", "skills__update"]);
     expect(written?.manifest.triggers).toHaveLength(8);
     expect(written?.manifest.description).toContain("Guide for authoring");
     // The filename is the caller's — it is what the permission gate ran against.
@@ -587,10 +584,10 @@ describe("a pasted SKILL.md in the body", () => {
       },
     });
     const out = result.structuredContent as {
-      loading?: { wouldLoad: boolean; mechanism: string };
+      loading?: { mechanism: string };
       frontmatterApplied?: string[];
     };
-    expect(out.loading).toEqual({ wouldLoad: true, mechanism: "tool_affinity" });
+    expect(out.loading).toEqual({ mechanism: "tool_affinity" });
     expect(out.frontmatterApplied).toEqual(["description", "loading-strategy", "tool-affinity"]);
   });
 
@@ -1614,11 +1611,14 @@ describe("cross-workspace access — regression", () => {
     runtime.wsId = "ws_00148bca567ef156";
     // Alice is admin in ws_00148bca567ef156. ws_005820c54ca342ad has no Alice membership.
     runtime.setMember("ws_00148bca567ef156", "u_alice", "admin");
-    runtime.workspaces.set("ws_005820c54ca342ad", {
-      id: "ws_005820c54ca342ad",
-      name: "Other",
-      members: [{ userId: "u_carol", role: "admin" }],
-    });
+    runtime.workspaces.set(
+      "ws_005820c54ca342ad",
+      makeWorkspace({
+        id: "ws_005820c54ca342ad",
+        name: "Other",
+        members: [{ userId: "u_carol", role: "admin" }],
+      }),
+    );
     // Pre-stage a skill under ws_005820c54ca342ad, on disk.
     const otherDir = join(workDir, "workspaces", "ws_005820c54ca342ad", "skills");
     mkdirSync(otherDir, { recursive: true });

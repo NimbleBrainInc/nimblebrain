@@ -49,21 +49,21 @@ beforeEach(() => {
     (globalThis as Record<string, unknown>).window = globalThis;
   }
 
-  (globalThis as unknown as { open: unknown }).open = mock(() => null);
+  globalThis.open = mock(() => null);
 
-  globalThis.window.addEventListener = ((type: string, fn: Listener) => {
+  globalThis.window.addEventListener = (type: string, fn: Listener) => {
     if (!windowListeners.has(type)) windowListeners.set(type, new Set());
     windowListeners.get(type)!.add(fn);
-  }) as unknown as typeof globalThis.window.addEventListener;
+  };
 
-  globalThis.window.removeEventListener = ((type: string, fn: Listener) => {
+  globalThis.window.removeEventListener = (type: string, fn: Listener) => {
     windowListeners.get(type)?.delete(fn);
-  }) as unknown as typeof globalThis.window.removeEventListener;
+  };
 
-  globalThis.window.dispatchEvent = ((event: Event & { detail?: unknown }) => {
+  globalThis.window.dispatchEvent = (event: Event & { detail?: unknown }) => {
     customEventsFired.push({ type: event.type, detail: event.detail });
     return true;
-  }) as unknown as typeof globalThis.window.dispatchEvent;
+  };
 
   // Provide a minimal document shim so getHostThemeMode() doesn't throw.
   if (typeof globalThis.document === "undefined") {
@@ -202,51 +202,6 @@ describe("Bridge — ui/message (spec format)", () => {
   });
 });
 
-describe("Bridge — ai.nimblebrain/action", () => {
-  it("hands every action to the shell by name, with no action handled in the bridge", () => {
-    const { iframe } = makeFakeIframe();
-    const handle = createBridge(iframe, "test-app");
-
-    simulatePostMessage(iframe, {
-      jsonrpc: "2.0",
-      method: "ai.nimblebrain/action",
-      params: { action: "openApp", name: "crm" },
-    });
-    simulatePostMessage(iframe, {
-      jsonrpc: "2.0",
-      method: "ai.nimblebrain/action",
-      params: { action: "navigate", route: "/settings" },
-    });
-
-    expect(customEventsFired.filter((e) => e.type === "nb:action")).toEqual([
-      { type: "nb:action", detail: { action: "openApp", name: "crm", serverName: "test-app" } },
-      {
-        type: "nb:action",
-        detail: { action: "navigate", route: "/settings", serverName: "test-app" },
-      },
-    ]);
-
-    handle.destroy();
-  });
-
-  it("names the sending server itself, whatever server the app claims to be", () => {
-    const { iframe } = makeFakeIframe();
-    const handle = createBridge(iframe, "test-app");
-
-    simulatePostMessage(iframe, {
-      jsonrpc: "2.0",
-      method: "ai.nimblebrain/action",
-      params: { action: "openConnectorSettings", serverName: "other-app" },
-    });
-
-    expect(customEventsFired.filter((e) => e.type === "nb:action")).toEqual([
-      { type: "nb:action", detail: { action: "openConnectorSettings", serverName: "test-app" } },
-    ]);
-
-    handle.destroy();
-  });
-});
-
 describe("Bridge — methods the host does not serve", () => {
   it("answers a synapse/download-file request with method-not-found", () => {
     const { iframe, posted } = makeFakeIframe();
@@ -264,6 +219,28 @@ describe("Bridge — methods the host does not serve", () => {
       id: 7,
       error: { code: -32601, message: "Method not found: synapse/download-file" },
     });
+    handle.destroy();
+  });
+
+  // An app built on a Synapse release before 0.33.0 asks for a host action;
+  // the host serves `ai.nimblebrain/open` in its place and dispatches nothing.
+  it("answers an ai.nimblebrain/action request with method-not-found and dispatches nothing", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      id: 8,
+      method: "ai.nimblebrain/action",
+      params: { action: "openApp", name: "crm" },
+    });
+
+    expect(posted).toContainEqual({
+      jsonrpc: "2.0",
+      id: 8,
+      error: { code: -32601, message: "Method not found: ai.nimblebrain/action" },
+    });
+    expect(customEventsFired).toEqual([]);
     handle.destroy();
   });
 
@@ -301,11 +278,7 @@ describe("Bridge — ui/open-link and size-changed", () => {
       params: { url: "https://example.com" },
     });
 
-    expect((globalThis as unknown as { open: ReturnType<typeof mock> }).open).toHaveBeenCalledWith(
-      "https://example.com",
-      "_blank",
-      "noopener",
-    );
+    expect(globalThis.open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener");
 
     handle.destroy();
   });

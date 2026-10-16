@@ -1,22 +1,14 @@
-import { fireEvent, render, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import { fireEvent, render, within } from "@testing-library/react";
 import {
   ModelPicker,
   type PickerModel,
   shortModelName,
   toPickerModels,
 } from "../src/components/ModelPicker.tsx";
+import { defineHappyDomErrorClasses } from "./happy-dom";
 
-// happy-dom's Window stub doesn't expose SyntaxError/TypeError; querySelector's
-// selector parser constructs one and trips on the gap. Same patch the
-// RecentConversationsPopover suite uses.
-{
-  const win = (globalThis as unknown as { window?: Record<string, unknown> }).window;
-  if (win) {
-    win.SyntaxError ??= SyntaxError;
-    win.TypeError ??= TypeError;
-  }
-}
+defineHappyDomErrorClasses();
 
 /**
  * The control has two states and the difference between them is the feature.
@@ -140,11 +132,7 @@ describe("toPickerModels", () => {
       openai: [{ id: "gpt-5", name: "GPT-5" }],
     });
     expect(models.map((m) => m.provider)).toEqual(["google", "google", "openai"]);
-    expect(models.map((m) => m.name)).toEqual([
-      "Gemini 3 Flash",
-      "Nano Banana 2 Lite",
-      "GPT-5",
-    ]);
+    expect(models.map((m) => m.name)).toEqual(["Gemini 3 Flash", "Nano Banana 2 Lite", "GPT-5"]);
   });
 
   it("keeps a moving pointer that is a model in its own right", () => {

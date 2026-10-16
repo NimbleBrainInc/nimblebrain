@@ -14,7 +14,7 @@ export declare const ConversationsListInput: import("@sinclair/typebox").TObject
 export type ConversationsListInput = Static<typeof ConversationsListInput>;
 export declare const ConversationsGetInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"metadata" | "messages" | "full">>;
+    expand: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"full" | "messages" | "metadata">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
 export type ConversationsGetInput = Static<typeof ConversationsGetInput>;
@@ -34,204 +34,528 @@ export declare const ConversationsForkInput: import("@sinclair/typebox").TObject
 }>;
 export type ConversationsForkInput = Static<typeof ConversationsForkInput>;
 export declare const ConversationsStatsInput: import("@sinclair/typebox").TObject<{
-    period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
+    period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "day" | "month" | "week">>;
 }>;
 export type ConversationsStatsInput = Static<typeof ConversationsStatsInput>;
 export declare const ConversationsExportInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    format: import("@sinclair/typebox").TUnsafe<"markdown" | "json">;
+    format: import("@sinclair/typebox").TUnsafe<"json" | "markdown">;
 }>;
 export type ConversationsExportInput = Static<typeof ConversationsExportInput>;
 /** What `conversations__fork` returns: a summary of the new conversation. */
-export interface ConversationsForkOutput {
-    id: string;
-    title: null;
-    createdAt: string;
-    updatedAt: string;
-    messageCount: number;
-    totalInputTokens: number;
-    totalOutputTokens: number;
-    lastModel: string | null;
-    preview: string;
-}
+export declare const ConversationsForkOutput: import("@sinclair/typebox").TObject<{
+    title: import("@sinclair/typebox").TNull;
+    id: import("@sinclair/typebox").TString;
+    createdAt: import("@sinclair/typebox").TString;
+    updatedAt: import("@sinclair/typebox").TString;
+    messageCount: import("@sinclair/typebox").TNumber;
+    totalInputTokens: import("@sinclair/typebox").TNumber;
+    totalOutputTokens: import("@sinclair/typebox").TNumber;
+    lastModel: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    preview: import("@sinclair/typebox").TString;
+}>;
+export type ConversationsForkOutput = Static<typeof ConversationsForkOutput>;
+/** What `conversations__update` returns: the conversation as a reader now projects it. */
+export declare const ConversationsUpdateOutput: import("@sinclair/typebox").TObject<{
+    title: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    id: import("@sinclair/typebox").TString;
+    createdAt: import("@sinclair/typebox").TString;
+    updatedAt: import("@sinclair/typebox").TString;
+    messageCount: import("@sinclair/typebox").TNumber;
+    totalInputTokens: import("@sinclair/typebox").TNumber;
+    totalOutputTokens: import("@sinclair/typebox").TNumber;
+    lastModel: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    preview: import("@sinclair/typebox").TString;
+}>;
+export type ConversationsUpdateOutput = Static<typeof ConversationsUpdateOutput>;
+/** One row of `conversations__list`. */
+export declare const ConversationListEntry: import("@sinclair/typebox").TObject<{
+    title: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    ownerId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    workspaceId: import("@sinclair/typebox").TString;
+    active: import("@sinclair/typebox").TBoolean;
+    id: import("@sinclair/typebox").TString;
+    createdAt: import("@sinclair/typebox").TString;
+    updatedAt: import("@sinclair/typebox").TString;
+    messageCount: import("@sinclair/typebox").TNumber;
+    totalInputTokens: import("@sinclair/typebox").TNumber;
+    totalOutputTokens: import("@sinclair/typebox").TNumber;
+    lastModel: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    preview: import("@sinclair/typebox").TString;
+}>;
+export type ConversationListEntry = Static<typeof ConversationListEntry>;
+/** What `conversations__list` returns: one page of the workspace's conversations. */
+export declare const ConversationsListOutput: import("@sinclair/typebox").TObject<{
+    conversations: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        title: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+        ownerId: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+        workspaceId: import("@sinclair/typebox").TString;
+        active: import("@sinclair/typebox").TBoolean;
+        id: import("@sinclair/typebox").TString;
+        createdAt: import("@sinclair/typebox").TString;
+        updatedAt: import("@sinclair/typebox").TString;
+        messageCount: import("@sinclair/typebox").TNumber;
+        totalInputTokens: import("@sinclair/typebox").TNumber;
+        totalOutputTokens: import("@sinclair/typebox").TNumber;
+        lastModel: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+        preview: import("@sinclair/typebox").TString;
+    }>>;
+    nextCursor: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    totalCount: import("@sinclair/typebox").TNumber;
+}>;
+export type ConversationsListOutput = Static<typeof ConversationsListOutput>;
+export declare const DisplayResourceLink: import("@sinclair/typebox").TObject<{
+    uri: import("@sinclair/typebox").TString;
+    name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+}>;
+export type DisplayResourceLink = Static<typeof DisplayResourceLink>;
+/**
+ * MCP tool-result envelope — identical shape to what streaming emits, so the
+ * UI consumes one type regardless of source. `content[0].text` is the tool's
+ * text output; `isError` mirrors `!ok`.
+ */
+export declare const DisplayToolResult: import("@sinclair/typebox").TObject<{
+    content: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        type: import("@sinclair/typebox").TString;
+        text: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    }>>;
+    structuredContent: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+    isError: import("@sinclair/typebox").TBoolean;
+}>;
+export type DisplayToolResult = Static<typeof DisplayToolResult>;
+export declare const DisplayToolCall: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    name: import("@sinclair/typebox").TString;
+    appName: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    status: import("@sinclair/typebox").TUnsafe<"done" | "error">;
+    ok: import("@sinclair/typebox").TBoolean;
+    ms: import("@sinclair/typebox").TNumber;
+    input: import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>;
+    result: import("@sinclair/typebox").TObject<{
+        content: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            type: import("@sinclair/typebox").TString;
+            text: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        }>>;
+        structuredContent: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+        isError: import("@sinclair/typebox").TBoolean;
+    }>;
+    resourceUri: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    resourceLinks: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        uri: import("@sinclair/typebox").TString;
+        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    }>>>;
+}>;
+export type DisplayToolCall = Static<typeof DisplayToolCall>;
+export declare const DisplayBlock: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+    type: import("@sinclair/typebox").TUnsafe<"text">;
+    text: import("@sinclair/typebox").TString;
+}>, import("@sinclair/typebox").TObject<{
+    type: import("@sinclair/typebox").TUnsafe<"reasoning">;
+    text: import("@sinclair/typebox").TString;
+}>, import("@sinclair/typebox").TObject<{
+    type: import("@sinclair/typebox").TUnsafe<"tool">;
+    toolCalls: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        name: import("@sinclair/typebox").TString;
+        appName: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        status: import("@sinclair/typebox").TUnsafe<"done" | "error">;
+        ok: import("@sinclair/typebox").TBoolean;
+        ms: import("@sinclair/typebox").TNumber;
+        input: import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>;
+        result: import("@sinclair/typebox").TObject<{
+            content: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                type: import("@sinclair/typebox").TString;
+                text: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            }>>;
+            structuredContent: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+            isError: import("@sinclair/typebox").TBoolean;
+        }>;
+        resourceUri: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        resourceLinks: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            uri: import("@sinclair/typebox").TString;
+            name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        }>>>;
+    }>>;
+}>]>;
+export type DisplayBlock = Static<typeof DisplayBlock>;
+export declare const DisplayUsage: import("@sinclair/typebox").TObject<{
+    inputTokens: import("@sinclair/typebox").TNumber;
+    outputTokens: import("@sinclair/typebox").TNumber;
+    cacheReadTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    /**
+     * Cache-write and reasoning subtotals carried through so fork() can
+     * round-trip them onto the new file. Losing them here means a forked
+     * conversation would report lower cost than the original on cache-heavy or
+     * reasoning-heavy turns.
+     */
+    cacheWriteTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    reasoningTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    model: import("@sinclair/typebox").TString;
+    llmMs: import("@sinclair/typebox").TNumber;
+}>;
+export type DisplayUsage = Static<typeof DisplayUsage>;
+export declare const DisplayFile: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    filename: import("@sinclair/typebox").TString;
+    mimeType: import("@sinclair/typebox").TString;
+    size: import("@sinclair/typebox").TNumber;
+    extracted: import("@sinclair/typebox").TBoolean;
+}>;
+export type DisplayFile = Static<typeof DisplayFile>;
+/** One skill in a turn's `skills.loaded` telemetry, projected for display. */
+export declare const DisplaySkill: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    name: import("@sinclair/typebox").TString;
+    connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    scope: import("@sinclair/typebox").TString;
+    tokens: import("@sinclair/typebox").TNumber;
+    loadedBy: import("@sinclair/typebox").TString;
+    reason: import("@sinclair/typebox").TString;
+}>;
+export type DisplaySkill = Static<typeof DisplaySkill>;
+/** A turn's skills-loaded telemetry — the ledger line's data. */
+export declare const DisplaySkillsContext: import("@sinclair/typebox").TObject<{
+    skills: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        name: import("@sinclair/typebox").TString;
+        connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        scope: import("@sinclair/typebox").TString;
+        tokens: import("@sinclair/typebox").TNumber;
+        loadedBy: import("@sinclair/typebox").TString;
+        reason: import("@sinclair/typebox").TString;
+    }>>;
+    totalTokens: import("@sinclair/typebox").TNumber;
+}>;
+export type DisplaySkillsContext = Static<typeof DisplaySkillsContext>;
 /**
  * A single chat turn as it should be rendered. One per `user.message` event
  * and one per `run.start`→`run.done` span — never split per iteration.
  */
-export interface DisplayMessage {
-    role: "user" | "assistant";
-    /** Aggregated text across all text blocks (convenient for copy/title). */
-    content: string;
-    /** Ordered content blocks — the primary structure for rendering. */
-    blocks: DisplayBlock[];
-    timestamp: string;
-    userId?: string;
-    /** All tool calls flattened out of blocks — derived, for consumers that scan them. */
-    toolCalls?: DisplayToolCall[];
-    /** Aggregate LLM usage for the whole turn; undefined for user messages. */
-    usage?: DisplayUsage;
-    files?: DisplayFile[];
+export declare const DisplayMessage: import("@sinclair/typebox").TObject<{
+    role: import("@sinclair/typebox").TUnsafe<"assistant" | "user">;
+    content: import("@sinclair/typebox").TString;
+    blocks: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+        type: import("@sinclair/typebox").TUnsafe<"text">;
+        text: import("@sinclair/typebox").TString;
+    }>, import("@sinclair/typebox").TObject<{
+        type: import("@sinclair/typebox").TUnsafe<"reasoning">;
+        text: import("@sinclair/typebox").TString;
+    }>, import("@sinclair/typebox").TObject<{
+        type: import("@sinclair/typebox").TUnsafe<"tool">;
+        toolCalls: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            id: import("@sinclair/typebox").TString;
+            name: import("@sinclair/typebox").TString;
+            appName: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            status: import("@sinclair/typebox").TUnsafe<"done" | "error">;
+            ok: import("@sinclair/typebox").TBoolean;
+            ms: import("@sinclair/typebox").TNumber;
+            input: import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>;
+            result: import("@sinclair/typebox").TObject<{
+                content: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                    type: import("@sinclair/typebox").TString;
+                    text: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                }>>;
+                structuredContent: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+                isError: import("@sinclair/typebox").TBoolean;
+            }>;
+            resourceUri: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            resourceLinks: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                uri: import("@sinclair/typebox").TString;
+                name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            }>>>;
+        }>>;
+    }>]>>;
+    timestamp: import("@sinclair/typebox").TString;
+    userId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    toolCalls: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        name: import("@sinclair/typebox").TString;
+        appName: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        status: import("@sinclair/typebox").TUnsafe<"done" | "error">;
+        ok: import("@sinclair/typebox").TBoolean;
+        ms: import("@sinclair/typebox").TNumber;
+        input: import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>;
+        result: import("@sinclair/typebox").TObject<{
+            content: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                type: import("@sinclair/typebox").TString;
+                text: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            }>>;
+            structuredContent: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+            isError: import("@sinclair/typebox").TBoolean;
+        }>;
+        resourceUri: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        resourceLinks: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            uri: import("@sinclair/typebox").TString;
+            name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        }>>>;
+    }>>>;
+    /** Aggregate LLM usage for the whole turn; absent on user messages. */
+    usage: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        inputTokens: import("@sinclair/typebox").TNumber;
+        outputTokens: import("@sinclair/typebox").TNumber;
+        cacheReadTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        /**
+         * Cache-write and reasoning subtotals carried through so fork() can
+         * round-trip them onto the new file. Losing them here means a forked
+         * conversation would report lower cost than the original on cache-heavy or
+         * reasoning-heavy turns.
+         */
+        cacheWriteTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        reasoningTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        model: import("@sinclair/typebox").TString;
+        llmMs: import("@sinclair/typebox").TNumber;
+    }>>;
+    files: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        filename: import("@sinclair/typebox").TString;
+        mimeType: import("@sinclair/typebox").TString;
+        size: import("@sinclair/typebox").TNumber;
+        extracted: import("@sinclair/typebox").TBoolean;
+    }>>>;
     /**
      * Non-"complete" run terminations bubble up here: a `run.done` stopReason
      * verbatim ("max_iterations", "cancelled", …), "error" for a `run.error`,
      * "interrupted" for a run with no terminal event.
      */
-    stopReason?: string;
+    stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /**
      * True when this assistant turn has no terminal event yet (no run.done /
-     * run.error) — i.e. the run was still in flight when the file was read. Lets
-     * a live viewer tell a partial disk snapshot from a finished turn and decide
-     * whether to reconcile against the server's replay.
+     * run.error) and a run is live for the conversation — a partial disk
+     * snapshot rather than a finished turn.
      */
-    pending?: boolean;
+    pending: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     /**
      * Skills the runtime composed into this turn's prompt (the `skills.loaded`
-     * event for the run) — the Context Ledger's durable source. The live stream
-     * carries the same payload for an in-flight turn; this is how a reopened
-     * conversation re-derives the ledger line. Absent when the turn loaded none.
+     * event for the run) — the Context Ledger's durable source. Absent when the
+     * turn loaded none.
      */
-    skillsLoaded?: DisplaySkillsContext;
-}
-/** One skill in a turn's `skills.loaded` telemetry, projected for display. */
-export interface DisplaySkill {
-    id: string;
-    /** The skill's own name — resolved here, safe to render directly. */
-    name: string;
-    /** The MCP server that published it; absent for filesystem skills. */
-    connector?: string;
-    scope: "org" | "workspace" | "user" | "provided";
-    tokens: number;
-    loadedBy: string;
-    reason: string;
-}
-/** A turn's skills-loaded telemetry — the ledger line's data. */
-export interface DisplaySkillsContext {
-    skills: DisplaySkill[];
-    totalTokens: number;
-}
-export type DisplayBlock = {
-    type: "text";
-    text: string;
-} | {
-    type: "reasoning";
-    text: string;
-} | {
-    type: "tool";
-    toolCalls: DisplayToolCall[];
-};
-export interface DisplayToolCall {
-    id: string;
-    /** Full tool name (may include "server__tool" prefix). */
-    name: string;
-    /** Server prefix from the name (before "__"), if any — convenience for routing. */
-    appName?: string;
-    /** Terminal status — tool calls from history are never mid-flight. */
-    status: "done" | "error";
-    ok: boolean;
-    ms: number;
-    input: Record<string, unknown>;
-    /**
-     * MCP tool-result envelope — identical shape to what streaming emits, so the
-     * UI consumes one type regardless of source. `content[0].text` is the tool's
-     * text output; `isError` mirrors `!ok`.
-     */
-    result: DisplayToolResult;
-    resourceUri?: string;
-    resourceLinks?: DisplayResourceLink[];
-}
-export interface DisplayToolResult {
-    content: Array<{
-        type: string;
-        text?: string;
-        [key: string]: unknown;
-    }>;
-    structuredContent?: Record<string, unknown>;
-    isError: boolean;
-}
-export interface DisplayResourceLink {
-    uri: string;
-    name?: string;
-    mimeType?: string;
-    description?: string;
-}
-export interface DisplayUsage {
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens?: number;
-    /**
-     * Cache-write and reasoning subtotals carried through so fork() can
-     * round-trip them onto the new file. The chat UI doesn't currently
-     * render these per-message, but losing them here means a forked
-     * conversation would silently report lower cost than the original on
-     * cache-heavy or reasoning-heavy turns.
-     */
-    cacheWriteTokens?: number;
-    reasoningTokens?: number;
-    /** Model of the last LLM call in the run (runs can switch models mid-turn). */
-    model: string;
-    llmMs: number;
-}
-export interface DisplayFile {
-    id: string;
-    filename: string;
-    mimeType: string;
-    size: number;
-    extracted: boolean;
-}
+    skillsLoaded: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        skills: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            id: import("@sinclair/typebox").TString;
+            name: import("@sinclair/typebox").TString;
+            connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            scope: import("@sinclair/typebox").TString;
+            tokens: import("@sinclair/typebox").TNumber;
+            loadedBy: import("@sinclair/typebox").TString;
+            reason: import("@sinclair/typebox").TString;
+        }>>;
+        totalTokens: import("@sinclair/typebox").TNumber;
+    }>>;
+}>;
+export type DisplayMessage = Static<typeof DisplayMessage>;
 /** Metadata `conversations__get` returns for a conversation. */
-export interface ConversationMetadata {
-    id: string;
-    title: string | null;
-    createdAt: string;
-    updatedAt: string;
-    totalInputTokens: number;
-    totalOutputTokens: number;
-    lastModel: string | null;
-    /** The model the conversation is bound to. */
-    model: string;
-    ownerId?: string;
-    /** The workspace the conversation is sealed to; absent when the record carries no stamp. */
-    workspaceId?: string;
-}
+export declare const ConversationMetadata: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    title: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    createdAt: import("@sinclair/typebox").TString;
+    updatedAt: import("@sinclair/typebox").TString;
+    totalInputTokens: import("@sinclair/typebox").TNumber;
+    totalOutputTokens: import("@sinclair/typebox").TNumber;
+    lastModel: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    model: import("@sinclair/typebox").TString;
+    ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+}>;
+export type ConversationMetadata = Static<typeof ConversationMetadata>;
 /**
  * What `conversations__get` returns. `expand: "metadata"` sends no messages and
  * `expand: "full"` the whole transcript; the default sends the most recent
  * messages under a character budget, and says so when it dropped older ones.
  */
-export interface ConversationsGetOutput {
-    metadata: ConversationMetadata;
-    totalMessages: number;
-    messages: DisplayMessage[];
-    truncated?: true;
-    droppedOlderMessages?: number;
-    truncationHint?: string;
-}
-/** What `conversations__update` returns: the conversation as a reader now projects it. */
-export interface ConversationsUpdateOutput {
-    id: string;
-    title: string | null;
-    createdAt: string;
-    updatedAt: string;
-    messageCount: number;
-    totalInputTokens: number;
-    totalOutputTokens: number;
-    lastModel: string | null;
-    preview: string;
-}
-/** What `conversations__export` returns: the transcript as Markdown or as JSON text. */
-export interface ConversationsExportOutput {
-    content: string;
-}
-/** One conversation whose messages matched a `conversations__search` query. */
-export interface ConversationSearchResult {
-    id: string;
-    title: string | null;
-    matches: Array<{
-        snippet: string;
+export declare const ConversationsGetOutput: import("@sinclair/typebox").TObject<{
+    metadata: import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        title: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+        createdAt: import("@sinclair/typebox").TString;
+        updatedAt: import("@sinclair/typebox").TString;
+        totalInputTokens: import("@sinclair/typebox").TNumber;
+        totalOutputTokens: import("@sinclair/typebox").TNumber;
+        lastModel: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+        model: import("@sinclair/typebox").TString;
+        ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>;
-}
+    totalMessages: import("@sinclair/typebox").TNumber;
+    truncated: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+    droppedOlderMessages: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    truncationHint: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    messages: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        role: import("@sinclair/typebox").TUnsafe<"assistant" | "user">;
+        content: import("@sinclair/typebox").TString;
+        blocks: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+            type: import("@sinclair/typebox").TUnsafe<"text">;
+            text: import("@sinclair/typebox").TString;
+        }>, import("@sinclair/typebox").TObject<{
+            type: import("@sinclair/typebox").TUnsafe<"reasoning">;
+            text: import("@sinclair/typebox").TString;
+        }>, import("@sinclair/typebox").TObject<{
+            type: import("@sinclair/typebox").TUnsafe<"tool">;
+            toolCalls: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                id: import("@sinclair/typebox").TString;
+                name: import("@sinclair/typebox").TString;
+                appName: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                status: import("@sinclair/typebox").TUnsafe<"done" | "error">;
+                ok: import("@sinclair/typebox").TBoolean;
+                ms: import("@sinclair/typebox").TNumber;
+                input: import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>;
+                result: import("@sinclair/typebox").TObject<{
+                    content: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                        type: import("@sinclair/typebox").TString;
+                        text: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                    }>>;
+                    structuredContent: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+                    isError: import("@sinclair/typebox").TBoolean;
+                }>;
+                resourceUri: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                resourceLinks: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                    uri: import("@sinclair/typebox").TString;
+                    name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                    mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                    description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                }>>>;
+            }>>;
+        }>]>>;
+        timestamp: import("@sinclair/typebox").TString;
+        userId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        toolCalls: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            id: import("@sinclair/typebox").TString;
+            name: import("@sinclair/typebox").TString;
+            appName: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            status: import("@sinclair/typebox").TUnsafe<"done" | "error">;
+            ok: import("@sinclair/typebox").TBoolean;
+            ms: import("@sinclair/typebox").TNumber;
+            input: import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>;
+            result: import("@sinclair/typebox").TObject<{
+                content: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                    type: import("@sinclair/typebox").TString;
+                    text: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                }>>;
+                structuredContent: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnknown>>;
+                isError: import("@sinclair/typebox").TBoolean;
+            }>;
+            resourceUri: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            resourceLinks: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                uri: import("@sinclair/typebox").TString;
+                name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            }>>>;
+        }>>>;
+        /** Aggregate LLM usage for the whole turn; absent on user messages. */
+        usage: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+            inputTokens: import("@sinclair/typebox").TNumber;
+            outputTokens: import("@sinclair/typebox").TNumber;
+            cacheReadTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            /**
+             * Cache-write and reasoning subtotals carried through so fork() can
+             * round-trip them onto the new file. Losing them here means a forked
+             * conversation would report lower cost than the original on cache-heavy or
+             * reasoning-heavy turns.
+             */
+            cacheWriteTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            reasoningTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            model: import("@sinclair/typebox").TString;
+            llmMs: import("@sinclair/typebox").TNumber;
+        }>>;
+        files: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            id: import("@sinclair/typebox").TString;
+            filename: import("@sinclair/typebox").TString;
+            mimeType: import("@sinclair/typebox").TString;
+            size: import("@sinclair/typebox").TNumber;
+            extracted: import("@sinclair/typebox").TBoolean;
+        }>>>;
+        /**
+         * Non-"complete" run terminations bubble up here: a `run.done` stopReason
+         * verbatim ("max_iterations", "cancelled", …), "error" for a `run.error`,
+         * "interrupted" for a run with no terminal event.
+         */
+        stopReason: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        /**
+         * True when this assistant turn has no terminal event yet (no run.done /
+         * run.error) and a run is live for the conversation — a partial disk
+         * snapshot rather than a finished turn.
+         */
+        pending: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+        /**
+         * Skills the runtime composed into this turn's prompt (the `skills.loaded`
+         * event for the run) — the Context Ledger's durable source. Absent when the
+         * turn loaded none.
+         */
+        skillsLoaded: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+            skills: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                id: import("@sinclair/typebox").TString;
+                name: import("@sinclair/typebox").TString;
+                connector: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                scope: import("@sinclair/typebox").TString;
+                tokens: import("@sinclair/typebox").TNumber;
+                loadedBy: import("@sinclair/typebox").TString;
+                reason: import("@sinclair/typebox").TString;
+            }>>;
+            totalTokens: import("@sinclair/typebox").TNumber;
+        }>>;
+    }>>;
+}>;
+export type ConversationsGetOutput = Static<typeof ConversationsGetOutput>;
+/** What `conversations__export` returns: the transcript as Markdown or as JSON text. */
+export declare const ConversationsExportOutput: import("@sinclair/typebox").TObject<{
+    content: import("@sinclair/typebox").TString;
+}>;
+export type ConversationsExportOutput = Static<typeof ConversationsExportOutput>;
+/** One conversation whose messages matched a `conversations__search` query. */
+export declare const ConversationSearchResult: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    title: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+    matches: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        snippet: import("@sinclair/typebox").TString;
+    }>>;
+}>;
+export type ConversationSearchResult = Static<typeof ConversationSearchResult>;
 /** What `conversations__search` returns. */
-export interface ConversationsSearchOutput {
-    results: ConversationSearchResult[];
-    totalMatches: number;
-}
+export declare const ConversationsSearchOutput: import("@sinclair/typebox").TObject<{
+    results: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        title: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
+        matches: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            snippet: import("@sinclair/typebox").TString;
+        }>>;
+    }>>;
+    totalMatches: import("@sinclair/typebox").TNumber;
+}>;
+export type ConversationsSearchOutput = Static<typeof ConversationsSearchOutput>;
+/** One model's share of a `conversations__stats` period. */
+export declare const ConversationModelStats: import("@sinclair/typebox").TObject<{
+    inputTokens: import("@sinclair/typebox").TNumber;
+    outputTokens: import("@sinclair/typebox").TNumber;
+    conversations: import("@sinclair/typebox").TNumber;
+}>;
+export type ConversationModelStats = Static<typeof ConversationModelStats>;
+/** What `conversations__stats` returns: token usage for the period in the current workspace. */
+export declare const ConversationsStatsOutput: import("@sinclair/typebox").TObject<{
+    period: import("@sinclair/typebox").TObject<{
+        since: import("@sinclair/typebox").TString;
+        until: import("@sinclair/typebox").TString;
+    }>;
+    totalConversations: import("@sinclair/typebox").TNumber;
+    totalInputTokens: import("@sinclair/typebox").TNumber;
+    totalOutputTokens: import("@sinclair/typebox").TNumber;
+    byModel: import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TObject<{
+        inputTokens: import("@sinclair/typebox").TNumber;
+        outputTokens: import("@sinclair/typebox").TNumber;
+        conversations: import("@sinclair/typebox").TNumber;
+    }>>;
+    topTools: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        name: import("@sinclair/typebox").TString;
+        callCount: import("@sinclair/typebox").TNumber;
+    }>>;
+}>;
+export type ConversationsStatsOutput = Static<typeof ConversationsStatsOutput>;

@@ -120,6 +120,7 @@ const CONVERSATION_EVENT_TYPES = new Set([
   "context.assembled",
   "connector.skill.injected",
   "skill.activated",
+  "skill.not_delivered",
   "skill.suppression",
 ]);
 
@@ -291,6 +292,7 @@ function mapToolDone(ts: string, d: ToolDonePayload): ToolDoneEvent {
     // fetched on view.
     ...(d.resourceUri !== undefined ? { resourceUri: d.resourceUri } : {}),
     ...(d.resourceLinks && d.resourceLinks.length > 0 ? { resourceLinks: d.resourceLinks } : {}),
+    ...(d.held ? { held: d.held } : {}),
   };
 }
 
@@ -357,6 +359,7 @@ function mapConnectorSkillInjected(
     skillName: d.skillName,
     skillBody: d.skillBody,
     scope: d.scope,
+    ...(d.heldToolCallId !== undefined ? { heldToolCallId: d.heldToolCallId } : {}),
   };
   return e;
 }
@@ -780,6 +783,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
         return mapConnectorSkillInjected(ts, event.data);
       case "skill.activated":
         return mapSkillActivated(ts, event.data);
+      case "skill.not_delivered":
+        return { ts, type: "skill.not_delivered", ...event.data };
       case "skill.suppression":
         return mapSkillSuppression(ts, event.data);
       default:

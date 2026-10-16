@@ -24,6 +24,7 @@
  * See `src/platform/AGENTS.md` § 1.4 for the cross-cutting rule.
  */
 
+import type { ThinkingEffort } from "../../engine/types.ts";
 import { requireQualifiedModelId } from "../../model/model-id.ts";
 import { parseModelSlotRef } from "../../model/slots.ts";
 import { computeBudgetResetAt, computeNextRunAt, setNextRunAt } from "./scheduler.ts";
@@ -119,8 +120,9 @@ export interface DomainCreateInput {
   schedule?: ScheduleSpec;
   kind?: TaskKind;
   description?: string;
-  skill?: string;
+  skills?: string[];
   model?: string;
+  thinkingEffort?: ThinkingEffort;
   maxIterations?: number;
   maxInputTokens?: number;
   maxRunDurationMs?: number;
@@ -148,9 +150,11 @@ export interface DomainUpdatePatch {
   /** `null` removes the schedule: nothing fires the task unattended. */
   schedule?: ScheduleSpec | null;
   prompt?: string;
-  skill?: string | null;
+  skills?: string[] | null;
   /** `null` removes it: runs use the workspace default model. */
   model?: string | null;
+  /** `null` removes it: runs reason at the workspace setting. */
+  thinkingEffort?: ThinkingEffort | null;
   maxIterations?: number | null;
   maxInputTokens?: number | null;
   maxRunDurationMs?: number | null;
@@ -275,7 +279,7 @@ export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): Cr
     ...(input.schedule ? { schedule: input.schedule } : {}),
     ...(input.kind ? { kind: input.kind } : {}),
     description: input.description,
-    skill: input.skill,
+    skills: input.skills,
     allowedTools: input.allowedTools,
     ...(input.inputSchema ? { inputSchema: input.inputSchema } : {}),
     ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
@@ -289,6 +293,7 @@ export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): Cr
     maxInputTokens: input.maxInputTokens,
     maxRunDurationMs: input.maxRunDurationMs,
     model: input.model,
+    ...(input.thinkingEffort ? { thinkingEffort: input.thinkingEffort } : {}),
     tokenBudget: input.tokenBudget,
     enabled: input.enabled ?? true,
     source: input.source ?? "agent",
@@ -335,7 +340,7 @@ const UPDATABLE_FIELDS = [
   "description",
   "prompt",
   "schedule",
-  "skill",
+  "skills",
   "allowedTools",
   "inputSchema",
   "outputSchema",
@@ -347,6 +352,7 @@ const UPDATABLE_FIELDS = [
   "maxInputTokens",
   "maxRunDurationMs",
   "model",
+  "thinkingEffort",
   "enabled",
   "tokenBudget",
 ] as const satisfies readonly (keyof DomainUpdatePatch)[];
@@ -398,6 +404,7 @@ function applyOnceRearm(task: Task, patch: DomainUpdatePatch, wasRetiredOnce: bo
   if (patch.enabled === false) return;
   task.enabled = true;
   task.consecutiveErrors = 0;
+  task.failureNoticeRunId = undefined;
   task.disabledAt = undefined;
   task.disabledReason = undefined;
 }
@@ -442,6 +449,7 @@ export function updateTask(
   // Clear disable state when re-enabling
   if (patch.enabled === true) {
     task.consecutiveErrors = 0;
+    task.failureNoticeRunId = undefined;
     task.disabledAt = undefined;
     task.disabledReason = undefined;
     // A past `nextRunAt` the schedule really fires at reads as a run still owed

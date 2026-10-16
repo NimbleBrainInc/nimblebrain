@@ -349,7 +349,7 @@ describe("createTask / deleteTask — internal caller path", () => {
 describe("an event schedule", () => {
   const eventSchedule = {
     type: "event" as const,
-    match: { source: "precision-outbound", name: "reply.*" },
+    match: { source: "acme-outbound", name: "reply.*" },
   };
 
   test("carries no nextRunAt, because it has no position in time", () => {
@@ -396,6 +396,7 @@ describe("an event schedule", () => {
           name: "Self wake",
           prompt: "Go.",
           schedule: eventSchedule,
+          // biome-ignore lint/plugin/never-cast: a provenance outside `TaskSource`, which is the input under test
           source: "bundle" as never,
         },
         ctx,
@@ -411,6 +412,7 @@ describe("an event schedule", () => {
         name: "Bundle job",
         prompt: "Go.",
         schedule: { type: "interval", intervalMs: 3_600_000 },
+        // biome-ignore lint/plugin/never-cast: a provenance outside `TaskSource`, which is the input under test
         source: "bundle" as never,
       },
       ctx,

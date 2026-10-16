@@ -12,7 +12,7 @@ import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
 import { workspaceFilesDir } from "../../../../src/files/paths.ts";
 import { createFileStore, type FileStore } from "../../../../src/files/store.ts";
-import type { FileEntry } from "../../../../src/files/types.ts";
+import { DEFAULT_FILE_CONFIG, type FileEntry } from "../../../../src/files/types.ts";
 import { fileKind } from "../../../../src/platform/files/query.ts";
 import { createFilesSource } from "../../../../src/platform/files/source.ts";
 import type {
@@ -27,6 +27,8 @@ import {
 } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const OWNER_ID = "usr_test";
@@ -37,13 +39,13 @@ let source: McpSource;
 let store: FileStore;
 
 function makeRuntime(dir: string): Runtime {
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? OWNER_ID,
     getWorkspaceFileStore: (wsId: string, ownerId: string) =>
       createFileStore(workspaceFilesDir(dir, wsId, ownerId)),
-    getFilesConfig: () => ({ maxExtractedTextSize: 204_800 }),
-  } as unknown as Runtime;
+    getFilesConfig: () => DEFAULT_FILE_CONFIG,
+  });
 }
 
 function exec(
@@ -99,6 +101,9 @@ beforeEach(async () => {
   store = createFileStore(workspaceFilesDir(workDir, WS_ID, OWNER_ID));
   source = createFilesSource(makeRuntime(workDir), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {

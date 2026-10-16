@@ -205,10 +205,15 @@ typedTool({
   name: "create",
   description: SKILLS_CREATE_DESCRIPTION,
   inputSchema: SkillsCreateInput,
-  handler: async (input): Promise<ToolResult> => createSkill(runtime, input, eventSink),
+  outputSchema: SkillsWriteOutput, // §2.1
+  handler: async (input) => createSkill(runtime, input, eventSink),
 });
 
-async function createSkill(runtime: Runtime, input: SkillsCreateInput, ...): Promise<ToolResult> {
+async function createSkill(
+  runtime: Runtime,
+  input: SkillsCreateInput,
+  ...
+): Promise<TypedToolResult<typeof SkillsWriteOutput>> {
   const { scope, manifest, body } = input;
   // ... handler logic, no defensive re-validation
 }
@@ -231,104 +236,86 @@ on-disk formats, etc.), do that in the storage layer (`writer.ts`,
 
 ---
 
-## 2.1. Handler output types are shared, named, and the handler's return type
+## 2.1. A tool's output is a TypeBox schema, and its handler returns that schema's type
 
-Inputs have a strong shared-type story: TypeBox schemas in
-`src/platform/schemas/`, derived static types via `Static<typeof X>`,
-codegen to web. Outputs need the same shape. **The handler's TypeScript
-return type IS the contract; the schemas file is where it's declared so
-every consumer (CLI, integration tests, web client, future apps) imports
-the same name.**
+An output is a contract the same way an input is: the web shell, the CLI,
+tests, and any MCP client read it. Declare it once, as a TypeBox schema in
+`schemas/<app>.ts`, and every reader gets it from there:
 
-Why this matters: until this rule was enforced, every consumer redeclared
-response shapes inline with `as { … }`. The `tasks__run` handler
-gained a `{ status: "dispatched" }` branch; the CLI was casting blindly to
-`{ run }` and crashed on every run that outlasted the 30 s sync-wait. Five
-review rounds on the same PR each surfaced one more drifted surface
-(regex, schema description, CLI cast, integration test, PR body). The fix
-is structural, not procedural: the type system enforces the contract.
-
-DO:
+- `typedTool` registers it as the tool's `outputSchema`, and holds every
+  success result to `Static<typeof XxxOutput>` at compile time.
+- `tools/list` publishes it, so a client learns the result's shape without
+  reading this source.
+- The SDK client validates each success result against it, so a handler whose
+  output drifts from its schema fails its own call, in tests as in production.
+- Codegen carries the static type to web, as it does for inputs.
 
 ```ts
-// src/platform/schemas/tasks.ts — named, exported, type-only OK
-export type TasksRunOutput =
-  | { run: TaskRunRecord; enabled: boolean; message?: string }
-  | { status: "dispatched"; taskId: string; startedAt: string; enabled: boolean; message: string };
+// src/platform/schemas/skills.ts
+export const SkillsListOutput = Type.Object({ skills: Type.Array(SkillSummary) });
+export type SkillsListOutput = Static<typeof SkillsListOutput>;
 
-// src/platform/tasks/server.ts — handler return type is the contract
-export async function handleRun(
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-): Promise<TasksRunOutput> { ... }
+// src/platform/skills/source.ts
+typedTool({
+  name: "list",
+  inputSchema: SkillsListInput,
+  outputSchema: SkillsListOutput,
+  handler: async (input) => {
+    const list = await listSkills(runtime, authoringGuidePath, input);
+    return {
+      content: textContent(summarizeList(list)), // what the model reads
+      structuredContent: { skills: list },       // checked against SkillsListOutput
+      isError: false,
+    };
+  },
+});
+```
 
-// a consumer module imports the same contract type
+The handler returns `TypedToolResult<typeof XxxOutput>`
+(`src/tools/in-process-app.ts`): a success carries the schema's type as
+`structuredContent`, and a failure (`ToolErrorResult`, `isError: true`) carries
+anything or nothing, because MCP validates only a success. A helper that can
+only fail returns `ToolErrorResult`, so it composes into any typed handler.
+
+Rules for an output schema:
+
+- **The root is an object.** MCP's 2025-11-25 revision requires it, and the SDK
+  server rewraps any other root as `{ result: … }`, which the handler's
+  `structuredContent` then fails to match. A result with several shapes is
+  `ObjectUnion([...])` (`schemas/_shared.ts`); a bare `Type.Union` does not
+  compile as an `outputSchema`.
+- **It stays open: no `additionalProperties: false`.** A result the client
+  rejects fails the call, so a closed schema turns a new field into an outage.
+- **It accepts every shape the source can return.** An output read from stored
+  data (a conversation log, a file on disk) admits every shape that store holds,
+  not only the one written today: `skills__loading_log` leaves `skill` optional
+  because a stored entry may lack it.
+- **Enums use `StringEnum` / `NumberEnum`**, since the schema goes out over the
+  wire (`schemas/_shared.ts`).
+- **The engine never sends it to the model.** The model reads `content`, so
+  `content` must carry what the model needs (`renderRead` in the skills app).
+
+`test/unit/platform/schema-shape.test.ts` requires an output schema on every
+platform tool, and checks its object root and open shape. A unit test sees the
+SDK's validation only after its client has fetched `tools/list`, which
+`McpSource.tools()` does, so an app's test fixture calls it after `start()`.
+
+### Consumers import the named type
+
+Every consumer reads the output through its `XxxOutput` name, never an inline
+`as { … }`, which restates the shape and drifts the first time the handler
+changes. For a union output, narrow by a field (`"run" in data`,
+`data.status === "dispatched"`), never `as { run }`, so the compiler makes every
+consumer handle every branch.
+
+```ts
 import type { TasksRunOutput } from "../../platform/schemas/tasks.ts";
 const data = (await callTool(runtime, "tasks__run", { taskId })) as TasksRunOutput;
 if ("status" in data && data.status === "dispatched") { ... } else if ("run" in data) { ... }
 ```
 
-DO NOT:
-
-```ts
-// Inline cast — re-declares the shape, drifts the first time the handler changes.
-const data = (await callTool(runtime, "tasks__run", { taskId })) as {
-  run: { id: string; status: string; /* ... */ };
-};
-const r = data.run;  // crashes on dispatched envelope
-```
-
-DO NOT use `as { run }` against a typed-discriminated handler. That narrows
-the union without runtime evidence and bypasses the only check that would
-catch a future shape change. Narrow via `"run" in data` (or `data.status ===
-"dispatched"`) — the type system then forces every consumer to handle every
-branch.
-
-### In-process platform-tool variant
-
-`src/platform/tasks/server.ts`-style handlers return their
-domain object directly (`Promise<TasksRunOutput>`) and the
-framework wraps them as MCP `ToolResult` at registration time. That's
-the simplest §2.1 shape — the handler's return type IS the contract.
-
-In-process platform tools registered via `defineInProcessApp` return
-`Promise<ToolResult>` directly because they build the MCP-boundary
-shape themselves (`content` for the human summary, `structuredContent`
-for the typed payload, `isError` for the error flag). To still get
-compile-time drift coverage:
-
-```ts
-handler: async (input): Promise<ToolResult> => {
-  const list = await listSkills(...);
-  const out: SkillsListOutput = { skills: list };  // ← shape pinned here
-  return {
-    content: textContent(summarizeList(list)),
-    // `structuredContent()` widens a named output interface to the wire's
-    // `Record<string, unknown>`; the `out` declaration above is what is checked.
-    structuredContent: structuredContent(out),
-    isError: false,
-  };
-},
-```
-
-The discipline is the same — a named `XxxOutput` from `schemas/` —
-just expressed at the construction site rather than the handler
-signature. Either form satisfies §2.1; pick by which layer authored
-the handler. See `src/platform/skills/source.ts` for the
-handler-signature form; `src/platform/tasks/server.ts` for the
-construction-site form.
-
-### Output schemas vs input schemas
-
-Output types are typically **type-only** exports — no TypeBox runtime
-schema. We don't validate outputs at the MCP boundary; the handler's
-TypeScript return type already constrains it. If you ever need wire
-validation on a specific output (e.g. a particularly user-visible API),
-add the TypeBox version then — but the type-only export is the floor.
-
-When you change a handler's return shape, update the matching output type
-in `schemas/` **in the same commit**. Treat it like a database migration:
-shape moves and consumers move together, not separately.
+When you change a handler's return shape, change its output schema (or type)
+and every consumer in the same commit.
 
 ### Tests must use the shared types too
 
@@ -396,14 +383,13 @@ passed, production stayed broken. Match the production type strictly.
    tasks' schedule), pull into a top-of-file const so create + update
    reference the same definition.
 2. **Export `type XxxInput = Static<typeof XxxInput>`** beside the schema.
-3. **Define output types.** Named `XxxOutput` exports in the same
-   `schemas/<source>.ts` file (§2.1). Discriminated unions for handlers
-   that return multiple shapes. Type-only is the floor; add TypeBox only
-   if you need wire validation.
-4. **Write the handler.** Register it with `typedTool`, so its input is the
-   schema's static type with no cast. **Annotate the return type** with the
-   named `XxxOutput` — that's what makes consumer drift a compile error. No
-   `: object`.
+3. **Define `XxxOutput`** as a TypeBox schema in the same
+   `schemas/<source>.ts` file, with `type XxxOutput = Static<typeof XxxOutput>`
+   beside it (§2.1). An object root, open, and `ObjectUnion` for a result with
+   several shapes.
+4. **Write the handler.** Register it with `typedTool`, passing `inputSchema`
+   and `outputSchema`, so its input is the input schema's static type and each
+   success result is checked against the output schema's. No `: object`.
 5. **Add a unit test.** One happy path. One validator rejection (schema
    should reject malformed input before the handler runs). Test direct
    handler calls — not the full MCP roundtrip — for speed. For
@@ -416,9 +402,8 @@ passed, production stayed broken. Match the production type strictly.
 7. **Run `bun run verify`.** Mirrors CI.
 
 When changing an existing handler's return shape, treat it like a database
-migration: update the `XxxOutput` type in `schemas/` and every consumer
-(CLI, tests, web client, tool description) in the same commit. The TypeBox
-catalog covers inputs; §2.1 output types cover the other half. Search-and-
+migration: update the `XxxOutput` schema in `schemas/` and every consumer
+(CLI, tests, web client, tool description) in the same commit. Search-and-
 update by grep is the discipline; the type system is the safety net.
 
 ---
@@ -428,16 +413,16 @@ update by grep is the discipline; the type system is the safety net.
 - **Lint**: `test/unit/platform/schema-shape.test.ts` walks every
   source's `tools/list`, the core `nb` tools included, and rejects bare
   object/array shapes, `clear<Field>` flags, and a `null` inside an `enum`.
+  On the output side it rejects a missing output schema on a platform tool,
+  a non-object root, and `additionalProperties: false`.
 - **Type system**: each handler's input is `Static<typeof XxxInput>` of the
   schema it is registered with (`typedTool`), so the schema and the type
   cannot drift.
-- **Type system, output side (§2.1)**: handler return types are the named
-  `XxxOutput` exports from `schemas/`; consumers import and narrow, and
-  consumer drift, tests included, surfaces at compile.
-- **Check, output side (§2.1)**: `bun run check:platform-output-types`
-  (in `verify:static`) fails on any function under `src/platform/` declared
-  to return `object` or `Promise<object>`. Rule doc: `CODE_STYLE.md`,
-  "Platform tool handlers return a named output type".
+- **Type system, output side (§2.1)**: `typedTool` holds each success result
+  to `Static<typeof XxxOutput>`; consumers import the named type and narrow,
+  so consumer drift, tests included, surfaces at compile.
+- **Runtime, output side (§2.1)**: the SDK client validates each success result
+  against the published output schema, so a drifted handler fails its call.
 - **Code review**: section 3 (anti-patterns) — flag in PRs explicitly.
 
 If you're tempted to violate any of section 1, ask whether the underlying

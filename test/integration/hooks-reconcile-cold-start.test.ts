@@ -276,10 +276,11 @@ describe("a source that is running but has advertised nothing yet", () => {
           connector: CONNECTOR,
           vendor: DECL.vendor,
           kid: "hk_before_delivery_ids",
+          createdAt: "2026-01-01T00:00:00.000Z",
           route: DECL.route,
         },
       },
-    } as never);
+    });
 
     const fake = makeSource([advertised("set_webhook_url")]);
     const provisioned = await ensureHooks(makeDeps(fake.source), wsId, CONNECTOR, {

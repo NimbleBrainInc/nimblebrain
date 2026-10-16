@@ -40,6 +40,8 @@
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar: var(--sidebar);
     --color-sidebar-hover: var(--sidebar-hover);
+    --color-sidebar-active: var(--sidebar-active);
+    --color-sidebar-active-foreground: var(--sidebar-active-foreground);
     --color-tooltip: var(--tooltip);
     --color-tooltip-foreground: var(--tooltip-foreground);
     --sidebar-width: var(--sidebar-width);
@@ -175,7 +177,7 @@
      whichever surface the bubble lands on and reads in both modes.
 
      It is an alpha token rather than a `color-mix()`, because Tailwind emits
-     one in a colour property with an unguarded first-operand fallback — here
+     one in a color property with an unguarded first-operand fallback — here
      `var(--foreground)`, the same value as the `color` two lines up, at
      1.000:1. See `palette.ts`; guarded by
      `test/unit/docs/css-color-mix.test.ts`. */

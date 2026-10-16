@@ -18,6 +18,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
+import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /**
@@ -118,14 +119,14 @@ async function buildHarness(): Promise<Harness> {
   );
 
   const ctx: ManageConnectorsContext = {
-    runtime: {
+    runtime: stub<Runtime>({
       getWorkDir: () => workDir,
       getCredentialStore: () => credStore,
       getWorkspaceStore: () => workspaceStore,
       getPermissionStore: () => permissionStore,
       getLifecycle: () => lifecycle,
       getRegistryForWorkspace: () => registry,
-    } as unknown as Runtime,
+    }),
     getIdentity: () => ADMIN,
     getWorkspaceId: () => wsId,
   };

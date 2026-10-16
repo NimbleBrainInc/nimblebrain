@@ -142,6 +142,10 @@ The same `idempotencyKey` with the same definition returns the same run.
 
 - **`body`**: the prompt every run starts from. The run's `input` is given to
   it as data, never as instructions.
+- **`skills`**: skills every run is given in full before it starts, by catalog
+  name. Name the skill a job is written in, so no run depends on loading it. A
+  run whose skill is not available is refused. With no `body`, each run carries
+  the skills out on its input.
 - **Tools**: `allowedTools`, as above. A run is never allowed `tasks__create`,
   `tasks__update`, `tasks__delete`, `tasks__run`, `tasks__run_batch`,
   `tasks__batch_control`, or `tasks__assess`.
@@ -199,6 +203,10 @@ runs the task when a connector reports something. Tell the person:
   someone re-enables it. Suggest a daily budget for a task that runs more than a
   few times a day, and a budget for any task on an expensive model.
 - A batch: `budgetUsd` on `tasks__run_batch`.
+- Reasoning depth: `thinkingEffort` (`low`, `medium`, `high`, `xhigh`, `max`;
+  unset, the workspace setting applies). Lower it for a task that runs often
+  and mostly gathers and formats; reasoning is billed as output. It does
+  nothing when the operator turned thinking off or set it adaptive.
 
 ## When things go wrong
 

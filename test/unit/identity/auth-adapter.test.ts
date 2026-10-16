@@ -28,6 +28,7 @@ describe("createIdentityProvider", () => {
   });
 
   test("throws descriptive error for unknown adapter type", () => {
+    // biome-ignore lint/plugin/double-cast: an auth block naming an adapter no provider implements, claimed as InstanceConfig to reach the factory's unknown-adapter error
     const config = { auth: { adapter: "foobar" } } as unknown as InstanceConfig;
     expect(() => createIdentityProvider(config, userStore, workDir)).toThrow(
       'Unknown identity provider: "foobar"',
@@ -62,6 +63,7 @@ describe("createIdentityProvider", () => {
   });
 
   test("throws for unknown adapter type", () => {
+    // biome-ignore lint/plugin/double-cast: an auth block naming an adapter no provider implements, claimed as InstanceConfig to reach the factory's unknown-adapter error
     const config = {
       auth: { adapter: "nosuch" },
     } as unknown as InstanceConfig;

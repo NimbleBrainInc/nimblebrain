@@ -27,7 +27,7 @@ import { Value } from "@sinclair/typebox/value";
 import { isToolEnabled, type ResolvedFeatures } from "../../config/features.ts";
 import { collectDeliveredSkillNames } from "../../conversation/event-reconstructor.ts";
 import type { ConversationEvent } from "../../conversation/types.ts";
-import { structuredContent, textContent } from "../../engine/content-helpers.ts";
+import { textContent } from "../../engine/content-helpers.ts";
 import {
   type EventSink,
   SKILL_ACTIVATED_META_KEY,
@@ -78,33 +78,40 @@ import {
   updateSkill,
   writeSkill,
 } from "../../skills/writer.ts";
-import { defineInProcessApp, type InProcessTool, typedTool } from "../../tools/in-process-app.ts";
+import {
+  defineInProcessApp,
+  type InProcessTool,
+  type ToolErrorResult,
+  type TypedToolResult,
+  typedTool,
+} from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { WORKSPACE_OPTIONAL_META } from "../../tools/workspace-optional.ts";
 import { splitInnerToolName } from "../../util/tool-name.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
-import type {
-  SkillDetail,
-  SkillLoading,
-  SkillSummary,
-  SkillsListOutput,
-  SkillsReadOutput,
-  SkillsUseOutput,
-  SkillsWriteOutput,
-} from "../schemas/skills.ts";
+import type { SkillDetail, SkillLoading, SkillSummary } from "../schemas/skills.ts";
 import {
   SkillPriority,
   SkillsActivateInput,
+  SkillsActivationOutput,
   SkillsCreateInput,
   SkillsDeactivateInput,
   SkillsDeleteInput,
+  SkillsDeleteOutput,
   SkillsHistoryInput,
+  SkillsHistoryOutput,
   SkillsListInput,
+  SkillsListOutput,
   SkillsLoadingLogInput,
+  SkillsLoadingLogOutput,
   SkillsReadInput,
+  SkillsReadOutput,
   SkillsRestoreInput,
+  SkillsRestoreOutput,
   SkillsSetStatusInput,
   SkillsUpdateInput,
+  SkillsUseOutput,
+  SkillsWriteOutput,
   UseSkillInput,
 } from "../schemas/skills.ts";
 
@@ -294,45 +301,45 @@ export function createSkillsSource(
   );
 
   const tools: InProcessTool[] = [
-    {
+    typedTool({
       name: "list",
       description: SKILLS_LIST_DESCRIPTION,
       meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsListInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: SkillsListOutput,
+      handler: async (input) => {
         try {
           const list = await listSkills(runtime, authoringGuidePath, input);
-          // Construct via the canonical envelope so a shape drift on
-          // either side surfaces at compile time.
-          const out: SkillsListOutput = { skills: list };
           return {
             content: textContent(summarizeList(list)),
-            structuredContent: structuredContent(out),
+            structuredContent: { skills: list },
             isError: false,
           };
         } catch (err) {
           return errorResult(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "read",
       description: SKILLS_READ_DESCRIPTION,
       meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsReadInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: SkillsReadOutput,
+      handler: async (input) => {
         try {
           return await readSkillHandler(runtime, authoringGuidePath, input);
         } catch (err) {
           return errorResult(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "loading_log",
       description: SKILLS_LOADING_LOG_DESCRIPTION,
       inputSchema: SkillsLoadingLogInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: SkillsLoadingLogOutput,
+      handler: async (input) => {
         try {
           const loads = await loadingLog(runtime, input);
           return {
@@ -344,16 +351,16 @@ export function createSkillsSource(
           return errorResult(err);
         }
       },
-    },
+    }),
     typedTool({
       name: "create",
       description: SKILLS_CREATE_DESCRIPTION,
       meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsCreateInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: SkillsWriteOutput,
+      handler: async (input) => {
         try {
-          const result = await createSkill(runtime, input, eventSink);
-          return result;
+          return await createSkill(runtime, input, eventSink);
         } catch (err) {
           return errorResult(err);
         }
@@ -364,7 +371,8 @@ export function createSkillsSource(
       description: SKILLS_UPDATE_DESCRIPTION,
       meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsUpdateInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: SkillsWriteOutput,
+      handler: async (input) => {
         try {
           return await updateSkillHandler(runtime, input, eventSink, authoringGuidePath);
         } catch (err) {
@@ -372,49 +380,53 @@ export function createSkillsSource(
         }
       },
     }),
-    {
+    typedTool({
       name: "history",
       description: SKILLS_HISTORY_DESCRIPTION,
       inputSchema: SkillsHistoryInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: SkillsHistoryOutput,
+      handler: async (input) => {
         try {
           return await historySkillHandler(runtime, input, authoringGuidePath);
         } catch (err) {
           return errorResult(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "restore",
       description: SKILLS_RESTORE_DESCRIPTION,
       inputSchema: SkillsRestoreInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: SkillsRestoreOutput,
+      handler: async (input) => {
         try {
           return await restoreSkillHandler(runtime, input, eventSink, authoringGuidePath);
         } catch (err) {
           return errorResult(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "delete",
       description: SKILLS_DELETE_DESCRIPTION,
       meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsDeleteInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: SkillsDeleteOutput,
+      handler: async (input) => {
         try {
           return await deleteSkillHandler(runtime, input, eventSink, authoringGuidePath);
         } catch (err) {
           return errorResult(err);
         }
       },
-    },
+    }),
     typedTool({
       name: "set_status",
       description: SKILLS_SET_STATUS_DESCRIPTION,
       meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsSetStatusInput,
-      handler: async (input): Promise<ToolResult> => {
+      outputSchema: SkillsWriteOutput,
+      handler: async (input) => {
         try {
           const status = input.status === "disabled" ? "disabled" : "active";
           return await updateSkillHandler(
@@ -429,30 +441,32 @@ export function createSkillsSource(
         }
       },
     }),
-    {
+    typedTool({
       name: "activate",
       description: SKILLS_ACTIVATE_DESCRIPTION,
       inputSchema: SkillsActivateInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: SkillsActivationOutput,
+      handler: async (input) => {
         try {
           return await setStatusHandler(runtime, input, "active");
         } catch (err) {
           return errorResult(err);
         }
       },
-    },
-    {
+    }),
+    typedTool({
       name: "deactivate",
       description: SKILLS_DEACTIVATE_DESCRIPTION,
       inputSchema: SkillsDeactivateInput,
-      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+      outputSchema: SkillsActivationOutput,
+      handler: async (input) => {
         try {
           return await setStatusHandler(runtime, input, "disabled");
         } catch (err) {
           return errorResult(err);
         }
       },
-    },
+    }),
   ];
 
   // A feature-disabled tool is never BUILT. That is the enforcement — no
@@ -563,7 +577,7 @@ function skillToListed(skill: Skill): ListedSkill {
     ...(m.toolAffinity && m.toolAffinity.length > 0 ? { toolAffinity: m.toolAffinity } : {}),
     ...(m.triggers && m.triggers.length > 0 ? { triggers: m.triggers } : {}),
     priority: m.priority,
-    loading: { wouldLoad: mechanism !== "none", mechanism },
+    loading: { mechanism },
   };
 }
 
@@ -668,7 +682,7 @@ function buildAuthoringGuideEntry(authoringGuidePath: string): ListedSkill | nul
       ? { triggers: skill.manifest.triggers }
       : {}),
     priority: skill.manifest.priority,
-    loading: { wouldLoad: mechanism !== "none", mechanism },
+    loading: { mechanism },
   };
 }
 
@@ -892,7 +906,11 @@ async function readSkillById(
  * `readSkillHandler` so the live-read path keeps its shape; the caller has
  * already run every scope/permission/symlink gate.
  */
-function renderSkillVersion(id: string, version: string, isUri: boolean): ToolResult {
+function renderSkillVersion(
+  id: string,
+  version: string,
+  isUri: boolean,
+): TypedToolResult<typeof SkillsReadOutput> {
   if (isUri) {
     return errorResult(
       new Error(
@@ -928,9 +946,9 @@ function renderSkillVersion(id: string, version: string, isUri: boolean): ToolRe
 async function readSkillHandler(
   runtime: Runtime,
   authoringGuidePath: string,
-  input: Record<string, unknown>,
-): Promise<ToolResult> {
-  const id = String(input.id ?? "");
+  input: SkillsReadInput,
+): Promise<TypedToolResult<typeof SkillsReadOutput>> {
+  const { id, version } = input;
   // Determine scope for the permission check before any FS work.
   // skill:// URIs always resolve to the Layer 1 connector resource;
   // anything else is path-derived.
@@ -992,7 +1010,6 @@ async function readSkillHandler(
   // A snapshot read runs the SAME scope/permission/symlink gates above and
   // only then swaps which file is parsed — history must never be a side door
   // to content the live path would refuse.
-  const version = typeof input.version === "string" ? input.version : undefined;
   if (version) return renderSkillVersion(id, version, isUri);
   const result = await readSkillById(runtime, authoringGuidePath, id);
   if (!result) {
@@ -1001,16 +1018,13 @@ async function readSkillHandler(
       isError: true,
     };
   }
-  // Compile-time drift coverage on the read shape: `out`'s type
-  // pins it to the canonical `SkillsReadOutput`.
-  const out: SkillsReadOutput = result;
   return {
     // `content` carries the full body + manifest because the
     // engine never surfaces `structuredContent` to the model;
     // `structuredContent` keeps the typed copy for `/mcp` clients
     // and the UI. See `renderRead`.
     content: textContent(renderRead(result)),
-    structuredContent: structuredContent(out),
+    structuredContent: result,
     isError: false,
   };
 }
@@ -1040,7 +1054,8 @@ export function createUseSkillToolDef(runtime: Runtime): InProcessTool {
     name: "use_skill",
     description: USE_SKILL_DESCRIPTION,
     inputSchema: UseSkillInput,
-    handler: async (input): Promise<ToolResult> => {
+    outputSchema: SkillsUseOutput,
+    handler: async (input) => {
       try {
         return await handleUseSkill(runtime, input);
       } catch (err) {
@@ -1081,7 +1096,10 @@ function skillLoadFailureMessage(name: string, reason: "unreachable" | "unverifi
  * surface-once dedup set. The body itself persists via the normal `tool.done`
  * event — no synthetic history message, no `connector.skill.injected`.
  */
-async function handleUseSkill(runtime: Runtime, input: UseSkillInput): Promise<ToolResult> {
+async function handleUseSkill(
+  runtime: Runtime,
+  input: UseSkillInput,
+): Promise<TypedToolResult<typeof SkillsUseOutput>> {
   const { name } = input;
   const { wsId, userId } = resolveCallContext(runtime);
   if (!wsId) {
@@ -1327,7 +1345,7 @@ async function listOwnedConversationIds(
   return ids;
 }
 
-function errorResult(err: unknown): ToolResult {
+function errorResult(err: unknown): ToolErrorResult {
   const message = err instanceof Error ? err.message : String(err);
   return {
     content: textContent(message),
@@ -1369,10 +1387,7 @@ function summarizeList(skills: ListedSkill[]): string {
     if (s.status && s.status !== "active") tags.push(s.status);
     const meta = `(${tags.join(" ")})`;
     const desc = s.description ? ` — ${s.description.slice(0, 100)}` : "";
-    // Flag dead skills (no strategy, no triggers, no tool affinity) so the
-    // zero-signal failure mode is visible in the model-facing content.
-    const warn = s.loading?.wouldLoad === false ? " ⚠ never loads" : "";
-    return `- ${s.id} ${meta}${desc}${warn}`;
+    return `- ${s.id} ${meta}${desc}`;
   });
   return `${header}\n${lines.join("\n")}`;
 }
@@ -1426,6 +1441,8 @@ function renderRead(skill: ReadResult): string {
 
 function summarizeLog(rows: SkillLoadRow[]): string {
   if (rows.length === 0) return "No skill loads match the filters.";
+  const missed = rows.filter((r) => r.status !== undefined).length;
+  const missedNote = missed > 0 ? `; ${missed} bound skill(s) did not arrive (see status)` : "";
   const conversations = new Set(rows.map((r) => r.conv_id)).size;
   // Channel breakdown is the point of the ledger — a channel that never fires
   // should be legible as a missing key, not inferred from a total.
@@ -1437,7 +1454,7 @@ function summarizeLog(rows: SkillLoadRow[]): string {
     .join(", ");
   const plural = rows.length === 1 ? "" : "s";
   const convPlural = conversations === 1 ? "" : "s";
-  return `${rows.length} skill load${plural} across ${conversations} conversation${convPlural} (${breakdown})`;
+  return `${rows.length} skill load${plural} across ${conversations} conversation${convPlural} (${breakdown})${missedNote}`;
 }
 
 // ── Mutation handlers ────────────────────────────────────────────────────
@@ -1684,7 +1701,7 @@ function permissionDenied(
     scope?: WritableScope | "provided";
     role?: string;
   },
-): ToolResult {
+): ToolErrorResult {
   const lines: string[] = [reason];
   if (context?.path && context.scope) {
     lines.push(
@@ -1731,7 +1748,7 @@ function currentRoleHint(runtime: Runtime, scope: WritableScope | "provided"): s
   return identity.orgRole;
 }
 
-function connectorNotMutable(): ToolResult {
+function connectorNotMutable(): ToolErrorResult {
   // Structured error shape per the skill management design doc — the
   // `suggested_action` discriminator lets calling agents present the
   // right next step without parsing prose.
@@ -1823,7 +1840,7 @@ interface PastedFields {
   declaredName?: string;
 }
 
-type PastedFrontmatter = { error: ToolResult } | PastedFields;
+type PastedFrontmatter = { error: ToolErrorResult } | PastedFields;
 
 /**
  * Read a pasted `SKILL.md` out of a write's body, or refuse it.
@@ -1897,13 +1914,12 @@ function absorbPastedFrontmatter(
 }
 
 /**
- * How a written skill loads, said in a way a caller can act on. `none` is the
- * dead case, so it names the two signals that would revive it rather than
- * reporting a status word nothing follows from.
+ * How a written skill loads, said in a way a caller can act on. `on_request`
+ * names the signals that would make it load without the model asking.
  */
 function loadsNote(mechanism: SkillLoadingMechanism): string {
-  return mechanism === "none"
-    ? "catalog-only — won't auto-load yet; add a trigger or tool-affinity, or set loading-strategy: always"
+  return mechanism === "on_request"
+    ? "on request — the model loads it from the catalog when the job needs it; add tool-affinity or a trigger to load it without being asked"
     : mechanism;
 }
 
@@ -1931,7 +1947,7 @@ async function createSkill(
   runtime: Runtime,
   input: SkillsCreateInput,
   eventSink: EventSink,
-): Promise<ToolResult> {
+): Promise<TypedToolResult<typeof SkillsWriteOutput>> {
   const { scope, manifest, body, frontmatter } = input;
   const { name } = manifest;
   assertValidName(name);
@@ -2018,14 +2034,14 @@ async function createSkill(
     name,
     scope,
     loadingStrategy: fullManifest.loadingStrategy,
-    loading: { wouldLoad: mechanism !== "none", mechanism },
+    loading: { mechanism },
     ...(pasted.applied?.length ? { frontmatterApplied: pasted.applied } : {}),
   };
   return {
     content: textContent(
       `Created ${scope} skill "${name}" → ${target} (loads: ${loadsNote(mechanism)})${frontmatterNote(pasted, name)}`,
     ),
-    structuredContent: structuredContent(out),
+    structuredContent: out,
     isError: false,
   };
 }
@@ -2066,7 +2082,7 @@ function buildUpdatePatch(
  * lets unknown keys through, so ignoring one would report a disable that never
  * happened — the silent no-op this whole change exists to remove.
  */
-function durableStatusError(manifest: unknown): ToolResult | null {
+function durableStatusError(manifest: unknown): ToolErrorResult | null {
   if ((manifest as { status?: unknown } | undefined)?.status === undefined) return null;
   return errorResult(
     new Error(
@@ -2084,7 +2100,7 @@ function durableStatusError(manifest: unknown): ToolResult | null {
  * the whole body when the caller sent a full rewrite. An error costs one
  * retry; both defaults cost content.
  */
-function bodyModeError(body: string | undefined, bodyMode: unknown): ToolResult | null {
+function bodyModeError(body: string | undefined, bodyMode: unknown): ToolErrorResult | null {
   if (body === undefined) return null;
   if (bodyMode === "append" || bodyMode === "replace") return null;
   return errorResult(
@@ -2106,7 +2122,7 @@ function bodyModeError(body: string | undefined, bodyMode: unknown): ToolResult 
  * refusing those would stop an owner fixing one rule, or changing a trigger,
  * until they had first cut the skill below the limit.
  */
-function bodySizeError(next: string, current?: string): ToolResult | null {
+function bodySizeError(next: string, current?: string): ToolErrorResult | null {
   const size = skillBodyChars(next);
   if (size <= MAX_SKILL_BODY_CHARS) return null;
   if (current !== undefined && size <= skillBodyChars(current)) return null;
@@ -2132,7 +2148,7 @@ function prepareUpdateBody(
   body: string | undefined,
   mode: SkillBodyMode,
   frontmatter: "apply" | "ignore" | undefined,
-): { error: ToolResult } | { pasted: PastedFields | null; nextBody: string | undefined } {
+): { error: ToolErrorResult } | { pasted: PastedFields | null; nextBody: string | undefined } {
   const absorbed = absorbForUpdate(body, mode, frontmatter);
   if ("error" in absorbed) return absorbed;
   const sentBody = absorbed.pasted ? absorbed.pasted.body : body;
@@ -2157,7 +2173,7 @@ function overLimitNote(body: string | undefined): string {
  * Mutating a snapshot would snapshot a snapshot, and the loader skips that
  * subtree, so the result would be unreachable by every reader.
  */
-function snapshotPathError(id: string): ToolResult | null {
+function snapshotPathError(id: string): ToolErrorResult | null {
   if (!isSnapshotPath(id)) return null;
   return errorResult(
     new Error(
@@ -2181,7 +2197,7 @@ function updatePreWriteRefusal(
   bodyMode: unknown,
   patch: unknown,
   allowStatus: boolean,
-): ToolResult | null {
+): ToolErrorResult | null {
   const modeError = bodyModeError(body, bodyMode);
   if (modeError) return modeError;
   // `set_status` is the one door to the durable off switch, and only it passes
@@ -2203,7 +2219,7 @@ function absorbForUpdate(
   body: string | undefined,
   mode: SkillBodyMode,
   frontmatter: "apply" | "ignore" | undefined,
-): { error: ToolResult } | { pasted: PastedFields | null } {
+): { error: ToolErrorResult } | { pasted: PastedFields | null } {
   if (body === undefined || mode === "append") return { pasted: null };
   const absorbed = absorbPastedFrontmatter(body, frontmatter);
   return "error" in absorbed ? absorbed : { pasted: absorbed };
@@ -2230,7 +2246,7 @@ async function updateSkillHandler(
    * ignoring it would report a successful disable that never happened.
    */
   opts: { allowStatus?: boolean } = {},
-): Promise<ToolResult> {
+): Promise<TypedToolResult<typeof SkillsWriteOutput>> {
   const { id, manifest: patch, body, body_mode: bodyMode, frontmatter } = input;
 
   // Same gate the history/restore pair runs: scope, existence-before-permission,
@@ -2284,7 +2300,7 @@ async function updateSkillHandler(
     content: textContent(
       `Updated ${scope} skill "${name}"${loads}${frontmatterNote(pasted, name)}${overLimitNote(nextBody)}`,
     ),
-    structuredContent: structuredContent(out),
+    structuredContent: out,
     isError: false,
   };
 }
@@ -2306,9 +2322,7 @@ function describeWrittenSkill(
 ): SkillsWriteOutput {
   const written = readSkill(dir, name);
   const mechanism = written ? resolveLoadingMechanism(written.manifest) : undefined;
-  const loading: SkillLoading | undefined = mechanism
-    ? { wouldLoad: mechanism !== "none", mechanism }
-    : undefined;
+  const loading: SkillLoading | undefined = mechanism ? { mechanism } : undefined;
   return {
     id,
     name,
@@ -2331,7 +2345,7 @@ async function gateSkillPath(
   id: string,
   authoringGuidePath: string,
   access: "read" | "write",
-): Promise<{ scope: WritableScope } | { error: ToolResult }> {
+): Promise<{ scope: WritableScope } | { error: ToolErrorResult }> {
   if (!id) return { error: errorResult(new Error("`id` is required")) };
   const snapErr = snapshotPathError(id);
   if (snapErr) return { error: snapErr };
@@ -2369,14 +2383,14 @@ async function gateSkillPath(
 
 async function historySkillHandler(
   runtime: Runtime,
-  input: Record<string, unknown>,
+  input: SkillsHistoryInput,
   authoringGuidePath: string,
-): Promise<ToolResult> {
-  const { id } = input as { id?: string };
-  const gate = await gateSkillPath(runtime, id ?? "", authoringGuidePath, "read");
+): Promise<TypedToolResult<typeof SkillsHistoryOutput>> {
+  const { id } = input;
+  const gate = await gateSkillPath(runtime, id, authoringGuidePath, "read");
   if ("error" in gate) return gate.error;
 
-  const versions = listSkillVersions(id as string);
+  const versions = listSkillVersions(id);
   const summary = versions.length
     ? `${versions.length} saved version(s) of "${id}":\n` +
       versions.map((v) => `  ${v.version}  (${v.savedAt}, ${v.bytes} bytes)`).join("\n")
@@ -2390,15 +2404,13 @@ async function historySkillHandler(
 
 async function restoreSkillHandler(
   runtime: Runtime,
-  input: Record<string, unknown>,
+  input: SkillsRestoreInput,
   eventSink: EventSink,
   authoringGuidePath: string,
-): Promise<ToolResult> {
-  const { id, version } = input as { id?: string; version?: string };
-  if (!version) return errorResult(new Error("`version` is required"));
-  const gate = await gateSkillPath(runtime, id ?? "", authoringGuidePath, "write");
+): Promise<TypedToolResult<typeof SkillsRestoreOutput>> {
+  const { id: path, version } = input;
+  const gate = await gateSkillPath(runtime, path, authoringGuidePath, "write");
   if ("error" in gate) return gate.error;
-  const path = id as string;
 
   const raw = readSkillVersionRaw(path, version);
   if (raw === null) {
@@ -2451,29 +2463,29 @@ async function restoreSkillHandler(
 
 async function deleteSkillHandler(
   runtime: Runtime,
-  input: Record<string, unknown>,
+  input: SkillsDeleteInput,
   eventSink: EventSink,
   authoringGuidePath: string,
-): Promise<ToolResult> {
-  const { id } = input as { id?: string };
+): Promise<TypedToolResult<typeof SkillsDeleteOutput>> {
+  const { id } = input;
 
   // The same gate update / history / restore run. Delete is the last
   // destructive path that carried its own copy, which is why it was also the
   // last one that would accept a `_versions/` path — deleting a snapshot and
   // leaving a nested `_versions/_versions/` no reader can see.
-  const gate = await gateSkillPath(runtime, id ?? "", authoringGuidePath, "write");
+  const gate = await gateSkillPath(runtime, id, authoringGuidePath, "write");
   if ("error" in gate) return gate.error;
   const scope = gate.scope;
 
-  const dir = dirname(id as string);
-  const name = ((id as string).split("/").pop() ?? "").replace(/\.md$/, "");
+  const dir = dirname(id);
+  const name = (id.split("/").pop() ?? "").replace(/\.md$/, "");
   if (!name) return errorResult(new Error(`Cannot derive skill name from path "${id}"`));
 
-  snapshotSkillVersion(id as string);
+  snapshotSkillVersion(id);
   deleteSkill(dir, name);
   await reloadBootSkills(runtime);
 
-  eventSink.emit({ type: "skill.deleted", data: { id: id as string, name, scope } });
+  eventSink.emit({ type: "skill.deleted", data: { id, name, scope } });
   return {
     content: textContent(`Deleted ${scope} skill "${name}" (snapshotted to _versions/)`),
     structuredContent: { id, name, scope },
@@ -2502,10 +2514,10 @@ async function deleteSkillHandler(
  */
 async function setStatusHandler(
   runtime: Runtime,
-  input: Record<string, unknown>,
+  input: SkillsActivateInput,
   status: "active" | "disabled",
-): Promise<ToolResult> {
-  const name = typeof input.id === "string" ? input.id : "";
+): Promise<TypedToolResult<typeof SkillsActivationOutput>> {
+  const name = input.id;
   if (!name) return errorResult(new Error("`id` is required — the skill name from `skills__list`"));
 
   const { wsId, userId } = resolveCallContext(runtime);

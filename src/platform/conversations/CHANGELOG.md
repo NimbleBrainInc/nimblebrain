@@ -4,6 +4,9 @@
 
 ### Removed
 
+- **`filePath` on `conversations__list` rows.** A row names a conversation by
+  `id` and its workspace by `workspaceId`; the server's storage path stays on
+  the server.
 - **The flat layout reader.** `listConversationFiles` reads only the
   workspace-owned layout, so `ConversationFileRef.wsId`,
   `ConversationChange.wsId` and `IndexEntry.workspaceId` are always a
@@ -19,6 +22,10 @@
 
 ### Changed
 
+- Every tool publishes a TypeBox output schema and returns its result as
+  `structuredContent` beside the unchanged JSON text. `DisplaySkill.scope` is a
+  string, since a recorded `skills.loaded` keeps the scope vocabulary it was
+  written with. A stored tool-call input that is not a JSON object reads as `{}`.
 - The streaming dot reads `active` from each `conversations__list` entry, which
   the server takes from the live turn state. It marks a reply generating on any
   tab or device, and the runtime announces a turn starting and ending so the

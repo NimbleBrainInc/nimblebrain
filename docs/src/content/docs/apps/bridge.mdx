@@ -63,7 +63,8 @@ These have no spec equivalent. Each name is both the method and the identifier t
 
 | Method | Direction | Description |
 |--------|-----------|-------------|
-| `ai.nimblebrain/action` | App → Host | Request a semantic action from the shell. |
+| `ai.nimblebrain/open` | App → Host | Open what a resource URI names; the host finds what shows it. Answered `{}`. See [below](#ainimblebrainopen). |
+| `ai.nimblebrain/open-connector-settings` | App → Host | Open your connector's own settings page. Answered `{}`. See [below](#ainimblebrainopen-connector-settings). |
 | `ai.nimblebrain/notify` | App → Host | Show the user a notice (success, info, warning or error), labelled with your app; answered `{}`. See [below](#ainimblebrainnotify). |
 | `ai.nimblebrain/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ files: [...] }`. See [below](#ainimblebrainrequest-file). |
 | `ai.nimblebrain/upload-files` | App → Host | Store `File`s the app already holds (dropped on it, say), the way a pick is stored; answered `{ files: [...] }`. Offered only to the platform's Files app. See [below](#ainimblebrainupload-files). |
@@ -112,7 +113,8 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
       "updateModelContext": { "text": {}, "structuredContent": {} },
       "experimental": {
         "io.modelcontextprotocol/tasks": {},
-        "ai.nimblebrain/action": {},
+        "ai.nimblebrain/open": {},
+        "ai.nimblebrain/open-connector-settings": {},
         "ai.nimblebrain/request-file": {},
         "ai.nimblebrain/keydown": {},
         "ai.nimblebrain/location": {}
@@ -575,34 +577,39 @@ A log line, forwarded to the host's browser console with your app's name. A noti
 }
 ```
 
-### `ai.nimblebrain/action`
+### `ai.nimblebrain/open`
 
-Ask the shell to open an app or a conversation. Your app names what to open and the shell resolves it, so the app never depends on the shell's routes.
+Ask the host to open what a resource URI names. Your app says *what* to show, never *which app* shows it; the host finds that, so your app depends on no other app's name.
 
 ```json
-{
-  "jsonrpc": "2.0",
-  "method": "ai.nimblebrain/action",
-  "params": {
-    "action": "openConversation",
-    "id": "conv_abc123"
-  }
-}
+// App → Host
+{ "jsonrpc": "2.0", "id": 7, "method": "ai.nimblebrain/open", "params": { "uri": "files://fl_abc123" } }
+
+// Host → App, once it is on screen
+{ "jsonrpc": "2.0", "id": 7, "result": {} }
 ```
 
-The `action` field is required. All other fields in `params` are action-specific.
+The host resolves the URI in this order:
 
-| Action | Params | Description |
-|--------|--------|-------------|
-| `openConversation` | `{ id: string }` | Open the chat panel and load a specific conversation. |
-| `openApp` | `{ name: string, target?: string }` | Open an installed app, named by its route, server name or sidebar label. `target` is a view inside it, by the stable address that app reports in [`ai.nimblebrain/location`](#ainimblebrainlocation); the shell sends it to that app as [`ai.nimblebrain/navigate`](#ainimblebrainnavigate) once the app has reported its location, whether it was already open or not. An app opened by this action gets the target at its first report. |
-| `openConnectorSettings` | none | Open this connector's settings page in the current workspace. The connector is always the one that sent the action. |
+| URI | Opens |
+|-----|-------|
+| `conversation://<id>` | The chat panel, at that conversation. |
+| An app's own `ui://` resource | That app, at its home. |
+| Anything else | The one app in the workspace whose server advertises a resource template (`resources/templates/list`) the URI expands from. The host opens it and sends it the URI as [`ai.nimblebrain/navigate`](#ainimblebrainnavigate). |
 
-The bridge adds `serverName`, the server whose view sent the action, to every action's params, replacing any `serverName` the app passed. It hands every action to the registered `onAction` callback, or dispatches it as an `nb:action` custom event on `window` when no callback is registered. The shell ignores an action it does not know. To put a message into the conversation, use [`ui/message`](#uimessage); to open an external page, [`ui/open-link`](#uiopen-link).
+So for your own records to be openable, by other apps and by the agent, advertise their URI shape as a resource template.
 
-<Aside type="note">
-`ai.nimblebrain/action` is a NimbleBrain platform extension — it is not part of the ext-apps specification. The host declares it as `experimental["ai.nimblebrain/action"]`.
-</Aside>
+`{}` means the host put the destination on screen and handed it the URI. Whether an app then shows that view is the app's to decide. When nothing in the workspace shows the URI, or two apps claim it, the host answers an error naming it, with code `-32602`. The agent's `nb__open_app` resolves through the same rules.
+
+### `ai.nimblebrain/open-connector-settings`
+
+Ask the host to open your connector's settings page in the current workspace. It takes no params: the connector is always the one whose view sent it.
+
+```json
+{ "jsonrpc": "2.0", "id": 8, "method": "ai.nimblebrain/open-connector-settings", "params": {} }
+```
+
+Answered `{}` once open, or an error when the connector has no settings page.
 
 ### `ai.nimblebrain/request-file`
 
@@ -758,7 +765,7 @@ A view that sends nothing still gets a title: the bar shows the name of the side
 
 ### `ai.nimblebrain/navigate`
 
-Sent by the host when the user picks an entry in the top bar (a breadcrumb, or back), or when an `openApp` action names a view inside your app, naming the view to go to by its `id`:
+Sent by the host when the user picks an entry in the top bar (a breadcrumb, or back), or when an [`ai.nimblebrain/open`](#ainimblebrainopen) or the agent's `nb__open_app` names a view inside your app, naming the view to go to by its `id`:
 
 ```json
 {

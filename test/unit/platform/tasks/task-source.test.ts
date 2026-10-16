@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task as McpTask } from "@modelcontextprotocol/server";
+import { TasksRunOutput } from "../../../../src/platform/schemas/tasks.ts";
 import {
   type Executor,
   isOpenRun,
@@ -20,6 +21,7 @@ import {
 import type { ToolContext } from "../../../../src/platform/tasks/server.ts";
 import {
   loadOwnerTasks,
+  loadTask,
   readIdempotencyKey,
   readRunResult,
   readRuns,
@@ -37,6 +39,7 @@ import type {
 import { createRunAdmission, type RunAdmission } from "../../../../src/runtime/admission.ts";
 import type { IdentityTaskSource } from "../../../../src/tools/identity-task-source.ts";
 import { TaskNotFoundError, type TaskOwnerContext } from "../../../../src/tools/types.ts";
+import { validateToolInput } from "../../../../src/tools/validate-input.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const WS = "ws_00a1b2c3d4e5f607";
@@ -140,6 +143,7 @@ function harness(opts: { executor: Executor; admission?: RunAdmission }) {
   const source = createTaskRunSource({
     toolContext: () => ctx(),
     readTicket: currentTicket,
+    readTask: (wsId, owner, id) => loadTask(workDir, wsId, owner, id),
     readResult: (wsId, owner, id, runId) => readRunResult(workDir, wsId, owner, id, runId),
     runEnded: (runId) => scheduler.runEnded(runId),
     cancelRun: (wsId, owner, runId) => scheduler.cancelRunById(wsId, owner, runId),
@@ -250,10 +254,15 @@ describe("tasks__run as a task", () => {
       "completed",
     );
     expect(result.content).toEqual([{ type: "text", text: "the digest" }]);
-    const { run, result: deliverable } = result.structuredContent as {
-      run: TaskRun;
-      result: TaskRunResult;
-    };
+    // `/mcp` publishes `tasks__run`'s output schema for this result too.
+    const structured = result.structuredContent ?? {};
+    expect(validateToolInput(structured, TasksRunOutput)).toEqual({ valid: true });
+    const out = structured as TasksRunOutput;
+    if (!("run" in out))
+      throw new Error(`expected the ended-run shape, got ${JSON.stringify(out)}`);
+    const { run, result: deliverable, enabled } = out;
+    expect(enabled).toBe(true);
+    if (!deliverable) throw new Error("expected the run's result");
     expect(run.id).toBe(task.taskId);
     expect(run.status).toBe("success");
     expect(run.input).toEqual({ topic: "news" });

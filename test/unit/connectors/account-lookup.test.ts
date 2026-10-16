@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { Client, Transport } from "@modelcontextprotocol/client";
 import { parseAccountLookup } from "../../../src/connectors/catalog/account-lookup.ts";
 import { serverDetailToCatalogEntry } from "../../../src/connectors/catalog/projection.ts";
 import type { ServerDetail } from "../../../src/connectors/catalog/server-detail.ts";
@@ -12,6 +13,8 @@ import type { ConnectorOwner } from "../../../src/identity/connector-owner.ts";
 import { McpSource } from "../../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../../src/tools/registry.ts";
 import type { ToolSource } from "../../../src/tools/types.ts";
+import { connectMcpSource } from "../../helpers/mcp-source-connection.ts";
+import { stub } from "../../helpers/stub.ts";
 
 /**
  * The catalog-declared account lookup: a connector whose sign-in names no
@@ -29,14 +32,14 @@ function source(answer: () => ToolResult | Promise<ToolResult>): ToolSource & {
   calls: Array<{ tool: string; input: Record<string, unknown> }>;
 } {
   const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
-  return {
+  const zoom = stub<ToolSource>({
     name: "zoom",
-    calls,
-    execute: async (tool: string, input: Record<string, unknown>) => {
+    execute: async (tool, input) => {
       calls.push({ tool, input });
       return answer();
     },
-  } as unknown as ToolSource & { calls: typeof calls };
+  });
+  return Object.assign(zoom, { calls });
 }
 
 describe("parseAccountLookup", () => {
@@ -75,7 +78,7 @@ describe("parseAccountLookup", () => {
   });
 
   test("the catalog projection carries the declaration onto the entry", () => {
-    const detail = {
+    const detail: ServerDetail = {
       name: "com.example/close",
       description: "CRM",
       version: "1.0.0",
@@ -86,7 +89,7 @@ describe("parseAccountLookup", () => {
           account: { tool: "org_info", field: "user.email" },
         },
       },
-    } as unknown as ServerDetail;
+    };
 
     expect(serverDetailToCatalogEntry(detail)?.account).toEqual({
       tool: "org_info",
@@ -94,7 +97,7 @@ describe("parseAccountLookup", () => {
       field: "user.email",
     });
     const plain = { ...detail, _meta: { "ai.nimblebrain/connector": { auth: "dcr" } } };
-    expect(serverDetailToCatalogEntry(plain as unknown as ServerDetail)?.account).toBeUndefined();
+    expect(serverDetailToCatalogEntry(plain)?.account).toBeUndefined();
   });
 });
 
@@ -248,10 +251,8 @@ describe("ConnectorLifecycleManager.lookUpAccount", () => {
       return text({ data: { email: "alice@zoom.example" } });
     };
     if (opts.live) {
-      // Private connection state; the test stands in for a completed `start()`.
-      const internals = source as unknown as { client: unknown; transport: unknown };
-      internals.client = {};
-      internals.transport = {};
+      // The test stands in for a completed `start()`.
+      connectMcpSource(source, { client: stub<Client>({}), transport: stub<Transport>({}) });
     }
     return Object.assign(source, { calls: () => calls, starts: () => starts });
   }
@@ -264,11 +265,9 @@ describe("ConnectorLifecycleManager.lookUpAccount", () => {
     lifecycle.bindWorkspaceRegistries(() => new Map([[WS, workspace]]));
     const user = new ToolRegistry();
     user.addSource(source);
-    // Private map; a personal connector reaches it only through a start that hits the network.
-    (lifecycle as unknown as { registriesByUser: Map<string, ToolRegistry> }).registriesByUser.set(
-      USER,
-      user,
-    );
+    // A personal connector reaches this map only through a start that hits the network.
+    // biome-ignore lint/complexity/useLiteralKeys: registriesByUser is private; bracket access is TypeScript's typed path to it
+    lifecycle["registriesByUser"].set(USER, user);
     return lifecycle;
   }
 

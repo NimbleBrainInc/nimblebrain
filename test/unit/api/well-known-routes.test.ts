@@ -17,6 +17,7 @@ import type {
 import type { AppContext } from "../../../src/api/types.ts";
 import { fakeFetch } from "../../helpers/fake-fetch.ts";
 import { readJson } from "../../helpers/http.ts";
+import { stub } from "../../helpers/stub.ts";
 
 /**
  * The error body these routes answer with. They build it inline rather than
@@ -59,7 +60,7 @@ function makeCtx(issuerHost?: string, opts: { metadataUrl?: boolean } = {}): App
     authorizationServer: () => authServer,
   };
 
-  return { provider } as unknown as AppContext;
+  return stub<AppContext>({ provider });
 }
 
 function createApp(issuerHost?: string, opts: { metadataUrl?: boolean } = {}) {

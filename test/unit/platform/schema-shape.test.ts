@@ -16,6 +16,10 @@
  *   5. No `enum` holds `null` or sits beside a `type` array. Gemini rejected
  *      that shape and failed every tool call for the tenant; a nullable enum
  *      is `anyOf: [{ type: "string", enum }, { type: "null" }]`.
+ *   6. Every output schema has an object root and no `additionalProperties:
+ *      false` anywhere: the SDK client validates each success result against
+ *      it and fails a call whose result it rejects (src/platform/AGENTS.md
+ *      §2.1). Every platform app declares one on every tool.
  *
  * Adding a new platform source: register its factory in the `SOURCES`
  * array below. Adding a new tool to an existing source: nothing to do —
@@ -29,11 +33,14 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { resolveTasksConfig } from "../../../src/config/tasks.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
+import { createComposeSource } from "../../../src/platform/compose/source.ts";
 import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
 import { createFilesSource } from "../../../src/platform/files/source.ts";
+import { createHooksSource } from "../../../src/platform/hooks/source.ts";
 import { createNotificationsSource } from "../../../src/platform/notifications/source.ts";
 import { createSkillsSource } from "../../../src/platform/skills/source.ts";
 import { createTasksSource } from "../../../src/platform/tasks/source.ts";
+import { createUsageSource } from "../../../src/platform/usage/source.ts";
 import { createRunAdmission } from "../../../src/runtime/admission.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import { createSpendBalances } from "../../../src/runtime/spend.ts";
@@ -91,10 +98,15 @@ const SOURCES = [
   { name: "conversations", factory: createConversationsSource },
   { name: "tasks", factory: createTasksSource },
   { name: "notifications", factory: createNotificationsSource },
+  { name: "usage", factory: createUsageSource },
+  { name: "hooks", factory: createHooksSource },
+  { name: "compose", factory: createComposeSource },
   // The core `nb` tools are not a platform app, but they take the same input
-  // conventions and `set_model_config` is the reference patch tool.
+  // conventions and `set_model_config` is the reference patch tool. They
+  // declare an output schema where they have one, so a missing one passes.
   {
     name: "nb",
+    outputsOptional: true,
     factory: (runtime: Runtime, sink: NoopEventSink) =>
       defineInProcessApp(
         { name: "nb", version: "1.0.0", tools: createCoreToolDefs(runtime) },
@@ -107,6 +119,7 @@ const SOURCES = [
 
 interface SchemaNode {
   type?: string | string[];
+  additionalProperties?: unknown;
   enum?: unknown[];
   properties?: Record<string, SchemaNode>;
   items?: SchemaNode;
@@ -165,6 +178,20 @@ function findShapeViolations(node: SchemaNode, path = ""): string[] {
   return violations;
 }
 
+/** Paths in an output schema that close an object to unlisted properties. */
+function findClosedObjects(node: unknown, path = ""): string[] {
+  if (node === null || typeof node !== "object") return [];
+  if (Array.isArray(node))
+    return node.flatMap((child, i) => findClosedObjects(child, `${path}[${i}]`));
+  const record = node as Record<string, unknown>;
+  const here =
+    record.additionalProperties === false ? [`${path}: additionalProperties: false`] : [];
+  return [
+    ...here,
+    ...Object.entries(record).flatMap(([key, child]) => findClosedObjects(child, `${path}.${key}`)),
+  ];
+}
+
 // ── Test ─────────────────────────────────────────────────────────────────
 
 let workDir: string;
@@ -183,7 +210,8 @@ afterEach(async () => {
 });
 
 describe("platform tool schemas — convention shape", () => {
-  for (const { name, factory } of SOURCES) {
+  for (const source of SOURCES) {
+    const { name, factory } = source;
     test(`${name}: every tool input schema is fully typed`, async () => {
       const runtime = makeRuntimeStub(workDir);
       // The factory is permissive about the runtime shape — it only
@@ -212,6 +240,16 @@ describe("platform tool schemas — convention shape", () => {
         }
         const violations = findShapeViolations(schema, tool.name);
         allViolations.push(...violations);
+
+        const output = tool.outputSchema as SchemaNode | undefined;
+        if (!output) {
+          if (!("outputsOptional" in source)) allViolations.push(`${tool.name}: no outputSchema`);
+          continue;
+        }
+        if (output.type !== "object") {
+          allViolations.push(`${tool.name}: top-level outputSchema must be type 'object'`);
+        }
+        allViolations.push(...findClosedObjects(output, `${tool.name} (output)`));
       }
 
       // Detail-rich failure message — when a future tool drifts, the
@@ -221,6 +259,7 @@ describe("platform tool schemas — convention shape", () => {
         throw new Error(
           `Platform source "${name}" has ${allViolations.length} schema-shape violation(s):\n  ${allViolations.join("\n  ")}\n\n` +
             `Every \`object\`-typed property must declare \`properties\`. Every \`array\` must declare \`items\`. ` +
+            `An output schema has an object root and stays open, and every platform tool declares one (§2.1). ` +
             `A field clears with \`null\`, declared as \`anyOf\` with a \`{ type: "null" }\` branch (src/platform/AGENTS.md §1.3). ` +
             `Bare \`{ type: "object" }\` lets the model invent structure under-spec — see src/platform/skills/source.ts for the canonical pattern.`,
         );

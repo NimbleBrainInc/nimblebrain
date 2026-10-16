@@ -3,7 +3,7 @@
  * stored task, and the create / update / inline-run arguments it makes.
  */
 import type { ScheduleSpec } from "../components/SchedulePicker.tsx";
-import type { OnPoorResult, TaskDetail } from "../types.ts";
+import type { OnPoorResult, TaskDetail, ThinkingEffort } from "../types.ts";
 import {
   type CriterionDraft,
   draftsValid,
@@ -48,6 +48,8 @@ export interface EditorDraft {
   enabled: boolean;
   allowedTools: string;
   model: string;
+  /** Carried from the stored task unedited; the form has no control for it. */
+  thinkingEffort?: ThinkingEffort;
   maxIterations: string;
   maxRunDurationSec: string;
   maxInputTokens: string;
@@ -154,9 +156,9 @@ export function draftFromDetail(d: TaskDetail): EditorDraft {
     ...inputOf(d.inputSchema),
     name: d.name,
     description: d.description ?? "",
-    doMode: d.skill && !d.prompt ? "skill" : "prompt",
+    doMode: d.skills?.length && !d.prompt ? "skill" : "prompt",
     prompt: d.prompt ?? "",
-    skill: d.skill ?? "",
+    skill: (d.skills ?? []).join(", "),
     criteria: fromCriteria(d.criteria),
     confidence: str(d.confidenceThreshold),
     outputJson: json(d.outputSchema),
@@ -165,6 +167,7 @@ export function draftFromDetail(d: TaskDetail): EditorDraft {
     enabled: d.enabled,
     allowedTools: (d.allowedTools ?? []).join(", "),
     model: d.model ?? "",
+    ...(d.thinkingEffort ? { thinkingEffort: d.thinkingEffort } : {}),
     maxIterations: str(d.maxIterations),
     maxRunDurationSec: d.maxRunDurationMs ? String(d.maxRunDurationMs / 1000) : "",
     maxInputTokens: str(d.maxInputTokens),
@@ -213,7 +216,7 @@ function positive(text: string, what: string, problems: string[], min = 1): numb
 export interface BuiltDefinition {
   problems: string[];
   body: string;
-  skill?: string;
+  skills?: string[];
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   criteria?: ReturnType<typeof toCriteria>;
@@ -222,6 +225,7 @@ export interface BuiltDefinition {
   onPoorResult?: OnPoorResult;
   allowedTools?: string[];
   model?: string;
+  thinkingEffort?: ThinkingEffort;
   maxIterations?: number;
   maxRunDurationMs?: number;
   maxInputTokens?: number;
@@ -235,8 +239,12 @@ function readDoing(d: EditorDraft, out: BuiltDefinition): void {
     if (!out.body) out.problems.push("Say what the task should do.");
     return;
   }
-  if (!d.skill.trim()) out.problems.push("Name the skill to carry out.");
-  else out.skill = d.skill.trim();
+  const skills = d.skill
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (skills.length === 0) out.problems.push("Name the skill to carry out.");
+  else out.skills = skills;
 }
 
 function readSchemas(d: EditorDraft, out: BuiltDefinition): void {
@@ -291,6 +299,7 @@ function readLimits(d: EditorDraft, out: BuiltDefinition): void {
   const tools = parseToolList(d.allowedTools);
   if (tools.length > 0) out.allowedTools = tools;
   if (d.model.trim()) out.model = d.model.trim();
+  if (d.thinkingEffort) out.thinkingEffort = d.thinkingEffort;
   out.maxIterations = positive(d.maxIterations, "Max steps", out.problems);
   const secs = positive(d.maxRunDurationSec, "The time limit", out.problems, 10);
   if (secs !== undefined) out.maxRunDurationMs = Math.round(secs * 1000);
@@ -343,7 +352,7 @@ export function buildDefinition(d: EditorDraft): BuiltDefinition {
 }
 
 const DEFINITION_KEYS = [
-  "skill",
+  "skills",
   "inputSchema",
   "outputSchema",
   "criteria",
@@ -352,6 +361,7 @@ const DEFINITION_KEYS = [
   "onPoorResult",
   "allowedTools",
   "model",
+  "thinkingEffort",
   "maxIterations",
   "maxRunDurationMs",
   "maxInputTokens",

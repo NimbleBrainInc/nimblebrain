@@ -9,10 +9,14 @@ import {
   hooksRoutes,
 } from "../../src/api/routes/hooks.ts";
 import type { AppContext } from "../../src/api/types.ts";
+import type { HookReconcileDeps } from "../../src/hooks/reconcile.ts";
 import { listRegistrations, registrationKey } from "../../src/hooks/registrations.ts";
 import { type HookIdentity, newDeliveryId } from "../../src/hooks/token.ts";
 import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "../../src/hooks/types.ts";
+import type { Runtime } from "../../src/runtime/runtime.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
+import { stub } from "../helpers/stub.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 
 /**
@@ -91,6 +95,19 @@ function registration(over: Partial<HookRegistration> = {}): HookRegistration {
   };
 }
 
+/** A registration as stored before delivery ids existed: it has no `deliveryId`. */
+function staleRegistration(): HookRegistration {
+  const stored = {
+    connector: CONNECTOR,
+    vendor: VENDOR,
+    kid: KID,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    route: "/ingest/stale",
+  };
+  // The record without its deliveryId, read back as the HookRegistration the store's type says every record is.
+  return stored as HookRegistration;
+}
+
 /** The URL a vendor was handed, for a given delivery id. */
 function hookUrl(id: string = DELIVERY_ID): string {
   return `/v1/hooks/${id}`;
@@ -118,23 +135,24 @@ async function seedWorkspace(opts: {
 }
 
 /** Records the forward instead of making it, and answers as the connector would. */
-const captureFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+const captureFetch = fakeFetch(async (url, init) => {
   forwarded.push({ url: String(url), init: init ?? {} });
   return upstreamResponse();
-}) as unknown as typeof fetch;
+});
 
 function makeCtx(over: Partial<AppContext> = {}): AppContext {
-  return {
-    runtime: {
+  return stub<AppContext>({
+    runtime: stub<Runtime>({
       getWorkspaceStore: () => store,
       getAllowInsecureRemotes: () => false,
-      getHookReconcileDeps: () => ({
-        declarationsFor: async () =>
-          declaredVendors.map((vendor) => ({ vendor, route: ROUTE, register_tool: "register" })),
-      }),
-    },
+      getHookReconcileDeps: () =>
+        stub<HookReconcileDeps>({
+          declarationsFor: async () =>
+            declaredVendors.map((vendor) => ({ vendor, route: ROUTE, register_tool: "register" })),
+        }),
+    }),
     ...over,
-  } as unknown as AppContext;
+  });
 }
 
 function makeApp(identity: HookIdentity = IDENTITY): Hono {
@@ -328,13 +346,7 @@ describe("a registration written before delivery ids existed", () => {
     await seedWorkspace({
       id: stale.id,
       hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: {
-          connector: CONNECTOR,
-          vendor: VENDOR,
-          kid: KID,
-          createdAt: "2026-01-01T00:00:00.000Z",
-          route: "/ingest/stale",
-        } as unknown as ReturnType<typeof registration>,
+        [registrationKey(CONNECTOR, VENDOR)]: staleRegistration(),
       },
     });
     await seedWorkspace({});
@@ -350,13 +362,7 @@ describe("a registration written before delivery ids existed", () => {
     await seedWorkspace({
       id: stale.id,
       hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: {
-          connector: CONNECTOR,
-          vendor: VENDOR,
-          kid: KID,
-          createdAt: "2026-01-01T00:00:00.000Z",
-          route: "/ingest/stale",
-        } as unknown as ReturnType<typeof registration>,
+        [registrationKey(CONNECTOR, VENDOR)]: staleRegistration(),
       },
     });
     await expectIndistinguishable404(await deliver(makeApp(), hookUrl(newDeliveryId())));

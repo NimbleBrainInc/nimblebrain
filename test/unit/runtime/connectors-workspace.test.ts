@@ -67,6 +67,7 @@ describe("serverNameFromRef", () => {
       { url: "https://mcp.example.com/echo", serverName: "" },
       { name: "@acme/echo" },
     ]) {
+      // biome-ignore lint/plugin/double-cast: a stored row with no serverName or no url, claimed as a ConnectorRef, which requires both
       expect(serverNameFromRef(row as unknown as ConnectorRef)).toBeNull();
     }
   });

@@ -154,10 +154,10 @@ describe("createDirectExecutor", () => {
   });
 
   test("omits workspaceId and identity when context is empty", async () => {
-    let capturedRequest: Record<string, unknown> | undefined;
+    let capturedRequest: Parameters<TaskFn>[0] | undefined;
 
     const taskFn: TaskFn = async (req) => {
-      capturedRequest = req as unknown as Record<string, unknown>;
+      capturedRequest = req;
       return {
         output: "ok",
         runId: "run_test000000",
@@ -209,6 +209,49 @@ describe("createDirectExecutor", () => {
 // (Restores coverage lost when the executeHttp tests were deleted.)
 // ---------------------------------------------------------------------------
 
+describe("createDirectExecutor — a task's declared skills", () => {
+  test("passes the skills to the run and records what the run was given", async () => {
+    let captured: TaskFnRequest | undefined;
+    const taskFn: TaskFn = async (req) => {
+      captured = req;
+      return {
+        ...(await makeDirectTaskFn()(req)),
+        skillsDelivered: [{ name: "ledger-runbook", loadedBy: "declared" }],
+      };
+    };
+    const executor = createDirectExecutor(taskFn, () => ({}));
+    const { result } = await executor(makeTask({ skills: ["ledger-runbook"] }));
+    expect(captured?.skills).toEqual(["ledger-runbook"]);
+    expect(result?.skillsDelivered).toEqual([{ name: "ledger-runbook", loadedBy: "declared" }]);
+  });
+
+  test("a task with skills and no prompt runs on an instruction to carry them out", async () => {
+    let captured: TaskFnRequest | undefined;
+    const executor = createDirectExecutor(
+      async (req) => {
+        captured = req;
+        return makeDirectTaskFn()(req);
+      },
+      () => ({}),
+    );
+    await executor(makeTask({ prompt: "", skills: ["ledger-runbook", "record-rules"] }));
+    expect(captured?.prompt).toBe(
+      'Carry out the "ledger-runbook", "record-rules" skills on this run\'s input, and give the result as the deliverable.',
+    );
+  });
+});
+
+describe("createDirectExecutor — the run's cost", () => {
+  test("records the runtime's per-call costUsd, not a price of the summed usage", async () => {
+    const executor = createDirectExecutor(
+      async (req) => ({ ...(await makeDirectTaskFn()(req)), costUsd: 1.2345 }),
+      () => ({}),
+    );
+    const { run } = await executor(makeTask());
+    expect(run.costUsd).toBe(1.2345);
+  });
+});
+
 describe("createDirectExecutor — the run input cap", () => {
   async function requestFor(overrides: Partial<Task>) {
     let seen: Parameters<TaskFn>[0] | undefined;
@@ -228,6 +271,28 @@ describe("createDirectExecutor — the run input cap", () => {
   test("a task without maxInputTokens runs with no input cap when no ceiling is configured", async () => {
     const req = await requestFor({});
     expect(req?.maxRunInputTokens).toBeUndefined();
+  });
+});
+
+describe("createDirectExecutor — the run's thinking effort", () => {
+  async function requestFor(overrides: Partial<Task>) {
+    let seen: Parameters<TaskFn>[0] | undefined;
+    const taskFn: TaskFn = async (req) => {
+      seen = req;
+      return makeDirectTaskFn()(req);
+    };
+    await createDirectExecutor(taskFn, () => ({}))(makeTask(overrides));
+    return seen;
+  }
+
+  test("a task's thinkingEffort reaches the runtime as the run's depth", async () => {
+    const req = await requestFor({ thinkingEffort: "low" });
+    expect(req?.thinkingEffort).toBe("low");
+  });
+
+  test("a task without thinkingEffort leaves the depth to the runtime", async () => {
+    expect((await requestFor({}))?.thinkingEffort).toBeUndefined();
+    expect((await requestFor({ thinkingEffort: null }))?.thinkingEffort).toBeUndefined();
   });
 });
 
@@ -833,6 +898,72 @@ describe("createDirectExecutor — degraded runs", () => {
     const run = await runWith([
       ...Array.from({ length: 3 }, () => call("people__log_interaction", {}, false)),
       call("outlook__send_mail", {}, false),
+    ]);
+    expect(run.status).toBe("failure");
+    expect(run.error).toMatch(/never succeeded/);
+  });
+});
+
+describe("createDirectExecutor — calls the engine held for guidance", () => {
+  const held = (id: string, name: string): TaskFnToolCall => ({
+    id,
+    name,
+    input: { to: "a@example.com" },
+    output: `Not run: ${name} is governed by guidance you have not read yet (drafting).`,
+    ok: false,
+    ms: 0,
+    errorReason: "skill_guidance_pending",
+    held: true,
+  });
+  const ran = (id: string, name: string, ok = true): TaskFnToolCall => ({
+    id,
+    name,
+    input: { to: "a@example.com" },
+    output: ok ? "{}" : "500",
+    ok,
+    ms: 10,
+  });
+
+  async function runWith(toolCalls: TaskFnToolCall[], stopReason = "complete"): Promise<TaskRun> {
+    const taskFn: TaskFn = async (): Promise<TaskFnResult> => ({
+      output: "Drafted.",
+      runId: "run_test000000",
+      toolCalls,
+      stopReason,
+      usage: { inputTokens: 10, outputTokens: 5, iterations: 2 },
+    });
+    const executor = createDirectExecutor(taskFn, () => ({}));
+    const { run } = await executor(makeTask());
+    return run;
+  }
+
+  test("a held call re-issued to success is neither a failure nor a counted call", async () => {
+    const run = await runWith([
+      held("c1", "outreach__draft_email"),
+      ran("c2", "outreach__draft_email"),
+    ]);
+    expect(run.status).toBe("success");
+    expect(run.unrecoveredToolFailures).toBeUndefined();
+    expect(run.toolCalls).toBe(1);
+  });
+
+  test("a held call the model rightly never re-issues does not mark a complete run", async () => {
+    const run = await runWith([held("c1", "outreach__draft_email")]);
+    expect(run.status).toBe("success");
+    expect(run.unrecoveredToolFailures).toBeUndefined();
+  });
+
+  test("a held call the run stopped before re-issuing is recorded as unrecovered", async () => {
+    const run = await runWith([held("c1", "outreach__draft_email")], "max_iterations");
+    expect(run.unrecoveredToolFailures).toEqual(["outreach__draft_email"]);
+  });
+
+  test("three holds then failures still read as a tool that never succeeded", async () => {
+    const run = await runWith([
+      held("c1", "records__create"),
+      ran("c2", "records__create", false),
+      ran("c3", "records__create", false),
+      ran("c4", "records__create", false),
     ]);
     expect(run.status).toBe("failure");
     expect(run.error).toMatch(/never succeeded/);

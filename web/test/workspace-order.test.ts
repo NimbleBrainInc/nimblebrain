@@ -35,7 +35,12 @@ describe("orderWorkspacesForSidebar", () => {
       ws({ id: "ws_00488fa17f87e9a3", name: "Mat's workspace", userRole: "admin" }),
       ws({ id: "ws_001e036c5def1252", name: "Basecamp" }),
     ]);
-    expect(out.map((w) => w.id)).toEqual(["ws_000f7ed6658f9d30", "ws_001e036c5def1252", "ws_003eba8844413cd9", "ws_00488fa17f87e9a3"]);
+    expect(out.map((w) => w.id)).toEqual([
+      "ws_000f7ed6658f9d30",
+      "ws_001e036c5def1252",
+      "ws_003eba8844413cd9",
+      "ws_00488fa17f87e9a3",
+    ]);
   });
 
   test("case-insensitive alphabetical comparison", () => {
@@ -55,7 +60,10 @@ describe("orderWorkspacesForSidebar", () => {
   });
 
   test("does not mutate the input array", () => {
-    const input: WorkspaceInfo[] = [ws({ id: "ws_001c32f121060ff3", name: "B" }), ws({ id: "ws_00079598e311c160", name: "A" })];
+    const input: WorkspaceInfo[] = [
+      ws({ id: "ws_001c32f121060ff3", name: "B" }),
+      ws({ id: "ws_00079598e311c160", name: "A" }),
+    ];
     const snapshot = input.map((w) => w.id);
     orderWorkspacesForSidebar(input);
     expect(input.map((w) => w.id)).toEqual(snapshot);
@@ -71,6 +79,11 @@ describe("orderWorkspacesForSidebar", () => {
       ],
       new Set(["ws_008cdfc2b7fba196", "ws_001e036c5def1252", "ws_003bdf4cf2ed3a6e"]),
     );
-    expect(out.map((w) => w.id)).toEqual(["ws_001e036c5def1252", "ws_008cdfc2b7fba196", "ws_000f7ed6658f9d30", "ws_003eba8844413cd9"]);
+    expect(out.map((w) => w.id)).toEqual([
+      "ws_001e036c5def1252",
+      "ws_008cdfc2b7fba196",
+      "ws_000f7ed6658f9d30",
+      "ws_003eba8844413cd9",
+    ]);
   });
 });

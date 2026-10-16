@@ -104,204 +104,284 @@ export const ConversationsExportInput = Type.Object(
 );
 export type ConversationsExportInput = Static<typeof ConversationsExportInput>;
 
-// ── Output types ────────────────────────────────────────────────────────
+// ── Output schemas ──────────────────────────────────────────────────────
 //
-// The display shapes are declared here, where the handlers' outputs name
-// them; `jsonl-reader.ts` builds them and re-exports them for its callers.
+// Each tool's result, published as its `outputSchema` (src/platform/AGENTS.md
+// §2.1). The display shapes are declared here, where the handlers' outputs name
+// them; `jsonl-reader.ts` builds them from stored conversation logs and
+// re-exports them for its callers. A shape read from a log admits every value
+// that log can hold, not only what the runtime writes today.
+
+const NullableString = Type.Union([Type.String(), Type.Null()]);
+
+/** A conversation as its header and events project it: the row `list`, `update` and `fork` describe. */
+const ConversationSummaryFields = {
+  id: Type.String(),
+  createdAt: Type.String(),
+  updatedAt: Type.String(),
+  messageCount: Type.Number(),
+  totalInputTokens: Type.Number(),
+  totalOutputTokens: Type.Number(),
+  lastModel: NullableString,
+  preview: Type.String({
+    description: "The conversation's first user message, capped for the response.",
+  }),
+};
 
 /** What `conversations__fork` returns: a summary of the new conversation. */
-export interface ConversationsForkOutput {
-  id: string;
-  title: null;
-  createdAt: string;
-  updatedAt: string;
-  messageCount: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  lastModel: string | null;
-  preview: string;
-}
+export const ConversationsForkOutput = Type.Object({
+  ...ConversationSummaryFields,
+  title: Type.Null({ description: "A fork starts untitled." }),
+});
+export type ConversationsForkOutput = Static<typeof ConversationsForkOutput>;
+
+/** What `conversations__update` returns: the conversation as a reader now projects it. */
+export const ConversationsUpdateOutput = Type.Object({
+  ...ConversationSummaryFields,
+  title: NullableString,
+});
+export type ConversationsUpdateOutput = Static<typeof ConversationsUpdateOutput>;
+
+/** One row of `conversations__list`. */
+export const ConversationListEntry = Type.Object({
+  ...ConversationSummaryFields,
+  title: NullableString,
+  ownerId: Type.Union([Type.String(), Type.Null()], {
+    description: "The conversation's owner; null when its header names none.",
+  }),
+  workspaceId: Type.String({
+    description: "The workspace whose directory holds the conversation.",
+  }),
+  active: Type.Boolean({ description: "Whether a reply is generating for it right now." }),
+});
+export type ConversationListEntry = Static<typeof ConversationListEntry>;
+
+/** What `conversations__list` returns: one page of the workspace's conversations. */
+export const ConversationsListOutput = Type.Object({
+  conversations: Type.Array(ConversationListEntry),
+  nextCursor: Type.Union([Type.String(), Type.Null()], {
+    description: "Pass as `cursor` for the next page; null on the last page.",
+  }),
+  totalCount: Type.Number(),
+});
+export type ConversationsListOutput = Static<typeof ConversationsListOutput>;
+
+export const DisplayResourceLink = Type.Object({
+  uri: Type.String(),
+  name: Type.Optional(Type.String()),
+  mimeType: Type.Optional(Type.String()),
+  description: Type.Optional(Type.String()),
+});
+export type DisplayResourceLink = Static<typeof DisplayResourceLink>;
+
+/**
+ * MCP tool-result envelope — identical shape to what streaming emits, so the
+ * UI consumes one type regardless of source. `content[0].text` is the tool's
+ * text output; `isError` mirrors `!ok`.
+ */
+export const DisplayToolResult = Type.Object({
+  content: Type.Array(Type.Object({ type: Type.String(), text: Type.Optional(Type.String()) })),
+  structuredContent: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  isError: Type.Boolean(),
+});
+export type DisplayToolResult = Static<typeof DisplayToolResult>;
+
+export const DisplayToolCall = Type.Object({
+  id: Type.String(),
+  name: Type.String({ description: 'Full tool name (may include "server__tool" prefix).' }),
+  appName: Type.Optional(
+    Type.String({ description: 'Server prefix from the name (before "__"), if any.' }),
+  ),
+  status: StringEnum(["done", "error"] as const, {
+    description: "Terminal status — tool calls from history are never mid-flight.",
+  }),
+  ok: Type.Boolean(),
+  ms: Type.Number(),
+  input: Type.Record(Type.String(), Type.Unknown()),
+  result: DisplayToolResult,
+  resourceUri: Type.Optional(Type.String()),
+  resourceLinks: Type.Optional(Type.Array(DisplayResourceLink)),
+});
+export type DisplayToolCall = Static<typeof DisplayToolCall>;
+
+export const DisplayBlock = Type.Union([
+  Type.Object({ type: StringEnum(["text"] as const), text: Type.String() }),
+  Type.Object({ type: StringEnum(["reasoning"] as const), text: Type.String() }),
+  Type.Object({ type: StringEnum(["tool"] as const), toolCalls: Type.Array(DisplayToolCall) }),
+]);
+export type DisplayBlock = Static<typeof DisplayBlock>;
+
+export const DisplayUsage = Type.Object({
+  inputTokens: Type.Number(),
+  outputTokens: Type.Number(),
+  cacheReadTokens: Type.Optional(Type.Number()),
+  /**
+   * Cache-write and reasoning subtotals carried through so fork() can
+   * round-trip them onto the new file. Losing them here means a forked
+   * conversation would report lower cost than the original on cache-heavy or
+   * reasoning-heavy turns.
+   */
+  cacheWriteTokens: Type.Optional(Type.Number()),
+  reasoningTokens: Type.Optional(Type.Number()),
+  model: Type.String({
+    description: "Model of the last LLM call in the run (runs can switch models mid-turn).",
+  }),
+  llmMs: Type.Number(),
+});
+export type DisplayUsage = Static<typeof DisplayUsage>;
+
+export const DisplayFile = Type.Object({
+  id: Type.String(),
+  filename: Type.String(),
+  mimeType: Type.String(),
+  size: Type.Number(),
+  extracted: Type.Boolean(),
+});
+export type DisplayFile = Static<typeof DisplayFile>;
+
+/** One skill in a turn's `skills.loaded` telemetry, projected for display. */
+export const DisplaySkill = Type.Object({
+  id: Type.String(),
+  name: Type.String({ description: "The skill's own name — safe to render directly." }),
+  connector: Type.Optional(
+    Type.String({ description: "The MCP server that published it; absent for filesystem skills." }),
+  ),
+  // A string, not an enum: the scope is read from the recorded event, and a
+  // record keeps the vocabulary current when it was written (`bundle` and
+  // `platform` name tiers that are `provided` and `org` today).
+  scope: Type.String({
+    description: 'Storage tier the skill loaded from: "org", "workspace", "user" or "provided".',
+  }),
+  tokens: Type.Number(),
+  loadedBy: Type.String(),
+  reason: Type.String(),
+});
+export type DisplaySkill = Static<typeof DisplaySkill>;
+
+/** A turn's skills-loaded telemetry — the ledger line's data. */
+export const DisplaySkillsContext = Type.Object({
+  skills: Type.Array(DisplaySkill),
+  totalTokens: Type.Number(),
+});
+export type DisplaySkillsContext = Static<typeof DisplaySkillsContext>;
 
 /**
  * A single chat turn as it should be rendered. One per `user.message` event
  * and one per `run.start`→`run.done` span — never split per iteration.
  */
-export interface DisplayMessage {
-  role: "user" | "assistant";
-  /** Aggregated text across all text blocks (convenient for copy/title). */
-  content: string;
-  /** Ordered content blocks — the primary structure for rendering. */
-  blocks: DisplayBlock[];
-  timestamp: string;
-  userId?: string;
-  /** All tool calls flattened out of blocks — derived, for consumers that scan them. */
-  toolCalls?: DisplayToolCall[];
-  /** Aggregate LLM usage for the whole turn; undefined for user messages. */
-  usage?: DisplayUsage;
-  files?: DisplayFile[];
+export const DisplayMessage = Type.Object({
+  role: StringEnum(["user", "assistant"] as const),
+  content: Type.String({ description: "Aggregated text across all text blocks." }),
+  blocks: Type.Array(DisplayBlock, {
+    description: "Ordered content blocks — the primary structure for rendering.",
+  }),
+  timestamp: Type.String(),
+  userId: Type.Optional(Type.String()),
+  toolCalls: Type.Optional(
+    Type.Array(DisplayToolCall, { description: "All tool calls flattened out of blocks." }),
+  ),
+  /** Aggregate LLM usage for the whole turn; absent on user messages. */
+  usage: Type.Optional(DisplayUsage),
+  files: Type.Optional(Type.Array(DisplayFile)),
   /**
    * Non-"complete" run terminations bubble up here: a `run.done` stopReason
    * verbatim ("max_iterations", "cancelled", …), "error" for a `run.error`,
    * "interrupted" for a run with no terminal event.
    */
-  stopReason?: string;
+  stopReason: Type.Optional(Type.String()),
   /**
    * True when this assistant turn has no terminal event yet (no run.done /
-   * run.error) — i.e. the run was still in flight when the file was read. Lets
-   * a live viewer tell a partial disk snapshot from a finished turn and decide
-   * whether to reconcile against the server's replay.
+   * run.error) and a run is live for the conversation — a partial disk
+   * snapshot rather than a finished turn.
    */
-  pending?: boolean;
+  pending: Type.Optional(Type.Boolean()),
   /**
    * Skills the runtime composed into this turn's prompt (the `skills.loaded`
-   * event for the run) — the Context Ledger's durable source. The live stream
-   * carries the same payload for an in-flight turn; this is how a reopened
-   * conversation re-derives the ledger line. Absent when the turn loaded none.
+   * event for the run) — the Context Ledger's durable source. Absent when the
+   * turn loaded none.
    */
-  skillsLoaded?: DisplaySkillsContext;
-}
-
-/** One skill in a turn's `skills.loaded` telemetry, projected for display. */
-export interface DisplaySkill {
-  id: string;
-  /** The skill's own name — resolved here, safe to render directly. */
-  name: string;
-  /** The MCP server that published it; absent for filesystem skills. */
-  connector?: string;
-  scope: "org" | "workspace" | "user" | "provided";
-  tokens: number;
-  loadedBy: string;
-  reason: string;
-}
-
-/** A turn's skills-loaded telemetry — the ledger line's data. */
-export interface DisplaySkillsContext {
-  skills: DisplaySkill[];
-  totalTokens: number;
-}
-
-export type DisplayBlock =
-  | { type: "text"; text: string }
-  | { type: "reasoning"; text: string }
-  | { type: "tool"; toolCalls: DisplayToolCall[] };
-
-export interface DisplayToolCall {
-  id: string;
-  /** Full tool name (may include "server__tool" prefix). */
-  name: string;
-  /** Server prefix from the name (before "__"), if any — convenience for routing. */
-  appName?: string;
-  /** Terminal status — tool calls from history are never mid-flight. */
-  status: "done" | "error";
-  ok: boolean;
-  ms: number;
-  input: Record<string, unknown>;
-  /**
-   * MCP tool-result envelope — identical shape to what streaming emits, so the
-   * UI consumes one type regardless of source. `content[0].text` is the tool's
-   * text output; `isError` mirrors `!ok`.
-   */
-  result: DisplayToolResult;
-  resourceUri?: string;
-  resourceLinks?: DisplayResourceLink[];
-}
-
-export interface DisplayToolResult {
-  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
-  structuredContent?: Record<string, unknown>;
-  isError: boolean;
-}
-
-export interface DisplayResourceLink {
-  uri: string;
-  name?: string;
-  mimeType?: string;
-  description?: string;
-}
-
-export interface DisplayUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens?: number;
-  /**
-   * Cache-write and reasoning subtotals carried through so fork() can
-   * round-trip them onto the new file. The chat UI doesn't currently
-   * render these per-message, but losing them here means a forked
-   * conversation would silently report lower cost than the original on
-   * cache-heavy or reasoning-heavy turns.
-   */
-  cacheWriteTokens?: number;
-  reasoningTokens?: number;
-  /** Model of the last LLM call in the run (runs can switch models mid-turn). */
-  model: string;
-  llmMs: number;
-}
-
-export interface DisplayFile {
-  id: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-  extracted: boolean;
-}
+  skillsLoaded: Type.Optional(DisplaySkillsContext),
+});
+export type DisplayMessage = Static<typeof DisplayMessage>;
 
 /** Metadata `conversations__get` returns for a conversation. */
-export interface ConversationMetadata {
-  id: string;
-  title: string | null;
-  createdAt: string;
-  updatedAt: string;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  lastModel: string | null;
-  /** The model the conversation is bound to. */
-  model: string;
-  ownerId?: string;
-  /** The workspace the conversation is sealed to; absent when the record carries no stamp. */
-  workspaceId?: string;
-}
+export const ConversationMetadata = Type.Object({
+  id: Type.String(),
+  title: NullableString,
+  createdAt: Type.String(),
+  updatedAt: Type.String(),
+  totalInputTokens: Type.Number(),
+  totalOutputTokens: Type.Number(),
+  lastModel: NullableString,
+  model: Type.String({ description: "The model the conversation is bound to." }),
+  ownerId: Type.Optional(Type.String()),
+  workspaceId: Type.Optional(
+    Type.String({
+      description:
+        "The workspace the conversation is sealed to; absent when the record carries no stamp.",
+    }),
+  ),
+});
+export type ConversationMetadata = Static<typeof ConversationMetadata>;
 
 /**
  * What `conversations__get` returns. `expand: "metadata"` sends no messages and
  * `expand: "full"` the whole transcript; the default sends the most recent
  * messages under a character budget, and says so when it dropped older ones.
  */
-export interface ConversationsGetOutput {
-  metadata: ConversationMetadata;
-  totalMessages: number;
-  messages: DisplayMessage[];
-  truncated?: true;
-  droppedOlderMessages?: number;
-  truncationHint?: string;
-}
-
-/** What `conversations__update` returns: the conversation as a reader now projects it. */
-export interface ConversationsUpdateOutput {
-  id: string;
-  title: string | null;
-  createdAt: string;
-  updatedAt: string;
-  messageCount: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  lastModel: string | null;
-  preview: string;
-}
+export const ConversationsGetOutput = Type.Object({
+  metadata: ConversationMetadata,
+  totalMessages: Type.Number(),
+  truncated: Type.Optional(
+    Type.Boolean({ description: "Present, and true, when older messages were dropped." }),
+  ),
+  droppedOlderMessages: Type.Optional(Type.Number()),
+  truncationHint: Type.Optional(Type.String()),
+  messages: Type.Array(DisplayMessage),
+});
+export type ConversationsGetOutput = Static<typeof ConversationsGetOutput>;
 
 /** What `conversations__export` returns: the transcript as Markdown or as JSON text. */
-export interface ConversationsExportOutput {
-  content: string;
-}
+export const ConversationsExportOutput = Type.Object({ content: Type.String() });
+export type ConversationsExportOutput = Static<typeof ConversationsExportOutput>;
 
 /** One conversation whose messages matched a `conversations__search` query. */
-export interface ConversationSearchResult {
-  id: string;
-  title: string | null;
-  matches: Array<{ snippet: string }>;
-}
+export const ConversationSearchResult = Type.Object({
+  id: Type.String(),
+  title: NullableString,
+  matches: Type.Array(Type.Object({ snippet: Type.String() })),
+});
+export type ConversationSearchResult = Static<typeof ConversationSearchResult>;
 
 /** What `conversations__search` returns. */
-export interface ConversationsSearchOutput {
-  results: ConversationSearchResult[];
-  totalMatches: number;
-}
+export const ConversationsSearchOutput = Type.Object({
+  results: Type.Array(ConversationSearchResult),
+  totalMatches: Type.Number(),
+});
+export type ConversationsSearchOutput = Static<typeof ConversationsSearchOutput>;
+
+/** One model's share of a `conversations__stats` period. */
+export const ConversationModelStats = Type.Object({
+  inputTokens: Type.Number(),
+  outputTokens: Type.Number(),
+  conversations: Type.Number({ description: "Conversations with a turn on this model." }),
+});
+export type ConversationModelStats = Static<typeof ConversationModelStats>;
+
+/** What `conversations__stats` returns: token usage for the period in the current workspace. */
+export const ConversationsStatsOutput = Type.Object({
+  period: Type.Object({
+    since: Type.String({ description: 'ISO 8601 lower bound; "" for period "all".' }),
+    until: Type.String(),
+  }),
+  totalConversations: Type.Number(),
+  totalInputTokens: Type.Number(),
+  totalOutputTokens: Type.Number(),
+  byModel: Type.Record(Type.String(), ConversationModelStats, {
+    description: "Usage keyed by model id.",
+  }),
+  topTools: Type.Array(Type.Object({ name: Type.String(), callCount: Type.Number() }), {
+    description: "Tools by call count, most-called first.",
+  }),
+});
+export type ConversationsStatsOutput = Static<typeof ConversationsStatsOutput>;

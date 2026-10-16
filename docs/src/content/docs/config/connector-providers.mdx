@@ -44,11 +44,14 @@ Composio, Smithery, MCP360, and Glama all describe themselves with overlapping w
 | [Composio](https://composio.dev) | OAuth, API key | Per connection | A provider — [Composio guide](/gateways/composio/) |
 | [Smithery](https://smithery.ai) | OAuth, config, completed on Smithery's own hosted setup page rather than a callback to us | Per connection | A provider — [Smithery guide](/gateways/smithery/) |
 | [MCP360](https://mcp360.ai) | No, one account key | Fixed endpoints | A catalog entry — [gateway endpoints](/config/connectors-catalog/#auth-provider-for-a-gateway-endpoint) |
+| [Obot](https://obot.ai) | Upstream only — between Obot and the servers it fronts | Fixed endpoint per registered server | A catalog entry — [Obot guide](/gateways/obot/) |
 | [Glama](https://glama.ai) | Upstream only — see below | Per connection profile | A [remote connector](/config/connectors/#the-entry-shape) — see below |
 
 The top two are providers, and this page describes their machinery. Configuration — the block, its fields, the broker credential's environment fallback, and why it names a credential provider rather than an env var — is documented once, under [`connectors.providers`](/config/nimblebrain-json/#connectors).
 
 MCP360 publishes fixed endpoints and one account-wide API key. It holds no per-connection state for you to configure, so it never reaches this page's machinery and belongs in the catalog instead — see [gateway endpoints](/config/connectors-catalog/#auth-provider-for-a-gateway-endpoint).
+
+Obot is the self-hosted case of the same shape: an organization's own gateway, one endpoint per server it registers, one API key for the platform. Any OAuth it brokers sits between Obot and the servers behind it, not between Obot and us — see the [Obot guide](/gateways/obot/).
 
 Glama's MCP gateway is a source-agnostic reverse proxy: it fronts servers Glama hosts for you, its own pre-indexed connectors, and any remote MCP endpoint you point it at. You create a **connection profile** in its UI and get a dedicated Streamable HTTP endpoint back:
 

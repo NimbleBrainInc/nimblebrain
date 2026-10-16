@@ -24,7 +24,7 @@ const TOOLS = [
   // …and a WORKSPACE source of the same underlying name, which is the whole
   // reason the marker exists.
   { name: "granola__list_meetings", description: "", inputSchema: {} },
-] as never[];
+];
 
 const names = (pattern: string): string[] =>
   filterTools(TOOLS, [pattern]).map((t: { name: string }) => t.name);

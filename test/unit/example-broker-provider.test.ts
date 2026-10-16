@@ -35,18 +35,20 @@ import type {
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { uninstallWorkspaceConnector } from "../../src/connectors/runtime/uninstall.ts";
+import type { UserStore } from "../../src/identity/user.ts";
+import type { LifecycleNotifyDeps } from "../../src/lifecycle/notify.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
-import {
-  createManageConnectorsTool,
-  type ManageConnectorsContext,
-} from "../../src/tools/connector-tools.ts";
+import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../helpers/identity.ts";
+import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const PROVIDER_ID = "example-broker";
 const CONNECTOR_ID = "com.example/widgets";
-const ADMIN = { id: "usr_admin", name: "Admin", email: "admin@test" };
+const ADMIN = makeIdentity({ id: "usr_admin", displayName: "Admin", email: "admin@test" });
 
 // ── The provider ────────────────────────────────────────────────────
 //
@@ -148,7 +150,7 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
   lifecycle.setWorkDir(workDir);
   const workspaceRegistry = new ToolRegistry();
 
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
     getConnectorCatalog: () => new ConnectorCatalog(join(workDir, "catalog.yaml")),
@@ -156,20 +158,22 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,
     getEventSink: () => new NoopEventSink(),
-    getPermissionStore: () => ({
-      deleteConnector: async () => {},
-      listConnectorGrants: async () => ({}),
-      getConnectorGrants: async () => [],
-      revokeConnector: async () => {},
-    }),
-    getUserStore: () => ({ get: async () => null }),
+    getPermissionStore: () =>
+      stub<PermissionStore>({
+        deleteConnector: async () => {},
+        listConnectorGrants: async () => ({}),
+        getConnectorGrants: async () => [],
+        revokeConnector: async () => {},
+      }),
+    getUserStore: () => stub<UserStore>({ get: async () => null }),
     getConnectorInstancesForWorkspace: () => lifecycle.getInstances(),
     getManagedConnectorRegistry: () => registry,
-    getLifecycleNotifyDeps: () => ({
-      declarationFor: async () => undefined,
-      portFor: () => undefined,
-    }),
-  } as unknown as Runtime;
+    getLifecycleNotifyDeps: () =>
+      stub<LifecycleNotifyDeps>({
+        declarationFor: async () => undefined,
+        portFor: () => undefined,
+      }),
+  });
 
   return { workDir, wsId, workspaceStore, lifecycle, runtime };
 }
@@ -179,7 +183,7 @@ function buildTool(h: Harness) {
     runtime: h.runtime,
     getIdentity: () => ADMIN,
     getWorkspaceId: () => h.wsId,
-  } as unknown as ManageConnectorsContext);
+  });
 }
 
 function widgetsEntry(): CatalogListing {
@@ -187,14 +191,18 @@ function widgetsEntry(): CatalogListing {
     id: CONNECTOR_ID,
     name: "Widgets",
     description: "Widgets, brokered",
-    install: {
-      kind: "remote-oauth",
-      url: "https://widgets.example/mcp",
-      transportType: "streamable-http",
-      auth: PROVIDER_ID,
-      [PROVIDER_ID]: { realm: "acme", widget: "sprockets" },
-    },
-  } as unknown as CatalogListing;
+    // The provider's config block rides under the provider's own id, a key the
+    // install type names only for the providers that ship with the runtime.
+    install: Object.assign(
+      {
+        kind: "remote-oauth" as const,
+        url: "https://widgets.example/mcp",
+        transportType: "streamable-http" as const,
+        auth: PROVIDER_ID,
+      },
+      { [PROVIDER_ID]: { realm: "acme", widget: "sprockets" } },
+    ),
+  };
 }
 
 /** The ref an install of this connector persists. */

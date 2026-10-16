@@ -122,7 +122,11 @@ mock.module("../src/api/client", () => ({
   },
   callTool: (_server: string, _action: string, args?: Record<string, unknown>) => {
     const id = args?.id as string | undefined;
-    const nth = id ? (getCalls[id] = (getCalls[id] ?? 0) + 1) : 0;
+    let nth = 0;
+    if (id) {
+      nth = (getCalls[id] ?? 0) + 1;
+      getCalls[id] = nth;
+    }
     // `conv_settling` models a turn that terminated AFTER our transcript
     // snapshot was taken: the first read is partial, a later read is complete.
     const messages =
@@ -131,7 +135,9 @@ mock.module("../src/api/client", () => ({
         : id === "conv_stranded"
           ? STRANDED_LOADED
           : id === "conv_settling"
-            ? (nth === 1 ? PENDING_LOADED : LOADED)
+            ? nth === 1
+              ? PENDING_LOADED
+              : LOADED
             : id === "conv_skills"
               ? LOADED_WITH_SKILLS
               : LOADED;
@@ -200,10 +206,12 @@ describe("chat-store viewer", () => {
 
     s.onEvent("reasoning.delta", { text: "" }, 4);
     expect(store.getSnapshot("draft-sig").streamingState).toBe("analyzing");
-    expect(lastAssistant(store.getSnapshot("draft-sig").messages)?.blocks ?? []).not.toContainEqual({
-      type: "reasoning",
-      text: "",
-    });
+    expect(lastAssistant(store.getSnapshot("draft-sig").messages)?.blocks ?? []).not.toContainEqual(
+      {
+        type: "reasoning",
+        text: "",
+      },
+    );
 
     s.onEvent("reasoning.delta", { text: "weighing the results" }, 5);
     expect(store.getSnapshot("draft-sig").streamingState).toBe("streaming");
@@ -310,9 +318,9 @@ describe("chat-store viewer", () => {
     s.onEvent("user.message", { content: "loaded-q" }, 1);
     s.onEvent("text.delta", { text: "fresh" }, 2);
     expect(lastAssistant(store.getSnapshot("conv_pending").messages)?.content).toBe("fresh");
-    expect(store.getSnapshot("conv_pending").messages.filter((m) => m.role === "user")).toHaveLength(
-      1,
-    );
+    expect(
+      store.getSnapshot("conv_pending").messages.filter((m) => m.role === "user"),
+    ).toHaveLength(1);
   });
 
   it("refetches at most once when a pending tail outlives its run (no unbounded resume loop)", async () => {

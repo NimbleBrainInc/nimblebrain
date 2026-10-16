@@ -3,50 +3,51 @@ import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { payloadsOf } from "../helpers/engine-events.ts";
+import { stub } from "../helpers/stub.ts";
 
-/** Minimal mock of McpSource exposing only what HealthMonitor needs. */
-function makeMockSource(name: string): McpSource & {
+interface MockControls {
   alive: boolean;
   userStopped: boolean;
   restartResult: boolean;
   restartCalls: number;
+  /** Test helper: age the source so `uptime()` reports `ms` of continuous run. */
   setUptime: (ms: number) => void;
-} {
+}
+
+/** Minimal mock of McpSource exposing only what HealthMonitor needs. */
+function makeMockSource(name: string): McpSource & MockControls {
   let startedAt: number | null = Date.now();
-  const mock = {
-    name,
-    alive: true,
-    userStopped: false,
-    restartResult: true,
-    restartCalls: 0,
-    isAlive() {
-      return mock.alive;
+  const mock: McpSource & MockControls = Object.assign(
+    stub<McpSource>({
+      name,
+      isAlive() {
+        return mock.alive;
+      },
+      isStopped() {
+        return mock.userStopped;
+      },
+      uptime() {
+        return startedAt !== null ? Date.now() - startedAt : null;
+      },
+      async restart() {
+        mock.restartCalls++;
+        if (mock.restartResult) {
+          mock.alive = true;
+          startedAt = Date.now();
+        }
+        return mock.restartResult;
+      },
+    }),
+    {
+      alive: true,
+      userStopped: false,
+      restartResult: true,
+      restartCalls: 0,
+      setUptime(ms: number) {
+        startedAt = Date.now() - ms;
+      },
     },
-    isStopped() {
-      return mock.userStopped;
-    },
-    uptime() {
-      return startedAt !== null ? Date.now() - startedAt : null;
-    },
-    /** Test helper: age the source so `uptime()` reports `ms` of continuous run. */
-    setUptime(ms: number) {
-      startedAt = Date.now() - ms;
-    },
-    async restart() {
-      mock.restartCalls++;
-      if (mock.restartResult) {
-        mock.alive = true;
-        startedAt = Date.now();
-      }
-      return mock.restartResult;
-    },
-  } as unknown as McpSource & {
-    alive: boolean;
-    userStopped: boolean;
-    restartResult: boolean;
-    restartCalls: number;
-    setUptime: (ms: number) => void;
-  };
+  );
   return mock;
 }
 

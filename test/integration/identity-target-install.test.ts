@@ -10,6 +10,7 @@ import { buildManagedConnectorRegistry } from "../../src/connectors/providers/re
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -24,6 +25,7 @@ import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { stub } from "../helpers/stub.ts";
 
 /**
  * Integration coverage for `manage_connectors.install` with `scope: "identity"`
@@ -118,31 +120,32 @@ async function buildHarness(): Promise<Harness> {
   // Per-tool allow/deny policies, keyed serverName — the user-scope
   // `connectors[serverName]` block a disconnect must also clear.
   const toolPolicies: Record<string, unknown> = {};
-  const runtime = {
+  const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
     getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
-    getPermissionStore: () => ({
-      deleteConnector: async (owner: { scope: string }, serverName: string) => {
-        if (owner.scope === "user") delete toolPolicies[serverName];
-      },
-      listConnectorGrants: async (_userId: string) => grants,
-      getConnectorGrants: async (_userId: string, serverName: string) => grants[serverName] ?? [],
-      grantConnector: async (_userId: string, serverName: string, wsId: string) => {
-        grants[serverName] = [...(grants[serverName] ?? []), wsId];
-      },
-      revokeConnector: async (_userId: string, serverName: string, wsId: string) => {
-        const remaining = (grants[serverName] ?? []).filter((id) => id !== wsId);
-        if (remaining.length === 0) delete grants[serverName];
-        else grants[serverName] = remaining;
-      },
-    }),
+    getPermissionStore: () =>
+      stub<PermissionStore>({
+        deleteConnector: async (owner: { scope: string }, serverName: string) => {
+          if (owner.scope === "user") delete toolPolicies[serverName];
+        },
+        listConnectorGrants: async (_userId: string) => grants,
+        getConnectorGrants: async (_userId: string, serverName: string) => grants[serverName] ?? [],
+        grantConnector: async (_userId: string, serverName: string, wsId: string) => {
+          grants[serverName] = [...(grants[serverName] ?? []), wsId];
+        },
+        revokeConnector: async (_userId: string, serverName: string, wsId: string) => {
+          const remaining = (grants[serverName] ?? []).filter((id) => id !== wsId);
+          if (remaining.length === 0) delete grants[serverName];
+          else grants[serverName] = remaining;
+        },
+      }),
     getAllowInsecureRemotes: () => false,
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
-  } as unknown as Runtime;
+  });
 
   const ctx: ManageConnectorsContext = {
     runtime,
@@ -307,7 +310,7 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     }
   });
 
-  test("rejects a static remote-oauth entry — static is workspace-bound", async () => {
+  test("rejects a static remote-oauth entry without an instance OAuth client", async () => {
     const staticEntry = composioEntry();
     staticEntry.id = "com.dropbox/mcp";
     staticEntry.name = "Dropbox";
@@ -321,7 +324,7 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
       scope: "identity",
     });
     expect(result.isError).toBe(true);
-    expect(resultText(result)).toMatch(/isn't supported for personal connectors yet/i);
+    expect(resultText(result)).toMatch(/isn't supported for personal connectors here/i);
   });
 
   describe("a personal connector and a workspace install coexist (both install directions)", () => {

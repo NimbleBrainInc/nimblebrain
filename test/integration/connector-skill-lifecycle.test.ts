@@ -8,6 +8,7 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -48,12 +49,12 @@ function fixtureModel(): LanguageModelV4 {
 function fixtureFetch(): typeof fetch {
   // Serve the fixture overlay for any curated `<identity>/SKILL.md` lookup; 404
   // otherwise. Hermetic — never touches the network.
-  return (async (url: string | URL | Request) => {
+  return fakeFetch(async (url) => {
     const u = typeof url === "string" ? url : url.toString();
     return u.endsWith("/SKILL.md")
       ? new Response(OVERLAY, { status: 200 })
       : new Response("", { status: 404 });
-  }) as unknown as typeof fetch;
+  });
 }
 
 async function callTool(
@@ -108,7 +109,7 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     const overlays = runtime.listConnectorOverlays(TEST_WORKSPACE_ID);
     expect(overlays).toHaveLength(1);
     expect(overlays[0]!.server).toBe("gmail");
-    expect(overlays[0]!.source).toBe("connector:gmail@v0.3.0");
+    expect(overlays[0]!.source).toBe("connector:gmail@v0.5.0");
 
     // Absent from the authored-skill listing — a separate store, filtered out.
     const list = await callTool(runtime, "skills__list", {});

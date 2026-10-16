@@ -95,6 +95,15 @@ const CATALOG_YAML = `servers:
 const calls = new Map<string, FixtureCall[]>();
 const sources = new Map<string, McpSource>();
 
+/** Drop a live source's connection, as an idle close does, and return the source. */
+function dropConnection(wsId: string, serverName: string): McpSource {
+  const source = sources.get(`${wsId}/${serverName}`);
+  if (!source) throw new Error(`no source ${wsId}/${serverName}`);
+  // biome-ignore lint/complexity/useLiteralKeys: client is private; bracket access is TypeScript's typed path to it
+  source["client"] = null;
+  return source;
+}
+
 function ran(wsId: string, server: string): FixtureCall[] {
   return calls.get(`${wsId}/${server}`) ?? [];
 }
@@ -273,8 +282,7 @@ describe("the host's calls, declared on the wire", () => {
     resetCalls();
     // A new process holds no binding; the connection has idle-closed.
     forgetLifecycleBinding(MEMBER_WS, WIRED);
-    const source = sources.get(`${MEMBER_WS}/${WIRED}`) as unknown as { client: unknown };
-    source.client = null;
+    dropConnection(MEMBER_WS, WIRED);
     await notifyRemoving(runtime.getLifecycleNotifyDeps(), MEMBER_WS, WIRED);
     expect(ran(MEMBER_WS, WIRED)).toEqual([{ tool: "scope_removing", args: {}, task: false }]);
   });
@@ -284,8 +292,7 @@ describe("withholding wire-declared handlers", () => {
   it("refuses a call when no binding is held and the connection has dropped", async () => {
     resetCalls();
     forgetLifecycleBinding(MEMBER_WS, WIRED);
-    const source = sources.get(`${MEMBER_WS}/${WIRED}`) as unknown as { client: unknown };
-    source.client = null;
+    dropConnection(MEMBER_WS, WIRED);
     const res = await fetch(`${baseUrl}/v1/workspaces/${MEMBER_WS}/tools/call`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -359,18 +366,15 @@ describe("a connector whose binding is unknown", () => {
   it("refuses a call it cannot reconnect for, though the dispatch would reconnect later", async () => {
     resetCalls();
     forgetLifecycleBinding(MEMBER_WS, WIRED);
-    const source = sources.get(`${MEMBER_WS}/${WIRED}`) as unknown as {
-      client: unknown;
-      lastReconnectFailedAt: number | null;
-      downSince: number | null;
-      restartingSourceWait: { waitMs: number; horizonMs: number; retryMs: number };
-    };
-    source.client = null;
+    const source = dropConnection(MEMBER_WS, WIRED);
     // The gate's reconnect is floored by a failure moments ago; the dispatch's
     // restart wait, inside the outage horizon, would reconnect on its own.
-    source.lastReconnectFailedAt = Date.now();
-    source.downSince = Date.now();
-    source.restartingSourceWait = { waitMs: 2000, horizonMs: 60_000, retryMs: 50 };
+    // biome-ignore lint/complexity/useLiteralKeys: lastReconnectFailedAt is private; bracket access is TypeScript's typed path to it
+    source["lastReconnectFailedAt"] = Date.now();
+    // biome-ignore lint/complexity/useLiteralKeys: downSince is private; bracket access is TypeScript's typed path to it
+    source["downSince"] = Date.now();
+    // biome-ignore lint/complexity/useLiteralKeys: restartingSourceWait is private; bracket access is TypeScript's typed path to it
+    source["restartingSourceWait"] = { waitMs: 2000, horizonMs: 60_000, retryMs: 50 };
     const res = await fetch(`${baseUrl}/v1/workspaces/${MEMBER_WS}/tools/call`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

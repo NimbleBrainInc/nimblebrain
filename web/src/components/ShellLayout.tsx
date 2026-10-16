@@ -1,5 +1,6 @@
 import { memo, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { useSidebarClass } from "../brand";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
@@ -59,6 +60,7 @@ export const ShellLayout = memo(function ShellLayout({
 }: ShellLayoutProps) {
   const { state: sidebarState, setDrawerOpen } = useSidebar();
   const isCollapsed = sidebarState === "collapsed";
+  const sidebarClass = useSidebarClass();
   const isHidden = sidebarState === "hidden";
   const wsCtx = useWorkspaceContext();
   const wsSlug = wsCtx.activeWorkspace ? toSlug(wsCtx.activeWorkspace.id) : undefined;
@@ -103,6 +105,7 @@ export const ShellLayout = memo(function ShellLayout({
           className={cn(
             "shrink-0 h-dvh flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-[width] duration-200",
             isCollapsed ? "w-16" : "w-60",
+            sidebarClass,
           )}
         >
           <SidebarBody collapsed={isCollapsed} onLogout={onLogout} />
@@ -258,7 +261,7 @@ function MobileNavItem({
       className={({ isActive }) =>
         `flex items-center gap-3 px-3 py-2.5 mx-2 rounded-sm text-sm transition-colors ${
           isActive
-            ? "bg-sidebar-foreground/10 font-medium text-foreground"
+            ? "bg-sidebar-active font-medium text-sidebar-active-foreground"
             : "font-normal hover:bg-sidebar-foreground/5"
         }`
       }

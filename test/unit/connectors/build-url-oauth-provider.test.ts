@@ -2,10 +2,20 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ConnectorCatalog } from "../../../src/connectors/catalog/catalog.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../../src/connectors/providers/config.ts";
+import {
+  _resetInstanceOAuthClientsForTest,
+  bindInstanceOAuthClients,
+} from "../../../src/connectors/runtime/instance-oauth-clients.ts";
 import { buildUrlOAuthProvider } from "../../../src/connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
 import { mcpOAuthKey } from "../../../src/tools/mcp-oauth-records.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
+import { CONNECTOR_FIXTURE_DIR } from "../../helpers/connector-fixtures.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -21,6 +31,8 @@ import {
 
 afterEach(() => {
   resetTestCredentialStore();
+  _resetConnectorsConfigForTest();
+  _resetInstanceOAuthClientsForTest();
 });
 
 const noop = (): void => {};
@@ -82,5 +94,38 @@ describe("buildUrlOAuthProvider — owner dimension", () => {
       noop,
     );
     expect(provider?.getOwner()).toEqual({ type: "user", userId: "usr_alice" });
+  });
+});
+
+describe("buildUrlOAuthProvider — personal connector with an instance OAuth client", () => {
+  // `auth: static` in the connector fixture.
+  const DROPBOX_ID = "com.dropbox/mcp";
+  const DROPBOX_URL = "https://mcp.dropbox.com/mcp";
+
+  it("uses the operator's pre-registered client and keeps the provider user-owned", async () => {
+    setConnectorsConfig({
+      oauthClients: { [DROPBOX_ID]: { clientId: "cid", clientSecret: "sec" } },
+    });
+    await bindInstanceOAuthClients(() =>
+      new ConnectorCatalog(CONNECTOR_FIXTURE_DIR).catalogByIdMap(),
+    );
+    const workDir = mkdtempSync(join(tmpdir(), "nb-buop-instance-"));
+    installTestCredentialStore(workDir);
+    const provider = await buildUrlOAuthProvider(
+      urlRef({
+        url: DROPBOX_URL,
+        serverName: "com-dropbox-mcp",
+        oauthClient: { instanceClient: DROPBOX_ID },
+      }),
+      "com-dropbox-mcp",
+      undefined,
+      { identityOwner: { userId: "usr_alice", workDir } },
+      noop,
+    );
+    expect(provider?.getOwner()).toEqual({ type: "user", userId: "usr_alice" });
+    expect(await provider?.clientInformation()).toMatchObject({
+      client_id: "cid",
+      client_secret: "sec",
+    });
   });
 });

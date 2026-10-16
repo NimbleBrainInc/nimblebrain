@@ -22,7 +22,10 @@ import { createConversationsSource } from "../../../../src/platform/conversation
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
 import { conversationEventLines } from "../../../helpers/conversation-events.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 const OWNER_ID = "usr_test";
 const WS_ID = "ws_005e2c642b8af5fe";
@@ -61,19 +64,21 @@ function writeConv(id: string, firstMessage: string): void {
 }
 
 function makeRuntime(): Runtime {
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: () => OWNER_ID,
-    getWorkspaceStore: () => ({ getWorkspacesDir: () => join(workDir, "workspaces") }),
-    onConversationsChanged: () => {},
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({ getWorkspacesDir: () => join(workDir, "workspaces") }),
+    onConversationsChanged: () => () => {},
     isTurnActive: () => false,
     announceIdentitySourceChange: () => {},
-  } as unknown as Runtime;
+  });
 }
 
 function exec(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
-  return runWithRequestContext({ identity: { id: OWNER_ID } as never, workspaceId: WS_ID }, () =>
-    source.execute(tool, args),
+  return runWithRequestContext(
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID },
+    () => source.execute(tool, args),
   );
 }
 
@@ -88,6 +93,9 @@ beforeEach(async () => {
   writeConv("conv_long", LONG_MESSAGE);
   source = await createConversationsSource(makeRuntime(), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {

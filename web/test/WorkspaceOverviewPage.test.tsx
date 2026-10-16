@@ -23,10 +23,10 @@
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
-import type { PlacementEntry } from "../src/types";
+import type { ChatRequest, PlacementEntry } from "../src/types";
 import { realClient } from "./setup";
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 // Stub only `callTool` so the briefing fetch hangs in its skeleton (its own
 // async timeline — not what this file tests). Spread the preload's real-module
@@ -42,13 +42,13 @@ type CallTool = (server: string, tool: string) => Promise<unknown>;
 let callToolImpl: CallTool = () => new Promise(() => {});
 // The composer's send reaches `startChatTurn`; a test records it here. Unset, the
 // real function runs, so the mock changes nothing for other suites.
-type StartChatTurn = (req: { message: string }) => Promise<unknown>;
+type StartChatTurn = (req: ChatRequest) => Promise<unknown>;
 let startChatTurnImpl: StartChatTurn | null = null;
 mock.module("../src/api/client", () => ({
   ...realClient,
   callTool: (server: string, tool: string) => callToolImpl(server, tool),
-  startChatTurn: (req: { message: string }) =>
-    startChatTurnImpl ? startChatTurnImpl(req) : realClient.startChatTurn(req as never),
+  startChatTurn: (req: ChatRequest) =>
+    startChatTurnImpl ? startChatTurnImpl(req) : realClient.startChatTurn(req),
 }));
 
 const ReactDOMClient = await import("react-dom/client");
@@ -234,7 +234,12 @@ describe("WorkspaceOverviewPage — actions", () => {
   test("an org admin outside the membership role may still invite", async () => {
     const member: WorkspaceInfo = { ...SOLO, userRole: "member" };
     mounted = await mount(
-      <SessionProvider session={{ authenticated: true, user: { id: "u1", email: "a@b.c", displayName: "A", orgRole: "admin" } }}>
+      <SessionProvider
+        session={{
+          authenticated: true,
+          user: { id: "u1", email: "a@b.c", displayName: "A", orgRole: "admin" },
+        }}
+      >
         {harness(member.id, [], member)}
       </SessionProvider>,
     );
@@ -248,8 +253,18 @@ describe("WorkspaceOverviewPage — actions", () => {
             isError: false,
             structuredContent: {
               conversations: [
-                { id: "conv_1", title: "Q3 pipeline", preview: "", updatedAt: new Date().toISOString() },
-                { id: "conv_2", title: null, preview: "draft the memo", updatedAt: new Date().toISOString() },
+                {
+                  id: "conv_1",
+                  title: "Q3 pipeline",
+                  preview: "",
+                  updatedAt: new Date().toISOString(),
+                },
+                {
+                  id: "conv_2",
+                  title: null,
+                  preview: "draft the memo",
+                  updatedAt: new Date().toISOString(),
+                },
               ],
             },
           })
@@ -324,15 +339,20 @@ describe("WorkspaceOverviewPage — actions", () => {
       </MemoryRouter>,
     );
     expect(panelState).toBe("closed");
-    const input = findByTestId(mounted.container, "workspace-overview-ask-input") as HTMLInputElement;
+    const input = findByTestId(
+      mounted.container,
+      "workspace-overview-ask-input",
+    ) as HTMLInputElement;
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+    const WindowEvent = window.Event;
     await act(async () => {
       setValue?.call(input, "  what changed this week?  ");
       input.dispatchEvent(new WindowEvent("input", { bubbles: true }));
     });
     await act(async () => {
-      (findByTestId(mounted?.container as HTMLElement, "workspace-overview-ask") as HTMLFormElement).requestSubmit();
+      (
+        findByTestId(mounted?.container as HTMLElement, "workspace-overview-ask") as HTMLFormElement
+      ).requestSubmit();
     });
 
     expect(sent).toEqual(["what changed this week?"]);
@@ -399,7 +419,10 @@ describe("WorkspaceOverviewPage — briefing", () => {
         : new Promise(() => {});
     mounted = await mount(
       <WorkspaceAppIconsContext.Provider
-        value={{ iconFor: () => undefined, connectors: { workspaceId: "ws_005820c54ca342ad", installed: [] } }}
+        value={{
+          iconFor: () => undefined,
+          connectors: { workspaceId: "ws_005820c54ca342ad", installed: [] },
+        }}
       >
         <MemoryRouter initialEntries={[`/w/${toSlug(WS.id)}`]}>
           <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>

@@ -174,11 +174,15 @@ function skillPath(uri: string): string {
  * are dropped.
  *
  * With nothing declared, the skill is bound to the whole server (`<serverName>__*`).
+ * An explicit empty list binds it to no tool: the skill is catalog-only, loaded
+ * when the model asks for it. A list whose every entry is blank is malformed and
+ * reads as nothing declared.
  */
 export function connectorToolAffinity(
   serverName: string,
   declared: readonly string[] | undefined,
 ): string[] {
+  if (declared?.length === 0) return [];
   const patterns = (declared ?? [])
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
@@ -257,13 +261,26 @@ function readDeclaredLoading(data: Record<string, unknown>): {
   const strategy = block["loading-strategy"];
   const priority = block.priority;
   const triggers = nonBlankStrings(block.triggers);
-  const toolAffinity = nonBlankStrings(block["tool-affinity"]);
+  const toolAffinity = declaredToolAffinity(block["tool-affinity"]);
   return {
     ...(strategy === "always" || strategy === "dynamic" ? { loadingStrategy: strategy } : {}),
     ...(typeof priority === "number" && priority >= 0 && priority <= 100 ? { priority } : {}),
     ...(triggers.length > 0 ? { triggers } : {}),
-    ...(toolAffinity.length > 0 ? { toolAffinity } : {}),
+    ...(toolAffinity ? { toolAffinity } : {}),
   };
+}
+
+/**
+ * A declared `tool-affinity`: its non-blank entries, an empty list when the
+ * server declared `[]` (bound to no tool), or `undefined` when it declared
+ * nothing usable (absent, not a list, or only blank entries), so the
+ * whole-server default applies.
+ */
+function declaredToolAffinity(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (value.length === 0) return [];
+  const entries = nonBlankStrings(value);
+  return entries.length > 0 ? entries : undefined;
 }
 
 /** The non-blank strings of `value` when it is an array, else none. */

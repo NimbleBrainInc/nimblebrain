@@ -17,6 +17,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import type { ConnectorLifecycleManager } from "../../../../src/connectors/runtime/lifecycle.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
 import { parseNotificationEnvelope } from "../../../../src/notifications/envelope.ts";
 import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
@@ -33,6 +34,8 @@ import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const OWNER_ID = "usr_test";
@@ -72,16 +75,16 @@ function seed(wsId: string, source_: string, eventId: string, extra: Record<stri
  * `notifications/routes.test.ts`.
  */
 function makeRuntime(): Runtime {
-  return {
+  return stub<Runtime>({
     getNotificationStore: (wsId: string) => storeFor(wsId),
     getWorkspaceStore: () => new WorkspaceStore(workDir),
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: (identity?: { id: string }) => identity?.id ?? OWNER_ID,
     dispatchUnattended: async () => ({ outcome: "ok" }),
-    getLifecycle: () => ({ getInstances: () => [] }),
+    getLifecycle: () => stub<ConnectorLifecycleManager>({ getInstances: () => [] }),
     getNotificationsDeclaration: async () => undefined,
     getNotificationsPollConfig: () => resolvePollConfig(),
-  } as unknown as Runtime;
+  });
 }
 
 /** Run a notifications tool with `wsId` as the request's bound workspace. */
@@ -91,7 +94,7 @@ function exec(
   wsId: string | undefined,
 ): Promise<ToolResult> {
   return runWithRequestContext(
-    { identity: { id: OWNER_ID } as never, ...(wsId ? { workspaceId: wsId } : {}) },
+    { identity: makeIdentity({ id: OWNER_ID }), ...(wsId ? { workspaceId: wsId } : {}) },
     () => source.execute(tool, args),
   );
 }
@@ -108,6 +111,9 @@ beforeEach(async () => {
   seedWorkspaceRoot(workDir, WS_B);
   source = createNotificationsSource(makeRuntime(), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {
@@ -172,6 +178,53 @@ describe("list", () => {
       link: { resource: "acme://campaigns/1" },
       data: { workspace: WS_A },
     });
+  });
+
+  test("an item with a clamped level, delivery records, and read state passes its output schema", async () => {
+    const envelope = parseNotificationEnvelope({
+      eventId: "a1",
+      name: "domain.active",
+      timestamp: "2026-09-01T18:42:10Z",
+      data: { workspace: WS_A },
+      _meta: { "ai.nimblebrain/notification": { level: "attention", title: "Active" } },
+    });
+    if (!envelope) throw new Error("fixture did not parse");
+    const store = storeFor(WS_A);
+    store.append("acme", envelope, "info");
+    const ref = { source: "acme", eventId: "a1" };
+    store.recordDeliveries(ref, [
+      {
+        routeId: "rt_1",
+        target: "slack__post",
+        index: 0,
+        kind: "tool",
+        attempts: 3,
+        lastError: "timeout",
+        outcome: "pending",
+        classification: "timeout",
+        updatedAt: "2026-09-01T18:43:00Z",
+        nextAttemptAt: "2026-09-01T18:48:00Z",
+      },
+      {
+        routeId: "rt_1",
+        target: "digest",
+        index: 1,
+        kind: "agent",
+        attempts: 1,
+        outcome: "delivered",
+        updatedAt: "2026-09-01T18:43:00Z",
+        runId: "run_1",
+      },
+    ]);
+    store.markRead([ref], OWNER_ID);
+
+    // The client validates the result against `list`'s output schema; a
+    // mismatch comes back as an error result.
+    const result = await exec("list", {}, WS_A);
+    expect(result.isError).toBeFalsy();
+    const [item] = payload<NotificationsListOutput>(result).notifications;
+    expect(item).toMatchObject({ level: "attention", effectiveLevel: "info", readBy: OWNER_ID });
+    expect(item?.deliveries?.map((d) => d.outcome)).toEqual(["pending", "delivered"]);
   });
 
   test("a `since` that is not an instant is refused, not read as no filter", async () => {

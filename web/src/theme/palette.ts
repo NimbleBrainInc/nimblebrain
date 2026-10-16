@@ -54,7 +54,7 @@ export const colors = {
   popover: ["#ffffff", "#0e0e10"],
   "popover-foreground": ["#09090b", "#fafafa"],
   // NimbleBrain Blue. The single accent: every primary action, focus ring, and
-  // live state. There is no second accent hue; status colours are the only
+  // live state. There is no second accent hue; status colors are the only
   // other hues in the interface.
   primary: ["#315EDB", "#6a8fe4"],
   "primary-foreground": ["#ffffff", "#000000"],
@@ -69,7 +69,7 @@ export const colors = {
   // Translucent 10% tints of `foreground` and `destructive`, used as the chat
   // bubble fill and the failed-tool-call ground. They are alpha values rather
   // than `color-mix(… 10%, transparent)` because Tailwind emits every
-  // `color-mix()` in a colour property as a pair: the real value behind an
+  // `color-mix()` in a color property as a pair: the real value behind an
   // `@supports` test, and an unguarded FIRST OPERAND for browsers that fail it
   // — dropping both the percentage and the transparency. That fallback is
   // emitted after any fallback we declare ourselves, so it cannot be
@@ -104,7 +104,7 @@ export const colors = {
   // Categorical chart series, in assignment order. A chart that splits a value
   // by a dimension (usage cost by model, workspace, user) paints its series
   // 1..N from these and the remainder in `muted-foreground`; a legend names
-  // every series, so colour never carries the distinction alone. Each clears
+  // every series, so color never carries the distinction alone. Each clears
   // 4.5:1 against `card` in both modes, and they stay perceptually distinct
   // from each other — `contrast.test.ts` asserts both.
   "chart-1": ["#2f5fd0", "#6f93e8"],
@@ -116,6 +116,11 @@ export const colors = {
   "sidebar-foreground": ["#5c5c66", "#9b9ba4"],
   "sidebar-border": ["#e4e4e7", "#232326"],
   "sidebar-hover": ["#f4f4f5", "#0e0e10"],
+  // The active sidebar row: `sidebar-foreground` at 10% over `sidebar`, the
+  // look of a selected row, as an opaque token so a brand can fill the row
+  // with its highlight color.
+  "sidebar-active": ["#eaeaeb", "#171719"],
+  "sidebar-active-foreground": ["#09090b", "#fafafa"],
   // The tooltip pill (`components/ui/tooltip.tsx`): a dark chip in both modes,
   // lifted off the black ground in dark mode so it still reads as a surface.
   tooltip: ["#18181b", "#2e2e33"],

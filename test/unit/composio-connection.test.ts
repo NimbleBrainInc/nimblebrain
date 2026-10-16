@@ -57,7 +57,7 @@ describe("connectorSlug", () => {
 
   test("rejects empty / non-string input", () => {
     expect(() => connectorSlug("")).toThrow();
-    expect(() => connectorSlug(undefined as unknown as string)).toThrow();
+    expect(() => connectorSlug(undefined)).toThrow();
   });
 });
 

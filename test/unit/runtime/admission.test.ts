@@ -6,9 +6,12 @@ import {
   createRunAdmission,
   RunAdmissionRefusedError,
 } from "../../../src/runtime/admission.ts";
+import type { RequestContext } from "../../../src/runtime/request-context.ts";
 import type { RunSpec } from "../../../src/runtime/run-spec.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import type { TaskRequest } from "../../../src/runtime/types.ts";
+import type { RuntimeConfig, TaskRequest } from "../../../src/runtime/types.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
+import { stub } from "../../helpers/stub.ts";
 
 /** A waiter that records how its run left the queue. */
 function recorder(log: string[], name: string) {
@@ -345,14 +348,11 @@ describe("Runtime.executeTask — admission at the door", () => {
     const rt = Object.create(Runtime.prototype) as Runtime;
     const gates: Array<PromiseWithResolvers<void>> = [];
     const specs: RunSpec[] = [];
-    const fields = rt as unknown as {
-      config: { tasks: { maxConcurrentRuns: number } };
-      resolveRequestModelString: (m?: string) => string;
-      startRun: (spec: RunSpec) => Promise<unknown>;
-    };
-    fields.config = { tasks: { maxConcurrentRuns } };
-    fields.resolveRequestModelString = () => "test:model";
-    fields.startRun = async (spec) => {
+    // biome-ignore-start lint/complexity/useLiteralKeys: config and resolveRequestModelString are private; bracket access is TypeScript's typed path to them
+    rt["config"] = stub<RuntimeConfig>({ tasks: { maxConcurrentRuns } });
+    rt["resolveRequestModelString"] = () => "test:model";
+    // biome-ignore-end lint/complexity/useLiteralKeys: config and resolveRequestModelString are private; bracket access is TypeScript's typed path to them
+    rt.startRun = async (spec) => {
       specs.push(spec);
       const gate = Promise.withResolvers<void>();
       gates.push(gate);
@@ -360,11 +360,14 @@ describe("Runtime.executeTask — admission at the door", () => {
       return {
         runId: `run_${specs.length}`,
         conversationId: null,
+        context: stub<RequestContext>({}),
         output: "done",
         skillName: null,
         toolCalls: [],
         stopReason: "complete",
-        usage: { inputTokens: 0, outputTokens: 0, iterations: 1 },
+        usage: { inputTokens: 0, outputTokens: 0, model: "test:model", llmMs: 0, iterations: 1 },
+        costUsd: 0,
+        skillsDelivered: [],
       };
     };
     return { runtime: rt, gates, specs };
@@ -372,7 +375,7 @@ describe("Runtime.executeTask — admission at the door", () => {
 
   const task = (prompt: string): TaskRequest => ({
     prompt,
-    identity: { id: "user-a" } as TaskRequest["identity"],
+    identity: makeIdentity({ id: "user-a" }),
     workspaceId: "ws-a",
   });
 
@@ -398,7 +401,7 @@ describe("Runtime.executeTask — admission at the door", () => {
 
   it("releases its slot when the run throws", async () => {
     const { runtime } = doorRuntime(1);
-    (runtime as unknown as { startRun: () => Promise<never> }).startRun = async () => {
+    runtime.startRun = async () => {
       throw new Error("engine failed");
     };
     await expect(runtime.executeTask(task("x"))).rejects.toThrow("engine failed");

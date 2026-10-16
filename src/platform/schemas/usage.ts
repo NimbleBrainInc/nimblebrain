@@ -1,4 +1,4 @@
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, type TOptional, type TSchema, Type } from "@sinclair/typebox";
 import { StringEnum } from "./_shared.ts";
 
 /**
@@ -105,92 +105,129 @@ export type UsageGroupBy = (typeof USAGE_GROUP_BYS)[number];
 export type UsageStackBy = (typeof USAGE_STACK_BYS)[number];
 export type UsageOrigin = (typeof USAGE_ORIGINS)[number];
 
-// ── Output types (§2.1) ────────────────────────────────────────────────
+// ── Output schemas (§2.1) ──────────────────────────────────────────────
 //
-// The handler's structuredContent IS the contract. These mirror the
-// `UsageReport` shape produced by `src/usage/aggregate.ts`;
-// keep them in lockstep with that module. Type-only (we don't wire-validate
-// outputs) — the named export is what every consumer (web shell, CLI,
-// tests) imports so a rename surfaces as a compile error rather than a
-// silent UI break.
+// What `usage__report` returns: the `UsageReport` the aggregator
+// (`src/usage/aggregate.ts`) produces, with the resolved `scope`. The SDK
+// client checks each success against `UsageReportOutput`, so the two stay in
+// lockstep or the call fails. Every field is derived by the aggregator rather
+// than copied from a ledger line, from the fields every line carries (`ts`,
+// `origin`, `model`, the two token totals, `llmMs`; see `UsageLedgerEntry`),
+// so the shape does not vary with the age of the lines it reads. A breakdown
+// `key` is a free string: a day, a model, an id, or `"none"` / `"unknown"` for
+// an absent one.
 
-export interface UsageTokenBreakdown {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
+const Count = (description?: string) =>
+  Type.Integer({ minimum: 0, ...(description ? { description } : {}) });
+
+const CacheHitRate = Type.Number({
+  description: "Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator.",
+});
+
+export const UsageTokenBreakdown = Type.Object({
+  /** Non-cached input tokens. */
+  input: Type.Number(),
+  output: Type.Number(),
+  cacheRead: Type.Number(),
+  cacheWrite: Type.Number(),
+});
+export type UsageTokenBreakdown = Static<typeof UsageTokenBreakdown>;
+
+/** Cost in USD per token bucket, and their sum. */
+export const UsageCostBreakdown = Type.Object({
+  input: Type.Number(),
+  output: Type.Number(),
+  cacheRead: Type.Number(),
+  cacheWrite: Type.Number(),
+  total: Type.Number(),
+});
+export type UsageCostBreakdown = Static<typeof UsageCostBreakdown>;
+
+export const UsageModelEntry = Type.Object({
+  /** The model string with its provider prefix and date suffix stripped. */
+  model: Type.String(),
+  tokens: UsageTokenBreakdown,
+  cost: UsageCostBreakdown,
+  llmCalls: Count(),
+  cacheHitRate: Type.Optional(CacheHitRate),
+});
+export type UsageModelEntry = Static<typeof UsageModelEntry>;
+
+export const UsageBreakdownEntry = Type.Object({
+  key: Type.String(),
+  tokens: UsageTokenBreakdown,
+  cost: UsageCostBreakdown,
+  llmCalls: Count(),
+  conversations: Count(
+    "Distinct chat conversations. Task runs are counted by `runs`, as in `totals`.",
+  ),
+  runs: Type.Optional(Count("Distinct task runs in this bucket. Present only when non-zero.")),
+  unpricedCalls: Type.Optional(
+    Count("Calls with no resolvable price. Present only when non-zero. See `totals`."),
+  ),
+  cacheHitRate: Type.Optional(CacheHitRate),
+  stack: Type.Optional(
+    Type.Record(Type.String(), Type.Number(), {
+      description:
+        "Cost total (USD) per key of the requested `stackBy` dimension. On `day` rows only, " +
+        "only when `stackBy` was set, and only keys with spend that day.",
+    }),
+  ),
+});
+export type UsageBreakdownEntry = Static<typeof UsageBreakdownEntry>;
+
+/** How many rows a capped breakdown returned, of how many exist. */
+const UsageBreakdownTruncation = Type.Object({
+  returned: Count(),
+  total: Count(),
+});
+
+// One optional property per dimension. A `Type.Record` keyed by a `StringEnum`
+// compiles to `{ not: {} }`, so the keys are spelled out instead.
+function ByGroupBy<T extends TSchema>(value: T, options: { description?: string } = {}) {
+  return Type.Object(
+    Object.fromEntries(
+      USAGE_GROUP_BYS.map((k) => [k, Type.Optional(value) as TOptional<T>]),
+    ) as Record<UsageGroupBy, TOptional<T>>,
+    options,
+  );
 }
 
-export interface UsageCostBreakdown {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  total: number;
-}
-
-export interface UsageModelEntry {
-  model: string;
-  tokens: UsageTokenBreakdown;
-  cost: UsageCostBreakdown;
-  llmCalls: number;
-  /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
-  cacheHitRate?: number;
-}
-
-export interface UsageBreakdownEntry {
-  key: string;
-  tokens: UsageTokenBreakdown;
-  cost: UsageCostBreakdown;
-  llmCalls: number;
-  /** Distinct chat conversations. Task runs are counted by `runs`, as in `totals`. */
-  conversations: number;
-  /** Distinct task runs in this bucket. Present only when non-zero. */
-  runs?: number;
-  /** Calls with no resolvable price. Present only when non-zero. See `totals`. */
-  unpricedCalls?: number;
-  /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
-  cacheHitRate?: number;
-  /**
-   * Cost total (USD) per key of the requested `stackBy` dimension. On `day`
-   * rows only, only when `stackBy` was set, and only keys with spend that day.
-   */
-  stack?: Record<string, number>;
-}
-
-export interface UsageReportOutput {
-  /** Echoes the resolved scope so consumers know whether this is a self or org view. */
-  scope: "user" | "org";
-  period: { from: string; to: string };
-  totals: {
-    tokens: UsageTokenBreakdown;
-    cost: UsageCostBreakdown;
-    llmCalls: number;
-    llmMs: number;
-    /** Distinct chat conversations. Task runs are counted by `runs`. */
-    conversations: number;
-    /** Distinct task runs — tasks, which have no conversation to count. */
-    runs?: number;
-    /**
-     * Calls no price could be found for. Present only when non-zero.
-     *
-     * Their tokens are in the totals and their cost is not, so this says the
-     * dollar figure is incomplete — as distinct from a spend of zero, which a
-     * bare `$0.00` beside a large token count would otherwise imply.
-     */
-    unpricedCalls?: number;
-    /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
-    cacheHitRate?: number;
-  };
-  models: UsageModelEntry[];
-  breakdown: UsageBreakdownEntry[];
-  breakdowns: Partial<Record<UsageGroupBy, UsageBreakdownEntry[]>>;
-  /**
-   * Dimensions whose breakdown was capped at the costliest rows, with how many
-   * rows exist in full. Absent when every breakdown is complete — so its
-   * presence is the signal that a row list is a top-N view and must not be
-   * read as the whole set. `totals` is unaffected: it counts every record,
-   * capped rows included, so no spend is missing from the report.
-   */
-  truncatedBreakdowns?: Partial<Record<UsageGroupBy, { returned: number; total: number }>>;
-}
+export const UsageReportOutput = Type.Object({
+  scope: StringEnum(["user", "org"] as const, {
+    description: "Echoes the resolved scope, so a consumer knows a self view from an org view.",
+  }),
+  period: Type.Object({ from: Type.String(), to: Type.String() }),
+  totals: Type.Object({
+    tokens: UsageTokenBreakdown,
+    cost: UsageCostBreakdown,
+    llmCalls: Count(),
+    llmMs: Type.Number(),
+    conversations: Count("Distinct chat conversations. Task runs are counted by `runs`."),
+    runs: Type.Optional(Count("Distinct task runs, which have no conversation to count.")),
+    unpricedCalls: Type.Optional(
+      Count(
+        "Calls no price could be found for. Present only when non-zero. Their tokens are in " +
+          "the totals and their cost is not, so this says the dollar figure is incomplete " +
+          "rather than the spend being zero.",
+      ),
+    ),
+    cacheHitRate: Type.Optional(CacheHitRate),
+  }),
+  models: Type.Array(UsageModelEntry),
+  breakdown: Type.Array(UsageBreakdownEntry, {
+    description: "The rows of the first requested `groupBy` dimension.",
+  }),
+  breakdowns: ByGroupBy(Type.Array(UsageBreakdownEntry), {
+    description: "The rows of every requested `groupBy` dimension, by dimension.",
+  }),
+  truncatedBreakdowns: Type.Optional(
+    ByGroupBy(UsageBreakdownTruncation, {
+      description:
+        "Dimensions whose breakdown was capped at the costliest rows, with how many rows " +
+        "exist in full. Absent when every breakdown is complete, so its presence says a row " +
+        "list is a top-N view. `totals` counts every record, capped rows included.",
+    }),
+  ),
+});
+export type UsageReportOutput = Static<typeof UsageReportOutput>;

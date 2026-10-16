@@ -33,7 +33,7 @@ const WIRE_NAME_ALPHABET = /^[a-zA-Z0-9_-]+$/;
 const CANONICAL_SERVER_NAMES = [
   "ai.example/web-mcp",
   "ai.example/people-mcp",
-  "ai.example/precision-outbound-mcp",
+  "ai.example/acme-outbound-mcp",
   "com.acme.crm/mcp",
   "dev.mpak.exampleinc/echo",
 ];
@@ -44,12 +44,11 @@ describe("wire tool-name shape", () => {
   test("a source segment round-trips through the first-`__` split", () => {
     // THE dispatch invariant: splitting `<source>__<tool>` on the FIRST `__`
     // must recover the source. That requires a source to contain no `__`. It
-    // does NOT require a source to contain no `_` — `precision_outbound` is a
-    // live source name carrying one, and `precision_outbound__create_campaign`
-    // splits correctly.
+    // does NOT require a source to contain no `_` — a source name may carry
+    // one, and `acme_outbound__create_campaign` splits correctly.
     const sources = [
       ...CANONICAL_SERVER_NAMES.map(slugifyServerName),
-      "precision_outbound",
+      "acme_outbound",
       "ai-bassethound-mcp",
     ];
 

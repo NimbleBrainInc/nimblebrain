@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, type Mock, mock, spyOn } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +39,7 @@ import {
   runWithRequestContext,
 } from "../../../../src/runtime/request-context.ts";
 import { createSpendBalances } from "../../../../src/runtime/spend.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
 import { createMockModel } from "../../../helpers/mock-model.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
@@ -133,10 +134,8 @@ function makeFailureRun(taskId: string, error = "Something broke"): TaskRun {
   };
 }
 
-function createMockExecutor(result?: TaskRun): Executor {
-  return mock(async (auto: Task, _signal: AbortSignal) => {
-    return execOk(result ?? makeSuccessRun(auto.id));
-  }) as Executor;
+function createMockExecutor(result?: TaskRun): Mock<Executor> {
+  return mock<Executor>(async (auto) => execOk(result ?? makeSuccessRun(auto.id)));
 }
 
 /** Executor that throws — exercises `dispatchRun`'s catch/classification path. */
@@ -438,7 +437,7 @@ describe("Scheduler — timer arming", () => {
 
     try {
       scheduler.start();
-      runWithRequestContext({ identity: { id: "usr_caller" } as never, workspaceId: WS }, () =>
+      runWithRequestContext({ identity: makeIdentity({ id: "usr_caller" }), workspaceId: WS }, () =>
         scheduler.reload(),
       );
       expect(armedIn.length).toBeGreaterThanOrEqual(2);
@@ -1003,6 +1002,33 @@ describe("Scheduler — backoff", () => {
 
     expect(run?.status).toBe("failure");
     expect(run?.error).toContain("crm__search");
+    expect(run?.transient).toBe(false);
+    expect(defOf(scheduler, auto.id)!.consecutiveErrors).toBe(4);
+  });
+
+  it("records a run refused for unavailable declared skills as a failure", async () => {
+    // Unlike a revoked membership, a missing connector is the task's own
+    // problem to surface: it counts toward the streak, so a connector that
+    // stays gone backs the task off and disables it.
+    const auto = makeTask({
+      consecutiveErrors: 3,
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    const defs = new Map<string, Task>();
+    defs.set(auto.id, auto);
+    seedDefs(tmpDir, defs);
+
+    const refused = Object.assign(
+      new Error("Declared skill unavailable: crm-playbook. The run did not start."),
+      { code: "declared_skills_unavailable" },
+    );
+    const scheduler = new Scheduler(createThrowingExecutor(refused), { workDir: tmpDir });
+    scheduler.start();
+    const run = await scheduler.runNow(WS, OWNER, auto.id);
+    scheduler.stop();
+
+    expect(run?.status).toBe("failure");
+    expect(run?.error).toContain("crm-playbook");
     expect(run?.transient).toBe(false);
     expect(defOf(scheduler, auto.id)!.consecutiveErrors).toBe(4);
   });
@@ -2306,7 +2332,7 @@ describe("Scheduler — event schedules", () => {
       id: "reply-triage",
       schedule: {
         type: "event",
-        match: { source: "precision-outbound", name: "reply.*" },
+        match: { source: "acme-outbound", name: "reply.*" },
       },
       ...overrides,
     });
@@ -2355,8 +2381,7 @@ describe("Scheduler — event schedules", () => {
 
     expect("run" in outcome).toBe(true);
     expect(executor).toHaveBeenCalledTimes(1);
-    const [, , trigger, input] = (executor as unknown as { mock: { calls: unknown[][] } }).mock
-      .calls[0]!;
+    const [, , trigger, input] = executor.mock.calls[0]!;
     expect(trigger).toBe("event");
     expect(input).toEqual({ preamble: "<event>…</event>" });
     scheduler.stop();

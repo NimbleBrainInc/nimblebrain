@@ -22,8 +22,10 @@
 //     relay in hooks/useServerNotificationRelay.ts
 //
 // NimbleBrain extensions (ai.nimblebrain/ namespace — no spec equivalent):
-//   ai.nimblebrain/action, ai.nimblebrain/keydown, ai.nimblebrain/request-file,
-//   ai.nimblebrain/location (in) and ai.nimblebrain/navigate (out)
+//   ai.nimblebrain/open, ai.nimblebrain/open-connector-settings,
+//   ai.nimblebrain/notify, ai.nimblebrain/keydown, ai.nimblebrain/request-file,
+//   ai.nimblebrain/upload-files, ai.nimblebrain/location (in) and
+//   ai.nimblebrain/navigate (out)
 //   Each is served only because it is declared: see host-capabilities.ts.
 // ---------------------------------------------------------------------------
 
@@ -39,19 +41,24 @@ import {
 import type { FileEntry } from "../types";
 import { openAppChannel } from "./app-channel";
 import {
-  ACTION_METHOD,
   HOST_STYLES_EXTENSION,
   KEYDOWN_METHOD,
   LOCATION_METHOD,
   NAVIGATE_METHOD,
   NOTIFY_METHOD,
+  OPEN_CONNECTOR_SETTINGS_METHOD,
+  OPEN_METHOD,
   REQUEST_FILE_METHOD,
   UPLOAD_FILES_APPS,
   UPLOAD_FILES_METHOD,
 } from "./extensions";
 import { buildHostCapabilities, TASKS_EXTENSION_ID } from "./host-capabilities";
 import { buildHostStyles, type UploadLimits } from "./host-extensions";
-import type { LoggingMessageNotification } from "./schemas";
+import type {
+  LoggingMessageNotification,
+  UiOpenConnectorSettingsMessage,
+  UiOpenMessage,
+} from "./schemas";
 import { getHostThemeMode, getModeExtensionTokens, getSpecThemeTokens } from "./theme";
 import type {
   AppNotice,
@@ -64,7 +71,6 @@ import type {
   ResourcesReadMessage,
   SynapseRequestFileMessage,
   SynapseUploadFilesMessage,
-  UiActionMessage,
   UiMessageMessage,
   UiToolResultError,
   UiToolResultResponse,
@@ -365,10 +371,12 @@ export function createBridge(
         break;
 
       // -----------------------------------------------------------------
-      // Extension: ai.nimblebrain/action — semantic host actions
+      // Extension: ai.nimblebrain/open (what a URI names) and
+      // ai.nimblebrain/open-connector-settings (the sender's own)
       // -----------------------------------------------------------------
-      case ACTION_METHOD:
-        handleSynapseAction(msg.params, callbacks, appName);
+      case OPEN_METHOD:
+      case OPEN_CONNECTOR_SETTINGS_METHOD:
+        void answerOpen(msg, callbacks, appName, postToIframe);
         break;
 
       // -----------------------------------------------------------------
@@ -975,24 +983,41 @@ function handleUpdateModelContext(
 }
 
 /**
- * Handle an ai.nimblebrain/action: invoke onAction, or dispatch an `nb:action`
- * event when no callback is wired. The shell resolves the action by name.
- *
- * `serverName` is the server whose view sent the action, set here and last so
- * a param of the same name from the app cannot replace it. An action about
- * "this connector" reads it; the app never names itself.
+ * Answer an open request once the shell has acted: `{}` when the destination
+ * is on screen, or an error carrying the shell's reason. Settings are always
+ * the sender's own: the connector is `appName`, never a param. A bridge with no
+ * shell behind it refuses at once rather than leaving the app's request waiting.
  */
-function handleSynapseAction(
-  params: UiActionMessage["params"],
+async function answerOpen(
+  msg: UiOpenMessage | UiOpenConnectorSettingsMessage,
   callbacks: BridgeCallbacks | undefined,
   appName: string,
-): void {
-  const { action, ...rest } = params;
-  const actionParams = { ...rest, serverName: appName };
-  if (callbacks?.onAction) {
-    callbacks.onAction(action, actionParams);
+  postToIframe: (msg: unknown) => void,
+): Promise<void> {
+  const { id } = msg;
+  const onOpen = callbacks?.onOpen;
+  const onOpenSettings = callbacks?.onOpenConnectorSettings;
+  let run: (() => Promise<void>) | undefined;
+  if (msg.method === OPEN_METHOD) {
+    const { uri } = msg.params;
+    run = onOpen && (() => onOpen(uri));
   } else {
-    window.dispatchEvent(new CustomEvent("nb:action", { detail: { action, ...actionParams } }));
+    run = onOpenSettings && (() => onOpenSettings(appName));
+  }
+  if (!run) {
+    postToIframe({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32601, message: "Opening is not served here" },
+    });
+    return;
+  }
+  try {
+    await run();
+    postToIframe({ jsonrpc: "2.0", id, result: {} });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    postToIframe({ jsonrpc: "2.0", id, error: { code: -32602, message } });
   }
 }
 

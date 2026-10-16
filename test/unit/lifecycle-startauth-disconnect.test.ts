@@ -11,11 +11,13 @@ import { log } from "../../src/observability/log.ts";
 import { hasMcpOAuthAuthLost, McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
+import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { stub } from "../helpers/stub.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 /**
@@ -342,28 +344,16 @@ describe("ConnectorLifecycleManager.startAuthBackground — headless / already-a
     const resolveAuthUrl = mock((_url: string | null) => {});
     const rejectAuthUrl = mock((_err: Error) => {});
     let disarmed = false;
-    const provider = {
+    const provider = stub<WorkspaceOAuthProvider>({
       setInteractiveAuthAllowed: (v: boolean) => {
         if (!v) disarmed = true;
       },
-    };
+    });
     // A source that connects cleanly without ever driving an interactive flow.
-    const source = { start: async () => {} };
+    const source = stub<McpSource>({ start: async () => {} });
 
-    (
-      lifecycle as unknown as {
-        startAuthBackground: (a: {
-          source: unknown;
-          provider: unknown;
-          serverName: string;
-          wsId: string;
-          principalId: string;
-          getCapturedAuthUrl: () => string | undefined;
-          resolveAuthUrl: (u: string | null) => void;
-          rejectAuthUrl: (e: Error) => void;
-        }) => void;
-      }
-    ).startAuthBackground({
+    // biome-ignore lint/complexity/useLiteralKeys: `startAuthBackground` is private; bracket access is TypeScript's typed path to it
+    lifecycle["startAuthBackground"]({
       source,
       provider,
       serverName: "minted",

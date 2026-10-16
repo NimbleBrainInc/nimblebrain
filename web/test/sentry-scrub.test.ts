@@ -9,8 +9,8 @@
 // Mirrors the server OTel rule: stamp only tenant_id/workspace_id/opaque user id.
 // ---------------------------------------------------------------------------
 
-import type { Breadcrumb, ErrorEvent } from "@sentry/react";
 import { beforeEach, describe, expect, test } from "bun:test";
+import type { Breadcrumb, ErrorEvent } from "@sentry/react";
 import {
   beforeBreadcrumb,
   beforeSend,
@@ -21,13 +21,14 @@ import {
 
 describe("beforeSend", () => {
   test("strips cookies and headers from the request", () => {
-    const event = {
+    const event: ErrorEvent = {
+      type: undefined,
       request: {
         url: "https://app.example/x",
         cookies: { session: "secret" },
         headers: { authorization: "Bearer abc" },
       },
-    } as unknown as ErrorEvent;
+    };
 
     const out = beforeSend(event);
     expect(out.request?.cookies).toBeUndefined();
@@ -35,14 +36,15 @@ describe("beforeSend", () => {
   });
 
   test("reduces user to the opaque id, dropping email/username/ip", () => {
-    const event = {
+    const event: ErrorEvent = {
+      type: undefined,
       user: {
         id: "user-123",
         email: "person@example.com",
         username: "person",
         ip_address: "1.2.3.4",
       },
-    } as unknown as ErrorEvent;
+    };
 
     const out = beforeSend(event);
     expect(out.user).toEqual({ id: "user-123" });

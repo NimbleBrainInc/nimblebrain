@@ -475,7 +475,7 @@ export class ConnectorLifecycleManager {
       if (!materialized) return [];
 
       log.debug("mcp", `[connector-skills] bound overlay "${identity}" → ${serverName} (${wsId})`);
-      return [{ identity, version: config.version, sha: resolved.sha, path: materialized.path }];
+      return [{ identity, version: config.version, sha: resolved.sha }];
     } catch (err) {
       // Non-fatal: the connector is installed regardless. Surface the reason so
       // an operator can see why an expected overlay didn't bind.
@@ -1352,6 +1352,35 @@ export class ConnectorLifecycleManager {
     };
     logDisconnect(serverName, wsId, false, outcome);
     return outcome;
+  }
+
+  /**
+   * Point an installed connection at a replaced pre-registered OAuth client
+   * (`oauthClient`) and make it sign in again.
+   *
+   * Tokens, the PKCE verifier, and any identity were minted for the previous
+   * client, which the vendor will not accept from the new one, so every OAuth
+   * record goes. Nothing is revoked upstream: revocation authenticates as the
+   * client that minted the tokens, and its secret has already been replaced.
+   * The connection lands in `not_authenticated`, so the next Connect runs
+   * `startAuth` with `ref`'s client.
+   *
+   * The caller persists `ref` to the workspace record; this updates the copy the
+   * live instance reads. No-op when the connector is not installed here.
+   */
+  async replaceOAuthClient(serverName: string, wsId: string, ref: ConnectorRef): Promise<void> {
+    const instance = this.instances.get(`${serverName}|${wsId}`);
+    if (!instance) return;
+    instance.ref = { ...ref };
+    await this.teardownConnectionSource(serverName, wsId);
+    await new McpOAuthRecords({ owner: { type: "workspace", wsId }, serverName }).deleteAll();
+    this.recordConnectionStateChange(
+      serverName,
+      wsId,
+      WORKSPACE_PRINCIPAL_ID,
+      "not_authenticated",
+      { authorizationUrl: undefined },
+    );
   }
 
   /**

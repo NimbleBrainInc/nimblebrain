@@ -188,13 +188,20 @@ function Disclosure({
 function DoesSection({ d }: { d: TaskDetail }) {
   return (
     <Disclosure title="What it does" hint={d.scheduleHuman}>
-      {d.skill && (
+      {d.skills?.length ? (
         <p>
-          Carries out the skill <code>{d.skill}</code>.
+          Carries out {d.skills.length === 1 ? "the skill" : "the skills"}{" "}
+          {d.skills.map((s, i) => (
+            <span key={s}>
+              {i > 0 && ", "}
+              <code>{s}</code>
+            </span>
+          ))}
+          .
         </p>
-      )}
+      ) : null}
       {d.prompt && <p className="prose">{d.prompt}</p>}
-      {!d.prompt && !d.skill && <p className="muted">No prompt.</p>}
+      {!d.prompt && !d.skills?.length && <p className="muted">No prompt.</p>}
       {d.inputSchema && (
         <>
           <h3 className="sub-heading">Input</h3>

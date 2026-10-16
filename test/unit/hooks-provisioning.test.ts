@@ -8,6 +8,9 @@ import { buildHookUrl } from "../../src/hooks/token.ts";
 import type { HookDeclaration, HookRegistration } from "../../src/hooks/types.ts";
 import { connectorPortForSource } from "../../src/tools/connector-surface.ts";
 import type { Tool, ToolResult } from "../../src/tools/types.ts";
+import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { stub } from "../helpers/stub.ts";
+import { makeWorkspace } from "../helpers/test-workspace.ts";
 
 const DECL: HookDeclaration = {
   vendor: "acme",
@@ -205,7 +208,7 @@ describe("connectorPortForSource", () => {
 
 describe("provisionHooks", () => {
   function harness(seed?: Record<string, HookRegistration>) {
-    const ws: { hooks?: Record<string, HookRegistration> } = seed ? { hooks: seed } : {};
+    const ws = makeWorkspace({ id: "ws_005b519ef7efc353", ...(seed ? { hooks: seed } : {}) });
     const handed: Array<Record<string, unknown>> = [];
     return {
       handed,
@@ -213,14 +216,14 @@ describe("provisionHooks", () => {
         return Object.values(ws.hooks ?? {});
       },
       opts: {
-        store: {
+        store: stub<WorkspaceStore>({
           get: async () => ws,
-          update: async (_id: string, patch: { hooks?: Record<string, HookRegistration> }) => {
+          update: async (_id, patch) => {
             ws.hooks = patch.hooks;
             return ws;
           },
-        },
-        wsId: "ws_005b519ef7efc353",
+        }),
+        wsId: ws.id,
         connector: "acme-mcp",
         mcpUrl: "https://acme.internal/mcp",
         declarations: [DECL],
@@ -231,7 +234,7 @@ describe("provisionHooks", () => {
             return { content: [] } as ToolResult;
           },
         },
-      } as unknown as Parameters<typeof provisionHooks>[0],
+      } satisfies Parameters<typeof provisionHooks>[0],
     };
   }
 
@@ -278,12 +281,13 @@ describe("provisionHooks", () => {
     // to the server as though it were a URL. It is plausible enough that a vendor
     // stores it, which is what made the failure silent: every signal reads
     // registered and no delivery can ever be admitted.
-    const legacy = {
+    const legacy: HookRegistration = {
       connector: "acme-mcp",
       vendor: "acme",
       kid: "hk_legacy",
       route: "/ingest/acme",
-    } as unknown as HookRegistration;
+      createdAt: "2025-01-01T00:00:00.000Z",
+    };
     const h = harness({ "acme-mcp/acme": legacy });
 
     await provisionHooks(h.opts);

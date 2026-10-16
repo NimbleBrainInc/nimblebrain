@@ -21,6 +21,7 @@ import type {
 } from "../../src/tools/system-tools.ts";
 import { createSystemTools } from "../../src/tools/system-tools.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
+import { stub } from "../helpers/stub.ts";
 
 const noopSink = new NoopEventSink();
 
@@ -392,7 +393,7 @@ describe("System Tools", () => {
     // getRegistry). The handler resolves its workspace per call, so a bare
     // stand-in is enough to assert registration.
     const systemTools = await createSystemTools(() => registry, {
-      runtime: {} as unknown as Runtime,
+      runtime: stub<Runtime>({}),
     });
     const names = (await systemTools.tools()).map((t) => t.name);
     expect(names).toContain("nb__use_skill");
@@ -631,10 +632,10 @@ describe("status tool — scope: skills", () => {
     // Status reads workspace/user-tier skills through `describeRequestSkills`
     // (the same per-request path `chat` composes with); `context` carries the
     // boot context skills, `layer3` the per-request selection.
-    const runtimeMock = {
+    const runtimeMock = stub<Runtime>({
       requireWorkspaceId: () => "ws_0076759dbbe19fcc",
       describeRequestSkills: async () => ({ context: skills.context, layer3: layer3 ?? [] }),
-    } as unknown as import("../../src/runtime/runtime.ts").Runtime;
+    });
     return await createSystemTools(() => registry, { getSkills, runtime: runtimeMock });
   }
 
@@ -844,9 +845,9 @@ describe("search — scope: catalog", () => {
     const catalogDir = join(workDir, "catalog");
     mkdirSync(catalogDir);
     writeFileSync(join(catalogDir, "catalog.json"), JSON.stringify({ servers }));
-    return {
+    return stub<Runtime>({
       getConnectorCatalog: () => new ConnectorCatalog(catalogDir),
-    } as unknown as Runtime;
+    });
   }
 
   async function search(runtime: Runtime, query: string) {
@@ -913,9 +914,9 @@ describe("search — scope: catalog", () => {
     const unreadable = join(workDir, "unreadable");
     mkdirSync(unreadable);
     chmodSync(unreadable, 0o000);
-    const runtime = {
+    const runtime = stub<Runtime>({
       getConnectorCatalog: () => new ConnectorCatalog(unreadable),
-    } as unknown as Runtime;
+    });
     try {
       const result = await search(runtime, "asana");
       expect(result.isError).toBe(true);

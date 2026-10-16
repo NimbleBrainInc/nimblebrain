@@ -198,9 +198,10 @@ a route mounted after the router authenticates once per such router, and
 depend on mount order in `app.ts`. Per-route middleware scopes it to the route
 by construction.
 
-**Detection.** `bun run check:route-middleware` (wired into `verify:static`)
-flags any `.use(...)` call in a file under `src/` that imports from `hono`,
-except `src/api/app.ts`.
+**Detection.** The Biome plugin `biome-plugins/router-use.grit` (run by
+`bun run lint`) flags any `.use(...)` call in a `.ts` file under `src/` except
+`src/api/app.ts`. `test/integration/route-middleware-scope.test.ts` walks the
+mounted route table.
 
 **Override.** None. The global middleware in `src/api/app.ts` (tracing,
 metrics, CORS, security headers, the cross-site guard) is app-wide by design
@@ -250,42 +251,51 @@ its source.
 
 ### Platform tool handlers return a named output type
 
-A tool handler under `src/platform/` declares a named output type from
-`src/platform/schemas/<app>.ts` as its return type, never `object`. The full
-rule, including the construction-site form for handlers that build their own
-`ToolResult`, is `src/platform/AGENTS.md` §2.1.
+A tool under `src/platform/` is registered with `typedTool`, passing a TypeBox
+`outputSchema` from `src/platform/schemas/<app>.ts`, and its handler returns
+that schema's static type, never `object`. The full rule is
+`src/platform/AGENTS.md` §2.1.
 
 ```ts
 // BAD — every caller gets an untyped result and re-declares its shape.
-async function handleTag(store: FileStore, args: TagInput): Promise<object> {
+async function handleTag(store: FileStore, args: FilesTagInput): Promise<object> {
   return { id: args.id, tags: newTags };
 }
 ```
 
 ```ts
-// GOOD — the named type is the contract every caller imports.
-import type { FilesTagOutput } from "../schemas/files.ts";
+// GOOD — the schema is the contract; the handler returns its static type.
+import { FilesTagInput, FilesTagOutput } from "../schemas/files.ts";
 
-async function handleTag(store: FileStore, args: TagInput): Promise<FilesTagOutput> {
+async function handleTag(store: FileStore, args: FilesTagInput): Promise<FilesTagOutput> {
   return { id: args.id, tags: newTags };
 }
+
+typedTool({
+  name: "tag",
+  description: "Add or remove tags on a file.",
+  inputSchema: FilesTagInput,
+  outputSchema: FilesTagOutput,
+  handler: async (input) => ok(await handleTag(getStore(), input)),
+});
 ```
 
 **Rationale.** A handler's return type is its tool's contract. Declared as
 `object`, it checks nothing: callers and tests cast the result to a shape they
 write themselves, and those casts drift from the handler the first time it
-changes. A named type in `schemas/` is compiled against the handler and, through
-codegen, shared with the web client, so a changed shape fails the build at each
-consumer.
+changes. A named schema in `schemas/` is compiled against the handler,
+published on `tools/list`, and through codegen shared with the web client, so a
+changed shape fails the build at each consumer.
 
-**Detection.** `bun run check:platform-output-types` (wired into
-`verify:static`) flags any function implementation in a `.ts` file under
-`src/platform/`, outside the app UI packages, whose declared return type is
-`object`, `Promise<object>`, or a union with either as a member. A function type
-is not flagged, so a registration signature that accepts a handler
-(`fn: (input) => Promise<object>`) passes.
+**Detection.** `typedTool` fails the typecheck when a success result's
+`structuredContent` is not the output schema's static type, so a helper typed
+`object` cannot feed it while the schema has a required field. (`object` is
+assignable to an all-optional object type, so there the SDK client's runtime
+check is the guard.) `test/unit/platform/schema-shape.test.ts` fails when a
+platform tool publishes no output schema, and the SDK client fails any call
+whose result does not match the published one.
 
-**Override.** None. Declare the output type in `schemas/`; when it mirrors a
+**Override.** None. Declare the output schema in `schemas/`; when it mirrors a
 domain type the schemas tree cannot import, hold the two together with a
 drift guard (`src/platform/files/output-types-drift-guard.ts`).
 
@@ -366,6 +376,10 @@ typedTool({
   handler: async ({ taskId }) => ok(await deleteTask(taskId)),
 });
 
+// GOOD — a test double through `stub<T>` (test/helpers/stub.ts): the members
+// it shares with `T` are checked against `T`, and the ones left out are absent.
+const runtime = stub<Runtime>({ requireWorkspaceId: () => WS });
+
 // GOOD — no typed path, so the reason names the mismatch.
 // biome-ignore lint/plugin/double-cast: the app's window, reduced to the `postMessage` the bridge calls
 const stub = { postMessage() {} } as unknown as Window;
@@ -387,8 +401,46 @@ suppresses anything. Whether a reason is true is review's call. The repo has no
 **Override.** The suppression above, on the line directly above the line where
 the cast expression starts; a longer explanation may sit above it. The plugin
 runs on the paths in its `biome.json` override: `scripts/`, `src/` (the platform
-app UIs included), `web/src/`, and each `test/` directory whose casts are clean.
-A directory joins when it is cleaned. `web/test/` joins once Biome lints it.
+app UIs included), `web/src/`, `test/`, and `web/test/`.
+
+---
+
+### A cast to `never` names its mismatch
+
+`never` is assignable to every type, so `x as never` passes `x` into any slot
+unchecked: a double cast in one step. Give the value its slot's type instead;
+where the value is deliberately outside that type, suppress with a reason.
+
+```ts
+// BAD — the fixture can drift from the type it stands in for, and nothing fails.
+runWithRequestContext({ identity: { id: USER } as never }, run);
+```
+
+```ts
+// GOOD — `makeIdentity` (test/helpers/identity.ts) returns a whole `UserIdentity`,
+// so a change to the type fails in one place.
+runWithRequestContext({ identity: makeIdentity({ id: USER }) }, run);
+
+// GOOD — the value is outside the type on purpose, and the reason says so.
+// biome-ignore lint/plugin/never-cast: a stored tier outside `SkillScope`, which is the input under test
+skillProvenanceLabel({ scope: "retired-tier" as never });
+```
+
+**Rationale.** The same as for a double cast: the compiler stops checking the
+value, and nothing records why. A test fixture cast this way keeps compiling
+after the type it imitates changes, so the test goes on exercising a shape the
+code no longer receives.
+
+**Detection.** The Biome plugin `biome-plugins/never-cast.grit` (run by
+`bun run lint`) flags `x as never` and `x as never[]`. A `never` annotation
+(`const xs: never[] = []`, an exhaustiveness check) is not a cast and passes. It
+does not look for `x as Array<never>` or a `<never>x` assertion; the repo has
+neither.
+
+**Override.** `// biome-ignore lint/plugin/never-cast: <reason>` on the line
+directly above the line where the cast expression starts. The plugin runs on
+the paths in its `biome.json` override: `scripts/`, `src/` (the platform app
+UIs included), `web/src/`, `web/test/`, and `test/`.
 
 ---
 

@@ -11,8 +11,8 @@
  * which is vendored from models.dev. Run `bun run sync-models` to refresh.
  */
 
-import { getModelByString } from "../model/catalog.ts";
-import type { TokenUsage, UsageRates } from "./types.ts";
+import { getModelByString, type ModelCostTier } from "../model/catalog.ts";
+import type { TokenUsage, UsageRates, UsageRateTier } from "./types.ts";
 
 /**
  * Per-bucket cost in USD plus the total. The four buckets always sum to
@@ -68,6 +68,17 @@ export function resolveRates(modelString: string): UsageRates | null {
   const model = getModelByString(modelString);
   if (!model) return null;
   const c = model.cost;
+  const tiers = c.tiers?.map(flattenTier);
+  return {
+    ...flattenCard(c),
+    ...(tiers?.length ? { tiers } : {}),
+  };
+}
+
+type RateCard = Omit<UsageRateTier, "aboveInputTokens">;
+
+/** One catalog rate card as stored unit prices, with both cache-write TTLs derived. */
+function flattenCard(c: Omit<ModelCostTier, "aboveInputTokens">): RateCard {
   return {
     input: c.input,
     output: c.output,
@@ -76,6 +87,23 @@ export function resolveRates(modelString: string): UsageRates | null {
     cacheWrite1h: c.input * ONE_HOUR_CACHE_WRITE_MULTIPLIER,
     ...(c.reasoning != null ? { reasoning: c.reasoning } : {}),
   };
+}
+
+function flattenTier(t: ModelCostTier): UsageRateTier {
+  return { aboveInputTokens: t.aboveInputTokens, ...flattenCard(t) };
+}
+
+/**
+ * The rate card a call bills on: the highest tier whose threshold its prompt
+ * exceeds, else the base card. The prompt is `inputTokens`, the total of every
+ * input-side token, cached or not, which is what the providers measure.
+ */
+function cardFor(rates: UsageRates, inputTokens: number): RateCard {
+  let card: RateCard = rates;
+  for (const tier of rates.tiers ?? []) {
+    if (inputTokens > tier.aboveInputTokens) card = tier;
+  }
+  return card;
 }
 
 /**
@@ -101,6 +129,9 @@ export function resolveRates(modelString: string): UsageRates | null {
  * all output tokens bill at `cost.output`, including any reasoning
  * subtotal.
  *
+ * Pricing model — prompt length: a model with `tiers` bills the whole call,
+ * every bucket, at the card for its prompt length (see `cardFor`).
+ *
  * @param rates Stored unit prices from a ledger line. When supplied they win
  *   over the catalog, so a past call costs what it cost rather than what the
  *   model costs today. Optional, and the catalog path is unchanged, so every
@@ -111,8 +142,9 @@ export function costBreakdown(
   usage: TokenUsage,
   rates?: UsageRates | null,
 ): CostBreakdownUsd {
-  const c = rates ?? resolveRates(modelString);
-  if (!c) return { ...ZERO_BREAKDOWN };
+  const stored = rates ?? resolveRates(modelString);
+  if (!stored) return { ...ZERO_BREAKDOWN };
+  const c = cardFor(stored, usage.inputTokens);
 
   const cacheRead = usage.cacheReadTokens ?? 0;
   const cacheWrite = usage.cacheWriteTokens ?? 0;

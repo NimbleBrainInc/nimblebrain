@@ -126,7 +126,7 @@ export function AppWithChat({ placement }: AppWithChatProps) {
     return () => setFocusedApp(null);
   }, [appContext, setFocusedApp]);
 
-  // A view to open inside the app, carried by `openApp` in the router state.
+  // A view to open inside the app, carried in the router state by an open (ADR-0052).
   // Keyed by the navigation, so asking for the same view again re-sends it.
   const targetId = appTargetFrom(location.state);
   const target = useMemo(

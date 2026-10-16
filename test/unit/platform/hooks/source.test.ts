@@ -6,12 +6,21 @@
  */
 
 import { beforeEach, describe, expect, test } from "bun:test";
+import type { EventSink } from "../../../../src/engine/types.ts";
 import { isModelVisible } from "../../../../src/engine/types.ts";
 import { buildHookUrl } from "../../../../src/hooks/token.ts";
-import type { HookRegistration } from "../../../../src/hooks/types.ts";
+import type { HookDeclaration, HookRegistration } from "../../../../src/hooks/types.ts";
 import { createHooksSource } from "../../../../src/platform/hooks/source.ts";
+import type { HooksListOutput, HooksRotateOutput } from "../../../../src/platform/schemas/hooks.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
+import type { ConnectorPort } from "../../../../src/tools/connector-surface.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { Tool, ToolResult } from "../../../../src/tools/types.ts";
 import type { Workspace } from "../../../../src/workspace/types.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
+import { makeWorkspace } from "../../../helpers/test-workspace.ts";
 
 const WS = "ws_005b519ef7efc353";
 const USER = "usr_admin";
@@ -35,56 +44,105 @@ class FakeRuntime {
   workspaces = new Map<string, Workspace>();
 
   getCurrentIdentity() {
-    return this.identity;
+    return this.identity && makeIdentity(this.identity);
   }
   getCurrentWorkspaceId() {
     return this.wsId;
   }
   getWorkspaceStore() {
-    return { get: async (id: string) => this.workspaces.get(id) ?? null };
+    return stub<WorkspaceStore>({ get: async (id: string) => this.workspaces.get(id) ?? null });
   }
   /** What `ensureHooks` will find. Empty = the connector is not running. */
-  hookPorts = new Map<string, unknown>();
+  hookPorts = new Map<string, ConnectorPort>();
+  /** What the connector declares. Empty = it declares no inbound hook. */
+  declarations: HookDeclaration[] = [];
   getHookReconcileDeps() {
     return {
-      workspaceStore: {
+      workspaceStore: stub<WorkspaceStore>({
         get: async (id: string) => this.workspaces.get(id) ?? null,
-        update: async () => undefined,
-      },
+        update: async (id: string, patch: Partial<Workspace>) => {
+          const ws = this.workspaces.get(id);
+          if (!ws) return null;
+          const next = { ...ws, ...patch };
+          this.workspaces.set(id, next);
+          return next;
+        },
+      }),
       identity: { tid: "tenant-a", key: Buffer.alloc(32, 7) },
-      declarationsFor: () => [],
-      portFor: (name: string) => this.hookPorts.get(name),
+      declarationsFor: async () => this.declarations,
+      portFor: (_wsId: string, name: string) => this.hookPorts.get(name),
     };
   }
 
   seed(role: "admin" | "member", hooks: Record<string, HookRegistration>): void {
-    this.workspaces.set(WS, {
-      id: WS,
-      name: WS,
-      members: [{ userId: USER, role }],
-      connectors: [],
-      hooks,
-      createdAt: "",
-      updatedAt: "",
-    } as unknown as Workspace);
+    this.workspaces.set(
+      WS,
+      makeWorkspace({
+        id: WS,
+        members: [{ userId: USER, role }],
+        connectors: [{ url: "https://acme.example/mcp", serverName: "acme-billing-mcp" }],
+        hooks,
+      }),
+    );
+  }
+
+  /** A running connector that declares the stream, answering its register tool with `answer`. */
+  runConnector(
+    answer: ToolResult = { content: [], isError: false },
+  ): Array<Record<string, unknown>> {
+    const handed: Array<Record<string, unknown>> = [];
+    this.declarations = [
+      { vendor: "acme", route: "/ingest/acme", register_tool: "set_webhook_url" },
+    ];
+    const registerTool: Tool = {
+      name: "set_webhook_url",
+      description: "Register a webhook URL",
+      inputSchema: {
+        type: "object",
+        properties: { vendor: { type: "string" }, url: { type: "string" } },
+        required: ["vendor", "url"],
+      },
+      source: "acme-billing-mcp",
+    };
+    this.hookPorts.set("acme-billing-mcp", {
+      tools: async () => [registerTool],
+      execute: async (_name, input) => {
+        handed.push(input);
+        return answer;
+      },
+    });
+    return handed;
   }
 }
 
 let runtime: FakeRuntime;
 let source: McpSource;
 
-const noopSink = { emit: () => {} } as unknown as never;
+const noopSink: EventSink = { emit: () => {} };
 
 beforeEach(async () => {
   runtime = new FakeRuntime();
-  source = createHooksSource(runtime as unknown as never, noopSink);
+  source = createHooksSource(stub<Runtime>(runtime), noopSink);
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
-async function list(): Promise<Record<string, unknown>> {
+/** The text a reader gets, which the structured result restates and never extends. */
+function textOf(res: ToolResult): string {
+  return (res.content?.[0] as { text?: string } | undefined)?.text ?? "";
+}
+
+/** Fail with the result's own text, which names an output-schema mismatch when there is one. */
+function expectSuccess(res: ToolResult): void {
+  if (res.isError) throw new Error(`expected a success, got: ${textOf(res)}`);
+}
+
+async function list(): Promise<HooksListOutput> {
   const res = await source.execute("list_webhooks", {});
-  const text = (res.content?.[0] as { text?: string } | undefined)?.text ?? "{}";
-  return JSON.parse(text) as Record<string, unknown>;
+  expectSuccess(res);
+  return JSON.parse(textOf(res)) as HooksListOutput;
 }
 
 describe("the webhook tools are not agent capabilities", () => {
@@ -104,15 +162,12 @@ describe("the webhook tools are not agent capabilities", () => {
   });
 });
 
-async function rotate(): Promise<{ isError?: boolean; text: string }> {
+async function rotate(): Promise<{ isError?: boolean; text: string; res: ToolResult }> {
   const res = await source.execute("rotate_webhook", {
     connector: "acme-billing-mcp",
     vendor: "acme",
   });
-  return {
-    isError: res.isError,
-    text: (res.content?.[0] as { text?: string } | undefined)?.text ?? "",
-  };
+  return { isError: res.isError, text: textOf(res), res };
 }
 
 describe("a rotation that did not happen is not reported as one", () => {
@@ -127,7 +182,7 @@ describe("a rotation that did not happen is not reported as one", () => {
     expect(out.text).toContain("Nothing was rotated");
     expect(out.text).toContain("still live");
     // And nothing moved.
-    const after = (await list()).webhooks as Array<Record<string, unknown>>;
+    const after = (await list()).webhooks;
     expect(after[0]?.url).toBe(buildHookUrl(DELIVERY_ID));
   });
 });
@@ -139,7 +194,7 @@ describe("the grace window the page reports is the one the door enforces", () =>
     runtime.seed("admin", {
       "acme-billing-mcp:acme": reg({ prevDeliveryId: "older-id", rotatedAt: rotatedAgo(60_000) }),
     });
-    const webhooks = (await list()).webhooks as Array<Record<string, unknown>>;
+    const webhooks = (await list()).webhooks;
     expect(webhooks[0]?.previousStillValid).toBe(true);
   });
 
@@ -154,7 +209,7 @@ describe("the grace window the page reports is the one the door enforces", () =>
         rotatedAt: rotatedAgo(25 * 60 * 60 * 1000),
       }),
     });
-    const webhooks = (await list()).webhooks as Array<Record<string, unknown>>;
+    const webhooks = (await list()).webhooks;
     expect(webhooks[0]?.previousStillValid).toBe(false);
   });
 });
@@ -166,8 +221,8 @@ describe("a registration that predates delivery ids", () => {
     // record; the page has to say the same thing, or an admin pastes a dead
     // address into a vendor console and gets no error from anyone.
     const { deliveryId: _dropped, ...stale } = reg();
-    runtime.seed("admin", { "acme-billing-mcp:acme": stale as never });
-    const webhooks = (await list()).webhooks as Array<Record<string, unknown>>;
+    runtime.seed("admin", { "acme-billing-mcp:acme": stale });
+    const webhooks = (await list()).webhooks;
     expect(webhooks[0]?.url).toBeNull();
     expect(JSON.stringify(webhooks)).not.toContain("undefined");
   });
@@ -177,7 +232,7 @@ describe("reading a delivery URL", () => {
   test("an admin gets the full address, which is what makes the page useful", async () => {
     runtime.seed("admin", { "acme-billing-mcp:acme": reg() });
     const out = await list();
-    const webhooks = out.webhooks as Array<Record<string, unknown>>;
+    const webhooks = out.webhooks;
     expect(webhooks).toHaveLength(1);
     expect(webhooks[0]?.url).toBe(buildHookUrl(DELIVERY_ID));
     expect(webhooks[0]?.vendor).toBe("acme");
@@ -187,8 +242,8 @@ describe("reading a delivery URL", () => {
     runtime.seed("member", { "acme-billing-mcp:acme": reg() });
     const res = await source.execute("list_webhooks", {});
     expect(res.isError).toBe(true);
-    const body = (res.content?.[0] as { text?: string } | undefined)?.text ?? "";
-    expect(body).not.toContain(DELIVERY_ID);
+    expect(textOf(res)).not.toContain(DELIVERY_ID);
+    expect(JSON.stringify(res.structuredContent ?? {})).not.toContain(DELIVERY_ID);
   });
 
   test("no identity is refused", async () => {
@@ -221,5 +276,59 @@ describe("rotation refuses before it acts", () => {
       vendor: "acme",
     });
     expect(res.isError).toBe(true);
+  });
+});
+
+describe("a result carries the same object as text and as structured content", () => {
+  test("list: the structured result is the text, checked against the output schema", async () => {
+    runtime.seed("admin", {
+      "acme-billing-mcp/acme": reg({
+        prevDeliveryId: "older-id",
+        rotatedAt: new Date().toISOString(),
+      }),
+      "acme-billing-mcp/legacy": (() => {
+        const { deliveryId: _dropped, ...stale } = reg({ vendor: "legacy" });
+        return stale;
+      })(),
+    });
+    const res = await source.execute("list_webhooks", {});
+    expectSuccess(res);
+    const out = res.structuredContent as HooksListOutput;
+    expect(out).toEqual(JSON.parse(textOf(res)));
+    expect(out.count).toBe(2);
+    // A registration from before delivery ids, and one never rotated: both are
+    // shapes the store holds, and both pass the output schema.
+    expect(out.webhooks.map((w) => [w.vendor, w.url === null, w.rotatedAt === null])).toEqual([
+      ["acme", false, false],
+      ["legacy", true, true],
+    ]);
+  });
+
+  test("rotate: a rotation the connector accepted reports the new URL", async () => {
+    // Keyed as `registrationKey` keys it, so the rotation replaces this record.
+    runtime.seed("admin", { "acme-billing-mcp/acme": reg() });
+    const handed = runtime.runConnector();
+    const out = await rotate();
+    expectSuccess(out.res);
+    const data = out.res.structuredContent as HooksRotateOutput;
+    expect(data).toEqual(JSON.parse(out.text));
+    expect(data.registered).toBe(true);
+    expect(data.error).toBeNull();
+    expect(data.previousStillValid).toBe(true);
+    // The URL reported is the one the connector was handed and the store holds.
+    expect(data.url).not.toBe(buildHookUrl(DELIVERY_ID));
+    expect(handed[0]?.url).toBe(data.url);
+    expect((await list()).webhooks[0]?.url).toBe(data.url as string);
+  });
+
+  test("rotate: a connector that refused the URL is a success that says so", async () => {
+    runtime.seed("admin", { "acme-billing-mcp/acme": reg() });
+    runtime.runConnector({ content: [{ type: "text", text: "vendor is down" }], isError: true });
+    const out = await rotate();
+    expectSuccess(out.res);
+    const data = out.res.structuredContent as HooksRotateOutput;
+    expect(data).toEqual(JSON.parse(out.text));
+    expect(data.registered).toBe(false);
+    expect(typeof data.error).toBe("string");
   });
 });

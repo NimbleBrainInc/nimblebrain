@@ -17,6 +17,9 @@ import { createConversationsSource } from "../../../../src/platform/conversation
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../../helpers/identity.ts";
+import { stub } from "../../../helpers/stub.ts";
 
 const OWNER_ID = "usr_test";
 const OTHER_ID = "usr_other";
@@ -58,18 +61,19 @@ function writeConversation(id: string, ownerId: string): void {
 }
 
 function makeRuntime(): Runtime {
-  return {
-    getCurrentIdentity: () => ({ id: OWNER_ID }),
+  return stub<Runtime>({
+    getCurrentIdentity: () => makeIdentity({ id: OWNER_ID }),
     resolveRequestUserId: () => OWNER_ID,
-    getWorkspaceStore: () => ({ getWorkspacesDir: () => join(workDir, "workspaces") }),
-    onConversationsChanged: () => {},
+    getWorkspaceStore: () =>
+      stub<WorkspaceStore>({ getWorkspacesDir: () => join(workDir, "workspaces") }),
+    onConversationsChanged: () => () => {},
     isTurnActive: (conversationId: string) => liveIds.has(conversationId),
-  } as unknown as Runtime;
+  });
 }
 
 async function list(): Promise<Array<{ id: string; active?: boolean }>> {
   const result: ToolResult = await runWithRequestContext(
-    { identity: { id: OWNER_ID } as never, workspaceId: WS_ID },
+    { identity: makeIdentity({ id: OWNER_ID }), workspaceId: WS_ID },
     () => source.execute("list", {}),
   );
   const first = result.content[0];
@@ -86,6 +90,9 @@ beforeEach(async () => {
   writeConversation(OTHERS_LIVE_ID, OTHER_ID);
   source = await createConversationsSource(makeRuntime(), new NoopEventSink());
   await source.start();
+  // List first, as the engine does: the SDK client validates a result against
+  // its tool's output schema only once it holds the `tools/list` that declares it.
+  await source.tools();
 });
 
 afterEach(async () => {
