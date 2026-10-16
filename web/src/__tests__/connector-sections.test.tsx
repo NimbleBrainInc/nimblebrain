@@ -54,7 +54,7 @@ const disconnectConnector = mock(async () => ({
 const initiateMcpOAuth = mock<typeof ApiClient.initiateMcpOAuth>(async () => ({
   authorizationUrl: "https://example.test/auth",
 }));
-const setupConnectorOperator = mock(async () => ({
+const setConnectorOAuthClient = mock(async () => ({
   ok: true,
   catalogId: "io.asana/mcp",
   clientId: "cid-rotated",
@@ -73,7 +73,7 @@ mock.module("../api/client", () => ({
   ...realClient,
   disconnectConnector,
   initiateMcpOAuth,
-  setupConnectorOperator,
+  setConnectorOAuthClient,
   connectComposioApiKey,
 }));
 
@@ -89,7 +89,7 @@ Object.defineProperty(window, "location", {
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 
-const { OperatorOAuthSection } = await import("../components/connectors/OperatorOAuthSection");
+const { OAuthClientSection } = await import("../components/connectors/OAuthClientSection");
 const { ComposioApiKeyModal } = await import("../components/connectors/ComposioApiKeyModal");
 
 import type { ComposioField, InstalledConnector } from "../api/client";
@@ -162,7 +162,7 @@ async function click(el: Element | null): Promise<void> {
 beforeEach(() => {
   disconnectConnector.mockClear();
   initiateMcpOAuth.mockClear();
-  setupConnectorOperator.mockClear();
+  setConnectorOAuthClient.mockClear();
   connectComposioApiKey.mockClear();
 });
 
@@ -260,13 +260,13 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
       iconUrl: "",
       url: "https://app.asana.com/api/mcp",
       auth: "static",
-      operatorSetup: {
+      oauthClientSetup: {
         portalUrl: "https://app.asana.com/0/developer-console",
-        hint: "Create OAuth app",
+        hint: "Create OAuth client",
         clientSecretKey: "asana.client_secret",
       },
     },
-    operatorOAuth: {
+    workspaceOAuthClient: {
       clientId: "1234567890abcdef",
       configuredAt: new Date(Date.now() - 60_000).toISOString(),
       configuredBy: "usr_admin",
@@ -415,12 +415,12 @@ describe("DisconnectDialog", () => {
   });
 });
 
-// ── OperatorOAuthSection ────────────────────────────────────────────
+// ── OAuthClientSection ────────────────────────────────────────────
 
-describe("OperatorOAuthSection", () => {
+describe("OAuthClientSection", () => {
   test("renders nothing for a connector with no catalog match", async () => {
     mounted = await mount(
-      <OperatorOAuthSection
+      <OAuthClientSection
         installed={uncataloguedConnector()}
         canManage={true}
         onChanged={() => {}}
@@ -431,18 +431,18 @@ describe("OperatorOAuthSection", () => {
 
   test("renders nothing for DCR connectors (auth: 'dcr', not 'static')", async () => {
     mounted = await mount(
-      <OperatorOAuthSection installed={dcrConnector()} canManage={true} onChanged={() => {}} />,
+      <OAuthClientSection installed={dcrConnector()} canManage={true} onChanged={() => {}} />,
     );
     expect(mounted.container.textContent).toBe("");
   });
 
-  test("renders nothing for static-auth connector with no operatorOAuth populated", async () => {
+  test("renders nothing for static-auth connector with no workspaceOAuthClient populated", async () => {
     // Static-auth catalog match but workspace hasn't configured the
-    // OAuth app yet. Browse handles first-time setup; Configure stays
+    // OAuth client yet. Browse handles first-time setup; Configure stays
     // empty until the install path runs.
     mounted = await mount(
-      <OperatorOAuthSection
-        installed={staticAuthConnector({ operatorOAuth: undefined })}
+      <OAuthClientSection
+        installed={staticAuthConnector({ workspaceOAuthClient: undefined })}
         canManage={true}
         onChanged={() => {}}
       />,
@@ -452,7 +452,7 @@ describe("OperatorOAuthSection", () => {
 
   test("renders audit info + truncated clientId for configured static-auth", async () => {
     mounted = await mount(
-      <OperatorOAuthSection
+      <OAuthClientSection
         installed={staticAuthConnector()}
         canManage={true}
         onChanged={() => {}}
@@ -468,7 +468,7 @@ describe("OperatorOAuthSection", () => {
 
   test("canManage=false hides Edit affordance but keeps audit visible", async () => {
     mounted = await mount(
-      <OperatorOAuthSection
+      <OAuthClientSection
         installed={staticAuthConnector()}
         canManage={false}
         onChanged={() => {}}
@@ -515,15 +515,15 @@ describe("ConnectorHeader — banner and primary action", () => {
     expect(findButton(mounted.container, "Connect")).toBeNull();
   });
 
-  test("status=needs_setup + missingOperatorSetup → 'Set up OAuth' (admin)", async () => {
+  test("status=needs_setup + missingOAuthClient → 'Set up OAuth' (admin)", async () => {
     mounted = await mount(
       <ConnectorHeader
         onUninstall={() => {}}
         installed={staticAuthConnector({
           status: "needs_setup",
-          missingOperatorSetup: true,
-          operatorOAuth: undefined,
-          statusReason: "OAuth app not configured for this workspace.",
+          missingOAuthClient: true,
+          workspaceOAuthClient: undefined,
+          statusReason: "OAuth client not configured for this workspace.",
         })}
         canManage={true}
         onChanged={() => {}}
@@ -678,9 +678,9 @@ describe("ConnectorHeader — banner and primary action", () => {
         onUninstall={() => {}}
         installed={staticAuthConnector({
           status: "needs_setup",
-          missingOperatorSetup: true,
-          operatorOAuth: undefined,
-          statusReason: "OAuth app not configured for this workspace.",
+          missingOAuthClient: true,
+          workspaceOAuthClient: undefined,
+          statusReason: "OAuth client not configured for this workspace.",
         })}
         canManage={false}
         onChanged={() => {}}
@@ -733,9 +733,9 @@ describe("ConnectorHeader — banner and primary action", () => {
     expect(findButton(mounted.container, "Cancel")).not.toBeNull();
   });
 
-  test("a member blocked on operator setup is told that, not just that they lack the role", async () => {
-    // The hero half of a must-match pair: ConnectorBrowsePage says "Operator
-    // setup required" for this same user in this same state, and that string
+  test("a member blocked on OAuth client setup is told that, not just that they lack the role", async () => {
+    // The hero half of a must-match pair: ConnectorBrowsePage says "Needs an
+    // OAuth client" for this same user in this same state, and that string
     // is pinned in connector-browse-card-action.test.tsx. Pinning one side
     // doesn't pin the pair — this is the other side.
     mounted = await mount(
@@ -743,16 +743,16 @@ describe("ConnectorHeader — banner and primary action", () => {
         onUninstall={() => {}}
         installed={staticAuthConnector({
           status: "needs_setup",
-          missingOperatorSetup: true,
-          operatorOAuth: undefined,
-          statusReason: "OAuth app not configured for this workspace.",
+          missingOAuthClient: true,
+          workspaceOAuthClient: undefined,
+          statusReason: "OAuth client not configured for this workspace.",
         })}
         canManage={false}
         onChanged={() => {}}
       />,
     );
     expect(findButton(mounted.container, "Set up OAuth")).toBeNull();
-    expect(mounted.container.textContent).toContain("Operator setup required");
+    expect(mounted.container.textContent).toContain("Needs an OAuth client");
     // ...and not the generic wording, which is what the ternary exists to avoid.
     expect(mounted.container.textContent).not.toContain("Workspace admin required");
   });

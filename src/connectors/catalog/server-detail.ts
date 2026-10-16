@@ -8,7 +8,7 @@
  * future HTTP-backed source reads the same shape natively. Consumers always
  * see one type. The `_meta` extension
  * `ai.nimblebrain/connector` carries our platform-specific fields
- * (auth, operatorSetup, etc.) without polluting upstream-defined slots.
+ * (auth, oauthClientSetup, etc.) without polluting upstream-defined slots.
  *
  * Validated at every system boundary so an invalid entry is dropped
  * at the source it came from, never reaching the UI / agent. Each
@@ -194,7 +194,7 @@ export interface SecretHeaderRef extends CredentialRef {
 /**
  * NimbleBrain-specific extension carried inside `ServerDetail._meta`
  * under the key `ai.nimblebrain/connector`. Holds the platform-specific
- * fields that don't fit upstream slots: OAuth flow type, operator-setup
+ * fields that don't fit upstream slots: OAuth flow type, OAuth client setup
  * pointers, recommended scope, search tags, and UI hints.
  *
  * Authored on entries we curate (loaded by the catalog read from the
@@ -209,12 +209,13 @@ export interface NimbleBrainConnectorMeta {
    *
    * Runtime-native ({@link RUNTIME_NATIVE_AUTH_KINDS}):
    * - `dcr`: dynamic client registration (RFC 7591). Provider issues
-   *   a client at first use; no operator setup.
-   * - `static`: pre-registered OAuth client. Operator provides
-   *   `clientId` + `clientSecret` from the vendor's developer portal.
+   *   a client at first use; no OAuth client setup.
+   * - `static`: pre-registered OAuth client. A workspace admin provides
+   *   `clientId` + `clientSecret` from the vendor's developer portal, or the
+   *   instance declares them once (`connectors.oauthClients`).
    * - `provider`: a platform-managed connector whose credential is produced
-   *   server-side by a named credential provider (no user/operator OAuth, no
-   *   per-user secret). Required: the `providerAuth` block below.
+   *   server-side by a named credential provider (no user OAuth, no OAuth client,
+   *   no per-user secret). Required: the `providerAuth` block below.
    *
    * Anything else names a **brokered** provider (`composio`, `smithery`) — a
    * third party that holds the upstream credential and hosts the MCP session.
@@ -230,8 +231,12 @@ export interface NimbleBrainConnectorMeta {
    * we ship, not an enumeration the runtime enforces.
    */
   auth?: ConnectorAuthKind;
-  /** Required for `auth: "static"`: where the operator creates the OAuth app. */
-  operatorSetup?: {
+  /**
+   * Required for `auth: "static"`: where a workspace admin creates the OAuth
+   * client and which credential key holds its secret. Read under its earlier
+   * name, `operatorSetup`, too (see {@link getNimbleBrainConnectorMeta}).
+   */
+  oauthClientSetup?: {
     portalUrl: string;
     hint: string;
     clientSecretKey: string;
@@ -329,7 +334,24 @@ export const NIMBLEBRAIN_CONNECTOR_META_KEY = "ai.nimblebrain/connector";
 
 /** Convenience accessor with the right type narrowing. */
 export function getNimbleBrainConnectorMeta(s: ServerDetail): NimbleBrainConnectorMeta | undefined {
-  return s._meta?.[NIMBLEBRAIN_CONNECTOR_META_KEY] as NimbleBrainConnectorMeta | undefined;
+  const meta = s._meta?.[NIMBLEBRAIN_CONNECTOR_META_KEY] as LegacyConnectorMeta | undefined;
+  if (!meta?.operatorSetup) return meta;
+  // `operatorSetup` is the name `oauthClientSetup` had before. One catalog file
+  // serves a runtime on each side of the rename, so both names read until the
+  // catalog has moved; the next release drops this. The current name wins.
+  const { operatorSetup, ...rest } = meta;
+  return { ...rest, oauthClientSetup: rest.oauthClientSetup ?? operatorSetup };
+}
+
+/** The connector meta as a catalog written before the setup rename may carry it. */
+type LegacyConnectorMeta = NimbleBrainConnectorMeta & {
+  operatorSetup?: NimbleBrainConnectorMeta["oauthClientSetup"];
+};
+
+/** Whether an entry declares the setup block under both its names (the catalog logs it). */
+export function declaresBothSetupNames(s: ServerDetail): boolean {
+  const meta = s._meta?.[NIMBLEBRAIN_CONNECTOR_META_KEY] as LegacyConnectorMeta | undefined;
+  return meta?.operatorSetup !== undefined && meta.oauthClientSetup !== undefined;
 }
 
 /**

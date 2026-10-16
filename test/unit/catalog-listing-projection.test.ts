@@ -92,7 +92,7 @@ describe("projectServerDetailToCatalogListing", () => {
             auth: "static",
             requiredScopes: ["read", "write"],
             additionalAuthorizationParams: { access_type: "offline" },
-            operatorSetup: {
+            oauthClientSetup: {
               portalUrl: "https://example.com/portal",
               hint: "Create app",
               clientSecretKey: "x.client_secret",
@@ -108,7 +108,7 @@ describe("projectServerDetailToCatalogListing", () => {
       expect(e.install.auth).toBe("static");
       expect(e.install.requiredScopes).toEqual(["read", "write"]);
       expect(e.install.additionalAuthorizationParams).toEqual({ access_type: "offline" });
-      expect(e.install.operatorSetup?.clientSecretKey).toBe("x.client_secret");
+      expect(e.install.oauthClientSetup?.clientSecretKey).toBe("x.client_secret");
     }
   });
 
@@ -274,7 +274,7 @@ describe("directory and catalog projections agree on shared meta auth fields", (
   // helper; if a future change re-forks the derivation, these assertions
   // fail in CI before the surfaces can drift.
 
-  test("a static-auth entry yields identical auth/scopes/params/operatorSetup on both paths", () => {
+  test("a static-auth entry yields identical auth/scopes/params/oauthClientSetup on both paths", () => {
     const s = detail({
       remotes: [{ type: "streamable-http", url: "https://example.com/mcp" }],
       _meta: {
@@ -282,7 +282,7 @@ describe("directory and catalog projections agree on shared meta auth fields", (
           auth: "static",
           requiredScopes: ["read", "write"],
           additionalAuthorizationParams: { access_type: "offline", prompt: "consent" },
-          operatorSetup: {
+          oauthClientSetup: {
             portalUrl: "https://example.com/portal",
             hint: "Create app",
             clientSecretKey: "x.client_secret",
@@ -302,7 +302,7 @@ describe("directory and catalog projections agree on shared meta auth fields", (
     expect(dir.install.auth).toBe(cat.auth);
     expect(dir.install.requiredScopes).toEqual(cat.requiredScopes);
     expect(dir.install.additionalAuthorizationParams).toEqual(cat.additionalAuthorizationParams);
-    expect(dir.install.operatorSetup).toEqual(cat.operatorSetup);
+    expect(dir.install.oauthClientSetup).toEqual(cat.oauthClientSetup);
     // Concrete values, so the assertion fails loudly if BOTH paths regress together.
     expect(cat.auth).toBe("static");
     expect(cat.requiredScopes).toEqual(["read", "write"]);
@@ -310,7 +310,7 @@ describe("directory and catalog projections agree on shared meta auth fields", (
       access_type: "offline",
       prompt: "consent",
     });
-    expect(cat.operatorSetup?.clientSecretKey).toBe("x.client_secret");
+    expect(cat.oauthClientSetup?.clientSecretKey).toBe("x.client_secret");
   });
 
   test("a provider-auth entry carries identical providerAuth on both paths", () => {

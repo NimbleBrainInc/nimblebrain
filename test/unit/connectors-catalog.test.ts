@@ -27,16 +27,16 @@ describe("curated catalog contract", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  test("static-auth entries all have operatorSetup with clientSecretKey", () => {
+  test("static-auth entries all have oauthClientSetup with clientSecretKey", () => {
     const servers = readCatalogServers(CONNECTOR_FIXTURE_DIR);
     let staticSeen = 0;
     for (const s of servers) {
       const meta = getNimbleBrainConnectorMeta(s);
       if (meta?.auth === "static") {
         staticSeen++;
-        expect(meta.operatorSetup).toBeDefined();
-        expect(meta.operatorSetup?.clientSecretKey.length).toBeGreaterThan(0);
-        expect(meta.operatorSetup?.portalUrl.startsWith("http")).toBe(true);
+        expect(meta.oauthClientSetup).toBeDefined();
+        expect(meta.oauthClientSetup?.clientSecretKey.length).toBeGreaterThan(0);
+        expect(meta.oauthClientSetup?.portalUrl.startsWith("http")).toBe(true);
       }
     }
     expect(staticSeen).toBeGreaterThan(0); // fixture covers the static-auth shape

@@ -43,11 +43,11 @@ const TEST_READ = { caller: "test", purpose: "assert the store holds what the ha
 
 /**
  * Coverage for the new actions on `manage_connectors` introduced with
- * static-auth (operator-configured OAuth apps):
+ * static-auth (admin-configured OAuth clients):
  *
- *   - `setup_operator` — admin-only upsert of (clientId, clientSecret)
- *   - `remove_operator_setup` — admin-only teardown, install-aware
- *   - `list_directory` — `operatorConfigured` flag for static entries
+ *   - `set_oauth_client` — admin-only upsert of (clientId, clientSecret)
+ *   - `remove_oauth_client` — admin-only teardown, install-aware
+ *   - `list_directory` — `oauthClientConfigured` flag for static entries
  *   - `install` for static-auth — refuses when setup is missing, persists
  *     the credential ref in the workspace ConnectorRef on success
  *
@@ -62,12 +62,12 @@ const TEST_READ = { caller: "test", purpose: "assert the store holds what the ha
 // Reverse-DNS form per upstream MCP registry's ServerDetail spec — matches
 // the `name` field of the Dropbox entry in the connector test fixture
 // (test/fixtures/connectors/). Dropbox is the canonical `auth: static`
-// (bring-your-own OAuth) connector, so static-auth setup_operator/install
+// (bring-your-own OAuth) connector, so static-auth set_oauth_client/install
 // tests resolve against it.
 const DROPBOX_ID = "com.dropbox/mcp";
 const DROPBOX_URL = "https://mcp.dropbox.com/mcp";
 const DROPBOX_SECRET_KEY = "dropbox.client_secret";
-// DCR entry from the bundled static catalog — used to verify operator
+// DCR entry from the bundled static catalog — used to verify OAuth client
 // setup is rejected for non-static-auth connectors.
 const NOTION_ID = "com.notion/mcp";
 
@@ -75,7 +75,7 @@ const NOTION_ID = "com.notion/mcp";
  * Build a CatalogListing shaped like what the catalog read projects for
  * Dropbox — used by install tests since the install API takes the full
  * entry, not an id. Field set matches the real source output; tests
- * can override pieces (operatorSetup, install) per case.
+ * can override pieces (oauthClientSetup, install) per case.
  */
 function dropboxEntry(over: Partial<CatalogListing> = {}): CatalogListing {
   return {
@@ -87,7 +87,7 @@ function dropboxEntry(over: Partial<CatalogListing> = {}): CatalogListing {
       url: DROPBOX_URL,
       transportType: "streamable-http",
       auth: "static",
-      operatorSetup: {
+      oauthClientSetup: {
         portalUrl: "https://www.dropbox.com/developers/apps",
         hint: "Create a service account",
         clientSecretKey: DROPBOX_SECRET_KEY,
@@ -258,7 +258,7 @@ interface StructuredResult {
   alreadyInstalled?: boolean;
   entries?: Array<{
     id: string;
-    operatorConfigured?: boolean;
+    oauthClientConfigured?: boolean;
   }>;
   errors?: Array<{ file: string; message: string }>;
   key?: string;
@@ -275,10 +275,10 @@ function structured(result: { structuredContent?: unknown }): StructuredResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// setup_operator
+// set_oauth_client
 // ─────────────────────────────────────────────────────────────────────
 
-describe("manage_connectors.setup_operator", () => {
+describe("manage_connectors.set_oauth_client", () => {
   let h: Harness;
 
   beforeEach(async () => {
@@ -293,7 +293,7 @@ describe("manage_connectors.setup_operator", () => {
   test("returns permission_denied when caller is not workspace admin", async () => {
     const tool = buildTool(h, NON_ADMIN_USER);
     const result = await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid-1",
       clientSecret: "sec-1",
@@ -306,7 +306,7 @@ describe("manage_connectors.setup_operator", () => {
   test("on success persists clientId in workspace.json AND clientSecret in credential store", async () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid-public",
       clientSecret: "sec-private",
@@ -317,8 +317,8 @@ describe("manage_connectors.setup_operator", () => {
     expect(structured(result).clientId).toBe("cid-public");
 
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid-public");
-    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.configuredBy).toBe(ADMIN_USER.id);
+    expect(ws?.oauthClients?.[DROPBOX_ID]?.clientId).toBe("cid-public");
+    expect(ws?.oauthClients?.[DROPBOX_ID]?.configuredBy).toBe(ADMIN_USER.id);
 
     const wrapped = await h.credStore.get(
       { kind: "workspace", wsId: h.wsId },
@@ -332,13 +332,13 @@ describe("manage_connectors.setup_operator", () => {
     const tool = buildTool(h, ADMIN_USER);
 
     await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid-v1",
       clientSecret: "sec-v1",
     });
     const second = await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid-v2",
       clientSecret: "sec-v2",
@@ -346,7 +346,7 @@ describe("manage_connectors.setup_operator", () => {
 
     expect(second.isError).toBe(false);
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid-v2");
+    expect(ws?.oauthClients?.[DROPBOX_ID]?.clientId).toBe("cid-v2");
     const wrapped = await h.credStore.get(
       { kind: "workspace", wsId: h.wsId },
       DROPBOX_SECRET_KEY,
@@ -360,7 +360,7 @@ describe("manage_connectors.setup_operator", () => {
     expect(
       (
         await noWs.handler({
-          action: "setup_operator",
+          action: "set_oauth_client",
           catalogId: DROPBOX_ID,
           clientId: "x",
           clientSecret: "y",
@@ -372,7 +372,7 @@ describe("manage_connectors.setup_operator", () => {
     expect(
       (
         await tool.handler({
-          action: "setup_operator",
+          action: "set_oauth_client",
           clientId: "x",
           clientSecret: "y",
         })
@@ -381,7 +381,7 @@ describe("manage_connectors.setup_operator", () => {
     expect(
       (
         await tool.handler({
-          action: "setup_operator",
+          action: "set_oauth_client",
           catalogId: DROPBOX_ID,
           clientSecret: "y",
         })
@@ -390,7 +390,7 @@ describe("manage_connectors.setup_operator", () => {
     expect(
       (
         await tool.handler({
-          action: "setup_operator",
+          action: "set_oauth_client",
           catalogId: DROPBOX_ID,
           clientId: "x",
         })
@@ -401,7 +401,7 @@ describe("manage_connectors.setup_operator", () => {
   test("rejects unknown workspace and unknown catalog entry", async () => {
     const fakeWs = buildTool(h, ADMIN_USER, "ws_004f1f715b791487");
     const r1 = await fakeWs.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "x",
       clientSecret: "y",
@@ -410,7 +410,7 @@ describe("manage_connectors.setup_operator", () => {
 
     const tool = buildTool(h, ADMIN_USER);
     const r2 = await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: "no-such-entry",
       clientId: "x",
       clientSecret: "y",
@@ -418,11 +418,11 @@ describe("manage_connectors.setup_operator", () => {
     expect(r2.isError).toBe(true);
   });
 
-  test("rejects DCR (non-static-auth) entries — operator setup is meaningless there", async () => {
+  test("rejects DCR (non-static-auth) entries — OAuth client setup is meaningless there", async () => {
     const tool = buildTool(h, ADMIN_USER);
     // com.notion/mcp is auth: "dcr" in the default catalog
     const result = await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: NOTION_ID,
       clientId: "x",
       clientSecret: "y",
@@ -441,7 +441,7 @@ describe("manage_connectors.setup_operator", () => {
     const tool = buildTool(h, ADMIN_USER);
     await expect(
       tool.handler({
-        action: "setup_operator",
+        action: "set_oauth_client",
         catalogId: DROPBOX_ID,
         clientId: "cid-orphan",
         clientSecret: "sec-orphan",
@@ -464,7 +464,7 @@ describe("manage_connectors.setup_operator", () => {
     // leaving the prior secret in place.
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid-v1",
       clientSecret: "sec-v1",
@@ -476,7 +476,7 @@ describe("manage_connectors.setup_operator", () => {
     };
     await expect(
       tool.handler({
-        action: "setup_operator",
+        action: "set_oauth_client",
         catalogId: DROPBOX_ID,
         clientId: "cid-v2",
         clientSecret: "sec-v2",
@@ -497,10 +497,10 @@ describe("manage_connectors.setup_operator", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// remove_operator_setup
+// remove_oauth_client
 // ─────────────────────────────────────────────────────────────────────
 
-describe("manage_connectors.remove_operator_setup", () => {
+describe("manage_connectors.remove_oauth_client", () => {
   let h: Harness;
 
   beforeEach(async () => {
@@ -516,7 +516,7 @@ describe("manage_connectors.remove_operator_setup", () => {
     // Seed setup as admin first so the gate is what fails (not "no setup").
     const adminTool = buildTool(h, ADMIN_USER);
     await adminTool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid",
       clientSecret: "sec",
@@ -524,7 +524,7 @@ describe("manage_connectors.remove_operator_setup", () => {
 
     const memberTool = buildTool(h, NON_ADMIN_USER);
     const result = await memberTool.handler({
-      action: "remove_operator_setup",
+      action: "remove_oauth_client",
       catalogId: DROPBOX_ID,
     });
     expect(result.isError).toBe(true);
@@ -534,7 +534,7 @@ describe("manage_connectors.remove_operator_setup", () => {
   test("errors when no setup exists for the catalog entry", async () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
-      action: "remove_operator_setup",
+      action: "remove_oauth_client",
       catalogId: DROPBOX_ID,
     });
     expect(result.isError).toBe(true);
@@ -543,7 +543,7 @@ describe("manage_connectors.remove_operator_setup", () => {
   test("refuses while the connector is currently installed in workspace.connectors", async () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid",
       clientSecret: "sec",
@@ -559,7 +559,7 @@ describe("manage_connectors.remove_operator_setup", () => {
     });
 
     const result = await tool.handler({
-      action: "remove_operator_setup",
+      action: "remove_oauth_client",
       catalogId: DROPBOX_ID,
     });
     expect(result.isError).toBe(true);
@@ -568,21 +568,21 @@ describe("manage_connectors.remove_operator_setup", () => {
   test("on success removes both clientId from workspace.json and the credential", async () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid",
       clientSecret: "sec",
     });
 
     const result = await tool.handler({
-      action: "remove_operator_setup",
+      action: "remove_oauth_client",
       catalogId: DROPBOX_ID,
     });
     expect(result.isError).toBe(false);
     expect(structured(result).ok).toBe(true);
 
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]).toBeUndefined();
+    expect(ws?.oauthClients?.[DROPBOX_ID]).toBeUndefined();
     const wrapped = await h.credStore.get(
       { kind: "workspace", wsId: h.wsId },
       DROPBOX_SECRET_KEY,
@@ -595,7 +595,7 @@ describe("manage_connectors.remove_operator_setup", () => {
     // `connectors[]` empty + setup configured + no install ⇒ removable.
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid",
       clientSecret: "sec",
@@ -604,7 +604,7 @@ describe("manage_connectors.remove_operator_setup", () => {
     expect(ws?.connectors).toEqual([]);
 
     const result = await tool.handler({
-      action: "remove_operator_setup",
+      action: "remove_oauth_client",
       catalogId: DROPBOX_ID,
     });
     expect(result.isError).toBe(false);
@@ -612,7 +612,7 @@ describe("manage_connectors.remove_operator_setup", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// list_directory — operatorConfigured flag for static entries
+// list_directory — oauthClientConfigured flag for static entries
 // ─────────────────────────────────────────────────────────────────────
 
 describe("manage_connectors.list_directory", () => {
@@ -635,18 +635,18 @@ describe("manage_connectors.list_directory", () => {
     expect(entries.length).toBeGreaterThan(0);
   });
 
-  test("static entry shows operatorConfigured: false before setup_operator runs", async () => {
+  test("static entry shows oauthClientConfigured: false before set_oauth_client runs", async () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "list_directory" });
     const dropbox = (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID);
     expect(dropbox).toBeDefined();
-    expect(dropbox?.operatorConfigured).toBe(false);
+    expect(dropbox?.oauthClientConfigured).toBe(false);
   });
 
-  test("static entry shows operatorConfigured: true after setup_operator runs", async () => {
+  test("static entry shows oauthClientConfigured: true after set_oauth_client runs", async () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid",
       clientSecret: "sec",
@@ -654,7 +654,7 @@ describe("manage_connectors.list_directory", () => {
 
     const result = await tool.handler({ action: "list_directory" });
     const dropbox = (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID);
-    expect(dropbox?.operatorConfigured).toBe(true);
+    expect(dropbox?.oauthClientConfigured).toBe(true);
   });
 });
 
@@ -674,7 +674,7 @@ describe("manage_connectors.install (static-auth)", () => {
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("errors with a setup pointer when oauthOperatorApps[id] is missing", async () => {
+  test("errors with a setup pointer when oauthClients[id] is missing", async () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({
       action: "install",
@@ -691,7 +691,7 @@ describe("manage_connectors.install (static-auth)", () => {
     // Stamp the public clientId without a credential — simulates a corrupted
     // half-setup (e.g., the credentials directory was wiped).
     await h.workspaceStore.update(h.wsId, {
-      oauthOperatorApps: {
+      oauthClients: {
         [DROPBOX_ID]: {
           clientId: "cid-only",
           configuredAt: new Date().toISOString(),
@@ -714,7 +714,7 @@ describe("manage_connectors.install (static-auth)", () => {
   test("on success the ConnectorRef in workspace.connectors carries oauthClient pointing at the credential", async () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid-public",
       clientSecret: "sec-private",
@@ -744,10 +744,10 @@ describe("manage_connectors.install (static-auth)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// setup_operator on an installed connector — the rotated client reaches it
+// set_oauth_client on an installed connector — the rotated client reaches it
 // ─────────────────────────────────────────────────────────────────────
 
-describe("manage_connectors.setup_operator on an installed connector", () => {
+describe("manage_connectors.set_oauth_client on an installed connector", () => {
   const SERVER = "com-dropbox-mcp";
   const scope = () => ({ kind: "workspace" as const, wsId: h.wsId });
   let h: Harness;
@@ -757,7 +757,7 @@ describe("manage_connectors.setup_operator on an installed connector", () => {
     await provisionWorkspace(h);
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid-old",
       clientSecret: "sec-old",
@@ -791,7 +791,7 @@ describe("manage_connectors.setup_operator on an installed connector", () => {
 
   test("a new client id reaches the persisted ref and the live instance", async () => {
     const result = await buildTool(h, ADMIN_USER).handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid-new",
       clientSecret: "sec-new",
@@ -806,7 +806,7 @@ describe("manage_connectors.setup_operator on an installed connector", () => {
 
   test("a new client id drops the old sign-in and asks for a new one", async () => {
     await buildTool(h, ADMIN_USER).handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid-new",
       clientSecret: "sec-new",
@@ -819,7 +819,7 @@ describe("manage_connectors.setup_operator on an installed connector", () => {
 
   test("the same client id with a new secret keeps the sign-in", async () => {
     await buildTool(h, ADMIN_USER).handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid-old",
       clientSecret: "sec-new",
@@ -839,7 +839,7 @@ describe("manage_connectors.setup_operator on an installed connector", () => {
   });
 });
 
-describe("manage_connectors.setup_operator before install", () => {
+describe("manage_connectors.set_oauth_client before install", () => {
   let h: Harness;
 
   beforeEach(async () => {
@@ -851,22 +851,22 @@ describe("manage_connectors.setup_operator before install", () => {
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("records the operator app and touches no connector", async () => {
+  test("records the OAuth client and touches no connector", async () => {
     const result = await buildTool(h, ADMIN_USER).handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid-first",
       clientSecret: "sec-first",
     });
     expect(result.isError).toBe(false);
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid-first");
+    expect(ws?.oauthClients?.[DROPBOX_ID]?.clientId).toBe("cid-first");
     expect(ws?.connectors).toEqual([]);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// uninstall of a static-auth connector — the operator app goes with its last user
+// uninstall of a static-auth connector — the OAuth client goes with its last user
 // ─────────────────────────────────────────────────────────────────────
 
 describe("manage_connectors.uninstall of a static-auth connector", () => {
@@ -879,7 +879,7 @@ describe("manage_connectors.uninstall of a static-auth connector", () => {
     await provisionWorkspace(h);
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "cid",
       clientSecret: "sec",
@@ -896,13 +896,14 @@ describe("manage_connectors.uninstall of a static-auth connector", () => {
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  async function operatorConfigured(): Promise<boolean | undefined> {
+  async function oauthClientConfigured(): Promise<boolean | undefined> {
     const result = await buildTool(h, ADMIN_USER).handler({ action: "list_directory" });
-    return (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID)?.operatorConfigured;
+    return (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID)
+      ?.oauthClientConfigured;
   }
 
-  test("removing the last user clears the operator app, so the entry needs Set up again", async () => {
-    expect(await operatorConfigured()).toBe(true);
+  test("removing the last user clears the OAuth client, so the entry needs Set up again", async () => {
+    expect(await oauthClientConfigured()).toBe(true);
 
     const result = await buildTool(h, ADMIN_USER).handler({
       action: "uninstall",
@@ -911,9 +912,9 @@ describe("manage_connectors.uninstall of a static-auth connector", () => {
     expect(result.isError).toBe(false);
 
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]).toBeUndefined();
+    expect(ws?.oauthClients?.[DROPBOX_ID]).toBeUndefined();
     expect(await h.credStore.get(scope(), DROPBOX_SECRET_KEY, TEST_READ)).toBeNull();
-    expect(await operatorConfigured()).toBe(false);
+    expect(await oauthClientConfigured()).toBe(false);
   });
 
   test("the result lists the removed client secret key", async () => {
@@ -946,7 +947,7 @@ describe("manage_connectors.uninstall of a static-auth connector", () => {
   });
 
   test("an app another installed connector still uses is kept, and said", async () => {
-    // A second ref built on the same operator app: same url, same secret ref.
+    // A second ref built on the same OAuth client: same url, same secret ref.
     const ws = await h.workspaceStore.get(h.wsId);
     const first = ws?.connectors.find((c) => c.serverName === SERVER);
     expect(first?.oauthClient).toBeDefined();
@@ -970,9 +971,9 @@ describe("manage_connectors.uninstall of a static-auth connector", () => {
     expect(out.retainedSecretKeys).toEqual([DROPBOX_SECRET_KEY]);
 
     const after = await h.workspaceStore.get(h.wsId);
-    expect(after?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid");
+    expect(after?.oauthClients?.[DROPBOX_ID]?.clientId).toBe("cid");
     expect((await h.credStore.get(scope(), DROPBOX_SECRET_KEY, TEST_READ))?.reveal()).toBe("sec");
-    expect(await operatorConfigured()).toBe(true);
+    expect(await oauthClientConfigured()).toBe(true);
   });
 });
 
@@ -1682,21 +1683,21 @@ describe("manage_connectors.disconnect", () => {
 describe("deriveConnectorStatus", () => {
   test("running + no probes outstanding → ready", () => {
     // This is the state a provider-auth fleet source (e.g. deep_research `web`)
-    // produces: no operator OAuth client, so its inputs are bare
+    // produces: no OAuth client, so its inputs are bare
     // `{ state: "running" }` → ready (no bogus Connect). Boot-side coverage:
     // provider-source-boot.test.ts.
     expect(deriveConnectorStatus({ state: "running" })).toEqual({ status: "ready" });
   });
 
-  test("missingOperatorSetup wins over every other signal — admin acts first", () => {
-    // Even with state=running, an unconfigured operator OAuth client should
+  test("missingOAuthClient wins over every other signal — admin acts first", () => {
+    // Even with state=running, an unconfigured OAuth client should
     // mark the connector as needs_setup. Setup is the precondition.
     const result = deriveConnectorStatus({
       state: "running",
-      missingOperatorSetup: true,
+      missingOAuthClient: true,
     });
     expect(result.status).toBe("needs_setup");
-    expect(result.statusReason).toContain("OAuth app");
+    expect(result.statusReason).toContain("OAuth client");
   });
 
   test("reauth_required → needs_auth, prefers lastError over generic copy", () => {
@@ -1731,12 +1732,12 @@ describe("deriveConnectorStatus", () => {
   });
 
   test("setup priority outranks needs_auth — same logic, finer level", () => {
-    // A connector in needs_auth state with missing operator setup should
+    // A connector in needs_auth state with missing OAuth client setup should
     // still surface as needs_setup; the user can't auth against an
-    // OAuth app that doesn't exist yet.
+    // OAuth client that doesn't exist yet.
     const result = deriveConnectorStatus({
       state: "not_authenticated",
-      missingOperatorSetup: true,
+      missingOAuthClient: true,
     });
     expect(result.status).toBe("needs_setup");
   });
@@ -1903,7 +1904,7 @@ describe("manage_connectors with an instance OAuth client", () => {
     await declareDropboxInstanceClient();
     const result = await buildTool(h, ADMIN_USER).handler({ action: "list_directory" });
     const dropbox = (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID);
-    expect(dropbox?.operatorConfigured).toBe(true);
+    expect(dropbox?.oauthClientConfigured).toBe(true);
   });
 
   test("install writes a ref naming the instance OAuth client, with no client id or secret on it", async () => {
@@ -1917,13 +1918,13 @@ describe("manage_connectors with an instance OAuth client", () => {
     const ws = await h.workspaceStore.get(h.wsId);
     const installed = ws?.connectors.find((b) => "url" in b && b.url === DROPBOX_URL);
     expect(installed?.oauthClient).toEqual({ instanceClient: DROPBOX_ID });
-    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]).toBeUndefined();
+    expect(ws?.oauthClients?.[DROPBOX_ID]).toBeUndefined();
   });
 
   test("the instance OAuth client wins over a workspace's own setup for the same entry", async () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "ws-cid",
       clientSecret: "ws-sec",
@@ -1936,17 +1937,17 @@ describe("manage_connectors with an instance OAuth client", () => {
     expect(installed?.oauthClient).toEqual({ instanceClient: DROPBOX_ID });
   });
 
-  test("setup_operator is refused: the client is the operator's", async () => {
+  test("set_oauth_client is refused: the client is the operator's", async () => {
     await declareDropboxInstanceClient();
     const result = await buildTool(h, ADMIN_USER).handler({
-      action: "setup_operator",
+      action: "set_oauth_client",
       catalogId: DROPBOX_ID,
       clientId: "ws-cid",
       clientSecret: "ws-sec",
     });
     expect(result.isError).toBe(true);
     const ws = await h.workspaceStore.get(h.wsId);
-    expect(ws?.oauthOperatorApps?.[DROPBOX_ID]).toBeUndefined();
+    expect(ws?.oauthClients?.[DROPBOX_ID]).toBeUndefined();
     expect(
       await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, {
         caller: "test",
