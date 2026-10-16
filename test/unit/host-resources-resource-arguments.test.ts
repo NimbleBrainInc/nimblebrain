@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { ReadResourceResult } from "@modelcontextprotocol/server";
 import {
   collectResourceArgumentUris,
   createResourceArgumentsResolver,
@@ -33,16 +34,50 @@ function servingSource(
 
 function resolverOver(
   byWorkspace: Record<string, ResourceServingSource[]>,
-  opts: { maxSize?: number; maxUris?: number; rateLimit?: TokenBucketRateLimit } = {},
+  opts: {
+    maxChars?: number;
+    maxSize?: number;
+    maxUris?: number;
+    rateLimit?: TokenBucketRateLimit;
+  } = {},
 ) {
-  return createResourceArgumentsResolver({
+  const resolver = createResourceArgumentsResolver({
     sourcesOf: (wsId) => byWorkspace[wsId] ?? [],
     isHostScheme: isReservedResourceScheme,
     rateLimit: opts.rateLimit ?? new TokenBucketRateLimit(),
+    maxChars: opts.maxChars ?? 1000,
     ...(opts.maxSize !== undefined ? { maxSize: opts.maxSize } : {}),
     ...(opts.maxUris !== undefined ? { maxUris: opts.maxUris } : {}),
   });
+  return {
+    /** The entries a call carries. */
+    resolve: async (uris: { uri: string; declared: boolean }[]) =>
+      (await resolver.resolve(uris, ctx)).entries,
+    /** The audit records of the same resolution. */
+    resolutions: async (uris: { uri: string; declared: boolean }[]) =>
+      (await resolver.resolve(uris, ctx)).resolutions,
+  };
 }
+
+/** A connector whose every read answers `contents`. */
+function answering(
+  name: string,
+  template: string,
+  contents: (uri: string) => ReadResourceResult["contents"],
+): ResourceServingSource & { reads: string[] } {
+  const reads: string[] = [];
+  return {
+    name,
+    reads,
+    resourceTemplates: async () => [{ uriTemplate: template }],
+    readResourceContents: async (uri) => {
+      reads.push(uri);
+      return contents(uri);
+    },
+  };
+}
+
+const declared = (...uris: string[]) => uris.map((uri) => ({ uri, declared: true }));
 
 const ctx = { workspaceId: WS_A, connectorId: "outbound" };
 
@@ -107,13 +142,10 @@ describe("collectResourceArgumentUris", () => {
 
 describe("createResourceArgumentsResolver", () => {
   it("reads a declared URI from the connector whose template it expands from", async () => {
-    const crm = servingSource("crm", ["crm://signals/{id}"], {
-      "crm://signals/42": '{"id":42}',
-    });
+    const crm = servingSource("crm", ["crm://signals/{id}"], { "crm://signals/42": '{"id":42}' });
     const other = servingSource("notes", ["notes://pages/{id}"]);
     const entries = await resolverOver({ [WS_A]: [crm, other] }).resolve(
-      [{ uri: "crm://signals/42", declared: true }],
-      ctx,
+      declared("crm://signals/42"),
     );
     expect(entries).toEqual({
       "crm://signals/42": {
@@ -123,26 +155,11 @@ describe("createResourceArgumentsResolver", () => {
     expect(other.reads).toEqual([]);
   });
 
-  it("reads nothing, and spends no budget, for a call that may not read resources", async () => {
-    const crm = servingSource("crm", ["crm://signals/{id}"], { "crm://signals/42": "{}" });
-    const rateLimit = new TokenBucketRateLimit({ burst: 1, ratePerSec: 0.001, now: () => 0 });
-    const entries = await resolverOver({ [WS_A]: [crm] }, { rateLimit }).resolve(
-      [{ uri: "crm://signals/42", declared: true }],
-      { ...ctx, mayRead: false },
-    );
-    expect(entries["crm://signals/42"]).toEqual({
-      error: { code: "not_found", message: expect.any(String) },
-    });
-    expect(crm.reads).toEqual([]);
-    expect(() => rateLimit.check(WS_A, "outbound")).not.toThrow();
-  });
-
   it("never reads a URI whose scheme is undeclared, and says so", async () => {
     const mail = servingSource("mail", ["mail://inbox/{id}"], { "mail://inbox/9": "secret" });
-    const entries = await resolverOver({ [WS_A]: [mail] }).resolve(
-      [{ uri: "mail://inbox/9", declared: false }],
-      ctx,
-    );
+    const entries = await resolverOver({ [WS_A]: [mail] }).resolve([
+      { uri: "mail://inbox/9", declared: false },
+    ]);
     expect(entries["mail://inbox/9"]).toEqual({
       error: { code: "scheme_not_declared", message: expect.any(String) },
     });
@@ -152,7 +169,7 @@ describe("createResourceArgumentsResolver", () => {
   it("passes a URI no connector serves as unresolved, never dropped", async () => {
     const entries = await resolverOver({
       [WS_A]: [servingSource("notes", ["notes://{id}"])],
-    }).resolve([{ uri: "crm://signals/1", declared: true }], ctx);
+    }).resolve(declared("crm://signals/1"));
     expect(entries["crm://signals/1"]).toEqual({
       error: { code: "not_found", message: expect.any(String) },
     });
@@ -167,13 +184,8 @@ describe("createResourceArgumentsResolver", () => {
       },
     };
     const empty = servingSource("crm2", ["crm2://signals/{id}"]);
-    const resolver = resolverOver({ [WS_A]: [failing, empty] });
-    const entries = await resolver.resolve(
-      [
-        { uri: "crm://signals/1", declared: true },
-        { uri: "crm2://signals/1", declared: true },
-      ],
-      ctx,
+    const entries = await resolverOver({ [WS_A]: [failing, empty] }).resolve(
+      declared("crm://signals/1", "crm2://signals/1"),
     );
     expect(entries["crm://signals/1"]).toMatchObject({ error: { code: "not_found" } });
     expect(entries["crm2://signals/1"]).toMatchObject({ error: { code: "not_found" } });
@@ -182,8 +194,7 @@ describe("createResourceArgumentsResolver", () => {
   it("never resolves from a connector in another workspace", async () => {
     const elsewhere = servingSource("crm", ["crm://signals/{id}"], { "crm://signals/1": "{}" });
     const entries = await resolverOver({ [WS_A]: [], [WS_B]: [elsewhere] }).resolve(
-      [{ uri: "crm://signals/1", declared: true }],
-      ctx,
+      declared("crm://signals/1"),
     );
     expect(entries["crm://signals/1"]).toMatchObject({ error: { code: "not_found" } });
     expect(elsewhere.reads).toEqual([]);
@@ -192,55 +203,67 @@ describe("createResourceArgumentsResolver", () => {
   it("refuses to guess between two connectors that claim the same URI", async () => {
     const a = servingSource("crm-a", ["crm://signals/{id}"], { "crm://signals/1": "a" });
     const b = servingSource("crm-b", ["crm://{+path}"], { "crm://signals/1": "b" });
-    const entries = await resolverOver({ [WS_A]: [a, b] }).resolve(
-      [{ uri: "crm://signals/1", declared: true }],
-      ctx,
-    );
+    const entries = await resolverOver({ [WS_A]: [a, b] }).resolve(declared("crm://signals/1"));
     expect(entries["crm://signals/1"]).toMatchObject({ error: { code: "ambiguous" } });
     expect([...a.reads, ...b.reads]).toEqual([]);
   });
 
   it("lets no connector answer for a scheme the host resolves itself", async () => {
     const squatter = servingSource("squatter", ["files://{id}"], { "files://fl_1": "x" });
-    const entries = await resolverOver({ [WS_A]: [squatter] }).resolve(
-      [{ uri: "files://fl_1", declared: true }],
-      ctx,
-    );
+    const entries = await resolverOver({ [WS_A]: [squatter] }).resolve(declared("files://fl_1"));
     expect(entries["files://fl_1"]).toMatchObject({ error: { code: "not_found" } });
     expect(squatter.reads).toEqual([]);
   });
 
-  it("caps one resource, and one call's contents together, at maxSize", async () => {
-    const crm = servingSource("crm", ["crm://signals/{id}"], {
-      "crm://signals/big": "x".repeat(11),
-      "crm://signals/a": "x".repeat(6),
-      "crm://signals/b": "x".repeat(6),
-    });
-    const entries = await resolverOver({ [WS_A]: [crm] }, { maxSize: 10 }).resolve(
-      [
-        { uri: "crm://signals/big", declared: true },
-        { uri: "crm://signals/a", declared: true },
-        { uri: "crm://signals/b", declared: true },
-      ],
-      ctx,
+  it("hands on text only: a blob, alone or beside text, is not_text and its bytes never pass", async () => {
+    const blob = Buffer.from("%PDF-1.7").toString("base64");
+    const files = answering("crm", "crm://files/{id}", (uri) =>
+      uri.endsWith("/mixed")
+        ? [
+            { uri, mimeType: "text/plain", text: "caption" },
+            { uri, mimeType: "application/pdf", blob },
+          ]
+        : [{ uri, mimeType: "application/pdf", blob }],
     );
-    expect(entries["crm://signals/big"]).toMatchObject({ error: { code: "too_large" } });
-    expect(entries["crm://signals/a"]).toHaveProperty("contents");
-    expect(entries["crm://signals/b"]).toMatchObject({ error: { code: "too_large" } });
+    const entries = await resolverOver({ [WS_A]: [files] }).resolve(
+      declared("crm://files/pdf", "crm://files/mixed"),
+    );
+    expect(entries["crm://files/pdf"]).toMatchObject({ error: { code: "not_text" } });
+    expect(entries["crm://files/mixed"]).toMatchObject({ error: { code: "not_text" } });
+    expect(JSON.stringify(entries)).not.toContain(blob);
   });
 
-  it("measures a blob by its decoded bytes", async () => {
-    const blob = Buffer.from("0123456789").toString("base64");
-    const source: ResourceServingSource = {
-      name: "crm",
-      resourceTemplates: async () => [{ uriTemplate: "crm://files/{id}" }],
-      readResourceContents: async (uri) => [{ uri, mimeType: "application/pdf", blob }],
-    };
-    const fits = await resolverOver({ [WS_A]: [source] }, { maxSize: 10 }).resolve(
-      [{ uri: "crm://files/1", declared: true }],
-      ctx,
+  it("caps each resource at the agent's read limit: over it is too_large, never cut", async () => {
+    const crm = servingSource("crm", ["crm://signals/{id}"], {
+      "crm://signals/fits": "x".repeat(10),
+      "crm://signals/over": "x".repeat(11),
+    });
+    const entries = await resolverOver({ [WS_A]: [crm] }, { maxChars: 10 }).resolve(
+      declared("crm://signals/fits", "crm://signals/over"),
     );
-    expect(fits["crm://files/1"]).toHaveProperty("contents");
+    expect(entries["crm://signals/fits"]).toHaveProperty("contents");
+    expect(entries["crm://signals/over"]).toEqual({
+      error: { code: "too_large", message: expect.any(String) },
+    });
+  });
+
+  it("caps a call's contents together, refusing before reading or spending budget", async () => {
+    // Each read reserves maxChars × 3 bytes = 30; a 60-byte call admits two.
+    const crm = servingSource("crm", ["crm://signals/{id}"], {
+      "crm://signals/1": "a",
+      "crm://signals/2": "b",
+      "crm://signals/3": "c",
+    });
+    const rateLimit = new TokenBucketRateLimit({ burst: 3, ratePerSec: 0.001, now: () => 0 });
+    const entries = await resolverOver(
+      { [WS_A]: [crm] },
+      { maxChars: 10, maxSize: 60, rateLimit },
+    ).resolve(declared("crm://signals/1", "crm://signals/2", "crm://signals/3"));
+    expect(entries["crm://signals/1"]).toHaveProperty("contents");
+    expect(entries["crm://signals/2"]).toHaveProperty("contents");
+    expect(entries["crm://signals/3"]).toMatchObject({ error: { code: "too_large" } });
+    expect(crm.reads).toEqual(["crm://signals/1", "crm://signals/2"]);
+    expect(() => rateLimit.check(WS_A, "outbound")).not.toThrow();
   });
 
   it("resolves at most maxUris per call and marks the rest", async () => {
@@ -249,31 +272,52 @@ describe("createResourceArgumentsResolver", () => {
       "crm://signals/2": "2",
     });
     const entries = await resolverOver({ [WS_A]: [crm] }, { maxUris: 1 }).resolve(
-      [
-        { uri: "crm://signals/1", declared: true },
-        { uri: "crm://signals/2", declared: true },
-      ],
-      ctx,
+      declared("crm://signals/1", "crm://signals/2"),
     );
     expect(entries["crm://signals/1"]).toHaveProperty("contents");
     expect(entries["crm://signals/2"]).toMatchObject({ error: { code: "too_many" } });
     expect(crm.reads).toEqual(["crm://signals/1"]);
   });
 
-  it("spends the calling connector's host-resources budget, one token per read", async () => {
+  it("spends one token per read made, and none on a URI no connector serves", async () => {
     const crm = servingSource("crm", ["crm://signals/{id}"], {
       "crm://signals/1": "1",
       "crm://signals/2": "2",
     });
     const rateLimit = new TokenBucketRateLimit({ burst: 1, ratePerSec: 0.001, now: () => 0 });
     const entries = await resolverOver({ [WS_A]: [crm] }, { rateLimit }).resolve(
-      [
-        { uri: "crm://signals/1", declared: true },
-        { uri: "crm://signals/2", declared: true },
-      ],
-      ctx,
+      declared("nobody://x/1", "crm://signals/1", "crm://signals/2"),
     );
-    const codes = Object.values(entries).map((e) => ("error" in e ? e.error.code : "ok"));
+    expect(entries["nobody://x/1"]).toMatchObject({ error: { code: "not_found" } });
+    const codes = ["crm://signals/1", "crm://signals/2"].map((u) => {
+      const e = entries[u];
+      return e && "error" in e ? e.error.code : "ok";
+    });
     expect(codes.sort()).toEqual(["ok", "rate_limited"]);
+  });
+
+  it("records each URI's outcome for the audit trail, in argument order, never its contents", async () => {
+    const crm = servingSource("crm", ["crm://signals/{id}"], { "crm://signals/1": "héllo" });
+    const resolutions = await resolverOver({ [WS_A]: [crm] }).resolutions([
+      { uri: "crm://signals/1", declared: true },
+      { uri: "crm://signals/9", declared: true },
+      { uri: "mail://inbox/1", declared: false },
+    ]);
+    expect(resolutions).toEqual([
+      { uri: "crm://signals/1", source: "crm", outcome: "resolved", bytes: 6 },
+      { uri: "crm://signals/9", source: "crm", outcome: "not_found", bytes: 0 },
+      { uri: "mail://inbox/1", outcome: "scheme_not_declared", bytes: 0 },
+    ]);
+    expect(JSON.stringify(resolutions)).not.toContain("héllo");
+  });
+
+  it("advertises its limits", () => {
+    const resolver = createResourceArgumentsResolver({
+      sourcesOf: () => [],
+      isHostScheme: () => false,
+      rateLimit: new TokenBucketRateLimit(),
+      maxChars: 500,
+    });
+    expect(resolver.limits).toEqual({ maxChars: 500, maxSize: 10 * 1024 * 1024, maxUris: 32 });
   });
 });

@@ -481,8 +481,8 @@ describe("IdentityToolRouter — a run's allowedTools", () => {
     expect(mail.calls).toHaveLength(0);
     expect(allowed.isError).toBe(false);
     expect(crm.calls).toHaveLength(1);
-    // The source gets the limit too, so a read it makes on the call's behalf
-    // (resource arguments) is bounded by the same list.
-    expect(crm.calls[0]?.options?.isToolAllowed).toBe(isToolAllowed);
+    // The call's request context carries the limit, so a read made on the
+    // call's behalf (resource arguments) is bounded by the same list.
+    expect(crm.calls[0]?.context?.isToolAllowed).toBe(isToolAllowed);
   });
 });

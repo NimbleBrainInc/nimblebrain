@@ -30,7 +30,7 @@ The host claims the capability on a workspace connector's connection, on both er
 {
   "capabilities": {
     "extensions": {
-      "ai.nimblebrain/resource-arguments": { "maxSize": 10485760, "maxUris": 32 }
+      "ai.nimblebrain/resource-arguments": { "maxChars": 49600, "maxSize": 10485760, "maxUris": 32 }
     }
   }
 }
@@ -38,7 +38,8 @@ The host claims the capability on a workspace connector's connection, on both er
 
 | Field | Meaning |
 |---|---|
-| `maxSize` | The most bytes of resolved contents one call carries, all URIs together (10 MiB). Text counts in UTF-8, a blob in decoded bytes. |
+| `maxChars` | The most characters of text one resolved resource may carry: the limit the agent's own `nb__read_resource` applies. A longer resource is refused, never cut. |
+| `maxSize` | The most bytes of resolved text one call carries, all URIs together (10 MiB). Each URI the host reads counts as `maxChars` × 3 bytes, the most a resource within `maxChars` can take in UTF-8, so a read that is made is never dropped afterwards. |
 | `maxUris` | The most distinct URIs resolved for one call. |
 
 The capability is absent where the host resolves nothing: on a personal connector's connection, which belongs to a person rather than a workspace, and on any host that does not implement the extension.
@@ -125,7 +126,7 @@ An entry is one of two shapes:
 
 | Shape | Meaning |
 |---|---|
-| `{ "contents": [...] }` | The serving server's `resources/read` result contents, as it returned them: text as `text`, anything else base64-encoded in `blob`. |
+| `{ "contents": [...] }` | The serving server's `resources/read` result contents, as it returned them. Always text: each entry has `uri`, `text`, and `mimeType` when the server gave one. A resource with any non-text (`blob`) entry is refused as `not_text`. |
 | `{ "error": { "code", "message" } }` | The host did not read the URI, or the read gave nothing. See [Errors](#errors). |
 
 A URI is never silently dropped: every string in a declared argument has an entry. Whether an unresolved citation refuses the call is your tool's decision.
@@ -139,7 +140,16 @@ The host reads a URI from the one server in the calling connection's workspace w
 - **One workspace.** Only the servers installed in the same workspace as your connection are consulted. A server in another workspace is never read, whatever it serves.
 - **One owner.** When two servers in the workspace claim the URI, the host reads neither and answers `ambiguous`. It does not guess.
 - **The host's own schemes are not served this way.** `files://`, `ui://`, `skill://`, `artifact://`, `conversation://` and `app://` URIs are never resolved through this extension, whatever a server advertises. Workspace files are read with [host resources](/extensions/host-resources/).
-- **The session's authority.** The read is sent while the tool call is being made, for the same user, so the serving server sees the caller it would see if the agent read the resource itself. Your tool receives nothing the agent could not have read in the same workspace: in a task run limited to a list of tools that does not include `nb__read_resource`, the host reads nothing and every URI is `not_found`.
+
+## What your tool can receive
+
+Your tool receives only text the agent itself could have read in the same call. Three rules make that true:
+
+- **The same credential.** The host sends the read over the serving server's connection in this workspace, inside the tool call, so the serving server sees exactly what it sees when the agent reads the resource with `nb__read_resource`. A workspace connector authenticates as the workspace, not as each user, so the read carries the workspace's credential, not a per-user one.
+- **The same reach.** The host reads only from servers the agent's own read reaches. A task run whose list of allowed tools does not include `nb__read_resource` cannot read connector resources itself, so for a tool it calls the host reads nothing and every URI is `not_found`.
+- **The same shape.** The agent's read gives it text, up to `maxChars` characters. The host hands on text only (a blob is `not_text`, and its bytes never reach your tool) and refuses a resource longer than `maxChars` as `too_large` rather than cutting it.
+
+Each resolution is recorded on the host's trace of the tool call: one `resource_argument` event per URI, with the URI, the serving server, the outcome code, and the bytes handed on. The contents are never recorded.
 
 ## Errors
 
@@ -148,7 +158,8 @@ The host reads a URI from the one server in the calling connection's workspace w
 | `scheme_not_declared` | The string's scheme is not one the argument declares, or the string has no scheme. The host did not read it. |
 | `not_found` | No server in the workspace serves the URI, or its server returned nothing or failed. These are one code on purpose, as in [host resources](/extensions/host-resources/#scope-which-files-a-server-can-see): a read tells your server nothing about what exists beyond the contents it is handed. |
 | `ambiguous` | More than one server in the workspace serves the URI. A workspace admin resolves it by removing one. |
-| `too_large` | The contents would take the call past `maxSize`. Entries are admitted in argument order, so the first URIs that fit are the ones resolved. |
+| `not_text` | The resource's contents include a non-text (`blob`) entry. The host hands on text only. |
+| `too_large` | The resource has more than `maxChars` characters of text, or reading it would take the call past `maxSize`. URIs are admitted in argument order, so the first ones that fit are read; a URI refused for the call's size is not read. |
 | `too_many` | The call names more than `maxUris` distinct URIs with declared schemes; the rest are not read. |
 | `rate_limited` | Your server's resource budget in this workspace is spent. Reads made here and [host-resources](/extensions/host-resources/) requests share one budget per server per workspace. |
 

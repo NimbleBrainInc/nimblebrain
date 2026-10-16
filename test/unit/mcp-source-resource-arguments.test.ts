@@ -11,12 +11,17 @@ import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import type { EventSink } from "../../src/engine/types.ts";
 import {
   createResourceArgumentsResolver,
+  RESOURCE_ARGUMENT_SPAN_EVENT,
   RESOURCE_ARGUMENTS_EXTENSION_ID,
   TokenBucketRateLimit,
 } from "../../src/host-resources/index.ts";
+import { callMayUseTool, runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { isReservedResourceScheme } from "../../src/tools/resource-schemes.ts";
+import { READ_RESOURCE_TOOL } from "../../src/tools/system-tools.ts";
+import { isToolAllowedForRun } from "../../src/tools/tool-pattern.ts";
 import { mcpSourceInternals } from "../helpers/mcp-source-internals.ts";
+import { spanExporter } from "../helpers/span-exporter.ts";
 
 const NoopSink: EventSink = { emit: () => {} };
 const WS = "ws_00000000000c0de1";
@@ -94,10 +99,13 @@ describe("McpSource resource arguments", () => {
     await crm.start();
     started.push(crm);
     const rateLimit = new TokenBucketRateLimit();
+    // The same narrowing the runtime applies: the call's own workspace, and
+    // nothing when its run's tool limit excludes the agent's own read.
     const resolver = createResourceArgumentsResolver({
-      sourcesOf: (wsId) => (wsId === WS ? [crm] : []),
+      sourcesOf: (wsId) => (wsId === WS && callMayUseTool(READ_RESOURCE_TOOL) ? [crm] : []),
       isHostScheme: isReservedResourceScheme,
       rateLimit,
+      maxChars: 50_000,
     });
     const outbound = new McpSource(
       "outbound",
@@ -137,17 +145,47 @@ describe("McpSource resource arguments", () => {
 
   it("reads nothing inside a run whose tool limit excludes nb__read_resource", async () => {
     const outbound = await setUp({ withResolver: true });
-    const limited = await outbound.execute("cite", { citations: ["crm://signals/42"] }, undefined, {
-      isToolAllowed: (name) => name.startsWith("outbound__"),
-    });
+    // What the run's tool router stamps on each call it dispatches.
+    const inRun = (allowedTools: string[]) =>
+      runWithRequestContext(
+        {
+          identity: null,
+          workspaceId: WS,
+          isToolAllowed: (name) => isToolAllowedForRun(name, allowedTools),
+        },
+        () => outbound.execute("cite", { citations: ["crm://signals/42"] }),
+      );
+
+    const limited = await inRun(["outbound__*"]);
     expect(JSON.parse(textOf(limited))).toEqual({
       "crm://signals/42": { error: { code: "not_found", message: expect.any(String) } },
     });
 
-    const reading = await outbound.execute("cite", { citations: ["crm://signals/42"] }, undefined, {
-      isToolAllowed: (name) => name === "nb__read_resource",
-    });
+    const reading = await inRun(["outbound__*", "nb__read_resource"]);
     expect(JSON.parse(textOf(reading))["crm://signals/42"].contents[0].text).toBe(SIGNAL);
+  });
+
+  it("records each resolution on the tool.dispatch span, without the contents", async () => {
+    const outbound = await setUp({ withResolver: true });
+    spanExporter.reset();
+    await outbound.execute("cite", { citations: ["crm://signals/42", "crm://signals/7"] });
+    const span = spanExporter.getFinishedSpans().find((s) => s.name === "tool.dispatch");
+    const events = (span?.events ?? []).filter((e) => e.name === RESOURCE_ARGUMENT_SPAN_EVENT);
+    expect(events.map((e) => e.attributes)).toEqual([
+      {
+        "resource_argument.uri": "crm://signals/42",
+        "resource_argument.source": "crm",
+        "resource_argument.outcome": "resolved",
+        "resource_argument.bytes": Buffer.byteLength(SIGNAL),
+      },
+      {
+        "resource_argument.uri": "crm://signals/7",
+        "resource_argument.source": "crm",
+        "resource_argument.outcome": "not_found",
+        "resource_argument.bytes": 0,
+      },
+    ]);
+    expect(JSON.stringify(span?.events)).not.toContain(SIGNAL);
   });
 
   it("resolves the entries itself on a task started directly, with no meta given", async () => {
@@ -175,6 +213,7 @@ describe("McpSource resource arguments", () => {
     const withResolver = await setUp({ withResolver: true });
     const claimed = mcpSourceInternals(withResolver).inProcessServer?.getClientCapabilities();
     expect(claimed?.extensions?.[RESOURCE_ARGUMENTS_EXTENSION_ID]).toEqual({
+      maxChars: 50_000,
       maxSize: 10 * 1024 * 1024,
       maxUris: 32,
     });

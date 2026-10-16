@@ -40,6 +40,14 @@ export interface RequestContext {
    */
   workspaceModelOverride?: Partial<ModelSlots> | null;
   /**
+   * An unattended run's tool limit (its `allowedTools` predicate), stamped by
+   * the run's tool router on each call it dispatches. Absent ⇒ no limit (a
+   * chat, `/mcp`, REST). Read by whatever reads on a call's behalf beyond the
+   * tool called, so it reads only what the run itself could: the host resolves
+   * a tool's resource arguments only when this allows `nb__read_resource`.
+   */
+  isToolAllowed?: (name: string) => boolean;
+  /**
    * Active conversation id when this context was created inside `runtime.chat()`.
    * Tools that ask "what's happening in the current conversation" (the
    * `conversations__*` tools) read this when their input omits an explicit id.
@@ -138,4 +146,10 @@ export function runDetached<T>(fn: () => T): T {
  */
 export function getRequestContext(): RequestContext | undefined {
   return storage.getStore();
+}
+
+/** Whether the current call's tool limit, if it has one, allows `toolName`. */
+export function callMayUseTool(toolName: string): boolean {
+  const limit = storage.getStore()?.isToolAllowed;
+  return !limit || limit(toolName);
 }

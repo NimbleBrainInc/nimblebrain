@@ -265,7 +265,11 @@ import {
   relayIdentitySourceNotifications,
 } from "../tools/server-notifications.ts";
 import { surfaceTools } from "../tools/surfacing.ts";
-import { createSystemTools } from "../tools/system-tools.ts";
+import {
+  createSystemTools,
+  READ_RESOURCE_TOOL,
+  RECORD_READ_MAX_CHARS,
+} from "../tools/system-tools.ts";
 import { isToolAllowedForRun, unmatchedAllowedTools } from "../tools/tool-pattern.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { toToolSchema } from "../tools/types.ts";
@@ -292,6 +296,7 @@ import {
 import { IdentityToolRouter } from "./identity-tool-router.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
 import {
+  callMayUseTool,
   getRequestContext,
   type RequestContext,
   runWithRequestContext,
@@ -856,15 +861,21 @@ export class Runtime {
     const hostResourcesRateLimit = new TokenBucketRateLimit();
     // `ai.nimblebrain/resource-arguments`: a tool's declared URIs are read from
     // the connectors of the calling connection's own workspace, and nowhere
-    // else. Late-bound to `rt`, which is constructed below; the resolver runs
-    // only on a tool call, long after boot. It spends from the same
-    // per-(workspace, connector) budget as the host-resources methods.
+    // else, and only from those the caller could read itself: an unattended
+    // run whose tool limit (stamped on the call's request context) excludes the
+    // agent's own read reads none. What is handed on is the agent's read too:
+    // text, within its character limit. Late-bound to `rt`, which is
+    // constructed below; the resolver runs only on a tool call, long after
+    // boot. It spends from the same per-(workspace, connector) budget as the
+    // host-resources methods.
     const resourceArgumentsResolver = createResourceArgumentsResolver({
       sourcesOf: (wsId) => {
+        if (!callMayUseTool(READ_RESOURCE_TOOL)) return [];
         const registry = rt._workspaceRegistries.get(wsId);
         if (!registry) return [];
         return registry.getSources().filter((s): s is McpSource => s instanceof McpSource);
       },
+      maxChars: RECORD_READ_MAX_CHARS,
       isHostScheme: isReservedResourceScheme,
       rateLimit: hostResourcesRateLimit,
     });

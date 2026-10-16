@@ -158,6 +158,7 @@ describe.each([
           sourcesOf: (wsId) => (wsId === WS ? [crm] : []),
           isHostScheme: isReservedResourceScheme,
           rateLimit,
+          maxChars: 50_000,
         }),
       },
     );
@@ -182,8 +183,9 @@ describe.each([
   });
 });
 
-describe("resource arguments on a call made for an outside client", () => {
-  it("sends the entries beside the client's capabilities in one _meta", async () => {
+describe("resource arguments beside the client capabilities in one 2026-07-28 _meta", () => {
+  /** A 2026-07-28 outbound connector recording each `tools/call` `_meta` it receives. */
+  async function connectRecording() {
     const handler = createMcpHandler(() => outboundServer()).fetch;
     const callMetas: Record<string, unknown>[] = [];
     const server = Bun.serve({
@@ -204,7 +206,6 @@ describe("resource arguments on a call made for an outside client", () => {
         return handler(request);
       },
     });
-
     const crm = await crmSource();
     const rateLimit = new TokenBucketRateLimit();
     const outbound = new McpSource(
@@ -227,12 +228,49 @@ describe("resource arguments on a call made for an outside client", () => {
           sourcesOf: (wsId) => (wsId === WS ? [crm] : []),
           isHostScheme: isReservedResourceScheme,
           rateLimit,
+          maxChars: 50_000,
         }),
       },
     );
+    await outbound.start();
+    expect(outbound.getNegotiatedProtocolVersion()).toBe("2026-07-28");
+    await outbound.tools();
+    return {
+      outbound,
+      callMetas,
+      close: async () => {
+        await outbound.stop();
+        await crm.stop();
+        server.stop(true);
+      },
+    };
+  }
+
+  const resolved = {
+    "crm://signals/42": {
+      contents: [{ uri: "crm://signals/42", mimeType: "application/json", text: SIGNAL }],
+    },
+  };
+
+  it("on a plain inline call, merges the entries with the host's own client capabilities", async () => {
+    const { outbound, callMetas, close } = await connectRecording();
     try {
-      await outbound.start();
-      await outbound.tools();
+      const result = await outbound.execute("cite", { citation: "crm://signals/42" });
+      expect(result.isError).toBe(false);
+      const meta = callMetas.at(-1);
+      expect(meta?.[RESOURCE_ARGUMENTS_EXTENSION_ID]).toEqual(resolved);
+      const hostCaps = meta?.[CLIENT_CAPABILITIES_META_KEY] as
+        | { extensions?: Record<string, unknown> }
+        | undefined;
+      expect(hostCaps?.extensions?.[RESOURCE_ARGUMENTS_EXTENSION_ID]).toBeDefined();
+    } finally {
+      await close();
+    }
+  });
+
+  it("on a call made for an outside client, sends the entries beside that client's capabilities", async () => {
+    const { outbound, callMetas, close } = await connectRecording();
+    try {
       const capabilities = { elicitation: {} };
       const result = await outbound.execute("cite", { citation: "crm://signals/42" }, undefined, {
         caller: { capabilities },
@@ -240,15 +278,9 @@ describe("resource arguments on a call made for an outside client", () => {
       expect(result.isError).toBe(false);
       const meta = callMetas.at(-1);
       expect(meta?.[CLIENT_CAPABILITIES_META_KEY]).toEqual(capabilities);
-      expect(meta?.[RESOURCE_ARGUMENTS_EXTENSION_ID]).toEqual({
-        "crm://signals/42": {
-          contents: [{ uri: "crm://signals/42", mimeType: "application/json", text: SIGNAL }],
-        },
-      });
+      expect(meta?.[RESOURCE_ARGUMENTS_EXTENSION_ID]).toEqual(resolved);
     } finally {
-      await outbound.stop();
-      await crm.stop();
-      server.stop(true);
+      await close();
     }
   });
 });

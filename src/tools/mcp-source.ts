@@ -47,11 +47,12 @@ import {
   type HostResourcesResolver,
   hostExtensions,
   parseResourceArgumentsDeclaration,
+  RESOURCE_ARGUMENT_SPAN_EVENT,
   RESOURCE_ARGUMENTS_EXTENSION_ID,
   type ResourceArgumentsResolver,
   resourceArgumentsClientExtension,
 } from "../host-resources/index.ts";
-import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
+import { addSpanEvent, requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
 import { facetsClientExtension } from "../services/facets-extension.ts";
 import { lifecycleClientExtension } from "../services/lifecycle-extension.ts";
@@ -1244,12 +1245,13 @@ export class McpSource implements ToolSource {
    * and only where it is served (ADR-0023).
    */
   private clientCapabilities(): ClientCapabilities {
-    if (!this.connectorContext?.resourceArguments) return McpSource.CAPABILITIES;
+    const resolver = this.connectorContext?.resourceArguments;
+    if (!resolver) return McpSource.CAPABILITIES;
     return {
       ...McpSource.CAPABILITIES,
       extensions: {
         ...McpSource.CAPABILITIES.extensions,
-        ...resourceArgumentsClientExtension(),
+        ...resourceArgumentsClientExtension(resolver.limits),
       },
     };
   }
@@ -2159,12 +2161,9 @@ export class McpSource implements ToolSource {
       TASKS_EXTENSION_ID in this.serverExtensions();
 
     const dispatchArgs = this.prepareDispatchArgs(tool, input, toolName);
-    const meta = await this.resourceArgumentsMeta(
-      tool,
-      dispatchArgs,
-      signal,
-      options?.isToolAllowed,
-    );
+    // Resolved inside the dispatch span, so its audit events land on it, and
+    // kept for the retry in the catch below.
+    let meta: Record<string, unknown> | undefined;
 
     // Answers: "why is this tool call going inline vs task-augmented?" and
     // "is the tool cache populated?". Covers the whole dispatch decision in
@@ -2187,10 +2186,12 @@ export class McpSource implements ToolSource {
           "tool.path": path,
           ...requestIdentityAttrs(),
         },
-        () =>
-          isTaskAugmented
+        async () => {
+          meta = await this.resourceArgumentsMeta(tool, dispatchArgs, signal);
+          return isTaskAugmented
             ? this.callToolAsTask(toolName, dispatchArgs, signal, meta)
-            : this.callToolInline(toolName, dispatchArgs, signal, options?.caller, meta),
+            : this.callToolInline(toolName, dispatchArgs, signal, options?.caller, meta);
+        },
         // A client cancellation isn't a crash — don't mark the span failed.
         { isExpectedError: () => signal?.aborted === true },
       );
@@ -2218,15 +2219,17 @@ export class McpSource implements ToolSource {
    *
    * Computed once per call, before dispatch, and reused by the retry, so one
    * call never reads the same resource twice. The workspace is the connection's
-   * own, never one the arguments could name. Inside an unattended run whose
-   * tool limit excludes `nb__read_resource`, nothing is read, since the run
-   * could not read the resources itself.
+   * own, never one the arguments could name; which of its connectors the call
+   * may read from is the resolver's to decide.
+   *
+   * Each URI's outcome is recorded on the active span (`tool.dispatch` for an
+   * agent's call) as a `resource_argument` event: the URI, the serving
+   * connector, the outcome code and the bytes handed on, never the contents.
    */
   private async resourceArgumentsMeta(
     tool: Tool | undefined,
     args: Record<string, unknown>,
     signal?: AbortSignal,
-    isToolAllowed?: (name: string) => boolean,
   ): Promise<Record<string, unknown> | undefined> {
     const ctx = this.connectorContext;
     if (!ctx?.resourceArguments) return undefined;
@@ -2234,12 +2237,19 @@ export class McpSource implements ToolSource {
     if (!declaration) return undefined;
     const uris = collectResourceArgumentUris(declaration, args);
     if (uris.length === 0) return undefined;
-    const entries = await ctx.resourceArguments.resolve(uris, {
+    const { entries, resolutions } = await ctx.resourceArguments.resolve(uris, {
       workspaceId: ctx.workspaceId,
       connectorId: ctx.connectorId,
-      ...(isToolAllowed && !isToolAllowed("nb__read_resource") ? { mayRead: false } : {}),
       ...(signal ? { signal } : {}),
     });
+    for (const r of resolutions) {
+      addSpanEvent(RESOURCE_ARGUMENT_SPAN_EVENT, {
+        "resource_argument.uri": r.uri,
+        "resource_argument.outcome": r.outcome,
+        "resource_argument.bytes": r.bytes,
+        ...(r.source ? { "resource_argument.source": r.source } : {}),
+      });
+    }
     return { [RESOURCE_ARGUMENTS_EXTENSION_ID]: entries };
   }
 

@@ -1,8 +1,6 @@
-import { beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { LanguageModelV4, LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { SpanStatusCode } from "@opentelemetry/api";
-import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { callModel, NO_FINISH_PART_RAW } from "../../src/model/stream.ts";
 import {
@@ -18,17 +16,11 @@ import {
   runDetached,
   runWithRequestContext,
 } from "../../src/runtime/request-context.ts";
+import { spanExporter } from "../helpers/span-exporter.ts";
 
-const exporter = new InMemorySpanExporter();
-
-beforeAll(() => {
-  // Register a provider with an in-memory exporter so withSpan() produces real,
-  // inspectable spans. No OTLP endpoint — matches the no-export default path.
-  const provider = new NodeTracerProvider({
-    spanProcessors: [new SimpleSpanProcessor(exporter)],
-  });
-  provider.register();
-});
+// The process-wide in-memory exporter, so withSpan() produces real, inspectable
+// spans. No OTLP endpoint — matches the no-export default path.
+const exporter = spanExporter;
 
 beforeEach(() => {
   exporter.reset();

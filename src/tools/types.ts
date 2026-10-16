@@ -87,13 +87,6 @@ export interface ToolExecuteOptions {
    * ignores it.
    */
   caller?: McpCaller;
-  /**
-   * An unattended run's tool limit (its `allowedTools`), for a call made inside
-   * that run. A source that reads on the call's behalf beyond the tool called
-   * reads only what the run itself could: an MCP source resolves a tool's
-   * resource arguments only when the run may call `nb__read_resource`.
-   */
-  isToolAllowed?: (name: string) => boolean;
 }
 
 /**
