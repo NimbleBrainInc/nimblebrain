@@ -898,7 +898,8 @@ describe("manage_connectors.uninstall of a static-auth connector", () => {
 
   async function oauthClientConfigured(): Promise<boolean | undefined> {
     const result = await buildTool(h, ADMIN_USER).handler({ action: "list_directory" });
-    return (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID)?.oauthClientConfigured;
+    return (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID)
+      ?.oauthClientConfigured;
   }
 
   test("removing the last user clears the OAuth client, so the entry needs Set up again", async () => {

@@ -436,7 +436,8 @@ export function oauthClientSetupTarget(entry: CatalogListing): OAuthClientSetupT
   return {
     id: entry.id,
     name: entry.name,
-    oauthClientSetup: entry.install.kind === "remote-oauth" ? entry.install.oauthClientSetup : undefined,
+    oauthClientSetup:
+      entry.install.kind === "remote-oauth" ? entry.install.oauthClientSetup : undefined,
   };
 }
 

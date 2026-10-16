@@ -200,7 +200,10 @@ export function deriveConnectorStatus(input: StatusInputs): {
 } {
   // 1. Setup gates everything. OAuth client missing → admin acts first.
   if (input.missingOAuthClient) {
-    return { status: "needs_setup", statusReason: "OAuth client not configured for this workspace." };
+    return {
+      status: "needs_setup",
+      statusReason: "OAuth client not configured for this workspace.",
+    };
   }
   // 2. Auth lifecycle. A broken connection needs someone to act; one that
   //    was never connected, or was disconnected, is at rest.
@@ -895,9 +898,7 @@ async function applyWorkspaceOAuthClient(
 ): Promise<void> {
   // An instance OAuth client is the operator's: there is no workspace record to show or edit.
   const op =
-    cat?.auth === "static" && !instanceOAuthClient(cat.id)
-      ? ws?.oauthClients?.[cat.id]
-      : undefined;
+    cat?.auth === "static" && !instanceOAuthClient(cat.id) ? ws?.oauthClients?.[cat.id] : undefined;
   if (!op) return;
   const label = await resolveUserLabel(op.configuredBy);
   entry.workspaceOAuthClient = {
@@ -2844,7 +2845,9 @@ async function handleUninstall(
   // drops the row, and both are inputs here.
   const { deletable: secretKeys, retained } = deletableSecretKeys(ws, serverName, instance.ref);
   const workspaceClient = await workspaceOAuthClientOf(ctx, ws, serverName, instance.ref);
-  const retainedKeys = workspaceClient?.inUse ? [...retained, workspaceClient.clientSecretKey] : retained;
+  const retainedKeys = workspaceClient?.inUse
+    ? [...retained, workspaceClient.clientSecretKey]
+    : retained;
 
   const outcome = await uninstallWorkspaceConnector(ctx.runtime, wsId, serverName, {
     secretKeys,
