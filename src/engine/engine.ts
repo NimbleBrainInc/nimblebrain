@@ -1191,7 +1191,7 @@ function buildRunErrorData(runId: string, err: unknown): RunErrorPayload {
 interface PendingOverlayFetch {
   data: Omit<ConnectorSkillInjectedPayload, "skillBody">;
   body: Promise<string | null>;
-  /** Left out of a hold by its size cap: settled without being delivered. */
+  /** Left out by a hold's or the drain's size limit: settled without being delivered. */
   dropped?: boolean;
   /** Counted as delivered by some hold, so neither a later hold nor the drain's cap drops it. */
   kept?: boolean;
@@ -1224,9 +1224,11 @@ interface SkillDelivery {
 }
 
 /**
- * Most characters of skill guidance one held call delivers: three bodies at
- * the loader's per-skill limit. Skills past it are named in the held result,
- * loadable with `nb__use_skill`, and recorded as `skill.not_delivered`.
+ * Most characters of skill guidance one delivery carries, whether a held call
+ * or an iteration's drain: three bodies at the loader's per-skill limit. Skills
+ * past it are recorded as `skill.not_delivered`. A hold names its left-out
+ * skills in the held result, loadable with `nb__use_skill`; the drain makes its
+ * left-out skills eligible again.
  */
 const MAX_HELD_GUIDANCE_CHARS = 3 * MAX_SKILL_BODY_CHARS;
 

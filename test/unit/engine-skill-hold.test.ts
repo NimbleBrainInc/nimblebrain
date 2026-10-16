@@ -308,4 +308,54 @@ describe("engine: a bound skill reaches the model before its tool's first call r
     ]);
     expect(texts(r.prompts[1] ?? []).some((t) => t.includes("S4 "))).toBe(false);
   });
+
+  it("delivers every body a hold kept, past the cap, and caps the rest", async () => {
+    // Two parallel holds keep two full-size bodies each; a third call runs and claims one more.
+    const notesTool: ToolSchema = {
+      name: "notes__list",
+      description: "List notes",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    };
+    const big = (name: string, toolAffinity: string[], priority: number) => ({
+      ...DRAFTING,
+      name,
+      body: `${name} ${"x".repeat(MAX_SKILL_BODY_CHARS - 40)}`,
+      toolAffinity,
+      priority,
+    });
+    const r = run({
+      turns: [
+        [
+          { id: "c1", name: "outreach__draft_email" },
+          { id: "c2", name: "outreach__list_campaigns" },
+          { id: "c3", name: "notes__list" },
+        ],
+      ],
+      tools: [draftTool, listTool, notesTool],
+      candidates: [
+        big("connector:outreach:h1", ["outreach__draft_email"], 50),
+        big("connector:outreach:h2", ["outreach__draft_email"], 50),
+        big("connector:outreach:l1", ["outreach__list_campaigns"], 40),
+        big("connector:outreach:l2", ["outreach__list_campaigns"], 40),
+        // Ahead of every kept body by priority, but no hold counted it.
+        { ...big("connector:notes:n", ["notes__*"], 0), implicitBinding: true },
+      ],
+    });
+    await r.result;
+    expect(r.executed).toEqual(["c3"]);
+    const delivered = r.events
+      .filter((e) => e.type === "connector.skill.injected")
+      .map((e) => (e.type === "connector.skill.injected" ? e.data.skillName : ""));
+    expect(delivered).toEqual([
+      "connector:outreach:l1",
+      "connector:outreach:l2",
+      "connector:outreach:h1",
+      "connector:outreach:h2",
+    ]);
+    const notDelivered = r.events.filter((e) => e.type === "skill.not_delivered");
+    expect(notDelivered.map((e) => e.data)).toEqual([
+      expect.objectContaining({ skillName: "connector:notes:n", reason: "capped" }),
+    ]);
+  });
 });

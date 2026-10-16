@@ -541,7 +541,7 @@ export interface ConnectorSkillInjectedEvent {
 
 /**
  * A skill bound to a called tool did not reach the model on that call: its
- * body could not be fetched, a hold's size cap left it out, or a
+ * body could not be fetched, one delivery's size limit left it out, or a
  * `beforeToolCall` hook renamed the call past the hold. Reconstruction ignores
  * it; the load ledger shows it, so a gap is visible rather than silent.
  */

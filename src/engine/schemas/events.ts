@@ -192,8 +192,8 @@ export type ConnectorSkillInjectedPayload = Static<typeof ConnectorSkillInjected
 
 /**
  * `skill.not_delivered` — a skill bound to a called tool did not reach the
- * model on that call: its body could not be fetched, the hold's size cap left
- * it out, or a `beforeToolCall` hook renamed the call past the hold. Recorded
+ * model on that call: its body could not be fetched, one delivery's size limit
+ * left it out, or a `beforeToolCall` hook renamed the call past the hold. Recorded
  * so the load ledger shows the gap instead of silence.
  */
 export const SkillNotDeliveredPayload = Type.Object({
