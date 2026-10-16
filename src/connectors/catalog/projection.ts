@@ -195,6 +195,8 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
  *
  * Catches:
  *   - icons[].src non-http(s) (would XSS the Browse `<img src>`)
+ *   - `auth: static` without a complete `oauthClientSetup` (nothing could set
+ *     up its OAuth client, so it would reach Browse and fail at install)
  *   - oauthClientSetup.portalUrl non-http(s) (clickable in Set-up modal)
  *   - docsUrl non-http(s) (clickable in Configure page hero)
  *   - additionalAuthorizationParams reserved-key smuggling (RFC 6749
@@ -210,6 +212,9 @@ export function validateServerDetailSafety(s: ServerDetail): string | null {
     }
   }
   const meta = getNimbleBrainConnectorMeta(s);
+  if (meta?.auth === "static" && !hasCompleteOAuthClientSetup(meta.oauthClientSetup)) {
+    return "auth='static' requires oauthClientSetup.{portalUrl,hint,clientSecretKey}";
+  }
   if (meta?.oauthClientSetup) {
     if (!isHttpUrl(meta.oauthClientSetup.portalUrl)) {
       return `oauthClientSetup.portalUrl must be http(s): "${meta.oauthClientSetup.portalUrl}"`;
@@ -226,6 +231,11 @@ export function validateServerDetailSafety(s: ServerDetail): string | null {
     return `docsUrl must be http(s): "${meta.docsUrl}"`;
   }
   return hostVersionViolation(s);
+}
+
+/** Whether a static entry names where to create its client and where its secret goes. */
+function hasCompleteOAuthClientSetup(setup: NimbleBrainConnectorMeta["oauthClientSetup"]): boolean {
+  return Boolean(setup?.portalUrl && setup.hint && setup.clientSecretKey);
 }
 
 function hostVersionViolation(s: ServerDetail): string | null {

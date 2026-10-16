@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import { readCatalogServers, validateCatalog } from "../../src/connectors/catalog/read.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
@@ -157,6 +158,37 @@ describe("validateCatalog", () => {
     const diagnostics = validateCatalog(dir);
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.message).toContain("directory boundary");
+  });
+
+  test("a static entry without a complete oauthClientSetup is a directory-boundary drop", async () => {
+    const setup = {
+      portalUrl: "https://portal.example.com",
+      hint: "Create a client",
+      clientSecretKey: "k",
+    };
+    const withSetup = (name: string, oauthClientSetup?: unknown) => ({
+      ...VALID_ENTRY,
+      name,
+      _meta: {
+        "ai.nimblebrain/connector": {
+          auth: "static",
+          ...(oauthClientSetup ? { oauthClientSetup } : {}),
+        },
+      },
+    });
+    writeCatalog("catalog.json", [
+      withSetup("com.example/none"),
+      withSetup("com.example/partial", { portalUrl: setup.portalUrl, hint: setup.hint }),
+      withSetup("com.example/complete", setup),
+    ]);
+
+    const diagnostics = validateCatalog(dir);
+    expect(diagnostics.map((d) => d.message.includes("requires oauthClientSetup"))).toEqual([
+      true,
+      true,
+    ]);
+    const browse = await new ConnectorCatalog(dir).catalogEntries();
+    expect(browse.map((e) => e.id)).toEqual(["com.example/complete"]);
   });
 
   test("safety runs over survivors only — a schema failure is not double-reported", () => {
