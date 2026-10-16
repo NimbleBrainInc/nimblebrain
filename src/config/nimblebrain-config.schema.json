@@ -394,6 +394,24 @@
             },
             "additionalProperties": false
           }
+        },
+        "operatorApps": {
+          "description": "OAuth apps for `auth: static` catalog entries, keyed by catalog id and held once for the instance. Declaring one makes the entry installable in every workspace and as a personal connector, each connection signing in with its own account, and replaces any workspace's own Set up for that id. The app is used only for the URL the catalog publishes for its id; an id the catalog does not publish as `auth: static` is logged and unused. See /config/connectors-catalog/#an-oauth-app-for-the-whole-instance.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "clientId": {
+                "type": "string",
+                "description": "The app's public client_id. Required."
+              },
+              "clientSecret": {
+                "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
+                "description": "The app's client_secret. Falls back to <CATALOG_ID>_CLIENT_SECRET (catalog id upper-cased, non-alphanumerics to underscore), so `com.example/mcp` reads COM_EXAMPLE_MCP_CLIENT_SECRET. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup. Startup fails when a declared app has no secret."
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

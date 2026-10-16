@@ -180,9 +180,9 @@ function warnUnrecognizedUrlAuthType(ref: ConnectorRef, serverName: string): voi
 /**
  * The `{type:"user"}` arm of {@link buildUrlOAuthProvider} — a personal
  * connector's OAuth provider. Credentials live in the store at user scope,
- * with no `workspaceContext`. Static-client (non-DCR) resolution is
- * workspace-scoped and not wired for personal connectors here; the DCR /
- * provider auth paths apply.
+ * with no `workspaceContext`. A pre-registered (non-DCR) client resolves only
+ * when it is an instance operator app; a workspace's own app has no workspace
+ * to read its secret from here, and `resolveStaticOAuthClient` refuses it.
  */
 async function buildUserOAuthProvider(
   ref: ConnectorRef,
@@ -196,6 +196,7 @@ async function buildUserOAuthProvider(
   // in place of the opaque `user:<id>`; mirrors the workspace arm's
   // `resolveWorkspaceDisplayName`. Best-effort — falls back to the id.
   const ownerDisplayName = await resolveUserDisplayName(workDir, identityOwner.userId);
+  const staticClient = await resolveStaticOAuthClient({ ref, serverName });
   return new WorkspaceOAuthProvider({
     clientIdentity: oauthClientIdentity(),
     owner: { type: "user", userId: identityOwner.userId },
@@ -208,6 +209,7 @@ async function buildUserOAuthProvider(
     onInteractiveAuthRequired,
     ...(opts?.onAuthLost ? { onAuthLost: opts.onAuthLost } : {}),
     ...(opts?.abortSignal ? { abortSignal: opts.abortSignal } : {}),
+    ...(staticClient ? { staticClient } : {}),
     ...(ref.scopes ? { scopes: ref.scopes } : {}),
     ...(ref.additionalAuthorizationParams
       ? { additionalAuthorizationParams: ref.additionalAuthorizationParams }

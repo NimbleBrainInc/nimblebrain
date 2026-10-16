@@ -40,6 +40,7 @@ import {
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
+import { bindInstanceOperatorApps } from "../connectors/runtime/operator-apps.ts";
 import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
@@ -761,6 +762,12 @@ export class Runtime {
     // a built-in registered above — registration overwrites by name. The guard
     // is the reserved-name list in the gateway module, not this ordering.
     registerGatewayCredentialProviders();
+
+    // Instance operator apps, bound to the URL the catalog publishes for each id
+    // before any connector starts: every connect resolves its app through this
+    // bind, and it is what keeps the operator's secret on the catalog's server.
+    // Throws on a declared app with no client id or secret.
+    await bindInstanceOperatorApps(() => new ConnectorCatalog(catalogPath()).catalogByIdMap());
 
     // Derive the override-file path when the caller supplied a configPath
     // but not an explicit override path. The CLI's loadConfig already

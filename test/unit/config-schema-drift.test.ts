@@ -13,6 +13,7 @@ import {
   CONNECTORS_CONFIG_KEYS,
   GATEWAY_CONFIG_KEYS,
   MANAGED_PROVIDER_KEYS,
+  OPERATOR_APP_CONFIG_KEYS,
   SMITHERY_PROVIDER_CONFIG_KEYS,
 } from "../../src/connectors/providers/config.ts";
 import { MODEL_SLOTS } from "../../src/model/slots.ts";
@@ -62,6 +63,7 @@ const schema = JSON.parse(
         // Gateway names are operator-chosen, so the map itself is open and the
         // per-gateway object under `additionalProperties` is what is closed.
         gateways: { additionalProperties: SchemaObject };
+        operatorApps: { additionalProperties: SchemaObject };
       };
     };
   };
@@ -124,6 +126,12 @@ describe("config schema ↔ managed-connector provider config", () => {
     "connectors.gateways.<name>",
     connectors.properties.gateways.additionalProperties,
     GATEWAY_CONFIG_KEYS,
+  );
+  // Same for `operatorApps`: keyed by catalog id, closed per app.
+  expectLockstep(
+    "connectors.operatorApps.<catalogId>",
+    connectors.properties.operatorApps.additionalProperties,
+    OPERATOR_APP_CONFIG_KEYS,
   );
 });
 

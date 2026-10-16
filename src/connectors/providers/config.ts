@@ -115,10 +115,36 @@ export interface GatewayConfig {
 /** Declared gateway blocks, keyed by the operator-chosen gateway name. */
 export type GatewayConfigs = Record<string, GatewayConfig>;
 
+/**
+ * The declared `connectors.operatorApps.<catalogId>` block — the OAuth app an
+ * `auth: static` catalog entry signs in with, held once for the whole instance.
+ *
+ * A vendor without dynamic client registration needs a pre-registered app, and
+ * the app belongs to whoever holds the vendor relationship. With one instance
+ * per tenant, that is the operator. Declaring it here makes the entry
+ * installable in every workspace and on every person's identity, each signing in
+ * with their own account; a workspace's own Set up record for the same id is
+ * then ignored. See `src/connectors/runtime/operator-apps.ts`.
+ */
+export interface OperatorAppConfig {
+  /** The app's public `client_id`. */
+  clientId?: string;
+  /**
+   * The app's `client_secret`. Falls back to `<CATALOG_ID>_CLIENT_SECRET` (the
+   * catalog id upper-cased, non-alphanumerics to `_`), so `com.example/mcp`
+   * reads `COM_EXAMPLE_MCP_CLIENT_SECRET`.
+   */
+  clientSecret?: string;
+}
+
+/** Declared operator apps, keyed by the catalog id of the `auth: static` entry each serves. */
+export type OperatorAppConfigs = Record<string, OperatorAppConfig>;
+
 /** The `connectors` block of `nimblebrain.json`. */
 export interface ConnectorsConfig {
   providers?: ManagedProviderConfigs;
   gateways?: GatewayConfigs;
+  operatorApps?: OperatorAppConfigs;
 }
 
 // ── Schema drift guard ───────────────────────────────────────────────
@@ -132,7 +158,16 @@ export interface ConnectorsConfig {
 const CONNECTORS_FIELDS: Record<keyof Required<ConnectorsConfig>, true> = {
   providers: true,
   gateways: true,
+  operatorApps: true,
 };
+
+const OPERATOR_APP_FIELDS: Record<keyof Required<OperatorAppConfig>, true> = {
+  clientId: true,
+  clientSecret: true,
+};
+
+/** Every key a `connectors.operatorApps.<catalogId>` block accepts. */
+export const OPERATOR_APP_CONFIG_KEYS: string[] = Object.keys(OPERATOR_APP_FIELDS);
 
 const GATEWAY_FIELDS: Record<keyof Required<GatewayConfig>, true> = {
   apiKey: true,
@@ -194,6 +229,11 @@ export function declaredProviderConfig<K extends keyof ManagedProviderConfigs>(
 /** The declared gateways, or undefined when the operator declared none. */
 export function declaredGatewayConfigs(): GatewayConfigs | undefined {
   return _declared?.gateways;
+}
+
+/** The declared operator apps, or undefined when the operator declared none. */
+export function declaredOperatorAppConfigs(): OperatorAppConfigs | undefined {
+  return _declared?.operatorApps;
 }
 
 /** Test-only. Drop the installed block so a suite starts from no declared config. */
