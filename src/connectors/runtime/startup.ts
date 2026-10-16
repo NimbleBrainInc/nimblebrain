@@ -181,7 +181,7 @@ function warnUnrecognizedUrlAuthType(ref: ConnectorRef, serverName: string): voi
  * The `{type:"user"}` arm of {@link buildUrlOAuthProvider} — a personal
  * connector's OAuth provider. Credentials live in the store at user scope,
  * with no `workspaceContext`. A pre-registered (non-DCR) client resolves only
- * when it is an instance operator app; a workspace's own app has no workspace
+ * when it is an instance OAuth client; a workspace's own client has no workspace
  * to read its secret from here, and `resolveStaticOAuthClient` refuses it.
  */
 async function buildUserOAuthProvider(

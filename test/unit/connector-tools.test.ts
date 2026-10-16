@@ -10,11 +10,11 @@ import {
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
-import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import {
-  _resetInstanceOperatorAppsForTest,
-  bindInstanceOperatorApps,
-} from "../../src/connectors/runtime/operator-apps.ts";
+  _resetInstanceOAuthClientsForTest,
+  bindInstanceOAuthClients,
+} from "../../src/connectors/runtime/instance-oauth-clients.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef, OAuthClientConfig } from "../../src/connectors/runtime/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
@@ -265,7 +265,7 @@ interface StructuredResult {
   keys?: Array<{ key: string; updatedAt: string }>;
 }
 
-/** A ref's own client id; undefined for no client or one naming an instance app. */
+/** A ref's own client id; undefined for no client or one naming an instance OAuth client. */
 function registeredClientId(client: OAuthClientConfig | undefined): string | undefined {
   return client && "clientId" in client ? client.clientId : undefined;
 }
@@ -1872,20 +1872,20 @@ describe("manage_connectors workspace secrets", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// Instance operator apps — the OAuth app declared once for the instance
+// Instance OAuth clients — the pre-registered OAuth client declared once for the instance
 // ─────────────────────────────────────────────────────────────────────
 
-/** Declare an instance operator app for Dropbox and bind it against the fixture catalog. */
-async function declareDropboxInstanceApp(): Promise<void> {
+/** Declare an instance OAuth client for Dropbox and bind it against the fixture catalog. */
+async function declareDropboxInstanceClient(): Promise<void> {
   setConnectorsConfig({
-    operatorApps: { [DROPBOX_ID]: { clientId: "inst-cid", clientSecret: "inst-sec" } },
+    oauthClients: { [DROPBOX_ID]: { clientId: "inst-cid", clientSecret: "inst-sec" } },
   });
-  await bindInstanceOperatorApps(() =>
+  await bindInstanceOAuthClients(() =>
     new ConnectorCatalog(CONNECTOR_FIXTURE_DIR).catalogByIdMap(),
   );
 }
 
-describe("manage_connectors with an instance operator app", () => {
+describe("manage_connectors with an instance OAuth client", () => {
   let h: Harness;
 
   beforeEach(async () => {
@@ -1895,19 +1895,19 @@ describe("manage_connectors with an instance operator app", () => {
 
   afterEach(() => {
     _resetConnectorsConfigForTest();
-    _resetInstanceOperatorAppsForTest();
+    _resetInstanceOAuthClientsForTest();
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
   test("Browse reports the entry configured with no workspace setup", async () => {
-    await declareDropboxInstanceApp();
+    await declareDropboxInstanceClient();
     const result = await buildTool(h, ADMIN_USER).handler({ action: "list_directory" });
     const dropbox = (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID);
     expect(dropbox?.operatorConfigured).toBe(true);
   });
 
-  test("install writes a ref naming the instance app, with no client id or secret on it", async () => {
-    await declareDropboxInstanceApp();
+  test("install writes a ref naming the instance OAuth client, with no client id or secret on it", async () => {
+    await declareDropboxInstanceClient();
     const result = await buildTool(h, ADMIN_USER).handler({
       action: "install",
       entry: dropboxEntry(),
@@ -1916,11 +1916,11 @@ describe("manage_connectors with an instance operator app", () => {
     expect(result.isError).toBe(false);
     const ws = await h.workspaceStore.get(h.wsId);
     const installed = ws?.connectors.find((b) => "url" in b && b.url === DROPBOX_URL);
-    expect(installed?.oauthClient).toEqual({ instanceApp: DROPBOX_ID });
+    expect(installed?.oauthClient).toEqual({ instanceClient: DROPBOX_ID });
     expect(ws?.oauthOperatorApps?.[DROPBOX_ID]).toBeUndefined();
   });
 
-  test("the instance app wins over a workspace's own setup for the same entry", async () => {
+  test("the instance OAuth client wins over a workspace's own setup for the same entry", async () => {
     const tool = buildTool(h, ADMIN_USER);
     await tool.handler({
       action: "setup_operator",
@@ -1928,16 +1928,16 @@ describe("manage_connectors with an instance operator app", () => {
       clientId: "ws-cid",
       clientSecret: "ws-sec",
     });
-    await declareDropboxInstanceApp();
+    await declareDropboxInstanceClient();
 
     await tool.handler({ action: "install", entry: dropboxEntry(), wsId: h.wsId });
     const ws = await h.workspaceStore.get(h.wsId);
     const installed = ws?.connectors.find((b) => "url" in b && b.url === DROPBOX_URL);
-    expect(installed?.oauthClient).toEqual({ instanceApp: DROPBOX_ID });
+    expect(installed?.oauthClient).toEqual({ instanceClient: DROPBOX_ID });
   });
 
-  test("setup_operator is refused: the app is the operator's", async () => {
-    await declareDropboxInstanceApp();
+  test("setup_operator is refused: the client is the operator's", async () => {
+    await declareDropboxInstanceClient();
     const result = await buildTool(h, ADMIN_USER).handler({
       action: "setup_operator",
       catalogId: DROPBOX_ID,
@@ -1955,8 +1955,8 @@ describe("manage_connectors with an instance operator app", () => {
     ).toBeNull();
   });
 
-  test("an install naming another URL lands at the catalog's, the one the app serves", async () => {
-    await declareDropboxInstanceApp();
+  test("an install naming another URL lands at the catalog's, the one the client serves", async () => {
+    await declareDropboxInstanceClient();
     const forged = dropboxEntry();
     if (forged.install.kind === "remote-oauth") forged.install.url = "https://evil.example/mcp";
     await buildTool(h, ADMIN_USER).handler({ action: "install", entry: forged, wsId: h.wsId });
@@ -1965,8 +1965,8 @@ describe("manage_connectors with an instance operator app", () => {
     expect(urls).toEqual([DROPBOX_URL]);
   });
 
-  test("a personal install is accepted and names the instance app", async () => {
-    await declareDropboxInstanceApp();
+  test("a personal install is accepted and names the instance OAuth client", async () => {
+    await declareDropboxInstanceClient();
     const result = await buildTool(h, NON_ADMIN_USER).handler({
       action: "install",
       scope: "identity",
@@ -1978,10 +1978,12 @@ describe("manage_connectors with an instance operator app", () => {
       NON_ADMIN_USER.id,
       "com-dropbox-mcp",
     );
-    expect(ref && "url" in ref ? ref.oauthClient : undefined).toEqual({ instanceApp: DROPBOX_ID });
+    expect(ref && "url" in ref ? ref.oauthClient : undefined).toEqual({
+      instanceClient: DROPBOX_ID,
+    });
   });
 
-  test("a personal install of a static entry is refused without an instance app", async () => {
+  test("a personal install of a static entry is refused without an instance OAuth client", async () => {
     const result = await buildTool(h, NON_ADMIN_USER).handler({
       action: "install",
       scope: "identity",
@@ -1990,7 +1992,7 @@ describe("manage_connectors with an instance operator app", () => {
     expect(result.isError).toBe(true);
   });
 
-  test("the personal catalog offers a static entry only when the instance holds its app", async () => {
+  test("the personal catalog offers a static entry only when the instance holds its client", async () => {
     const tool = buildTool(h, NON_ADMIN_USER);
     const ids = async () =>
       (
@@ -1999,15 +2001,15 @@ describe("manage_connectors with an instance operator app", () => {
         }
       ).catalog.map((e) => e.id);
     expect(await ids()).not.toContain(DROPBOX_ID);
-    await declareDropboxInstanceApp();
+    await declareDropboxInstanceClient();
     expect(await ids()).toContain(DROPBOX_ID);
   });
 
-  test("rotating a workspace app leaves refs that name the instance app alone", () => {
+  test("rotating a workspace client leaves refs that name the instance OAuth client alone", () => {
     const instanceRef: ConnectorRef = {
       url: DROPBOX_URL,
       serverName: "com-dropbox-mcp",
-      oauthClient: { instanceApp: DROPBOX_ID },
+      oauthClient: { instanceClient: DROPBOX_ID },
     };
     const rotated = rotateInstalledOAuthClients([instanceRef], DROPBOX_URL, "new-cid");
     expect(rotated.refs).toHaveLength(0);

@@ -310,7 +310,7 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     }
   });
 
-  test("rejects a static remote-oauth entry without an instance operator app", async () => {
+  test("rejects a static remote-oauth entry without an instance OAuth client", async () => {
     const staticEntry = composioEntry();
     staticEntry.id = "com.dropbox/mcp";
     staticEntry.name = "Dropbox";

@@ -224,13 +224,13 @@ export interface BrokeredRef {
 
 /**
  * Config for a pre-registered OAuth client (Track A — alternative to DCR).
- * Lives on the URL connector ref, in one of two forms: the app itself
- * (a workspace's own Set up), or the name of an instance operator app.
+ * Lives on the URL connector ref, in one of two forms: the client itself
+ * (a workspace's own Set up), or the name of an instance OAuth client.
  */
-export type OAuthClientConfig = RegisteredOAuthClientConfig | InstanceOAuthClientConfig;
+export type OAuthClientConfig = RegisteredOAuthClientConfig | InstanceOAuthClientRef;
 
 /**
- * An app carried on the ref. The provider reads `clientId` directly and
+ * A client carried on the ref. The provider reads `clientId` directly and
  * resolves `clientSecret` per-request via `CredentialStore` (the value is never
  * inline in `workspace.json`).
  */
@@ -255,29 +255,29 @@ export interface RegisteredOAuthClientConfig {
 }
 
 /**
- * The instance operator app declared for a catalog id
- * (`connectors.operatorApps`). The ref names it and carries neither its id nor
+ * The instance OAuth client declared for a catalog id
+ * (`connectors.oauthClients`). The ref names it and carries neither its id nor
  * its secret, so the operator's current values apply on every connect. It
  * resolves only for the URL the catalog publishes for that id; see
- * `operator-apps.ts`.
+ * `instance-oauth-clients.ts`.
  */
-export interface InstanceOAuthClientConfig {
-  /** The catalog id the app is declared under. */
-  instanceApp: string;
+export interface InstanceOAuthClientRef {
+  /** The catalog id the client is declared under. */
+  instanceClient: string;
 }
 
-/** Whether a ref's OAuth client names an instance operator app. */
-export function isInstanceOAuthClient(
+/** Whether a ref's OAuth client names an instance OAuth client. */
+export function isInstanceOAuthClientRef(
   client: OAuthClientConfig | undefined,
-): client is InstanceOAuthClientConfig {
-  return client !== undefined && "instanceApp" in client;
+): client is InstanceOAuthClientRef {
+  return client !== undefined && "instanceClient" in client;
 }
 
 /** The workspace secret reference a ref's OAuth client carries, if any. */
 export function oauthClientSecretRef(
   client: OAuthClientConfig | undefined,
 ): CredentialRef | undefined {
-  return client && !isInstanceOAuthClient(client) ? client.clientSecret : undefined;
+  return client && !isInstanceOAuthClientRef(client) ? client.clientSecret : undefined;
 }
 
 /** Host manifest metadata at _meta["ai.nimblebrain/host"]. */

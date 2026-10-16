@@ -1,6 +1,6 @@
 /**
  * Resolve a URL connector's pre-registered OAuth client (Track A) — the one place
- * `oauthClient.clientSecret` or an instance operator app is dereferenced.
+ * `oauthClient.clientSecret` or an instance OAuth client is dereferenced.
  *
  * Every path that builds a connection's OAuth provider calls it: boot and lazy
  * start (`startup.ts`, for a workspace or a personal connector) and `startAuth`
@@ -11,8 +11,8 @@
  */
 
 import { requireCredentialStore } from "../../tools/credential-store.ts";
-import { instanceOperatorApp } from "./operator-apps.ts";
-import { type ConnectorRef, isInstanceOAuthClient } from "./types.ts";
+import { instanceOAuthClient } from "./instance-oauth-clients.ts";
+import { type ConnectorRef, isInstanceOAuthClientRef } from "./types.ts";
 
 /** Resolved pre-registered OAuth client (Track A), with the secret dereferenced to a string. */
 export type StaticOAuthClient = {
@@ -27,11 +27,11 @@ export type StaticOAuthClient = {
  * overwhelmingly common DCR connector needs no store installed at all.
  *
  * Two forms resolve here:
- *  - an app on the ref, whose secret is read from the WORKSPACE credential
+ *  - a client on the ref, whose secret is read from the WORKSPACE credential
  *    store, so it needs `wsId`;
- *  - an instance operator app (`instanceApp`), read from the bound instance
+ *  - an instance OAuth client (`instanceClient`), read from the bound instance
  *    config for any owner, workspace or personal. It resolves only when the
- *    ref's URL is the one the catalog publishes for that app, so the operator's
+ *    ref's URL is the one the catalog publishes for that client, so the operator's
  *    secret is never sent toward a server the catalog did not name.
  *
  * Every failure throws. The catalog boundary already enforced that the
@@ -52,8 +52,8 @@ export async function resolveStaticOAuthClient(opts: {
   const client = ref.oauthClient;
   if (!client) return undefined;
   const forServer = serverName ? ` for ${serverName}` : "";
-  if (isInstanceOAuthClient(client)) {
-    return resolveInstanceClient(client.instanceApp, ref.url, forServer);
+  if (isInstanceOAuthClientRef(client)) {
+    return resolveInstanceClient(client.instanceClient, ref.url, forServer);
   }
   const clientSecret = client.clientSecret
     ? await revealWorkspaceSecret(client.clientSecret.key, wsId, serverName, forServer)
@@ -67,26 +67,26 @@ export async function resolveStaticOAuthClient(opts: {
   };
 }
 
-/** The instance operator app `catalogId`, refused for any URL but the one it is bound to. */
+/** The instance OAuth client `catalogId`, refused for any URL but the one it is bound to. */
 function resolveInstanceClient(
   catalogId: string,
   url: string,
   forServer: string,
 ): StaticOAuthClient {
-  const app = instanceOperatorApp(catalogId);
-  if (!app) {
+  const client = instanceOAuthClient(catalogId);
+  if (!client) {
     throw new Error(
-      `[connectors] no operator app is declared for "${catalogId}"${forServer} — ` +
-        "declare it in connectors.operatorApps and restart",
+      `[connectors] no OAuth client is declared for "${catalogId}"${forServer} — ` +
+        "declare it in connectors.oauthClients and restart",
     );
   }
-  if (app.url !== url) {
+  if (client.url !== url) {
     throw new Error(
-      `[connectors] the operator app for "${catalogId}" serves ${app.url}, ` +
+      `[connectors] the OAuth client for "${catalogId}" serves ${client.url}, ` +
         `not ${url}${forServer}; reinstall the connector from the catalog`,
     );
   }
-  return { clientId: app.clientId, clientSecret: app.clientSecret };
+  return { clientId: client.clientId, clientSecret: client.clientSecret };
 }
 
 /** A workspace's own client secret, read and revealed (one audit line). */
