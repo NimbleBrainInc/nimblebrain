@@ -1,7 +1,7 @@
 /**
  * The notifications block on the workspace record — source ceilings and routes.
  *
- * It sits beside `hooks` for the reason `hooks` sits beside `oauthOperatorApps`:
+ * It sits beside `hooks` for the reason `hooks` sits beside `oauthClients`:
  * operator-plane, workspace-scoped, a lifecycle related to but not identical to
  * a connector install, and one read on the path that needs it. Written only by a
  * workspace admin through the settings surface; never by a connector, and never by

@@ -126,11 +126,11 @@ describe("workspaceKeysDeclaredBy", () => {
     ).toEqual([]);
   });
 
-  test("a static entry names its operator client secret", () => {
+  test("a static entry names its OAuth client secret", () => {
     expect(
       workspaceKeysDeclaredBy({
         auth: "static",
-        operatorSetup: { clientSecretKey: "acme.client_secret" },
+        oauthClientSetup: { clientSecretKey: "acme.client_secret" },
       }),
     ).toEqual(["acme.client_secret"]);
   });

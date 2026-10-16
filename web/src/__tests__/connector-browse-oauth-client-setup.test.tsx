@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
-// Set up on a static-auth card opens the operator OAuth dialog.
+// Set up on a static-auth card opens the OAuth client dialog.
 //
 // A catalog listing carries the vendor portal and secret key under
-// `install.operatorSetup`; the dialog renders nothing without them, so Browse
+// `install.oauthClientSetup`; the dialog renders nothing without them, so Browse
 // must hand them over or the button does nothing.
 //
 // Same plumbing as connector-browse-installed.test.tsx.
@@ -20,15 +20,15 @@ const STATIC = {
   id: "com.acme/ledger",
   name: "Acme Ledger",
   description: "Acme Ledger tools",
-  operatorConfigured: false,
+  oauthClientConfigured: false,
   install: {
     kind: "remote-oauth" as const,
     url: "https://ledger.acme.test/mcp",
     transportType: "streamable-http" as const,
     auth: "static" as const,
-    operatorSetup: {
+    oauthClientSetup: {
       portalUrl: "https://developer.acme.test/",
-      hint: "Create an OAuth app in the Acme developer portal",
+      hint: "Create an OAuth client in the Acme developer portal",
       clientSecretKey: "acme.client_secret",
     },
   },
@@ -52,7 +52,7 @@ const { act } = await import("react");
 const { MemoryRouter, Route, Routes } = await import("react-router-dom");
 
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
-const { ConnectorBrowsePage, operatorSetupTarget } = await import(
+const { ConnectorBrowsePage, oauthClientSetupTarget } = await import(
   "../pages/settings/ConnectorBrowsePage"
 );
 
@@ -119,12 +119,12 @@ describe("Set up on a static-auth connector", () => {
   });
 });
 
-describe("operatorSetupTarget", () => {
-  test("lifts operatorSetup out of the install", () => {
-    expect(operatorSetupTarget(STATIC)).toEqual({
+describe("oauthClientSetupTarget", () => {
+  test("lifts oauthClientSetup out of the install", () => {
+    expect(oauthClientSetupTarget(STATIC)).toEqual({
       id: "com.acme/ledger",
       name: "Acme Ledger",
-      operatorSetup: STATIC.install.operatorSetup,
+      oauthClientSetup: STATIC.install.oauthClientSetup,
     });
   });
 });

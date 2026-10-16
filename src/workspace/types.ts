@@ -58,29 +58,29 @@ export interface Workspace {
   connectorsAllowList?: string[];
 
   /**
-   * Per-workspace OAuth app configurations for static-auth catalog
+   * Per-workspace OAuth client configurations for static-auth catalog
    * entries. Keyed by catalog id (the reverse-DNS `ServerDetail.name`,
-   * e.g. "io.asana/mcp"), the value carries the operator-supplied
+   * e.g. "io.asana/mcp"), the value carries the admin-supplied
    * public `client_id` plus an audit trail. The
    * matching `client_secret` lives in the workspace credential store
-   * under the catalog entry's `operatorSetup.clientSecretKey` — kept
+   * under the catalog entry's `oauthClientSetup.clientSecretKey` — kept
    * separate so the secret never sits next to non-secret config and
    * the type system isn't carrying a `Redacted` for what's a public id.
    *
-   * Setting up an OAuth app makes the connector installable for the
+   * Setting up an OAuth client makes the connector installable for the
    * whole workspace. The app lives as long as something uses it: the
    * uninstall that removes the last installed connector built on it
    * removes this record and its secret together, so a reinstall asks
    * for both again. With nothing installed, an admin removes it through
-   * `manage_connectors.remove_operator_setup`.
+   * `manage_connectors.remove_oauth_client`.
    */
-  oauthOperatorApps?: Record<string, OAuthOperatorAppConfig>;
+  oauthClients?: Record<string, WorkspaceOAuthClient>;
 
   /**
    * Inbound-webhook registrations for this workspace, keyed
    * `"<connector>/<vendor>"`.
    *
-   * Beside `oauthOperatorApps` because it is the same kind of record:
+   * Beside `oauthClients` because it is the same kind of record:
    * operator-plane, workspace-scoped, with a lifecycle related to but not
    * identical to a connector install. It holds the current and previous key ids
    * for each minted URL and the route each forwards to — **never a token**,
@@ -108,12 +108,12 @@ export interface Workspace {
   notifications?: WorkspaceNotificationsConfig;
 }
 
-/** Per-workspace operator-supplied OAuth app credentials, public side. */
-export interface OAuthOperatorAppConfig {
+/** Per-workspace admin-supplied OAuth client credentials, public side. */
+export interface WorkspaceOAuthClient {
   /** OAuth client_id from the vendor's developer portal. */
   clientId: string;
-  /** ISO timestamp of when the operator first configured this app. */
+  /** ISO timestamp of when an admin first configured this client. */
   configuredAt: string;
-  /** User id of the operator who set this up — audit trail only. */
+  /** User id of the admin who set it up — audit trail only. */
   configuredBy: string;
 }

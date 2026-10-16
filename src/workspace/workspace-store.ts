@@ -312,7 +312,7 @@ export class WorkspaceStore {
         | "connectors"
         | "skillDirs"
         | "models"
-        | "oauthOperatorApps"
+        | "oauthClients"
         | "hooks"
         | "notifications"
         | "about"
@@ -336,6 +336,41 @@ export class WorkspaceStore {
 
     await this.atomicWrite(this.wsPath(id), updated);
     return updated;
+  }
+
+  /**
+   * Copy each workspace's OAuth client records from `oauthOperatorApps`, the
+   * name they were stored under before, to `oauthClients`. Runs once at boot,
+   * before anything reads a workspace (`Runtime.start`).
+   *
+   * A workspace is copied only when it has the old key and no `oauthClients`
+   * yet. After the first copy `oauthClients` exists, even emptied, so a client
+   * an admin removes stays removed on the next boot. The old key is left on
+   * disk untouched, so a rollback to the release before still finds its
+   * records; the next release deletes it.
+   *
+   * Best-effort per workspace: one that cannot be written is logged and the
+   * rest go on, and the count of failures is returned so boot can say so.
+   */
+  async reconcileOAuthClientRecords(): Promise<{ copied: number; failed: number }> {
+    let copied = 0;
+    let failed = 0;
+    for (const ws of await this.list()) {
+      const legacy = (ws as Workspace & { oauthOperatorApps?: Workspace["oauthClients"] })
+        .oauthOperatorApps;
+      if (!legacy || ws.oauthClients !== undefined) continue;
+      try {
+        await this.atomicWrite(this.wsPath(ws.id), { ...ws, oauthClients: { ...legacy } });
+        copied++;
+      } catch (err) {
+        failed++;
+        log.warn("[workspace-store] could not copy OAuth client records", {
+          wsId: ws.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return { copied, failed };
   }
 
   /**

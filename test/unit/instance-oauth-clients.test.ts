@@ -95,7 +95,7 @@ describe("resolveStaticOAuthClient for an instance OAuth client", () => {
   let workDir: string;
 
   beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "nb-operator-clients-"));
+    workDir = mkdtempSync(join(tmpdir(), "nb-instance-oauth-clients-"));
     installTestCredentialStore(workDir);
   });
 

@@ -18,11 +18,7 @@ They are different layers. A connector *declares which auth kind it uses*, and t
 | Connector | A catalog entry a workspace installs | Workspace admin, per workspace | The [connectors catalog](/config/connectors-catalog/) |
 
 <Aside type="note">
-**"Operator" here means platform-wide, which the product's own vocabulary predates.** The catalog field is `operatorSetup` and the UI says "Operator setup required" — both for the `auth: static` flow, which this split calls a *workspace-admin* action. Read those two as "someone has to configure this first," not as the platform-wide role.
-</Aside>
-
-<Aside type="note">
-**The auth kind is a deployment choice, not a property of the server.** Gmail is typically catalogued as `auth: composio` because Google requires app verification (`gmail.*`) most operators don't hold on day one — but the same server becomes `auth: static` or `auth: dcr` once you have your own verified OAuth app — see [migrating off the broker](/gateways/composio/#migrating-off-composio-per-toolkit). Nothing about Gmail forces the broker; your verification status does.
+**The auth kind is a deployment choice, not a property of the server.** Gmail is typically catalogued as `auth: composio` because Google requires app verification (`gmail.*`) most operators don't hold on day one — but the same server becomes `auth: static` or `auth: dcr` once you have your own verified OAuth client — see [migrating off the broker](/gateways/composio/#migrating-off-composio-per-toolkit). Nothing about Gmail forces the broker; your verification status does.
 </Aside>
 
 ## Why a provider at all
@@ -30,10 +26,10 @@ They are different layers. A connector *declares which auth kind it uses*, and t
 A broker earns its place when the platform can't hold the vendor relationship itself:
 
 - The vendor's API requires app verification you don't hold yet (Google's restricted `gmail.*` scopes, Microsoft's `Mail.*`).
-- You'd otherwise register and maintain an OAuth app per vendor, per environment.
+- You'd otherwise register and maintain an OAuth client per vendor, per environment.
 - The vendor has no MCP server of its own and the broker supplies one.
 
-If none of those apply, prefer a runtime-native kind. `auth: dcr` needs zero operator setup and puts no third party in the trust path.
+If none of those apply, prefer a runtime-native kind. `auth: dcr` needs zero OAuth client setup and puts no third party in the trust path.
 
 ## Hosted MCP gateways
 
