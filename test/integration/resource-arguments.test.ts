@@ -181,3 +181,74 @@ describe.each([
     }
   });
 });
+
+describe("resource arguments on a call made for an outside client", () => {
+  it("sends the entries beside the client's capabilities in one _meta", async () => {
+    const handler = createMcpHandler(() => outboundServer()).fetch;
+    const callMetas: Record<string, unknown>[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        if (request.method === "POST") {
+          const body = (await request
+            .clone()
+            .json()
+            .catch(() => null)) as {
+            method?: string;
+            params?: { _meta?: Record<string, unknown> };
+          } | null;
+          if (body?.method === "tools/call" && body.params?._meta) {
+            callMetas.push(body.params._meta);
+          }
+        }
+        return handler(request);
+      },
+    });
+
+    const crm = await crmSource();
+    const rateLimit = new TokenBucketRateLimit();
+    const outbound = new McpSource(
+      "outbound",
+      {
+        type: "remote",
+        url: new URL(`http://localhost:${server.port}/mcp`),
+        allowInsecure: true,
+      },
+      new NoopEventSink(),
+      {
+        workspaceId: WS,
+        connectorId: "outbound",
+        hostResources: {
+          read: async () => ({ contents: [] }),
+          list: async () => ({ resources: [] }),
+        },
+        rateLimit,
+        resourceArguments: createResourceArgumentsResolver({
+          sourcesOf: (wsId) => (wsId === WS ? [crm] : []),
+          isHostScheme: isReservedResourceScheme,
+          rateLimit,
+        }),
+      },
+    );
+    try {
+      await outbound.start();
+      await outbound.tools();
+      const capabilities = { elicitation: {} };
+      const result = await outbound.execute("cite", { citation: "crm://signals/42" }, undefined, {
+        caller: { capabilities },
+      });
+      expect(result.isError).toBe(false);
+      const meta = callMetas.at(-1);
+      expect(meta?.[CLIENT_CAPABILITIES_META_KEY]).toEqual(capabilities);
+      expect(meta?.[RESOURCE_ARGUMENTS_EXTENSION_ID]).toEqual({
+        "crm://signals/42": {
+          contents: [{ uri: "crm://signals/42", mimeType: "application/json", text: SIGNAL }],
+        },
+      });
+    } finally {
+      await outbound.stop();
+      await crm.stop();
+      server.stop(true);
+    }
+  });
+});

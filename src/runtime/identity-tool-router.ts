@@ -232,8 +232,9 @@ export class IdentityToolRouter implements ToolRouter {
     // state.
     const outer = getRequestContext();
     const perCallCtx = buildPerCallContext(outer, routed);
+    const options = this.isToolAllowed ? { isToolAllowed: this.isToolAllowed } : undefined;
     return runWithRequestContext(perCallCtx, () =>
-      routed.source.execute(bareToolName, call.input, signal),
+      routed.source.execute(bareToolName, call.input, signal, options),
     );
   }
 

@@ -123,6 +123,20 @@ describe("createResourceArgumentsResolver", () => {
     expect(other.reads).toEqual([]);
   });
 
+  it("reads nothing, and spends no budget, for a call that may not read resources", async () => {
+    const crm = servingSource("crm", ["crm://signals/{id}"], { "crm://signals/42": "{}" });
+    const rateLimit = new TokenBucketRateLimit({ burst: 1, ratePerSec: 0.001, now: () => 0 });
+    const entries = await resolverOver({ [WS_A]: [crm] }, { rateLimit }).resolve(
+      [{ uri: "crm://signals/42", declared: true }],
+      { ...ctx, mayRead: false },
+    );
+    expect(entries["crm://signals/42"]).toEqual({
+      error: { code: "not_found", message: expect.any(String) },
+    });
+    expect(crm.reads).toEqual([]);
+    expect(() => rateLimit.check(WS_A, "outbound")).not.toThrow();
+  });
+
   it("never reads a URI whose scheme is undeclared, and says so", async () => {
     const mail = servingSource("mail", ["mail://inbox/{id}"], { "mail://inbox/9": "secret" });
     const entries = await resolverOver({ [WS_A]: [mail] }).resolve(

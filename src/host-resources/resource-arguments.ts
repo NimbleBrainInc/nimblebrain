@@ -135,6 +135,12 @@ export interface ResourceServingSource {
 export interface ResourceArgumentsContext {
   workspaceId: string;
   connectorId: string;
+  /**
+   * False when the call runs inside an unattended run that may not read
+   * connector resources itself: every declared URI is then `not_found` and
+   * nothing is read.
+   */
+  mayRead?: boolean;
   signal?: AbortSignal;
 }
 
@@ -205,6 +211,10 @@ export function createResourceArgumentsResolver(
     ctx: ResourceArgumentsContext,
     sources: readonly ResourceServingSource[],
   ): Promise<ResourceArgumentEntry> {
+    if (ctx.mayRead === false) {
+      debug(ctx, `${uri} → not read: the run's tool limit excludes resource reads`);
+      return failure("not_found", NOT_FOUND_MESSAGE);
+    }
     try {
       deps.rateLimit.check(ctx.workspaceId, ctx.connectorId);
     } catch {

@@ -2159,7 +2159,12 @@ export class McpSource implements ToolSource {
       TASKS_EXTENSION_ID in this.serverExtensions();
 
     const dispatchArgs = this.prepareDispatchArgs(tool, input, toolName);
-    const meta = await this.resourceArgumentsMeta(tool, dispatchArgs, signal);
+    const meta = await this.resourceArgumentsMeta(
+      tool,
+      dispatchArgs,
+      signal,
+      options?.isToolAllowed,
+    );
 
     // Answers: "why is this tool call going inline vs task-augmented?" and
     // "is the tool cache populated?". Covers the whole dispatch decision in
@@ -2213,12 +2218,15 @@ export class McpSource implements ToolSource {
    *
    * Computed once per call, before dispatch, and reused by the retry, so one
    * call never reads the same resource twice. The workspace is the connection's
-   * own, never one the arguments could name.
+   * own, never one the arguments could name. Inside an unattended run whose
+   * tool limit excludes `nb__read_resource`, nothing is read, since the run
+   * could not read the resources itself.
    */
   private async resourceArgumentsMeta(
     tool: Tool | undefined,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    isToolAllowed?: (name: string) => boolean,
   ): Promise<Record<string, unknown> | undefined> {
     const ctx = this.connectorContext;
     if (!ctx?.resourceArguments) return undefined;
@@ -2229,6 +2237,7 @@ export class McpSource implements ToolSource {
     const entries = await ctx.resourceArguments.resolve(uris, {
       workspaceId: ctx.workspaceId,
       connectorId: ctx.connectorId,
+      ...(isToolAllowed && !isToolAllowed("nb__read_resource") ? { mayRead: false } : {}),
       ...(signal ? { signal } : {}),
     });
     return { [RESOURCE_ARGUMENTS_EXTENSION_ID]: entries };

@@ -135,6 +135,36 @@ describe("McpSource resource arguments", () => {
     });
   });
 
+  it("reads nothing inside a run whose tool limit excludes nb__read_resource", async () => {
+    const outbound = await setUp({ withResolver: true });
+    const limited = await outbound.execute("cite", { citations: ["crm://signals/42"] }, undefined, {
+      isToolAllowed: (name) => name.startsWith("outbound__"),
+    });
+    expect(JSON.parse(textOf(limited))).toEqual({
+      "crm://signals/42": { error: { code: "not_found", message: expect.any(String) } },
+    });
+
+    const reading = await outbound.execute("cite", { citations: ["crm://signals/42"] }, undefined, {
+      isToolAllowed: (name) => name === "nb__read_resource",
+    });
+    expect(JSON.parse(textOf(reading))["crm://signals/42"].contents[0].text).toBe(SIGNAL);
+  });
+
+  it("resolves the entries itself on a task started directly, with no meta given", async () => {
+    const outbound = await setUp({ withResolver: true });
+    const owner = { workspaceId: WS, identityId: "user_1" };
+    const start = await outbound.startToolAsTask(
+      "cite",
+      { citations: ["crm://signals/42"] },
+      { ownerContext: owner },
+    );
+    const result = await outbound.awaitToolTaskResult(start.task.taskId, { ownerContext: owner });
+    const text = result.content.find((c) => c.type === "text");
+    expect(
+      JSON.parse(text?.type === "text" ? text.text : "")["crm://signals/42"].contents[0].text,
+    ).toBe(SIGNAL);
+  });
+
   it("adds nothing to a call to a tool that declares no resource arguments", async () => {
     const outbound = await setUp({ withResolver: true });
     const result = await outbound.execute("plain", {});

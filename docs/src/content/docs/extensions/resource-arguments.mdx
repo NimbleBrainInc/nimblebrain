@@ -139,7 +139,7 @@ The host reads a URI from the one server in the calling connection's workspace w
 - **One workspace.** Only the servers installed in the same workspace as your connection are consulted. A server in another workspace is never read, whatever it serves.
 - **One owner.** When two servers in the workspace claim the URI, the host reads neither and answers `ambiguous`. It does not guess.
 - **The host's own schemes are not served this way.** `files://`, `ui://`, `skill://`, `artifact://`, `conversation://` and `app://` URIs are never resolved through this extension, whatever a server advertises. Workspace files are read with [host resources](/extensions/host-resources/).
-- **The session's authority.** The read is sent while the tool call is being made, for the same user, so the serving server sees the caller it would see if the agent read the resource itself. Your tool receives nothing the agent could not have read in the same workspace.
+- **The session's authority.** The read is sent while the tool call is being made, for the same user, so the serving server sees the caller it would see if the agent read the resource itself. Your tool receives nothing the agent could not have read in the same workspace: in a task run limited to a list of tools that does not include `nb__read_resource`, the host reads nothing and every URI is `not_found`.
 
 ## Errors
 
