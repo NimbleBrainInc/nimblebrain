@@ -41,7 +41,7 @@ Authorization follows the specification's [authorization flow](https://modelcont
 
 A claim travels differently on each era. On a 2025-era connection the host sends it once, in `initialize`'s `capabilities`. On a `2026-07-28` connection it sends it on every request, `server/discover` included, under `_meta["io.modelcontextprotocol/clientCapabilities"]`. The host claims a capability only on the era where it serves it.
 
-On a 2025-era connection, `initialize` carries exactly these capabilities:
+On a 2025-era connection, a workspace connector's `initialize` carries exactly these capabilities:
 
 ```json
 {
@@ -50,6 +50,7 @@ On a 2025-era connection, `initialize` carries exactly these capabilities:
       "io.modelcontextprotocol/skills": {},
       "ai.nimblebrain/facets": {},
       "ai.nimblebrain/lifecycle": {},
+      "ai.nimblebrain/resource-arguments": { "maxSize": 10485760, "maxUris": 32 },
       "ai.nimblebrain/host-resources": {
         "read": { "enabled": true, "range": false, "maxSize": 10485760 },
         "list": { "enabled": true },
@@ -61,7 +62,7 @@ On a 2025-era connection, `initialize` carries exactly these capabilities:
 }
 ```
 
-On a `2026-07-28` connection, every request's envelope carries the same Skills claim, facets claim, and lifecycle claim, and no `ai.nimblebrain/host-resources`:
+On a `2026-07-28` connection, every request's envelope carries the same Skills, facets, lifecycle, and resource-arguments claims, and no `ai.nimblebrain/host-resources`:
 
 ```json
 {
@@ -70,7 +71,8 @@ On a `2026-07-28` connection, every request's envelope carries the same Skills c
       "extensions": {
         "io.modelcontextprotocol/skills": {},
         "ai.nimblebrain/facets": {},
-        "ai.nimblebrain/lifecycle": {}
+        "ai.nimblebrain/lifecycle": {},
+        "ai.nimblebrain/resource-arguments": { "maxSize": 10485760, "maxUris": 32 }
       }
     }
   }
@@ -83,7 +85,7 @@ On a 2025-era connection the host never attaches a task. A tool that declares `e
 
 **`io.modelcontextprotocol/skills`**: the MCP [Skills Extension](/using/skills/#skills-published-by-an-mcp-server), claimed on both eras because skill discovery runs on both. On a `2026-07-28` connection the host asks for `skills/list` only when the server advertises the extension. On a 2025-era connection it asks whether or not the server declared it, because some SDKs leave `capabilities.extensions` out of the legacy `initialize` result; a `-32601` (method not found) answer means the server publishes no skills.
 
-**`ai.nimblebrain/*` extensions**: the vendor capabilities described in the [Extensions registry](/extensions/overview/#registry). [`ai.nimblebrain/facets`](/extensions/facets/) is claimed on both eras, because the host lists and reads facets over whichever era connected. [`ai.nimblebrain/lifecycle`](/extensions/lifecycle/) is claimed on both eras, because the host reads a server's handlers and calls them over whichever era connected. [`ai.nimblebrain/host-resources`](/extensions/host-resources/) is claimed on the 2025 era only, because it is served through server-to-client requests, which `2026-07-28` removed. Read this block before calling an extension method.
+**`ai.nimblebrain/*` extensions**: the vendor capabilities described in the [Extensions registry](/extensions/overview/#registry). [`ai.nimblebrain/facets`](/extensions/facets/) is claimed on both eras, because the host lists and reads facets over whichever era connected. [`ai.nimblebrain/lifecycle`](/extensions/lifecycle/) is claimed on both eras, because the host reads a server's handlers and calls them over whichever era connected. [`ai.nimblebrain/resource-arguments`](/extensions/resource-arguments/) is claimed on both eras, because the host delivers its contents in the `tools/call` request. [`ai.nimblebrain/host-resources`](/extensions/host-resources/) is claimed on the 2025 era only, because it is served through server-to-client requests, which `2026-07-28` removed. A personal connector's connection claims neither, since it belongs to no workspace. Read this block before calling an extension method.
 
 ### Client capabilities the host does not advertise
 

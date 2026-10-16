@@ -104,7 +104,11 @@ import { DEFAULT_FILE_CONFIG, type FileConfig } from "../files/types.ts";
 import type { HookReconcileDeps } from "../hooks/reconcile.ts";
 import { ensureHooksOnRunning } from "../hooks/reconcile.ts";
 import { readHookIdentity } from "../hooks/token.ts";
-import { FileBackedHostResourcesResolver, TokenBucketRateLimit } from "../host-resources/index.ts";
+import {
+  createResourceArgumentsResolver,
+  FileBackedHostResourcesResolver,
+  TokenBucketRateLimit,
+} from "../host-resources/index.ts";
 import { IdentityContext } from "../identity/context.ts";
 import type { InstanceConfig } from "../identity/instance.ts";
 import { loadInstanceConfig, missingInstanceConfigError } from "../identity/instance.ts";
@@ -251,7 +255,11 @@ import {
 } from "../tools/instance-credentials.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
-import { APP_INSTRUCTIONS_URI, readableRecordTemplates } from "../tools/resource-schemes.ts";
+import {
+  APP_INSTRUCTIONS_URI,
+  isReservedResourceScheme,
+  readableRecordTemplates,
+} from "../tools/resource-schemes.ts";
 import {
   announceResourceListChangedFor,
   relayIdentitySourceNotifications,
@@ -846,10 +854,25 @@ export class Runtime {
       return store;
     });
     const hostResourcesRateLimit = new TokenBucketRateLimit();
+    // `ai.nimblebrain/resource-arguments`: a tool's declared URIs are read from
+    // the connectors of the calling connection's own workspace, and nowhere
+    // else. Late-bound to `rt`, which is constructed below; the resolver runs
+    // only on a tool call, long after boot. It spends from the same
+    // per-(workspace, connector) budget as the host-resources methods.
+    const resourceArgumentsResolver = createResourceArgumentsResolver({
+      sourcesOf: (wsId) => {
+        const registry = rt._workspaceRegistries.get(wsId);
+        if (!registry) return [];
+        return registry.getSources().filter((s): s is McpSource => s instanceof McpSource);
+      },
+      isHostScheme: isReservedResourceScheme,
+      rateLimit: hostResourcesRateLimit,
+    });
     const connectorMcpDepsFactory = (wsId: string) => ({
       workspaceId: wsId,
       hostResources: hostResourcesResolver,
       rateLimit: hostResourcesRateLimit,
+      resourceArguments: resourceArgumentsResolver,
     });
     lifecycle.setConnectorMcpDepsFactory(connectorMcpDepsFactory);
 

@@ -1,0 +1,161 @@
+---
+title: Resource Arguments
+description: The ai.nimblebrain/resource-arguments extension lets a tool take another server's resource URIs as arguments and receive their contents with the call, read by the host from the server in the same workspace that serves them.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+| | |
+|---|---|
+| **Capability** | `ai.nimblebrain/resource-arguments`, in the client's `capabilities.extensions` |
+| **Declaration** | `_meta["ai.nimblebrain/resource-arguments"]` on a tool in your `tools/list` result |
+| **Delivery** | `_meta["ai.nimblebrain/resource-arguments"]` on the `tools/call` request, one entry per URI |
+| **Eras** | Both. Nothing travels from your server to the host |
+| **Schemas** | Each resolved entry carries the specification's `ReadResourceResult.contents`, unchanged |
+| **Fallback** | The tool treats the URI as an opaque reference, or asks for the content inline |
+
+## Why it exists
+
+A server sometimes has to act on a record that another server owns. An outbound tool stores citations such as `crm://signals/42`, and before it sends anything it has to check the cited record: refuse a citation whose event is too old, or quote its exact wording. Without help from the host it has two options, and neither is acceptable. It can call the other server directly, which couples two services that should know nothing about each other. Or it can trust whatever the agent copied into its arguments, which is exactly what it is trying to verify.
+
+With this extension, your tool declares that an argument holds resource URIs. Before the host sends the `tools/call`, it reads each URI from the server in the same workspace that serves it, and puts the contents in the call's `_meta`. Your tool gets the record as its owner returned it, not as the model retold it. The two servers never address each other.
+
+Nothing in this extension is a request from your server to the host, so it works on a `2026-07-28` connection as well as a 2025-era one. That is the difference from [host resources](/extensions/host-resources/), whose methods `2026-07-28` cannot carry.
+
+## Capability
+
+The host claims the capability on a workspace connector's connection, on both eras: in `initialize` on a 2025-era connection, and in every request's `_meta["io.modelcontextprotocol/clientCapabilities"]` on `2026-07-28`.
+
+```json
+{
+  "capabilities": {
+    "extensions": {
+      "ai.nimblebrain/resource-arguments": { "maxSize": 10485760, "maxUris": 32 }
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `maxSize` | The most bytes of resolved contents one call carries, all URIs together (10 MiB). Text counts in UTF-8, a blob in decoded bytes. |
+| `maxUris` | The most distinct URIs resolved for one call. |
+
+The capability is absent where the host resolves nothing: on a personal connector's connection, which belongs to a person rather than a workspace, and on any host that does not implement the extension.
+
+## Declare which arguments hold URIs
+
+Mark the tool in `_meta`, naming each argument and the URI schemes you accept in it:
+
+```json
+{
+  "name": "send_with_citations",
+  "description": "Send a message. Pass the source records as `citations`, by their URI.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "body": { "type": "string" },
+      "citations": { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["body"]
+  },
+  "_meta": {
+    "ai.nimblebrain/resource-arguments": {
+      "arguments": {
+        "citations": { "schemes": ["crm"] }
+      }
+    }
+  }
+}
+```
+
+| Field | Rule |
+|---|---|
+| `…arguments` | Required. An object keyed by top-level argument name. |
+| `…arguments.<name>.schemes` | Required. A non-empty array of URI scheme names, without `://`. Matched case-insensitively. There is no wildcard: an entry without a valid scheme declares nothing. |
+
+A declared argument is read as a string or an array of strings. Values nested inside an object are not resolved.
+
+The declaration lives on the tool, not inside `inputSchema`, because the input schema is passed to model providers, and some reject keywords JSON Schema does not define.
+
+<Aside type="tip" title="Keep the scheme list out of your code">
+The scheme list is the one place your server names another server's
+namespace. If the record source is a choice the workspace makes, read the list
+from your configuration and publish it in `tools/list`, rather than writing a
+scheme into the tool definition.
+</Aside>
+
+## What arrives with the call
+
+When the agent calls the tool, the host puts one entry per distinct string in the declared arguments into the request's `_meta`, keyed by the string exactly as it appeared:
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "send_with_citations",
+    "arguments": {
+      "body": "Congratulations on the funding round.",
+      "citations": ["crm://signals/42", "crm://signals/7", "mail://inbox/1"]
+    },
+    "_meta": {
+      "ai.nimblebrain/resource-arguments": {
+        "crm://signals/42": {
+          "contents": [
+            {
+              "uri": "crm://signals/42",
+              "mimeType": "application/json",
+              "text": "{\"id\":42,\"kind\":\"funding\",\"observedAt\":\"2026-10-01\"}"
+            }
+          ]
+        },
+        "crm://signals/7": {
+          "error": { "code": "not_found", "message": "No connector in this workspace returned this resource." }
+        },
+        "mail://inbox/1": {
+          "error": { "code": "scheme_not_declared", "message": "This argument does not declare the URI's scheme, so the host did not read it." }
+        }
+      }
+    }
+  }
+}
+```
+
+An entry is one of two shapes:
+
+| Shape | Meaning |
+|---|---|
+| `{ "contents": [...] }` | The serving server's `resources/read` result contents, as it returned them: text as `text`, anything else base64-encoded in `blob`. |
+| `{ "error": { "code", "message" } }` | The host did not read the URI, or the read gave nothing. See [Errors](#errors). |
+
+A URI is never silently dropped: every string in a declared argument has an entry. Whether an unresolved citation refuses the call is your tool's decision.
+
+The key is absent when the call has nothing to carry: the tool declares no resource arguments, its declared arguments hold no strings, or the host does not implement the extension. On a call made through the [MCP endpoint](/connect/mcp-endpoint/) for an outside client, the request's client capabilities are that client's, so check for the `_meta` key on the call itself rather than relying on the capability.
+
+## How the host finds the serving server
+
+The host reads a URI from the one server in the calling connection's workspace whose `resources/templates/list` has a template the URI expands from (RFC 6570). It is the same rule that finds the app to [open a URI](/apps/bridge/#ainimblebrainopen) in. To be a source for other servers' tools, publish your resource templates.
+
+- **One workspace.** Only the servers installed in the same workspace as your connection are consulted. A server in another workspace is never read, whatever it serves.
+- **One owner.** When two servers in the workspace claim the URI, the host reads neither and answers `ambiguous`. It does not guess.
+- **The host's own schemes are not served this way.** `files://`, `ui://`, `skill://`, `artifact://`, `conversation://` and `app://` URIs are never resolved through this extension, whatever a server advertises. Workspace files are read with [host resources](/extensions/host-resources/).
+- **The session's authority.** The read is sent while the tool call is being made, for the same user, so the serving server sees the caller it would see if the agent read the resource itself. Your tool receives nothing the agent could not have read in the same workspace.
+
+## Errors
+
+| `code` | Meaning |
+|---|---|
+| `scheme_not_declared` | The string's scheme is not one the argument declares, or the string has no scheme. The host did not read it. |
+| `not_found` | No server in the workspace serves the URI, or its server returned nothing or failed. These are one code on purpose, as in [host resources](/extensions/host-resources/#scope-which-files-a-server-can-see): a read tells your server nothing about what exists beyond the contents it is handed. |
+| `ambiguous` | More than one server in the workspace serves the URI. A workspace admin resolves it by removing one. |
+| `too_large` | The contents would take the call past `maxSize`. Entries are admitted in argument order, so the first URIs that fit are the ones resolved. |
+| `too_many` | The call names more than `maxUris` distinct URIs with declared schemes; the rest are not read. |
+| `rate_limited` | Your server's resource budget in this workspace is spent. Reads made here and [host-resources](/extensions/host-resources/) requests share one budget per server per workspace. |
+
+The `message` is for people. Match on `code`.
+
+## Related
+
+- [Extensions](/extensions/overview/): design rules shared by every extension
+- [Host resources](/extensions/host-resources/): reading workspace files by URI from inside a tool, on 2025-era connections
+- [Protocol support](/mcp/protocol-support/): every capability the host claims

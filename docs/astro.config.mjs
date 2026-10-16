@@ -191,6 +191,7 @@ export default defineConfig({
               { label: 'Admin-only Tools', slug: 'extensions/admin-tools' },
               { label: 'Placements & Navigation', slug: 'extensions/placements' },
               { label: 'Host Resources', slug: 'extensions/host-resources' },
+              { label: 'Resource Arguments', slug: 'extensions/resource-arguments' },
               { label: 'Custom Instructions', slug: 'extensions/custom-instructions' },
               {
                 label: 'App Bridge Extensions',

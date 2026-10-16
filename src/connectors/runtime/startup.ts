@@ -1,6 +1,10 @@
 import { oauthClientIdentity } from "../../brand/index.ts";
 import type { EventSink } from "../../engine/types.ts";
-import type { HostResourcesRateLimit, HostResourcesResolver } from "../../host-resources/index.ts";
+import type {
+  HostResourcesRateLimit,
+  HostResourcesResolver,
+  ResourceArgumentsResolver,
+} from "../../host-resources/index.ts";
 import { resolveUserDisplayName } from "../../identity/user.ts";
 import { fleetIssuerOption } from "../../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
@@ -33,6 +37,8 @@ export interface ConnectorMcpDeps {
   workspaceId: string;
   hostResources: HostResourcesResolver;
   rateLimit: HostResourcesRateLimit;
+  /** Resolves the `ai.nimblebrain/resource-arguments` a tool declares, in this workspace. */
+  resourceArguments?: ResourceArgumentsResolver;
 }
 
 /**
@@ -51,6 +57,7 @@ export function composeConnectorMcpContext(
     connectorId: sourceName,
     hostResources: deps.hostResources,
     rateLimit: deps.rateLimit,
+    ...(deps.resourceArguments ? { resourceArguments: deps.resourceArguments } : {}),
   };
 }
 
