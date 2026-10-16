@@ -360,7 +360,7 @@ function buildOpenAIThinkingOptions(
  * that measurement does not exist for GreenPT. Give this arm a per-model table
  * once the tiers are probed against a live key.
  */
-function buildGreenptThinkingOptions(): SharedV3ProviderOptions {
+function buildGreenptThinkingOptions(): SharedV4ProviderOptions {
   return {};
 }
 

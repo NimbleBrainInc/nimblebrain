@@ -115,6 +115,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   google: "Google",
   xai: "xAI",
   nebius: "Nebius",
+  greenpt: "GreenPT",
 };
 
 /** Capitalised fallback, so a provider nobody listed still reads as a name. */

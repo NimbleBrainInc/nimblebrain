@@ -30,9 +30,9 @@ describe("buildRegistry", () => {
 
   it("resolves greenpt models through the OpenAI-compatible Chat Completions API", () => {
     const registry = buildRegistry({ providers: { greenpt: { apiKey: "greenpt-test-key" } } });
-    const model = registry.languageModel("greenpt:glm-5.2");
+    const model = registry.languageModel("greenpt:glm-5.2") as LanguageModelV4;
     expect(model).toBeDefined();
-    expect(model.specificationVersion).toBe("v3");
+    expect(model.specificationVersion).toBe("v4");
     expect(model.provider).toBe("greenpt.chat");
     expect(model.modelId).toBe("glm-5.2");
   });
@@ -41,9 +41,7 @@ describe("buildRegistry", () => {
     const prev = process.env.GREENPT_API_KEY;
     process.env.GREENPT_API_KEY = "";
     try {
-      expect(() => buildRegistry({ providers: { greenpt: {} } })).toThrow(
-        /greenpt.*no API key/i,
-      );
+      expect(() => buildRegistry({ providers: { greenpt: {} } })).toThrow(/greenpt.*no API key/i);
     } finally {
       if (prev === undefined) delete process.env.GREENPT_API_KEY;
       else process.env.GREENPT_API_KEY = prev;
@@ -137,7 +135,7 @@ describe("greenpt request shape", () => {
     let body: Record<string, unknown> = {};
     let url = "";
     let authorization: string | null = null;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = fakeFetch(async (input, init) => {
       url = String(input);
       authorization = new Headers(init?.headers).get("authorization");
       body = JSON.parse(String(init?.body));
@@ -145,15 +143,13 @@ describe("greenpt request shape", () => {
         'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
         { status: 200, headers: { "content-type": "text/event-stream" } },
       );
-    }) as typeof fetch;
+    });
     try {
       await buildModelResolver({
         providers: { greenpt: { apiKey: "greenpt-test-key" } },
       })("greenpt:kimi-k3").doStream({
         prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
-        ...(reasoningEffort
-          ? { providerOptions: { greenpt: { reasoningEffort } } }
-          : {}),
+        ...(reasoningEffort ? { providerOptions: { greenpt: { reasoningEffort } } } : {}),
       });
     } finally {
       globalThis.fetch = realFetch;

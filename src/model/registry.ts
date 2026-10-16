@@ -101,11 +101,10 @@ export function buildRegistry(config: ProvidersConfig): Provider {
     // closed — the reasoning is identical and stated once, there.
     //
     // `includeUsage` and `supportsStructuredOutputs` are asserted from
-    // GreenPT's OpenAI compatibility, not measured against the API. The second
-    // is the load-bearing one: the home briefing sends a `json_schema` response
-    // format on every home load, so if GreenPT does not honor it, that call is
-    // where it surfaces. Measure both against a live key before treating them
-    // as established.
+    // GreenPT's OpenAI compatibility, not measured against the API. Without
+    // `includeUsage` every turn would meter at zero; `supportsStructuredOutputs`
+    // matters only to a call that sends a schema-bearing `responseFormat`.
+    // Measure both against a live key before treating them as established.
     providers.greenpt = createOpenAICompatible({
       name: "greenpt",
       apiKey: greenptApiKey,
