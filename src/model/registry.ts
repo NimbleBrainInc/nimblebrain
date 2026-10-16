@@ -100,11 +100,12 @@ export function buildRegistry(config: ProvidersConfig): Provider {
     // built through `createOpenAICompatible` and why the key guard fails
     // closed — the reasoning is identical and stated once, there.
     //
-    // `includeUsage` and `supportsStructuredOutputs` are asserted from
-    // GreenPT's OpenAI compatibility, not measured against the API. Without
-    // `includeUsage` every turn would meter at zero; `supportsStructuredOutputs`
-    // matters only to a call that sends a schema-bearing `responseFormat`.
-    // Measure both against a live key before treating them as established.
+    // `includeUsage` and `supportsStructuredOutputs` are measured against the
+    // live API on glm-5.2, kimi-k2.7-code, and kimi-k3: streamed responses
+    // carry non-zero usage, and `json_schema` response formats are honoured.
+    // Without `includeUsage` every turn would meter at zero;
+    // `supportsStructuredOutputs` matters only to a call that sends a
+    // schema-bearing `responseFormat`.
     providers.greenpt = createOpenAICompatible({
       name: "greenpt",
       apiKey: greenptApiKey,
