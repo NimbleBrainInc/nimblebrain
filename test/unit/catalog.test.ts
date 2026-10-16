@@ -8,6 +8,9 @@ import {
   getProviderName,
   googleThinkingModelIds,
   googleThinkingSupport,
+  greenptEffortModelIds,
+  greenptSupportedEfforts,
+  greenptUnmeasuredReasoningModels,
   isModelAllowed,
   isModelInPolicy,
   listModels,
@@ -534,6 +537,31 @@ describe("OpenAI effort support", () => {
     // CI instead. Note the guard cannot be "every -pro id has a row":
     // o3-pro is -pro, was measured, and correctly takes the full ladder.
     expect(openaiUnmeasuredReasoningModels()).toEqual([]);
+  });
+});
+
+describe("greenpt effort support", () => {
+  it("classifies only real catalog models", () => {
+    for (const id of greenptEffortModelIds()) {
+      expect(getModel("greenpt", id), `${id} is not in the catalog`).toBeDefined();
+    }
+  });
+
+  it("has measured every catalog reasoning model", () => {
+    // Fail-closed, so an unmeasured model gets no reasoning options rather
+    // than a 400. Measure a newly synced one: GreenPT's 400 for an unaccepted
+    // `reasoning_effort` lists the values the model takes.
+    expect(greenptUnmeasuredReasoningModels()).toEqual([]);
+  });
+
+  it("gives an unlisted model no options at all", () => {
+    expect(greenptSupportedEfforts("greenpt:not-a-model")).toBeUndefined();
+  });
+
+  it("records no model accepting max", () => {
+    for (const id of greenptEffortModelIds()) {
+      expect([...(greenptSupportedEfforts(`greenpt:${id}`) ?? [])]).not.toContain("max");
+    }
   });
 });
 

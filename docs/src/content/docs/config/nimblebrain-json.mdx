@@ -137,6 +137,7 @@ and the runtime translates.
 | Anthropic — up to Sonnet 4.6 | `thinking: {type: "enabled"}` + a `budgetTokens` sized from the tier |
 | OpenAI, and Nebius-hosted open-weight models (Qwen, DeepSeek, Kimi, GLM, Nemotron, gpt-oss) | `reasoningEffort`. Its usable range stops at `high`, so `xhigh` and `max` both land there. On OpenAI, acceptance is also per model — see below |
 | xAI (Grok) | `reasoningEffort`, tops out at `high`. Acceptance is per model and some Grok models take no effort parameter at all — see below |
+| GreenPT | `reasoningEffort`, tops out at `high`. Acceptance is per model — see [GreenPT](#greenpt) |
 | Google Gemini 3 | `thinkingConfig.thinkingLevel`, tops out at `high` |
 | Google Gemini 2.5 | `thinkingConfig.thinkingBudget`, sized from the tier and held inside the model's documented range |
 
@@ -177,8 +178,8 @@ accept it, rather than the call failing. When a known tier ladder steps down or
 drops an operator's requested tier, the runtime logs a `[thinking]` warning
 naming the requested tier and the tier sent (or the provider default), once per
 model and requested tier. An xAI model measured to accept no effort parameter
-sends none without this warning; an xAI model with no measured ladder warns when
-the operator's tier cannot be applied.
+sends none without this warning; an xAI or GreenPT model with no measured ladder
+warns when the operator's tier cannot be applied.
 
 `off` is not universally enforceable, and where it isn't, nothing is sent
 rather than a flag that would be rejected or ignored:
@@ -193,6 +194,8 @@ rather than a flag that would be rejected or ignored:
   On Gemini 3 it depends on the model: those offering a `minimal` level get it,
   and those that don't (both Pro entries) get nothing rather than the next tier
   up, which would answer "don't reason" with an instruction to reason.
+- **GreenPT** — models that accept `none` get it; the others (`gpt-oss-120b`,
+  `green-r`, `minimax-m2.5`) get nothing.
 
 ## models
 
@@ -321,7 +324,16 @@ GreenPT is a European AI provider with an OpenAI-compatible API, optimized infra
 
 The key falls back to `GREENPT_API_KEY`. Like `nebius` below, this key is **required when `greenpt` is configured** — the runtime fails to start if neither `providers.greenpt.apiKey` nor `GREENPT_API_KEY` is set, because the GreenPT adapter reads no environment variable of its own and a keyless provider has nothing to authenticate with. Override the endpoint with `baseURL` (default `https://api.greenpt.ai/v1`). The catalog lists GreenPT's chat models as published on [models.dev](https://models.dev), the same source as the Anthropic, OpenAI, Google, and xAI entries; other model IDs still route as free text. Use `GET https://api.greenpt.ai/v1/models` with your API key for the current model list.
 
-GreenPT turns are sent without a reasoning-effort tier, so each model reasons at its own default and `thinkingEffort` has no effect here. GreenPT documents an effort ladder for `kimi-k3` only and publishes no reasoning parameter for its other models, so there is no tier known to be accepted across them — sending an unaccepted value would fail the call outright, which is the worse trade.
+Effort acceptance is per model, measured against GreenPT's API. No GreenPT model accepts `max`, so `xhigh` and `max` land on `high`:
+
+| Model | Effort tiers accepted |
+|---|---|
+| `deepseek-v4-flash-0731`, `deepseek-v4.1-flash`, `gemma4`, `glm-5.2`, `glm-5.3`, `glm-5.3-flash`, `kimi-k2.6`, `kimi-k2.7-code`, `kimi-k3`, `qwen3.5-397b-a17b`, `qwen3.6-35b-a3b` | `low`, `medium`, `high`, plus `none` to suppress reasoning |
+| `gpt-oss-120b`, `green-r`, `green-r-raw` | `low`, `medium`, `high` |
+| `minimax-m2.5` | `low`, `medium`, `high` |
+| `mistral-medium-3.5-128b` | `high`, plus `none` |
+
+On `mistral-medium-3.5-128b` the platform's default `medium` is not offered, so the model runs at its own default unless you set `thinkingEffort` explicitly.
 
 ### Nebius Token Factory
 

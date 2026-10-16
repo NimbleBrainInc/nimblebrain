@@ -2053,20 +2053,46 @@ describe("AgentEngine", () => {
         }
       });
 
-      it("sends no effort tier to GreenPT, whose ladders are unmeasured", async () => {
-        // GreenPT documents `low | high | max` for kimi-k3 only and nothing at
-        // all for the other two catalog models, so no tier is known-accepted
-        // across them — including `medium`, the platform default. The arm fails
-        // closed until the tiers are probed; the model applies its own default.
+      it("routes GreenPT through the greenpt options key, NOT openai", async () => {
+        // `createOpenAICompatible` reads `providerOptions.<name>`; an `openai`
+        // key would reach the wire as nothing.
         const po = await providerOptionsFor("greenpt:kimi-k3", {
           mode: "effort",
-          effort: "max",
-          source: "operator",
+          effort: "medium",
+          source: "platform",
+        });
+        expect(po.greenpt?.reasoningEffort).toBe("medium");
+        expect(po.openai).toBeUndefined();
+      });
+
+      it("clamps GreenPT's top tiers to high, since every model rejects max", async () => {
+        for (const effort of ["xhigh", "max"] as const) {
+          const po = await providerOptionsFor("greenpt:kimi-k3", {
+            mode: "effort",
+            effort,
+            source: "operator",
+          });
+          expect(po.greenpt?.reasoningEffort).toBe("high");
+        }
+      });
+
+      it("sends GreenPT `none` for off only where the model accepts it", async () => {
+        const glm = await providerOptionsFor("greenpt:glm-5.2", { mode: "off" });
+        expect(glm.greenpt?.reasoningEffort).toBe("none");
+        // gpt-oss-120b takes low | medium | high and rejects `none`.
+        const oss = await providerOptionsFor("greenpt:gpt-oss-120b", { mode: "off" });
+        expect(oss.greenpt).toBeUndefined();
+      });
+
+      it("leaves the GreenPT default alone when a model lacks the fallback tier", async () => {
+        // mistral-medium-3.5-128b takes only `none` and `high`. A tier nobody
+        // chose must not override the model's own default.
+        const po = await providerOptionsFor("greenpt:mistral-medium-3.5-128b", {
+          mode: "effort",
+          effort: "medium",
+          source: "platform",
         });
         expect(po.greenpt).toBeUndefined();
-        // Whatever this arm sends must never land under `openai`: an
-        // `createOpenAICompatible` instance reads `providerOptions.<name>`.
-        expect(po.openai).toBeUndefined();
       });
 
       it("routes Nebius through the nebius options key, NOT openai", async () => {

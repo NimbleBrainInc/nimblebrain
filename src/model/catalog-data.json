@@ -2613,54 +2613,6 @@
         "knowledgeCutoff": "2025-05",
         "releaseDate": "2026-09-10"
       },
-      "devstral-2-123b-instruct-2512": {
-        "id": "devstral-2-123b-instruct-2512",
-        "name": "Devstral 2",
-        "family": "devstral",
-        "cost": {
-          "input": 0.57,
-          "output": 2.736
-        },
-        "limits": {
-          "context": 200000,
-          "output": 16384
-        },
-        "capabilities": {
-          "toolCall": true,
-          "reasoning": false,
-          "attachment": false
-        },
-        "modalities": {
-          "input": ["text"],
-          "output": ["text"]
-        },
-        "knowledgeCutoff": "2025-12",
-        "releaseDate": "2025-12-09"
-      },
-      "gemma-3-27b-it": {
-        "id": "gemma-3-27b-it",
-        "name": "Gemma 3 27B",
-        "family": "gemma",
-        "cost": {
-          "input": 0.342,
-          "output": 0.684
-        },
-        "limits": {
-          "context": 40000,
-          "output": 8192
-        },
-        "capabilities": {
-          "toolCall": true,
-          "reasoning": false,
-          "attachment": true
-        },
-        "modalities": {
-          "input": ["text", "image"],
-          "output": ["text"]
-        },
-        "knowledgeCutoff": "2024-08",
-        "releaseDate": "2025-03-12"
-      },
       "gemma4": {
         "id": "gemma4",
         "name": "gemma4",
@@ -2683,30 +2635,6 @@
           "output": ["text"]
         },
         "releaseDate": "2026-04-02"
-      },
-      "glm-5.1": {
-        "id": "glm-5.1",
-        "name": "GLM-5.1",
-        "family": "glm",
-        "cost": {
-          "input": 1.756,
-          "output": 5.518
-        },
-        "limits": {
-          "context": 200000,
-          "output": 131072
-        },
-        "capabilities": {
-          "toolCall": true,
-          "reasoning": true,
-          "attachment": false
-        },
-        "modalities": {
-          "input": ["text"],
-          "output": ["text"]
-        },
-        "releaseDate": "2026-04-07",
-        "deprecated": true
       },
       "glm-5.2": {
         "id": "glm-5.2",
@@ -2897,28 +2825,6 @@
         },
         "releaseDate": "2025-08-05"
       },
-      "holo2-30b-a3b": {
-        "id": "holo2-30b-a3b",
-        "name": "Holo2 30B A3B",
-        "cost": {
-          "input": 0.399,
-          "output": 0.969
-        },
-        "limits": {
-          "context": 22016,
-          "output": 16384
-        },
-        "capabilities": {
-          "toolCall": true,
-          "reasoning": true,
-          "attachment": true
-        },
-        "modalities": {
-          "input": ["text", "image"],
-          "output": ["text"]
-        },
-        "releaseDate": "2025-11"
-      },
       "kimi-k2.6": {
         "id": "kimi-k2.6",
         "name": "Kimi K2.6",
@@ -2943,31 +2849,6 @@
         },
         "knowledgeCutoff": "2025-01",
         "releaseDate": "2026-04-21"
-      },
-      "kimi-k2.6-fast": {
-        "id": "kimi-k2.6-fast",
-        "name": "Kimi K2.6 Fast",
-        "family": "kimi-k2",
-        "cost": {
-          "input": 1.655,
-          "output": 8.778
-        },
-        "limits": {
-          "context": 262144,
-          "output": 16384
-        },
-        "capabilities": {
-          "toolCall": true,
-          "reasoning": true,
-          "attachment": true
-        },
-        "modalities": {
-          "input": ["text", "image"],
-          "output": ["text"]
-        },
-        "knowledgeCutoff": "2025-01",
-        "releaseDate": "2026-04-21",
-        "deprecated": true
       },
       "kimi-k2.7-code": {
         "id": "kimi-k2.7-code",
@@ -3113,30 +2994,6 @@
         "knowledgeCutoff": "2025-03",
         "releaseDate": "2025-06-20"
       },
-      "pixtral-12b-2409": {
-        "id": "pixtral-12b-2409",
-        "name": "Pixtral 12B",
-        "family": "pixtral",
-        "cost": {
-          "input": 0.285,
-          "output": 0.285
-        },
-        "limits": {
-          "context": 128000,
-          "output": 4096
-        },
-        "capabilities": {
-          "toolCall": true,
-          "reasoning": false,
-          "attachment": true
-        },
-        "modalities": {
-          "input": ["text", "image"],
-          "output": ["text"]
-        },
-        "knowledgeCutoff": "2024-09",
-        "releaseDate": "2024-09-01"
-      },
       "qwen3-235b-a22b-instruct-2507": {
         "id": "qwen3-235b-a22b-instruct-2507",
         "name": "Qwen3 235B A22B Instruct 2507",
@@ -3160,30 +3017,6 @@
         },
         "knowledgeCutoff": "2025-04",
         "releaseDate": "2025-07-21"
-      },
-      "qwen3-coder-30b-a3b-instruct": {
-        "id": "qwen3-coder-30b-a3b-instruct",
-        "name": "Qwen3-Coder 30B-A3B Instruct",
-        "family": "qwen",
-        "cost": {
-          "input": 0.285,
-          "output": 1.083
-        },
-        "limits": {
-          "context": 128000,
-          "output": 32768
-        },
-        "capabilities": {
-          "toolCall": true,
-          "reasoning": false,
-          "attachment": false
-        },
-        "modalities": {
-          "input": ["text"],
-          "output": ["text"]
-        },
-        "knowledgeCutoff": "2025-04",
-        "releaseDate": "2025-04"
       },
       "qwen3.5-397b-a17b": {
         "id": "qwen3.5-397b-a17b",
@@ -3230,30 +3063,6 @@
           "output": ["text"]
         },
         "releaseDate": "2026-04-17"
-      },
-      "voxtral-small-24b-2507": {
-        "id": "voxtral-small-24b-2507",
-        "name": "Voxtral Small 24B",
-        "family": "mistral",
-        "cost": {
-          "input": 0.228,
-          "output": 0.513
-        },
-        "limits": {
-          "context": 32768,
-          "output": 16384
-        },
-        "capabilities": {
-          "toolCall": true,
-          "reasoning": false,
-          "attachment": true
-        },
-        "modalities": {
-          "input": ["text", "audio"],
-          "output": ["text"]
-        },
-        "knowledgeCutoff": "2025-07",
-        "releaseDate": "2025-07-15"
       }
     }
   }

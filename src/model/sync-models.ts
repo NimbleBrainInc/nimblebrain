@@ -47,6 +47,16 @@ const MANUAL_EXCLUSIONS = new Set<string>([
   "greenpt:glm-5.2-ponytail",
   "greenpt:glm-5.2-ponytail-lite",
   "greenpt:glm-5.2-ponytail-ultra",
+  // Listed and priced upstream, but GreenPT's Chat Completions endpoint answers
+  // `400 Unsupported model` for each, and none is in its `/v1/models` listing.
+  "greenpt:devstral-2-123b-instruct-2512",
+  "greenpt:gemma-3-27b-it",
+  "greenpt:glm-5.1",
+  "greenpt:holo2-30b-a3b",
+  "greenpt:kimi-k2.6-fast",
+  "greenpt:pixtral-12b-2409",
+  "greenpt:qwen3-coder-30b-a3b-instruct",
+  "greenpt:voxtral-small-24b-2507",
 ]);
 
 // Upstream reports each model's maximum limits, but some maxima are only
