@@ -251,7 +251,7 @@ Ask the agent and it reports the summary — how many loads, across how many con
 | `tool_use` | A bound skill delivered when its tool was promoted, or after a call that ran. |
 | `activation` | The model loaded a Skill Catalog entry by name with `nb__use_skill`. |
 
-A row with a `status` is a bound skill that did **not** reach the model on that call: `fetch_failed` (its body could not be fetched, so the call ran without it), `capped` (one held call delivers at most about three skills' worth of guidance; the rest are named for the model to load), or `renamed_unheld` (a policy hook renamed the call after the check). Filter by `conversation_id`, `skill` (name or id), `loaded_by`, or a `since`/`until` window. This is the way to answer questions the catalog alone can't — whether a skill is reaching the model at all, and whether it gets there because the model chose it or because a tool call forced it.
+A row with a `status` is a bound skill that did **not** reach the model on that call: `fetch_failed` (its body could not be fetched, so the call ran without it), `capped` (one delivery carries at most about three skills' worth of guidance, whether it came from a held call or a promotion; the rest arrive later, or the model loads them), or `renamed_unheld` (a policy hook renamed the call after the check). Filter by `conversation_id`, `skill` (name or id), `loaded_by`, or a `since`/`until` window. This is the way to answer questions the catalog alone can't — whether a skill is reaching the model at all, and whether it gets there because the model chose it or because a tool call forced it.
 
 ## Creating a custom skill
 

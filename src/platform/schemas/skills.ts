@@ -472,8 +472,8 @@ export const SkillLoadRow = Type.Object({
   status: Type.Optional(
     StringEnum(["fetch_failed", "capped", "renamed_unheld"] as const, {
       description:
-        "The skill did not reach the model: its body could not be fetched, a held call's " +
-        "size cap left it out, or a policy hook renamed the call past the hold.",
+        "The skill did not reach the model: its body could not be fetched, one delivery's " +
+        "size limit left it out, or a policy hook renamed the call past the hold.",
     }),
   ),
 });

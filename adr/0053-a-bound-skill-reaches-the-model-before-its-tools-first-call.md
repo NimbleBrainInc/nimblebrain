@@ -80,6 +80,11 @@ say otherwise.
 - **Per hold:** one hold delivers at most three skill bodies' worth
   (`3 × MAX_SKILL_BODY_CHARS`), lowest priority number first. Any further skills
   are named for `nb__use_skill` and not held for again.
+- **Per delivery:** every iteration's delivery is held to the same limit,
+  whichever path claimed its skills: a hold, a promotion, or a call that ran.
+  Bodies a hold counted come first, then the rest by priority. A skill past the
+  limit there is recorded `capped` and stays eligible, so a later hold for the
+  tool it governs, or a later delivery, still brings it.
 - **Parallel calls:** calls in one message bound to the same skill share its one
   fetch.
 - **No body arrived:** the call runs.
@@ -96,7 +101,7 @@ that server's own binding (`executor.ts`, `unresolvedFailures`).
 
 **Every gap is recorded.** `skill.not_delivered` records:
 - `fetch_failed`, a body that could not be fetched;
-- `capped`, a skill a hold's size cap left out;
+- `capped`, a skill one delivery's size limit left out;
 - `renamed_unheld`, a call a hook renamed past the hold.
 
 The load ledger reads a held delivery as `before_call` and a gap as a row with

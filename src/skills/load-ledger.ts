@@ -89,7 +89,7 @@ export interface SkillLoadRow {
   tool_name?: string;
   /**
    * Set when a bound skill did NOT reach the model on that call: its body could
-   * not be fetched, a hold's size cap left it out, or a hook renamed the call
+   * not be fetched, one delivery's size limit left it out, or a hook renamed the call
    * past the hold. Such a row delivered nothing (`tokens` is 0).
    */
   status?: SkillNotDeliveredEvent["reason"];
