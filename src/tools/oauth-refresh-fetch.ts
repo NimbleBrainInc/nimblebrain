@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { FetchLike } from "@modelcontextprotocol/server";
 import { log } from "../observability/log.ts";
 
@@ -32,8 +33,8 @@ import { log } from "../observability/log.ts";
  *
  * ## Scope
  *
- * Only the idempotent OAuth refresh-token POST (`grant_type=refresh_token`)
- * is retried. Every other transport request — the MCP JSON-RPC tool calls,
+ * Only the OAuth refresh-token POST (`grant_type=refresh_token`) is retried
+ * and shared (see `spendOnce`). Every other transport request — the MCP JSON-RPC tool calls,
  * the one-shot `authorization_code` exchange — passes straight through to a
  * single `fetch`, so tool-call semantics and the inline/task retry asymmetry
  * in `McpSource` are untouched.
@@ -76,17 +77,34 @@ export interface OAuthRefreshFetchOptions {
   rng?: () => number;
 }
 
-/** Is this the OAuth refresh-token grant POST (the only request we retry)? */
-function isRefreshGrant(init?: RequestInit): boolean {
-  const body = init?.body;
-  if (!body) return false;
-  if (body instanceof URLSearchParams) {
-    return body.get("grant_type") === "refresh_token";
+/**
+ * The form fields of a request body, whatever form it reaches this fetch in.
+ * The SDK posts `URLSearchParams`, but a wrapper outside this one may already
+ * have buffered it: the SSRF guard turns every non-string body into bytes so it
+ * can replay it across a redirect. A body read only in the SDK's own form would
+ * make every refresh look like an ordinary request.
+ */
+function formFields(body: RequestInit["body"]): URLSearchParams | null {
+  if (body == null) return null;
+  if (body instanceof URLSearchParams) return body;
+  if (typeof body === "string") return new URLSearchParams(body);
+  if (body instanceof ArrayBuffer) return new URLSearchParams(new TextDecoder().decode(body));
+  if (ArrayBuffer.isView(body)) {
+    return new URLSearchParams(
+      new TextDecoder().decode(new Uint8Array(body.buffer, body.byteOffset, body.byteLength)),
+    );
   }
-  if (typeof body === "string") {
-    return new URLSearchParams(body).get("grant_type") === "refresh_token";
-  }
-  return false;
+  return null;
+}
+
+/**
+ * The refresh token an OAuth refresh-token grant POST spends (the only request
+ * this fetch handles), or null for any other request.
+ */
+function refreshGrantToken(init?: RequestInit): string | null {
+  const fields = formFields(init?.body);
+  if (fields?.get("grant_type") !== "refresh_token") return null;
+  return fields.get("refresh_token") ?? "";
 }
 
 /**
@@ -217,29 +235,76 @@ export function createOAuthRefreshFetch(options: OAuthRefreshFetchOptions = {}):
     return () => new Response(body, responseInit);
   };
 
-  // Single-flight scope: this wrapper is created once per transport
-  // (`createRemoteTransport`), and one transport speaks for exactly one
-  // (workspace, connector) token. So every concurrent refresh POST that reaches
-  // it refreshes the SAME credential — one nullable in-flight slot is the
-  // correct coalescing scope, no keying needed.
-  let inFlight: Promise<() => Response> | null = null;
-
   return async (url, init) => {
-    if (!isRefreshGrant(init)) {
+    const refreshToken = refreshGrantToken(init);
+    if (refreshToken === null) {
       return doFetch(url, init);
     }
-    // Coalesce concurrent refreshes. The engine runs a turn's tool calls in
-    // parallel, so on token expiry N calls 401 at once and would otherwise each
-    // fire their own refresh POST — an IdP rate-limit storm, and on rotating
-    // providers a race where the losers get `invalid_grant` (a spurious dead
-    // credential). One upstream attempt serves them all; awaiters get an
-    // independent snapshot of its result.
-    if (!inFlight) {
-      inFlight = refreshOnceSnapshot(url, init).finally(() => {
-        inFlight = null;
-      });
-    }
-    const makeResponse = await inFlight;
-    return makeResponse();
+    // One exchange per refresh token, process-wide. The engine runs a turn's
+    // tool calls in parallel, so on token expiry N calls 401 at once, and a
+    // restarted or rebuilt connection runs on a transport of its own (each
+    // with its own fetch). Every request spending the same token shares one
+    // upstream attempt and gets an independent snapshot of its result: an IdP
+    // that rotates refresh tokens revokes the one it was given, so a second
+    // spend gets `invalid_grant`, and the SDK answers that by deleting the
+    // credential the first spend just renewed.
+    return (await spendOnce(String(url), refreshToken, () => refreshOnceSnapshot(url, init)))();
   };
+}
+
+/**
+ * How long a successful exchange keeps answering for the token it spent. A
+ * request that read the token before the winner saved its successor can reach
+ * this fetch after the winner's POST has settled; within this window it gets the
+ * winner's response, which carries the successor, instead of spending a revoked
+ * token. A failed exchange is dropped at once, so a retry runs.
+ */
+export const REFRESH_REPLAY_MS = 60_000;
+
+interface Exchange {
+  result: Promise<() => Response>;
+  /** When a successful exchange stops answering; unset while in flight. */
+  expiresAt?: number;
+}
+
+/**
+ * Refresh exchanges in this process, by a hash of the token endpoint and the
+ * refresh token spent: never the token itself, which is a credential.
+ */
+const exchanges = new Map<string, Exchange>();
+
+function exchangeKey(url: string, refreshToken: string): string {
+  return createHash("sha256").update(url).update("\n").update(refreshToken).digest("hex");
+}
+
+/** Run `exchange` for this token unless one is in flight or recently succeeded, and share it. */
+function spendOnce(
+  url: string,
+  refreshToken: string,
+  exchange: () => Promise<() => Response>,
+): Promise<() => Response> {
+  const now = Date.now();
+  for (const [key, entry] of exchanges) {
+    if (entry.expiresAt !== undefined && entry.expiresAt <= now) exchanges.delete(key);
+  }
+  const key = exchangeKey(url, refreshToken);
+  const existing = exchanges.get(key);
+  if (existing) return existing.result;
+  const entry: Exchange = { result: exchange() };
+  exchanges.set(key, entry);
+  entry.result.then(
+    (makeResponse) => {
+      if (makeResponse().ok) entry.expiresAt = Date.now() + REFRESH_REPLAY_MS;
+      else if (exchanges.get(key) === entry) exchanges.delete(key);
+    },
+    () => {
+      if (exchanges.get(key) === entry) exchanges.delete(key);
+    },
+  );
+  return entry.result;
+}
+
+/** Forget every exchange. Tests only: each test spends its own tokens. */
+export function resetRefreshExchanges(): void {
+  exchanges.clear();
 }
