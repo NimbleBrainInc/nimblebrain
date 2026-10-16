@@ -233,8 +233,7 @@ export interface NimbleBrainConnectorMeta {
   auth?: ConnectorAuthKind;
   /**
    * Required for `auth: "static"`: where a workspace admin creates the OAuth
-   * client and which credential key holds its secret. Read under its earlier
-   * name, `operatorSetup`, too (see {@link getNimbleBrainConnectorMeta}).
+   * client and which credential key holds its secret.
    */
   oauthClientSetup?: {
     portalUrl: string;
@@ -334,24 +333,7 @@ export const NIMBLEBRAIN_CONNECTOR_META_KEY = "ai.nimblebrain/connector";
 
 /** Convenience accessor with the right type narrowing. */
 export function getNimbleBrainConnectorMeta(s: ServerDetail): NimbleBrainConnectorMeta | undefined {
-  const meta = s._meta?.[NIMBLEBRAIN_CONNECTOR_META_KEY] as LegacyConnectorMeta | undefined;
-  if (!meta?.operatorSetup) return meta;
-  // `operatorSetup` is the name `oauthClientSetup` had before. One catalog file
-  // serves a runtime on each side of the rename, so both names read until the
-  // catalog has moved; the next release drops this. The current name wins.
-  const { operatorSetup, ...rest } = meta;
-  return { ...rest, oauthClientSetup: rest.oauthClientSetup ?? operatorSetup };
-}
-
-/** The connector meta as a catalog written before the setup rename may carry it. */
-type LegacyConnectorMeta = NimbleBrainConnectorMeta & {
-  operatorSetup?: NimbleBrainConnectorMeta["oauthClientSetup"];
-};
-
-/** Whether an entry declares the setup block under both its names (the catalog logs it). */
-export function declaresBothSetupNames(s: ServerDetail): boolean {
-  const meta = s._meta?.[NIMBLEBRAIN_CONNECTOR_META_KEY] as LegacyConnectorMeta | undefined;
-  return meta?.operatorSetup !== undefined && meta.oauthClientSetup !== undefined;
+  return s._meta?.[NIMBLEBRAIN_CONNECTOR_META_KEY] as NimbleBrainConnectorMeta | undefined;
 }
 
 /**

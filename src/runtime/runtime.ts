@@ -796,7 +796,7 @@ export class Runtime {
     // anything reads a workspace: identity, connectors, the scheduler and the
     // server all read `oauthClients` only.
     const oauthClientRecords = await workspaceStore.reconcileOAuthClientRecords();
-    if (oauthClientRecords.copied > 0 || oauthClientRecords.failed > 0) {
+    if (oauthClientRecords.moved > 0 || oauthClientRecords.failed > 0) {
       log.info("[runtime] OAuth client records reconciled", oauthClientRecords);
     }
     // The runtime is the one owner of the identity provider: the server
