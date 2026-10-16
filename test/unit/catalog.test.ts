@@ -39,9 +39,10 @@ describe("Model Catalog", () => {
     expect(getProviderName("unknown")).toBe("unknown");
   });
 
-  it("includes GreenPT flagship and coding models", () => {
-    const models = listModels("greenpt");
-    expect(models.map((model) => model.id)).toEqual(["glm-5.2", "kimi-k2.7-code", "kimi-k3"]);
+  it("includes GreenPT's chat models without its response-style variants", () => {
+    const ids = listModels("greenpt").map((model) => model.id);
+    expect(ids).toEqual(expect.arrayContaining(["glm-5.2", "kimi-k2.7-code", "kimi-k3"]));
+    expect(ids.some((id) => /^glm-5\.2-(caveman|honey|ponytail)/.test(id))).toBe(false);
     expect(getModel("greenpt", "glm-5.2")?.limits.context).toBe(1_000_000);
     expect(getModel("greenpt", "kimi-k3")?.capabilities.attachment).toBe(true);
   });

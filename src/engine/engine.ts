@@ -348,9 +348,9 @@ function buildOpenAIThinkingOptions(
  *
  * Sends nothing, on every mode: no ladder here is measured. GreenPT documents
  * `low | high | max` for `kimi-k3` alone, and publishes no reasoning parameter
- * at all for `glm-5.2` or `kimi-k2.7-code` — so no tier is known to be accepted
- * across the catalog. `medium`, the platform's `DEFAULT_THINKING_EFFORT`, is in
- * no GreenPT ladder that is documented anywhere, so mapping through
+ * for the rest of its catalog — so no tier is known to be accepted across it.
+ * `medium`, the platform's `DEFAULT_THINKING_EFFORT`, is in no GreenPT ladder
+ * that is documented anywhere, so mapping through
  * `toOpenAIEffort` would put an unaccepted value on the wire for every stock
  * call, with no configuration at all.
  *

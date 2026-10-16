@@ -2559,5 +2559,702 @@
         "releaseDate": "2026-04-16"
       }
     }
+  },
+  "greenpt": {
+    "name": "GreenPT",
+    "models": {
+      "deepseek-v4-flash-0731": {
+        "id": "deepseek-v4-flash-0731",
+        "name": "DeepSeek V4 Flash 0731",
+        "family": "deepseek-flash",
+        "cost": {
+          "input": 0.1596,
+          "output": 0.399,
+          "cacheRead": 0.0456
+        },
+        "limits": {
+          "context": 1000000,
+          "output": 384000
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-05",
+        "releaseDate": "2026-07-31"
+      },
+      "deepseek-v4.1-flash": {
+        "id": "deepseek-v4.1-flash",
+        "name": "DeepSeek V4.1 Flash",
+        "family": "deepseek-flash",
+        "cost": {
+          "input": 0.255552,
+          "output": 1.27776,
+          "cacheRead": 0.0127776
+        },
+        "limits": {
+          "context": 1000000,
+          "output": 384000
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-05",
+        "releaseDate": "2026-09-10"
+      },
+      "devstral-2-123b-instruct-2512": {
+        "id": "devstral-2-123b-instruct-2512",
+        "name": "Devstral 2",
+        "family": "devstral",
+        "cost": {
+          "input": 0.57,
+          "output": 2.736
+        },
+        "limits": {
+          "context": 200000,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-12",
+        "releaseDate": "2025-12-09"
+      },
+      "gemma-3-27b-it": {
+        "id": "gemma-3-27b-it",
+        "name": "Gemma 3 27B",
+        "family": "gemma",
+        "cost": {
+          "input": 0.342,
+          "output": 0.684
+        },
+        "limits": {
+          "context": 40000,
+          "output": 8192
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2024-08",
+        "releaseDate": "2025-03-12"
+      },
+      "gemma4": {
+        "id": "gemma4",
+        "name": "gemma4",
+        "family": "gemma",
+        "cost": {
+          "input": 0.57,
+          "output": 1.71
+        },
+        "limits": {
+          "context": 262144,
+          "output": 32768
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "releaseDate": "2026-04-02"
+      },
+      "glm-5.1": {
+        "id": "glm-5.1",
+        "name": "GLM-5.1",
+        "family": "glm",
+        "cost": {
+          "input": 1.756,
+          "output": 5.518
+        },
+        "limits": {
+          "context": 200000,
+          "output": 131072
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "releaseDate": "2026-04-07",
+        "deprecated": true
+      },
+      "glm-5.2": {
+        "id": "glm-5.2",
+        "name": "GLM-5.2",
+        "family": "glm",
+        "cost": {
+          "input": 1.254,
+          "output": 5.016,
+          "cacheRead": 0.3135
+        },
+        "limits": {
+          "context": 1000000,
+          "output": 131072
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "releaseDate": "2026-06-13"
+      },
+      "glm-5.3": {
+        "id": "glm-5.3",
+        "name": "GLM-5.3",
+        "family": "glm",
+        "cost": {
+          "input": 1.27754,
+          "output": 5.11016,
+          "cacheRead": 0.319385
+        },
+        "limits": {
+          "context": 1000000,
+          "output": 131072
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "releaseDate": "2026-08-14"
+      },
+      "glm-5.3-flash": {
+        "id": "glm-5.3-flash",
+        "name": "GLM-5.3-Flash",
+        "family": "glm-flash",
+        "cost": {
+          "input": 0.127754,
+          "output": 0.511016,
+          "cacheRead": 0.0255508
+        },
+        "limits": {
+          "context": 1000000,
+          "output": 131072
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "releaseDate": "2026-08-26"
+      },
+      "gpt-oss-120b": {
+        "id": "gpt-oss-120b",
+        "name": "GPT OSS 120B",
+        "family": "gpt-oss",
+        "cost": {
+          "input": 0.228,
+          "output": 0.798
+        },
+        "limits": {
+          "context": 131072,
+          "output": 32768
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "releaseDate": "2025-08-05"
+      },
+      "green-l": {
+        "id": "green-l",
+        "name": "Green L",
+        "family": "mistral-small",
+        "cost": {
+          "input": 0.285,
+          "output": 0.912
+        },
+        "limits": {
+          "context": 128000,
+          "output": 32768
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-03",
+        "releaseDate": "2025-06-20"
+      },
+      "green-l-raw": {
+        "id": "green-l-raw",
+        "name": "Green L Raw",
+        "family": "mistral-small",
+        "cost": {
+          "input": 0.285,
+          "output": 0.912
+        },
+        "limits": {
+          "context": 128000,
+          "output": 32768
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-03",
+        "releaseDate": "2025-06-20"
+      },
+      "green-r": {
+        "id": "green-r",
+        "name": "Green R",
+        "family": "gpt-oss",
+        "cost": {
+          "input": 0.399,
+          "output": 1.083
+        },
+        "limits": {
+          "context": 131072,
+          "output": 32768
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "releaseDate": "2025-08-05"
+      },
+      "green-r-raw": {
+        "id": "green-r-raw",
+        "name": "Green R Raw",
+        "family": "gpt-oss",
+        "cost": {
+          "input": 0.399,
+          "output": 1.083
+        },
+        "limits": {
+          "context": 131072,
+          "output": 32768
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "releaseDate": "2025-08-05"
+      },
+      "holo2-30b-a3b": {
+        "id": "holo2-30b-a3b",
+        "name": "Holo2 30B A3B",
+        "cost": {
+          "input": 0.399,
+          "output": 0.969
+        },
+        "limits": {
+          "context": 22016,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "releaseDate": "2025-11"
+      },
+      "kimi-k2.6": {
+        "id": "kimi-k2.6",
+        "name": "Kimi K2.6",
+        "family": "kimi-k2",
+        "cost": {
+          "input": 0.7524,
+          "output": 4.275,
+          "cacheRead": 0.2508
+        },
+        "limits": {
+          "context": 262144,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-01",
+        "releaseDate": "2026-04-21"
+      },
+      "kimi-k2.6-fast": {
+        "id": "kimi-k2.6-fast",
+        "name": "Kimi K2.6 Fast",
+        "family": "kimi-k2",
+        "cost": {
+          "input": 1.655,
+          "output": 8.778
+        },
+        "limits": {
+          "context": 262144,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-01",
+        "releaseDate": "2026-04-21",
+        "deprecated": true
+      },
+      "kimi-k2.7-code": {
+        "id": "kimi-k2.7-code",
+        "name": "Kimi K2.7 Code",
+        "family": "kimi-k2",
+        "cost": {
+          "input": 0.9006,
+          "output": 4.389,
+          "cacheRead": 0.1881
+        },
+        "limits": {
+          "context": 262144,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-01",
+        "releaseDate": "2026-06-12"
+      },
+      "kimi-k3": {
+        "id": "kimi-k3",
+        "name": "Kimi K3",
+        "family": "kimi-k3",
+        "cost": {
+          "input": 3.762,
+          "output": 18.81,
+          "cacheRead": 0.9405
+        },
+        "limits": {
+          "context": 1048576,
+          "output": 131072
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "releaseDate": "2026-07-16"
+      },
+      "llama-3.3-70b-instruct": {
+        "id": "llama-3.3-70b-instruct",
+        "name": "Llama-3.3-70B-Instruct",
+        "family": "llama",
+        "cost": {
+          "input": 1.254,
+          "output": 1.254
+        },
+        "limits": {
+          "context": 100000,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2023-12",
+        "releaseDate": "2024-12-06"
+      },
+      "minimax-m2.5": {
+        "id": "minimax-m2.5",
+        "name": "MiniMax-M2.5",
+        "family": "minimax",
+        "cost": {
+          "input": 0.1938,
+          "output": 1.129,
+          "cacheRead": 0.0627
+        },
+        "limits": {
+          "context": 204800,
+          "output": 131072
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "releaseDate": "2026-02-12"
+      },
+      "mistral-medium-3.5-128b": {
+        "id": "mistral-medium-3.5-128b",
+        "name": "Mistral Medium 3.5",
+        "family": "mistral-medium",
+        "cost": {
+          "input": 2.052,
+          "output": 10.26
+        },
+        "limits": {
+          "context": 262144,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "releaseDate": "2026-04-29"
+      },
+      "mistral-small-3.2-24b-instruct-2506": {
+        "id": "mistral-small-3.2-24b-instruct-2506",
+        "name": "Mistral Small 3.2",
+        "family": "mistral-small",
+        "cost": {
+          "input": 0.228,
+          "output": 0.456
+        },
+        "limits": {
+          "context": 128000,
+          "output": 32768
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-03",
+        "releaseDate": "2025-06-20"
+      },
+      "pixtral-12b-2409": {
+        "id": "pixtral-12b-2409",
+        "name": "Pixtral 12B",
+        "family": "pixtral",
+        "cost": {
+          "input": 0.285,
+          "output": 0.285
+        },
+        "limits": {
+          "context": 128000,
+          "output": 4096
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2024-09",
+        "releaseDate": "2024-09-01"
+      },
+      "qwen3-235b-a22b-instruct-2507": {
+        "id": "qwen3-235b-a22b-instruct-2507",
+        "name": "Qwen3 235B A22B Instruct 2507",
+        "family": "qwen",
+        "cost": {
+          "input": 1.026,
+          "output": 3.078
+        },
+        "limits": {
+          "context": 262144,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-04",
+        "releaseDate": "2025-07-21"
+      },
+      "qwen3-coder-30b-a3b-instruct": {
+        "id": "qwen3-coder-30b-a3b-instruct",
+        "name": "Qwen3-Coder 30B-A3B Instruct",
+        "family": "qwen",
+        "cost": {
+          "input": 0.285,
+          "output": 1.083
+        },
+        "limits": {
+          "context": 128000,
+          "output": 32768
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-04",
+        "releaseDate": "2025-04"
+      },
+      "qwen3.5-397b-a17b": {
+        "id": "qwen3.5-397b-a17b",
+        "name": "Qwen3.5 397B-A17B",
+        "family": "qwen",
+        "cost": {
+          "input": 0.798,
+          "output": 4.959
+        },
+        "limits": {
+          "context": 262144,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": false
+        },
+        "modalities": {
+          "input": ["text"],
+          "output": ["text"]
+        },
+        "releaseDate": "2026-02-15"
+      },
+      "qwen3.6-35b-a3b": {
+        "id": "qwen3.6-35b-a3b",
+        "name": "Qwen3.6 35B-A3B",
+        "family": "qwen",
+        "cost": {
+          "input": 0.342,
+          "output": 2.052
+        },
+        "limits": {
+          "context": 262144,
+          "output": 32768
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image"],
+          "output": ["text"]
+        },
+        "releaseDate": "2026-04-17"
+      },
+      "voxtral-small-24b-2507": {
+        "id": "voxtral-small-24b-2507",
+        "name": "Voxtral Small 24B",
+        "family": "mistral",
+        "cost": {
+          "input": 0.228,
+          "output": 0.513
+        },
+        "limits": {
+          "context": 32768,
+          "output": 16384
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": false,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "audio"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2025-07",
+        "releaseDate": "2025-07-15"
+      }
+    }
   }
 }
