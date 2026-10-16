@@ -351,6 +351,7 @@ describe("usage source — the report's optional fields", () => {
       usage: { inputTokens: 10, outputTokens: 5 },
       llmMs: 0,
       userId: "usr_alice",
+      workspaceId: "ws_0021762e0e7b3844",
       taskRunId: "run_0000000000000001",
     };
     const chats = Array.from({ length: MAX_BREAKDOWN_ROWS }, (_, i) => ({
@@ -361,6 +362,7 @@ describe("usage source — the report's optional fields", () => {
       usage: { inputTokens: 1, outputTokens: 1 },
       llmMs: 1,
       userId: "usr_alice",
+      workspaceId: "ws_0021762e0e7b3844",
       conversationId: `conv_${String(i).padStart(16, "0")}`,
     }));
     await appendFile(
