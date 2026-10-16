@@ -1683,14 +1683,14 @@ describe("manage_connectors.disconnect", () => {
 describe("deriveConnectorStatus", () => {
   test("running + no probes outstanding → ready", () => {
     // This is the state a provider-auth fleet source (e.g. deep_research `web`)
-    // produces: no OAuth client client, so its inputs are bare
+    // produces: no OAuth client, so its inputs are bare
     // `{ state: "running" }` → ready (no bogus Connect). Boot-side coverage:
     // provider-source-boot.test.ts.
     expect(deriveConnectorStatus({ state: "running" })).toEqual({ status: "ready" });
   });
 
   test("missingOAuthClient wins over every other signal — admin acts first", () => {
-    // Even with state=running, an unconfigured OAuth client client should
+    // Even with state=running, an unconfigured OAuth client should
     // mark the connector as needs_setup. Setup is the precondition.
     const result = deriveConnectorStatus({
       state: "running",

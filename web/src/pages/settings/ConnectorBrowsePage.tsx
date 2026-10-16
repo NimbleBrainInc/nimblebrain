@@ -180,7 +180,7 @@ export function ConnectorBrowsePage() {
     result: InstallResult,
   ): Promise<boolean> => {
     const { serverName } = result;
-    // A provider-auth (platform) source has no user/OAuth client — its
+    // A provider-auth (platform) source has no user OAuth and no OAuth client — its
     // credential is minted server-side and it eager-starts `running` at install.
     // So there's no auth flow to launch. Launching initiateMcpOAuth here would
     // spin a bogus OAuth flow against a server that has none.

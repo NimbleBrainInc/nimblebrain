@@ -199,8 +199,8 @@ export interface NimbleBrainConnectorMeta {
      *   `clientId` + `clientSecret` from the vendor's developer portal, or the
      *   instance declares them once (`connectors.oauthClients`).
      * - `provider`: a platform-managed connector whose credential is produced
-     *   server-side by a named credential provider (no user/OAuth client, no
-     *   per-user secret). Required: the `providerAuth` block below.
+     *   server-side by a named credential provider (no user OAuth, no OAuth client,
+     *   no per-user secret). Required: the `providerAuth` block below.
      *
      * Anything else names a **brokered** provider (`composio`, `smithery`) — a
      * third party that holds the upstream credential and hosts the MCP session.

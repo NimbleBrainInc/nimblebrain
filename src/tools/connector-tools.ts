@@ -153,7 +153,7 @@ function brokerNotConfiguredMessage(entryName: string, auth: string): string {
 export interface StatusInputs {
   /** ConnectionState as exposed by the lifecycle. */
   state: string;
-  /** True when a static-auth catalog entry has no OAuth client client configured. */
+  /** True when a static-auth catalog entry has no OAuth client configured. */
   missingOAuthClient?: boolean;
   /** Last connection error from the principal Connection (crashed / dead / reauth_required). */
   lastError?: string;
@@ -174,7 +174,7 @@ export type ConnectorStatus =
  * status for the UI:
  *
  *   ready          — works
- *   needs_setup    — admin must configure the OAuth client client before
+ *   needs_setup    — admin must configure the OAuth client before
  *                     this is usable
  *   not_connected  — installed with no connection: never connected, or
  *                     disconnected on purpose. A resting state, not an error
@@ -759,7 +759,7 @@ type InstalledEntry = {
    */
   lastError?: string;
   /**
-   * Per-workspace OAuth client client config — present only for
+   * Per-workspace OAuth client config — present only for
    * static-auth catalog entries the workspace has configured. Carries
    * the public clientId, audit metadata, and a best-effort display
    * label so the Configure page can render "Configured by Sarah" without
@@ -886,7 +886,7 @@ async function applyRemoteConnectionState(
 }
 
 /**
- * Attach the workspace's OAuth client client config (static-auth only). The
+ * Attach the workspace's OAuth client config (static-auth only). The
  * Configure page reads this to render the "Configured by ... on ..." audit line
  * + Edit affordance. clientId is public; the secret never leaves the store.
  */
@@ -1763,7 +1763,7 @@ function areAdditionalAuthParamsValid(additionalParams: unknown): boolean {
  * target: install, boot-state derivation, and disconnect cleanup are all
  * keyed purely on `wsId`, so the credential layout under
  * `credentials/<provider>/<connectorId>/` is the same in every workspace. Static-auth entries
- * require OAuth client client config persisted under
+ * require OAuth client config persisted under
  * `workspace.json#oauthClients[entry.id]` + the matching
  * client_secret in the credential store before this can proceed.
  */
@@ -2256,7 +2256,7 @@ async function buildBrokeredWiring(
 
 /**
  * Static-auth wiring: the instance OAuth client when the operator declared one
- * for this entry, else the workspace's configured OAuth client clientId + the
+ * for this entry, else the workspace's configured OAuth clientId + the
  * credential-store key holding its client_secret. Gated post-dedup so a
  * duplicate-install click doesn't read the client secret from disk.
  * Returns `__err` when setup is incomplete.
@@ -2463,7 +2463,7 @@ async function handleDuplicateInstall(
 
 /**
  * Resolve the fresh-install wiring for a remote-OAuth entry: the brokered
- * session, or the OAuth client client (static-auth). Deferred until after
+ * session, or the OAuth client (static-auth). Deferred until after
  * dedup so a duplicate-install click never mints a brokered session or reads
  * the credential. Returns `{}` for auth kinds needing neither.
  */

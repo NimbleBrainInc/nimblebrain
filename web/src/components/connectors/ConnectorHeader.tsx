@@ -670,7 +670,7 @@ function resolveAction(
 
     case "needs_setup": {
       // The only setup gate left: a static-auth catalog match without a
-      // configured OAuth client client can't proceed until an admin
+      // configured OAuth client can't proceed until an admin
       // registers one.
       if (installed.missingOAuthClient && hasOAuthClientEntry) {
         return { kind: "open-oauth-client-modal", label: "Set up OAuth", adminOnly: true };

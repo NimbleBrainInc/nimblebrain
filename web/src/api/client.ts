@@ -671,7 +671,7 @@ export interface InstalledConnector {
   /** Last connection error for crashed / dead / reauth_required states. */
   lastError?: string;
   /**
-   * OAuth client client config — present only for static-auth
+   * OAuth client config — present only for static-auth
    * connectors the workspace has configured. The Configure page reads
    * this to render the audit line + Edit affordance. Secret never
    * appears here.
@@ -689,7 +689,7 @@ export interface InstalledConnector {
    * detail-page hero, and any future surface read one value.
    *
    *   ready          — works
-   *   needs_setup    — admin must configure the OAuth client client
+   *   needs_setup    — admin must configure the OAuth client
    *   not_connected  — installed, no connection (never connected, or
    *                     disconnected): at rest, not an error
    *   needs_auth     — a working connection broke (credential revoked or
