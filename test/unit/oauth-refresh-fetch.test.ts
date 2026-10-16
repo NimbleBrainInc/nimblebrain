@@ -1,5 +1,8 @@
-import { describe, expect, it } from "bun:test";
-import { createOAuthRefreshFetch } from "../../src/tools/oauth-refresh-fetch.ts";
+import { beforeEach, describe, expect, it } from "bun:test";
+import {
+  createOAuthRefreshFetch,
+  resetRefreshExchanges,
+} from "../../src/tools/oauth-refresh-fetch.ts";
 
 // The OAuth refresh-fetch wrapper restores the truth of McpSource's contract:
 // a tool call throwing UnauthorizedError should mean the refresh token was
@@ -31,6 +34,10 @@ function makeFetch(responses: Array<Response | (() => never)>) {
 
 // Deterministic, instant retries — no wall-clock in tests.
 const fast = { sleep: (_ms: number) => Promise.resolve(), rng: () => 0 } as const;
+
+beforeEach(() => {
+  resetRefreshExchanges();
+});
 
 describe("createOAuthRefreshFetch", () => {
   it("retries a transient network error on the refresh POST, then succeeds", async () => {
@@ -176,16 +183,70 @@ describe("createOAuthRefreshFetch single-flight", () => {
     for (const t of tokens) expect(t).toEqual({ access_token: "tok_1" });
   });
 
-  it("does NOT coalesce a refresh that starts after the previous settled", async () => {
+  it("answers a later spend of a token that already succeeded with that success, not a second POST", async () => {
+    // A rotating IdP revokes the token it was given, so a second spend would
+    // get invalid_grant. The replay carries the successor instead.
     const { impl, calls } = countingTokenFetch();
     const wrapped = createOAuthRefreshFetch({ fetchImpl: impl, ...fast });
 
     const r1 = await wrapped(TOKEN_URL, refreshInit());
-    const r2 = await wrapped(TOKEN_URL, refreshInit()); // in-flight already cleared
+    const r2 = await wrapped(TOKEN_URL, refreshInit()); // settled, same token
+
+    expect(calls()).toBe(1);
+    expect(await r1.json()).toEqual({ access_token: "tok_1" });
+    expect(await r2.json()).toEqual({ access_token: "tok_1" });
+  });
+
+  it("spends a different refresh token with its own POST", async () => {
+    const { impl, calls } = countingTokenFetch();
+    const wrapped = createOAuthRefreshFetch({ fetchImpl: impl, ...fast });
+    const other: RequestInit = {
+      method: "POST",
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: "rt_next" }),
+    };
+
+    await wrapped(TOKEN_URL, refreshInit());
+    await wrapped(TOKEN_URL, other);
 
     expect(calls()).toBe(2);
-    expect(await r1.json()).toEqual({ access_token: "tok_1" });
-    expect(await r2.json()).toEqual({ access_token: "tok_2" });
+  });
+
+  it("runs a new POST after a failed exchange of the same token", async () => {
+    const dead = new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+    const ok = new Response(JSON.stringify({ access_token: "tok_ok" }), { status: 200 });
+    const { impl, calls } = makeFetch([dead, ok]);
+    const wrapped = createOAuthRefreshFetch({ fetchImpl: impl, ...fast });
+
+    expect((await wrapped(TOKEN_URL, refreshInit())).status).toBe(400);
+    expect((await wrapped(TOKEN_URL, refreshInit())).status).toBe(200);
+    expect(calls()).toBe(2);
+  });
+
+  it("coalesces across separate wrappers (two transports on one credential)", async () => {
+    const { impl, calls } = countingTokenFetch();
+    const a = createOAuthRefreshFetch({ fetchImpl: impl, ...fast });
+    const b = createOAuthRefreshFetch({ fetchImpl: impl, ...fast });
+
+    const [ra, rb] = await Promise.all([a(TOKEN_URL, refreshInit()), b(TOKEN_URL, refreshInit())]);
+
+    expect(calls()).toBe(1);
+    expect(await ra.json()).toEqual(await rb.json());
+  });
+
+  it("recognizes a refresh whose body an outer wrapper buffered to bytes", async () => {
+    // The SSRF guard buffers every non-string body to a Uint8Array before this
+    // fetch sees it. Read only as URLSearchParams, the refresh would pass
+    // through with no coalescing and no retry.
+    const fail = new Response("down", { status: 503 });
+    const ok = new Response(JSON.stringify({ access_token: "tok_ok" }), { status: 200 });
+    const { impl, calls } = makeFetch([fail, ok]);
+    const wrapped = createOAuthRefreshFetch({ fetchImpl: impl, ...fast });
+    const bytes = new TextEncoder().encode("grant_type=refresh_token&refresh_token=rt_abc");
+
+    const res = await wrapped(TOKEN_URL, { method: "POST", body: bytes });
+
+    expect(res.status).toBe(200);
+    expect(calls()).toBe(2);
   });
 
   it("shares ONE retry sequence across coalesced callers (transient then success)", async () => {

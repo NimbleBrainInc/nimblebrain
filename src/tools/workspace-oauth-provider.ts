@@ -618,6 +618,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
   /**
+   * The refresh token the last `tokens()` call handed the SDK: the one its next
+   * refresh spends, and so the one an `invalid_grant` it answers with rejected.
+   */
+  private servedRefreshToken: string | undefined;
+  /**
    * In-flight DCR coalesce. Set in `clientInformation()` just before it
    * returns `undefined` (which tells the SDK to do DCR). Resolved by the
    * first `saveClientInformation()` call. Concurrent `clientInformation()`
@@ -1068,7 +1073,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * one call site that knows better goes through `readTokens` directly.
    */
   async tokens(_ctx?: OAuthClientInformationContext): Promise<OAuthTokens | undefined> {
-    return this.readTokens("transport");
+    const tokens = await this.readTokens("transport");
+    this.servedRefreshToken = tokens?.refresh_token;
+    return tokens;
   }
 
   /** The token read proper. `purpose` is what the audit line says it was for. */
@@ -1767,6 +1774,16 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         this.dcrInFlight = null;
       }
     }
+    if (scope === "tokens" && (await this.tokensRenewedElsewhere())) {
+      // The SDK answers `invalid_grant` by invalidating the tokens and
+      // authorizing again. When the store already holds a different refresh
+      // token, the rejected one was a copy someone else had since rotated (a
+      // stale cache, another transport, another pod), and the stored
+      // credential is good: drop only this provider's copy, so the SDK's
+      // retry reads the stored tokens and refreshes with those.
+      this.cachedTokens = null;
+      return;
+    }
     if (scope === "all" || scope === "tokens") {
       this.cachedTokens = null;
       await this.records.delete("tokens");
@@ -1779,6 +1796,20 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       await this.records.delete("verifier");
     }
     // 'discovery' is SDK-internal metadata; we don't persist it.
+  }
+
+  /**
+   * Whether the stored tokens carry a refresh token other than the one this
+   * provider last served, read from the store past the cache: a rotation that
+   * landed after this provider read its copy.
+   */
+  private async tokensRenewedElsewhere(): Promise<boolean> {
+    const stored = await this.records.read<OAuthTokens>("tokens", {
+      caller: "oauth:tokens",
+      purpose: `invalidate ${this.serverName}`,
+    });
+    const storedRefresh = stored?.refresh_token;
+    return storedRefresh !== undefined && storedRefresh !== this.servedRefreshToken;
   }
 
   // ── Extensions used by McpSource.start() ──────────────────────────
