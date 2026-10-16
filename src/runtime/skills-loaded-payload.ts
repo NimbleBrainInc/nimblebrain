@@ -25,30 +25,26 @@ function skillKey(skill: Skill): string {
 }
 
 /**
- * Unify every loading mechanism for a turn into one selected set for
- * `skills.loaded` telemetry, so the Context Ledger reports the full picture,
- * not just tool-affinity:
+ * Unify every skill a turn composes into its prompt into one selected set for
+ * `skills.loaded` telemetry. A skill bound to a tool is not here: it reaches
+ * the model in history, recorded by its own delivery event (ADR-0053).
  *
- *   - `toolAffinity` — the Layer-3 selection (`selectLayer3Skills`), verbatim.
  *   - `trigger`      — the `SkillMatcher` hit, if any → reason
  *     `trigger matched "<phrase>"`.
  *   - `alwaysOn`     — the always-on context skills composed this turn (persona
  *     override, org/workspace/user + connector always-on skills) → reason
  *     `always-on`.
  *
- * Platform-vendored core/builtin skills are EXCLUDED across ALL three sources —
+ * Platform-vendored core/builtin skills are EXCLUDED across both sources —
  * they ship with the platform in every tenant, so surfacing them would drown
  * the ambient line and leak internals. The exclusion has to be uniform: some
  * vendored skills are `dynamic` (e.g. the skill-authoring guide), so they reach
- * the ledger through tool-affinity or a trigger match, not just the always-on
- * channel. Enforcing it in the shared `push` covers every path.
+ * the ledger through a trigger match, not just the always-on channel.
+ * Enforcing it in the shared `push` covers every path.
  *
- * De-duplicated by skill identity with tool-affinity taking precedence (the
- * established channel), so a `dynamic` skill that both trigger- and
- * affinity-matches is reported once. Pure — no FS access, no emission.
+ * De-duplicated by skill identity. Pure — no FS access, no emission.
  */
 export function collectLoadedSkills(input: {
-  toolAffinity: SelectedSkill[];
   trigger?: SkillMatch | null;
   alwaysOn: Skill[];
 }): SelectedSkill[] {
@@ -62,7 +58,6 @@ export function collectLoadedSkills(input: {
     out.push(sel);
   };
 
-  for (const s of input.toolAffinity) push(s);
   if (input.trigger) {
     push({
       skill: input.trigger.skill,

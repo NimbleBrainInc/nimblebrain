@@ -28,7 +28,6 @@ import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import { parseSkillContent } from "../../../../src/skills/loader.ts";
-import { selectLayer3Skills } from "../../../../src/skills/select.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
 import { listSkillVersions } from "../../../../src/skills/versions.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
@@ -422,7 +421,7 @@ describe("skills — workspace-scope write gate", () => {
 // ── create-time loading-strategy derivation (issue #391) ───────────────────
 
 describe("skills__create — loading-strategy", () => {
-  test("defaults to dynamic; with no triggers/affinity it is catalog-only (not Layer-3 selected)", async () => {
+  test("defaults to dynamic; with no triggers/affinity it is catalog-only (binds no tool)", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -440,10 +439,9 @@ describe("skills__create — loading-strategy", () => {
     expect(parsed).not.toBeNull();
     expect(parsed?.manifest.loadingStrategy).toBe("dynamic");
 
-    // No tool-affinity → NOT reachable by the Layer-3 selector (catalog-only,
-    // honoring #4 — the handler does not silently bump it to `always`).
-    const selected = selectLayer3Skills({ skills: [parsed!], activeTools: [] });
-    expect(selected.map((s) => s.skill.manifest.name)).not.toContain("catalog-only");
+    // No tool-affinity → bound to no tool, so it loads only from the catalog
+    // (the handler does not silently bump it to `always`).
+    expect(parsed?.manifest.toolAffinity).toBeUndefined();
   });
 
   test("dynamic + triggers loads via the matcher", async () => {

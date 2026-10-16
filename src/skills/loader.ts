@@ -269,7 +269,7 @@ export function parseSkillParts(
 /**
  * Boot-time partition of the *raw* skill cache by role: `always` = the context
  * channel (Layer 0/1, sorted by priority); `dynamic` = matchable/conditional
- * (tool-affinity Layer 3 + matcher).
+ * (trigger matcher + bound-skill delivery).
  *
  * NOTE — do not confuse with `partitionSkillsByRole` in `select.ts`. This one
  * runs once at boot over the full on-disk set and intentionally keeps *disabled*

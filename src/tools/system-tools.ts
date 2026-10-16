@@ -10,7 +10,6 @@ import { createUseSkillToolDef } from "../platform/skills/source.ts";
 import { getRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { hydrateSkill } from "../skills/connector-skills.ts";
-import type { SelectedSkill } from "../skills/select.ts";
 import { approxTokens } from "../skills/tokens.ts";
 import type { Skill } from "../skills/types.ts";
 import { createManageConnectorsTool } from "./connector-tools.ts";
@@ -446,41 +445,44 @@ async function handleSkillStatus(
   nameQuery: string | null,
   wsId: string,
 ): Promise<ToolResult> {
-  // Report through the SAME per-request path `chat` composes with
-  // (`describeRequestSkills` → `selectRequestLayer3`), so workspace- and
-  // user-tier skills that actually load into the prompt appear here — a
-  // boot-time cache would report only platform/core skills.
-  const { context, layer3 } = await runtime.describeRequestSkills(wsId);
+  // Report through the SAME per-request loaders `chat` composes with
+  // (`describeRequestSkills`), so workspace- and user-tier skills appear here:
+  // a boot-time cache would report only platform/core skills.
+  const { context, bound } = await runtime.describeRequestSkills(wsId);
   // Legacy trigger-matched skills still come from the boot matcher cache.
   const matchable = getSkills?.().matchable ?? [];
-  const layer3Names = new Set(layer3.map((s) => s.skill.manifest.name));
+  const boundNames = new Set(bound.map((s) => s.manifest.name));
 
   // Single skill detail view
   if (nameQuery) {
-    return await skillDetailResult(context, layer3, matchable, nameQuery);
+    return await skillDetailResult(context, bound, matchable, nameQuery);
   }
 
   // Overview: categorize all skills
   const coreContext = context.filter((s) => s.sourcePath.includes(CORE_SKILL_MARKER));
   const coreNames = new Set(coreContext.map((s) => s.manifest.name));
-  // Non-core boot context skills, minus any that ALSO surface in the
-  // per-request Layer-3 set below — otherwise the same skill lists twice.
+  // Non-core boot context skills, minus any that ALSO surface in the bound
+  // set below — otherwise the same skill lists twice.
   const userContext = context.filter(
-    (s) => !s.sourcePath.includes(CORE_SKILL_MARKER) && !layer3Names.has(s.manifest.name),
+    (s) => !s.sourcePath.includes(CORE_SKILL_MARKER) && !boundNames.has(s.manifest.name),
   );
   // A skill already shown under "Core Skills (immutable)" is not repeated in
-  // the Layer-3 sections — Core is authoritative. Deduped BY NAME (not by a
+  // the bound section — Core is authoritative. Deduped BY NAME (not by a
   // `/skills/core/` path marker), so a non-core skill that merely lives under
-  // a `core/` subfolder keeps its own name and is never wrongly hidden.
-  // Layer 3 is the conditional channel: only tool-affinity skills load here.
-  // `always` skills compose into the context channel (shown in the sections above).
-  const toolAffined = layer3.filter((s) => !coreNames.has(s.skill.manifest.name));
+  // a `core/` subfolder keeps its own name and is never wrongly hidden. A bound
+  // skill is not in the prompt: it reaches the model before the first call to
+  // a tool it names (ADR-0053).
+  const boundSkills = bound.filter((s) => !coreNames.has(s.manifest.name));
 
   const sections = [
     formatAlwaysOnCost(context),
     buildSkillSection("## Core Skills (immutable)", coreContext, formatSkillSummary),
     buildSkillSection("## User Context Skills (always active)", userContext, formatSkillSummary),
-    buildSkillSection("## Tool-Affined Skills (active)", toolAffined, formatLayer3Summary),
+    buildSkillSection(
+      "## Bound Skills (delivered before their tool's first call)",
+      boundSkills,
+      formatBoundSummary,
+    ),
     buildSkillSection("## Matchable Skills (triggered)", matchable, formatMatchableSummary),
   ].filter((s): s is string => s !== null);
 
@@ -544,11 +546,11 @@ function formatAlwaysOnCost(context: readonly Skill[]): string | null {
  */
 async function skillDetailResult(
   context: readonly Skill[],
-  layer3: readonly SelectedSkill[],
+  bound: readonly Skill[],
   matchable: readonly Skill[],
   nameQuery: string,
 ): Promise<ToolResult> {
-  const all = [...context, ...layer3.map((s) => s.skill), ...matchable];
+  const all = [...context, ...bound, ...matchable];
   const found = all.find((s) => s.manifest.name.toLowerCase() === nameQuery.toLowerCase());
   if (!found) {
     return {
@@ -676,11 +678,11 @@ function formatSkillSummary(skill: Skill): string {
   return `- ${m.name} (${m.loadingStrategy}, priority ${m.priority}) — ${m.description || "(no description)"}`;
 }
 
-/** Summary line for a per-request Layer-3 skill, including why it loaded. */
-function formatLayer3Summary(selected: SelectedSkill): string {
-  const m = selected.skill.manifest;
+/** Summary line for a bound skill, with the tool patterns that deliver it. */
+function formatBoundSummary(skill: Skill): string {
+  const m = skill.manifest;
   const scope = m.scope ?? "org";
-  return `- ${m.name} (${scope}, priority ${m.priority}) — ${m.description || "(no description)"}\n  Loaded: ${selected.reason}`;
+  return `- ${m.name} (${scope}, priority ${m.priority}) — ${m.description || "(no description)"}\n  Bound to: ${(m.toolAffinity ?? []).join(", ")}`;
 }
 
 function formatMatchableSummary(skill: Skill): string {

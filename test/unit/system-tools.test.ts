@@ -625,16 +625,16 @@ describe("status tool — scope: skills", () => {
 
   async function makeStatusSource(
     skills: { context: Skill[]; matchable: Skill[] },
-    layer3?: Array<{ skill: Skill; loadedBy: "always" | "tool_affinity"; reason: string }>,
+    bound?: Skill[],
   ) {
     const registry = await makeRegistry();
     const getSkills = () => skills;
     // Status reads workspace/user-tier skills through `describeRequestSkills`
     // (the same per-request path `chat` composes with); `context` carries the
-    // boot context skills, `layer3` the per-request selection.
+    // boot context skills, `bound` the skills held for their tool's first call.
     const runtimeMock = stub<Runtime>({
       requireWorkspaceId: () => "ws_0076759dbbe19fcc",
-      describeRequestSkills: async () => ({ context: skills.context, layer3: layer3 ?? [] }),
+      describeRequestSkills: async () => ({ context: skills.context, bound: bound ?? [] }),
     });
     return await createSystemTools(() => registry, { getSkills, runtime: runtimeMock });
   }
@@ -683,25 +683,23 @@ describe("status tool — scope: skills", () => {
     expect(text).toContain("team-voice");
   });
 
-  it("shows a core skill that also enters the Layer-3 set once, under Core", async () => {
-    // If a core skill ever carries a Layer-3 loading strategy it can appear in
-    // both the boot context (Core) and the per-request Layer-3 set. Core is
-    // authoritative: it must render once, under "Core Skills", never also in
-    // the Layer-3 sections. Guards the name-based coreNames dedup.
-    const source = await makeStatusSource({ context: [coreSkill], matchable: [] }, [
-      { skill: coreSkill, loadedBy: "always", reason: "loading_strategy: always" },
-    ]);
+  it("shows a core skill that is also bound once, under Core", async () => {
+    // A core skill that names tools appears in both the boot context (Core)
+    // and the bound set. Core is authoritative: it must render once, under
+    // "Core Skills", never also in the bound section. Guards the name-based
+    // coreNames dedup.
+    const source = await makeStatusSource({ context: [coreSkill], matchable: [] }, [coreSkill]);
     const result = await source.execute("status", { scope: "skills" });
     expect(result.isError).toBe(false);
     const text = extractText(result.content);
     expect(text.split("soul").length - 1).toBe(1);
     expect(text).toContain("Core Skills");
-    expect(text).not.toContain("Workspace & User Skills");
+    expect(text).not.toContain("Bound Skills");
   });
 
   // A server skill's body is fetched only when it is needed: the overview
   // lists names, and the detail view fetches the one body it prints.
-  describe("a tool-affined server skill", () => {
+  describe("a bound server skill", () => {
     function serverSkill(loadBody: Skill["loadBody"]) {
       const skill: Skill = {
         manifest: {
@@ -710,29 +708,33 @@ describe("status tool — scope: skills", () => {
           loadingStrategy: "dynamic",
           priority: 50,
           status: "active",
+          toolAffinity: ["crm__search"],
         },
         body: "",
         sourcePath: "skill://lookup/SKILL.md",
         loadBody,
       };
-      return [{ skill, loadedBy: "tool_affinity" as const, reason: "tool: crm__search" }];
+      return [skill];
     }
 
     it("is listed by the overview without fetching its body", async () => {
       let fetched = 0;
-      const layer3 = serverSkill(async () => {
+      const bound = serverSkill(async () => {
         fetched++;
         return { ok: true, body: "LOOKUP_BODY" };
       });
-      const source = await makeStatusSource({ context: [], matchable: [] }, layer3);
+      const source = await makeStatusSource({ context: [], matchable: [] }, bound);
       const result = await source.execute("status", { scope: "skills" });
-      expect(extractText(result.content)).toContain("connector:crm:lookup");
+      const text = extractText(result.content);
+      expect(text).toContain("Bound Skills (delivered before their tool's first call)");
+      expect(text).toContain("connector:crm:lookup");
+      expect(text).toContain("Bound to: crm__search");
       expect(fetched).toBe(0);
     });
 
     it("has its body fetched and printed by the detail view", async () => {
-      const layer3 = serverSkill(async () => ({ ok: true, body: "LOOKUP_BODY" }));
-      const source = await makeStatusSource({ context: [], matchable: [] }, layer3);
+      const bound = serverSkill(async () => ({ ok: true, body: "LOOKUP_BODY" }));
+      const source = await makeStatusSource({ context: [], matchable: [] }, bound);
       const result = await source.execute("status", {
         scope: "skills",
         name: "connector:crm:lookup",
@@ -742,8 +744,8 @@ describe("status tool — scope: skills", () => {
     });
 
     it("is reported as unfetchable when its body cannot be loaded", async () => {
-      const layer3 = serverSkill(async () => ({ ok: false, reason: "unreachable" }));
-      const source = await makeStatusSource({ context: [], matchable: [] }, layer3);
+      const bound = serverSkill(async () => ({ ok: false, reason: "unreachable" }));
+      const source = await makeStatusSource({ context: [], matchable: [] }, bound);
       const result = await source.execute("status", {
         scope: "skills",
         name: "connector:crm:lookup",

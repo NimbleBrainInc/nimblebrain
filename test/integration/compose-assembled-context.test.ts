@@ -7,7 +7,7 @@
  *
  *   - The latest-run digest carries the per-source token breakdown
  *     (system_prompt / tool_descriptions / skills / history) and the
- *     layer-3 skills that loaded, with provenance.
+ *     skills that loaded, with provenance.
  *   - An explicit run_id selects that run.
  *   - A conversation the caller doesn't own (or that doesn't exist) errors
  *     rather than leaking events.
@@ -88,7 +88,7 @@ async function callAssembled(
   };
 }
 
-/** Start a runtime with one dynamic tool-affinity skill and run a chat that records telemetry. */
+/** Start a runtime with one always-on skill and run a chat that records telemetry. */
 async function runtimeWithRecordedRun(
   subdir: string,
   skillBody: string,
@@ -105,11 +105,10 @@ async function runtimeWithRecordedRun(
 
   mkdirSync(join(workDir, "skills"), { recursive: true });
   const skillPath = join(workDir, "skills", "draft-rules.md");
-  // dynamic + tool-affinity on `nb__*` so it deterministically loads into
-  // Layer 3 (and thus into skills.loaded) on any turn.
+  // `always`, so every turn records it in skills.loaded.
   writeFileSync(
     skillPath,
-    `---\nname: draft-rules\ndescription: Drafting\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n    priority: 30\n    tool-affinity: ['nb__*']\n---\n\n${skillBody}\n`,
+    `---\nname: draft-rules\ndescription: Drafting\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n    priority: 30\n---\n\n${skillBody}\n`,
   );
   await runtime.reloadSkills();
 
@@ -125,7 +124,7 @@ async function runtimeWithRecordedRun(
 }
 
 describe("compose__assembled_context — latest run", () => {
-  it("returns the per-source token breakdown and the loaded layer-3 skills", async () => {
+  it("returns the per-source token breakdown and the loaded skills", async () => {
     const skillBody = "Always answer in plain English.";
     const { runtime, convId, runId, skillPath } = await runtimeWithRecordedRun("latest", skillBody);
 
@@ -165,7 +164,7 @@ describe("compose__assembled_context — latest run", () => {
     expect(skill!.name).toBe("draft-rules");
     expect(skill!.connector).toBeUndefined();
     expect(skill!.scope).toBe("org");
-    expect(skill!.loadedBy).toBe("tool_affinity");
+    expect(skill!.loadedBy).toBe("always");
     expect(skill!.reason.length).toBeGreaterThan(0);
     expect(skill!.tokens).toBeGreaterThan(0);
 

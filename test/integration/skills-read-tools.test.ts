@@ -1,10 +1,10 @@
 /**
  * End-to-end integration test for the skills read tools.
  *
- * Boots a real Runtime, creates a workspace, drops a Layer 3 skill into the
- * workspace skills dir, runs a turn (which triggers Layer 3 selection +
- * `skills.loaded` emission), and exercises all four read tools through the
- * runtime's tool registry.
+ * Boots a real Runtime, creates a workspace, drops a skill bound to `nb__*`
+ * into the workspace skills dir, runs a turn whose first call is to a bound
+ * tool (so the engine holds it and delivers the skill), and exercises the read
+ * tools through the runtime's tool registry.
  *
  * No mocks of the conversation store or runtime — only the model is stubbed
  * (via `createMockModel`) so the test stays fast and offline.
@@ -59,7 +59,7 @@ async function callTool(
 }
 
 describe("skills read tools — end-to-end", () => {
-  it("list / read / loading_log all report a workspace skill loaded by always", async () => {
+  it("list / read / loading_log all report a workspace skill delivered before its tool's first call", async () => {
     const workDir = join(testDir, "e2e");
     mkdirSync(workDir, { recursive: true });
 
@@ -76,8 +76,8 @@ describe("skills read tools — end-to-end", () => {
         "---",
         "name: voice-rules",
         "description: Voice rules",
-        // dynamic + tool-affinity (nb__* is always surfaced) → loads into Layer 3
-        // (skills.loaded / loading_log), where this test asserts.
+        // dynamic + tool-affinity (nb__* is always surfaced) → delivered before
+        // the first nb__ call, recorded in loading_log as `before_call`.
         "metadata:",
         "  nimblebrain:",
         "    loading-strategy: dynamic",
@@ -91,11 +91,26 @@ describe("skills read tools — end-to-end", () => {
       ].join("\n"),
     );
 
-    const model = createMockModel(() => ({
-      content: [{ type: "text", text: "ok" }],
-      inputTokens: 10,
-      outputTokens: 5,
-    }));
+    // First call: an nb__ tool, which the engine holds for the bound skill.
+    // Every later call answers in text.
+    let calls = 0;
+    const model = createMockModel(() =>
+      calls++ === 0
+        ? {
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-1",
+                toolName: "nb__status",
+                input: JSON.stringify({ scope: "skills" }),
+              },
+            ],
+            finishReason: "tool-calls",
+            inputTokens: 10,
+            outputTokens: 5,
+          }
+        : { content: [{ type: "text", text: "ok" }], inputTokens: 10, outputTokens: 5 },
+    );
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
@@ -108,8 +123,8 @@ describe("skills read tools — end-to-end", () => {
     await provisionTestWorkspace(runtime, wsId);
 
     try {
-      // Run a turn — this triggers Layer 3 selection and emits skills.loaded /
-      // context.assembled into the conversation jsonl.
+      // Run a turn: its first nb__ call is held and the bound skill delivered,
+      // recorded in the conversation's events.
       const chat = await runtime.chat({ identity: DEV_IDENTITY, message: "hi", workspaceId: wsId });
       const convId = chat.conversationId;
 
@@ -164,9 +179,9 @@ describe("skills read tools — end-to-end", () => {
         loaded_by: string;
       }>;
       expect(loads.length).toBeGreaterThanOrEqual(1);
-      const voiceRow = loads.find((r) => r.skill_id?.endsWith("voice.md"));
+      const voiceRow = loads.find((r) => r.skill === "voice-rules");
       expect(voiceRow).toBeDefined();
-      expect(voiceRow?.loaded_by).toBe("tool_affinity");
+      expect(voiceRow?.loaded_by).toBe("before_call");
     } finally {
       await runtime.shutdown();
     }

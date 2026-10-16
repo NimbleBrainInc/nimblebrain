@@ -204,15 +204,8 @@ describe("buildSkillsLoadedPayload", () => {
 });
 
 describe("collectLoadedSkills", () => {
-  test("reports tool-affinity, trigger, and always-on with the right loadedBy + reason", () => {
+  test("reports trigger and always-on with the right loadedBy + reason", () => {
     const out = collectLoadedSkills({
-      toolAffinity: [
-        {
-          skill: makeSkill("mpak-guide", { strategy: "dynamic", sourcePath: "/s/mpak.md" }),
-          loadedBy: "tool_affinity",
-          reason: "tool-affinity matched mpak__*",
-        },
-      ],
       trigger: {
         skill: makeSkill("deploy-guide", { strategy: "dynamic", sourcePath: "/s/deploy.md" }),
         trigger: "deploy",
@@ -220,17 +213,15 @@ describe("collectLoadedSkills", () => {
       alwaysOn: [makeSkill("house-style", { sourcePath: "/s/house.md" })],
     });
     expect(out.map((s) => [s.skill.manifest.name, s.loadedBy])).toEqual([
-      ["mpak-guide", "tool_affinity"],
       ["deploy-guide", "trigger"],
       ["house-style", "always"],
     ]);
-    expect(out[1]!.reason).toBe('trigger matched "deploy"');
-    expect(out[2]!.reason).toBe("always-on");
+    expect(out[0]!.reason).toBe('trigger matched "deploy"');
+    expect(out[1]!.reason).toBe("always-on");
   });
 
   test("excludes vendored platform-core always-on skills (soul/capabilities)", () => {
     const out = collectLoadedSkills({
-      toolAffinity: [],
       alwaysOn: [
         makeSkill("soul", { vendored: true, sourcePath: "/core/soul.md" }),
         makeSkill("house-style", { sourcePath: "/s/house.md" }),
@@ -239,28 +230,11 @@ describe("collectLoadedSkills", () => {
     expect(out.map((s) => s.skill.manifest.name)).toEqual(["house-style"]);
   });
 
-  test("excludes vendored skills from EVERY source — tool-affinity and trigger too, not just always-on", () => {
+  test("excludes a vendored skill matched by a trigger, not just always-on", () => {
     // Vendored skills can be `dynamic` (the shipped skill-authoring guide has
-    // both a tool-affinity glob and triggers), so they reach the ledger via
-    // tool-affinity or a trigger match. The exclusion must cover all paths, or
-    // the "core skills aren't listed" contract is false.
+    // triggers), so they reach the ledger by a trigger match too. The exclusion
+    // must cover that path, or the "core skills aren't listed" contract is false.
     const out = collectLoadedSkills({
-      toolAffinity: [
-        {
-          skill: makeSkill("task-authoring", {
-            strategy: "dynamic",
-            vendored: true,
-            sourcePath: "/core/task-authoring.md",
-          }),
-          loadedBy: "tool_affinity",
-          reason: "tool-affinity matched tasks__*",
-        },
-        {
-          skill: makeSkill("mpak-guide", { strategy: "dynamic", sourcePath: "/s/mpak.md" }),
-          loadedBy: "tool_affinity",
-          reason: "tool-affinity matched mpak__*",
-        },
-      ],
       trigger: {
         skill: makeSkill("authoring-guide", {
           strategy: "dynamic",
@@ -271,44 +245,21 @@ describe("collectLoadedSkills", () => {
       },
       alwaysOn: [makeSkill("house-style", { sourcePath: "/s/house.md" })],
     });
-    // Only the tenant-authored skills survive; both vendored skills are dropped.
-    expect(out.map((s) => s.skill.manifest.name)).toEqual(["mpak-guide", "house-style"]);
+    expect(out.map((s) => s.skill.manifest.name)).toEqual(["house-style"]);
   });
 
   test("keeps a non-vendored always-on skill with no sourcePath", () => {
     const out = collectLoadedSkills({
-      toolAffinity: [],
       alwaysOn: [makeSkill("example", { sourcePath: "" })],
     });
     expect(out).toHaveLength(1);
     expect(out[0]!.loadedBy).toBe("always");
   });
 
-  test("dedupes a skill matched by both tool-affinity and trigger — tool-affinity wins", () => {
-    const dual = makeSkill("dual", { strategy: "dynamic", sourcePath: "/s/dual.md" });
-    const out = collectLoadedSkills({
-      toolAffinity: [
-        { skill: dual, loadedBy: "tool_affinity", reason: "tool-affinity matched x__*" },
-      ],
-      trigger: { skill: dual, trigger: "x" },
-      alwaysOn: [],
-    });
+  test("dedupes a skill matched by a trigger that is also always-on — trigger wins", () => {
+    const dual = makeSkill("dual", { sourcePath: "/s/dual.md" });
+    const out = collectLoadedSkills({ trigger: { skill: dual, trigger: "x" }, alwaysOn: [dual] });
     expect(out).toHaveLength(1);
-    expect(out[0]!.loadedBy).toBe("tool_affinity");
-  });
-
-  test("no trigger and no always-on collapses to just tool-affinity", () => {
-    const out = collectLoadedSkills({
-      toolAffinity: [
-        {
-          skill: makeSkill("only", { strategy: "dynamic" }),
-          loadedBy: "tool_affinity",
-          reason: "r",
-        },
-      ],
-      alwaysOn: [],
-    });
-    expect(out).toHaveLength(1);
-    expect(out[0]!.loadedBy).toBe("tool_affinity");
+    expect(out[0]!.loadedBy).toBe("trigger");
   });
 });
