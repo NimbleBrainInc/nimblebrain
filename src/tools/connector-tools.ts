@@ -2256,7 +2256,7 @@ async function buildBrokeredWiring(
 
 /**
  * Static-auth wiring: the instance OAuth client when the operator declared one
- * for this entry, else the workspace's configured OAuth clientId + the
+ * for this entry, else the workspace's configured OAuth client's clientId + the
  * credential-store key holding its client_secret. Gated post-dedup so a
  * duplicate-install click doesn't read the client secret from disk.
  * Returns `__err` when setup is incomplete.
