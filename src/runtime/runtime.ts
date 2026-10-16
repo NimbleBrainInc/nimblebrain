@@ -135,7 +135,7 @@ import {
   isModelInPolicy,
 } from "../model/catalog.ts";
 import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
-import { buildModelResolver } from "../model/registry.ts";
+import { buildModelResolver, providerModelAllowlists } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { type ResolvedPollConfig, resolvePollConfig } from "../notifications/poll-config.ts";
 import { positionOutbox } from "../notifications/position.ts";
@@ -5180,14 +5180,7 @@ export class Runtime {
 
   /** Get provider configs with optional model allowlists. */
   getProviderConfigs(): Record<string, { models?: string[] }> {
-    if (this.config.providers) {
-      const result: Record<string, { models?: string[] }> = {};
-      for (const [id, cfg] of Object.entries(this.config.providers)) {
-        result[id] = { models: (cfg as { models?: string[] }).models };
-      }
-      return result;
-    }
-    return { anthropic: {} };
+    return providerModelAllowlists(this.config);
   }
 
   /**
