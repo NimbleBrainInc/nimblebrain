@@ -167,6 +167,15 @@ export async function withSpan<T>(
 }
 
 /**
+ * Add an event to the active span (inside a {@link withSpan} callback, the span
+ * that callback runs in). No-op outside any span. Attributes follow the same
+ * rule as span attributes: never secrets, prompts, or contents.
+ */
+export function addSpanEvent(name: string, attrs: SpanAttrs): void {
+  trace.getActiveSpan()?.addEvent(name, attrs);
+}
+
+/**
  * Run `fn` as an active span continued from an inbound `traceparent` (e.g. the
  * mcp-edge -> runtime hop). With no inbound context present it opens a fresh
  * root span. Used by the HTTP middleware.

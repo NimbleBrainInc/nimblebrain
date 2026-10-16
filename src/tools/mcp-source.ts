@@ -26,7 +26,7 @@ import {
   UnauthorizedError,
 } from "@modelcontextprotocol/client";
 import { ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/core";
-import type { Server } from "@modelcontextprotocol/server";
+import type { ReadResourceResult, Server } from "@modelcontextprotocol/server";
 import { brandName } from "../brand/index.ts";
 import type { PlacementDeclaration, RemoteTransportConfig } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
@@ -40,13 +40,19 @@ import {
   type ToolResult,
 } from "../engine/types.ts";
 import {
+  collectResourceArgumentUris,
   HOST_RESOURCES_LIST_METHOD,
   HOST_RESOURCES_READ_METHOD,
   type HostResourcesRateLimit,
   type HostResourcesResolver,
   hostExtensions,
+  parseResourceArgumentsDeclaration,
+  RESOURCE_ARGUMENT_SPAN_EVENT,
+  RESOURCE_ARGUMENTS_EXTENSION_ID,
+  type ResourceArgumentsResolver,
+  resourceArgumentsClientExtension,
 } from "../host-resources/index.ts";
-import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
+import { addSpanEvent, requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
 import { facetsClientExtension } from "../services/facets-extension.ts";
 import { lifecycleClientExtension } from "../services/lifecycle-extension.ts";
@@ -140,6 +146,13 @@ export interface ConnectorMcpContext {
   connectorId: string;
   hostResources: HostResourcesResolver;
   rateLimit: HostResourcesRateLimit;
+  /**
+   * Reads the resources a tool's declared arguments name, from the connector in
+   * this workspace that serves them (`ai.nimblebrain/resource-arguments`). When
+   * set, the connection claims the extension on both eras and every tool call
+   * carries the resolved entries in its `_meta`.
+   */
+  resourceArguments?: ResourceArgumentsResolver;
 }
 
 /**
@@ -974,7 +987,13 @@ export class McpSource implements ToolSource {
     const transport = this.transport;
     if (!client || !transport) return;
     this.protocolEra = client.getProtocolEra() === "modern" ? "modern" : "legacy";
-    const wire = TaskWire.attach(this.name, client, transport, CLIENT_INFO, McpSource.CAPABILITIES);
+    const wire = TaskWire.attach(
+      this.name,
+      client,
+      transport,
+      CLIENT_INFO,
+      this.clientCapabilities(),
+    );
     this.taskClient = wire
       ? taskClientFor(wire)
       : inlineTaskClient((params, signal) => client.callTool(params, { signal }));
@@ -1220,6 +1239,24 @@ export class McpSource implements ToolSource {
   };
 
   /**
+   * `CAPABILITIES`, plus `ai.nimblebrain/resource-arguments` on a source that
+   * resolves them: one whose `connectorContext` carries a resolver. The
+   * extension needs no server→client channel, so it is claimed on both eras,
+   * and only where it is served (ADR-0023).
+   */
+  private clientCapabilities(): ClientCapabilities {
+    const resolver = this.connectorContext?.resourceArguments;
+    if (!resolver) return McpSource.CAPABILITIES;
+    return {
+      ...McpSource.CAPABILITIES,
+      extensions: {
+        ...McpSource.CAPABILITIES.extensions,
+        ...resourceArgumentsClientExtension(resolver.limits),
+      },
+    };
+  }
+
+  /**
    * What the 2025 `initialize` handshake claims on top of `CAPABILITIES`: the
    * NimbleBrain-namespaced extensions (`ai.nimblebrain/host-resources`, per
    * https://modelcontextprotocol.io/extensions/overview). The host-resources
@@ -1248,7 +1285,7 @@ export class McpSource implements ToolSource {
   private buildClient(): Client {
     return new EraCapabilitiesClient(
       CLIENT_INFO,
-      { capabilities: McpSource.CAPABILITIES, versionNegotiation: { mode: "auto" } },
+      { capabilities: this.clientCapabilities(), versionNegotiation: { mode: "auto" } },
       this.connectorContext ? McpSource.INITIALIZE_EXTENSIONS : {},
     );
   }
@@ -2124,6 +2161,9 @@ export class McpSource implements ToolSource {
       TASKS_EXTENSION_ID in this.serverExtensions();
 
     const dispatchArgs = this.prepareDispatchArgs(tool, input, toolName);
+    // Resolved inside the dispatch span, so its audit events land on it, and
+    // kept for the retry in the catch below.
+    let meta: Record<string, unknown> | undefined;
 
     // Answers: "why is this tool call going inline vs task-augmented?" and
     // "is the tool cache populated?". Covers the whole dispatch decision in
@@ -2146,10 +2186,12 @@ export class McpSource implements ToolSource {
           "tool.path": path,
           ...requestIdentityAttrs(),
         },
-        () =>
-          isTaskAugmented
-            ? this.callToolAsTask(toolName, dispatchArgs, signal)
-            : this.callToolInline(toolName, dispatchArgs, signal, options?.caller),
+        async () => {
+          meta = await this.resourceArgumentsMeta(tool, dispatchArgs, signal);
+          return isTaskAugmented
+            ? this.callToolAsTask(toolName, dispatchArgs, signal, meta)
+            : this.callToolInline(toolName, dispatchArgs, signal, options?.caller, meta);
+        },
         // A client cancellation isn't a crash — don't mark the span failed.
         { isExpectedError: () => signal?.aborted === true },
       );
@@ -2164,8 +2206,62 @@ export class McpSource implements ToolSource {
         signal,
         isTaskAugmented,
         options?.caller,
+        meta,
       );
     }
+  }
+
+  /**
+   * The `_meta` a call carries for the `ai.nimblebrain/resource-arguments`
+   * extension, or undefined when there is nothing to carry: the source has no
+   * resolver (an in-process platform source, a personal connector), the tool
+   * declares no resource arguments, or its declared arguments hold no strings.
+   *
+   * Computed once per call, before dispatch, and reused by the retry, so one
+   * call never reads the same resource twice. The workspace is the connection's
+   * own, never one the arguments could name; which of its connectors the call
+   * may read from is the resolver's to decide.
+   *
+   * Each URI's outcome is recorded on the active span (`tool.dispatch` for an
+   * agent's call) as a `resource_argument` event: the URI, the serving
+   * connector, the outcome code and the bytes handed on, never the contents.
+   */
+  private async resourceArgumentsMeta(
+    tool: Tool | undefined,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown> | undefined> {
+    const ctx = this.connectorContext;
+    if (!ctx?.resourceArguments) return undefined;
+    const declaration = parseResourceArgumentsDeclaration(tool?.meta);
+    if (!declaration) return undefined;
+    const uris = collectResourceArgumentUris(declaration, args);
+    if (uris.length === 0) return undefined;
+    const { entries, resolutions } = await ctx.resourceArguments.resolve(uris, {
+      workspaceId: ctx.workspaceId,
+      connectorId: ctx.connectorId,
+      ...(signal ? { signal } : {}),
+    });
+    for (const r of resolutions) {
+      addSpanEvent(RESOURCE_ARGUMENT_SPAN_EVENT, {
+        "resource_argument.uri": r.uri,
+        "resource_argument.outcome": r.outcome,
+        "resource_argument.bytes": r.bytes,
+        ...(r.source ? { "resource_argument.source": r.source } : {}),
+      });
+    }
+    return { [RESOURCE_ARGUMENTS_EXTENSION_ID]: entries };
+  }
+
+  /** A task call's resource-arguments `_meta`: the one its caller resolved, else resolved now. */
+  private async taskCallMeta(
+    toolName: string,
+    args: Record<string, unknown>,
+    given: Record<string, unknown> | null | undefined,
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown> | undefined> {
+    if (given !== undefined) return given ?? undefined;
+    return this.resourceArgumentsMeta(this.findTool(toolName), args, signal);
   }
 
   /**
@@ -2213,6 +2309,7 @@ export class McpSource implements ToolSource {
     signal: AbortSignal | undefined,
     isTaskAugmented: boolean,
     caller?: McpCaller,
+    meta?: Record<string, unknown>,
   ): ToolResult | Promise<ToolResult> {
     // Cancellation isn't a crash — the source is healthy, the client just asked
     // to stop. Emit a terminal tool.task_status for task-augmented calls so a
@@ -2239,7 +2336,7 @@ export class McpSource implements ToolSource {
 
     return this.recover<ToolResult>(
       err,
-      () => this.callToolInline(toolName, dispatchArgs, signal, caller),
+      () => this.callToolInline(toolName, dispatchArgs, signal, caller, meta),
       {
         idempotent: !isTaskAugmented,
         // A throw on a tools/call is almost always the transport; recover even
@@ -2453,6 +2550,30 @@ export class McpSource implements ToolSource {
     uri: string,
     opts?: { logFailures?: boolean; reconnect?: boolean; signal?: AbortSignal },
   ): Promise<ResourceData | null> {
+    return this.readResourceAs(uri, opts, (result) => this.toResourceData(result));
+  }
+
+  /**
+   * Read a resource and return the server's `contents` as they came, every
+   * entry, or null where {@link readResource} would return null. For a reader
+   * that hands the result on rather than rendering it: the
+   * `ai.nimblebrain/resource-arguments` resolver passes it to another connector.
+   */
+  async readResourceContents(
+    uri: string,
+    opts?: { signal?: AbortSignal },
+  ): Promise<ReadResourceResult["contents"] | null> {
+    return this.readResourceAs(uri, opts, (result) =>
+      result.contents && result.contents.length > 0 ? result.contents : null,
+    );
+  }
+
+  /** The read both public readers share: one recovery policy, one projection each. */
+  private async readResourceAs<T>(
+    uri: string,
+    opts: { logFailures?: boolean; reconnect?: boolean; signal?: AbortSignal } | undefined,
+    project: (result: Awaited<ReturnType<Client["readResource"]>>) => T | null,
+  ): Promise<T | null> {
     if (!this.client) {
       // A torn-down client (a source degraded/crashed without re-creation) is the
       // persistent silent-404 shape — the most likely cause of a read that stays
@@ -2493,7 +2614,7 @@ export class McpSource implements ToolSource {
     // A caller's signal bounds the read and its recovery retry alike.
     const request = opts?.signal ? { signal: opts.signal } : undefined;
     try {
-      return this.toResourceData(await this.client.readResource({ uri }, request));
+      return project(await this.client.readResource({ uri }, request));
     } catch (err) {
       // Route every failure through the shared recovery. A genuine MCP miss
       // (`shape.miss`) stays a silent null — e.g. a skill:// or app://instructions
@@ -2501,11 +2622,11 @@ export class McpSource implements ToolSource {
       // gateway blip / torn transport re-initializes and retries (issue #571);
       // an auth loss flips the connection to `reauth_required`. Reads are
       // idempotent, so they retry across the deploy window.
-      return this.recover<ResourceData | null>(
+      return this.recover<T | null>(
         err,
         async () => {
           if (!this.client) throw err; // restart produced no client — keep recovering
-          return this.toResourceData(await this.client.readResource({ uri }, request));
+          return project(await this.client.readResource({ uri }, request));
         },
         {
           idempotent: true,
@@ -2668,11 +2789,12 @@ export class McpSource implements ToolSource {
     args: Record<string, unknown>,
     signal?: AbortSignal,
     caller?: McpCaller,
+    meta?: Record<string, unknown>,
   ): Promise<ToolResult> {
     const result = caller
-      ? await this.callToolForCaller(toolName, args, caller, signal)
+      ? await this.callToolForCaller(toolName, args, caller, signal, meta)
       : await this.client?.callTool(
-          { name: toolName, arguments: args },
+          { name: toolName, arguments: args, ...(meta ? { _meta: meta } : {}) },
           signal ? { signal } : undefined,
         );
     if (!result) return { content: [], isError: true };
@@ -2721,6 +2843,7 @@ export class McpSource implements ToolSource {
     args: Record<string, unknown>,
     caller: McpCaller,
     signal?: AbortSignal,
+    meta?: Record<string, unknown>,
   ) {
     const { inputResponses, requestState, onProgress } = caller;
     return this.client?.callTool(
@@ -2729,7 +2852,7 @@ export class McpSource implements ToolSource {
         arguments: args,
         ...(inputResponses ? { inputResponses } : {}),
         ...(requestState !== undefined ? { requestState } : {}),
-        _meta: { [CLIENT_CAPABILITIES_META_KEY]: caller.capabilities },
+        _meta: { ...meta, [CLIENT_CAPABILITIES_META_KEY]: caller.capabilities },
       },
       {
         allowInputRequired: true,
@@ -2757,8 +2880,11 @@ export class McpSource implements ToolSource {
     toolName: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    meta?: Record<string, unknown>,
   ): Promise<ToolResult> {
     const start = await this.startToolAsTask(toolName, args, {
+      // Resolved by `execute` already; passed so the task path does not resolve again.
+      meta: meta ?? null,
       // Agent-loop default owner context. The /mcp entry path will pass a
       // workspace-scoped one; inside the agent, all sources are already
       // workspace-scoped at registry-selection time, so an agent-loop
@@ -2833,7 +2959,16 @@ export class McpSource implements ToolSource {
   async startToolAsTask(
     toolName: string,
     args: Record<string, unknown>,
-    opts: { ownerContext: TaskOwnerContext; signal?: AbortSignal },
+    opts: {
+      ownerContext: TaskOwnerContext;
+      signal?: AbortSignal;
+      /**
+       * The call's resource-arguments `_meta`, when the caller resolved it
+       * already (`null`: resolved, nothing to carry). Omitted, it is resolved
+       * here, which is what the `/mcp` door's direct task calls rely on.
+       */
+      meta?: Record<string, unknown> | null;
+    },
   ): Promise<CreateTaskResult> {
     const client = this.client;
     if (!client || this.dead) {
@@ -2854,8 +2989,9 @@ export class McpSource implements ToolSource {
 
     const taskClient = this.taskClient;
     if (!taskClient) throw new Error(`McpSource "${this.name}" has no task client`);
+    const meta = await this.taskCallMeta(toolName, args, opts.meta, abortController.signal);
     const stream = taskClient.callToolStream(
-      { name: toolName, arguments: args },
+      { name: toolName, arguments: args, ...(meta ? { _meta: meta } : {}) },
       { signal: abortController.signal, createTimeoutMs: TASK_CREATED_TIMEOUT_MS },
     );
 

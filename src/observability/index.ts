@@ -8,6 +8,7 @@
  */
 export { requestIdentityAttrs } from "./identity.ts";
 export {
+  addSpanEvent,
   currentTraceId,
   initTracing,
   injectTraceparent,

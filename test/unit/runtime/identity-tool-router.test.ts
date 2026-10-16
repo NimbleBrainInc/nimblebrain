@@ -30,7 +30,7 @@ import {
   runWithRequestContext,
 } from "../../../src/runtime/request-context.ts";
 import { isToolAllowedForRun } from "../../../src/tools/tool-pattern.ts";
-import type { Tool, ToolSource } from "../../../src/tools/types.ts";
+import type { Tool, ToolExecuteOptions, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
 
@@ -41,6 +41,7 @@ interface SpyCall {
   input: Record<string, unknown>;
   /** RequestContext observed at dispatch time. Captured from AsyncLocalStorage. */
   context: RequestContext | undefined;
+  options: ToolExecuteOptions | undefined;
 }
 
 interface SpySource extends ToolSource {
@@ -70,8 +71,13 @@ function makeSpySource(
         content: [{ type: "text" as const, text: `[${name}] ${resultText}` }],
         isError: false,
       })),
-    async execute(toolName: string, input: Record<string, unknown>): Promise<ToolResult> {
-      calls.push({ toolName, input, context: getRequestContext() });
+    async execute(
+      toolName: string,
+      input: Record<string, unknown>,
+      _signal?: AbortSignal,
+      options?: ToolExecuteOptions,
+    ): Promise<ToolResult> {
+      calls.push({ toolName, input, context: getRequestContext(), options });
       return this.resultFor(input);
     },
   };
@@ -475,5 +481,8 @@ describe("IdentityToolRouter — a run's allowedTools", () => {
     expect(mail.calls).toHaveLength(0);
     expect(allowed.isError).toBe(false);
     expect(crm.calls).toHaveLength(1);
+    // The call's request context carries the limit, so a read made on the
+    // call's behalf (resource arguments) is bounded by the same list.
+    expect(crm.calls[0]?.context?.isToolAllowed).toBe(isToolAllowed);
   });
 });

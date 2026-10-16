@@ -189,7 +189,14 @@ const TRUNCATION_NOTE_RESERVE = 400;
  * Most characters any other read returns: a connector's record (a contact with
  * a long dossier, say) is read whole up to the limit every tool result has.
  */
-const RECORD_READ_MAX_CHARS = MAX_TOOL_RESULT_CHARS - TRUNCATION_NOTE_RESERVE;
+export const RECORD_READ_MAX_CHARS = MAX_TOOL_RESULT_CHARS - TRUNCATION_NOTE_RESERVE;
+
+/**
+ * The agent's own resource read, by its qualified name. A run whose tool limit
+ * does not allow it reads no connector's resources, directly or through a
+ * tool's resource arguments.
+ */
+export const READ_RESOURCE_TOOL = "nb__read_resource";
 
 /** The read limit for `uri`: the skill budget for `skill://`, the tool-result limit otherwise. */
 function readLimitFor(uri: string): number {
