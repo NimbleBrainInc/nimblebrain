@@ -304,6 +304,14 @@ describe("TopBar", () => {
     expect(byTestId("top-bar-app-settings")).toBeUndefined();
   });
 
+  test("a settings sub-slot placement is not a settings section", async () => {
+    await mountBar("/w/000f7ed6658f9d30/app/people", 0, {
+      settings: [{ ...PEOPLE_SETTINGS, slot: "settings.extra" }],
+      shellWorkspaceId: ACME.id,
+    });
+    expect(byTestId("top-bar-app-settings")).toBeUndefined();
+  });
+
   test("no gear while the shell still holds another workspace's placements", async () => {
     await mountBar("/w/000f7ed6658f9d30/app/people", 0, { settings: [PEOPLE_SETTINGS] });
     expect(byTestId("top-bar-app-settings")).toBeUndefined();
