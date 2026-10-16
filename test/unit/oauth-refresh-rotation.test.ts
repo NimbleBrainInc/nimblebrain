@@ -213,6 +213,26 @@ describe("refresh under rotation never deletes a credential that is still good",
     expect(await storedRefreshToken()).toBe(vendor.current());
   });
 
+  it("test_refresh_replayed_result_never_rolls_back_newer_tokens", async () => {
+    // rt_1 → rt_2 → rt_3 inside the replay window, then a provider still
+    // holding rt_1 refreshes: the replayed rt_1 exchange answers with rt_2.
+    const vendor = rotatingServer();
+    await seedConnection();
+    const a = makeProvider();
+    const stale = makeProvider();
+    await stale.tokens(); // holds rt_1
+    const fetchFn = createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast });
+    expect(await refreshVia(a, fetchFn)).toBe("AUTHORIZED");
+    expect(await refreshVia(a, fetchFn)).toBe("AUTHORIZED");
+    expect(vendor.current()).toBe("rt_3");
+
+    const result = await refreshVia(stale, fetchFn).catch((err: unknown) => err);
+    expect(result).toBe("AUTHORIZED");
+    expect(vendor.refreshPosts()).toBe(2);
+    expect(await storedRefreshToken()).toBe("rt_3");
+    expect((await stale.tokens())?.refresh_token).toBe("rt_3");
+  });
+
   it("test_refresh_through_ssrf_guard_parallel_spends_one_exchange", async () => {
     // The transport's chain: the SSRF guard outside the refresh fetch
     // (`createRemoteTransport`). The guard buffers the SDK's form body to

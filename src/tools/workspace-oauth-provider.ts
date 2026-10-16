@@ -1090,6 +1090,19 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
+    // A refresh result answers for the refresh token this provider served. When
+    // the store already holds a different one, the result is for a stale copy
+    // (a replayed exchange, or one that settled after a later rotation landed):
+    // writing it would roll the credential back to a token the vendor has since
+    // revoked. Drop this provider's copy so its next read takes the stored one.
+    if (
+      !this.exchangingCode &&
+      this.servedRefreshToken !== undefined &&
+      (await this.tokensRenewedElsewhere())
+    ) {
+      this.cachedTokens = null;
+      return;
+    }
     this.cachedTokens = tokens;
     // Fresh tokens landed — a subsequent auth loss is a NEW episode, so
     // re-arm the one-shot `notifyAuthLost` guard. Without this, a connection
