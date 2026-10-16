@@ -1,6 +1,6 @@
 /**
- * `Runtime.start` moves stored OAuth client records to `oauthClients` before
- * anything reads a workspace. The store method has its own unit tests; this
+ * `Runtime.start` moves stored OAuth client records off `oauthOperatorApps`
+ * onto `oauthClients` before anything reads a workspace. The store method has its own unit tests; this
  * pins that the boot runs it, since every existing static-auth workspace
  * depends on that call and no other test would notice it missing.
  */
@@ -36,7 +36,7 @@ afterEach(async () => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-test("Runtime.start copies stored records to oauthClients before readers see the workspace", async () => {
+test("Runtime.start moves stored records to oauthClients before readers see the workspace", async () => {
   runtime = await Runtime.start({
     identityProvider: devProvider,
     languageModel: createEchoModel(),
@@ -45,4 +45,5 @@ test("Runtime.start copies stored records to oauthClients before readers see the
   });
   const ws = await runtime.getWorkspaceStore().get(WS);
   expect(ws?.oauthClients).toEqual({ "com.example/mcp": RECORD });
+  expect(ws && "oauthOperatorApps" in ws).toBe(false);
 });

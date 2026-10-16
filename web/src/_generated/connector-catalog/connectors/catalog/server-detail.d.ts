@@ -218,8 +218,7 @@ export interface NimbleBrainConnectorMeta {
     auth?: ConnectorAuthKind;
     /**
      * Required for `auth: "static"`: where a workspace admin creates the OAuth
-     * client and which credential key holds its secret. Read under its earlier
-     * name, `operatorSetup`, too (see {@link getNimbleBrainConnectorMeta}).
+     * client and which credential key holds its secret.
      */
     oauthClientSetup?: {
         portalUrl: string;
@@ -319,8 +318,6 @@ export interface ServerDetail {
 export declare const NIMBLEBRAIN_CONNECTOR_META_KEY = "ai.nimblebrain/connector";
 /** Convenience accessor with the right type narrowing. */
 export declare function getNimbleBrainConnectorMeta(s: ServerDetail): NimbleBrainConnectorMeta | undefined;
-/** Whether an entry declares the setup block under both its names (the catalog logs it). */
-export declare function declaresBothSetupNames(s: ServerDetail): boolean;
 /**
  * Reverse-DNS namespace key for the host-integration `_meta` extension —
  * how a server declares its UI placement in the NimbleBrain host shell.

@@ -37,7 +37,7 @@ import {
   validateServerDetailSafety,
 } from "./projection.ts";
 import { readCatalogEntries } from "./read.ts";
-import { declaresBothSetupNames, type ServerDetail } from "./server-detail.ts";
+import type { ServerDetail } from "./server-detail.ts";
 import type { CatalogListing, ConnectorCatalogEntry, ListEntriesContext } from "./types.ts";
 
 /** Browse-list result: surviving listings + the files that failed. */
@@ -248,12 +248,6 @@ export class ConnectorCatalog {
       if (safetyError) {
         log.warn(`[catalog] [${source}] entry "${detail.name}" dropped — ${safetyError}`);
         continue;
-      }
-      if (declaresBothSetupNames(detail)) {
-        log.warn(
-          `[catalog] [${source}] entry "${detail.name}" declares oauthClientSetup and ` +
-            "operatorSetup; using oauthClientSetup",
-        );
       }
       out.servers.push({ file: source, detail });
     }
