@@ -12,6 +12,8 @@
 //   6. The inbox's bell sits left of Chat on workspace routes and shows a dot
 //      only while something is unread, the count in its accessible name. What
 //      it opens is pinned in inbox-preview.test.tsx.
+//   7. On an app whose connector has a settings section, a gear left of the
+//      bell links to that connector's settings page; nowhere else.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -54,6 +56,13 @@ const PEOPLE: PlacementEntry = {
   route: "people",
 };
 
+const PEOPLE_SETTINGS: PlacementEntry = {
+  serverName: "people",
+  slot: "settings",
+  resourceUri: "ui://people/settings",
+  priority: 100,
+};
+
 // Captures the context's setter so a test can publish a trail the way
 // AppWithChat does.
 let location: AppLocationContextValue;
@@ -77,7 +86,12 @@ function inbox(unread: number): NotificationsValue {
   return { unread, revision: 0, refresh: () => {}, markRead: async () => {} };
 }
 
-async function mountBar(path: string, unread = 0): Promise<void> {
+async function mountBar(
+  path: string,
+  unread = 0,
+  shell: { settings?: PlacementEntry[]; shellWorkspaceId?: string } = {},
+): Promise<void> {
+  const settings = shell.settings ?? [];
   container = document.createElement("div");
   document.body.appendChild(container);
   root = ReactDOMClient.createRoot(container);
@@ -91,9 +105,10 @@ async function mountBar(path: string, unread = 0): Promise<void> {
                 <SidebarProvider>
                   <ShellProvider
                     value={{
-                      forSlot: (slot) => (slot === "sidebar" ? [PEOPLE] : []),
+                      forSlot: (slot) =>
+                        slot === "sidebar" ? [PEOPLE] : slot === "settings" ? settings : [],
                       mainRoutes: () => [],
-                      shellWorkspaceId: "ws_00079598e311c160",
+                      shellWorkspaceId: shell.shellWorkspaceId ?? "ws_00079598e311c160",
                     }}
                   >
                     <AppLocationProvider>
@@ -260,5 +275,45 @@ describe("TopBar", () => {
     await mountBar("/w/000f7ed6658f9d30/", 3);
     expect(byTestId("top-bar-inbox-dot")).toBeDefined();
     expect(byTestId("top-bar-inbox")?.getAttribute("aria-label")).toBe("Inbox, 3 unread");
+  });
+
+  test("an app with a settings section gets a gear to its settings page, left of the bell", async () => {
+    await mountBar("/w/000f7ed6658f9d30/app/people", 0, {
+      settings: [PEOPLE_SETTINGS],
+      shellWorkspaceId: ACME.id,
+    });
+    const gear = byTestId("top-bar-app-settings");
+    expect(gear?.getAttribute("aria-label")).toBe("People settings");
+    expect(gear?.getAttribute("href")).toBe("/w/000f7ed6658f9d30/settings/connectors/people");
+    const bell = byTestId("top-bar-inbox");
+    expect(gear && bell && gear.compareDocumentPosition(bell)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  test("no gear for an app without a settings section, or off an app route", async () => {
+    await mountBar("/w/000f7ed6658f9d30/app/people", 0, { shellWorkspaceId: ACME.id });
+    expect(byTestId("top-bar-app-settings")).toBeUndefined();
+    act(() => root.unmount());
+    container.remove();
+
+    await mountBar("/w/000f7ed6658f9d30/", 0, {
+      settings: [PEOPLE_SETTINGS],
+      shellWorkspaceId: ACME.id,
+    });
+    expect(byTestId("top-bar-app-settings")).toBeUndefined();
+  });
+
+  test("a settings sub-slot placement is not a settings section", async () => {
+    await mountBar("/w/000f7ed6658f9d30/app/people", 0, {
+      settings: [{ ...PEOPLE_SETTINGS, slot: "settings.extra" }],
+      shellWorkspaceId: ACME.id,
+    });
+    expect(byTestId("top-bar-app-settings")).toBeUndefined();
+  });
+
+  test("no gear while the shell still holds another workspace's placements", async () => {
+    await mountBar("/w/000f7ed6658f9d30/app/people", 0, { settings: [PEOPLE_SETTINGS] });
+    expect(byTestId("top-bar-app-settings")).toBeUndefined();
   });
 });
