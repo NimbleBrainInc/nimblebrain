@@ -1499,8 +1499,8 @@ export class Runtime {
    *    own run).
    *  - The prompt goes in as a plain user message — no content parts, no file
    *    refs, and no trigger matching: a task description is not a phrase a skill
-   *    should claim. Layer 3 (connector workflow guidance) still applies based on
-   *    the active tool set.
+   *    should claim. A skill bound to a tool reaches the model when the run
+   *    calls that tool, as in chat.
    *  - The system prompt is composed in task mode, prepending `TASK_IDENTITY`
    *    so the model produces a deliverable rather than a conversational reply.
    *    The runtime owns this framing — connectors cannot spoof it by wrapping the
@@ -1739,9 +1739,9 @@ export class Runtime {
     // Build pre-emit run telemetry tied to the engine's runId. The engine fires
     // these immediately after `run.start` and before any LLM call so the log
     // records what the prompt looked like for this run — even if the LLM call
-    // fails or the process is killed. Reports every loading mechanism, not just
-    // tool-affinity: the trigger match and the always-on context skills
-    // (persona + org/workspace/user + connector always-on; vendored core excluded).
+    // fails or the process is killed. Reports the skills composed at turn start:
+    // the trigger match and the always-on context skills (persona +
+    // org/workspace/user + connector always-on; vendored core excluded).
     const skillsLoaded = buildSkillsLoadedPayload(
       collectLoadedSkills({
         trigger: composed.skillMatch,
@@ -1927,10 +1927,8 @@ export class Runtime {
   /**
    * The prompt a run reasons with, and the tool surface it reasons over.
    *
-   * One phase, because the two are a cycle otherwise: the matched skill's
-   * `allowed-tools` feeds `surfaceTools`, and the surfaced set is what
-   * tool-affinity Layer 3 selection reads. Splitting discovery (registry only)
-   * from selection (needs the toolset) breaks it.
+   * One phase, because both follow from the trigger match: the matched skill
+   * composes into the prompt, and its `allowed-tools` feeds `surfaceTools`.
    *
    * Every pool it reads is read exactly once — the filesystem skill tiers, the
    * workspace's server-published connector skills, and the connector-overlay store
@@ -2004,7 +2002,7 @@ export class Runtime {
     //
     // Partitioned by ROLE once: `context` skills (every tier) compose into the
     // always-on Layer 0/1 channel; `capability` skills feed the conditional
-    // channels (keyword matcher + tool-affinity Layer 3). Disjoint by `type`,
+    // channels (keyword matcher + bound-skill delivery). Disjoint by `type`,
     // so nothing is injected twice — no downstream de-dup. Computed ONCE and
     // threaded into the catalog and bound-skill candidates below, so the disk read happens a
     // single time per run.
@@ -2016,11 +2014,9 @@ export class Runtime {
     // Server-published skills, discovered and routed by declared strategy. This
     // runs HERE — after the workspace registry exists (`ensureWorkspaceRegistry`
     // above; discovery reads it and silently yields nothing without it), and
-    // before the matcher — because the run is a cycle otherwise: the matched
-    // skill feeds `surfaceTools`, whose output is the active toolset that
-    // tool-affinity selection needs. Splitting discovery (registry only) from
-    // selection (needs the toolset) breaks it. The partition is threaded into
-    // the catalog and candidates below, so discovery still happens once per run.
+    // before the matcher, which takes its `capability` skills as candidates.
+    // The partition is threaded into the catalog and candidates below, so
+    // discovery happens once per run.
     const connectorPoolRaw = await this.discoverConnectorSkillsByRole(spec.workspaceId, {
       // Exclude only the ONE skill `<app-guide>` carries, resolved above — not
       // the entered server (its other skills must still route by strategy), and
@@ -2074,12 +2070,11 @@ export class Runtime {
     const prefs = buildPromptPrefs(identity);
     const workspaceContext = buildWorkspaceContext(briefingWsId, activeWorkspace);
 
-    // Skill selection over the pools gathered above. Server-published skills
-    // route by the strategy they DECLARE: `dynamic` ones join tool-affinity
-    // Layer 3 (loading when the connector's tools are surfaced, no `appContext`
-    // scoping required); `always` ones (`connectorContext`) compose into the
-    // always-on context channel below, the same reliable every-run path
-    // filesystem `always` skills use.
+    // Server-published skills route by the strategy they DECLARE: `dynamic`
+    // ones join the bound-skill candidates (delivered when the model calls a
+    // tool they are bound to); `always` ones (`connectorContext`) compose into
+    // the always-on context channel below, the same every-run path filesystem
+    // `always` skills use.
     //
     // Workspace-tier skills follow the run's own workspace, matching the
     // briefing / apps / overlay surfaces. Both precomputed pools are threaded
@@ -2088,10 +2083,9 @@ export class Runtime {
     const { context: connectorContextSelected, capability: connectorCapability } = connectorPool;
 
     // Server-published skills carry no body until one is needed (the MCP Skills
-    // Extension forbids fetching a skill's files ahead of need). Every skill
-    // selected above is about to reach the model, so this is where their
-    // bodies are fetched: `always` skills every turn, the matched and
-    // tool-affinity skills when selected. A body served from the digest cache
+    // Extension forbids fetching a skill's files ahead of need). The `always`
+    // skills and the trigger-matched skill are about to reach the model, so
+    // this is where their bodies are fetched. A body served from the digest cache
     // is byte-identical turn to turn, so the cached prefix holds. A skill whose
     // body cannot be fetched or verified drops out of this turn.
     const [connectorContext, matchedSkill] = await Promise.all([
@@ -3144,8 +3138,8 @@ export class Runtime {
    * `null` when it cannot be used this turn.
    *
    * Called only where the body is about to reach the model: an `always` skill
-   * every turn, a `dynamic` skill when tool-affinity or a trigger selects it or
-   * a surface-once candidate fires, a catalog skill on `nb__use_skill`, and an
+   * every turn, a `dynamic` skill when a trigger matches it or a call to a
+   * tool it is bound to delivers it, a catalog skill on `nb__use_skill`, and an
    * entered app's primary skill. The `SKILL.md` is read with `resources/read`
    * from the workspace's own instance of the server and verified against the
    * listing entry (digest, size, frontmatter); content that fails is never used.
@@ -5544,16 +5538,12 @@ export class Runtime {
    * toolset.
    *
    * That split is what makes a server-published skill reachable by the phrase
-   * matcher. The chat path runs: match → `surfaceTools(allTools, matched, …)` →
-   * active tool names → tool-affinity selection. So a pool built by the
-   * selection step cannot also be an input to the matcher that runs before it.
-   * Discovery needs only the workspace registry, so it can run ahead of the
-   * matcher and feed both: the matcher gets `capability` as extra candidates,
-   * and the selection step gets the same partition back instead of re-walking
-   * the registry and re-synthesizing every skill a second time for one turn.
+   * matcher, which runs before `surfaceTools`. Discovery needs only the
+   * workspace registry, so it runs ahead of the matcher, and the rest of the
+   * turn reuses the same partition instead of re-walking the registry.
    *
    * `context` (`always` skills) composes into the always-on channel; `capability`
-   * (`dynamic` skills) is both the tool-affinity pool and the matchable pool.
+   * (`dynamic` skills) is both the matchable pool and the bound-skill pool.
    */
   private async discoverConnectorSkillsByRole(
     wsId: string,
@@ -6386,8 +6376,8 @@ function buildWorkspaceContext(
 /**
  * The skills an unattended run declared, resolved to the bodies its system
  * prompt carries in the Layer 3 skills section. A name the turn already
- * composes into its system prompt (`composedNames`: the `always` skills,
- * tool-affinity selection, and the trigger match) needs no delivery. A name the workspace does not offer refuses the
+ * composes into its system prompt (`composedNames`: the `always` skills and
+ * the trigger match) needs no delivery. A name the workspace does not offer refuses the
  * run before its first model call (`DeclaredSkillsUnavailableError`), as an
  * unreachable declared tool does: the owner named it as the run's job. A body
  * that cannot be fetched fails the run as an ordinary failure, and the task's
@@ -6426,9 +6416,8 @@ async function resolveDeclaredSkills(
  *
  * A skill with no `tool-affinity` is bound to nothing and is left to the
  * catalog. A disabled skill is left out. So is any skill this turn already
- * composed into the prompt (`alreadyComposed`: turn-start tool-affinity
- * selection and the trigger match), because its body is in context and
- * delivering it again would put it there twice. The `<app-guide>` skill never
+ * composed into the prompt (`alreadyComposed`: the trigger match), because
+ * its body is in context and delivering it again would put it there twice. The `<app-guide>` skill never
  * reaches the connector pool, so it needs no exclusion here.
  *
  * Names are unique, the first pool winning in catalog order (filesystem, then

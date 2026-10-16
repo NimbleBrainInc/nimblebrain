@@ -253,8 +253,8 @@ export interface RunHandle {
  * The prompt a run reasons with, and the tool surface it reasons over.
  *
  * One value because the two are resolved together and cannot be resolved apart:
- * the matched skill's `allowed-tools` decides the surfaced set, and the surfaced
- * set decides which connector skills tool-affinity selection loads.
+ * the matched skill composes into the prompt, and its `allowed-tools` decides
+ * the surfaced set.
  */
 export interface RunComposition {
   /** The ACTIVE tool set the model sees. */
