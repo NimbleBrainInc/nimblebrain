@@ -12,7 +12,9 @@
 // ("Settings › Members"), linked to that area's first tab. On a phone, the menu
 // button that opens the nav drawer leads the row.
 //
-// Right, on workspace routes: the inbox's bell, then Chat, which stays last.
+// Right, on workspace routes: on an app with a settings section, a gear to
+// its connector's settings page; then the inbox's bell, then Chat, which stays
+// last.
 // Neither holds a fill while its panel or page is open: they are ways in, not
 // tabs, and a held fill reads as stuck. `aria-pressed` / `aria-current` carry
 // the state for assistive tech.
@@ -32,6 +34,7 @@ import { useSidebar } from "../../context/SidebarContext";
 import { pageTitle, settingsLocation } from "../../lib/page-title";
 import { SidebarToggle } from "../SidebarToggle";
 import { Tooltip, TooltipProvider } from "../ui/tooltip";
+import { AppSettingsLink } from "./AppSettingsLink";
 import { ChatToggle } from "./ChatToggle";
 import { InboxToggle } from "./InboxToggle";
 
@@ -166,6 +169,7 @@ export function TopBar() {
         </h1>
         {pathname.startsWith("/w/") && (
           <>
+            <AppSettingsLink />
             <InboxToggle />
             <ChatToggle />
           </>
