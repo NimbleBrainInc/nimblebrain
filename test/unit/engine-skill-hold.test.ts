@@ -272,4 +272,40 @@ describe("engine: a bound skill reaches the model before its tool's first call r
     await r.result;
     expect(r.executed).toEqual(["c1"]);
   });
+
+  it("caps a call that runs and gets guidance after it, and keeps the rest eligible", async () => {
+    // Whole-server, implicit bindings on a read-only tool: no hold, delivered after the call.
+    const big = (n: number): ConnectorSkillCandidate => ({
+      ...DRAFTING,
+      name: `connector:outreach:s${n}`,
+      body: `S${n} ${"x".repeat(MAX_SKILL_BODY_CHARS - 10)}`,
+      toolAffinity: ["outreach__*"],
+      implicitBinding: true,
+      priority: n,
+    });
+    const r = run({
+      turns: [
+        [{ id: "c1", name: "outreach__list_campaigns" }],
+        [{ id: "c2", name: "outreach__list_campaigns" }],
+      ],
+      candidates: [big(4), big(1), big(3), big(2)],
+    });
+    await r.result;
+    expect(r.executed).toEqual(["c1", "c2"]);
+    const delivered = r.events
+      .filter((e) => e.type === "connector.skill.injected")
+      .map((e) => (e.type === "connector.skill.injected" ? e.data.skillName : ""));
+    // Three fit in the first drain; the fourth is capped, then delivered after the next call.
+    expect(delivered).toEqual([
+      "connector:outreach:s1",
+      "connector:outreach:s2",
+      "connector:outreach:s3",
+      "connector:outreach:s4",
+    ]);
+    const capped = r.events.filter((e) => e.type === "skill.not_delivered");
+    expect(capped.map((e) => e.data)).toEqual([
+      expect.objectContaining({ skillName: "connector:outreach:s4", reason: "capped" }),
+    ]);
+    expect(texts(r.prompts[1] ?? []).some((t) => t.includes("S4 "))).toBe(false);
+  });
 });

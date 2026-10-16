@@ -5417,9 +5417,10 @@ describe("AgentEngine — connector skills bound by declared tool-affinity", () 
   }
 
   it("injects a skill declaring draft_email on promoting <server>__draft_email", async () => {
+    // One drain delivers by priority, then name.
     expect(await injectedOnPromoting("acme__draft_email")).toEqual([
-      "connector:acme:writing",
       "connector:acme:usage",
+      "connector:acme:writing",
     ]);
   });
 
