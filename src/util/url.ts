@@ -3,7 +3,7 @@
  *
  * The connector wire format (`ServerDetail`) carries several URL-typed
  * fields — icon `src`, `repository.url`, `websiteUrl`, the
- * `_meta["ai.nimblebrain/connector"].operatorSetup.portalUrl` and
+ * `_meta["ai.nimblebrain/connector"].oauthClientSetup.portalUrl` and
  * `docsUrl` extensions, and `remotes[].url`. Upstream ajv only checks
  * `format: "uri"`, which accepts `javascript:` / `data:` / `file:`
  * schemes. Whenever we render or follow these URLs in the UI, we

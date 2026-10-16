@@ -37,7 +37,7 @@ import {
   validateServerDetailSafety,
 } from "./projection.ts";
 import { readCatalogEntries } from "./read.ts";
-import type { ServerDetail } from "./server-detail.ts";
+import { declaresBothSetupNames, type ServerDetail } from "./server-detail.ts";
 import type { CatalogListing, ConnectorCatalogEntry, ListEntriesContext } from "./types.ts";
 
 /** Browse-list result: surviving listings + the files that failed. */
@@ -128,8 +128,8 @@ export class ConnectorCatalog {
    * Browse-shaped result. Same data as `servers()` projected through
    * `projectServerDetailToCatalogListing`, deduped first-wins by id.
    *
-   * `ctx.isOperatorConfigured` is awaited per static-auth entry to
-   * compute `operatorConfigured` — DCR / unknown entries skip the probe.
+   * `ctx.isOAuthClientConfigured` is awaited per static-auth entry to
+   * compute `oauthClientConfigured` — DCR / unknown entries skip the probe.
    */
   async list(ctx?: ListEntriesContext): Promise<AggregatedCatalog> {
     const { servers, errors } = await this.servers();
@@ -158,12 +158,12 @@ export class ConnectorCatalog {
       if (
         entry.install.kind === "remote-oauth" &&
         entry.install.auth === "static" &&
-        entry.install.operatorSetup &&
-        ctx?.isOperatorConfigured
+        entry.install.oauthClientSetup &&
+        ctx?.isOAuthClientConfigured
       ) {
-        entry.operatorConfigured = await ctx.isOperatorConfigured(
+        entry.oauthClientConfigured = await ctx.isOAuthClientConfigured(
           entry.id,
-          entry.install.operatorSetup.clientSecretKey,
+          entry.install.oauthClientSetup.clientSecretKey,
         );
       }
       entries.push(entry);
@@ -190,7 +190,7 @@ export class ConnectorCatalog {
 
   /**
    * Lookup table for handleListInstalled: remote connectors match their
-   * URL to a catalog entry to render the icon, name, and operator-setup
+   * URL to a catalog entry to render the icon, name, and OAuth client setup
    * affordance. Built once from the cached read.
    */
   async catalogByUrl(): Promise<Map<string, ConnectorCatalogEntry>> {
@@ -198,7 +198,7 @@ export class ConnectorCatalog {
     return new Map(entries.map((e) => [e.url, e]));
   }
 
-  /** Single-entry lookup by reverse-DNS id (used by setup_operator handlers). */
+  /** Single-entry lookup by reverse-DNS id (used by set_oauth_client handlers). */
   async catalogById(id: string): Promise<ConnectorCatalogEntry | null> {
     const entries = await this.catalogEntries();
     return entries.find((e) => e.id === id) ?? null;
@@ -248,6 +248,12 @@ export class ConnectorCatalog {
       if (safetyError) {
         log.warn(`[catalog] [${source}] entry "${detail.name}" dropped — ${safetyError}`);
         continue;
+      }
+      if (declaresBothSetupNames(detail)) {
+        log.warn(
+          `[catalog] [${source}] entry "${detail.name}" declares oauthClientSetup and ` +
+            "operatorSetup; using oauthClientSetup",
+        );
       }
       out.servers.push({ file: source, detail });
     }

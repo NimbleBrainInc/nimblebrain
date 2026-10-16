@@ -2,19 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import {
   getOAuthRedirectUri,
   type RemoteOAuthInstall,
-  setupConnectorOperator,
+  setConnectorOAuthClient,
 } from "../../api/client";
 import { safeHostname } from "../../lib/safe-url";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
 /**
- * Workspace operator OAuth app setup. The form is the same whether
+ * Workspace OAuth client setup. The form is the same whether
  * the catalog entry is being configured for the first time or
  * rotated: clientId is pre-fillable, clientSecret never echoes (we
  * don't have the plaintext server-side anyway — the credential store
  * wraps it in `Redacted`). Submitting writes both pieces atomically
- * via `manage_connectors.setup_operator`.
+ * via `manage_connectors.set_oauth_client`.
  *
  * The modal is intentionally light on chrome — focused single
  * destination for one task. The vendor portal link is the only
@@ -23,7 +23,7 @@ import { Input } from "../ui/input";
 
 /**
  * The three things this modal needs of a connector: which catalog entry to
- * write the OAuth app against, what to call it, and where the vendor's
+ * write the OAuth client against, what to call it, and where the vendor's
  * developer portal is.
  *
  * Narrower than a `CatalogListing` on purpose. Browse has a real one; the
@@ -32,23 +32,23 @@ import { Input } from "../ui/input";
  * `transportType` — objects that would be wrong if anything ever read the rest
  * of them.
  */
-export interface OperatorSetupTarget {
-  /** Catalog entry id — what `setup_operator` writes against. */
+export interface OAuthClientSetupTarget {
+  /** Catalog entry id — what `set_oauth_client` writes against. */
   id: string;
   /** Display name, for the dialog's title. */
   name: string;
   /** Vendor portal + hint + the key the client secret is stored at. */
-  operatorSetup?: RemoteOAuthInstall["operatorSetup"];
+  oauthClientSetup?: RemoteOAuthInstall["oauthClientSetup"];
 }
 
-export function OperatorSetupModal({
+export function OAuthClientSetupModal({
   entry,
   initialClientId,
   open,
   onClose,
   onSaved,
 }: {
-  entry: OperatorSetupTarget;
+  entry: OAuthClientSetupTarget;
   /** Pre-fill for the rotate case. Empty string for first-time setup. */
   initialClientId?: string;
   open: boolean;
@@ -79,7 +79,7 @@ export function OperatorSetupModal({
   }, [open, initialClientId]);
 
   // Fetch the platform's OAuth redirect URI on open so the admin can
-  // register it with the vendor's OAuth app. Without this, the admin
+  // register it with the vendor's OAuth client. Without this, the admin
   // sets up the app, hits Connect, and gets a vendor-side
   // `redirect_uri does not match` error long after they've left the
   // platform.
@@ -125,8 +125,8 @@ export function OperatorSetupModal({
 
   if (!open) return null;
 
-  const operatorSetup = entry.operatorSetup;
-  if (!operatorSetup) return null;
+  const oauthClientSetup = entry.oauthClientSetup;
+  if (!oauthClientSetup) return null;
 
   const isEdit = !!initialClientId;
   const submit = async (e: React.FormEvent) => {
@@ -138,7 +138,7 @@ export function OperatorSetupModal({
     setBusy(true);
     setError(null);
     try {
-      await setupConnectorOperator(entry.id, clientId.trim(), clientSecret.trim());
+      await setConnectorOAuthClient(entry.id, clientId.trim(), clientSecret.trim());
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -162,39 +162,39 @@ export function OperatorSetupModal({
       <div
         role="dialog"
         aria-modal="true"
-        aria-labelledby="operator-setup-title"
+        aria-labelledby="oauth-client-setup-title"
         className="relative bg-background border border-border rounded-sm shadow-xl w-full max-w-md p-5"
       >
-        <h2 id="operator-setup-title" className="text-base font-semibold">
-          {isEdit ? `Edit ${entry.name} OAuth app` : `Set up ${entry.name}`}
+        <h2 id="oauth-client-setup-title" className="text-base font-semibold">
+          {isEdit ? `Edit ${entry.name} OAuth client` : `Set up ${entry.name}`}
         </h2>
         <p className="text-xs text-muted-foreground mt-1">
           {isEdit
             ? "Rotate the OAuth client credentials for this workspace."
-            : "Configure the OAuth app once per workspace. After setup, anyone in this workspace can connect their account."}
+            : "Configure the OAuth client once per workspace. After setup, anyone in this workspace can connect their account."}
         </p>
 
         <ol className="mt-4 space-y-3 text-xs">
           <li className="flex items-start gap-2">
             <span className="font-semibold text-muted-foreground shrink-0">1.</span>
             <span>
-              Create an OAuth app at{" "}
+              Create an OAuth client at{" "}
               <a
-                href={operatorSetup.portalUrl}
+                href={oauthClientSetup.portalUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-primary hover:underline underline-offset-4"
               >
-                {safeHostname(operatorSetup.portalUrl)} ↗
+                {safeHostname(oauthClientSetup.portalUrl)} ↗
               </a>
-              .<span className="block text-muted-foreground mt-0.5">{operatorSetup.hint}</span>
+              .<span className="block text-muted-foreground mt-0.5">{oauthClientSetup.hint}</span>
             </span>
           </li>
           {redirectUri && (
             <li className="flex items-start gap-2">
               <span className="font-semibold text-muted-foreground shrink-0">2.</span>
               <span className="flex-1 min-w-0">
-                Add this redirect URI to the OAuth app's allowed redirect list:
+                Add this redirect URI to the OAuth client's allowed redirect list:
                 <span className="mt-1 flex items-center gap-2">
                   <code className="flex-1 min-w-0 truncate font-mono text-2xs px-2 py-1 rounded border border-border bg-muted text-foreground">
                     {redirectUri}
@@ -219,10 +219,10 @@ export function OperatorSetupModal({
         </ol>
 
         <form onSubmit={submit} className="mt-4 space-y-3">
-          <label className="block" htmlFor="operator-client-id">
+          <label className="block" htmlFor="oauth-client-id">
             <span className="text-xs font-medium">Client ID</span>
             <Input
-              id="operator-client-id"
+              id="oauth-client-id"
               ref={firstFieldRef}
               type="text"
               value={clientId}
@@ -235,10 +235,10 @@ export function OperatorSetupModal({
               className="mt-1 font-mono"
             />
           </label>
-          <label className="block" htmlFor="operator-client-secret">
+          <label className="block" htmlFor="oauth-client-secret">
             <span className="text-xs font-medium">Client Secret</span>
             <Input
-              id="operator-client-secret"
+              id="oauth-client-secret"
               type="password"
               value={clientSecret}
               onChange={(e) => setClientSecret(e.target.value)}

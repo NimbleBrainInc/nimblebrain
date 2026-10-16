@@ -1191,10 +1191,12 @@ function buildRunErrorData(runId: string, err: unknown): RunErrorPayload {
 interface PendingOverlayFetch {
   data: Omit<ConnectorSkillInjectedPayload, "skillBody">;
   body: Promise<string | null>;
-  /** Left out of a hold by its size cap: settled without being delivered. */
+  /** Left out by a hold's or the drain's size limit: settled without being delivered. */
   dropped?: boolean;
-  /** Counted as delivered by some hold, so no later hold may drop it. */
+  /** Counted as delivered by some hold, so neither a later hold nor the drain's cap drops it. */
   kept?: boolean;
+  /** The skill's priority (lower first), for ordering under the drain's cap. */
+  priority: number;
 }
 
 /**
@@ -1222,9 +1224,11 @@ interface SkillDelivery {
 }
 
 /**
- * Most characters of skill guidance one held call delivers: three bodies at
- * the loader's per-skill limit. Skills past it are named in the held result,
- * loadable with `nb__use_skill`, and recorded as `skill.not_delivered`.
+ * Most characters of skill guidance one delivery carries, whether a held call
+ * or an iteration's drain: three bodies at the loader's per-skill limit. Skills
+ * past it are recorded as `skill.not_delivered`. A hold names its left-out
+ * skills in the held result, loadable with `nb__use_skill`; the drain makes its
+ * left-out skills eligible again.
  */
 const MAX_HELD_GUIDANCE_CHARS = 3 * MAX_SKILL_BODY_CHARS;
 
@@ -2175,6 +2179,7 @@ export class AgentEngine {
         scope: candidate.scope,
         ...(heldToolCallId !== undefined ? { heldToolCallId } : {}),
       },
+      priority: candidate.priority ?? 50,
       body: candidate.loadBody
         ? candidate.loadBody().catch(() => null)
         : Promise.resolve(candidate.body || null),
@@ -2190,11 +2195,36 @@ export class AgentEngine {
    * body that did not arrive (`skill.not_delivered`) and make its skill
    * eligible again. A claim a hold dropped for size is neither. Emitted before
    * the next `llm.response`, so replay places each body where the live run did.
+   *
+   * One drain delivers at most {@link MAX_HELD_GUIDANCE_CHARS}, whichever path
+   * claimed its skills (a hold, a promotion, or a call that ran): bodies a hold
+   * already counted first, then the rest by priority. A body past the cap is
+   * recorded `capped` and made eligible again, so a later hold for the tool it
+   * governs, or a later drain, still delivers it: the cap bounds one delivery,
+   * it does not withhold guidance. The first body always fits, so a drain is
+   * never empty for size alone.
    */
   private async settleOverlayFetches(skills: SkillDelivery): Promise<void> {
-    for (const claim of skills.fetches) {
-      if (claim.dropped) continue;
+    const claims = skills.fetches
+      .filter((c) => !c.dropped)
+      .sort(
+        (a, b) =>
+          Number(Boolean(b.kept)) - Number(Boolean(a.kept)) ||
+          a.priority - b.priority ||
+          (a.data.skillName < b.data.skillName ? -1 : a.data.skillName > b.data.skillName ? 1 : 0),
+      );
+    let chars = 0;
+    let delivered = 0;
+    for (const claim of claims) {
       const skillBody = await claim.body;
+      if (skillBody !== null && !claim.kept && delivered > 0) {
+        if (chars + skillBody.length > MAX_HELD_GUIDANCE_CHARS) {
+          claim.dropped = true;
+          skills.injected.delete(claim.data.skillName);
+          this.emitNotDelivered(skills.runId, claim.data.toolName, claim.data.skillName, "capped");
+          continue;
+        }
+      }
       if (skillBody === null) {
         skills.injected.delete(claim.data.skillName);
         this.emitNotDelivered(
@@ -2208,6 +2238,8 @@ export class AgentEngine {
       const data = { ...claim.data, skillBody };
       this.events.emit({ type: "connector.skill.injected", data });
       skills.pending.push(data);
+      chars += skillBody.length;
+      delivered += 1;
     }
     skills.fetches.length = 0;
   }

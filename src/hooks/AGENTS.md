@@ -78,7 +78,7 @@ URL stands alone — revoked by rotating its own record, not by rotating a secre
 that governs all of them.
 
 **Registrations** live on the workspace record (`Workspace.hooks`), beside
-`oauthOperatorApps`. They hold the current and previous delivery id, the `kid`,
+`oauthClients`. They hold the current and previous delivery id, the `kid`,
 and the route. The `kid` is **correlation only** — it is what the runtime's log
 line names so an operator can line a delivery up against the URL it arrived on;
 the door never admits on it. The delivery id is never logged, because unlike a

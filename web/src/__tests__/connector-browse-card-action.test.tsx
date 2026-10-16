@@ -61,7 +61,7 @@ function render(canManage: boolean, over: Partial<Parameters<typeof CardAction>[
       busy={false}
       canManage={canManage}
       isStaticAuth={false}
-      operatorReady={true}
+      oauthClientReady={true}
       onInstall={() => {}}
       onSetUp={() => {}}
       {...over}
@@ -86,18 +86,18 @@ describe("CardAction — the install gate", () => {
   });
 });
 
-describe("CardAction — static auth awaiting operator setup", () => {
+describe("CardAction — static auth awaiting OAuth client setup", () => {
   test("an admin gets Set up", async () => {
-    mounted = await render(true, { isStaticAuth: true, operatorReady: false });
+    mounted = await render(true, { isStaticAuth: true, oauthClientReady: false });
     expect(findButton(mounted.container, "Set up")).not.toBeNull();
   });
 
-  test("a member is told the operator blocker, not just that they lack the role", async () => {
-    // The blocker here is the missing OAuth app, which no member can supply —
+  test("a member is told the OAuth client blocker, not just that they lack the role", async () => {
+    // The blocker here is the missing OAuth client, which no member can supply —
     // naming it is more useful than naming their role.
-    mounted = await render(false, { isStaticAuth: true, operatorReady: false });
+    mounted = await render(false, { isStaticAuth: true, oauthClientReady: false });
     expect(findButton(mounted.container, "Set up")).toBeNull();
-    expect(mounted.container.textContent).toContain("Operator setup required");
+    expect(mounted.container.textContent).toContain("Needs an OAuth client");
   });
 });
 
@@ -114,7 +114,7 @@ describe("CardAction — an installed entry", () => {
           canManage={canManage}
           configurePath="/w/000f7ed6658f9d30/settings/connectors/acme"
           isStaticAuth={false}
-          operatorReady={true}
+          oauthClientReady={true}
           onInstall={() => {}}
           onSetUp={() => {}}
           {...over}
@@ -137,8 +137,8 @@ describe("CardAction — an installed entry", () => {
     expect(mounted.container.textContent).not.toContain("Workspace admin required");
   });
 
-  test("outranks a pending operator setup", async () => {
-    mounted = await renderInstalled(true, { isStaticAuth: true, operatorReady: false });
+  test("outranks a pending OAuth client setup", async () => {
+    mounted = await renderInstalled(true, { isStaticAuth: true, oauthClientReady: false });
     expect(findButton(mounted.container, "Set up")).toBeNull();
     expect(findButton(mounted.container, "Installed")).not.toBeNull();
   });

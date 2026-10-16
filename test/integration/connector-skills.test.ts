@@ -13,9 +13,9 @@
  * slug and misses the short-name path.
  *
  * Then runs a chat with NO `appContext` — the failing production case — and
- * verifies the synthesized skill flows through `selectLayer3Skills` and appears
- * in the `skills.loaded` payload with `scope: "provided"` and
- * `loadedBy: "tool_affinity"`.
+ * verifies the synthesized skill is bound to the server's tools with
+ * `scope: "provided"`, waiting for a tool's first call rather than composed at
+ * turn start (ADR-0053).
  */
 
 import { afterAll, beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
@@ -34,7 +34,7 @@ import {
   materializeConnectorSkill,
 } from "../../src/skills/connector-skill-store.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
+import { asDevUser, devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
@@ -186,7 +186,7 @@ afterAll(async () => {
 });
 
 describe("connector-skill adapter — end-to-end", () => {
-  it("loads connector skill via Layer 3 tool_affined selection when tools are active (no appContext)", async () => {
+  it("binds the connector skill to its server's tools, not composed at turn start (no appContext)", async () => {
     // Run a chat WITHOUT appContext, with the slug-prefixed tool visible.
     const chat = await runtime.chat({
       identity: DEV_IDENTITY,
@@ -201,20 +201,21 @@ describe("connector-skill adapter — end-to-end", () => {
     const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
-    expect(skillsLoaded.skills.length).toBeGreaterThan(0);
+    expect(skillsLoaded.skills.some((s) => s.id === "skill://test/SKILL.md")).toBe(false);
+    expect(lastPromptText()).not.toContain("Always call test__doit before anything else.");
 
-    const connectorEntry = skillsLoaded.skills.find((s) => s.id === "skill://test/SKILL.md");
-    expect(connectorEntry).toBeDefined();
-    expect(connectorEntry?.scope).toBe("provided");
-    expect(connectorEntry?.loadedBy).toBe("tool_affinity");
-    expect(connectorEntry?.reason).toContain("ai-nimblebrain-test-mcp__*");
+    const { bound } = await asDevUser(() => runtime.describeRequestSkills(TEST_WORKSPACE_ID));
+    const connectorSkill = bound.find((s) => s.manifest.name === CONNECTOR_SKILL_NAME);
+    expect(connectorSkill).toBeDefined();
+    expect(connectorSkill?.manifest.scope).toBe("provided");
+    expect(connectorSkill?.manifest.toolAffinity).toEqual(["ai-nimblebrain-test-mcp__*"]);
   });
 
-  it("does NOT synthesize a Layer 3 skill when the connector is already on the appContext path", async () => {
+  it("does NOT bind the app-guide skill when the connector is already on the appContext path", async () => {
     // When `appContext.serverName` is the server, its `skill://<name>/SKILL.md`
     // body is already injected via `<app-guide>` by `discoverServerSkills` on
-    // the focused-app path. The Layer 3 adapter must skip that source or the
-    // same content lands in the prompt twice under two different framings.
+    // the focused-app path. Discovery must skip that skill or the same content
+    // reaches the model twice under two different framings.
     const chat = await runtime.chat({
       identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
@@ -228,7 +229,7 @@ describe("connector-skill adapter — end-to-end", () => {
     const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     expect(skillsLoaded).toBeDefined();
     const connectorEntry = skillsLoaded.skills.find((s) => s.id === "skill://test/SKILL.md");
-    // The skill is gone from Layer 3 — `<app-guide>` is now its only home.
+    // `<app-guide>` is its only home.
     expect(connectorEntry).toBeUndefined();
   });
 
@@ -311,11 +312,9 @@ describe("connector-skill adapter — end-to-end", () => {
 
   it("discovers the workspace's connector skills once per turn", async () => {
     // A turn needs both halves of the connector-skill partition: the `always` half
-    // for the context channel and the tool-affined half twice over — once for
-    // Layer-3 selection, once as surface-once promotion candidates. Those came
-    // from two independent discoveries, so every turn walked the registry and
-    // re-synthesized every skill a second time to recover a set it had just
-    // computed and dropped.
+    // for the context channel and the tool-affined half for the catalog and the
+    // engine's bound-skill candidates. Two independent discoveries would walk
+    // the registry and re-synthesize every skill a second time each turn.
     //
     // Counting MCP round-trips would not catch a regression here: the 5-minute
     // `skillResourceCache` absorbs the second discovery's `resources/list`, so
@@ -344,11 +343,10 @@ describe("connector-skill adapter — end-to-end", () => {
 /**
  * Mid-turn promotion path.
  *
- * Turn-start Layer-3 selection only matches the tools active at turn start, so a
- * server whose tool is behind PROGRESSIVE DISCLOSURE — activated mid-turn via
- * `nb__manage_tools` — never matches, and its connector skill never loads. The fix
- * feeds connector skills into the surface-once connector-skill channel and fires it
- * on tool PROMOTION, so the guidance arrives the moment the tool goes live.
+ * A server whose tool is behind PROGRESSIVE DISCLOSURE — activated mid-turn via
+ * `nb__manage_tools` — is not in the turn-start tool set. Its connector skills
+ * feed the surface-once connector-skill channel, which fires on tool PROMOTION,
+ * so the guidance arrives the moment the tool goes live.
  *
  * This uses its own Runtime with a SCRIPTED model (the shared capturing model
  * has no response queue): turn 1 promotes the fixture tool, turn 2 finishes
@@ -372,7 +370,7 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
     const model = createEchoModel({
       responses: [
         // Turn 1: promote the fixture tool mid-turn. Its tools are NOT in the
-        // turn-start active set, so turn-start Layer-3 selection missed the skill.
+        // turn-start active set.
         {
           toolCalls: [
             {
@@ -432,8 +430,7 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
     const store = await promoRuntime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
 
-    // Regression precondition: the connector skill did NOT load at turn start — its
-    // tool wasn't active, so turn-start Layer-3 selection couldn't match it.
+    // Precondition: the connector skill did NOT load at turn start.
     const skillsLoaded = firstStoredEvent(events, "skills.loaded");
     const turnStartConnector = skillsLoaded?.skills.find((s) => s.id === "skill://test/SKILL.md");
     expect(turnStartConnector).toBeUndefined();
@@ -473,8 +470,8 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
  *   - `skill://dynamic-usage/SKILL.md` → declares nothing (defaults to `dynamic`)
  *
  * The `always` skill must compose into context EVERY turn, even when none of the
- * server's tools are in the active set (the exact case turn-start Layer-3
- * selection can't cover). The `dynamic` skill must stay tool-gated. Both must be
+ * server's tools are in the active set. The `dynamic` skill must stay
+ * tool-gated. Both must be
  * discovered from the same `resources/list`.
  */
 const ALWAYS_SKILL_BODY = `---
@@ -601,7 +598,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
 
   it("composes the `always` skill into context even when the server's tools are NOT active", async () => {
     multiPrompt = undefined;
-    // No server tools active — the case turn-start Layer-3 selection can't cover.
+    // No server tools active.
     const chat = await multiRuntime.chat({
       identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
@@ -616,9 +613,8 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     expect(prompt).not.toContain("DYNAMIC_USAGE_MARKER");
 
     // It rides the always-on context channel, so it is reported in `skills.loaded`
-    // as an always-on entry (`loadedBy: "always"`, layer 0) — NOT a tool-affinity
-    // (Layer-3) selection. The Context Ledger surfaces it as workspace/connector
-    // context the user configured.
+    // as an always-on entry (`loadedBy: "always"`, layer 0). The Context Ledger
+    // surfaces it as workspace/connector context the user configured.
     const store = await multiRuntime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = firstStoredEvent(events, "skills.loaded");
@@ -627,7 +623,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     expect(always?.layer).toBe(0);
   });
 
-  it("loads the `dynamic` skill via Layer 3 when its tool is active, alongside the always skill in context", async () => {
+  it("keeps the `dynamic` skill for its tool's first call when the tool is active, beside the always skill in context", async () => {
     multiPrompt = undefined;
     const chat = await multiRuntime.chat({
       identity: DEV_IDENTITY,
@@ -637,30 +633,27 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     });
 
     const prompt = multiPromptText();
-    // Both skills are now discovered and present in the prompt: the always one in
-    // context, the dynamic one via Layer-3 tool-affinity.
+    // The always skill is in context; the dynamic one waits for its tool's
+    // first call, even with the tool direct from turn start.
     expect(prompt).toContain("ALWAYS_ON_WORKFLOW_MARKER");
-    expect(prompt).toContain("DYNAMIC_USAGE_MARKER");
+    expect(prompt).not.toContain("DYNAMIC_USAGE_MARKER");
 
     const store = await multiRuntime.resolveConversationStore(chat.conversationId);
     const events = await store!.readEvents(chat.conversationId);
     const skillsLoaded = firstStoredEvent(events, "skills.loaded");
-    // The dynamic skill loads via Layer-3 tool-affinity; the always skill via the
-    // always-on channel — both now reported, distinguished by `loadedBy`.
+    // Only the always skill is recorded at turn start.
     const dynamicEntry = skillsLoaded?.skills.find(
       (s) => s.id === "skill://dynamic-usage/SKILL.md",
     );
-    expect(dynamicEntry?.scope).toBe("provided");
-    expect(dynamicEntry?.loadedBy).toBe("tool_affinity");
+    expect(dynamicEntry).toBeUndefined();
     const alwaysEntry = skillsLoaded?.skills.find((s) => s.id === "skill://always-guide/SKILL.md");
     expect(alwaysEntry?.loadedBy).toBe("always");
   });
 
   it("composes the `always` skill into an unattended task's context too (parity with chat)", async () => {
-    // `_taskInner` routes connector skills through the same `selectRequestLayer3` +
-    // `[...poolContext, ...connectorContext]` glue as `_chatInner`, so an `always`
-    // discovered skill must reach a scheduled/unattended run's context even with
-    // no server tools active — the exact case turn-start Layer-3 can't cover.
+    // A task run composes through the same run-start door as chat, so an
+    // `always` discovered skill must reach a scheduled/unattended run's context
+    // even with no server tools active.
     multiPrompt = undefined;
     const result = await multiRuntime.executeTask({
       identity: DEV_IDENTITY,
@@ -838,24 +831,14 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
     }
   });
 
-  it("loads a published skill only for the tools it declares", async () => {
-    const loadedFor = async (tool: string): Promise<string[]> => {
-      const chat = await affinityRuntime.chat({
-        identity: DEV_IDENTITY,
-        workspaceId: TEST_WORKSPACE_ID,
-        message: "go",
-        allowedTools: [`${AFFINITY_SERVER}__${tool}`],
-      });
-      const store = await affinityRuntime.resolveConversationStore(chat.conversationId);
-      const events = await store!.readEvents(chat.conversationId);
-      const loaded = firstStoredEvent(events, "skills.loaded");
-      return loaded?.skills.map((s) => s.id) ?? [];
-    };
-
+  it("binds a published skill only to the tools it declares", async () => {
+    const { bound } = await asDevUser(() =>
+      affinityRuntime.describeRequestSkills(TEST_WORKSPACE_ID),
+    );
     // `writing` declares `draft_email`; without its declared affinity it would
     // be bound to every tool of the server and load for `send_email` too.
-    expect(await loadedFor("draft_email")).toContain("skill://writing/SKILL.md");
-    expect(await loadedFor("send_email")).not.toContain("skill://writing/SKILL.md");
+    const writing = bound.find((s) => s.sourcePath === "skill://writing/SKILL.md");
+    expect(writing?.manifest.toolAffinity).toEqual([`${AFFINITY_SERVER}__draft_email`]);
   });
 
   it("never loads a published skill that declares an empty tool-affinity", async () => {
@@ -871,5 +854,10 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
       const loaded = firstStoredEvent(events, "skills.loaded");
       expect(loaded?.skills.map((s) => s.id) ?? []).not.toContain("skill://reference/SKILL.md");
     }
+    // Catalog-only: bound to no tool, so no call is held for it.
+    const { bound } = await asDevUser(() =>
+      affinityRuntime.describeRequestSkills(TEST_WORKSPACE_ID),
+    );
+    expect(bound.some((s) => s.sourcePath === "skill://reference/SKILL.md")).toBe(false);
   });
 });

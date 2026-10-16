@@ -79,7 +79,7 @@ type CatalogEntry = NonNullable<InstalledConnector["catalog"]>;
 
 function installed(
   overrides: Partial<
-    Pick<CatalogEntry, "auth" | "secretHeaders" | "providerAuth" | "operatorSetup">
+    Pick<CatalogEntry, "auth" | "secretHeaders" | "providerAuth" | "oauthClientSetup">
   >,
 ): InstalledConnector {
   return {
@@ -101,7 +101,7 @@ function installed(
       auth: overrides.auth ?? "provider",
       ...(overrides.secretHeaders ? { secretHeaders: overrides.secretHeaders } : {}),
       ...(overrides.providerAuth ? { providerAuth: overrides.providerAuth } : {}),
-      ...(overrides.operatorSetup ? { operatorSetup: overrides.operatorSetup } : {}),
+      ...(overrides.oauthClientSetup ? { oauthClientSetup: overrides.oauthClientSetup } : {}),
     },
   };
 }
@@ -250,12 +250,12 @@ describe("UninstallConnectorDialog — what it names", () => {
     expect(popup()?.textContent).not.toContain("will be deleted");
   });
 
-  test("a static-auth connector names its operator client secret", async () => {
+  test("a static-auth connector names its OAuth client secret", async () => {
     listResult = async () => ({ keys: [{ key: "acme.client_secret", updatedAt: HOUR_AGO }] });
     mounted = await open(
       installed({
         auth: "static",
-        operatorSetup: {
+        oauthClientSetup: {
           portalUrl: "https://developer.acme.test",
           hint: "Register an app",
           clientSecretKey: "acme.client_secret",

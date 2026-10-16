@@ -210,14 +210,16 @@ describe("a task's declared skills", () => {
 
     const first = promptText(prompts[0] ?? []);
     expect(first).toContain(RUNBOOK_MARKER);
-    // Narrowed to its tool, the bound skill is composed by tool affinity, so
-    // the declaration adds no second copy.
+    // A declared bound skill composes once, by its declaration.
     expect(occurrences(first, BOUND_MARKER)).toBe(1);
     expect(first).toContain("load it with `nb__use_skill`");
     // The bound skill was declared, so its tool's first call is not held for it.
     expect(prompts.some((p) => promptText(p).includes(`Not run: ${RECORD}`))).toBe(false);
     expect(executed).toBe(1);
-    expect(result.skillsDelivered).toEqual([{ name: "ledger-runbook", loadedBy: "declared" }]);
+    expect(result.skillsDelivered).toEqual([
+      { name: "ledger-runbook", loadedBy: "declared" },
+      { name: "record-rules", loadedBy: "declared" },
+    ]);
   });
 
   it("sit in the cached system prefix, shared by runs with different inputs", async () => {

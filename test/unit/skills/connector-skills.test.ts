@@ -4,8 +4,8 @@
  * The pure functions — `discoveredSkillFromEntry`, `parseSkillMarkdown`,
  * `synthesizeConnectorSkill`, and `hydrateSkill` — are the discovery + synthesis
  * primitives the runtime
- * composes. Combined with `selectLayer3Skills`, we verify end-to-end selection
- * behavior (active toolset → skill loads) without spinning up a Runtime.
+ * composes. Combined with `toolMatches`, we verify which tools a synthesized
+ * skill binds without spinning up a Runtime.
  */
 
 import { describe, expect, spyOn, test } from "bun:test";
@@ -22,11 +22,7 @@ import {
   unmatchedToolAffinity,
 } from "../../../src/skills/connector-skills.ts";
 import { SkillMatcher } from "../../../src/skills/matcher.ts";
-import {
-  partitionSkillsByRole,
-  selectLayer3Skills,
-  toolMatches,
-} from "../../../src/skills/select.ts";
+import { partitionSkillsByRole, toolMatches } from "../../../src/skills/select.ts";
 import type { SkillBodyLoad } from "../../../src/skills/types.ts";
 
 describe("discoveredSkillFromEntry", () => {
@@ -521,23 +517,9 @@ describe("partitionSkillsByRole routes synthesized connector skills by declared 
     expect(context.map((s) => s.manifest.name)).toEqual(["connector:foo:workflow"]);
     expect(capability.map((s) => s.manifest.name)).toEqual(["connector:bar:usage"]);
   });
-
-  test("an `always` connector skill is NOT selected by tool-affinity even when its tools are active", () => {
-    const always = synthesizeConnectorSkill({
-      serverName: "foo",
-      skillName: "workflow",
-      description: "",
-      body: "# always",
-      uri: "skill://workflow/SKILL.md",
-      loadingStrategy: "always",
-    });
-    // It rides the context channel unconditionally, so Layer 3 must skip it.
-    const result = selectLayer3Skills({ skills: [always], activeTools: ["foo__do_it"] });
-    expect(result).toHaveLength(0);
-  });
 });
 
-describe("selectLayer3Skills with server skills", () => {
+describe("server skill bindings", () => {
   function skill(serverName: string, skillName = serverName) {
     return synthesizeConnectorSkill({
       serverName,
@@ -547,32 +529,16 @@ describe("selectLayer3Skills with server skills", () => {
       uri: `skill://${skillName}/SKILL.md`,
     });
   }
+  const binds = (s: ReturnType<typeof skill>, tool: string): boolean =>
+    (s.manifest.toolAffinity ?? []).some((p) => toolMatches(tool, p));
 
-  test("loads a server skill when any matching tool is in the active toolset", () => {
-    const result = selectLayer3Skills({
-      skills: [skill("foo")],
-      activeTools: ["foo__do_it", "other__noop"],
-    });
-    expect(result).toHaveLength(1);
-    expect(result[0]?.skill.manifest.name).toBe("connector:foo:foo");
-    expect(result[0]?.loadedBy).toBe("tool_affinity");
-    expect(result[0]?.reason).toContain("foo__*");
+  test("a server skill binds every tool of its own server", () => {
+    expect(skill("foo").manifest.toolAffinity).toEqual(["foo__*"]);
+    expect(binds(skill("foo"), "foo__do_it")).toBe(true);
+    expect(binds(skill("foo"), "other__do_it")).toBe(false);
   });
 
-  test("does NOT load when no matching tool is in the active toolset", () => {
-    const result = selectLayer3Skills({
-      skills: [skill("foo")],
-      activeTools: ["other__do_it", "another__noop"],
-    });
-    expect(result).toHaveLength(0);
-  });
-
-  test("does NOT load when the toolset is empty", () => {
-    const result = selectLayer3Skills({ skills: [skill("foo")], activeTools: [] });
-    expect(result).toHaveLength(0);
-  });
-
-  test("a skill declaring tool-affinity loads only for the tools it names", () => {
+  test("a skill declaring tool-affinity binds only the tools it names", () => {
     const writing = synthesizeConnectorSkill({
       serverName: "acme",
       skillName: "writing",
@@ -582,20 +548,13 @@ describe("selectLayer3Skills with server skills", () => {
       toolAffinity: ["draft_email"],
     });
     expect(writing.manifest.toolAffinity).toEqual(["acme__draft_email"]);
-    expect(
-      selectLayer3Skills({ skills: [writing], activeTools: ["acme__draft_email"] }),
-    ).toHaveLength(1);
-    expect(
-      selectLayer3Skills({ skills: [writing], activeTools: ["acme__update_settings"] }),
-    ).toHaveLength(0);
+    expect(binds(writing, "acme__draft_email")).toBe(true);
+    expect(binds(writing, "acme__update_settings")).toBe(false);
   });
 
-  test("each server's skill matches only its own tools", () => {
-    const result = selectLayer3Skills({
-      skills: [skill("synapse-collateral"), skill("synapse-crm")],
-      activeTools: ["synapse-collateral__patch_source"],
-    });
-    expect(result).toHaveLength(1);
-    expect(result[0]?.skill.manifest.name).toBe("connector:synapse-collateral:synapse-collateral");
+  test("each server's skill binds only its own tools", () => {
+    const collateral = skill("synapse-collateral");
+    expect(binds(collateral, "synapse-collateral__patch_source")).toBe(true);
+    expect(binds(skill("synapse-crm"), "synapse-collateral__patch_source")).toBe(false);
   });
 });

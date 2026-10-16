@@ -288,11 +288,11 @@ describe("server-published skill triggers", () => {
     expect(chat.skillName).toBe(WS_SKILL_NAME);
   });
 
-  it("composes the skill ONCE when both tool-affinity and a trigger reach it", async () => {
-    // With the server's tool active, tool-affinity selects the skill into
-    // <layer3-skill> AND the phrase matches. Synthesis stamps
-    // `toolAffinity: ["<server>__*"]` on every published skill, so this overlap
-    // is the ordinary case, not a corner. The body must not be paid for twice.
+  it("composes a bound skill ONCE, by its trigger, when the phrase matches", async () => {
+    // Synthesis stamps `toolAffinity: ["<server>__*"]` on every published
+    // skill, so a triggered skill is also bound to its server's tools. The
+    // trigger composes it; the binding waits for the tool's first call and
+    // does not deliver it a second time (ADR-0053).
     lastPrompt = undefined;
     const chat = await runtime.chat({
       identity: DEV_IDENTITY,
@@ -306,11 +306,11 @@ describe("server-published skill triggers", () => {
 
     const prompt = lastPromptText();
     expect(countOccurrences(prompt, CAPTURE_BODY_MARKER)).toBe(1);
-    // Layer 3 is the surviving channel, matching the load ledger's precedence.
-    expect(prompt).not.toContain("<skill-instructions>");
+    expect(prompt).toContain("<skill-instructions>");
+    expect(prompt).not.toContain("<layer3-skill>");
 
     const entry = loadedFor(await loadedSkills(chat.conversationId), "skill://capture/SKILL.md");
-    expect(entry?.loadedBy).toBe("tool_affinity");
+    expect(entry?.loadedBy).toBe("trigger");
   });
 });
 

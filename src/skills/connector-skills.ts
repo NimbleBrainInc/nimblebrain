@@ -23,10 +23,10 @@
  *   extension forbids fetching a skill's files ahead of need — so the `Skill`
  *   carries a `loadBody` the composer resolves through `hydrateSkill`. The
  *   synthesized skill flows through `partitionSkillsByRole`: a `dynamic` skill
- *   routes to the `selectLayer3Skills` capability channel, tool-affined to the
- *   server's tools it declares, or to `<serverName>__*` when it declares none
- *   (`connectorToolAffinity`), and loads when a matching tool is in the active
- *   toolset; an `always` skill routes to the always-on context
+ *   is tool-affined to the server's tools it declares, or to `<serverName>__*`
+ *   when it declares none (`connectorToolAffinity`), and reaches the model
+ *   before the first call to a matching tool (ADR-0053); an `always` skill
+ *   routes to the always-on context
  *   channel (composed every turn, the same path filesystem `always` skills use).
  *
  *   Loading config is READ from the skill's frontmatter, not invented: a server
@@ -377,9 +377,8 @@ export interface ConnectorSkillInput {
  * skill DECLARES:
  *  - `dynamic` (the default when none is declared): tool-affined to the tools
  *    it declares, prefixed `<serverName>__` ({@link connectorToolAffinity}), or
- *    to `<serverName>__*` when it declares none. It loads via
- *    `selectLayer3Skills` when a matching tool is in the active toolset, and is
- *    delivered mid-turn when a matching tool is promoted or called.
+ *    to `<serverName>__*` when it declares none. It is delivered when a
+ *    matching tool is promoted, or before the first call to one (ADR-0053).
  *  - `always`: composed into the always-on context channel every turn (routed
  *    there by `partitionSkillsByRole`). `toolAffinity` is still stamped but
  *    unused on this path — the context channel is unconditional.
@@ -395,13 +394,9 @@ export interface ConnectorSkillInput {
  * fetch, parse, and cache. Keeping the synthesis pure means it's trivial to
  * unit-test the manifest shape without spinning up a registry.
  *
- * Observability contract: when a `dynamic` skill is selected by
- * `selectLayer3Skills`, `buildSkillsLoadedPayload` emits it on the
- * `skills.loaded` event with `id = <uri>`, `scope = "provided"`,
- * `loadedBy = "tool_affinity"` — byte-identical in payload structure to any
- * filesystem-sourced Layer 3 skill with the same scope / strategy, plus
- * `name` / `connector` split out of the manifest name so a reader gets the
- * skill's own name and who published it.
+ * Observability contract: a delivered `dynamic` skill is recorded by
+ * `connector.skill.injected` under its manifest name, from which a reader
+ * splits the publishing connector and the skill's own name.
  */
 export function synthesizeConnectorSkill(input: ConnectorSkillInput): Skill {
   const { serverName, skillName, description, uri, loadingStrategy, priority, triggers } = input;

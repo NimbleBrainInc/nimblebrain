@@ -4,10 +4,11 @@
  * bundle's own published skill and a workspace skill bound to the bundle's tool
  * reach the model on the same call.
  *
- * The test reads the outcome, not the mechanism: at the moment the fixture
- * server executes `draft_email`, the prompt the model acted on must already
- * carry both bodies. A turn-start composition or a held first call both satisfy
- * it; delivering the guidance after the call does not.
+ * At the moment the fixture server executes `draft_email`, the prompt the model
+ * acted on must already carry both bodies; delivering the guidance after the
+ * call does not satisfy it. A turn that never calls the tool composes neither
+ * body, so the cached system prefix is the same whatever tools the turn starts
+ * with.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -32,6 +33,7 @@ const SERVER = "ai-nimblebrain-fixture-outreach";
 const DRAFT = `${SERVER}__draft_email`;
 const BUNDLE_MARKER = "BUNDLE-DRAFTING-RULES-MARKER";
 const TENANT_MARKER = "TENANT-COPY-RULES-MARKER";
+const GREETING = "hey there";
 
 const SKILL_URI = "skill://drafting/SKILL.md";
 const SKILL_MD = [
@@ -47,12 +49,27 @@ const SKILL_MD = [
   `# Drafting\n\n${BUNDLE_MARKER}`,
 ].join("\n");
 
+/** The bundle's guide: listed first, so it rides `<app-guide>` when the app is focused. */
+const GUIDE_URI = "skill://outreach/SKILL.md";
+const GUIDE_MARKER = "BUNDLE-APP-GUIDE-MARKER";
+const GUIDE_MD = [
+  "---",
+  "name: outreach",
+  "description: What the outreach app does.",
+  "metadata:",
+  "  nimblebrain:",
+  "    tool-affinity: []",
+  "---",
+  "",
+  `# Outreach\n\n${GUIDE_MARKER}`,
+].join("\n");
+
 /** Prompts the model was called with, and the prompt index each execution followed. */
 let prompts: LanguageModelV4CallOptions["prompt"][] = [];
 let executedAfterPrompt: number[] = [];
 
 function createFixtureServer(): Server {
-  const bodies: Record<string, string> = { [SKILL_URI]: SKILL_MD };
+  const bodies: Record<string, string> = { [GUIDE_URI]: GUIDE_MD, [SKILL_URI]: SKILL_MD };
   const server = new Server(
     { name: "outreach", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
@@ -111,6 +128,11 @@ function draftingModel() {
     const lastTool = options.prompt.findLast((m) => m.role === "tool");
     const ran = lastTool !== undefined && promptText([lastTool]).includes("drafted");
     if (ran) return { content: [{ type: "text", text: "Drafted the email." }] };
+    // A greeting calls no tool.
+    const lastUser = options.prompt.findLast((m) => m.role === "user");
+    if (lastUser && promptText([lastUser]).includes(GREETING)) {
+      return { content: [{ type: "text", text: "Hello." }] };
+    }
     return {
       content: [
         {
@@ -219,6 +241,9 @@ describe("a bound skill governs its tool's first call", () => {
       message: "write the intro email",
       allowedTools: [DRAFT],
     });
+    // A direct tool composes nothing up front either: the first call is held.
+    expect(promptText(prompts[0] ?? [])).not.toContain(BUNDLE_MARKER);
+    expect(prompts.some((p) => promptText(p).includes(`Not run: ${DRAFT}`))).toBe(true);
     const text = promptAtFirstExecution();
     expect(text).toContain(BUNDLE_MARKER);
     expect(text).toContain(TENANT_MARKER);
@@ -236,5 +261,44 @@ describe("a bound skill governs its tool's first call", () => {
     const text = promptAtFirstExecution();
     expect(text).toContain(BUNDLE_MARKER);
     expect(text).toContain(TENANT_MARKER);
+  });
+});
+
+describe("a turn that calls no bound tool", () => {
+  /** The system message of the first model call: the cached prefix. */
+  function systemOf(p: LanguageModelV4CallOptions["prompt"] | undefined): string {
+    const system = p?.find((m) => m.role === "system");
+    return typeof system?.content === "string" ? system.content : "";
+  }
+
+  async function greet(allowedTools?: string[]): Promise<LanguageModelV4CallOptions["prompt"]> {
+    prompts = [];
+    executedAfterPrompt = [];
+    await runtime.chat({
+      identity: DEV_IDENTITY,
+      workspaceId: TEST_WORKSPACE_ID,
+      message: GREETING,
+      appContext: { appName: "outreach", serverName: SERVER },
+      ...(allowedTools ? { allowedTools } : {}),
+    });
+    expect(executedAfterPrompt).toHaveLength(0);
+    return prompts[0] ?? [];
+  }
+
+  it("composes the app guide and no bound skill, with the bound tool focused and direct", async () => {
+    const text = promptText(await greet([DRAFT]));
+    expect(text).toContain(GUIDE_MARKER);
+    expect(text).not.toContain(BUNDLE_MARKER);
+    expect(text).not.toContain(TENANT_MARKER);
+    expect(text).not.toContain("<layer3-skill>");
+  });
+
+  it("keeps the cached prefix byte-identical whatever tools the turn starts with", async () => {
+    const direct = systemOf(await greet([DRAFT]));
+    const proxied = systemOf(await greet(["nb__*"]));
+    const everything = systemOf(await greet());
+    expect(direct.length).toBeGreaterThan(0);
+    expect(proxied).toBe(direct);
+    expect(everything).toBe(direct);
   });
 });

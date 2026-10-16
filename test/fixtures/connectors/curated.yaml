@@ -34,7 +34,7 @@ servers:
         requiredScopes:
           - files.metadata.read
           - files.content.read
-        operatorSetup:
+        oauthClientSetup:
           portalUrl: https://www.dropbox.com/developers/apps
           hint: Create a Scoped Access app, add the redirect URI, paste App key + secret
           clientSecretKey: dropbox.client_secret

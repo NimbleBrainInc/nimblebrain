@@ -99,8 +99,9 @@ Every skill declares exactly one strategy (under `metadata.nimblebrain`):
     write the description to say **what the skill does AND when to use it**
     (fold in the words a user would actually say). Always available; needs
     no extra field.
-  - **`tool-affinity`** — auto-activates when a tool in the active set
-    glob-matches an entry. Use for skills bound to specific tools / connectors.
+  - **`tool-affinity`** — reaches the model before the first call to a tool
+    that glob-matches an entry. Use for skills bound to specific tools /
+    connectors.
   - **`triggers`** — exact-phrase substring match, for deterministic
     "must-fire" activation (e.g. a compliance skill that must load the moment
     a regulated action is named, rather than relying on the model noticing
@@ -121,7 +122,8 @@ skill is never reached for.
 
 ## `tool-affinity` patterns
 
-`tool-affinity` is a list of globs matched against the active tool set:
+`tool-affinity` is a list of globs matched against the name of each tool
+called:
 
 - `synapse-collateral__*` — any tool from one connector.
 - `synapse-collateral__*` plus `synapse-research__*` — across connectors (the

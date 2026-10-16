@@ -1,6 +1,6 @@
 # 0018. Where each skill channel sits relative to the cache breakpoints
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-03
 - Serves: manage skills
 
@@ -78,3 +78,33 @@ and by what. Turns the question from a design argument into a reading.
   byte-stability is a property of how the code is written, not something a test
   asserts. Whatever is decided, the decision is only durable if something fails
   when a future field breaks it.
+
+## Decision
+
+**No section of the system prompt depends on the turn's tool set.** Bound
+skills left the system prompt: a `dynamic` skill with `tool-affinity` reaches
+the model before its tool's first call, as a message in the conversation
+(ADR-0053), never by turn-start selection. That removes the one stable-classed
+section whose bytes moved with the tool set, so option B's cost never arises
+and option A's open question is closed.
+
+The stable prefix is the `always` skills, the catalog, and a task run's
+declared skills, which are the same on every run of the task. Each changes only
+when a skill is authored, installed, muted or declared.
+
+The byte-stability is asserted, not assumed (option D's durable half): a chat
+turn's system message is compared across turns that start with a bound tool
+direct, proxied, and with every tool available, and must be byte-identical
+(`test/integration/skill-before-call.test.ts`).
+
+## Consequences
+
+- The system prompt's bytes no longer move with the tool set. The tools block
+  still does: it precedes the system prompt in the cached prefix, so a tool set
+  that changes mid-conversation misses the cache from the tools breakpoint on
+  (`src/model/cache-policy.ts`). That cost belongs to the tool set, not to any
+  skill channel.
+- A bound body is paid for once, in the cached history, from the turn it is
+  needed onward, instead of in the prefix of every turn whose tool set matched.
+- Option C (order sections by volatility) and the attribution half of option D
+  remain open, but no known section motivates them.

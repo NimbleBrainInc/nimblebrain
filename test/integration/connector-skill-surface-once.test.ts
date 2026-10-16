@@ -1,24 +1,16 @@
 /**
- * A published skill the turn already composed is not re-delivered by the
- * surface-once channel.
+ * A published skill reaches the model once, before the first call to a tool it
+ * is bound to, whether or not the tool was direct at turn start.
  *
- * `connectorSkillCandidates` carries the workspace's `dynamic` published skills so
- * one can reach the model when its tools are promoted MID-turn — after Layer 3 has
- * already selected. The channel only makes sense for skills Layer 3 could not
- * select. A skill it did select is in `<layer3-skill>` for the turn, so delivering
- * it again as a synthetic message pays for the same body twice and leaves it in
- * history for the rest of the conversation.
- *
- * That was the behavior, and it was the ordinary case rather than a corner:
- * `selectLayer3Skills` matches the very `<server>__*` glob synthesis stamps on every
- * published skill, so both channels select on identical criteria. Because the glob
- * is per-SERVER, one tool call re-delivered every skill that server published — not
- * only the one whose tool was called.
+ * `connectorSkillCandidates` carries the workspace's `dynamic` published skills;
+ * the engine holds the first call to a bound tool and delivers them (ADR-0053).
+ * Synthesis stamps a per-SERVER `<server>__*` glob on every published skill, so
+ * one call to one tool delivers every skill that server published. Each must
+ * arrive exactly once, and none may sit in the system prompt at turn start.
  *
  * The model here is SCRIPTED, not the echo model: it emits a real tool call on the
- * first pass. That is the whole point. The surface-once hook fires from inside tool
- * execution, so a model that never calls a tool cannot reach this path, which is how
- * the duplication survived the existing connector-skill suite.
+ * first pass. That is the whole point. The hold fires from inside tool execution,
+ * so a model that never calls a tool cannot reach this path.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -172,11 +164,11 @@ afterAll(async () => {
 });
 
 describe("published skills and the surface-once channel", () => {
-  it("does not re-deliver a skill Layer 3 already composed, on any pass of the turn", async () => {
+  it("holds a direct tool's first call and delivers its bound skills once", async () => {
     prompts = [];
     modelCalls = 0;
-    // The server's tool is direct, so Layer 3 selects BOTH published skills at
-    // turn start (one `<server>__*` glob covers the pair).
+    // The server's tool is direct from turn start. Its skills still wait for
+    // its first call: the prompt carries no bound skill body.
     await runtime.chat({
       identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
@@ -185,23 +177,23 @@ describe("published skills and the surface-once channel", () => {
     });
 
     // Sanity: the turn genuinely exercised the path. Without a real tool call the
-    // surface-once hook never runs and this test proves nothing.
+    // hold never runs and this test proves nothing.
     expect(modelCalls).toBeGreaterThan(1);
-    expect(promptText(prompts[0] ?? [])).toContain("<layer3-skill>");
+    expect(promptText(prompts[0] ?? [])).not.toContain("<layer3-skill>");
+    expect(promptText(prompts[0] ?? [])).not.toContain(MARKER_A);
 
-    // The called tool's own skill: composed once, and still once after the call.
+    // The called tool's own skill: delivered once.
     expect(peakOccurrences(MARKER_A)).toBe(1);
     // Its neighbour on the same server: the affinity glob is per-SERVER, so this
     // is the one that could double without any tool of its own being called.
     expect(peakOccurrences(MARKER_B)).toBe(1);
   });
 
-  it("delivers a skill Layer 3 could NOT select before its tool's first call runs", async () => {
+  it("delivers a promoted tool's skill before its first call runs", async () => {
     prompts = [];
     modelCalls = 0;
     // `allowedTools` excludes the server's tool, so it is not in the active set at
-    // turn start and Layer 3 selects neither skill — the exact case the channel
-    // exists for. The model promotes and calls it mid-turn.
+    // turn start. The model promotes and calls it mid-turn.
     const chat = await runtime.chat({
       identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
@@ -249,7 +241,7 @@ describe("published skills and the surface-once channel", () => {
     });
 
     expect(modelCalls).toBeGreaterThan(1);
-    expect(promptText(prompts[0] ?? [])).toContain("<layer3-skill>");
+    expect(promptText(prompts[0] ?? [])).not.toContain(MARKER_A);
     expect(peakOccurrences(MARKER_A)).toBe(1);
     expect(peakOccurrences(MARKER_B)).toBe(1);
   });
