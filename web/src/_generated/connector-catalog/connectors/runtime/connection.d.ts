@@ -27,10 +27,12 @@ export declare const WORKSPACE_PRINCIPAL_ID = "_workspace";
  *   reauth_required     → pending_auth        (user clicked Reconnect after RT failure)
  *   pending_auth        → running             (callback succeeded; tokens stored)
  *   pending_auth        → dead                (callback failed or 15s timeout)
+ *   pending_auth        → reauth_required     (callback failed while `auth_lost` is set)
  *   starting            → running             (boot succeeded with persisted tokens)
  *   starting            → reauth_required     (boot failed; refresh token rejected)
  *   starting            → dead                (other transport / network failure)
- *   running             → reauth_required     (refresh failed mid-session)
+ *   running             → reauth_required     (refresh failed mid-session, or the revalidator
+ *                                              found a broker's credential gone)
  *   running             → crashed             (transport error; HealthMonitor may recover)
  *   running             → not_authenticated   (user clicked Disconnect)
  *   crashed             → running             (HealthMonitor recovered)
@@ -74,7 +76,9 @@ export type ConnectionState = "starting" | "running" | "crashed" | "dead" | "sto
  * affordance ("your previously-working connection broke") and from
  * `dead` so the UI knows reconnection is the recovery path. The distinction
  * survives a restart through the `auth_lost` OAuth record
- * (`src/tools/mcp-oauth-records.ts`).
+ * (`src/tools/mcp-oauth-records.ts`). Only the user's Reconnect leaves it:
+ * `HealthMonitor` and `tryRecoverSource` do not restart such a connection,
+ * and `nb_connector_reauth_required` counts it.
  */
  | "reauth_required";
 /**

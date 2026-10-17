@@ -115,6 +115,18 @@ A few properties worth knowing:
 
 In Kubernetes, point a `ServiceMonitor` (or your scrape config) at the platform service's `/metrics` path. Do not expose it to the internet.
 
+### Connector metrics
+
+Two gauges say whether a connector works, and they cover different faults, so alert on each:
+
+| Metric | Type | Labels | What it says |
+|---|---|---|---|
+| `nb_connector_unhealthy` | gauge | `source` | `1` while a connector's transport is down and the runtime is reconnecting it. No series for a connector that is up. A transport outage only: a connector whose sign-in was rejected is not counted here. |
+| `nb_connector_reauth_required` | gauge | `source` | The number of connections of a connector that need someone to **Reconnect** because the service rejected its credential. No series when none do. It stays set across a restart and clears only on Reconnect or Disconnect; the runtime does not retry these connections on its own. |
+| `nb_connector_crashed_total` | counter | `source`, `remote` | Health checks that found a connector's transport down. A rate for dashboards; use `nb_connector_unhealthy` to alert on a connector that stays down. |
+
+`source` is the connector's server name. Personal connectors are not counted by either gauge.
+
 ### Task run metrics
 
 | Metric | Type | Labels | What it says |
@@ -184,4 +196,4 @@ To see more than liveness:
 | To confirm | Read |
 |---|---|
 | Which build is live | `version` and `buildSha` on the authenticated `GET /v1/bootstrap`, also shown on the **About** page in organization settings |
-| Whether connectors are up | The `nb_connector_unhealthy` gauge on [`/metrics`](#prometheus-metrics): `1` for each connector that is currently down, and no series for a healthy one |
+| Whether connectors are up | The [connector gauges](#connector-metrics) on `/metrics`: `nb_connector_unhealthy` for a connector whose transport is down, `nb_connector_reauth_required` for one that needs Reconnect |

@@ -22,7 +22,11 @@ import {
  *                  reconnected or disconnected since. It outlives the tokens
  *                  the SDK deletes on `invalid_grant`, so a restart still tells
  *                  a broken connection (`reauth_required`) from one the user
- *                  disconnected (`not_authenticated`). Workspace scope only.
+ *                  disconnected (`not_authenticated`). A brokered connection
+ *                  keeps no other record here but carries this flag too: its
+ *                  credential lives with the broker, and the flag is what
+ *                  keeps its `reauth_required` across a restart. Workspace
+ *                  scope only.
  *
  * Three are secrets of the same class as the `client_secret` the credential
  * store was built for, and the rest are bound to them, so all go through the
@@ -217,6 +221,20 @@ export async function hasMcpOAuthAuthLost(
   serverName: string,
 ): Promise<boolean> {
   return new McpOAuthRecords({ owner, serverName }).has("auth_lost");
+}
+
+/**
+ * Set the `auth_lost` flag. The OAuth provider sets its own when a refresh is
+ * rejected; the lifecycle sets it for a brokered connection that enters
+ * `reauth_required`, whose credential is the broker's to hold.
+ */
+export async function setMcpOAuthAuthLost(
+  owner: ConnectorOwner,
+  serverName: string,
+): Promise<void> {
+  await new McpOAuthRecords({ owner, serverName }).write("auth_lost", {
+    at: new Date().toISOString(),
+  });
 }
 
 /**

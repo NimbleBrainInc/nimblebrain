@@ -2,7 +2,15 @@ import type { ConnectorHealthPayload } from "../engine/schemas/events.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { McpSource } from "./mcp-source.ts";
 
-export type ProcessLiveness = "healthy" | "restarting" | "cooldown" | "dead";
+/**
+ * What the monitor is doing with one source. `awaiting_reconnect` is a source
+ * whose connection needs the user's Reconnect (`awaitingReconnect`): the
+ * monitor leaves it alone, since no restart can replace a rejected credential,
+ * and it is not counted as down. It is not `dead`, which is terminal: the same
+ * source object can return to `running` (a broker's Reconnect keeps it), and
+ * the monitor then handles it as usual.
+ */
+export type ProcessLiveness = "healthy" | "restarting" | "cooldown" | "awaiting_reconnect" | "dead";
 
 export interface ConnectorHealth {
   name: string;
@@ -46,6 +54,13 @@ export interface HealthMonitorOptions {
   checkIntervalMs?: number;
   baseDelayMs?: number;
   cooldownMs?: number;
+  /**
+   * Whether a source's connection is waiting on the user's Reconnect. The
+   * lifecycle owns that answer (credential state, which outlives a restart);
+   * this monitor owns transport liveness only, so it asks rather than infers.
+   * Read on every check and status read. Absent, no source is waiting.
+   */
+  awaitingReconnect?: (source: McpSource) => boolean;
 }
 
 /**
@@ -62,6 +77,7 @@ export class HealthMonitor {
   private checkIntervalMs: number;
   private baseDelayMs: number;
   private cooldownMs: number;
+  private awaitingReconnect: (source: McpSource) => boolean;
 
   /**
    * `sources` is read on every check and status read, not once: the set of
@@ -77,6 +93,7 @@ export class HealthMonitor {
     this.checkIntervalMs = opts.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL_MS;
     this.baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     this.cooldownMs = opts.cooldownMs ?? DEFAULT_COOLDOWN_MS;
+    this.awaitingReconnect = opts.awaitingReconnect ?? (() => false);
     this.syncRecords();
   }
 
@@ -99,8 +116,12 @@ export class HealthMonitor {
           // them out of `nb_connector_unhealthy`, until the first sweep a full interval
           // later. (A source awaiting interactive auth is NOT such a case: it parks
           // with transport and client set, so `isAlive()` is true and it seeds
-          // healthy either way.)
-          state: source.isAlive() ? "healthy" : "restarting",
+          // healthy either way.) A source waiting on Reconnect is not down.
+          state: this.awaitingReconnect(source)
+            ? "awaiting_reconnect"
+            : source.isAlive()
+              ? "healthy"
+              : "restarting",
           restartCount: 0,
           cooldownUntil: null,
         },
@@ -129,12 +150,17 @@ export class HealthMonitor {
     await Promise.all([...this.records.values()].map((record) => this.checkOne(record)));
   }
 
-  /** Get per-connector health info. */
+  /**
+   * Get per-connector health info. A source waiting on Reconnect reads so from
+   * the moment its connection does, not from the next check, so the
+   * `nb_connector_unhealthy` gauge never counts it.
+   */
   getStatus(): ConnectorHealth[] {
     this.syncRecords();
     return [...this.records.values()].map((r) => ({
       name: r.source.name,
-      state: r.state,
+      state:
+        r.state !== "dead" && this.awaitingReconnect(r.source) ? "awaiting_reconnect" : r.state,
       uptime: r.source.uptime(),
       restartCount: r.restartCount,
     }));
@@ -146,6 +172,17 @@ export class HealthMonitor {
     // to the `cooldown` slow re-probe — so this early-out never strands a
     // recoverable source.
     if (record.state === "dead") return;
+
+    // The connection needs the user's Reconnect: its credential was rejected,
+    // so a restart would fail the same way, and each attempt is another refused
+    // refresh against the vendor. Leave the source and its backoff as they are.
+    // Not sticky: the answer is re-read every check, and once the connection is
+    // `running` again (a broker's Reconnect keeps this source) the checks below
+    // resume.
+    if (this.awaitingReconnect(record.source)) {
+      record.state = "awaiting_reconnect";
+      return;
+    }
 
     // Alive sources need no restart. Clear any cooldown, mark healthy, and (after
     // sustained uptime) reset the backoff counter for the next crash episode —

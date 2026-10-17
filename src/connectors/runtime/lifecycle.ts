@@ -27,6 +27,7 @@ import {
   hasMcpOAuthAuthLost,
   hasMcpOAuthTokens,
   McpOAuthRecords,
+  setMcpOAuthAuthLost,
 } from "../../tools/mcp-oauth-records.ts";
 import { McpSource } from "../../tools/mcp-source.ts";
 import {
@@ -799,6 +800,7 @@ export class ConnectorLifecycleManager {
     instance.connections.set(principalId, next);
 
     logTransition(serverName, wsId, existing?.state, next);
+    this.persistBrokeredCredentialLoss(instance, existing?.state, newState);
 
     // Recompute summary state so legacy consumers (HealthMonitor,
     // briefing-collector, runtime status API) see the right surface.
@@ -818,6 +820,70 @@ export class ConnectorLifecycleManager {
         ...(next.lastError ? { lastError: next.lastError } : {}),
       },
     });
+  }
+
+  /**
+   * Keep a brokered connection's `reauth_required` across a restart. The
+   * revalidator's flip is the only record of a broker's lost credential, and the
+   * boot seed otherwise reads the broker's local account as connected and seeds
+   * `running`. The `auth_lost` flag is set when a live connection enters
+   * `reauth_required` and cleared when it leaves for `running` (a Reconnect);
+   * disconnect and uninstall clear it themselves. A first record (`from`
+   * absent) is the boot seed, which read the flag and has nothing to write.
+   *
+   * Writes are chained per connection, so a clear never lands before the set it
+   * follows. Best-effort: a failed write is logged, and the in-memory state
+   * stands for this process.
+   */
+  private persistBrokeredCredentialLoss(
+    instance: ConnectorInstance,
+    from: ConnectionState | undefined,
+    to: ConnectionState,
+  ): void {
+    if (from === undefined || from === to || !brokeredRef(instance.ref)) return;
+    const owner: ConnectorOwner = { type: "workspace", wsId: instance.wsId };
+    let write: (() => Promise<void>) | undefined;
+    if (to === "reauth_required") write = () => setMcpOAuthAuthLost(owner, instance.serverName);
+    else if (from === "reauth_required" && to === "running") {
+      write = () => clearMcpOAuthAuthLost(owner, instance.serverName);
+    }
+    if (!write) return;
+    const key = `${instance.serverName}|${instance.wsId}`;
+    const next = (this.credentialLossWrites.get(key) ?? Promise.resolve())
+      .then(write)
+      .catch((err) => {
+        log.warn(
+          `[lifecycle] could not persist the credential state of ${instance.serverName} in ${instance.wsId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
+    this.credentialLossWrites.set(key, next);
+    void next.finally(() => {
+      if (this.credentialLossWrites.get(key) === next) this.credentialLossWrites.delete(key);
+    });
+  }
+
+  /** In-flight `auth_lost` writes for brokered connections, keyed `serverName|wsId`. */
+  private readonly credentialLossWrites = new Map<string, Promise<void>>();
+
+  /**
+   * Every workspace connection in `reauth_required`: its credential was
+   * rejected, and only a user's Reconnect (`startAuth`, or a broker's connect
+   * flow) can replace it. The state survives a restart through `auth_lost`, so
+   * this answers the same before and after one, whether or not a source is
+   * registered for the connection.
+   */
+  reauthRequiredConnections(): Array<{ serverName: string; wsId: string; principalId: string }> {
+    const out: Array<{ serverName: string; wsId: string; principalId: string }> = [];
+    for (const inst of this.instances.values()) {
+      for (const conn of inst.connections?.values() ?? []) {
+        if (conn.state === "reauth_required") {
+          out.push({ serverName: inst.serverName, wsId: inst.wsId, principalId: conn.principalId });
+        }
+      }
+    }
+    return out;
   }
 
   /**
@@ -1150,8 +1216,8 @@ export class ConnectorLifecycleManager {
    * success transitions to `running` (and, for the headless / pre-authenticated
    * path with no captured URL, resolves the caller's auth-URL promise with `null`
    * — a success the route reports as "already connected"); on failure logs,
-   * transitions to `dead` with the error, and rejects the promise on the pre-auth
-   * path. Always disarms interactive auth so a later background reconnect of this
+   * transitions to `dead` with the error (`reauth_required` while `auth_lost` is
+   * set), and rejects the promise on the pre-auth path. Always disarms interactive auth so a later background reconnect of this
    * long-lived source can't drive a browser flow.
    */
   private startAuthBackground(args: {
@@ -1186,7 +1252,7 @@ export class ConnectorLifecycleManager {
           resolveAuthUrl(null);
         }
       })
-      .catch((err) => {
+      .catch(async (err) => {
         // The source was stopped while its sign-in was open (a disconnect, an
         // uninstall). Whoever stopped it records what the connection is now; a
         // `dead` written here would land over that. The provider registers the
@@ -1208,13 +1274,13 @@ export class ConnectorLifecycleManager {
         // auth URL was returned — the token exchange or reconnect throws once
         // the user comes back, or the pending flow times out — a swallowed
         // error leaves the connection stuck in `pending_auth` ("Connecting…")
-        // forever with no log and no tokens. Log it and move the connection to `dead`
-        // (+ lastError) so the UI offers a recoverable Reconnect instead of
-        // an indefinite spinner.
+        // forever with no log and no tokens. Log it and move the connection to
+        // `dead` or `reauth_required` (+ lastError) so the UI offers a
+        // recoverable Reconnect instead of an indefinite spinner.
         log.warn(
           `[lifecycle] startAuth: ${serverName} start failed for ${principalId} in ${wsId}: ${msg}`,
         );
-        this.recordConnectionStateChange(serverName, wsId, principalId, "dead", {
+        await this.recordStartAuthFailure(source, serverName, wsId, principalId, {
           lastError: userFacingStartError(err, msg),
         });
         // A sign-in that ended without a code leaves nothing a restart can
@@ -1239,6 +1305,35 @@ export class ConnectorLifecycleManager {
         // long-lived source must NOT drive a browser flow.
         provider.setInteractiveAuthAllowed(false);
       });
+  }
+
+  /**
+   * Record a failed `startAuth` start: `dead`, or `reauth_required` while
+   * `auth_lost` is set. With the flag set the credential is still the rejected
+   * one, so `reauth_required` is the state the boot seed derives from the same
+   * flag (a restart does not change it), and the one `HealthMonitor` and
+   * `tryRecoverSource` leave to the user. A teardown that lands during the read
+   * stops the source and records the connection itself, so nothing is written
+   * over it.
+   */
+  private async recordStartAuthFailure(
+    source: McpSource,
+    serverName: string,
+    wsId: string,
+    principalId: string,
+    opts: { lastError: string },
+  ): Promise<void> {
+    const authLost = await hasMcpOAuthAuthLost({ type: "workspace", wsId }, serverName).catch(
+      () => false,
+    );
+    if (source.isStopped()) return;
+    this.recordConnectionStateChange(
+      serverName,
+      wsId,
+      principalId,
+      authLost ? "reauth_required" : "dead",
+      opts,
+    );
   }
 
   /**
@@ -1665,6 +1760,16 @@ export class ConnectorLifecycleManager {
       // registered and unstopped, and HealthMonitor keeps working on it.
       keepRegisteredOnStartFailure: true,
       workspaceContext: new WorkspaceContext({ wsId, workDir }),
+      // Same as every other path that builds a workspace source: a credential
+      // rejected on this source must reach the connection record.
+      onAuthLost: () => {
+        this.recordConnectionStateChange(
+          serverName,
+          wsId,
+          WORKSPACE_PRINCIPAL_ID,
+          "reauth_required",
+        );
+      },
       // Re-thread on reconnect so a Composio OAuth callback doesn't
       // silently drop the connector's host-resources handlers. The
       // composio-auth callback path goes through here.
@@ -2088,8 +2193,17 @@ export class ConnectorLifecycleManager {
     // on this path. No instance → the connector isn't installed in this
     // workspace (nothing to recover). A non-URL (named/stdio) ref needs
     // the credential-resolving named-spawn path — out of scope here.
-    const ref = this.instances.get(key)?.ref;
+    const instance = this.instances.get(key);
+    const ref = instance?.ref;
     if (!ref || !("url" in ref)) return false;
+
+    // A rejected credential is not something a re-spawn can fix: only the
+    // user's Reconnect replaces it, and that builds its own source. A source
+    // registered here would fail its start and sit registered and down, which
+    // is what restarted the `HealthMonitor` bursts after every restart.
+    if (instance.connections?.get(WORKSPACE_PRINCIPAL_ID)?.state === "reauth_required") {
+      return false;
+    }
 
     const now = Date.now();
     const last = this.recoveryAttempts.get(key);
@@ -2195,7 +2309,9 @@ export class ConnectorLifecycleManager {
    *      `reauth_required`. The flag outlives the tokens so a restart keeps a
    *      broken connection apart from one the user disconnected, and it is read
    *      before `startError` because the boot that discovers the rejection
-   *      fails with it.
+   *      fails with it. A brokered connection carries the flag when the
+   *      revalidator found its credential gone; its local account survives
+   *      the loss, so the flag alone records `reauth_required`.
    *   3. Boot-start was attempted and threw (`startError`) → record `dead` with
    *      the message. Reconnecting is not the recovery path here (the
    *      credential is fine; the endpoint was unreachable), so this must not
@@ -2230,13 +2346,17 @@ export class ConnectorLifecycleManager {
     const owner = { type: "workspace", wsId } as const;
     // A brokered connector's readiness is its provider's to answer; see below.
     const brokered = brokeredConnectionPresent(this.managedConnectors, ref, wsId, workDir);
-    // Only a connection held in our OAuth records can carry `auth_lost`: a
-    // brokered or static-auth one keeps its credential elsewhere.
-    const oauthRecordAuth = brokered === undefined && !connectorHasStaticAuth(ref);
+    // A connection held in our OAuth records carries `auth_lost` from its
+    // provider, and a brokered one from the lifecycle when the revalidator
+    // found its credential gone (`persistBrokeredCredentialLoss`). A brokered
+    // connection's local account outlives the loss, so the flag alone decides
+    // it. Other static-auth connections keep their credential elsewhere.
+    const isBrokered = brokeredRef(ref) !== undefined;
+    const oauthRecordAuth = !isBrokered && !connectorHasStaticAuth(ref);
     if (
-      oauthRecordAuth &&
+      (isBrokered || oauthRecordAuth) &&
       (await hasMcpOAuthAuthLost(owner, serverName)) &&
-      (startError !== undefined || !(await hasMcpOAuthTokens(owner, serverName)))
+      (isBrokered || startError !== undefined || !(await hasMcpOAuthTokens(owner, serverName)))
     ) {
       this.recordConnectionStateChange(serverName, wsId, "_workspace", "reauth_required", {
         ...(startError ? { lastError: startError } : {}),
