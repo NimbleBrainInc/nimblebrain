@@ -108,29 +108,38 @@ function refreshGrantToken(init?: RequestInit): string | null {
 }
 
 /**
- * Does a non-OK refresh response represent a transient failure (retry) rather
- * than a permanent credential rejection (give up, let the SDK reauth)?
- *
- * Reads a clone so the original body stays intact for the SDK's own
- * `parseErrorResponse` re-read.
+ * Does a non-OK refresh response, by its status and OAuth error code (undefined
+ * when the body is unparseable or carries none), represent a transient failure
+ * (retry) rather than a permanent credential rejection (give up, let the SDK
+ * reauth)? The retry decision and the refusal record both read this.
  */
-async function isTransientRefreshResponse(res: Response): Promise<boolean> {
-  if (res.status >= 500) return true; // gateway / ServerError class
-  if (res.status === 429 || res.status === 408) return true;
-  if (res.status === 400 || res.status === 401 || res.status === 403) {
+function isTransientRefreshFailure(status: number, code: string | undefined): boolean {
+  if (status >= 500) return true; // gateway / ServerError class
+  if (status === 429 || status === 408) return true;
+  if (status === 400 || status === 401 || status === 403) {
     // A 4xx may still be transient if it carries a transient OAuth code.
     // Unparseable / unrecognized 4xx → treat as permanent so we never mask a
     // real `invalid_grant`.
-    try {
-      const data = (await res.clone().json()) as { error?: unknown };
-      const code = typeof data?.error === "string" ? data.error : undefined;
-      if (!code || PERMANENT_REFRESH_ERRORS.has(code)) return false;
-      return TRANSIENT_REFRESH_ERRORS.has(code);
-    } catch {
-      return false;
-    }
+    if (!code || PERMANENT_REFRESH_ERRORS.has(code)) return false;
+    return TRANSIENT_REFRESH_ERRORS.has(code);
   }
   return false;
+}
+
+/**
+ * `isTransientRefreshFailure` for a live response. Reads a clone so the
+ * original body stays intact for the SDK's own `parseErrorResponse` re-read.
+ */
+async function isTransientRefreshResponse(res: Response): Promise<boolean> {
+  if (res.ok) return false;
+  let code: string | undefined;
+  try {
+    const data = (await res.clone().json()) as { error?: unknown };
+    code = typeof data?.error === "string" ? data.error : undefined;
+  } catch {
+    code = undefined;
+  }
+  return isTransientRefreshFailure(res.status, code);
 }
 
 function backoffDelayMs(attempt: number, baseDelayMs: number, rng: () => number): number {
@@ -378,13 +387,10 @@ function recordSettled(spent: string, res: Response, body: ArrayBuffer): void {
     issuedBy.set(refreshTokenHash(issued), { spent: refreshTokenHash(spent), expiresAt });
     return;
   }
-  // A refusal is a 4xx the retry policy calls permanent; a transient code or a
-  // 5xx left the token unjudged.
+  // A refusal is a failure the retry policy calls permanent; a transient one
+  // left the token unjudged.
   const code = typeof data?.error === "string" ? data.error : undefined;
-  if (
-    (res.status === 400 || res.status === 401 || res.status === 403) &&
-    !TRANSIENT_REFRESH_ERRORS.has(code ?? "")
-  ) {
+  if (!isTransientRefreshFailure(res.status, code)) {
     refused.set(refreshTokenHash(spent), { error: code ?? `http_${res.status}`, expiresAt });
   }
 }

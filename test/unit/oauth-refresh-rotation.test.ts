@@ -40,7 +40,8 @@ const TOKEN_URL = `${ISSUER}/oauth/token`;
 const CALLBACK = "http://localhost:27247/v1/mcp-auth/callback";
 
 /** The vendor: discovery documents, and a token endpoint that rotates. */
-function rotatingServer() {
+/** `refusalStatus` is the HTTP status the vendor answers `invalid_grant` with. */
+function rotatingServer(refusalStatus = 400) {
   let current = "rt_1";
   let issued = 1;
   const spent: string[] = [];
@@ -80,7 +81,7 @@ function rotatingServer() {
       );
       const presented = body.get("refresh_token") ?? "";
       if (gate) await gate;
-      if (presented !== current) return json({ error: "invalid_grant" }, 400);
+      if (presented !== current) return json({ error: "invalid_grant" }, refusalStatus);
       spent.push(presented);
       current = `rt_${++issued}`;
       return json({
@@ -315,32 +316,54 @@ describe("refresh under rotation never deletes a credential that is still good",
     expect(await storedRefreshToken()).toBe("rt_3");
   });
 
-  it("test_refresh_bearer_read_of_newer_token_mid_rejected_exchange_keeps_newer_tokens", async () => {
-    // The vendor refuses the spent rt_1 while the store holds rt_2, and between
-    // the spend and the refusal the provider's bearer read serves rt_2. The
-    // refusal is for rt_1, so it must not delete rt_2.
-    const vendor = rotatingServer();
-    await seedConnection();
-    const a = makeProvider();
-    const stale = makeProvider();
-    await stale.tokens(); // holds rt_1
-    await refreshVia(a, createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast }));
-    resetRefreshExchanges(); // past the replay window: rt_1 is spent at the vendor
+  // A vendor may answer `invalid_grant` on a 4xx other than RFC 6749's 400; the
+  // refusal record follows the retry policy's classification either way.
+  for (const [suffix, refusalStatus] of [
+    ["", 400],
+    ["_on_http_422", 422],
+  ] as const) {
+    it(`test_refresh_bearer_read_of_newer_token_mid_rejected_exchange_keeps_newer_tokens${suffix}`, async () => {
+      // The vendor refuses the spent rt_1 while the store holds rt_2, and between
+      // the spend and the refusal the provider's bearer read serves rt_2. The
+      // refusal is for rt_1, so it must not delete rt_2.
+      const info = spyOn(log, "info").mockImplementation(() => {});
+      try {
+        const vendor = rotatingServer(refusalStatus);
+        await seedConnection();
+        const a = makeProvider();
+        const stale = makeProvider();
+        await stale.tokens(); // holds rt_1
+        await refreshVia(a, createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast }));
+        resetRefreshExchanges(); // past the replay window: rt_1 is spent at the vendor
 
-    let servedMidExchange: string | undefined;
-    const result = await refreshVia(
-      stale,
-      interleaveAfterTokenPost(
-        createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast }),
-        async () => {
-          servedMidExchange = await bearerReadOfStoredTokens(stale);
-        },
-      ),
-    ).catch((err: unknown) => err);
-    expect(servedMidExchange).toBe("rt_2");
-    expect(result).toBe("AUTHORIZED");
-    expect(await storedRefreshToken()).toBe(vendor.current());
-  });
+        let servedMidExchange: string | undefined;
+        const result = await refreshVia(
+          stale,
+          interleaveAfterTokenPost(
+            createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast }),
+            async () => {
+              servedMidExchange = await bearerReadOfStoredTokens(stale);
+            },
+          ),
+        ).catch((err: unknown) => err);
+        expect(servedMidExchange).toBe("rt_2");
+        expect(result).toBe("AUTHORIZED");
+        expect(await storedRefreshToken()).toBe(vendor.current());
+        const fields = info.mock.calls.map(([, f]) => (f ?? {}) as Record<string, unknown>);
+        expect(fields).toContainEqual(
+          expect.objectContaining({
+            connector: SERVER,
+            outcome: "kept-stored",
+            error: "invalid_grant",
+            spent_refresh_hash: tag("rt_1"),
+            stored_refresh_hash: tag("rt_2"),
+          }),
+        );
+      } finally {
+        info.mockRestore();
+      }
+    });
+  }
 
   it("test_refresh_outcome_logs_carry_hash_tags_never_token_values", async () => {
     const info = spyOn(log, "info").mockImplementation(() => {});
@@ -386,20 +409,34 @@ describe("refresh under rotation never deletes a credential that is still good",
   });
 
   it("test_refresh_dead_credential_still_flips_to_reauth", async () => {
-    const vendor = rotatingServer();
-    await seedConnection();
-    const p = makeProvider();
-    await p.saveTokens({
-      access_token: "at_x",
-      token_type: "Bearer",
-      refresh_token: "rt_revoked_by_vendor",
-      issuer: ISSUER,
-    } as Parameters<WorkspaceOAuthProvider["saveTokens"]>[0]);
-    const result = await refreshVia(
-      p,
-      createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast }),
-    ).catch((err: unknown) => err);
-    expect(result).not.toBe("AUTHORIZED");
-    expect(await storedRefreshToken()).toBeUndefined();
+    const info = spyOn(log, "info").mockImplementation(() => {});
+    try {
+      const vendor = rotatingServer();
+      await seedConnection();
+      const p = makeProvider();
+      await p.saveTokens({
+        access_token: "at_x",
+        token_type: "Bearer",
+        refresh_token: "rt_revoked_by_vendor",
+        issuer: ISSUER,
+      } as Parameters<WorkspaceOAuthProvider["saveTokens"]>[0]);
+      const result = await refreshVia(
+        p,
+        createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast }),
+      ).catch((err: unknown) => err);
+      expect(result).not.toBe("AUTHORIZED");
+      expect(await storedRefreshToken()).toBeUndefined();
+      const fields = info.mock.calls.map(([, f]) => (f ?? {}) as Record<string, unknown>);
+      expect(fields).toContainEqual(
+        expect.objectContaining({
+          connector: SERVER,
+          outcome: "invalidated",
+          error: "invalid_grant",
+          stored_refresh_hash: tag("rt_revoked_by_vendor"),
+        }),
+      );
+    } finally {
+      info.mockRestore();
+    }
   });
 });
