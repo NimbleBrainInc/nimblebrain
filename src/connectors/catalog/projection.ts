@@ -195,6 +195,8 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
  *
  * Catches:
  *   - icons[].src non-http(s) (would XSS the Browse `<img src>`)
+ *   - `auth: static` without a complete `oauthClientSetup` (nothing could set
+ *     up its OAuth client, so it would reach Browse and fail at install)
  *   - oauthClientSetup.portalUrl non-http(s) (clickable in Set-up modal)
  *   - docsUrl non-http(s) (clickable in Configure page hero)
  *   - additionalAuthorizationParams reserved-key smuggling (RFC 6749
@@ -210,11 +212,8 @@ export function validateServerDetailSafety(s: ServerDetail): string | null {
     }
   }
   const meta = getNimbleBrainConnectorMeta(s);
-  if (meta?.oauthClientSetup) {
-    if (!isHttpUrl(meta.oauthClientSetup.portalUrl)) {
-      return `oauthClientSetup.portalUrl must be http(s): "${meta.oauthClientSetup.portalUrl}"`;
-    }
-  }
+  const setupError = oauthClientSetupViolation(meta);
+  if (setupError) return setupError;
   if (meta?.additionalAuthorizationParams) {
     try {
       validateAdditionalAuthorizationParams(meta.additionalAuthorizationParams);
@@ -226,6 +225,22 @@ export function validateServerDetailSafety(s: ServerDetail): string | null {
     return `docsUrl must be http(s): "${meta.docsUrl}"`;
   }
   return hostVersionViolation(s);
+}
+
+/**
+ * A static entry must say where its OAuth client is created and where the
+ * secret goes, or nothing could set it up; any entry's portal link must be
+ * http(s), because the Set up dialog renders it as a link.
+ */
+function oauthClientSetupViolation(meta: NimbleBrainConnectorMeta | undefined): string | null {
+  const setup = meta?.oauthClientSetup;
+  if (meta?.auth === "static" && !(setup?.portalUrl && setup.hint && setup.clientSecretKey)) {
+    return "auth='static' requires oauthClientSetup.{portalUrl,hint,clientSecretKey}";
+  }
+  if (setup && !isHttpUrl(setup.portalUrl)) {
+    return `oauthClientSetup.portalUrl must be http(s): "${setup.portalUrl}"`;
+  }
+  return null;
 }
 
 function hostVersionViolation(s: ServerDetail): string | null {
