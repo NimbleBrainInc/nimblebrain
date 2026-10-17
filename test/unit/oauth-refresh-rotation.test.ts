@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auth } from "@modelcontextprotocol/client";
 import type { FetchLike } from "@modelcontextprotocol/server";
+import { log } from "../../src/observability/log.ts";
 import {
   createOAuthRefreshFetch,
   resetRefreshExchanges,
@@ -139,6 +141,37 @@ async function storedRefreshToken(): Promise<string | undefined> {
   return (await makeProvider().tokens())?.refresh_token;
 }
 
+/**
+ * A transport fetch that, once its first token POST has its response and before
+ * the SDK reads it, runs `meanwhile`: what another flow on the same provider does
+ * while an exchange is in flight.
+ */
+function interleaveAfterTokenPost(inner: FetchLike, meanwhile: () => Promise<void>): FetchLike {
+  let ran = false;
+  return async (url, init) => {
+    const res = await inner(url, init);
+    if (!ran && String(url) === TOKEN_URL) {
+      ran = true;
+      await meanwhile();
+    }
+    return res;
+  };
+}
+
+/** Another flow on `provider` lands the stored tokens, then a request's bearer read serves them. */
+async function bearerReadOfStoredTokens(
+  provider: WorkspaceOAuthProvider,
+): Promise<string | undefined> {
+  const stored = await makeProvider().tokens();
+  if (stored) await provider.saveTokens(stored);
+  return (await provider.tokens())?.refresh_token;
+}
+
+/** The tag a log line names a refresh token by: the first 8 hex of its sha256. */
+function tag(refreshToken: string): string {
+  return createHash("sha256").update(refreshToken).digest("hex").slice(0, 8);
+}
+
 describe("refresh under rotation never deletes a credential that is still good", () => {
   beforeEach(() => {
     const workDir = mkdtempSync(join(tmpdir(), "nb-oauth-rotation-"));
@@ -254,6 +287,102 @@ describe("refresh under rotation never deletes a credential that is still good",
     expect(results).toEqual(["AUTHORIZED", "AUTHORIZED", "AUTHORIZED"]);
     expect(vendor.refreshPosts()).toBe(1);
     expect(await storedRefreshToken()).toBe(vendor.current());
+  });
+
+  it("test_refresh_bearer_read_of_newer_token_mid_stale_exchange_keeps_newer_tokens", async () => {
+    // The replayed rt_1 exchange answers with rt_2 while the store holds rt_3,
+    // and between the spend and its result the provider's bearer read serves
+    // rt_3. The result still answers for rt_1, so it must not overwrite rt_3.
+    const vendor = rotatingServer();
+    await seedConnection();
+    const a = makeProvider();
+    const stale = makeProvider();
+    await stale.tokens(); // holds rt_1
+    const fetchFn = createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast });
+    await refreshVia(a, fetchFn);
+    await refreshVia(a, fetchFn);
+    expect(vendor.current()).toBe("rt_3");
+
+    let servedMidExchange: string | undefined;
+    const result = await refreshVia(
+      stale,
+      interleaveAfterTokenPost(fetchFn, async () => {
+        servedMidExchange = await bearerReadOfStoredTokens(stale);
+      }),
+    ).catch((err: unknown) => err);
+    expect(servedMidExchange).toBe("rt_3");
+    expect(result).toBe("AUTHORIZED");
+    expect(await storedRefreshToken()).toBe("rt_3");
+  });
+
+  it("test_refresh_bearer_read_of_newer_token_mid_rejected_exchange_keeps_newer_tokens", async () => {
+    // The vendor refuses the spent rt_1 while the store holds rt_2, and between
+    // the spend and the refusal the provider's bearer read serves rt_2. The
+    // refusal is for rt_1, so it must not delete rt_2.
+    const vendor = rotatingServer();
+    await seedConnection();
+    const a = makeProvider();
+    const stale = makeProvider();
+    await stale.tokens(); // holds rt_1
+    await refreshVia(a, createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast }));
+    resetRefreshExchanges(); // past the replay window: rt_1 is spent at the vendor
+
+    let servedMidExchange: string | undefined;
+    const result = await refreshVia(
+      stale,
+      interleaveAfterTokenPost(
+        createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast }),
+        async () => {
+          servedMidExchange = await bearerReadOfStoredTokens(stale);
+        },
+      ),
+    ).catch((err: unknown) => err);
+    expect(servedMidExchange).toBe("rt_2");
+    expect(result).toBe("AUTHORIZED");
+    expect(await storedRefreshToken()).toBe(vendor.current());
+  });
+
+  it("test_refresh_outcome_logs_carry_hash_tags_never_token_values", async () => {
+    const info = spyOn(log, "info").mockImplementation(() => {});
+    try {
+      const vendor = rotatingServer();
+      await seedConnection();
+      const a = makeProvider();
+      const stale = makeProvider();
+      await stale.tokens(); // holds rt_1
+      const fetchFn = createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast });
+      await refreshVia(a, fetchFn);
+      await refreshVia(a, fetchFn);
+      await refreshVia(stale, fetchFn); // replayed rt_1 exchange, result dropped
+
+      const fields = info.mock.calls.map(([, f]) => (f ?? {}) as Record<string, unknown>);
+      expect(fields).toContainEqual(
+        expect.objectContaining({
+          connector: SERVER,
+          owner_type: "workspace",
+          owner_id: WS,
+          outcome: "saved",
+          spent_refresh_hash: tag("rt_1"),
+          received_refresh_hash: tag("rt_2"),
+        }),
+      );
+      expect(fields).toContainEqual({ spent_refresh_hash: tag("rt_1"), shared: "replay" });
+      expect(fields).toContainEqual(
+        expect.objectContaining({
+          connector: SERVER,
+          outcome: "dropped-stale",
+          spent_refresh_hash: tag("rt_1"),
+          received_refresh_hash: tag("rt_2"),
+          stored_refresh_hash: tag("rt_3"),
+        }),
+      );
+      const logged = JSON.stringify(info.mock.calls);
+      for (const secret of ["rt_1", "rt_2", "rt_3", "at_2", "at_3"]) {
+        expect(logged).not.toContain(secret);
+      }
+    } finally {
+      info.mockRestore();
+    }
   });
 
   it("test_refresh_dead_credential_still_flips_to_reauth", async () => {

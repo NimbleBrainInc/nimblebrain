@@ -38,6 +38,12 @@ import {
   namesAccount,
   parseIdTokenClaims,
 } from "./oauth-identity.ts";
+import {
+  refreshTokenHash,
+  refreshTokenRefusal,
+  refreshTokenTag,
+  spentRefreshTokenHash,
+} from "./oauth-refresh-fetch.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 
 /**
@@ -489,6 +495,9 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+/** How many recently served refresh tokens a provider remembers (see `servedRefreshTokens`). */
+const SERVED_REFRESH_TOKENS_KEPT = 8;
+
 /**
  * OAuthClientProvider scoped to an `(owner, serverName)` pair. It owns the
  * OAuth state machine; {@link McpOAuthRecords} owns where the records it
@@ -618,10 +627,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
   /**
-   * The refresh token the last `tokens()` call handed the SDK: the one its next
-   * refresh spends, and so the one an `invalid_grant` it answers with rejected.
+   * The refresh tokens recent `tokens()` calls handed the SDK, most recent last.
+   * An `invalid_grant` the SDK answers by invalidating was for one of these; the
+   * refresh fetch records which (`refreshTokenRefusal`).
    */
-  private servedRefreshToken: string | undefined;
+  private readonly servedRefreshTokens = new Set<string>();
   /**
    * In-flight DCR coalesce. Set in `clientInformation()` just before it
    * returns `undefined` (which tells the SDK to do DCR). Resolved by the
@@ -1074,7 +1084,15 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    */
   async tokens(_ctx?: OAuthClientInformationContext): Promise<OAuthTokens | undefined> {
     const tokens = await this.readTokens("transport");
-    this.servedRefreshToken = tokens?.refresh_token;
+    const refresh = tokens?.refresh_token;
+    if (refresh) {
+      this.servedRefreshTokens.delete(refresh);
+      this.servedRefreshTokens.add(refresh);
+      if (this.servedRefreshTokens.size > SERVED_REFRESH_TOKENS_KEPT) {
+        const oldest = this.servedRefreshTokens.values().next().value;
+        if (oldest !== undefined) this.servedRefreshTokens.delete(oldest);
+      }
+    }
     return tokens;
   }
 
@@ -1090,19 +1108,16 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    // A refresh result answers for the refresh token this provider served. When
-    // the store already holds a different one, the result is for a stale copy
-    // (a replayed exchange, or one that settled after a later rotation landed):
-    // writing it would roll the credential back to a token the vendor has since
-    // revoked. Drop this provider's copy so its next read takes the stored one.
-    if (
-      !this.exchangingCode &&
-      this.servedRefreshToken !== undefined &&
-      (await this.tokensRenewedElsewhere())
-    ) {
-      this.cachedTokens = null;
-      return;
-    }
+    // A refresh result answers for the refresh token its exchange spent, which
+    // the refresh fetch recorded against the token the result carries. When the
+    // store holds neither the spent token nor this result's, the result is for
+    // a stale copy (a replayed exchange, or one that settled after a later
+    // rotation landed): writing it would roll the credential back to a token the
+    // vendor has since revoked. Drop this provider's copy so its next read takes
+    // the stored one.
+    const received = tokens.refresh_token;
+    const spent = this.exchangingCode || !received ? undefined : spentRefreshTokenHash(received);
+    if (await this.droppedStaleResult(received, spent)) return;
     this.cachedTokens = tokens;
     // Fresh tokens landed — a subsequent auth loss is a NEW episode, so
     // re-arm the one-shot `notifyAuthLost` guard. Without this, a connection
@@ -1116,8 +1131,8 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       await this.records.delete("auth_lost");
     }
 
-    // Connector OAuth health — redacted (booleans + lifetime only, never token
-    // values). A token response carrying no refresh_token means the connection
+    // Connector OAuth health — token hash tags and lifetime only, never token
+    // values. A token response carrying no refresh_token means the connection
     // CANNOT refresh: it dies at access-token expiry and needs a full reconnect
     // every time. That silently degrades scheduled tasks (a daily run
     // lands after the access token has expired → dead connector). The usual
@@ -1129,13 +1144,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // here means the connection stays refreshable across refreshes, and the warn
     // fires only for a genuinely non-refreshable connection, at connect time, by
     // name.
-    const hasRefreshToken =
-      typeof tokens.refresh_token === "string" && tokens.refresh_token.length > 0;
-    if (hasRefreshToken) {
-      log.debug(
-        "mcp",
-        `[oauth] ${this.serverName} tokens saved: refreshable=true expires_in=${tokens.expires_in ?? "?"}`,
-      );
+    if (received) {
+      this.logRefreshOutcome("saved", {
+        grant: this.savedGrant(spent),
+        spent_refresh_hash: spent?.slice(0, 8),
+        received_refresh_hash: refreshTokenTag(received),
+        expires_in: tokens.expires_in,
+      });
     } else {
       log.warn(
         `[oauth] ${this.serverName} token exchange returned NO refresh_token ` +
@@ -1787,16 +1802,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         this.dcrInFlight = null;
       }
     }
-    if (scope === "tokens" && (await this.tokensRenewedElsewhere())) {
-      // The SDK answers `invalid_grant` by invalidating the tokens and
-      // authorizing again. When the store already holds a different refresh
-      // token, the rejected one was a copy someone else had since rotated (a
-      // stale cache, another transport, another pod), and the stored
-      // credential is good: drop only this provider's copy, so the SDK's
-      // retry reads the stored tokens and refreshes with those.
-      this.cachedTokens = null;
-      return;
-    }
+    if (scope === "tokens" && (await this.keptStoredTokens())) return;
     if (scope === "all" || scope === "tokens") {
       this.cachedTokens = null;
       await this.records.delete("tokens");
@@ -1812,17 +1818,94 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * Whether the stored tokens carry a refresh token other than the one this
-   * provider last served, read from the store past the cache: a rotation that
-   * landed after this provider read its copy.
+   * Drop a refresh result answering for a token the store has moved past: the
+   * store holds neither `spent` (the hash of the token its exchange spent) nor
+   * `received` (the token it carries). True when dropped.
    */
-  private async tokensRenewedElsewhere(): Promise<boolean> {
+  private async droppedStaleResult(
+    received: string | undefined,
+    spent: string | undefined,
+  ): Promise<boolean> {
+    if (received === undefined || spent === undefined) return false;
+    const stored = await this.storedRefreshToken("save");
+    if (stored === undefined || stored === received || refreshTokenHash(stored) === spent) {
+      return false;
+    }
+    this.cachedTokens = null;
+    this.logRefreshOutcome("dropped-stale", {
+      spent_refresh_hash: spent.slice(0, 8),
+      received_refresh_hash: refreshTokenTag(received),
+      stored_refresh_hash: refreshTokenTag(stored),
+    });
+    return true;
+  }
+
+  /** The grant a saved token response came from, when known. */
+  private savedGrant(spent: string | undefined): string | undefined {
+    if (this.exchangingCode) return "authorization_code";
+    return spent === undefined ? undefined : "refresh_token";
+  }
+
+  /**
+   * Whether an invalidation of the tokens keeps the stored ones. The SDK answers
+   * `invalid_grant` by invalidating the tokens and authorizing again, and the
+   * refresh fetch recorded which token the vendor refused. When that was a
+   * token this provider served and the store holds a different, unrefused one,
+   * the refused token was a copy someone else had since rotated (a stale cache,
+   * another transport, another pod), and the stored credential is good: drop
+   * only this provider's copy, so the SDK's retry reads the stored tokens and
+   * refreshes with those.
+   */
+  private async keptStoredTokens(): Promise<boolean> {
+    const stored = await this.storedRefreshToken("invalidate");
+    if (stored === undefined) return false;
+    const storedRefusal = refreshTokenRefusal(stored);
+    const refusedServed = [...this.servedRefreshTokens]
+      .reverse()
+      .find((token) => refreshTokenRefusal(token) !== undefined);
+    if (storedRefusal !== undefined || refusedServed === undefined) {
+      this.logRefreshOutcome("invalidated", {
+        error: storedRefusal,
+        stored_refresh_hash: refreshTokenTag(stored),
+      });
+      return false;
+    }
+    this.cachedTokens = null;
+    this.logRefreshOutcome("kept-stored", {
+      error: refreshTokenRefusal(refusedServed),
+      spent_refresh_hash: refreshTokenTag(refusedServed),
+      stored_refresh_hash: refreshTokenTag(stored),
+    });
+    return true;
+  }
+
+  /**
+   * The stored refresh token, read from the store past the cache: it reflects a
+   * rotation that landed after this provider read its copy.
+   */
+  private async storedRefreshToken(purpose: "save" | "invalidate"): Promise<string | undefined> {
     const stored = await this.records.read<OAuthTokens>("tokens", {
       caller: "oauth:tokens",
-      purpose: `invalidate ${this.serverName}`,
+      purpose: `${purpose} ${this.serverName}`,
     });
-    const storedRefresh = stored?.refresh_token;
-    return storedRefresh !== undefined && storedRefresh !== this.servedRefreshToken;
+    return stored?.refresh_token;
+  }
+
+  /**
+   * One info line per refresh outcome, attributed to this connector and owner.
+   * Tokens appear only as hash tags (`refreshTokenTag`), never as values.
+   */
+  private logRefreshOutcome(
+    outcome: "saved" | "dropped-stale" | "invalidated" | "kept-stored",
+    fields: Record<string, string | number | undefined>,
+  ): void {
+    log.info(`[oauth] ${this.serverName} refresh ${outcome}`, {
+      connector: this.serverName,
+      owner_type: this.owner.type,
+      owner_id: this.owner.type === "workspace" ? this.owner.wsId : this.owner.userId,
+      outcome,
+      ...Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)),
+    });
   }
 
   // ── Extensions used by McpSource.start() ──────────────────────────
