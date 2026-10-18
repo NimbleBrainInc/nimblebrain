@@ -12,10 +12,17 @@
 // bridge suites replace this module process-wide with `mock.module`.
 // ---------------------------------------------------------------------------
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { realClient, realMcpBridgeClient } from "../../test/setup";
+import type { McpTimeoutReport } from "../sentry";
 
-const { buildMcpRequest, readMcpAnswer, sendMcpRequest } = realMcpBridgeClient;
+const {
+  buildMcpRequest,
+  readMcpAnswer,
+  sendMcpRequest,
+  setMcpTimeoutReporter,
+  SUSPENSION_SLACK_MS,
+} = realMcpBridgeClient;
 const { setActiveWorkspaceId, setAuthToken } = realClient;
 
 const ENVELOPE = {
@@ -246,5 +253,199 @@ describe("sendMcpRequest", () => {
     setAuthToken(null);
     await sendMcpRequest("resources/list", {});
     expect(calls[0]?.headers.authorization).toBeUndefined();
+  });
+});
+
+// A suspended tab fires a request's timer on resume, long past its deadline.
+// These tests hold `Date.now` and move it forward an hour while a request is in
+// flight, which is what the timer sees after the page slept; the timers
+// themselves are real and short.
+describe("sendMcpRequest — a timer that fires late because the page was suspended", () => {
+  const HOUR = 3_600_000;
+  const TIMEOUT = 20;
+  let clock = 0;
+  let reports: McpTimeoutReport[] = [];
+  let restoreReporter: (report: McpTimeoutReport) => void = () => {};
+  let nowSpy: ReturnType<typeof spyOn<DateConstructor, "now">>;
+  const never = () => new Promise<Response>(() => {});
+
+  function setVisibility(state: DocumentVisibilityState): void {
+    Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+  }
+
+  beforeEach(() => {
+    clock = 1_000_000;
+    nowSpy = spyOn(Date, "now").mockImplementation(() => clock);
+    reports = [];
+    restoreReporter = setMcpTimeoutReporter((report) => reports.push(report));
+  });
+
+  afterEach(() => {
+    nowSpy.mockRestore();
+    setMcpTimeoutReporter(restoreReporter);
+    Reflect.deleteProperty(document, "visibilityState");
+  });
+
+  test("a read suspended in flight is sent again once and resolves with the resend's answer", async () => {
+    respond = () => {
+      if (calls.length === 1) {
+        clock += HOUR; // the page sleeps with the first request in flight
+        return never();
+      }
+      return jsonAnswer({ contents: [{ uri: "ui://notes/app", text: "fresh" }] });
+    };
+
+    const answer = await sendMcpRequest(
+      "resources/read",
+      { uri: "ui://notes/app" },
+      { timeoutMs: TIMEOUT },
+    );
+
+    expect(answer).toEqual({ result: { contents: [{ uri: "ui://notes/app", text: "fresh" }] } });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.body).toEqual(calls[0]?.body ?? {});
+  });
+
+  test("a resend is reported with method, lateness, visibility at arm and at fire", async () => {
+    setVisibility("hidden");
+    respond = () => {
+      if (calls.length === 1) {
+        clock += HOUR;
+        setVisibility("visible");
+        return never();
+      }
+      return jsonAnswer({ resources: [] });
+    };
+
+    await sendMcpRequest("resources/list", {}, { timeoutMs: TIMEOUT });
+
+    expect(reports).toEqual([
+      {
+        method: "resources/list",
+        latenessMs: HOUR - TIMEOUT,
+        suspendedMs: HOUR - TIMEOUT,
+        visibilityAtArm: "hidden",
+        visibilityAtFire: "visible",
+        resent: true,
+        outcome: "resent",
+      },
+    ]);
+  });
+
+  test("a read is sent again at most once: a resend that also times out answers -32001 with suspendedMs", async () => {
+    respond = () => {
+      clock += HOUR; // both sends sleep through their deadline
+      return never();
+    };
+
+    const answer = await sendMcpRequest("tasks/get", { taskId: "t1" }, { timeoutMs: TIMEOUT });
+
+    expect(calls).toHaveLength(2);
+    expect(answer).toEqual({
+      error: {
+        code: -32001,
+        message: `Request timed out after ${TIMEOUT}ms`,
+        data: { suspendedMs: 2 * (HOUR - TIMEOUT) },
+      },
+    });
+    expect(reports.map((r) => [r.outcome, r.resent])).toEqual([
+      ["resent", true],
+      ["timed_out", true],
+    ]);
+  });
+
+  test("a tools/call suspended in flight is not sent again and keeps waiting for its answer", async () => {
+    let answerCall: (response: Response) => void = () => {};
+    let signal: AbortSignal | undefined;
+    const fetchWithSignal = globalThis.fetch;
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return fetchWithSignal(input, init);
+    }) as typeof fetch;
+    respond = () => {
+      clock += HOUR;
+      return new Promise<Response>((resolve) => {
+        answerCall = resolve;
+      });
+    };
+
+    const pending = sendMcpRequest("tools/call", { name: "t" }, { timeoutMs: TIMEOUT });
+    // Past the late timer, inside the fresh budget it armed.
+    await new Promise((resolve) => setTimeout(resolve, TIMEOUT + 5));
+    expect(signal?.aborted).toBe(false);
+    answerCall(jsonAnswer({ content: [{ type: "text", text: "done" }] }));
+
+    expect(await pending).toEqual({ result: { content: [{ type: "text", text: "done" }] } });
+    expect(calls).toHaveLength(1);
+    expect(reports).toEqual([]);
+  });
+
+  test("a tools/call whose fresh budget also expires answers -32001 with data.suspendedMs, sent once", async () => {
+    respond = () => {
+      clock += HOUR;
+      return never();
+    };
+
+    const answer = await sendMcpRequest("tools/call", { name: "t" }, { timeoutMs: TIMEOUT });
+
+    expect(calls).toHaveLength(1);
+    expect(answer).toEqual({
+      error: {
+        code: -32001,
+        message: `Request timed out after ${TIMEOUT}ms`,
+        data: { suspendedMs: HOUR - TIMEOUT },
+      },
+    });
+    expect(reports).toEqual([
+      {
+        method: "tools/call",
+        latenessMs: 0,
+        suspendedMs: HOUR - TIMEOUT,
+        visibilityAtArm: "visible",
+        visibilityAtFire: "visible",
+        resent: false,
+        outcome: "timed_out",
+      },
+    ]);
+  });
+
+  test("a timer late by exactly the slack is a plain timeout: no resend, no data", async () => {
+    respond = () => {
+      clock += TIMEOUT + SUSPENSION_SLACK_MS;
+      return never();
+    };
+
+    const answer = await sendMcpRequest(
+      "resources/read",
+      { uri: "ui://notes/app" },
+      { timeoutMs: TIMEOUT },
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(answer).toEqual({
+      error: { code: -32001, message: `Request timed out after ${TIMEOUT}ms` },
+    });
+  });
+
+  test("a timer that fires on time behaves as before: abort, -32001, the same message, reported", async () => {
+    respond = never;
+
+    const answer = await sendMcpRequest("tools/call", { name: "t" }, { timeoutMs: TIMEOUT });
+
+    expect(answer).toEqual({
+      error: { code: -32001, message: `Request timed out after ${TIMEOUT}ms` },
+    });
+    expect(calls).toHaveLength(1);
+    expect(reports).toEqual([
+      {
+        method: "tools/call",
+        latenessMs: 0,
+        suspendedMs: 0,
+        visibilityAtArm: "visible",
+        visibilityAtFire: "visible",
+        resent: false,
+        outcome: "timed_out",
+      },
+    ]);
   });
 });

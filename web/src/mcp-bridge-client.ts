@@ -17,11 +17,23 @@
 // `Client` refuses, and the SDK sends no `tasks/*` request at all
 // (typescript-sdk#2189). The runtime's own task client
 // (`src/tools/mcp-task-client.ts`) drives the same wire for the same reason.
+//
+// A browser suspends a long-idle tab, and a request in flight then fires its
+// timer on resume, charging the time the page slept to the server. So a timer
+// that fires more than `SUSPENSION_SLACK_MS` past its deadline is read as a
+// suspension, not a timeout: a read (`READ_METHODS`) is aborted and sent again
+// once with a fresh budget, since sending it twice changes nothing; any other
+// request (`tools/call`, `tasks/cancel`) is not sent again, because it may
+// already have run and the host cannot know it is idempotent, so it waits one
+// fresh budget instead. A timeout after a suspension answers `-32001` with
+// `data: { suspendedMs }`, so an app can tell sleep from a slow server. Every
+// resend and every `-32001` is reported through `setMcpTimeoutReporter`.
 // ---------------------------------------------------------------------------
 
 import type { JSONRPCErrorResponse } from "@modelcontextprotocol/client";
 import { fetchWithRefresh, getActiveWorkspaceId, getAuthToken } from "./api/client";
 import { TASKS_EXTENSION_ID } from "./bridge/host-capabilities";
+import { type McpTimeoutReport, reportMcpTimeout } from "./sentry";
 
 /** The protocol revision `/mcp/<wsId>` serves, named in every request's `_meta` envelope. */
 export const MCP_PROTOCOL_VERSION = "2026-07-28";
@@ -46,6 +58,22 @@ const CLIENT_INFO = { name: "nimblebrain-web", version: "1.0.0" } as const;
  */
 export const MCP_REQUEST_TIMEOUT_MS = 60_000;
 
+/**
+ * How late a timer may fire before it means the page was suspended. Well above
+ * the clamping a running page sees; a timer this late means its event loop did
+ * not run. Hidden-tab throttling can also exceed it, which costs only a resent
+ * read or one more budget.
+ */
+export const SUSPENSION_SLACK_MS = 5_000;
+
+/** Methods that only read, so a request suspended in flight is sent again once. */
+export const READ_METHODS: ReadonlySet<string> = new Set([
+  "resources/read",
+  "resources/list",
+  "resources/templates/list",
+  "tasks/get",
+]);
+
 /** JSON-RPC error codes this module answers with. */
 const REQUEST_TIMEOUT = -32001;
 
@@ -68,14 +96,29 @@ export interface McpRequestOptions {
 
 let nextId = 0;
 
+let reportTimeout: (report: McpTimeoutReport) => void = reportMcpTimeout;
+
+/**
+ * Replace where resends and timeouts are reported (the Sentry seam by default)
+ * and return the previous reporter. A test seam.
+ */
+export function setMcpTimeoutReporter(
+  reporter: (report: McpTimeoutReport) => void,
+): (report: McpTimeoutReport) => void {
+  const previous = reportTimeout;
+  reportTimeout = reporter;
+  return previous;
+}
+
 /**
  * Send one request to the active workspace's `/mcp/<wsId>` and
  * resolve with its answer.
  *
  * Resolves `{ result }` or `{ error }` for every JSON-RPC answer, the server's
  * refusals included, and `{ error: { code: -32001 } }` when no answer came
- * within the timeout. Rejects when there is no active workspace or no
- * JSON-RPC answer came back (a network failure, an unparseable body).
+ * within the timeout (with `data: { suspendedMs }` when the page was suspended
+ * meanwhile; see the module comment). Rejects when there is no active workspace
+ * or no JSON-RPC answer came back (a network failure, an unparseable body).
  */
 export async function sendMcpRequest(
   method: string,
@@ -92,28 +135,117 @@ export async function sendMcpRequest(
     globalThis.location?.origin ?? "http://localhost",
   );
   const { headers, body } = buildMcpRequest(`nb-bridge-${++nextId}`, method, params, options);
+  const post = async (signal: AbortSignal): Promise<McpAnswer> =>
+    readMcpAnswer(await mcpFetch(url.toString(), { method: "POST", headers, body, signal }));
 
   const timeoutMs = options.timeoutMs ?? MCP_REQUEST_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await mcpFetch(url.toString(), {
-      method: "POST",
-      headers,
-      body,
-      signal: controller.signal,
-    });
-    return await readMcpAnswer(response);
-  } catch (err) {
-    if (controller.signal.aborted) {
-      return {
-        error: { code: REQUEST_TIMEOUT, message: `Request timed out after ${timeoutMs}ms` },
-      };
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+  const resendable = READ_METHODS.has(method);
+  const first = await attemptWithin(post, timeoutMs, resendable ? "resend" : "wait");
+  if (first.kind === "answer") return first.answer;
+  if (first.kind === "expired") return timedOut(method, timeoutMs, first, false);
+
+  reportTimeout({ method, ...first.timer, outcome: "resent", resent: true });
+  const second = await attemptWithin(post, timeoutMs, "expire");
+  if (second.kind === "answer") return second.answer;
+  const suspendedMs = first.timer.suspendedMs + second.timer.suspendedMs;
+  return timedOut(method, timeoutMs, { timer: { ...second.timer, suspendedMs } }, true);
+}
+
+/** What a request's timer saw when it fired. */
+interface TimerReading {
+  latenessMs: number;
+  suspendedMs: number;
+  visibilityAtArm: string;
+  visibilityAtFire: string;
+}
+
+type Attempt =
+  | { kind: "answer"; answer: McpAnswer }
+  /** A late timer on a read: the fetch was aborted for a resend. */
+  | { kind: "late"; timer: TimerReading }
+  /** No answer in time: the fetch was aborted. */
+  | { kind: "expired"; timer: TimerReading };
+
+/**
+ * Post once and wait up to `timeoutMs` for the answer. A timer that fires on
+ * time aborts the fetch (`expired`). A late one (past `SUSPENSION_SLACK_MS`)
+ * does what `onLate` says: `resend` aborts it for the caller to send again,
+ * `wait` keeps the fetch and arms one fresh budget, `expire` treats it as on
+ * time. Rejects as `post` does when no timer fired first.
+ */
+function attemptWithin(
+  post: (signal: AbortSignal) => Promise<McpAnswer>,
+  timeoutMs: number,
+  onLate: "resend" | "wait" | "expire",
+): Promise<Attempt> {
+  return new Promise<Attempt>((resolve, reject) => {
+    const controller = new AbortController();
+    const visibilityAtArm = pageVisibility();
+    let suspendedMs = 0;
+    let waited = false;
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const settle = (finish: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      finish();
+    };
+    const arm = () => {
+      // Wall clock, not `performance.now()`: the monotonic clock may stop while
+      // the page is suspended, and that gap is what this measures.
+      const deadline = Date.now() + timeoutMs;
+      timer = setTimeout(() => {
+        const latenessMs = Math.max(0, Date.now() - deadline);
+        const late = latenessMs > SUSPENSION_SLACK_MS;
+        if (late) suspendedMs += latenessMs;
+        if (late && onLate === "wait" && !waited) {
+          waited = true;
+          arm();
+          return;
+        }
+        const reading = {
+          latenessMs,
+          suspendedMs,
+          visibilityAtArm,
+          visibilityAtFire: pageVisibility(),
+        };
+        const kind = late && onLate === "resend" ? "late" : "expired";
+        settle(() => resolve({ kind, timer: reading }));
+        controller.abort();
+      }, timeoutMs);
+    };
+
+    arm();
+    post(controller.signal).then(
+      (answer) => settle(() => resolve({ kind: "answer", answer })),
+      (err: unknown) => settle(() => reject(err)),
+    );
+  });
+}
+
+/** The `-32001` answer for a request that got no answer in time, reported. */
+function timedOut(
+  method: string,
+  timeoutMs: number,
+  attempt: { timer: TimerReading },
+  resent: boolean,
+): McpAnswer {
+  const { suspendedMs } = attempt.timer;
+  reportTimeout({ method, ...attempt.timer, outcome: "timed_out", resent });
+  const message = `Request timed out after ${timeoutMs}ms`;
+  return {
+    error:
+      suspendedMs > 0
+        ? { code: REQUEST_TIMEOUT, message, data: { suspendedMs } }
+        : { code: REQUEST_TIMEOUT, message },
+  };
+}
+
+/** The page's visibility, or `unknown` where there is no document. */
+function pageVisibility(): string {
+  return globalThis.document?.visibilityState ?? "unknown";
 }
 
 /** The workspace's MCP endpoint path. */
