@@ -27,7 +27,7 @@
 // already have run and the host cannot know it is idempotent, so it waits one
 // fresh budget instead. A timeout after a suspension answers `-32001` with
 // `data: { suspendedMs }`, so an app can tell sleep from a slow server. Every
-// resend and every `-32001` is reported through `setMcpTimeoutReporter`.
+// resend and every `-32001` is reported to `reportMcpTimeout`.
 // ---------------------------------------------------------------------------
 
 import type { JSONRPCErrorResponse } from "@modelcontextprotocol/client";
