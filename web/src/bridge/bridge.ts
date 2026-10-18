@@ -857,8 +857,8 @@ function handleResourcesRead(
   // the wire (`readResourceViaMcp`). The URI itself passes through verbatim;
   // SSRF safety lives in the connector.
   readResourceViaMcp(appName, params.uri)
-    .then((result) => {
-      postToIframe({ jsonrpc: "2.0", id, result });
+    .then((answer) => {
+      postToIframe(toIframe(id, answer));
     })
     .catch((err: unknown) => {
       const errorMsg = err instanceof Error ? err.message : "Resource read failed";
@@ -903,8 +903,7 @@ function handleResourceListing(
 
   sendMcpRequest(method, request)
     .then((answer) => {
-      if ("error" in answer) throw new Error(answer.error.message);
-      postToIframe({ jsonrpc: "2.0", id, result: answer.result });
+      postToIframe(toIframe(id, answer));
     })
     .catch((err: unknown) => {
       const errorMsg = err instanceof Error ? err.message : "Resource listing failed";
@@ -1232,20 +1231,18 @@ async function callToolViaMcp(
 
 /**
  * Forward a `resources/read` to `/mcp`, scoped to `server` — the calling app's
- * own. Resolves the ReadResourceResult (`{ contents }`); a JSON-RPC error from
- * `/mcp` rejects with its message.
+ * own. Resolves `/mcp`'s answer: the ReadResourceResult (`{ contents }`), or
+ * its JSON-RPC error with code and `data` intact.
  */
-async function readResourceViaMcp(server: string, uri: string): Promise<Record<string, unknown>> {
+async function readResourceViaMcp(server: string, uri: string): Promise<McpAnswer> {
   // `server` goes on the wire under `RESOURCE_SOURCE_META_KEY`, as it does for
   // listings, and `/mcp` reads from that one source. It is the only thing that
   // can: the bridge sends every iframe's requests as one client, so without it
   // a read resolves across the whole workspace and the user's files.
-  const answer = await sendMcpRequest("resources/read", {
+  return sendMcpRequest("resources/read", {
     uri,
     _meta: { [RESOURCE_SOURCE_META_KEY]: server },
   });
-  if ("error" in answer) throw new Error(answer.error.message);
-  return answer.result;
 }
 
 // ---------------------------------------------------------------------------
