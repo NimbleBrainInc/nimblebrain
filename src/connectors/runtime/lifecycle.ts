@@ -612,7 +612,9 @@ export class ConnectorLifecycleManager {
     // `disconnect` (which invalidates "all" including the client record), but a
     // leftover from a partial earlier disconnect shouldn't survive an
     // uninstall. Worst case the keys are already gone; `deleteAll` is a no-op
-    // then.
+    // then. A pending `auth_lost` write lands first, so it cannot re-create
+    // the flag after the records are gone.
+    await this.settleCredentialLossWrites(serverName, instance.wsId);
     try {
       await new McpOAuthRecords({
         owner: { type: "workspace", wsId: instance.wsId },
@@ -866,6 +868,16 @@ export class ConnectorLifecycleManager {
 
   /** In-flight `auth_lost` writes for brokered connections, keyed `serverName|wsId`. */
   private readonly credentialLossWrites = new Map<string, Promise<void>>();
+
+  /**
+   * Wait out a connection's pending `auth_lost` writes. Disconnect and uninstall
+   * call it before they clear the flag, so a set still in flight cannot land
+   * after the clear and bring the connection back as `reauth_required` on the
+   * next boot. The chain never rejects; failures are logged where they occur.
+   */
+  private async settleCredentialLossWrites(serverName: string, wsId: string): Promise<void> {
+    await this.credentialLossWrites.get(`${serverName}|${wsId}`);
+  }
 
   /**
    * Every workspace connection in `reauth_required`: its credential was
@@ -1399,6 +1411,7 @@ export class ConnectorLifecycleManager {
         workDir: opts.workDir,
       });
       await this.teardownConnectionSource(serverName, wsId);
+      await this.settleCredentialLossWrites(serverName, wsId);
       await clearMcpOAuthAuthLost({ type: "workspace", wsId }, serverName);
       this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
         authorizationUrl: undefined,
@@ -1434,6 +1447,7 @@ export class ConnectorLifecycleManager {
     // A disconnect is deliberate: whatever broke before it, the connection now
     // rests. Cleared after teardown, so a refresh still in flight on the old
     // source — racing the revoke above — cannot set it again.
+    await this.settleCredentialLossWrites(serverName, wsId);
     await clearMcpOAuthAuthLost({ type: "workspace", wsId }, serverName);
 
     this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {

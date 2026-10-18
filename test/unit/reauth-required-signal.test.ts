@@ -21,6 +21,7 @@ import type { ManagedConnectorProvider } from "../../src/connectors/providers/ma
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { setCredentialStore } from "../../src/tools/credential-store.ts";
 import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import { hasMcpOAuthAuthLost, McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
@@ -301,5 +302,58 @@ describe("a brokered connection's lost credential", () => {
     const afterSecondRestart = brokeredLifecycle();
     await afterSecondRestart.seedInstance(SERVER, SERVER, brokeredRef(), undefined, WS);
     expect(connectionState(afterSecondRestart)).toBe("running");
+  });
+
+  /**
+   * Hold every store write until `release`, so an `auth_lost` set is still in
+   * flight when the terminal cleanup runs.
+   */
+  function holdStoreWrites(): { release: () => void } {
+    const inner = installTestCredentialStore(workDir);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    setCredentialStore({
+      get: (scope, key, read) => inner.get(scope, key, read),
+      put: async (scope, key, value) => {
+        await gate;
+        await inner.put(scope, key, value);
+      },
+      delete: (scope, key) => inner.delete(scope, key),
+      list: (scope) => inner.list(scope),
+    });
+    return { release };
+  }
+
+  test("test_disconnect_withPendingAuthLostWrite_staysDisconnectedAfterRestart", async () => {
+    const before = brokeredLifecycle();
+    await before.seedInstance(SERVER, SERVER, brokeredRef(), undefined, WS);
+    const { release } = holdStoreWrites();
+    before.recordConnectionStateChange(SERVER, WS, "_workspace", "reauth_required");
+
+    const disconnected = before.disconnect(SERVER, WS, "_workspace", { workDir });
+    release();
+    await disconnected;
+    await settleWrites(before);
+    expect(connectionState(before)).toBe("not_authenticated");
+    expect(await hasMcpOAuthAuthLost(OWNER, SERVER)).toBe(false);
+
+    const afterRestart = brokeredLifecycle();
+    await afterRestart.seedInstance(SERVER, SERVER, brokeredRef(), undefined, WS);
+    expect(connectionState(afterRestart)).not.toBe("reauth_required");
+  });
+
+  test("test_uninstall_withPendingAuthLostWrite_leavesNoAuthLost", async () => {
+    const before = brokeredLifecycle();
+    await before.seedInstance(SERVER, SERVER, brokeredRef(), undefined, WS);
+    const { release } = holdStoreWrites();
+    before.recordConnectionStateChange(SERVER, WS, "_workspace", "reauth_required");
+
+    const uninstalled = before.uninstall(SERVER, new ToolRegistry(), WS);
+    release();
+    await uninstalled;
+    await settleWrites(before);
+    expect(await hasMcpOAuthAuthLost(OWNER, SERVER)).toBe(false);
   });
 });
