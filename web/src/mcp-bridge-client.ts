@@ -24,8 +24,8 @@
 // suspension, not a timeout: a read (`READ_METHODS`) is aborted and sent again
 // once with a fresh budget, since sending it twice changes nothing; any other
 // request (`tools/call`, `tasks/cancel`) is not sent again, because it may
-// already have run and the host cannot know it is idempotent, so it waits one
-// fresh budget instead. A timeout after a suspension answers `-32001` with
+// already have run and the bridge holds no annotations that say it is safe to
+// repeat, so it waits one fresh budget instead. A timeout after a suspension answers `-32001` with
 // `data: { suspendedMs }`, so an app can tell sleep from a slow server. Every
 // resend and every `-32001` is reported to `reportMcpTimeout`.
 // ---------------------------------------------------------------------------
