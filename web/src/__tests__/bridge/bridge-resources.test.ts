@@ -5,7 +5,8 @@
 // server's resource listings as well as reads. Every iframe's requests reach
 // `/mcp` as one client, so the bridge alone knows which app asked: it names that app's
 // server in the request's `_meta`, forwards only the iframe's `cursor`, and
-// hands the server's answer back — `nextCursor` included — untouched.
+// hands the server's answer back — `nextCursor` included, or a JSON-RPC error
+// with its code and `data` — untouched.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -19,11 +20,16 @@ const listResourceTemplates = mock(async (_params: unknown) => ({
   resourceTemplates: [{ uriTemplate: "notes://{index}", name: "note" }],
 }));
 
+const refusal = mock(
+  (): { error: { code: number; message: string; data?: unknown } } | null => null,
+);
+
 mock.module("../../mcp-bridge-client", () => ({
   ...realMcpBridgeClient,
-  sendMcpRequest: async (method: string, params: Record<string, unknown>) => ({
-    result: await (method === "resources/list" ? listResources : listResourceTemplates)(params),
-  }),
+  sendMcpRequest: async (method: string, params: Record<string, unknown>) =>
+    refusal() ?? {
+      result: await (method === "resources/list" ? listResources : listResourceTemplates)(params),
+    },
 }));
 
 const { createBridge, RESOURCE_SOURCE_META_KEY } = await import("../../bridge/bridge");
@@ -184,6 +190,17 @@ describe("resources/list", () => {
       id: "l-4",
       error: { code: -32000, message: "boom" },
     });
+  });
+});
+
+describe("resources/list refused", () => {
+  test("a refused listing forwards its JSON-RPC error with code and data", async () => {
+    const error = { code: -32001, message: "Request timed out", data: { suspendedMs: 90_000 } };
+    refusal.mockImplementationOnce(() => ({ error }));
+    const frame = mount("notes");
+    frame.send({ jsonrpc: "2.0", id: "l-5", method: "resources/list" });
+
+    expect(await frame.waitFor(byId("l-5"))).toEqual({ jsonrpc: "2.0", id: "l-5", error });
   });
 });
 

@@ -15,8 +15,11 @@ import {
   beforeBreadcrumb,
   beforeSend,
   consumeLogoutOnce,
+  consumeMcpTimeoutEvent,
   isReportableLogout,
+  MCP_TIMEOUT_EVENT_INTERVAL_MS,
   resetLogoutGuard,
+  resetMcpTimeoutEventWindow,
 } from "../src/sentry";
 
 describe("beforeSend", () => {
@@ -100,5 +103,16 @@ describe("isReportableLogout (event vs. expected-end-of-session)", () => {
 
   test("reports retry_401 — a freshly minted token rejected on the very next call", () => {
     expect(isReportableLogout("retry_401")).toBe(true);
+  });
+});
+
+describe("MCP timeout events (one per window, not one per request)", () => {
+  beforeEach(() => resetMcpTimeoutEventWindow());
+
+  test("the first -32001 gets an event, the rest of its window do not, the next window does", () => {
+    expect(consumeMcpTimeoutEvent(1_000)).toBe(true);
+    expect(consumeMcpTimeoutEvent(1_001)).toBe(false);
+    expect(consumeMcpTimeoutEvent(1_000 + MCP_TIMEOUT_EVENT_INTERVAL_MS - 1)).toBe(false);
+    expect(consumeMcpTimeoutEvent(1_000 + MCP_TIMEOUT_EVENT_INTERVAL_MS)).toBe(true);
   });
 });

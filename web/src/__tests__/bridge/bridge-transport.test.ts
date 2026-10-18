@@ -473,9 +473,9 @@ describe("resources/read — MCP transport", () => {
     });
   });
 
-  test("a refused read forwards as JSON-RPC -32000", async () => {
+  test("a refused read forwards its JSON-RPC error with code and data", async () => {
     mcpBehavior.readResource = async () => ({
-      error: { code: -32002, message: "resource not found" },
+      error: { code: -32001, message: "Request timed out", data: { suspendedMs: 90_000 } },
     });
     const frame = mount("research");
 
@@ -487,10 +487,13 @@ describe("resources/read — MCP transport", () => {
     });
 
     const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "r-err")) as {
-      error?: { code: number; message: string };
+      error?: unknown;
     };
-    expect(reply.error?.code).toBe(-32000);
-    expect(reply.error?.message).toContain("resource not found");
+    expect(reply.error).toEqual({
+      code: -32001,
+      message: "Request timed out",
+      data: { suspendedMs: 90_000 },
+    });
   });
 });
 

@@ -181,3 +181,65 @@ export function captureLogout(reason: string): void {
   if (!sdk || !isReportableLogout(reason) || !consumeLogoutOnce()) return;
   sdk.captureMessage(`involuntary logout: ${reason}`, "warning");
 }
+
+/**
+ * What the MCP bridge client records when a request's timer fires late (the
+ * page was suspended) or a request times out (see `mcp-bridge-client.ts`).
+ * Numbers, a method name and page visibility only: never the request's params,
+ * a tool name or its result.
+ */
+export interface McpTimeoutReport {
+  /** The JSON-RPC method, e.g. `resources/read`. */
+  method: string;
+  /** How far past its deadline the timer that fired ran, in ms. */
+  latenessMs: number;
+  /** The suspension observed across the whole request, in ms (0 when none). */
+  suspendedMs: number;
+  /** `document.visibilityState` when the timer was armed, and when it fired. */
+  visibilityAtArm: string;
+  visibilityAtFire: string;
+  /** Whether the request was sent again after a late timer. */
+  resent: boolean;
+  /** `resent`: a read sent again after a suspension; `timed_out`: answered `-32001`. */
+  outcome: "resent" | "timed_out";
+}
+
+/**
+ * At most one `-32001` event per this window. A tab resumed from a long sleep
+ * can time out every request it had in flight at once; one event carries the
+ * trail, and the rest stay breadcrumbs.
+ */
+export const MCP_TIMEOUT_EVENT_INTERVAL_MS = 5 * 60_000;
+let lastMcpTimeoutEventAt = Number.NEGATIVE_INFINITY;
+
+/**
+ * Whether a `-32001` at `now` gets an event, consuming the window when it does.
+ * Exported as a test seam (cf. consumeLogoutOnce).
+ */
+export function consumeMcpTimeoutEvent(now: number): boolean {
+  if (now - lastMcpTimeoutEventAt < MCP_TIMEOUT_EVENT_INTERVAL_MS) return false;
+  lastMcpTimeoutEventAt = now;
+  return true;
+}
+
+/** Re-open the `-32001` event window. Exported for tests. */
+export function resetMcpTimeoutEventWindow(): void {
+  lastMcpTimeoutEventAt = Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Record a bridge request's resend or timeout: a breadcrumb every time, and for
+ * a `-32001` an event, rate-limited by {@link consumeMcpTimeoutEvent}, so the
+ * next timeout says whether the page slept or the server was slow.
+ */
+export function reportMcpTimeout(report: McpTimeoutReport): void {
+  if (!sdk) return;
+  const { outcome, ...data } = report;
+  sdk.addBreadcrumb({ category: "mcp", message: `mcp:${outcome}`, level: "info", data });
+  if (outcome === "timed_out" && consumeMcpTimeoutEvent(Date.now())) {
+    sdk.captureMessage(`mcp request timed out: ${report.method}`, {
+      level: "warning",
+      extra: { ...data },
+    });
+  }
+}
