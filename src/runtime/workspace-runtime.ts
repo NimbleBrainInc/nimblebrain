@@ -321,12 +321,12 @@ export async function startWorkspaceConnectors(
     if (!wsRegistry) return; // unreachable: registries is keyed by every wsId in byWorkspace
 
     // URL connectors without persisted tokens skip auto-start at boot —
-    // there's nothing to connect with. The Connection sits in
-    // `not_authenticated` until the user clicks Connect (which triggers
-    // `lifecycle.startAuth`). This is what keeps a fresh install silent
-    // — no surprise OAuth banner on a connector the user added but hasn't
-    // authenticated yet. `seedInstance` consults the same token check to
-    // set state.
+    // there's nothing to connect with. Their Connection state is the seed's
+    // to derive (`seedInstance`): `not_authenticated` until the user clicks
+    // Connect (which triggers `lifecycle.startAuth`), or `reauth_required`
+    // when the tokens were deleted because the credential was rejected
+    // (`auth_lost`). This is what keeps a fresh install silent — no surprise
+    // OAuth banner on a connector the user added but hasn't authenticated yet.
     //
     // A brokered connector's readiness is its provider's answer, not a token file
     // — mirrors the discriminator in `lifecycle.seedUrlConnectionState`, which
@@ -344,7 +344,7 @@ export async function startWorkspaceConnectors(
       ))
     ) {
       log.info(
-        `[connectors] Skipping boot start for URL connector "${entry.serverName}" — no tokens yet (state: not_authenticated)`,
+        `[connectors] Skipping boot start for URL connector "${entry.serverName}" — no tokens are stored`,
       );
       resultEntries[idx] = unstartedUrlConnectorEntry(entry, entry.connector);
       return;

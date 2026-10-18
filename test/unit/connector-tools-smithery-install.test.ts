@@ -36,6 +36,10 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { makeIdentity } from "../helpers/identity.ts";
 import { stub } from "../helpers/stub.ts";
@@ -69,6 +73,7 @@ interface Harness {
 
 function buildHarness(): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-smithery-install-"));
+  installTestCredentialStore(workDir);
   const wsId = "ws_0076759dbbe19fcc";
   const workspaceStore = new WorkspaceStore(workDir);
   // The catalog must PUBLISH the entry: a smithery install is permitted only for
@@ -164,6 +169,7 @@ afterEach(() => {
   _resetSmitheryConfigForTest();
   _resetConnectorsConfigForTest();
   globalThis.fetch = realFetch;
+  resetTestCredentialStore();
   rmSync(h.workDir, { recursive: true, force: true });
 });
 

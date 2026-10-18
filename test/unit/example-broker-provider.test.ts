@@ -42,6 +42,10 @@ import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 import { makeIdentity } from "../helpers/identity.ts";
 import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
@@ -141,6 +145,7 @@ function catalogYaml(): string {
 
 function buildHarness(provider: ManagedConnectorProvider): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-example-broker-"));
+  installTestCredentialStore(workDir);
   const wsId = "ws_0076759dbbe19fcc";
   const workspaceStore = new WorkspaceStore(workDir);
   writeFileSync(join(workDir, "catalog.yaml"), catalogYaml());
@@ -227,6 +232,7 @@ let h: Harness;
 let calls: BrokerCalls;
 
 afterEach(() => {
+  resetTestCredentialStore();
   rmSync(h.workDir, { recursive: true, force: true });
 });
 

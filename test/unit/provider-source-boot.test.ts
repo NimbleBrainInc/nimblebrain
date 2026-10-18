@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
@@ -7,6 +10,10 @@ import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycl
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 class NoopSink implements EventSink {
   emit(_event: EngineEvent): void {}
@@ -63,6 +70,17 @@ describe("connectorHasStaticAuth", () => {
 });
 
 describe("seedInstance — provider-auth fleet source", () => {
+  // The seed reads a brokered connection's `auth_lost` flag from the store.
+  let storeDir: string;
+  beforeEach(() => {
+    storeDir = mkdtempSync(join(tmpdir(), "nb-provider-boot-"));
+    installTestCredentialStore(storeDir);
+  });
+  afterEach(() => {
+    resetTestCredentialStore();
+    rmSync(storeDir, { recursive: true, force: true });
+  });
+
   // Regression: a provider-auth source mints on demand and has no persisted OAuth
   // tokens, so the OAuth-centric boot gate seeded it `not_authenticated` — the
   // agent never saw its tools, and the UI showed a "Connect" button that would

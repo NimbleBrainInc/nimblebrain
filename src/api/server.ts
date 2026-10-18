@@ -11,11 +11,12 @@ import { shutdownTracing } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { HealthMonitor } from "../tools/health-monitor.ts";
+import type { McpSource } from "../tools/mcp-source.ts";
 import { createApp } from "./app.ts";
 import { ConversationEventManager } from "./conversation-events.ts";
 import { SseEventManager } from "./events.ts";
 import { McpServerHost } from "./mcp-server.ts";
-import { registerConnectorHealthGauge } from "./metrics.ts";
+import { registerConnectorHealthGauge, registerConnectorReauthGauge } from "./metrics.ts";
 import { RequestRateLimiter } from "./rate-limiter.ts";
 import {
   HOOK_ANON_BUCKET_MAX,
@@ -83,13 +84,30 @@ export function startServer(options: ServerOptions): ServerHandle {
     ? new Set([...envAllowedOrigins, ...canonicalOrigins()])
     : null;
 
-  const healthMonitor = new HealthMonitor(() => runtime.mcpSources(), runtime.getEventSink());
+  const lifecycle = runtime.getLifecycle();
+  // The sources whose connection needs the user's Reconnect, matched by object
+  // identity: the same connector in two workspaces is two sources of one name,
+  // and only the one whose connection lost its credential is left alone.
+  const awaitingReconnect = (source: McpSource): boolean => {
+    for (const conn of lifecycle.reauthRequiredConnections()) {
+      if (lifecycle.connectionSource(conn.serverName, conn.wsId) === source) return true;
+    }
+    return false;
+  };
+  const healthMonitor = new HealthMonitor(() => runtime.mcpSources(), runtime.getEventSink(), {
+    awaitingReconnect,
+  });
   healthMonitor.start();
-  // Expose currently-down connectors as the `nb_connector_unhealthy` gauge (read
-  // through this provider at scrape time). The gauge stays asserted for the
-  // whole outage, unlike the crash counter which goes flat once a source is
-  // dead-terminal — so the down-alert resolves only on recovery.
+  // Expose connectors whose transport is down as the `nb_connector_unhealthy`
+  // gauge (read through this provider at scrape time). The gauge stays asserted
+  // for the whole outage, unlike the crash counter which goes flat once a source
+  // is dead-terminal — so the down-alert resolves only on recovery.
   registerConnectorHealthGauge(() => healthMonitor.getStatus());
+  // Connections that need Reconnect, from the lifecycle's records, which hold
+  // that state across a restart whether or not a source is registered.
+  registerConnectorReauthGauge(() =>
+    lifecycle.reauthRequiredConnections().map((conn) => conn.serverName),
+  );
 
   // Connection credential re-validation (a disjoint concern from HealthMonitor's
   // transport liveness): poll brokered providers whose upstream account can lapse
