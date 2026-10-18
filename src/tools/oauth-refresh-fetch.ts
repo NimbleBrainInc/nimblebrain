@@ -108,29 +108,38 @@ function refreshGrantToken(init?: RequestInit): string | null {
 }
 
 /**
- * Does a non-OK refresh response represent a transient failure (retry) rather
- * than a permanent credential rejection (give up, let the SDK reauth)?
- *
- * Reads a clone so the original body stays intact for the SDK's own
- * `parseErrorResponse` re-read.
+ * Does a non-OK refresh response, by its status and OAuth error code (undefined
+ * when the body is unparseable or carries none), represent a transient failure
+ * (retry) rather than a permanent credential rejection (give up, let the SDK
+ * reauth)? The retry decision and the refusal record both read this.
  */
-async function isTransientRefreshResponse(res: Response): Promise<boolean> {
-  if (res.status >= 500) return true; // gateway / ServerError class
-  if (res.status === 429 || res.status === 408) return true;
-  if (res.status === 400 || res.status === 401 || res.status === 403) {
+function isTransientRefreshFailure(status: number, code: string | undefined): boolean {
+  if (status >= 500) return true; // gateway / ServerError class
+  if (status === 429 || status === 408) return true;
+  if (status === 400 || status === 401 || status === 403) {
     // A 4xx may still be transient if it carries a transient OAuth code.
     // Unparseable / unrecognized 4xx → treat as permanent so we never mask a
     // real `invalid_grant`.
-    try {
-      const data = (await res.clone().json()) as { error?: unknown };
-      const code = typeof data?.error === "string" ? data.error : undefined;
-      if (!code || PERMANENT_REFRESH_ERRORS.has(code)) return false;
-      return TRANSIENT_REFRESH_ERRORS.has(code);
-    } catch {
-      return false;
-    }
+    if (!code || PERMANENT_REFRESH_ERRORS.has(code)) return false;
+    return TRANSIENT_REFRESH_ERRORS.has(code);
   }
   return false;
+}
+
+/**
+ * `isTransientRefreshFailure` for a live response. Reads a clone so the
+ * original body stays intact for the SDK's own `parseErrorResponse` re-read.
+ */
+async function isTransientRefreshResponse(res: Response): Promise<boolean> {
+  if (res.ok) return false;
+  let code: string | undefined;
+  try {
+    const data = (await res.clone().json()) as { error?: unknown };
+    code = typeof data?.error === "string" ? data.error : undefined;
+  } catch {
+    code = undefined;
+  }
+  return isTransientRefreshFailure(res.status, code);
 }
 
 function backoffDelayMs(attempt: number, baseDelayMs: number, rng: () => number): number {
@@ -223,10 +232,12 @@ export function createOAuthRefreshFetch(options: OAuthRefreshFetchOptions = {}):
   // responses are small JSON, so buffering is trivial.
   const refreshOnceSnapshot = async (
     url: string | URL,
+    refreshToken: string,
     init?: RequestInit,
   ): Promise<() => Response> => {
     const res = await refreshWithRetry(url, init);
     const body = await res.arrayBuffer();
+    recordSettled(refreshToken, res, body);
     const responseInit: ResponseInit = {
       status: res.status,
       statusText: res.statusText,
@@ -248,7 +259,9 @@ export function createOAuthRefreshFetch(options: OAuthRefreshFetchOptions = {}):
     // that rotates refresh tokens revokes the one it was given, so a second
     // spend gets `invalid_grant`, and the SDK answers that by deleting the
     // credential the first spend just renewed.
-    return (await spendOnce(String(url), refreshToken, () => refreshOnceSnapshot(url, init)))();
+    return (
+      await spendOnce(String(url), refreshToken, () => refreshOnceSnapshot(url, refreshToken, init))
+    )();
   };
 }
 
@@ -287,9 +300,16 @@ function spendOnce(
   for (const [key, entry] of exchanges) {
     if (entry.expiresAt !== undefined && entry.expiresAt <= now) exchanges.delete(key);
   }
+  sweepSettled(now);
   const key = exchangeKey(url, refreshToken);
   const existing = exchanges.get(key);
-  if (existing) return existing.result;
+  if (existing) {
+    log.info("[oauth] refresh exchange shared", {
+      spent_refresh_hash: refreshTokenTag(refreshToken),
+      shared: existing.expiresAt === undefined ? "in-flight" : "replay",
+    });
+    return existing.result;
+  }
   const entry: Exchange = { result: exchange() };
   exchanges.set(key, entry);
   entry.result.then(
@@ -304,7 +324,88 @@ function spendOnce(
   return entry.result;
 }
 
-/** Forget every exchange. Tests only: each test spends its own tokens. */
+/**
+ * How long the outcome of a settled exchange stays readable. The SDK saves or
+ * invalidates moments after the response, but a replayed answer can be handed
+ * out at the last moment of `REFRESH_REPLAY_MS`, so the record outlives the
+ * window that serves it.
+ */
+const SETTLED_RETENTION_MS = 2 * REFRESH_REPLAY_MS;
+
+/**
+ * For each refresh token a successful exchange left the connection holding (the
+ * one it issued, or the spent one when the vendor does not rotate), the hash of
+ * the token that exchange spent. By token hash, never the token.
+ */
+const issuedBy = new Map<string, { spent: string; expiresAt: number }>();
+
+/** Refresh tokens a vendor refused, by hash, with the OAuth error code it gave. */
+const refused = new Map<string, { error: string; expiresAt: number }>();
+
+/** The sha256 of a refresh token, hex: how the records above name one. */
+export function refreshTokenHash(refreshToken: string): string {
+  return createHash("sha256").update(refreshToken).digest("hex");
+}
+
+/** The first 8 hex of a refresh token's hash: names it in a log line without disclosing it. */
+export function refreshTokenTag(refreshToken: string): string {
+  return refreshTokenHash(refreshToken).slice(0, 8);
+}
+
+/**
+ * The hash of the refresh token whose exchange left the connection holding
+ * `refreshToken` (a refresh result's `refresh_token`), or undefined when no
+ * exchange in this process produced it.
+ */
+export function spentRefreshTokenHash(refreshToken: string): string | undefined {
+  return issuedBy.get(refreshTokenHash(refreshToken))?.spent;
+}
+
+/** The OAuth error code a vendor refused `refreshToken` with, or undefined when none did. */
+export function refreshTokenRefusal(refreshToken: string): string | undefined {
+  return refused.get(refreshTokenHash(refreshToken))?.error;
+}
+
+/**
+ * Record what an upstream exchange did with the token it spent, before any
+ * caller sees the response, so the provider's save or invalidate that follows
+ * can key on the token actually spent.
+ */
+function recordSettled(spent: string, res: Response, body: ArrayBuffer): void {
+  let data: { refresh_token?: unknown; error?: unknown } | null = null;
+  try {
+    data = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    data = null;
+  }
+  const expiresAt = Date.now() + SETTLED_RETENTION_MS;
+  if (res.ok) {
+    const issued =
+      typeof data?.refresh_token === "string" && data.refresh_token.length > 0
+        ? data.refresh_token
+        : spent;
+    issuedBy.set(refreshTokenHash(issued), { spent: refreshTokenHash(spent), expiresAt });
+    return;
+  }
+  // A refusal is a failure the retry policy calls permanent; a transient one
+  // left the token unjudged.
+  const code = typeof data?.error === "string" ? data.error : undefined;
+  if (!isTransientRefreshFailure(res.status, code)) {
+    refused.set(refreshTokenHash(spent), { error: code ?? `http_${res.status}`, expiresAt });
+  }
+}
+
+function sweepSettled(now: number): void {
+  for (const records of [issuedBy, refused]) {
+    for (const [key, entry] of records) {
+      if (entry.expiresAt <= now) records.delete(key);
+    }
+  }
+}
+
+/** Forget every exchange and its outcome. Tests only: each test spends its own tokens. */
 export function resetRefreshExchanges(): void {
   exchanges.clear();
+  issuedBy.clear();
+  refused.clear();
 }
