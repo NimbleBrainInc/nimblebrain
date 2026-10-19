@@ -12,7 +12,6 @@ import { hasMcpOAuthAuthLost, McpOAuthRecords } from "../../src/tools/mcp-oauth-
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
-import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -97,19 +96,6 @@ describe("ConnectorLifecycleManager.startAuth — validation & idempotence", () 
     ).rejects.toThrow(/not installed/);
   });
 
-  test("rejects when connector ref has no URL (named or local connector)", async () => {
-    seedInstance(
-      lifecycle,
-      "stdio",
-      "ws_0076759dbbe19fcc",
-      "workspace",
-      legacyConnectorRef({ name: "@scope/stdio" }),
-    );
-    await expect(
-      lifecycle.startAuth("stdio", "ws_0076759dbbe19fcc", "_workspace", OPTS),
-    ).rejects.toThrow(/missing URL ref/);
-  });
-
   test("rejects a principal other than the workspace principal", async () => {
     seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
@@ -172,19 +158,6 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
     await expect(
       lifecycle.disconnect("ghost", "ws_0076759dbbe19fcc", "_workspace", { workDir: "/tmp" }),
     ).rejects.toThrow(/not installed/);
-  });
-
-  test("rejects when connector has no URL ref (revocation requires the AS URL)", async () => {
-    seedInstance(
-      lifecycle,
-      "stdio",
-      "ws_0076759dbbe19fcc",
-      "workspace",
-      legacyConnectorRef({ name: "@scope/stdio" }),
-    );
-    await expect(
-      lifecycle.disconnect("stdio", "ws_0076759dbbe19fcc", "_workspace", { workDir: "/tmp" }),
-    ).rejects.toThrow(/missing URL ref/);
   });
 
   test("transitions Connection to not_authenticated, drops the source, emits state_changed", async () => {

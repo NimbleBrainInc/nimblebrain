@@ -349,7 +349,7 @@ export class ConnectorLifecycleManager {
    * disconnect tool refuses an established connection where it is false.
    */
   isDisconnectable(ref: ConnectorRef | undefined): boolean {
-    if (!ref || !("url" in ref)) return false;
+    if (!ref) return false;
     const brokered = brokeredRef(ref);
     if (brokered) {
       const provider = this.managedConnectors.get(brokered.provider);
@@ -970,7 +970,7 @@ export class ConnectorLifecycleManager {
     if (!instance) {
       throw new Error(`[lifecycle] connector "${serverName}" not installed in workspace ${wsId}`);
     }
-    if (!instance.ref || !("url" in instance.ref)) {
+    if (!instance.ref) {
       throw new Error(`[lifecycle] missing URL ref for "${serverName}" — cannot construct source`);
     }
     // Every URL connector is workspace-scoped, so the only legal principal
@@ -1372,7 +1372,7 @@ export class ConnectorLifecycleManager {
       throw new Error(`[lifecycle] connector "${serverName}" not installed in workspace ${wsId}`);
     }
     const ref = instance.ref;
-    if (!ref || !("url" in ref)) {
+    if (!ref) {
       throw new Error(`[lifecycle] missing URL ref for "${serverName}" — cannot revoke tokens`);
     }
     // Every URL connector is workspace-scoped. The only legal
@@ -2023,7 +2023,7 @@ export class ConnectorLifecycleManager {
         userId,
         serverName,
       );
-      if (!ref || !("url" in ref)) {
+      if (!ref) {
         throw new Error(`[lifecycle] "${serverName}" is not a personal connector for ${userId}`);
       }
 
@@ -2203,13 +2203,12 @@ export class ConnectorLifecycleManager {
 
     const key = `${serverName}|${wsId}`;
 
-    // Only an installed instance with a persisted URL ref is recoverable
-    // on this path. No instance → the connector isn't installed in this
-    // workspace (nothing to recover). A non-URL (named/stdio) ref needs
-    // the credential-resolving named-spawn path — out of scope here.
+    // Only an installed instance with a persisted ref is recoverable on this
+    // path. No instance → the connector isn't installed in this workspace
+    // (nothing to recover).
     const instance = this.instances.get(key);
     const ref = instance?.ref;
-    if (!ref || !("url" in ref)) return false;
+    if (!ref) return false;
 
     // A rejected credential is not something a re-spawn can fix: only the
     // user's Reconnect replaces it, and that builds its own source. A source

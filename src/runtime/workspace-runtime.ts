@@ -400,18 +400,7 @@ export async function startWorkspaceConnectors(
       // seeder still reads `startError` and records the connection `dead`, not
       // `running` — the connector is registered, but its connection is honestly down
       // until a reconnect succeeds.
-      //
-      // Named/path connectors stay dropped, for two reasons. The decisive one:
-      // only a URL ref reaches `seedUrlConnectionState`, and
-      // `buildSeededInstance` hardcodes `state: "running"` — so a surviving
-      // named entry would seed a permanently *running* instance for a dead
-      // connector, which is worse than absence, not better. Second, re-spawning
-      // one needs the credential-resolving `startConnectorSource` path that
-      // `tryRecoverSource` declines, so the entry would promise a recovery that
-      // never comes.
-      if ("url" in entry.connector) {
-        resultEntries[idx] = unstartedUrlConnectorEntry(entry, entry.connector, msg);
-      }
+      resultEntries[idx] = unstartedUrlConnectorEntry(entry, entry.connector, msg);
     }
   });
 

@@ -37,11 +37,6 @@ describe("IdentityContext — construction", () => {
 describe("IdentityContext — path helpers", () => {
   const ctx = new IdentityContext({ userId: "usr_abc", workDir: WORK_DIR });
 
-  test("files scope", () => {
-    expect(ctx.getDataPath("files")).toBe("/tmp/nb-test/users/usr_abc/files");
-    expect(ctx.getDataPath("files", "file_1")).toBe("/tmp/nb-test/users/usr_abc/files/file_1");
-  });
-
   test("skills scope", () => {
     expect(ctx.getDataPath("skills")).toBe("/tmp/nb-test/users/usr_abc/skills");
   });
@@ -57,7 +52,7 @@ describe("IdentityContext — path helpers", () => {
   });
 
   test("rejects traversal in a subpath segment", () => {
-    expect(() => ctx.getDataPath("files", "..")).toThrow();
-    expect(() => ctx.getDataPath("files", "../../etc")).toThrow();
+    expect(() => ctx.getDataPath("skills", "..")).toThrow();
+    expect(() => ctx.getDataPath("skills", "../../etc")).toThrow();
   });
 });

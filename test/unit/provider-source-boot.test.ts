@@ -9,7 +9,6 @@ import { connectorHasStaticAuth } from "../../src/connectors/runtime/connector-a
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
-import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -61,11 +60,6 @@ describe("connectorHasStaticAuth", () => {
       connectorHasStaticAuth({ url: "u", serverName: "s", transport: { auth: { type: "none" } } }),
     ).toBe(false);
     expect(connectorHasStaticAuth({ url: "u", serverName: "s" })).toBe(false);
-  });
-
-  test("named and local-path connectors are not static-auth url sources", () => {
-    expect(connectorHasStaticAuth(legacyConnectorRef({ name: "n" }))).toBe(false);
-    expect(connectorHasStaticAuth(legacyConnectorRef({ path: "/p" }))).toBe(false);
   });
 });
 

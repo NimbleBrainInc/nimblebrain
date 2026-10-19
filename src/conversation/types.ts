@@ -223,8 +223,6 @@ export interface Conversation {
   visibility?: "private" | "shared";
   /** Arbitrary caller-provided metadata. Stored in JSONL first line, never validated. */
   metadata?: Record<string, unknown>;
-  /** File format marker the event-sourced store writes on line 1. */
-  format?: "events";
 }
 
 /**

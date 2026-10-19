@@ -127,7 +127,7 @@ describe("chat rate limiting", () => {
       const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ message: `msg ${i}`, workspaceId: TEST_WORKSPACE_ID }),
+        body: JSON.stringify({ message: `msg ${i}` }),
       });
       expect(res.status).toBe(200);
     }
@@ -136,7 +136,7 @@ describe("chat rate limiting", () => {
     const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ message: "over limit", workspaceId: TEST_WORKSPACE_ID }),
+      body: JSON.stringify({ message: "over limit" }),
     });
 
     expect(res.status).toBe(429);

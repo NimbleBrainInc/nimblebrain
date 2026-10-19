@@ -293,64 +293,6 @@ export function verifyEnvelopeAsTenant(opts: {
 }
 
 /**
- * Bouncer-side verification: the caller is the router, which doesn't
- * know which tenant the flow belongs to until it has parsed the
- * envelope. We extract tid from the payload BEFORE HMAC verification,
- * but that's safe — tid is allowlist-validated, and a forged tid won't
- * pass HMAC unless the attacker also has the (derived) tenant key.
- *
- * Returns the verified tid so the bouncer can construct the redirect.
- */
-export function verifyEnvelopeAsRouter(opts: { wire: string; masterKey: Buffer; now?: number }): {
-  tid: string;
-  payload: EnvelopePayload;
-} {
-  const peeked = peekTid(opts.wire);
-  const tenantKey = deriveTenantKey(opts.masterKey, peeked);
-  const { payload } = parseAndVerify(opts.wire, tenantKey, opts.now);
-  // Defense in depth. Today this is redundant: the MAC has already
-  // proved the payload bytes weren't modified, and V8's `JSON.parse`
-  // is deterministic over identical bytes, so `payload.tid` must equal
-  // `peeked`. The check survives a future change to the parsing path
-  // (streaming parser, different runtime, key-deduplication semantics)
-  // that would otherwise silently let `peeked` and `payload.tid`
-  // diverge, turning a routing decision into an attacker-controlled
-  // primitive. The cost is one comparison.
-  //
-  // No direct unit test: constructing a divergence requires the same
-  // parsing-path change this guard protects against. Removing the
-  // check should be paired with a different forward-compatibility
-  // story (e.g. a single-pass parser that returns both `tid` and the
-  // full payload).
-  if (peeked !== payload.tid) {
-    throw new EnvelopeError("invalid_tid");
-  }
-  return { tid: payload.tid, payload };
-}
-
-function peekTid(wire: string): string {
-  const { payloadB64 } = splitWire(wire);
-  let payload: unknown;
-  try {
-    payload = JSON.parse(base64UrlDecode(payloadB64).toString("utf8"));
-  } catch {
-    throw new EnvelopeError("invalid_payload");
-  }
-  if (
-    !payload ||
-    typeof payload !== "object" ||
-    typeof (payload as { tid?: unknown }).tid !== "string"
-  ) {
-    throw new EnvelopeError("invalid_payload");
-  }
-  const tid = (payload as { tid: string }).tid;
-  if (!ALLOWED_TID_PATTERN.test(tid)) {
-    throw new EnvelopeError("invalid_tid");
-  }
-  return tid;
-}
-
-/**
  * Structural parse of the wire string. Narrows the three segments to
  * defined `string`s so callers don't have to re-check. Length and
  * version checks live here so they're applied exactly once per verify.

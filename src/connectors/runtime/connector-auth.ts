@@ -36,9 +36,7 @@ const STATIC_AUTH_TYPES: readonly string[] = ["bearer", "header", "provider"];
  * `running` and loses its Connect button.
  */
 export function connectorHasStaticAuth(ref: ConnectorRef): boolean {
-  return (
-    "url" in ref && !!ref.transport?.auth && STATIC_AUTH_TYPES.includes(ref.transport.auth.type)
-  );
+  return !!ref.transport?.auth && STATIC_AUTH_TYPES.includes(ref.transport.auth.type);
 }
 
 /**

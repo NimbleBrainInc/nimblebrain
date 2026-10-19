@@ -33,8 +33,3 @@ export function captureEvent(name: string, properties?: Record<string, unknown>)
   if (!initialized) return;
   posthog.capture(name, properties);
 }
-
-export function capturePageView(route: string): void {
-  if (!initialized) return;
-  posthog.capture("web.page_view", { route });
-}

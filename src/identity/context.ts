@@ -30,18 +30,16 @@ import { join } from "node:path";
  *     under a per-user directory. Reach them via `runtime.findConversation`,
  *     not a path helper here.
  *
- * What it owns: per-user data directories at `{workDir}/users/{userId}/...`
- * (`files`, `skills`) — the North Star `users/{userId}/files/` layout. Task
- * data is workspace-owned and never lives here.
+ * What it owns: per-user data directories at `{workDir}/users/{userId}/...`.
+ * Files and task data are workspace-owned and never live here.
  */
 
 /**
  * Scopes available under a user's root directory (`{workDir}/users/{userId}/`).
- *   - `files`       — user-owned files (North Star `users/{userId}/files/`)
  *   - `skills`      — per-user skills (existing layout, `users/<userId>/skills/`)
  * `root` returns the user root itself.
  */
-export type IdentityScope = "root" | "files" | "skills";
+export type IdentityScope = "root" | "skills";
 
 const SUBPATH_FORBIDDEN_RE = /\0/;
 
@@ -131,8 +129,7 @@ export class IdentityContext {
   /**
    * Absolute path to an identity-scoped directory or file.
    *
-   *   ctx.getDataPath("files")                  → users/{userId}/files
-   *   ctx.getDataPath("files", "<fileId>")      → users/{userId}/files/<fileId>
+   *   ctx.getDataPath("root")                   → users/{userId}
    *   ctx.getDataPath("skills")                 → users/{userId}/skills
    *
    * Subpath segments are validated against traversal / null bytes /

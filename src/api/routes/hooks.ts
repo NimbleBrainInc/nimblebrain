@@ -230,15 +230,11 @@ async function readBodyWithinCap(req: Request): Promise<Uint8Array | null> {
   return readCappedBody(req, HOOK_MAX_BODY_BYTES);
 }
 
-/** The `url:` variant of a `ConnectorRef` — the only shape a hook can forward to,
- *  because a forward needs a base URL and a transport to resolve against. */
-type RemoteConnectorRef = ConnectorRef;
-
 /** A delivery that passed every check, with everything the forward needs. */
 interface AdmittedDelivery {
   wsId: string;
   registration: HookRegistration;
-  ref: RemoteConnectorRef;
+  ref: ConnectorRef;
 }
 
 /**
@@ -306,9 +302,9 @@ async function forwardTarget(
   ctx: AppContext,
   ws: { id: string; connectors?: ConnectorRef[] },
   registration: HookRegistration,
-): Promise<RemoteConnectorRef | undefined> {
+): Promise<ConnectorRef | undefined> {
   const ref = findInstalledConnector(ws.connectors ?? [], registration.connector);
-  if (!ref || !("url" in ref)) return undefined;
+  if (!ref) return undefined;
   const declared = await ctx.runtime
     .getHookReconcileDeps()
     .declarationsFor(ws.id, registration.connector);

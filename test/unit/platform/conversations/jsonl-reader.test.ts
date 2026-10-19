@@ -104,7 +104,6 @@ describe("readConversation", () => {
     expect(result!.meta.title).toBeNull();
     expect(result!.meta.totalInputTokens).toBe(0);
     expect(result!.meta.totalOutputTokens).toBe(0);
-    expect(result!.meta.totalCostUsd).toBe(0);
     expect(result!.meta.lastModel).toBeNull();
     expect(result!.messageCount).toBe(1);
     expect(result!.preview).toBe("Old message");

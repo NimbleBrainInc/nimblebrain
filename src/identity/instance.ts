@@ -1,4 +1,4 @@
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveInstanceCredentialRefs } from "../tools/instance-credentials.ts";
 
@@ -211,12 +211,7 @@ function validateInstanceConfig(raw: unknown): InstanceConfig {
   return config;
 }
 
-// ── Load / Save ─────────────────────────────────────────────────────
-
-let tmpCounter = 0;
-function uniqueTmpSuffix(): string {
-  return `${Date.now()}.${++tmpCounter}`;
-}
+// ── Load ─────────────────────────────────────────────────────
 
 /**
  * Load instance config from `workDir/instance.json`.
@@ -265,15 +260,4 @@ export function missingInstanceConfigError(workDir: string): Error {
       `    or {"auth":{"adapter":"workos","clientId":"<client id>"}}\n` +
       `  See https://docs.nimblebrain.ai/config/instance-json/`,
   );
-}
-
-/**
- * Atomically save instance config to `workDir/instance.json`.
- * Uses write-temp-then-rename to prevent partial writes.
- */
-export async function saveInstanceConfig(workDir: string, config: InstanceConfig): Promise<void> {
-  const filePath = join(workDir, INSTANCE_FILE);
-  const tmpPath = `${filePath}.tmp.${uniqueTmpSuffix()}`;
-  await writeFile(tmpPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
-  await rename(tmpPath, filePath);
 }

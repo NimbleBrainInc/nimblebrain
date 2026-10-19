@@ -20,14 +20,9 @@ import type { Tone } from "./types.ts";
  *   present tense "Editing"       — in flight (running tone)
  *   error form    "Couldn't edit" — failed    (error tone)
  *
- * Past tense is the canonical identifier — it's what inferVerb returns, what
- * dominance compares, and what custom renderers set. Present and error forms
+ * Past tense is the canonical identifier — it's what inferVerb returns and
+ * what custom renderers set. Present and error forms
  * are produced by phraseFor based on tone.
- *
- * Batch dominance: when a turn mixes multiple verbs, the batch verb is the
- * one that signals the biggest change. "Edited" wins over "Read"; "Deleted"
- * wins over everything. Reflects how a user would describe what happened —
- * they'd say "I edited the doc" not "I read the doc" even if read came first.
  */
 
 /**
@@ -83,35 +78,6 @@ const VERB_ROOTS: Readonly<Record<string, string>> = {
 
 /** Returned when no token matches. */
 const DEFAULT_VERB = "Ran";
-
-/**
- * Verb dominance ranking — lower index = more dominant. When a batch contains
- * multiple verbs, the batch verb is the one with the smallest index.
- */
-const VERB_DOMINANCE: ReadonlyArray<string> = [
-  "Deleted",
-  "Rewrote",
-  "Created",
-  "Duplicated",
-  "Deployed",
-  "Sent",
-  "Edited",
-  "Updated",
-  "Built",
-  "Saved",
-  "Closed",
-  "Planned",
-  "Researched",
-  "Investigated",
-  "Analyzed",
-  "Summarized",
-  "Searched",
-  "Listed",
-  "Opened",
-  "Fetched",
-  "Read",
-  "Ran",
-];
 
 /**
  * Present-progressive form keyed by past-tense verb. Used when tone is
@@ -184,26 +150,6 @@ export function inferVerb(toolName: string): { verb: string; object: string } {
   }
   // No verb token matched: treat the entire name as the object.
   return { verb: DEFAULT_VERB, object: tokens.join(" ") };
-}
-
-/** Pick the most dominant verb from a set. Falls back to `Ran`. */
-export function dominantVerb(verbs: ReadonlyArray<string>): string {
-  if (verbs.length === 0) return DEFAULT_VERB;
-  let best = verbs[0];
-  let bestRank = rankOf(best);
-  for (let i = 1; i < verbs.length; i++) {
-    const r = rankOf(verbs[i]);
-    if (r < bestRank) {
-      bestRank = r;
-      best = verbs[i];
-    }
-  }
-  return best;
-}
-
-function rankOf(verb: string): number {
-  const idx = VERB_DOMINANCE.indexOf(verb);
-  return idx === -1 ? VERB_DOMINANCE.length : idx;
 }
 
 /** Split a tool name into lowercase tokens on `_`. Empty segments are dropped. */

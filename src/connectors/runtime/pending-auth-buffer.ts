@@ -50,11 +50,6 @@ export function consumePendingAuth(wsId: string, serverName: string): string | n
   return url;
 }
 
-/** Test-only: drop everything. */
-export function _clearAllPendingAuth(): void {
-  buffer.clear();
-}
-
 // ── Connection-running notifications ────────────────────────────────
 //
 // startup.ts's URL-connector `start().then` path needs to notify the

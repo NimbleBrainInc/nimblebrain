@@ -2,13 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StructuredLogSink } from "../../src/adapters/structured-log-sink.ts";
 import { WorkspaceLogSink } from "../../src/adapters/workspace-log-sink.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/privilege.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
-import { engineEvent, firstPayloadOf, runStartPayload } from "../helpers/engine-events.ts";
+import { firstPayloadOf } from "../helpers/engine-events.ts";
 
 function makeLogDir(): string {
   return mkdtempSync(join(tmpdir(), "audit-test-"));
@@ -23,110 +22,6 @@ function readLogRecords(dir: string, pattern?: RegExp): Record<string, unknown>[
     .split("\n")
     .map((line) => JSON.parse(line));
 }
-
-// ── StructuredLogSink: identity context ──────────────────────────
-
-describe("StructuredLogSink identity context", () => {
-  let logDir: string;
-
-  beforeEach(() => {
-    logDir = makeLogDir();
-  });
-
-  afterEach(() => {
-    rmSync(logDir, { recursive: true, force: true });
-  });
-
-  it("includes userId and workspaceId on records when set via constructor", () => {
-    const sink = new StructuredLogSink({
-      dir: logDir,
-      userId: "user_abc",
-      workspaceId: "ws_0076759dbbe19fcc",
-    });
-    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
-    sink.close();
-
-    const records = readLogRecords(logDir);
-    expect(records[0]!.uid).toBe("user_abc");
-    expect(records[0]!.wsId).toBe("ws_0076759dbbe19fcc");
-  });
-
-  it("omits uid and wsId when not set", () => {
-    const sink = new StructuredLogSink({ dir: logDir });
-    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
-    sink.close();
-
-    const records = readLogRecords(logDir);
-    expect(records[0]!.uid).toBeUndefined();
-    expect(records[0]!.wsId).toBeUndefined();
-  });
-
-  it("setUserId and setWorkspaceId update subsequent records", () => {
-    const sink = new StructuredLogSink({ dir: logDir });
-    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
-    sink.setUserId("user_xyz");
-    sink.setWorkspaceId("ws_0061a3cbd4f78051");
-    sink.emit(
-      engineEvent("run.done", { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 0 }),
-    );
-    sink.close();
-
-    const records = readLogRecords(logDir);
-    expect(records[0]!.uid).toBeUndefined();
-    expect(records[1]!.uid).toBe("user_xyz");
-    expect(records[1]!.wsId).toBe("ws_0061a3cbd4f78051");
-  });
-});
-
-// ── StructuredLogSink: retention cleanup ─────────────────────────
-
-describe("StructuredLogSink retention cleanup", () => {
-  let logDir: string;
-
-  beforeEach(() => {
-    logDir = makeLogDir();
-  });
-
-  afterEach(() => {
-    rmSync(logDir, { recursive: true, force: true });
-  });
-
-  it("deletes log files older than retentionDays", () => {
-    // Seed old files
-    writeFileSync(join(logDir, "nimblebrain-2025-01-01.jsonl"), '{"old":true}\n');
-    writeFileSync(join(logDir, "nimblebrain-2025-01-15.jsonl"), '{"old":true}\n');
-    // Seed a recent file (today)
-    const today = new Date().toISOString().slice(0, 10);
-    writeFileSync(join(logDir, `nimblebrain-${today}.jsonl`), '{"recent":true}\n');
-
-    // Retention = 30 days — old files should be cleaned
-    new StructuredLogSink({ dir: logDir, retentionDays: 30 });
-
-    const remaining = readdirSync(logDir).filter((f) => f.endsWith(".jsonl"));
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]).toBe(`nimblebrain-${today}.jsonl`);
-  });
-
-  it("does not delete files when retentionDays is omitted", () => {
-    writeFileSync(join(logDir, "nimblebrain-2020-01-01.jsonl"), '{"ancient":true}\n');
-
-    new StructuredLogSink({ dir: logDir });
-
-    const remaining = readdirSync(logDir).filter((f) => f.endsWith(".jsonl"));
-    expect(remaining).toHaveLength(1);
-  });
-
-  it("ignores non-log files during cleanup", () => {
-    writeFileSync(join(logDir, "nimblebrain-2020-01-01.jsonl"), '{"old":true}\n');
-    writeFileSync(join(logDir, "README.md"), "keep me");
-
-    new StructuredLogSink({ dir: logDir, retentionDays: 1 });
-
-    const remaining = readdirSync(logDir);
-    expect(remaining).toContain("README.md");
-    expect(remaining).not.toContain("nimblebrain-2020-01-01.jsonl");
-  });
-});
 
 // ── WorkspaceLogSink: audit events ───────────────────────────────
 

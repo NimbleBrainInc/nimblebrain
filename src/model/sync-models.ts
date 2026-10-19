@@ -71,16 +71,6 @@ const MANUAL_LIMIT_OVERRIDES: Record<string, { context?: number; output?: number
   "anthropic:claude-sonnet-4-5-20250929": { context: 200000 },
 };
 
-// Models the upstream API hasn't flagged yet but we know are scheduled for shutdown.
-// Format: "<provider>:<modelId>".
-//
-// Remove an entry once models.dev catches up — either by flagging the model
-// deprecated itself, or by dropping it from the API entirely once it shuts
-// down. The second case is easy to miss and leaves a permanently dead entry:
-// `buildProviderModels` iterates only models still present upstream, so an id
-// that no longer exists there can never match again.
-const MANUAL_DEPRECATIONS = new Set<string>([]);
-
 export interface RawModel {
   id: string;
   name: string;
@@ -203,13 +193,13 @@ function toCatalogCost(cost: RawModel["cost"]): CatalogModel["cost"] {
   };
 }
 
-/** Whether a model is deprecated per upstream status or our manual shutdown list. */
-function isModelDeprecated(providerId: string, modelId: string, raw: RawModel): boolean {
-  return raw.status === "deprecated" || MANUAL_DEPRECATIONS.has(`${providerId}:${modelId}`);
+/** Whether upstream flags a model deprecated. */
+function isModelDeprecated(raw: RawModel): boolean {
+  return raw.status === "deprecated";
 }
 
 /** Normalize one raw model into a catalog entry; optional fields are spread only when present. */
-function toCatalogModel(providerId: string, modelId: string, raw: RawModel): CatalogModel {
+function toCatalogModel(modelId: string, raw: RawModel): CatalogModel {
   return {
     id: modelId,
     name: raw.name || modelId,
@@ -230,7 +220,7 @@ function toCatalogModel(providerId: string, modelId: string, raw: RawModel): Cat
     },
     ...(raw.knowledge ? { knowledgeCutoff: raw.knowledge } : {}),
     ...(raw.release_date ? { releaseDate: raw.release_date } : {}),
-    ...(isModelDeprecated(providerId, modelId, raw) ? { deprecated: true } : {}),
+    ...(isModelDeprecated(raw) ? { deprecated: true } : {}),
   };
 }
 
@@ -248,7 +238,7 @@ export function buildProviderModels(
     if (!raw.cost?.input && !raw.cost?.output) continue;
     // Skip models the platform deliberately does not surface.
     if (MANUAL_EXCLUSIONS.has(`${providerId}:${modelId}`)) continue;
-    const model = toCatalogModel(providerId, modelId, raw);
+    const model = toCatalogModel(modelId, raw);
     // Skip a model upstream reports no context window for. Every budget the
     // runtime computes is `context - …`, so a zero window has no arithmetic
     // that yields a usable answer, and the cap below cannot supply one either:

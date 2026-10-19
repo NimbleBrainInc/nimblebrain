@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InstanceConfig } from "../../../src/identity/instance.ts";
-import { loadInstanceConfig, saveInstanceConfig } from "../../../src/identity/instance.ts";
+import { loadInstanceConfig } from "../../../src/identity/instance.ts";
 import {
   _resetCredentialStoreForTest,
   FileCredentialStore,
@@ -226,55 +226,5 @@ describe("loadInstanceConfig", () => {
     await expect(loadInstanceConfig(workDir)).rejects.toThrow(
       "oidc auth requires string 'clientId'",
     );
-  });
-});
-
-describe("saveInstanceConfig", () => {
-  test("save + load roundtrips correctly", async () => {
-    const config: InstanceConfig = {
-      auth: {
-        adapter: "oidc",
-        issuer: "https://auth.example.com",
-        clientId: "client-1",
-        allowedDomains: ["example.com"],
-      },
-      orgId: "org-1",
-      integrations: { github: { token: "ghp_xxx" } },
-    };
-
-    await saveInstanceConfig(workDir, config);
-    const loaded = await loadInstanceConfig(workDir);
-    expect(loaded).toEqual(config);
-  });
-
-  test("writes pretty-printed JSON with trailing newline", async () => {
-    const config: InstanceConfig = {
-      auth: {
-        adapter: "oidc",
-        issuer: "https://auth.example.com",
-        clientId: "test-client",
-        allowedDomains: ["example.com"],
-      },
-    };
-    await saveInstanceConfig(workDir, config);
-
-    const raw = await readFile(join(workDir, "instance.json"), "utf-8");
-    expect(raw).toEqual(`${JSON.stringify(config, null, 2)}\n`);
-  });
-
-  test("atomic write does not leave temp files on success", async () => {
-    const config: InstanceConfig = {
-      auth: {
-        adapter: "oidc",
-        issuer: "https://auth.example.com",
-        clientId: "test-client",
-        allowedDomains: ["example.com"],
-      },
-    };
-    await saveInstanceConfig(workDir, config);
-
-    const { readdir } = await import("node:fs/promises");
-    const files = await readdir(workDir);
-    expect(files).toEqual(["instance.json"]);
   });
 });

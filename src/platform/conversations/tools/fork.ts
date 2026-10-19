@@ -243,7 +243,6 @@ export async function handleFork(
     // The fork inherits the source's owner: every reader refuses a
     // conversation without one.
     ...(conversation.meta.ownerId ? { ownerId: conversation.meta.ownerId } : {}),
-    format: "events",
     // A fork continues the source conversation, so it inherits the model
     // binding along with the owner. Re-resolving would move the copy onto the
     // current default and replay the source's history to a different provider.

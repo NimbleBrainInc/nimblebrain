@@ -4,7 +4,6 @@ import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runti
 import type { EngineEvent, EventSink, ToolResult } from "../../src/engine/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
-import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 
 /**
  * Coverage for `ConnectorLifecycleManager.tryRecoverSource` — the best-effort,
@@ -103,13 +102,6 @@ describe("ConnectorLifecycleManager.tryRecoverSource", () => {
   test("returns false when no instance is installed for the source", async () => {
     const callCount = spyEnsure(lifecycle, async () => {});
     expect(await lifecycle.tryRecoverSource("ghost", WS, WORK_DIR)).toBe(false);
-    expect(callCount()).toBe(0);
-  });
-
-  test("returns false for a non-URL (named/stdio) ref without attempting a re-spawn", async () => {
-    seedInstance(lifecycle, "stdio", legacyConnectorRef({ name: "@scope/stdio" }));
-    const callCount = spyEnsure(lifecycle, async () => {});
-    expect(await lifecycle.tryRecoverSource("stdio", WS, WORK_DIR)).toBe(false);
     expect(callCount()).toBe(0);
   });
 

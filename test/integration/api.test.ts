@@ -49,7 +49,7 @@ describe("POST /v1/workspaces/:wsId/chat/start", () => {
   it("runs a turn whose done frame is a valid ChatResponse", async () => {
     const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "Hello there", workspaceId: TEST_WORKSPACE_ID }),
+      body: JSON.stringify({ message: "Hello there" }),
     });
 
     expect(res.status).toBe(200);
@@ -79,7 +79,7 @@ describe("POST /v1/workspaces/:wsId/chat/start", () => {
     const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversationId: "abc", workspaceId: TEST_WORKSPACE_ID }),
+      body: JSON.stringify({ conversationId: "abc" }),
     });
 
     expect(res.status).toBe(400);
@@ -91,7 +91,7 @@ describe("POST /v1/workspaces/:wsId/chat/start", () => {
   it("the done frame includes a usage object with all TurnUsage fields", async () => {
     const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "Usage test", workspaceId: TEST_WORKSPACE_ID }),
+      body: JSON.stringify({ message: "Usage test" }),
     });
     const doneData = await readJson<ChatResponse>(res);
 
@@ -126,7 +126,7 @@ describe("concurrent requests", () => {
       messages.map((message) =>
         postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, workspaceId: TEST_WORKSPACE_ID }),
+          body: JSON.stringify({ message }),
         }).then((res) => readJson<ChatResponse>(res)),
       ),
     );
@@ -204,7 +204,7 @@ describe("Bearer token authentication", () => {
     const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "no auth needed", workspaceId: TEST_WORKSPACE_ID }),
+      body: JSON.stringify({ message: "no auth needed" }),
     });
     expect(res.status).toBe(200);
   });
@@ -216,7 +216,7 @@ describe("Bearer token authentication", () => {
         "Content-Type": "application/json",
         Authorization: `Bearer ${TEST_API_KEY}`,
       },
-      body: JSON.stringify({ message: "authed", workspaceId: TEST_WORKSPACE_ID }),
+      body: JSON.stringify({ message: "authed" }),
     });
     expect(res.status).toBe(200);
   });
@@ -225,7 +225,7 @@ describe("Bearer token authentication", () => {
     const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "no header", workspaceId: TEST_WORKSPACE_ID }),
+      body: JSON.stringify({ message: "no header" }),
     });
     expect(res.status).toBe(401);
     const body = await res.text();
@@ -239,7 +239,7 @@ describe("Bearer token authentication", () => {
         "Content-Type": "application/json",
         Authorization: "Bearer wrong-key-entirely",
       },
-      body: JSON.stringify({ message: "bad key", workspaceId: TEST_WORKSPACE_ID }),
+      body: JSON.stringify({ message: "bad key" }),
     });
     expect(res.status).toBe(401);
     const body = await res.text();
@@ -253,7 +253,7 @@ describe("Bearer token authentication", () => {
         "Content-Type": "application/json",
         Authorization: TEST_API_KEY,
       },
-      body: JSON.stringify({ message: "no prefix", workspaceId: TEST_WORKSPACE_ID }),
+      body: JSON.stringify({ message: "no prefix" }),
     });
     expect(res.status).toBe(401);
     const body = await res.text();
