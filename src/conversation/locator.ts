@@ -27,7 +27,6 @@
 import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { log } from "../observability/log.ts";
 import { canAccess, parseFileHeader } from "./index-cache.ts";
 import { parseConversationPath } from "./paths.ts";
 import type {
@@ -144,17 +143,13 @@ export class ConversationLocator {
     this.entries.clear();
 
     // One tree walk for both this index and the usage aggregator's file list.
-    let ownerlessSkipped = 0;
     for (const filePath of listAllConversationFiles(this.workspacesRoot)) {
       const loc = parseConversationPath(filePath);
       if (!loc) continue;
       try {
         const content = await readFile(filePath, "utf-8");
         const parsed = parseFileHeader(content);
-        if (!parsed) {
-          ownerlessSkipped++;
-          continue;
-        }
+        if (!parsed) continue;
         this.entries.set(parsed.summary.id, {
           summary: parsed.summary,
           accessOwnerId: parsed.summary.ownerId,
@@ -165,12 +160,6 @@ export class ConversationLocator {
       } catch {
         // Corrupt / unreadable file — skip, same posture as the per-dir index.
       }
-    }
-
-    if (ownerlessSkipped > 0) {
-      log.warn(
-        `[locator] excluded ${ownerlessSkipped} ownerless conversation file(s) — these predate the ownership invariant and need manual triage (stamp an ownerId on line 1, or remove); no migration stamps them.`,
-      );
     }
     this.populated = true;
   }

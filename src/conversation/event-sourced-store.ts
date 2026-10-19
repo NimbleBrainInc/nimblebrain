@@ -32,6 +32,7 @@ import {
   reconstructMessages,
 } from "./event-reconstructor.ts";
 import { ConversationIndex, canAccess } from "./index-cache.ts";
+import { parseConversationPath } from "./paths.ts";
 import {
   type ConnectorSkillInjectedEvent,
   type ContextAssembledEvent,
@@ -128,18 +129,24 @@ const CONVERSATION_EVENT_TYPES = new Set([
 // Conversation header + derived-metadata helpers
 // ---------------------------------------------------------------------------
 
-/** Build the base Conversation from a parsed line-0 header record (ownerId already validated). */
-function parseConversationHeader(raw: Record<string, unknown>): Conversation {
+/**
+ * Build the base Conversation from a parsed line-0 header record (ownerId already
+ * validated). The title comes from `metadata.title` events (`applyDerivedMeta`),
+ * and the workspace from the directory the file is stored under, never line 1.
+ */
+function parseConversationHeader(
+  raw: Record<string, unknown>,
+  workspaceId: string | undefined,
+): Conversation {
   return {
     id: raw.id as string,
     createdAt: raw.createdAt as string,
     updatedAt: (raw.updatedAt as string) ?? (raw.createdAt as string),
-    title: (raw.title as string | null) ?? null,
+    title: null,
     lastModel: (raw.lastModel as string | null) ?? null,
     ownerId: raw.ownerId as string,
     model: raw.model as string,
-    ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
-    ...(raw.visibility ? { visibility: raw.visibility as "private" | "shared" } : {}),
+    ...(workspaceId ? { workspaceId } : {}),
     ...(raw.metadata ? { metadata: raw.metadata as Record<string, unknown> } : {}),
   };
 }
@@ -507,7 +514,7 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       // one predates the binding and was not converted before this release.
       throw new ConversationCorruptedError(id, "missing_model");
     }
-    const conversation = parseConversationHeader(raw);
+    const conversation = parseConversationHeader(raw, parseConversationPath(this.dir)?.wsId);
 
     // Derive mutable metadata from events (source of truth)
     if (lines.length > 1) {

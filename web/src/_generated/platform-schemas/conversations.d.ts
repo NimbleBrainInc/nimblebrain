@@ -364,7 +364,7 @@ export declare const ConversationMetadata: import("@sinclair/typebox").TObject<{
     lastModel: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
     model: import("@sinclair/typebox").TString;
     ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    workspaceId: import("@sinclair/typebox").TString;
 }>;
 export type ConversationMetadata = Static<typeof ConversationMetadata>;
 /**
@@ -383,7 +383,7 @@ export declare const ConversationsGetOutput: import("@sinclair/typebox").TObject
         lastModel: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>;
         model: import("@sinclair/typebox").TString;
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        workspaceId: import("@sinclair/typebox").TString;
     }>;
     totalMessages: import("@sinclair/typebox").TNumber;
     truncated: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;

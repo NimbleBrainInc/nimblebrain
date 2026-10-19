@@ -79,7 +79,6 @@ describe("a resume rehydrates files from the workspace it runs in", () => {
       description: null,
       workspaceId: WORKSPACE_A,
       ownerId: OWNER,
-      visibility: "private",
     });
 
     // Sanity: the default workspace does NOT hold the file. So "found" can only

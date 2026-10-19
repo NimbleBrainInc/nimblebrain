@@ -109,7 +109,6 @@ export interface FileEntry {
     folderId?: string | null;
     ownerId?: string;
     workspaceId?: string;
-    visibility?: "private" | "shared";
     deleted?: true;
     deletedAt?: string;
 }

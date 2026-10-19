@@ -33,12 +33,6 @@ export interface ConversationMeta {
    */
   model: string;
   ownerId?: string;
-  /**
-   * The workspace the conversation ran in — the breadcrumb the
-   * runtime stamps on the line-1 header at create time. May be absent; the
-   * workspace the file is stored under is authoritative either way.
-   */
-  workspaceId?: string;
 }
 
 export type {
@@ -248,7 +242,8 @@ function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
     id: raw.id,
     createdAt: raw.createdAt,
     updatedAt: (raw.updatedAt as string) ?? raw.createdAt,
-    title: (raw.title as string | null) ?? null,
+    // The title comes from `metadata.title` events, never the header.
+    title: null,
     // Token totals are derived from events (`applyDerivedMetrics`), never read
     // from the header.
     totalInputTokens: 0,
@@ -256,7 +251,6 @@ function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
     lastModel: (raw.lastModel as string | null) ?? null,
     model: raw.model,
     ...(raw.ownerId ? { ownerId: raw.ownerId as string } : {}),
-    ...(raw.workspaceId ? { workspaceId: raw.workspaceId as string } : {}),
   };
 }
 

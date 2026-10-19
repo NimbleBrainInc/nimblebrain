@@ -165,10 +165,8 @@ export interface ConversationStore {
 /**
  * Conversation metadata — stored as line 1 of the JSONL file.
  *
- * Single-owner. The conversation belongs to exactly one user (`ownerId`) and
- * is private by default (`visibility`). Sharing (multi-participant /
- * workspace-visible) is deferred with the sharing mechanism; v1 is
- * private-only — `visibility` is written but never read (fail-closed groundwork).
+ * Single-owner. The conversation belongs to exactly one user (`ownerId`), and
+ * the `<ownerId>` path partition is the privacy boundary.
  *
  * No token totals or cost — those are derived from events at read time
  * (see deriveUsageMetrics in event-reconstructor.ts and the index cache).
@@ -207,20 +205,12 @@ export interface Conversation {
   /**
    * The workspace this conversation lives in — the binding. Set at create from the
    * first-message workspace and never mutated (no mid-chat workspace switching). The
-   * conversation is stored under `workspaces/<workspaceId>/conversations/`, so
-   * the path is authoritative and this field is the denormalised convenience.
+   * conversation is stored under `workspaces/<workspaceId>/conversations/`, and a
+   * loaded conversation takes this field from that directory, never from line 1.
    * The session is walled to this one workspace plus the owner's identity tools.
-   * Optional only for legacy records predating the workspace-owned layout.
+   * Absent only in the in-memory store when it is created without one.
    */
   workspaceId?: string;
-  /**
-   * Who can see this conversation. `private` (owner-only, default) |
-   * `shared` (the workspace's members). **Reserved forward-compat field — not
-   * yet written or read in v1**; the `<ownerId>` path partition is the live
-   * boundary, and absent reads as `private` (fail-closed). Visibility never
-   * crosses the workspace wall.
-   */
-  visibility?: "private" | "shared";
   /** Arbitrary caller-provided metadata. Stored in JSONL first line, never validated. */
   metadata?: Record<string, unknown>;
 }

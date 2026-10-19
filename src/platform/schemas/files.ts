@@ -264,7 +264,6 @@ export const FileRecord = Type.Object({
   folderId: Type.Optional(NullableString),
   ownerId: Type.Optional(Type.String()),
   workspaceId: Type.Optional(Type.String()),
-  visibility: Type.Optional(StringEnum(["private", "shared"] as const)),
   deleted: Type.Optional(Type.Literal(true)),
   deletedAt: Type.Optional(Type.String()),
 });
