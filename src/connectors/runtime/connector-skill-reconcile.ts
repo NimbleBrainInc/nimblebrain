@@ -85,13 +85,13 @@ export async function reconcileConnectorSkills(
     const nextConnectors: ConnectorRef[] = [];
     // Reached only after `startWorkspaceConnectors`, whose disk-read boundary
     // has already refused any workspace record without a `connectors[]`. Keep
-    // that order: this loop would answer an un-migrated record with a bare
-    // TypeError instead of the error that names the migration.
+    // that order: this loop would answer such a record with a bare TypeError
+    // instead of the boundary's error.
     for (const ref of ws.connectors) {
       if (!("url" in ref)) {
-        // Every ref carries a url by type. A row read off disk may predate
-        // that, and it has no source to bind an overlay to — carry it through
-        // untouched rather than reconciling something unreachable.
+        // Every ref carries a url by type. A row read off disk without one has
+        // no source to bind an overlay to — carry it through untouched rather
+        // than reconciling something unreachable.
         nextConnectors.push(ref);
         continue;
       }

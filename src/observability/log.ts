@@ -1,9 +1,8 @@
 /**
  * Runtime logger — two output formats, one stream (stderr).
  *
- * - **pretty** (default): colored/dimmed stderr lines, for CLI/TUI and local
- *   `bun run dev`. Unchanged from the original logger so the dev loop reads the
- *   same. stdout stays clean for JSON-RPC / pipe output.
+ * - **pretty** (default): colored/dimmed stderr lines, for the CLI and local
+ *   `bun run dev`. stdout stays clean for JSON-RPC / pipe output.
  * - **json**: one structured JSON object per line, opted into with
  *   `NB_LOG_FORMAT=json` (the chart sets it for deployed pods). The line shape is
  *   the log CONTRACT consumed by Promtail/Loki/Grafana — keep it stable:

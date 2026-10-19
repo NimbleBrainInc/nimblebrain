@@ -333,7 +333,7 @@ describe("composioCallbackUrl", () => {
     expect(composioCallbackUrl()).toBe("https://brain.example.test/v1/composio-auth/callback");
   });
 
-  test("ignores legacy NB_API_URL (fallback removed) — falls back to localhost", () => {
+  test("ignores NB_API_URL — falls back to localhost", () => {
     process.env.NB_API_URL = "https://platform.example.test";
     expect(composioCallbackUrl()).toBe("http://localhost:27247/v1/composio-auth/callback");
   });

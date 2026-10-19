@@ -1297,8 +1297,8 @@ function matchesLoadingLogFilter(row: SkillLoadRow, filter: SkillsLoadingLogInpu
 
 /**
  * Read raw conversation events for the given id from the top-level
- * conversation store. Returns `null` for not-found, `[]` for legacy
- * (message-format) conversations.
+ * conversation store. Returns `null` for not-found, `[]` for a conversation
+ * that holds no events.
  */
 async function readConvEvents(
   runtime: Runtime,
@@ -1320,8 +1320,6 @@ async function readConvEvents(
  *
  * Workspace-scoped because `skills` is a workspace source and skills are
  * workspace-tiered: "which skills loaded" is a question about THIS workspace.
- * The unscoped version answered it across every workspace the caller belonged
- * to, contradicting this function's own contract.
  */
 async function listOwnedConversationIds(
   runtime: Runtime,

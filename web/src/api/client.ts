@@ -384,8 +384,8 @@ export async function getResources(
  * `args` is type-checked against the catalog at `@platform/schemas/catalog`.
  * For a `(server, tool)` pair registered there, callers must pass a payload
  * matching the schema-derived type. Unregistered pairs fall through to
- * `Record<string, unknown>` so untyped legacy callers continue to compile
- * while sources migrate one by one.
+ * `Record<string, unknown>`, so a tool with no catalog entry stays callable
+ * untyped.
  */
 export async function callTool<S extends string, T extends string>(
   server: S,

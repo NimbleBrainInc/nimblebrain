@@ -114,11 +114,8 @@ interface StartConnectorOpts {
    * records. Mutually exclusive with `workspaceContext` — a personal connector
    * belongs to no workspace.
    *
-   * Honored ONLY on the URL-connector path (a personal connector is a remote MCP
-   * connection). A named/local ref ignores it and falls through to the
-   * workspace path — the caller (`getIdentityConnectorSource`) already gates on
-   * `"url" in ref`, so this is a documentation guard against a future caller,
-   * not a live case.
+   * Read by the OAuth-provider step: when set, it takes the user arm and
+   * `workspaceContext` is not consulted.
    */
   identityOwner?: { userId: string; workDir: string };
   dataDir?: string;

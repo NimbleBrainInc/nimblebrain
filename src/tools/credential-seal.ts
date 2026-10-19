@@ -32,7 +32,7 @@ import { isUniformByte } from "../oauth/envelope.ts";
  * | `iv` | 12, fresh per seal | The AES-GCM nonce. |
  * | `ct‖tag` | n+16 | AES-256-GCM. |
  *
- * A reader decides "sealed" from "legacy plaintext" on the **magic alone**
+ * A reader decides "sealed" from "unsealed plaintext" on the **magic alone**
  * ({@link isSealedValue}), unconditionally — whether or not it has a sealer
  * configured. Well-formedness is a separate question, answered by
  * {@link parseSealedValue}, and its answer is throw rather than fall through:
@@ -62,7 +62,7 @@ const SEALED_VALUE_MAGIC = `${MAGIC}.`;
  * Does this value CLAIM to be sealed? The magic alone, deliberately.
  *
  * This is the discriminator a reader uses to decide "sealed, so open it" from
- * "legacy plaintext, so return it", and it has to be the weaker of the two
+ * "unsealed plaintext, so return it", and it has to be the weaker of the two
  * tests, not the stronger one. Gate on the full grammar and a sealed file that
  * gains one byte outside it — a trailing newline from an operator writing it
  * back with `echo`, a truncated write — stops counting as sealed, falls to the
@@ -74,7 +74,7 @@ const SEALED_VALUE_MAGIC = `${MAGIC}.`;
  * `NBS1` either opens or throws. The full grammar still exists — it is what
  * {@link parseSealedValue} enforces — but it decides validity, never identity.
  *
- * The cost is that a legacy plaintext secret whose value literally begins
+ * The cost is that an unsealed plaintext secret whose value literally begins
  * `NBS1.` now fails loudly instead of being read. That is the right side of
  * this trade: the alternative failure is silent, and it hands out ciphertext.
  */

@@ -734,26 +734,20 @@ function skillKey(sourcePath: string | undefined, name: string): string {
  * Layer 4: matched skill (the `SkillMatcher` trigger path), wrapped in
  * <skill-instructions> containment.
  *
- * Skipped when Layer 3 already composed the same skill. One `dynamic` skill can
- * reach a turn through both channels — a tool-affinity glob matched an active
- * tool AND a trigger phrase matched the message — and injecting it twice spends
- * the tokens twice while handing the model one body under two framings. Layer 3
- * wins, the precedence `collectLoadedSkills` reports the load under. The
- * trigger's must-fire guarantee holds: the body is in the prompt either way, and
- * the match still narrows the direct tool set via the skill's `allowed-tools`.
- * That guarantee rests entirely on {@link skillKey} being an identity — a key
- * that merges two skills converts this suppression into a silent drop.
+ * Layer 3 holds only a task run's declared skills: a skill bound to a tool
+ * reaches the model through the engine's per-call hold, before that tool's
+ * first call, never at turn start (ADR-0053). The run-start door already drops
+ * a declared skill the trigger matched (`resolveDeclaredSkills` skips composed
+ * names), so this layer is skipped when Layer 3 carries the same skill only as
+ * a second guard: injecting one body twice spends the tokens twice and hands
+ * the model one body under two framings. The body is in the prompt either way,
+ * and the match still narrows the direct tool set via the skill's
+ * `allowed-tools`. That rests entirely on {@link skillKey} being an identity —
+ * a key that merges two skills converts this suppression into a silent drop.
  *
  * The de-dup preserves presence, not POSITION. `matched_skill` is volatile and
- * rides the latest user message; `layer3_skills` is stable and sits in the cached
- * system prefix. A both-channel skill therefore moves out of the recency slot
- * into the prefix. Paying for the body twice to buy recency is the worse trade,
- * and the ledger already calls such a load `tool_affinity`.
- *
- * This overlap has always been reachable for a filesystem skill declaring both
- * fields. For a server-published skill it is the ordinary case, because
- * synthesis stamps a tool-affinity on every one (`<server>__*` when the skill
- * declares none).
+ * rides the latest user message; `layer3_skills` is stable and sits in the
+ * cached system prefix, so a skill in both keeps the prefix copy.
  */
 function matchedSkillLayers(
   matchedSkill?: Skill | null,

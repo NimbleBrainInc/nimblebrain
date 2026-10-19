@@ -2,11 +2,11 @@
 /**
  * Lint: `publicOrigin()` is the single source of the tenant's public origin.
  *
- * "What is this tenant's public origin?" used to be smeared across `NB_API_URL`,
- * `NB_WEB_URL`, `WORKOS_REDIRECT_URI`, and `ALLOWED_ORIGINS[0]` — values that had
- * to agree by hand and didn't (custom-domain tenants 401'd their OAuth return
- * leg). `src/oauth/public-origin.ts` now owns the derivation. To keep it the
- * floor, the legacy origin env vars may be read in exactly one place.
+ * "What is this tenant's public origin?" must have one answer, or values that
+ * have to agree by hand drift apart and an OAuth return leg lands cross-origin.
+ * `src/oauth/public-origin.ts` owns the derivation, so the raw origin env vars
+ * may be read only there: it reads `NB_WEB_URL` (the dev SPA origin), and
+ * nothing reads `NB_API_URL`.
  *
  * What this flags: any `process.env.NB_API_URL` or `process.env.NB_WEB_URL` read
  * in `src/` outside `src/oauth/public-origin.ts`. Use `publicOrigin()` (for
@@ -28,7 +28,7 @@ const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
 const ALLOW_MARKER = "lint-ok:public-origin";
 
-/** The one sanctioned reader of the legacy origin env vars. */
+/** The one sanctioned reader of the raw origin env vars. */
 const ALLOWED_FILES: ReadonlySet<string> = new Set<string>(
   ["oauth/public-origin.ts"].map((f) => f.split("/").join(sep)),
 );

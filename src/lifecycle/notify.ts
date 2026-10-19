@@ -50,7 +50,7 @@ export interface ReadyOutcome {
    */
   settled: boolean;
   /**
-   * The handler's text result — the bundle telling the user what is now
+   * The handler's text result — the connector telling the user what is now
    * happening ("setting up your sending workspace — watch the panel").
    *
    * Distinct from a warning, and kept in its own field for that reason: a
@@ -162,7 +162,7 @@ function findTool(tools: Tool[], name: string): Tool | undefined {
  *
  * A failure here never fails the install and is never an error-level event: the
  * connector is installed and useful, and the next transition to `running`
- * retries. What the operator needs is to know the bundle was not told, which
+ * retries. What the operator needs is to know the connector was not told, which
  * the warn line gives them.
  */
 async function callReady(
@@ -271,8 +271,8 @@ const REMOVING_DEADLINE_MS = 5_000;
  *
  * **Best-effort, never throws, and bounded.** A failure is a warn with the
  * connector named and the uninstall proceeds: blocking a user's uninstall on a
- * vendor's availability would be the wrong trade in both directions. A bundle
- * author must therefore not assume this call arrives — a bundle that leaks a
+ * vendor's availability would be the wrong trade in both directions. A connector
+ * author must therefore not assume this call arrives — a connector that leaks a
  * third-party resource when it does not is the failure this seam exists to
  * prevent, and hoping is not a design.
  *

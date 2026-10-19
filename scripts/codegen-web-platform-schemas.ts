@@ -299,12 +299,11 @@ console.log(`[codegen] OK → ${WEB_DEST.replace(REPO_ROOT, ".")}`);
 
 // ── connector-catalog wire types ──────────────────────────────────
 //
-// `web/src/api/client.ts` used to re-declare `CatalogListing` /
-// `ConnectorCatalogEntry` by hand, and the copy drifted: `providerAuth` and
-// `secretHeaders` were on the wire and absent from the client, which made a
-// whole credential class invisible to the UI with nothing to notice. The web
-// shell now imports these, and `check:codegen` fails the build when the server
-// type moves without a regen.
+// The web shell imports `CatalogListing` / `ConnectorCatalogEntry` from here
+// rather than re-declaring them, because a hand-kept copy drifts silently: a
+// wire field missing from the client hides what it carries from the UI with
+// nothing to notice. `check:codegen` fails the build when the server type moves
+// without a regen.
 //
 // Only the type closure of `src/connectors/catalog/types.ts` is emitted — a small set
 // of leaf type modules. `ConnectorCatalogEntry` lives there beside

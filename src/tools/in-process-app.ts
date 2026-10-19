@@ -21,9 +21,8 @@ import { McpSource } from "./mcp-source.ts";
 import { validateToolInput } from "./validate-input.ts";
 
 /**
- * Tool definition for an in-process MCP server. Mirrors the shape the
- * platform sources used pre-migration so authoring stays a function and a
- * JSON schema — no Zod adapter, no SDK boilerplate per tool.
+ * Tool definition for an in-process MCP server. Authoring stays a function and
+ * a JSON schema — no Zod adapter, no SDK boilerplate per tool.
  *
  * The two metadata fields are the two the MCP spec defines, and they are not
  * interchangeable:

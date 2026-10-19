@@ -22,16 +22,16 @@ carries no lifecycle field; do not add one back.
 Developer contract:
 [`docs/extensions/lifecycle.mdx`](../../docs/src/content/docs/extensions/lifecycle.mdx).
 
-**Two moments, because the notification is a tool call on the bundle.** Before a
+**Two moments, because the notification is a tool call on the connector.** Before a
 connector is reachable there is no server to call; after teardown there is
 nothing left. So extension is DECLARATIVE outside that window (install-time
 secret collection, the uninstall-time hook revoke — both runtime acts off the
 connector's record) and CALLABLE inside it. A `pre_install` proposal is a
-proposal to run bundle code outside a bundle. Do not add events without that
+proposal to run connector code before there is a connector. Do not add events without that
 argument.
 
 **No vendor vocabulary.** Same line `HostManifestMeta.hooks` holds: the kernel
-says *you were installed*, and what that means is the bundle's business. A
+says *you were installed*, and what that means is the connector's business. A
 `provisioning:` block describing what to provision is the taxonomy trap.
 
 Three rules that are load-bearing rather than stylistic:
@@ -64,7 +64,7 @@ Three rules that are load-bearing rather than stylistic:
   `taskSupport` refusal as the bound and delete the deadline as redundant;
   the wait is held where the guarantee is made. It also may never
   arrive — the docs say so in those words, because
-  a bundle that leaks a third-party resource without it is relying on a call
+  a connector that leaks a third-party resource without it is relying on a call
   nothing guarantees.
 
 **Declared handlers are host-only** (`src/permissions/host-only-tools.ts`):

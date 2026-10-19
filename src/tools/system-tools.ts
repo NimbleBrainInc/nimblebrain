@@ -456,7 +456,7 @@ async function handleSkillStatus(
   // (`describeRequestSkills`), so workspace- and user-tier skills appear here:
   // a boot-time cache would report only platform/core skills.
   const { context, bound } = await runtime.describeRequestSkills(wsId);
-  // Legacy trigger-matched skills still come from the boot matcher cache.
+  // Trigger-matched skills come from the boot matcher cache.
   const matchable = getSkills?.().matchable ?? [];
   const boundNames = new Set(bound.map((s) => s.manifest.name));
 

@@ -66,7 +66,7 @@ describe("the wire format", () => {
     // The point of the weaker gate. Each of these is a sealed value that lost
     // its well-formedness — an operator writing it back with `echo`, a
     // truncated write, a cut field. Under a full-grammar gate every one reads
-    // as legacy plaintext and is handed out AS the credential; under this one
+    // as unsealed plaintext and is handed out AS the credential; under this one
     // they all still claim to be sealed, so `open` refuses them.
     for (const damaged of [
       `${sealed}\n`,
