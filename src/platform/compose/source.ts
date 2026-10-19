@@ -226,8 +226,7 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  * scoped):
  *   - `contextSkills` = the conversation pool's context-role skills, every
  *     tier.
- *   - `apps` = `runtime.buildAppsList(wsId)` — workspace-scoped, includes
- *     each connector's `app://instructions` overlay.
+ *   - `apps` = `runtime.buildAppsList(wsId)` — workspace-scoped.
  *   - no Layer 3 skills: a skill bound to a tool reaches the model before
  *     that tool's first call, never at turn start (ADR-0053), and declared
  *     skills belong to task runs.

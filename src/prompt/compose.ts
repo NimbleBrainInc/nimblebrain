@@ -16,7 +16,6 @@ export type ContainmentTag =
   | "context-skill"
   | "runtime-context"
   | "app-instructions"
-  | "app-custom-instructions"
   | "app-description"
   | "app-resource-templates"
   | "app-guide"
@@ -232,14 +231,6 @@ export interface PromptAppInfo {
    * treats the content as data, not a nested system prompt.
    */
   instructions?: string;
-  /**
-   * Optional workspace-admin overlay text for this connector. Rendered inside a
-   * sibling `<app-custom-instructions>` tag using the same containment-escape
-   * pattern as `instructions`. The overlay text comes from the platform
-   * instructions store, NOT from the connector author — it's the workspace's
-   * say over how the agent should behave when using this connector.
-   */
-  customInstructions?: string;
   /**
    * URI shapes of the records this connector serves (its
    * `resources/templates/list`, already filtered and bounded by
@@ -678,8 +669,6 @@ function appsLayers(apps?: PromptAppInfo[], hasProxiedTools?: boolean): PendingL
         metadata: {
           description: app.description,
           hasInstructions: !!app.instructions,
-          hasCustomInstructions:
-            !!app.customInstructions && app.customInstructions.trim().length > 0,
           ui: app.ui,
           resourceTemplates: app.resourceTemplates?.length ?? 0,
         },
@@ -859,13 +848,6 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
       // arbitrary XML, only the specific tag we use for containment.
       lines.push(wrapContained("app-instructions", app.instructions));
     }
-    if (app.customInstructions && app.customInstructions.trim().length > 0) {
-      // Mirror the `<app-instructions>` containment escape byte-for-byte —
-      // this is a prompt-injection mitigation. The overlay text comes from
-      // the workspace admin (via the platform instructions store), not from
-      // the connector author, but the same containment guarantee applies.
-      lines.push(wrapContained("app-custom-instructions", app.customInstructions));
-    }
     if (app.resourceTemplates && app.resourceTemplates.length > 0) {
       lines.push(wrapContained("app-resource-templates", formatResourceTemplates(app)));
     }
@@ -923,8 +905,8 @@ function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {
   // Trust is enforced at install time, not per-prompt: if a connector is active
   // in the workspace its tools are already callable, so suppressing the
   // workflow guidance that teaches the model how to use them safely would
-  // make the situation worse, not better. Tool descriptions, tool outputs,
-  // and `app://instructions` flow through ungated already.
+  // make the situation worse, not better. Tool descriptions and tool outputs
+  // flow through ungated already.
   if (focusedApp.skillResource) {
     // Escape any embedded `</app-guide>` so a connector-authored skill body
     // cannot break out of containment. Matches the pattern used for

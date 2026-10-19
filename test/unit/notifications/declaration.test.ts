@@ -172,9 +172,8 @@ describe("the schema and the parser state the same rule", () => {
   const resource = schema.$defs.NotificationsDeclaration.properties.resource;
 
   test("the reserved-scheme constraint names exactly the schemes the runtime resolves", () => {
-    // Derived, not eyeballed: the schema carries a copy of a set that grows —
-    // it went from five to six when `app://` was added — so the copy is pinned
-    // to the constant rather than trusted to be re-read.
+    // Derived, not eyeballed: the schema carries a copy of a set that changes,
+    // so the copy is pinned to the constant rather than trusted to be re-read.
     const spelled = resource.not.pattern
       .replace(/^\^\(\?:/, "")
       .replace(/\):$/, "")

@@ -141,7 +141,7 @@ The host reads a URI from the one server in the calling connection's workspace w
 
 - **One workspace.** Only the servers installed in the same workspace as your connection are consulted. A server in another workspace is never read, whatever it serves.
 - **One owner.** When two servers in the workspace claim the URI, the host reads neither and answers `ambiguous`. It does not guess.
-- **The host's own schemes are not resolved yet.** This extension does not yet resolve `files://`, `ui://`, `skill://`, `artifact://`, `conversation://` or `app://` URIs, and no server can answer for them by advertising a matching template. For now, workspace files are read with [host resources](/extensions/host-resources/).
+- **The host's own schemes are not resolved yet.** This extension does not yet resolve `files://`, `ui://`, `skill://`, `artifact://` or `conversation://` URIs, and no server can answer for them by advertising a matching template. For now, workspace files are read with [host resources](/extensions/host-resources/).
 
 ## What your tool can receive
 

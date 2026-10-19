@@ -255,11 +255,7 @@ import {
 } from "../tools/instance-credentials.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
-import {
-  APP_INSTRUCTIONS_URI,
-  isReservedResourceScheme,
-  readableRecordTemplates,
-} from "../tools/resource-schemes.ts";
+import { isReservedResourceScheme, readableRecordTemplates } from "../tools/resource-schemes.ts";
 import {
   announceResourceListChangedFor,
   relayIdentitySourceNotifications,
@@ -3407,14 +3403,6 @@ export class Runtime {
   /**
    * Build apps list from in-memory lifecycle instances for system-prompt
    * injection (§7.3).
-   *
-   * Each app's `customInstructions` overlay comes from the connector itself —
-   * the platform reads `app://instructions` from the connector's MCP
-   * server on every assembly. Connectors that don't publish that resource get
-   * no overlay (no UI surfaces, no behavior change). The platform's job is
-   * the convention: read the URI, wrap the body in `<app-custom-instructions>`
-   * containment in `formatAppsSection`. Connectors own storage, the agent tool
-   * to write, validation, and the editor UI.
    */
   /** Public so the compose-effective-context debug tool can re-gather the same
    *  inputs `runtime.chat()` uses, without duplicating the connector-instructions
@@ -3452,8 +3440,9 @@ export class Runtime {
 
   /**
    * Assemble one app's system-prompt entry: UI descriptor, the MCP server's
-   * `initialize.instructions`, and the optional `app://instructions`
-   * custom-instructions overlay.
+   * `initialize.instructions`, and the record shapes it serves. Guidance a
+   * user sets for one app is a workspace skill bound to its tools, not a
+   * resource read from the connector.
    */
   private async buildAppInfo(
     instance: ConnectorInstance,
@@ -3467,17 +3456,11 @@ export class Runtime {
     // resources that explain correct tool usage. Without this hint the
     // agent cannot discover that such resources exist.
     let instructions: string | undefined;
-    let customInstructions: string | undefined;
     let resourceTemplates: PromptAppInfo["resourceTemplates"] = [];
     const source = registry?.getSource(instance.serverName);
     if (source instanceof McpSource) {
       instructions = source.getInstructions();
-      // Read together: each is a round trip to the same server on a cold memo.
-      const [custom, templates] = await Promise.all([
-        this.readAppCustomInstructions(source, instance.serverName),
-        source.resourceTemplates(),
-      ]);
-      customInstructions = custom;
+      const templates = await source.resourceTemplates();
       // The record shapes this connector serves, so the model knows
       // `nb__read_resource` reads them (ADR-0049).
       resourceTemplates = readableRecordTemplates(templates).map((t) => ({
@@ -3490,59 +3473,9 @@ export class Runtime {
       name: instance.serverName,
       description: instance.description,
       instructions,
-      ...(customInstructions !== undefined ? { customInstructions } : {}),
       ...(resourceTemplates.length > 0 ? { resourceTemplates } : {}),
       ui,
     };
-  }
-
-  /**
-   * Read a connector's `app://instructions` custom-instructions overlay. Returns
-   * the trimmed non-empty body, or `undefined` when the connector doesn't publish
-   * the resource (or the read errors) — the normal not-supported case.
-   */
-  private async readAppCustomInstructions(
-    source: McpSource,
-    serverName: string,
-  ): Promise<string | undefined> {
-    // A connector that supports user-set custom instructions publishes its current
-    // overlay body at this URI; the platform reads it on every assembly and
-    // renders it inside `<app-custom-instructions>` containment in
-    // `formatAppsSection`.
-    //
-    // Why a fixed `app://` over `<serverName>://instructions`: the serverName is
-    // platform-derived (e.g. `@nimblebraininc/synapse-collateral` →
-    // `synapse-collateral`), not something a connector author intuitively knows.
-    // A fixed scheme means connector authors just remember `app://instructions`
-    // and the platform's name-derivation rules are not part of the contract.
-    // That makes the scheme the host's rather than the connector's, which is why
-    // `tools/resource-schemes.ts` owns the URI and reserves it against an
-    // outbox declaring the same address.
-    //
-    // Resource-not-found returns `null` from `readResource` (the SDK's normal
-    // not-found path); we treat any read error or empty body as "connector does
-    // not support / has none". Plain MCP servers (no opt-in) end up here.
-    try {
-      const data = await source.readResource(APP_INSTRUCTIONS_URI);
-      const body = data?.text;
-      const trimmedLen = typeof body === "string" ? body.trim().length : 0;
-      // Visible under NB_DEBUG=mcp — confirms the platform fetched
-      // app://instructions per active connector and shows the resulting body
-      // length. "len=0" + "set=false" for connectors that don't publish;
-      // "set=true" + len=N for connectors that do.
-      log.debug(
-        "mcp",
-        `app-instructions source=${serverName} fetched=${data !== null} len=${trimmedLen} set=${trimmedLen > 0}`,
-      );
-      if (typeof body === "string" && body.trim().length > 0) return body;
-      return undefined;
-    } catch (err) {
-      log.debug(
-        "mcp",
-        `app-instructions source=${serverName} error=${err instanceof Error ? err.message : String(err)}`,
-      );
-      return undefined;
-    }
   }
 
   /** Get the default event sink. */
