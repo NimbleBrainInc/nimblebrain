@@ -35,9 +35,8 @@ The host reserves no resource scheme for app guidance.
 
 - One place holds a workspace's guidance, under the skill scopes ADR-0034 names,
   with the skill system's loading rules, history and audit.
-- Prompt assembly reads nothing from a connector beyond what it already holds for
-  the connector's entry, so its cost does not grow with the number of installed
-  connectors.
+- Prompt assembly makes no per-connector instructions read. Its remaining connector
+  read is the resource-template list, which each connection memoizes.
 - A connector that publishes instructions as a resource is not refused; the host
   does not read it. Its text reaches the agent only once someone moves it into a
   skill.
