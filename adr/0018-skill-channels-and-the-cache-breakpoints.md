@@ -8,7 +8,7 @@
 
 Golden rule 1 says skills load *without busting the prompt cache*. Whether that
 holds is a property of where each channel's bytes land relative to the cache
-breakpoints, and the four channels do not land in the same place.
+breakpoints, and the channels do not land in the same place.
 
 The cache policy (`src/model/cache-policy.ts`) places four breakpoints — tools,
 system, a rolling step-anchor, and the tail — and tiers the TTL by stability:

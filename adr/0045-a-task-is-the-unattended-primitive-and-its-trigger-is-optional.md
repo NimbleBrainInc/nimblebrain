@@ -1,6 +1,6 @@
 # 0045. A task is the unattended primitive; its trigger is optional, and its outcome separates running from being good
 
-- Status: Proposed; amended by ADR-0049
+- Status: Accepted; amended by ADR-0049
 - Date: 2026-10-03
 - Serves: orchestrate remote MCP, secure RBAC
 
@@ -153,9 +153,8 @@ validation and the unrecovered-failure signal.
 task-augmented tool call. The tasks source is the task-aware source the `/mcp`
 endpoint routes to, and the task id it hands out is the run id, so a lookup
 reads the run record. The record is written before the handle is returned, so
-the handle survives a lost connection, and on the current protocol revision it
-also survives a runtime restart; the older revision routes task lookups in
-memory, so there a restart drops the handle while the run record stays. A client that does not opt in to the tasks
+the handle survives a lost connection and a runtime restart (ADR-0046,
+ADR-0048). A client that does not opt in to the tasks
 extension gets the same operations as plain tools that return and look up a run
 id. No field outside the spec is needed for either.
 
@@ -175,24 +174,17 @@ period) and read a page at a time, so no read loads a task's whole history.
   collapses, before it spends its whole budget on a systematic failure.
 - A person's verdict on a run is a labeled example. Criteria can be refined
   against those examples, and a judge's agreement with people can be measured.
-- Admission and spend move out of the automations scheduler into the door. That
-  is a change to every unattended run, and the queue becomes runtime state, not
-  one source's state. Per-task and per-batch budgets become spend accounts the
-  tasks source names, checked before each call instead of after a run.
-- An automation's token budget (separate input and output caps, reset each
-  period, the automation disabled when one runs out) becomes two token-unit
-  spend accounts the tasks source re-issues at each period's start; when a run
-  exhausts one, the source disables the task's trigger, as today.
-- Automations migrate. Their storage becomes task storage, reconciled at boot so
-  no step depends on an operator remembering it, and their tools stay available
-  under their current names for a deprecation window. Their run statuses map:
-  `success` → `completed`; `degraded` → `completed` with its unrecovered tool
-  failures; `failure` → `failed`; `timeout` → `incomplete` when the run left a
-  partial deliverable and `failed` when it left none; `cancelled` and `skipped`
-  unchanged. A never-firing annual cron that stood for one action at T becomes a
-  once-at-T schedule.
-- Migrated automations lose today's cap on retained runs. Storage grows with use,
-  and the partitioned, paged index is what keeps reading it bounded.
+- Admission and spend sit in the door, so every unattended run passes them, and
+  the queue is runtime state, not one source's state. Per-task and per-batch
+  budgets are spend accounts the tasks source names, checked before each call
+  rather than after a run.
+- A task's token budget (separate input and output caps, reset each period) is
+  two token-unit spend accounts the tasks source re-issues at each period's
+  start; when a run exhausts one, the source disables the task's trigger.
+- There is no automations store or toolset beside tasks: a scheduled job is a
+  task with a trigger, and a single action at T is a once-at-T schedule.
+- No cap limits retained runs. Storage grows with use, and the partitioned,
+  paged index is what keeps reading it bounded.
 - Assessment costs a judge call per run, and sending a deliverable to a judge
   is a data flow. A workspace connects a judge the way it connects any server,
   with the same consent, so where the deliverable goes is the workspace's

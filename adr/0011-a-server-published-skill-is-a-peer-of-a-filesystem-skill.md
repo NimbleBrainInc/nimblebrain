@@ -15,7 +15,7 @@ its frontmatter verbatim, and a manifest of the skill's files with digests — a
 serves the files as resources. The body is an Agent Skills document like any
 other.
 
-The runtime already has a loader, a router, and four channels for exactly this
+The runtime already has a loader, a router, and its channels for exactly this
 kind of document. The question is whether a skill that arrived over MCP is the
 same kind of thing as one that came off disk, or a lesser kind that gets its own
 narrower path.
