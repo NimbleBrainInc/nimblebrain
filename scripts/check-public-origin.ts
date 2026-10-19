@@ -8,51 +8,130 @@
  * may be read only there: it reads `NB_WEB_URL` (the dev SPA origin), and
  * nothing reads `NB_API_URL`.
  *
- * What this flags: any `process.env.NB_API_URL` or `process.env.NB_WEB_URL` read
- * in `src/` outside `src/oauth/public-origin.ts`. Use `publicOrigin()` (for
- * vendor/OAuth callback URLs) or `webOrigin()` (for user-facing SPA returns)
- * instead.
+ * What this flags, in `src/` outside `src/oauth/public-origin.ts`, a read of
+ * `NB_API_URL` or `NB_WEB_URL` off `process.env` in any of these forms:
+ *   - dotted: `process.env.NB_WEB_URL`
+ *   - bracket with a string literal: `process.env["NB_WEB_URL"]`
+ *   - bracket with an identifier bound in the same file to that literal:
+ *     `const K = "NB_WEB_URL"; process.env[K]` (the form the sanctioned file uses)
+ *   - destructuring: `const { NB_WEB_URL } = process.env`
+ * Use `publicOrigin()` (for vendor/OAuth callback URLs) or `webOrigin()` (for
+ * user-facing SPA returns) instead.
  *
  * Allowed: `src/oauth/public-origin.ts` (the sanctioned reader), and a
  * `// lint-ok:public-origin` marker on the line above a genuinely exceptional
  * read.
  *
  * Scope: `src/**\/*.ts`. Scripts and tests are out of scope.
+ *
+ * Exports `findOriginEnvReads` for the self-test under `test/unit/scripts/`.
  */
 
 import { readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { Glob } from "bun";
+import * as ts from "typescript";
 
 const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
 const ALLOW_MARKER = "lint-ok:public-origin";
 
-/** The one sanctioned reader of the raw origin env vars. */
-const ALLOWED_FILES: ReadonlySet<string> = new Set<string>(
-  ["oauth/public-origin.ts"].map((f) => f.split("/").join(sep)),
-);
+/** The one sanctioned reader of the raw origin env vars, relative to `src/`. */
+export const SANCTIONED_FILE = ["oauth", "public-origin.ts"].join(sep);
 
-/** Forbidden env reads — the raw origin vars `publicOrigin()` centralizes. */
-const FORBIDDEN = /process\.env\.(NB_API_URL|NB_WEB_URL)\b/;
+/** The raw origin vars `publicOrigin()` centralizes. */
+const FORBIDDEN_NAMES: ReadonlySet<string> = new Set(["NB_API_URL", "NB_WEB_URL"]);
 
-interface Violation {
+export interface Violation {
   file: string;
   line: number;
   snippet: string;
 }
 
-function scanFile(absPath: string, violations: Violation[]): void {
-  const relPath = relative(SRC_ROOT, absPath);
-  if (ALLOWED_FILES.has(relPath)) return;
-  const lines = readFileSync(absPath, "utf-8").split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (!FORBIDDEN.test(line)) continue;
-    const prev = (lines[i - 1] ?? "").trim();
-    if (prev.includes(ALLOW_MARKER)) continue;
-    violations.push({ file: relative(ROOT, absPath), line: i + 1, snippet: line.trim() });
+/** `process.env`, exactly. */
+function isProcessEnv(node: ts.Node): boolean {
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === "env" &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "process"
+  );
+}
+
+function stringLiteralText(node: ts.Node): string | undefined {
+  return ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)
+    ? node.text
+    : undefined;
+}
+
+/** Names of `const X = "NB_…"` bindings anywhere in the file whose value is a forbidden name. */
+function forbiddenNameConstants(sf: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & ts.NodeFlags.Const) !== 0
+    ) {
+      const value = stringLiteralText(node.initializer);
+      if (value !== undefined && FORBIDDEN_NAMES.has(value)) names.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return names;
+}
+
+/** The forbidden var a node reads off `process.env`, if it reads one. */
+function forbiddenRead(node: ts.Node, constants: Set<string>): boolean {
+  if (ts.isPropertyAccessExpression(node) && isProcessEnv(node.expression)) {
+    return FORBIDDEN_NAMES.has(node.name.text);
   }
+  if (ts.isElementAccessExpression(node) && isProcessEnv(node.expression)) {
+    const arg = node.argumentExpression;
+    const literal = stringLiteralText(arg);
+    if (literal !== undefined) return FORBIDDEN_NAMES.has(literal);
+    return ts.isIdentifier(arg) && constants.has(arg.text);
+  }
+  if (
+    ts.isVariableDeclaration(node) &&
+    ts.isObjectBindingPattern(node.name) &&
+    node.initializer &&
+    isProcessEnv(node.initializer)
+  ) {
+    return node.name.elements.some((el) => {
+      const key = el.propertyName ?? el.name;
+      const text = ts.isIdentifier(key) ? key.text : stringLiteralText(key);
+      return text !== undefined && FORBIDDEN_NAMES.has(text);
+    });
+  }
+  return false;
+}
+
+/**
+ * Every forbidden origin-env read in one file's text. `relPath` is relative to
+ * `src/`; the sanctioned file reports nothing.
+ */
+export function findOriginEnvReads(relPath: string, text: string): Violation[] {
+  if (relPath === SANCTIONED_FILE) return [];
+  const sf = ts.createSourceFile(relPath, text, ts.ScriptTarget.Latest, true);
+  const constants = forbiddenNameConstants(sf);
+  const lines = text.split("\n");
+  const violations: Violation[] = [];
+  const visit = (node: ts.Node): void => {
+    if (forbiddenRead(node, constants)) {
+      const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+      const prev = (lines[line - 1] ?? "").trim();
+      if (!prev.includes(ALLOW_MARKER)) {
+        violations.push({ file: relPath, line: line + 1, snippet: (lines[line] ?? "").trim() });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return violations;
 }
 
 async function main(): Promise<void> {
@@ -65,7 +144,9 @@ async function main(): Promise<void> {
     if (abs.includes("/node_modules/") || abs.includes("/dist/")) continue;
     if (abs.endsWith(".d.ts")) continue;
     scanned++;
-    scanFile(abs, violations);
+    for (const v of findOriginEnvReads(relative(SRC_ROOT, abs), readFileSync(abs, "utf-8"))) {
+      violations.push({ ...v, file: relative(ROOT, abs) });
+    }
   }
 
   if (violations.length > 0) {
