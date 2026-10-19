@@ -125,7 +125,7 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
   test("a sealed file damaged out of its grammar still throws, rather than falling through", async () => {
     // The gap the magic-only discriminator closes: `echo` adds a newline, a
     // truncated write cuts a field, and under a full-grammar gate every one of
-    // these would read as legacy plaintext and be handed out AS the credential.
+    // these would read as unsealed plaintext and be handed out AS the credential.
     const sealed = createCredentialSealer([KEY_A]).seal(
       "workspace:ws_0076759dbbe19fcc",
       "acme.key",
@@ -441,7 +441,7 @@ describe("the trailing newline splits", () => {
   });
 });
 
-describe("legacy plaintext under a sealer", () => {
+describe("unsealed plaintext under a sealer", () => {
   test("a hand-seeded plaintext file is still read", async () => {
     // A deployment that turns sealing on keeps working on the files already
     // there. The boot sweep is what converts them; this store has not run one,

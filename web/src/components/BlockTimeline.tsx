@@ -731,11 +731,10 @@ function ToolWidgets({ calls }: { calls: ReadonlyArray<ToolCallDisplay> }) {
     <>
       {widgets.map((tc) => (
         // Pass the full ui:// URI through — InlineAppView strips the scheme
-        // and forwards everything after as the resource path. The legacy
-        // regex `/^ui:\/\/[^/]+\/(.+)$/` dropped the first segment on the
-        // assumption it was a namespace prefix, which breaks two-segment
-        // URIs like `ui://<state>/<method>` where the first segment is
-        // load-bearing (Reboot's convention for state-scoped UI methods).
+        // and forwards everything after as the resource path. Never drop the
+        // first segment as a namespace prefix: in two-segment URIs like
+        // `ui://<state>/<method>` it is load-bearing (Reboot's convention
+        // for state-scoped UI methods).
         <InlineAppView
           key={tc.id}
           appName={tc.appName!}
@@ -854,7 +853,7 @@ function weaveSmoothed(
   );
 }
 
-/** Same heuristic as the old reasoning row — 4 chars/token, k-form ≥2500. */
+/** Approximate token count: 4 chars/token, k-form at ≥2500. */
 function approximateTokenLabel(charCount: number): string {
   if (charCount === 0) return "";
   const tokens = Math.round(charCount / 4);

@@ -352,7 +352,7 @@ export const serverNotificationsRelayedTotal = new Counter({
  *
  * `source` is the MCP source name, sanitized to a bounded charset (see
  * recordConnectorCrash) so a malformed/unbounded name can't explode cardinality.
- * `remote` separates remote (HTTP/SSE) connectors from local stdio connectors.
+ * `remote` separates remote (HTTP/SSE) connectors from in-process sources.
  * No tenant/workspace label — one pod per tenant, so the scrape namespace
  * attributes it (same rationale as nb_artifact_resolutions_total).
  *
@@ -381,7 +381,7 @@ const SAFE_SOURCE = /^[a-z0-9_.-]+$/;
 /**
  * Record one health-monitor-detected connector crash. `source` is the MCP source
  * name (sanitized to a bounded label); `remote` is true for HTTP/SSE connectors
- * and false for local stdio connectors. Defensive: a missing/empty/odd name
+ * and false for in-process sources. Defensive: a missing/empty/odd name
  * buckets to "other".
  */
 export function recordConnectorCrash(source: string | undefined, remote: boolean): void {

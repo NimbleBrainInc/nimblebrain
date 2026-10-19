@@ -187,7 +187,7 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 The workspace is the tenancy boundary. These rules apply anywhere code touches workspace data; the detail is in the guides.
 
 - **All tool handlers that access data must be workspace-scoped.** Use `runtime.requireWorkspaceId()` (never `getCurrentWorkspaceId()`). It throws when no workspace is in scope, under every identity provider — no special-case logic needed.
-- **Hard-error on a missing `wsId`, don't silently default**, in any code path that touches workspace-scoped credentials or identity. A `?? "ws_default"` fallback would pool credentials across tenants. `startConnectorSource`'s named-connector and URL-connector (OAuth-provider) branches both throw; match them.
+- **Hard-error on a missing `wsId`, don't silently default**, in any code path that touches workspace-scoped credentials or identity. A `?? "ws_default"` fallback would pool credentials across tenants. Starting a URL connector that opens an OAuth flow throws when no workspace context is threaded (a personal connector binds to its user instead); match it.
 - **Every recursive mkdir on a workspace-scoped path passes `assertWorkspaceRootExists`** (via `ensureWorkspaceDir` or directly), and a `WorkspaceRootMissingError` is never fixed by creating the root, because only `WorkspaceStore.create` makes one. See `src/workspace/AGENTS.md`.
 - **Every secret goes through `CredentialStore`**; never construct a `FileCredentialStore`, which bypasses the configured backend. See `src/tools/AGENTS.md`.
 - **A session reaches exactly one workspace plus the caller's identity tools**, never a cross-workspace union, and a tool name's shape is its scope. See `src/orchestrator/AGENTS.md`.

@@ -331,8 +331,8 @@ export async function routeToolCall(opts: {
    * cross-workspace case to deny.
    * Membership + existence were already validated when the session was
    * established, so the per-call store lookup and membership scan are skipped.
-   * (Omitted only on the legacy `/mcp` path until its per-request workspace is
-   * threaded.)
+   * Omitted for a session bound to no workspace; a workspace-scoped call then
+   * raises `WorkspaceToolUnavailable`.
    */
   workspaceId?: string;
   runtime: OrchestratorRuntime;

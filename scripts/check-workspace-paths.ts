@@ -2,12 +2,10 @@
 /**
  * Lint: workspace-scoped on-disk paths must flow through `WorkspaceContext`.
  *
- * The cross-workspace refactor (Stage 0)
- * moves every `{workDir}/workspaces/{wsId}/...` derivation into a single
- * typed handle (`src/workspace/context.ts`). After Stage 0, any new
- * occurrence of the legacy free-form pattern is a regression — it
- * reintroduces a place where a caller could mistype `wsId`, skip
- * validation, or escape the workspace tree via path traversal.
+ * Every `{workDir}/workspaces/{wsId}/...` derivation goes through a single
+ * typed handle (`src/workspace/context.ts`). A path built by hand is a place
+ * where a caller could mistype `wsId`, skip validation, or escape the
+ * workspace tree via path traversal.
  *
  * What this script flags: any call to `join(...)` whose argument list
  * matches the literal sequence `<anything>, "workspaces", <wsId>, ...`
@@ -27,7 +25,7 @@
  *     genuinely doesn't apply.
  *
  * Scope: only `src/**\/*.ts`, minus vendored trees. Tests are out of scope —
- * they deliberately exercise the legacy shims.
+ * they build fixture layouts by hand on purpose.
  */
 
 import { readFileSync } from "node:fs";

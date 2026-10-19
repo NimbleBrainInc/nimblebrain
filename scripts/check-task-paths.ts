@@ -9,18 +9,17 @@
  * `src/`:
  *
  *   1. `getIdentityContext(...).getDataPath("tasks")` /
- *      `new IdentityContext(...).getDataPath("tasks")` — reaching the
- *      legacy identity-owned tasks dir (`users/<userId>/tasks`).
+ *      `new IdentityContext(...).getDataPath("tasks")` — an
+ *      identity-owned tasks dir (`users/<userId>/tasks`).
  *      The owning WORKSPACE, not the caller's identity, decides where a
  *      task lives.
  *   2. `join(..., "users", X, "tasks")` — a hand-built identity-scoped
- *      tasks dir, the exact shape the workspace migration removes.
+ *      tasks dir.
  *
  * Allowed: a `// lint-ok:task-path` marker on a line just above the call,
  * for the rare future case the constructor genuinely can't cover.
  *
- * Scope: `src/**\/*.ts`. Tests and `scripts/` are out of scope (the migration
- * deliberately reads the old identity-scoped layout).
+ * Scope: `src/**\/*.ts`, the code that ships.
  *
  * Exports its AST predicates for the self-test under `test/unit/scripts/`.
  */
@@ -75,7 +74,7 @@ function chainsFromIdentityContext(expr: ts.Expression): boolean {
 
 /**
  * True iff `node` is `<identityCtx>.getDataPath("tasks", ...)` — reaching
- * the legacy identity-owned tasks dir. Matches only when the
+ * an identity-owned tasks dir. Matches only when the
  * `getDataPath` receiver chains directly from `getIdentityContext`/
  * `IdentityContext` and the first argument is the string literal `"tasks"`.
  */

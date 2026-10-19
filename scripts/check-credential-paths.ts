@@ -3,7 +3,7 @@
  * Lint: credentials live with their owner — the workspace for shared
  * connectors, the identity for personal ones.
  *
- * Stage 2 moved workspace-shared credentials onto the workspace at
+ * Workspace-shared credentials live on the workspace at
  * `{workDir}/workspaces/<wsId>/credentials/...`, reached only through
  * `WorkspaceContext` or `FileCredentialStore`.
  * A hand-built `join(..., "users", X, "credentials", ...)` is a regression: a
@@ -32,7 +32,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative } from "node:path";
 import { Glob } from "bun";
 import * as ts from "typescript";
 
@@ -47,15 +47,6 @@ const ALLOW_MARKER = "lint-ok:credential-path";
  * literal.
  */
 const USER_CREDENTIAL_PATH_RE = /users\/[^/]+\/credentials(?:$|\/)/;
-
-// Files within `src/` that legitimately reference the legacy
-// `users/<userId>/credentials/...` shape. Stage-2 deletion of
-// `UserConnectorStore` left zero such files; the set is empty by design.
-// The matching scripts/ allowlist (the migration script) is enforced
-// implicitly by `src/`-only scope — we never scan scripts/.
-const ALLOWED_FILES: ReadonlySet<string> = new Set<string>(
-  ([] as string[]).map((f) => f.split("/").join(sep)),
-);
 
 interface Violation {
   file: string;
@@ -158,8 +149,6 @@ function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): 
 }
 
 function scanFile(absPath: string, violations: Violation[]): void {
-  const relPath = relative(SRC_ROOT, absPath);
-  if (ALLOWED_FILES.has(relPath)) return;
   const src = readFileSync(absPath, "utf-8");
   const sourceFile = ts.createSourceFile(
     absPath,

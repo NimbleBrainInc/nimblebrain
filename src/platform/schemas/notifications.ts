@@ -597,9 +597,7 @@ const NotificationRouteMatchView = Type.Object({
  * A stored route's target, as the settings read returns it: the shapes of
  * {@link NotificationDeliverTarget}, open and without the write-time bounds.
  *
- * An `agent` target names its task as `task`. Targets stored under the
- * `automation` key are rewritten by the v0.35.x boot, which a deployment
- * holding them upgrades through, so no store this runtime reads holds one.
+ * An `agent` target names its task as `task`.
  */
 const NotificationDeliverTargetView = ObjectUnion([
   Type.Object({

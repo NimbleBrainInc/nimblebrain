@@ -230,9 +230,10 @@ async function createSkill(
 - DO NOT coerce kebab-case / snake_case / camelCase variants. The schema
   declares one casing; reject the rest.
 
-If you need to migrate persisted data with a different shape (legacy
-on-disk formats, etc.), do that in the storage layer (`writer.ts`,
-`loader.ts`), not in the tool handler.
+A tool handler never reshapes persisted data. Moving stored data to a new
+shape is a one-off migration run against each deployment and then deleted
+(root `AGENTS.md`, Conventions); the storage layer reads and writes only the
+current shape.
 
 ---
 

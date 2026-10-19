@@ -221,8 +221,8 @@ async function revokeUrlConnectorTokens(
 
 /**
  * Strip the just-uninstalled connector from `workspace.json#connectors[]`.
- * `lifecycle.uninstall` clears its own `instances` map and the legacy global
- * `nimblebrain.json`, but not the workspace record.
+ * `lifecycle.uninstall` clears its own `instances` map, not the workspace
+ * record.
  */
 async function stripUninstalledConnectorEntry(
   deps: ConnectorTeardownDeps,
