@@ -4,11 +4,6 @@ export interface ConversationSummary {
   preview?: string;
   createdAt?: string;
   updatedAt?: string;
-  /**
-   * The workspace the conversation ran in. Absent on legacy chats with no
-   * stamped workspace.
-   */
-  workspaceId?: string | null;
   /** A reply is still generating in this conversation, on any tab or device. */
   active: boolean;
 }

@@ -102,11 +102,8 @@ export interface DerivedConversationMeta {
 
 /**
  * Derive mutable conversation metadata from metadata events.
- * Scans for `metadata.title` events; falls back to `defaults` (from line 1)
- * when none are present.
- *
- * Conversations are single-owner, so there are no visibility or
- * participants metadata events to derive.
+ * Scans for `metadata.title` events; falls back to `defaults` when none are
+ * present.
  */
 export function deriveConversationMeta(
   events: readonly ConversationEvent[],

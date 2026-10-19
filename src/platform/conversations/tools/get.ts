@@ -105,12 +105,12 @@ export async function handleGet(
     // does not move it, so the configured default is not the answer.
     model: conversation.meta.model,
     ...(conversation.meta.ownerId ? { ownerId: conversation.meta.ownerId } : {}),
-    // The workspace the conversation is sealed to. Surfaced so a client that
-    // holds an open conversation can tell which workspace it belongs to — the
-    // web chat panel uses it to avoid resuming a conversation from a workspace
-    // the user is no longer viewing (a fresh draft is started instead). Absent
-    // when the record carries no stamp, which means "don't reconcile".
-    ...(conversation.meta.workspaceId ? { workspaceId: conversation.meta.workspaceId } : {}),
+    // The workspace the conversation is sealed to: the directory it is stored
+    // under. Surfaced so a client that holds an open conversation can tell which
+    // workspace it belongs to — the web chat panel uses it to avoid resuming a
+    // conversation from a workspace the user is no longer viewing (a fresh draft
+    // is started instead).
+    workspaceId: entry.workspaceId,
   };
 
   const expand = input.expand ?? "messages";

@@ -128,7 +128,6 @@ describe("a resume scopes the file TOOL to the workspace it runs in", () => {
       description: null,
       workspaceId: WORKSPACE_A,
       ownerId: OWNER,
-      visibility: "private",
     });
 
     // Sanity: the default workspace does NOT hold the file. So a `files__list` that returns it can

@@ -1,7 +1,6 @@
 import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { log } from "../observability/log.ts";
 import { estimateCost } from "../usage/cost.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { previewTextOf } from "./preview.ts";
@@ -55,12 +54,6 @@ export class ConversationIndex {
       return;
     }
 
-    // Count ownerless files separately from generic "couldn't parse"
-    // failures. Ownerless files are pre-invariant state needing manual
-    // triage (no migration stamps an owner); surface a single line so
-    // they aren't a silent oracle ("the dashboard is missing N
-    // conversations and no one sees why").
-    let ownerlessSkipped = 0;
     for (const file of files) {
       try {
         const content = await readFile(join(dir, file), "utf-8");
@@ -68,18 +61,10 @@ export class ConversationIndex {
         if (parsed) {
           this.entries.set(parsed.summary.id, parsed.summary);
           this.accessMeta.set(parsed.summary.id, parsed.access);
-        } else if (isLikelyOwnerlessFile(content)) {
-          ownerlessSkipped++;
         }
       } catch {
         // Skip corrupt or unreadable files
       }
-    }
-
-    if (ownerlessSkipped > 0) {
-      log.warn(
-        `[index] excluded ${ownerlessSkipped} ownerless conversation file(s) in ${dir} — these predate the ownership invariant and need manual triage (stamp an ownerId on line 1, or remove); no migration stamps them.`,
-      );
     }
 
     this.populated = true;
@@ -177,28 +162,6 @@ export function canAccess(
 }
 
 /**
- * Heuristic check: did parseFileHeader bail because the file is
- * structurally OK but lacks `ownerId`? Used by `populate` to count
- * ownerless skips so operators see a "you have N pre-migration files"
- * line — vs corrupt files which silently fail.
- *
- * Doesn't re-derive everything: just peeks at line 1, parses it, and
- * checks whether `id` is present and `ownerId` is absent. Worst case
- * if we're wrong (file IS corrupt with a plausible-looking line 1)
- * the count is off by one; the operator action is the same either way.
- */
-function isLikelyOwnerlessFile(content: string): boolean {
-  const firstLine = content.split("\n", 1)[0];
-  if (!firstLine) return false;
-  try {
-    const meta = JSON.parse(firstLine) as Partial<ConversationMetadata>;
-    return typeof meta.id === "string" && !meta.ownerId;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Running metrics folded from a conversation's lines (past line 1).
  * `lastModel` is on Conversation, not ConversationSummary, so it isn't tracked.
  */
@@ -292,15 +255,9 @@ export function parseFileHeader(
   // Totals are always derived from events; line-1 totals are never read.
   const metrics = scanLines(lines);
 
-  // Invariant: every conversation has an ownerId. A file
-  // without one is pre-migration data — load() already throws when
-  // it encounters such a file directly, and the index honors the same
-  // invariant by EXCLUDING ownerless entries entirely. Including them
-  // with an absent / empty ownerId would be a category error: the
-  // application's view of "conversations that exist" would include
-  // entries that load() can't actually return. Operators see
-  // ownerless files via filesystem inspection or the migration
-  // script's report, not via the index.
+  // Invariant: every conversation has an ownerId. load() throws on a file
+  // without one, and the index honors the same invariant by excluding it, so
+  // the index never lists a conversation load() can't return.
   if (!meta.ownerId) return null;
 
   return {
@@ -308,7 +265,7 @@ export function parseFileHeader(
       id: meta.id,
       createdAt: meta.createdAt,
       updatedAt: metrics.lastEventTs ?? meta.updatedAt ?? meta.createdAt,
-      title: metrics.title ?? meta.title ?? null,
+      title: metrics.title ?? null,
       messageCount: metrics.messageCount,
       preview: metrics.preview,
       totalInputTokens: metrics.inputTokens,

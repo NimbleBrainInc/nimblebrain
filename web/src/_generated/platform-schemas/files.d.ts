@@ -114,7 +114,6 @@ export declare const FileRecord: import("@sinclair/typebox").TObject<{
     folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
     ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    visibility: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"private" | "shared">>;
     deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
     deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
@@ -147,7 +146,6 @@ export declare const ListedFile: import("@sinclair/typebox").TObject<{
     source: import("@sinclair/typebox").TUnsafe<"agent" | "app" | "chat" | "manual">;
     ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    visibility: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"private" | "shared">>;
     deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
     deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     folderPath: import("@sinclair/typebox").TString;
@@ -192,7 +190,6 @@ export declare const FilesListOutput: import("@sinclair/typebox").TObject<{
         source: import("@sinclair/typebox").TUnsafe<"agent" | "app" | "chat" | "manual">;
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        visibility: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"private" | "shared">>;
         deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
         deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         folderPath: import("@sinclair/typebox").TString;
@@ -233,7 +230,6 @@ export declare const FilesSearchOutput: import("@sinclair/typebox").TObject<{
         folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
         ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        visibility: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"private" | "shared">>;
         deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
         deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>>;
@@ -293,7 +289,6 @@ export declare const FilesInfoOutput: import("@sinclair/typebox").TObject<{
     folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
     ownerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    visibility: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"private" | "shared">>;
     deleted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TLiteral<true>>;
     deletedAt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;

@@ -315,12 +315,9 @@ export const ConversationMetadata = Type.Object({
   lastModel: NullableString,
   model: Type.String({ description: "The model the conversation is bound to." }),
   ownerId: Type.Optional(Type.String()),
-  workspaceId: Type.Optional(
-    Type.String({
-      description:
-        "The workspace the conversation is sealed to; absent when the record carries no stamp.",
-    }),
-  ),
+  workspaceId: Type.String({
+    description: "The workspace the conversation is sealed to: the one it is stored under.",
+  }),
 });
 export type ConversationMetadata = Static<typeof ConversationMetadata>;
 

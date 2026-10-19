@@ -18,9 +18,7 @@
  * `<ownerId>` partitions, and its consumer reads through a store rooted at the
  * same `(wsId, ownerId)`. The owner partition is therefore both the gate and the
  * search scope: there is no client-supplied coordinate, and a request can only
- * ever reach the caller's own bytes. Reading a file SHARED by another owner
- * (`visibility: shared`) is a separate, visibility-checked path — never a
- * widening of this locator to scan other owners.
+ * ever reach the caller's own bytes.
  *
  * **Memo, not source of truth.** An `(ownerId, fileId) → wsId` memo makes the
  * hot path (an id served repeatedly, or just uploaded) O(1); the caller `peek`s

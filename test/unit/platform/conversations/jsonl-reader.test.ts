@@ -35,7 +35,6 @@ describe("readConversation", () => {
       id: "conv_abc123",
       createdAt: "2025-01-01T00:00:00.000Z",
       updatedAt: "2025-01-01T00:05:00.000Z",
-      title: "Test conversation",
       totalInputTokens: 500,
       totalOutputTokens: 300,
       totalCostUsd: 0.02,
@@ -65,7 +64,11 @@ describe("readConversation", () => {
       { role: "user", content: "Thanks!", timestamp: "2025-01-01T00:05:00.000Z" },
     ];
 
-    const lines = [JSON.stringify(meta), ...conversationEventLines(messages as FixtureTurn[])];
+    const lines = [
+      JSON.stringify(meta),
+      JSON.stringify({ type: "metadata.title", ts: meta.createdAt, title: "Test conversation" }),
+      ...conversationEventLines(messages as FixtureTurn[]),
+    ];
     const path = writeTmpFile("conv_abc123.jsonl", lines);
 
     const result = await readConversation(path);
@@ -931,7 +934,6 @@ describe("readConversationHeader", () => {
       id: "conv_hdr001",
       createdAt: "2025-01-01T00:00:00.000Z",
       updatedAt: "2025-01-01T00:05:00.000Z",
-      title: "Header test",
       totalInputTokens: 100,
       totalOutputTokens: 50,
       totalCostUsd: 0.01,
@@ -942,7 +944,11 @@ describe("readConversationHeader", () => {
       { role: "assistant", content: "Reply", timestamp: "2025-01-01T00:02:00.000Z" },
       { role: "user", content: "Follow up", timestamp: "2025-01-01T00:03:00.000Z" },
     ];
-    const lines = [JSON.stringify(meta), ...conversationEventLines(messages as FixtureTurn[])];
+    const lines = [
+      JSON.stringify(meta),
+      JSON.stringify({ type: "metadata.title", ts: meta.createdAt, title: "Header test" }),
+      ...conversationEventLines(messages as FixtureTurn[]),
+    ];
     const path = writeTmpFile("conv_hdr001.jsonl", lines);
 
     const result = await readConversationHeader(path);

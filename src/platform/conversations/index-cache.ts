@@ -50,10 +50,8 @@ export interface IndexEntry {
   preview: string;
   filePath: string;
   /**
-   * Single-owner principal. Every conversation must carry an
-   * `ownerId`; legacy files written before the migration may
-   * lack one — the index keeps `null` for those rather than guessing,
-   * and the dispatcher treats `null` as inaccessible (no synthesis).
+   * Single-owner principal. A header without an `ownerId` indexes as `null`,
+   * which the dispatcher treats as inaccessible (no synthesis).
    */
   ownerId: string | null;
   /**

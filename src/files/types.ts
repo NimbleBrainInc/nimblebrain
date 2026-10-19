@@ -49,19 +49,12 @@ export interface FileEntry {
   /**
    * Denormalised workspace the file lives in. Stored under
    * `workspaces/<workspaceId>/files/<ownerId>/`, so the path is authoritative
-   * and this field is the convenience. Absent on legacy/identity-era records.
+   * and this field is the convenience. Absent on records written without it.
    *
    * ADVISORY ONLY — see `ownerId`. The workspace comes from the ambient request
    * (`RequestContext.workspaceId`), never from this field.
    */
   workspaceId?: string;
-  /**
-   * Who can see this file. `private` (owner-only, default) |
-   * `shared` (the workspace's members). **Reserved forward-compat field — not
-   * yet written or read in v1**; the `<ownerId>` path partition is the live
-   * boundary, and absent reads as `private` (fail-closed).
-   */
-  visibility?: "private" | "shared";
   deleted?: true;
   deletedAt?: string;
 }

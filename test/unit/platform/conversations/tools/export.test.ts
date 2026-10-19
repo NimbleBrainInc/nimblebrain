@@ -25,7 +25,6 @@ const META = {
   id: "conv_export001",
   createdAt: "2025-06-01T10:00:00.000Z",
   updatedAt: "2025-06-01T10:10:00.000Z",
-  title: "Export Test Conversation",
   totalInputTokens: 1200,
   totalOutputTokens: 800,
   totalCostUsd: 0.05,
@@ -71,10 +70,15 @@ async function setupConversation(
   meta: Record<string, unknown>,
   messages: FixtureTurn[],
   filename?: string,
+  title: string | null = "Export Test Conversation",
 ): Promise<void> {
   const id = meta.id as string;
   const fname = filename ?? `${id}.jsonl`;
-  const lines = [JSON.stringify(meta), ...conversationEventLines(messages)];
+  // The title is a `metadata.title` event; line 1 never carries one.
+  const titleLine = title
+    ? [JSON.stringify({ type: "metadata.title", ts: meta.createdAt, title })]
+    : [];
+  const lines = [JSON.stringify(meta), ...titleLine, ...conversationEventLines(messages)];
   writeTmpFile(fname, lines);
   await index.build(ROOT);
 }
@@ -104,8 +108,8 @@ describe("handleExport — markdown", () => {
   });
 
   test("uses 'Untitled' when title is null", async () => {
-    const meta = { ...META, id: "conv_notitle", title: null };
-    await setupConversation(meta, MESSAGES.slice(0, 2), "conv_notitle.jsonl");
+    const meta = { ...META, id: "conv_notitle" };
+    await setupConversation(meta, MESSAGES.slice(0, 2), "conv_notitle.jsonl", null);
 
     const result = await handleExport({ id: "conv_notitle", format: "markdown" }, index);
 
