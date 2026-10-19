@@ -11,9 +11,11 @@ Create the skill in **This Workspace → Skills**, or with `skills__create`, and
 ---
 name: crm-house-rules
 description: How we use the CRM's stages and fields.
-loading-strategy: dynamic
-tool-affinity:
-  - crm__*
+metadata:
+  nimblebrain:
+    loading-strategy: dynamic
+    tool-affinity:
+      - crm__*
 ---
 Move a deal to "Qualified" only after a call is logged.
 ```
