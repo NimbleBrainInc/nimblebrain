@@ -813,9 +813,9 @@ function resolveInstanceCatalog(
 }
 
 /**
- * Tools for a connector's read surface, kept fresh for remote sources. Local /
- * stdio sources change their tool set only via respawn (which already drops
- * the memo), so they read the memo directly; only remote sources need the
+ * Tools for a connector's read surface, kept fresh for remote sources. An
+ * in-process source changes its tool set only on restart (which already drops
+ * the memo), so it reads the memo directly; only remote sources need the
  * age-gated re-fetch. Here it waits for the answer, where the agent's run
  * listing serves the memo past a short wait; both use one max age
  * (`REMOTE_TOOL_LIST_MAX_AGE_MS`).
@@ -1915,7 +1915,7 @@ async function handleInstallRemoteOAuth(
       wsId,
       ...(warning ? { warning } : {}),
       // Kept in its own field beside `warning`. A warning says something is
-      // wrong; a notice is the bundle telling the user what is now happening.
+      // wrong; a notice is the connector telling the user what is now happening.
       ...(ready.notice ? { notice: ready.notice } : {}),
     },
     isError: false,
@@ -1961,7 +1961,7 @@ async function provisionDeclaredHooks(
 /**
  * Tell a freshly-installed connector it is ready, and carry back what it said.
  *
- * The `notice` is the bundle's own words about what is now happening — the one
+ * The `notice` is the connector's own words about what is now happening — the one
  * place a user waiting on install-time setup is told to wait. The `warning`
  * lists the marked tools the extension binding rejected.
  *
@@ -1991,7 +1991,7 @@ async function notifyConnectorReady(
     return { ...(notice ? { notice } : {}), ...withRejected() };
   } catch (err) {
     // A failure here (the source went away mid-install, a transient catalog
-    // read) leaves the connector installed and the bundle un-notified — the
+    // read) leaves the connector installed and the connector un-notified — the
     // next transition to `running` tells it, with `resume`.
     log.warn("[lifecycle] install-time notification failed", {
       connector: serverName,
@@ -2543,7 +2543,7 @@ interface RemoteInstallMessageParts {
    * because the connector is installed AND connected; only a declaration is wrong.
    */
   contractWarning?: string;
-  /** The bundle's own sentence about what it has started doing. */
+  /** The connector's own sentence about what it has started doing. */
   notice?: string;
 }
 
@@ -2973,9 +2973,9 @@ async function handleListTools(
   const registry = ctx.runtime.getRegistryForWorkspace(wsId);
   const source = registry.getSource(serverName);
   if (!source) {
-    // Connector is installed but not currently running (e.g. URL connector
-    // in `not_authenticated` after disconnect, stdio connector whose
-    // respawn failed). No tools to enumerate. Return empty tools
+    // Connector is installed but not currently running (e.g. in
+    // `not_authenticated` after disconnect, or its start failed). No tools to
+    // enumerate. Return empty tools
     // instead of throwing — this is a normal state, not an error.
     // The hero already conveys the "needs auth / needs setup" prompt.
     return {

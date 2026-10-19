@@ -148,10 +148,9 @@ export class WorkspaceContext {
   /**
    * The platform-wide working directory (e.g. `~/.nimblebrain`).
    *
-   * Exposed because some legacy call sites need the global root for
-   * non-workspace-scoped paths (the workspace tree itself, instance.json,
-   * the connector registry cache). New code should treat this as an
-   * implementation detail and prefer the scope-aware helpers below.
+   * Exposed for paths outside the workspace scope (the workspace tree itself,
+   * instance.json, the connector registry cache). A workspace-scoped path uses
+   * the scope-aware helpers below instead.
    */
   get workDir(): string {
     return this.#workDir;

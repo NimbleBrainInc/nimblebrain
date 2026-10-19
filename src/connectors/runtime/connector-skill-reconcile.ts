@@ -85,8 +85,8 @@ export async function reconcileConnectorSkills(
     const nextConnectors: ConnectorRef[] = [];
     // Reached only after `startWorkspaceConnectors`, whose disk-read boundary
     // has already refused any workspace record without a `connectors[]`. Keep
-    // that order: this loop would answer an un-migrated record with a bare
-    // TypeError instead of the error that names the migration.
+    // that order: this loop would answer such a record with a bare TypeError
+    // instead of the boundary's error.
     for (const ref of ws.connectors) {
       const updated = await reconcileRef(ref, ws.id, deps, catalog);
       if (updated !== ref) connectorsRefreshed++;

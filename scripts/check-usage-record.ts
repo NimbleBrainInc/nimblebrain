@@ -9,11 +9,10 @@
  * still increments a counter, so nothing breaks, no test goes red, and the
  * number is simply wrong until someone reconciles it against an invoice.
  *
- * That is not hypothetical. Usage was previously derived from a storage side
- * effect — a conversation file happening to exist — and four call paths that
- * did not write one (task runs, sub-agent runs, background briefing
- * refresh, archived workspaces) spent real money that no in-product surface
- * showed. `src/usage/record.ts` is the fix; this lint is what keeps it true.
+ * Usage derived from anything else — a storage side effect such as a
+ * conversation file happening to exist — misses every call path that does not
+ * produce that side effect, and that spend shows on no in-product surface.
+ * `src/usage/record.ts` is the seam; this lint keeps it the only one.
  *
  * What this flags, as three rules with per-call owners:
  *

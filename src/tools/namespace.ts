@@ -5,12 +5,10 @@
  * may parse this form by hand — enforced by the `check:tool-namespace` AST lint
  * (`scripts/check-tool-namespace.ts`).
  *
- * Nothing CONSTRUCTS the form any more: it is retired, rejected rather than
- * routed, and `namespacedToolName` has no caller in `src/` or `web/`. The
- * builder is kept for the test fixtures that must produce a well-formed retired
- * name in order to assert it is refused — validated construction beats a
- * hand-spliced string in a fixture. The lint scans `src/` and `web/src/` only,
- * so those fixtures are unaffected by it.
+ * Nothing in `src/` or `web/` constructs the form: it is rejected rather than
+ * routed. The builder test fixtures use to produce a well-formed name (to assert
+ * it is refused) is `test/helpers/namespaced-tool-name.ts`; the lint scans
+ * `src/` and `web/src/` only, so it does not apply there.
  *
  * **Separator: `-`.** Workspace ids match
  * `WORKSPACE_ID_PATTERN = ^ws_[a-f0-9]{16}$` (no `-`), so the first

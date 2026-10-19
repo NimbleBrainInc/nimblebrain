@@ -138,14 +138,12 @@ export class DeclaredSkillsUnavailableError extends Error {
 
 /**
  * Thrown when a conversation file on disk fails the ownership invariant
- * check at load time — specifically, a pre-migration file that lacks
- * `ownerId`. The store can't synthesize an owner safely and the chat
- * runtime can't authorize access on it.
+ * check at load time — a file that lacks `ownerId` (or a model). The store
+ * can't synthesize an owner safely and the chat runtime can't authorize access
+ * on it.
  *
- * Operator action is manual: an ownerless file has no derivable owner, so no
- * migration could recover it — such files predate the ownership invariant and
- * were skipped by the one-time workspace migration rather than guessed at.
- * Recovery is to stamp an `ownerId` on the file's
+ * Operator action is manual: an ownerless file has no derivable owner, so
+ * nothing can recover it automatically. Recovery is to stamp an `ownerId` on the file's
  * line-1 metadata (when the owner is known) or remove the file. Without this
  * typed error, the unwrapped `Error("missing ownerId in ...")` from
  * `event-sourced-store` bubbles to `handleChatStart` as a 500; with it, the HTTP

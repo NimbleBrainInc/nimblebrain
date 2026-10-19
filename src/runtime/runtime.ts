@@ -737,7 +737,7 @@ export class Runtime {
     // sealing file backend this re-wraps everything under the current key; for
     // a backend with nothing to reconcile it is a no-op. It must finish before
     // the instance credential references below resolve, or the first read of a
-    // legacy plaintext file would race the rewrite of that same file.
+    // unsealed plaintext file would race the rewrite of that same file.
     await credentialStore.reconcile?.();
     let config = await resolveInstanceCredentialRefs(declaredConfig);
     assertQualifiedModelConfig(config);
@@ -747,10 +747,9 @@ export class Runtime {
     loadBrand(config);
 
     // Register built-in transport credential providers (e.g. `minted`) at the
-    // ONE composition root every entry point shares — serve, the no-subcommand
-    // TUI/headless boot, and the task runner all reach here before
-    // startWorkspaceConnectors. Idempotent (last-writer-wins); doing it here instead
-    // of per-entry-point avoids a provider-auth source failing to boot under any
+    // ONE composition root every entry point (`serve`, tests, embedders) reaches
+    // before startWorkspaceConnectors. Idempotent (last-writer-wins); doing it
+    // here instead of per-entry-point avoids a provider-auth source failing to boot under any
     // path that forgot to register.
     registerBuiltinCredentialProviders();
     // Composio's transport credential, registered here for the same reason: a
@@ -1129,16 +1128,14 @@ export class Runtime {
 
       // Report Composio auth-config wiring across the whole catalog. Resolution is
       // lazy and per-connector, so it only ever runs for toolkits someone has
-      // installed, connected, or probed — the wrong set for deciding the legacy
-      // env fallback is unused (#789), or for catching an `authConfigs` key that
-      // matches no toolkit. Read-only and best-effort.
+      // installed, connected, or probed — the wrong set for catching an
+      // `authConfigs` key that matches no toolkit. Read-only and best-effort.
       await bootAuditComposioAuthConfigs({
         catalogEntries: () => rt.getConnectorCatalog().catalogEntries(),
       });
 
-      // Boot-time visibility: the locked curated registry is the platform's
-      // non-empty-Browse guarantee. Warn loudly if its resolved catalog
-      // path yields zero entries (missing/empty mount, mis-set
+      // Boot-time visibility: the connector catalog is what Browse lists.
+      // Warn loudly if its resolved catalog path yields zero entries (missing/empty mount, mis-set
       // NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
       // than silent.
       await warnIfCatalogEmpty(rt.getConnectorCatalog());
@@ -4081,7 +4078,7 @@ export class Runtime {
    * this seam exists to avoid.
    *
    * **Order is not a preference.** Teardown runs BEFORE the rename.
-   * `on_removing` needs the bundle still reachable, and the credential cleanup
+   * `on_removing` needs the connector still reachable, and the credential cleanup
    * inside `lifecycle.uninstall` needs the credential directory at its live
    * path; after the rename both address a tree that has moved.
    *

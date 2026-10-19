@@ -234,10 +234,9 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  *
  * Skipped vs. `runtime.chat()` (request-scoped, no signal in a debug
  * call):
- *   - matched skill (legacy SkillMatcher path) — needs a user message.
+ *   - matched skill (`SkillMatcher`) — needs a user message.
  *   - focused-app section / app-state — only present when a chat is
  *     running against an app context.
- *   - participants — shared-conv state.
  */
 async function composeLive(runtime: Runtime, convId: string): Promise<ComposeResponse> {
   const wsId = runtime.requireWorkspaceId();

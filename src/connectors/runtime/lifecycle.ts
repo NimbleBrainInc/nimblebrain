@@ -804,8 +804,8 @@ export class ConnectorLifecycleManager {
     logTransition(serverName, wsId, existing?.state, next);
     this.persistBrokeredCredentialLoss(instance, existing?.state, newState);
 
-    // Recompute summary state so legacy consumers (HealthMonitor,
-    // briefing-collector, runtime status API) see the right surface.
+    // Recompute the instance-level summary state, which readers that do not
+    // track per-principal connections see.
     instance.state = summarizeConnectionState(instance.connections);
 
     this.notifyConnectionRunning(serverName, wsId, principalId, newState);
@@ -2179,9 +2179,8 @@ export class ConnectorLifecycleManager {
    *
    *   - returns `true` immediately if the source is already registered;
    *   - returns `false` for an unknown instance (connector not installed
-   *     here), a non-URL ref (named/stdio re-spawn is the heavier
-   *     `startConnectorSource` path — deferred; see the tracked follow-up),
-   *     or a recent failed attempt still inside the cooldown window;
+   *     here), an instance with no persisted ref, or a recent failed
+   *     attempt still inside the cooldown window;
    *   - otherwise re-spawns once from the persisted URL ref, stamps the
    *     attempt, and returns whether the source is now registered.
    *
@@ -2205,9 +2204,9 @@ export class ConnectorLifecycleManager {
 
     const key = `${serverName}|${wsId}`;
 
-    // Only an installed instance with a persisted ref is recoverable on this
-    // path. No instance → the connector isn't installed in this workspace
-    // (nothing to recover).
+    // Only an installed instance with a persisted ref is recoverable. No
+    // instance → the connector isn't installed in this workspace (nothing to
+    // recover).
     const instance = this.instances.get(key);
     const ref = instance?.ref;
     if (!ref) return false;

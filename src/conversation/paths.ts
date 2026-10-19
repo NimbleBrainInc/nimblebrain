@@ -1,7 +1,7 @@
 /**
  * The single sanctioned construction (and parse) site for workspace-partitioned
- * conversation paths. Mirrors how `namespacedToolName` is the only site for
- * `ws_<id>-` tool names: every conversation directory is built and parsed here,
+ * conversation paths. Mirrors how `parseNamespacedToolName` is the only parse
+ * site for `ws_<id>-` tool names: every conversation directory is built and parsed here,
  * so the on-disk layout has exactly one definition.
  *
  * The workspace owns the directory: a conversation lives under the workspace it

@@ -12,8 +12,8 @@
  *      site builds a store off a path the caller chose, which is how files
  *      drift out of the workspace-owned layout.
  *   2. `getIdentityContext(...).getDataPath("files")` /
- *      `new IdentityContext(...).getDataPath("files")` — reaching the legacy
- *      identity-owned files dir (`users/<userId>/files`) — is forbidden
+ *      `new IdentityContext(...).getDataPath("files")` — an identity-owned
+ *      files dir (`users/<userId>/files`) — is forbidden
  *      anywhere in `src/`. The owning workspace, not the caller's identity, decides
  *      where a file lives; the dir comes only from `workspaceFilesDir()` in
  *      `src/files/paths.ts`.
@@ -21,8 +21,7 @@
  * Allowed: a `// lint-ok:file-path` marker on a line just above the call,
  * for the rare future case the constructor genuinely can't cover.
  *
- * Scope: `src/**\/*.ts`. Tests and `scripts/` are out of scope (the
- * migration deliberately reads the old identity-scoped layout).
+ * Scope: `src/**\/*.ts`, the code that ships.
  *
  * Exports its AST predicates for the self-test under `test/unit/scripts/`.
  */
@@ -91,7 +90,7 @@ function chainsFromIdentityContext(expr: ts.Expression): boolean {
 
 /**
  * True iff `node` is `<identityCtx>.getDataPath("files", ...)` — reaching the
- * legacy identity-owned files dir. Matches only when the `getDataPath` receiver
+ * identity-owned files dir. Matches only when the `getDataPath` receiver
  * chains directly from `getIdentityContext`/`IdentityContext` and the first
  * argument is the string literal `"files"`.
  */

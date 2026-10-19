@@ -1,18 +1,18 @@
 /**
- * Connector lifecycle events — the two moments the runtime can tell a bundle
+ * Connector lifecycle events — the two moments the runtime can tell a connector
  * something about its own installation.
  *
- * The notification is a **tool call on the bundle itself**, and that one fact
+ * The notification is a **tool call on the connector itself**, and that one fact
  * decides the whole vocabulary. Before a connector is reachable there is no
  * server to call; after its source is torn down there is nothing left to call.
  * So the callable set is exactly the two transitions in between: the first
- * moment the bundle is reachable, and the last moment before it goes away.
+ * moment the connector is reachable, and the last moment before it goes away.
  *
  * The rule that falls out, and the reason this block will not grow:
  *
  * > Before a connector is reachable and after it is gone, extension is
  * > DECLARATIVE — the manifest tells the runtime what to do. In between,
- * > extension is CALLABLE — the runtime calls the bundle.
+ * > extension is CALLABLE — the runtime calls the connector.
  *
  * The "missing" events are therefore not gaps and some already ship:
  * install-time secret collection is the pre-install extension point, declared
@@ -24,9 +24,9 @@
  * their hooks run in a context the manager controls and never call into the
  * thing being managed.
  *
- * **Nothing here describes what a bundle should DO with either event**, and
+ * **Nothing here describes what a connector should DO with either event**, and
  * nothing ever should — the same line `HostManifestMeta.hooks` holds. The
- * kernel says *you were installed*; what that means is the bundle's business. A
+ * kernel says *you were installed*; what that means is the connector's business. A
  * `provisioning:` block naming what to provision would put a vendor-shaped
  * taxonomy in the kernel, which is precisely the thing this shape avoids.
  */
@@ -63,7 +63,7 @@ export type LifecycleBinding = Partial<Record<LifecycleEvent, string>>;
  *
  * **`resume` is one value for every non-install reason** — a cold boot, a
  * reconnect, a re-auth, a server redeployed under the same URL. They are one
- * value because a bundle has nothing to do differently with them and the
+ * value because a connector has nothing to do differently with them and the
  * runtime frequently cannot tell them apart. The discriminator answers exactly
  * one question — *was this the install?* — and `resume` is the honest name for
  * "no".

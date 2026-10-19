@@ -113,6 +113,9 @@ interface StartConnectorOpts {
    * workspace. `workDir` is the instance work directory that holds the user's
    * records. Mutually exclusive with `workspaceContext` — a personal connector
    * belongs to no workspace.
+   *
+   * Read by the OAuth-provider step: when set, it takes the user arm and
+   * `workspaceContext` is not consulted.
    */
   identityOwner?: { userId: string; workDir: string };
   dataDir?: string;

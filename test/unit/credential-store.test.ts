@@ -96,7 +96,7 @@ describe("FileCredentialStore — on-disk mechanics", () => {
     }
   });
 
-  // The legacy plaintext path only. It is lossy — a value that genuinely ends
+  // The unsealed path only. It is lossy — a value that genuinely ends
   // in a newline comes back without it, and this path cannot tell that from an
   // `echo "secret" > file` — and sealing is what repairs it. The other half of
   // the split is in `credential-store-sealed.test.ts`.

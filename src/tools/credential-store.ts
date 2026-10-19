@@ -204,14 +204,14 @@ export class CredentialNotFoundError extends Error {
  * Read a file that is not sealed.
  *
  * The trailing-newline trim is an affordance for `echo "secret" > file`, which
- * is how the docs and every hand-seeded instance key have always written one.
+ * is how the docs and a hand-seeded instance key write one.
  * It is also lossy: a secret that genuinely ends in a newline comes back
  * without it, and there is no way for this path to tell the two apart. That is
  * the cost of accepting bytes a text editor produced, and it is why it belongs
- * to the legacy path alone — a sealed value carries its own length and
+ * to the unsealed path alone — a sealed value carries its own length and
  * round-trips exactly.
  */
-function legacyPlaintext(raw: string): string {
+function readUnsealed(raw: string): string {
   return raw.replace(/\n$/, "");
 }
 
@@ -466,7 +466,7 @@ export class FileCredentialStore implements CredentialStore {
       ? () => this.#open(scope, key, raw)
       : this.#strictPlaintextRefusal
         ? () => this.#refusePlaintext(scope, key)
-        : legacyPlaintext(raw);
+        : readUnsealed(raw);
     return new AuditedSecret(value, () => this.#auditReveal(scope, key, read));
   }
 
@@ -625,7 +625,7 @@ export class FileCredentialStore implements CredentialStore {
   /**
    * Re-seal everything on disk under the current sealing key, once, at boot.
    *
-   * Walks the three scope roots and rewrites any secret that is legacy
+   * Walks the three scope roots and rewrites any secret that is unsealed
    * plaintext or sealed under a key that is no longer `keys[0]`, through the
    * same atomic temp+rename `put` uses, with a fresh salt and IV each time.
    * Rotation is then three steps with nothing to schedule: put the new key at
@@ -832,7 +832,7 @@ export class FileCredentialStore implements CredentialStore {
         value = sealer.open(label, key, raw);
       } else {
         plaintext = true;
-        value = legacyPlaintext(raw);
+        value = readUnsealed(raw);
       }
 
       await this.put(scope, key, value);

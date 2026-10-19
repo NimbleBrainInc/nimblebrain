@@ -81,8 +81,8 @@ function mapChatTurnError(err: unknown): Response | null {
   if (err instanceof ConversationAccessDeniedError) {
     return conversationAccessDeniedResponse(err.conversationId);
   }
-  // Both chat doors can surface this: `store.load` throws it on a
-  // pre-migration (ownerless) conversation. 422 rather than a raw 500.
+  // Both chat doors can surface this: `store.load` throws it on an
+  // ownerless conversation file. 422 rather than a raw 500.
   if (err instanceof ConversationCorruptedError) {
     return conversationCorruptedResponse(err);
   }

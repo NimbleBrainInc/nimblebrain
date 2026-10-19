@@ -274,8 +274,8 @@ export class HealthMonitor {
 
     await sleep(delay);
 
-    // Remote sources reconnect via transport stop+start cycle; stdio sources
-    // restart the subprocess.
+    // Remote sources reconnect via a transport stop+start cycle; in-process
+    // sources restart their linked server pair.
     const ok = remote ? await this.reconnectRemote(record.source) : await record.source.restart();
 
     if (ok) {

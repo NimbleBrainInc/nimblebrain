@@ -65,7 +65,7 @@ describe("publicOrigin — derivation policy", () => {
     expect(publicOrigin()).toBe("https://auth.customer.com");
   });
 
-  it("ignores legacy NB_API_URL — the fallback was removed (no host facts → dev origin)", () => {
+  it("ignores NB_API_URL (no host facts → dev origin)", () => {
     process.env.NB_API_URL = "https://legacy.nb.example.com";
     expect(publicOrigin()).toBe("http://localhost:27247");
   });
