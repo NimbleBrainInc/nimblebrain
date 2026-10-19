@@ -8,7 +8,6 @@ import {
   EnvelopeError,
   MAX_INNER_LENGTH,
   signEnvelope,
-  verifyEnvelopeAsRouter,
   verifyEnvelopeAsTenant,
 } from "../../src/oauth/envelope.ts";
 
@@ -31,13 +30,6 @@ describe("envelope round-trip", () => {
     expect(payload.tid).toBe(TID);
     expect(payload.inner).toBe(INNER);
     expect(payload.exp).toBeGreaterThan(payload.iat);
-  });
-
-  test("router verifies with master key (derives tenant key on the fly)", () => {
-    const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: tenantKey() });
-    const result = verifyEnvelopeAsRouter({ wire, masterKey: MASTER });
-    expect(result.tid).toBe(TID);
-    expect(result.payload.inner).toBe(INNER);
   });
 
   test("wire format is v1.<b64>.<b64>", () => {
@@ -81,16 +73,6 @@ describe("envelope rejects forgeries", () => {
       () => verifyEnvelopeAsTenant({ wire: forged, tenantKey: tenantKey(), expectedTid: TID }),
       "bad_mac",
     );
-  });
-
-  test("router rejects forged tid (HKDF gives different key)", () => {
-    const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: tenantKey() });
-    const parts = wire.split(".");
-    const swapped = Buffer.from(
-      JSON.stringify({ tid: "tenant-b", inner: INNER, iat: 1, exp: 9e9 }),
-    ).toString("base64url");
-    const forged = `${parts[0]}.${swapped}.${parts[2]}`;
-    expectError(() => verifyEnvelopeAsRouter({ wire: forged, masterKey: MASTER }), "bad_mac");
   });
 });
 

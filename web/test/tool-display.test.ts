@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import type { ToolCallDisplay } from "../src/hooks/chat-store";
 import { describeCall, registerToolRenderer } from "../src/lib/tool-display";
 import { clearRenderersForTest } from "../src/lib/tool-display/registry";
-import { dominantVerb, inferVerb, phraseFor } from "../src/lib/tool-display/verbs";
+import { inferVerb, phraseFor } from "../src/lib/tool-display/verbs";
 
 afterEach(() => clearRenderersForTest());
 
@@ -85,27 +85,6 @@ describe("inferVerb", () => {
   it("is case-insensitive on verb matching", () => {
     expect(inferVerb("GET_SOURCE").verb).toBe("Read");
     expect(inferVerb("Patch_Source").verb).toBe("Edited");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-describe("dominantVerb", () => {
-  it("picks destructive verbs over reads", () => {
-    expect(dominantVerb(["Read", "Edited", "Read"])).toBe("Edited");
-    expect(dominantVerb(["Read", "Deleted"])).toBe("Deleted");
-    expect(dominantVerb(["Opened", "Read"])).toBe("Opened");
-  });
-
-  it("prefers Rewrote over Edited (bigger change)", () => {
-    expect(dominantVerb(["Edited", "Rewrote"])).toBe("Rewrote");
-  });
-
-  it("defaults to 'Ran' on empty input", () => {
-    expect(dominantVerb([])).toBe("Ran");
-  });
-
-  it("returns the only verb when homogeneous", () => {
-    expect(dominantVerb(["Read", "Read", "Read"])).toBe("Read");
   });
 });
 

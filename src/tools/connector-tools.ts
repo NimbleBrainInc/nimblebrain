@@ -3793,7 +3793,7 @@ async function handleRemoveOAuthClient(
   // OAuth client config out from under a live connector leaves a dangling
   // credential reference; force the admin through the explicit
   // uninstall path first.
-  const installed = ws.connectors.some((b) => "url" in b && b.url === entry.url);
+  const installed = ws.connectors.some((b) => b.url === entry.url);
   if (installed) {
     return errResult(
       `"${entry.name}" is installed — uninstall it first, then remove the OAuth client config.`,

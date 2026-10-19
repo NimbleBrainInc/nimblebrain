@@ -75,12 +75,6 @@ export const ChatRequestBody = Type.Object(
       Type.String({ description: "Model override; omit to use the workspace default." }),
     ),
     maxIterations: Type.Optional(Type.Number()),
-    workspaceId: Type.Optional(
-      Type.String({
-        description:
-          "DEPRECATED and ignored (kept for client compatibility). The workspace is the one in the URL, /v1/workspaces/<wsId>/chat; it scopes the tools and the prompt briefing (installed apps + house rules). Per-tool-call workspace attribution lives on each tool.done event's `workspaceId` field.",
-      }),
-    ),
     appContext: Type.Optional(
       // Mirrors `AppContext` in `src/runtime/types.ts`. `appState` is the
       // UI state pushed by the app via Synapse `updateModelContext()` —

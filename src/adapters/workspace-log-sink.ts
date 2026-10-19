@@ -58,7 +58,7 @@ export interface WorkspaceLogConfig {
  */
 export class WorkspaceLogSink implements EventSink {
   private dir: string;
-  /** First-failure-of-an-episode flag — see structured-log-sink. */
+  /** Set on the first write failure of an episode; a later success clears it. */
   private writeWarned = false;
 
   constructor(config: WorkspaceLogConfig) {

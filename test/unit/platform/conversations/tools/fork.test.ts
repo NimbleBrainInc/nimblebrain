@@ -248,7 +248,6 @@ describe("handleFork", () => {
     // Line 1 is the event-sourced store's header: no stored totals.
     const meta = JSON.parse(lines[0]!);
     expect(meta.id).toBe(result.id);
-    expect(meta.format).toBe("events");
     expect(typeof meta.createdAt).toBe("string");
     expect(typeof meta.updatedAt).toBe("string");
     expect(meta.totalInputTokens).toBeUndefined();

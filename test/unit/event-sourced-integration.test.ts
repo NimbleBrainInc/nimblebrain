@@ -19,7 +19,6 @@ describe("Event-sourced integration", () => {
 
     // Create conversation
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
-    expect(conv.format).toBe("events");
 
     // Append user message
     store.appendEvent(conv.id, {

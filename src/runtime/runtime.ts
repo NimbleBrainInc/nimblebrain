@@ -5108,8 +5108,8 @@ export class Runtime {
 
   /**
    * Tenant-level default preferences from the deployed runtime config
-   * (`config.preferences`, with `config.home.timezone` as the timezone
-   * fallback). Per-user identity preferences override them at request time.
+   * (`config.preferences`). Per-user identity preferences override them at
+   * request time.
    */
   getTenantDefaultPreferences(): {
     displayName?: string;
@@ -5118,10 +5118,9 @@ export class Runtime {
     theme?: "system" | "light" | "dark";
   } {
     const prefs = this.config.preferences ?? {};
-    const home = this.config.home ?? {};
     return {
       ...(prefs.displayName ? { displayName: prefs.displayName } : {}),
-      ...((prefs.timezone ?? home.timezone) ? { timezone: prefs.timezone ?? home.timezone } : {}),
+      ...(prefs.timezone ? { timezone: prefs.timezone } : {}),
       ...(prefs.locale ? { locale: prefs.locale } : {}),
       ...(prefs.theme ? { theme: prefs.theme } : {}),
     };

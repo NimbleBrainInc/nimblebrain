@@ -20,15 +20,6 @@ export function formatShortDate(iso: string): string {
   return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
 }
 
-/**
- * Format a UTC date-only string (YYYY-MM-DD) for table display.
- * Input is always a UTC date key from the server — never local.
- */
-export function formatDateLabel(iso: string): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  return d.toLocaleDateString(undefined, { timeZone: "UTC" });
-}
-
 /** Strip the MCP server prefix from a tool name (e.g. "server__tool" → "tool") */
 export function stripServerPrefix(name: string): string {
   const idx = name.indexOf("__");

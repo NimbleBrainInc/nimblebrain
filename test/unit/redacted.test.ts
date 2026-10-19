@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { inspect } from "node:util";
-import { isRedacted, Redacted } from "../../src/tools/redacted.ts";
+import { Redacted } from "../../src/tools/redacted.ts";
 
 describe("Redacted", () => {
   test("reveal returns the underlying value", () => {
@@ -32,12 +32,5 @@ describe("Redacted", () => {
     const r = new Redacted(obj);
     expect(r.reveal()).toBe(obj);
     expect(JSON.stringify(r)).toBe('"[redacted]"');
-  });
-
-  test("isRedacted type guard", () => {
-    expect(isRedacted(new Redacted("x"))).toBe(true);
-    expect(isRedacted("x")).toBe(false);
-    expect(isRedacted(null)).toBe(false);
-    expect(isRedacted({})).toBe(false);
   });
 });

@@ -24,7 +24,6 @@ export interface ConversationMeta {
   title: string | null;
   totalInputTokens: number;
   totalOutputTokens: number;
-  totalCostUsd: number;
   lastModel: string | null;
   /**
    * The model the conversation is bound to — the runtime stamps this on the
@@ -250,9 +249,10 @@ function parseMeta(raw: Record<string, unknown>): ConversationMeta | null {
     createdAt: raw.createdAt,
     updatedAt: (raw.updatedAt as string) ?? raw.createdAt,
     title: (raw.title as string | null) ?? null,
-    totalInputTokens: (raw.totalInputTokens as number) ?? 0,
-    totalOutputTokens: (raw.totalOutputTokens as number) ?? 0,
-    totalCostUsd: (raw.totalCostUsd as number) ?? 0,
+    // Token totals are derived from events (`applyDerivedMetrics`), never read
+    // from the header.
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
     lastModel: (raw.lastModel as string | null) ?? null,
     model: raw.model,
     ...(raw.ownerId ? { ownerId: raw.ownerId as string } : {}),
@@ -303,20 +303,11 @@ function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
 }
 
 function applyDerivedMetrics(meta: ConversationMeta, metrics: DerivedMetrics): void {
-  // Always overwrite with derived values — never fall back to the line-1
-  // totals stored on disk. The line-1 totals were a stored-derived field
-  // we deliberately stopped maintaining; preserving them here would
-  // produce different totals than the runtime's index-cache, which now
-  // always derives from events. Old conversations show zero totals.
+  // Totals come from events alone, matching the runtime's index-cache. The app
+  // carries no pricing, so it reports no cost; a consumer that wants one
+  // computes it from `(model, summed usage)`.
   meta.totalInputTokens = metrics.totalInputTokens;
   meta.totalOutputTokens = metrics.totalOutputTokens;
-  // Reset cost too — without this, a pre-PR conversation with line-1
-  // `{ totalInputTokens: 1000, totalCostUsd: 5.50 }` would read back as
-  // `{ totalInputTokens: 0, totalCostUsd: 5.50 }`: incoherent. The
-  // app is intentionally pricing-decoupled (no model catalog), so 0
-  // is the honest answer here. Consumers that want a real cost compute
-  // it themselves from `(model, summed usage)`.
-  meta.totalCostUsd = 0;
   meta.lastModel = metrics.lastModel;
   if (metrics.lastEventTs) meta.updatedAt = metrics.lastEventTs;
 }

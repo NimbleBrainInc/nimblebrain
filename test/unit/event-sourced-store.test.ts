@@ -36,14 +36,13 @@ describe("EventSourcedConversationStore", () => {
     store = new EventSourcedConversationStore({ dir });
   });
 
-  it("creates conversations with format: events", async () => {
+  it("creates conversations with a line-1 header", async () => {
     const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
-    expect(conv.format).toBe("events");
     expect(conv.id).toMatch(/^conv_/);
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
     const meta = JSON.parse(lines[0]);
-    expect(meta.format).toBe("events");
+    expect(meta.id).toBe(conv.id);
     // Token totals are not stored on Conversation; they're derived
     // from events at read time.
     expect(meta.totalInputTokens).toBeUndefined();

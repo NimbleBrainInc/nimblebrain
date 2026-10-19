@@ -130,7 +130,7 @@ Three port interfaces isolate concerns:
 |------|---------|----------------|
 | `ModelPort` | LLM provider | `AnthropicModelAdapter` (prompt caching), `EchoModelAdapter` (tests) |
 | `ToolRouter` | Tool discovery + execution | `ToolRegistry` (MCP sources + inline sources), `StaticToolRouter` (tests) |
-| `EventSink` | Observability | `StructuredLogSink`, `WorkspaceLogSink`, `SseEventManager`, `ConsoleEventSink`, `DebugEventSink`, `NoopEventSink` |
+| `EventSink` | Observability | `WorkspaceLogSink`, `SseEventManager`, `ConsoleEventSink`, `DebugEventSink`, `NoopEventSink` |
 
 ### System Tools
 
@@ -414,7 +414,6 @@ src/
 │   ├── user-tools.ts     User management tools
 │   └── conversation-tools.ts   Conversation sharing tools
 ├── adapters/             Pluggable implementations
-│   ├── structured-log-sink.ts   Per-conversation JSONL logs with cost
 │   ├── workspace-log-sink.ts    Workspace-level daily JSONL logs
 │   ├── console-events.ts        Stderr event logging
 │   ├── debug-events.ts          Verbose debug logging
@@ -700,7 +699,6 @@ These are non-negotiable patterns. Violating them causes production bugs:
 
 ### Observability
 
-- **`StructuredLogSink`** — Per-conversation JSONL logs with LLM/tool latency, cache tokens, cost. Disable with `logging.disabled: true`.
 - **`WorkspaceLogSink`** — Workspace-level daily rolling JSONL logs. Only persists workspace events (connector lifecycle, data/config changes, skill/file operations).
 - **`ConsoleEventSink`** — Human-readable stderr for development.
 - **`DebugEventSink`** — Verbose JSON dumps (`--debug`).

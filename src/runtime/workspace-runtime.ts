@@ -15,7 +15,11 @@ import {
   brokeredConnectionPresent,
   connectorHasStaticAuth,
 } from "../connectors/runtime/connector-auth.ts";
-import { resolveConnectorDataDirForRef, serverNameFromRef } from "../connectors/runtime/paths.ts";
+import {
+  isUsableConnectorRef,
+  resolveConnectorDataDirForRef,
+  serverNameFromRef,
+} from "../connectors/runtime/paths.ts";
 import { setPendingAuth } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
 import { startConnectorSource } from "../connectors/runtime/startup.ts";
@@ -95,7 +99,7 @@ export function buildProcessInventory(
       // per-entry break ("that entry no longer starts") true, and the warn
       // names the row so it can be fixed.
       const serverName = serverNameFromRef(connector);
-      if (serverName === null || !isHttpUrl(connector.url)) {
+      if (serverName === null || !isUsableConnectorRef(connector)) {
         log.warn(
           `[connectors] ${ws.id}: skipping a connector entry it cannot start — ` +
             `${describeUnusableRef(connector)}. ` +
@@ -400,18 +404,7 @@ export async function startWorkspaceConnectors(
       // seeder still reads `startError` and records the connection `dead`, not
       // `running` — the connector is registered, but its connection is honestly down
       // until a reconnect succeeds.
-      //
-      // Named/path connectors stay dropped, for two reasons. The decisive one:
-      // only a URL ref reaches `seedUrlConnectionState`, and
-      // `buildSeededInstance` hardcodes `state: "running"` — so a surviving
-      // named entry would seed a permanently *running* instance for a dead
-      // connector, which is worse than absence, not better. Second, re-spawning
-      // one needs the credential-resolving `startConnectorSource` path that
-      // `tryRecoverSource` declines, so the entry would promise a recovery that
-      // never comes.
-      if ("url" in entry.connector) {
-        resultEntries[idx] = unstartedUrlConnectorEntry(entry, entry.connector, msg);
-      }
+      resultEntries[idx] = unstartedUrlConnectorEntry(entry, entry.connector, msg);
     }
   });
 

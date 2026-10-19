@@ -131,7 +131,7 @@ describe("loadConfig", () => {
       expect("agents" in config).toBe(false);
       expect(config.skillDirs).toBeUndefined();
       expect(config.preferences).toBeUndefined();
-      expect(config.home).toBeUndefined();
+      expect("home" in config).toBe(false);
     } finally {
       spy.mockRestore();
     }

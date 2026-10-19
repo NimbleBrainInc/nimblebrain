@@ -22,7 +22,6 @@ import { join } from "node:path";
 import type { ApiErrorBody, ChatResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import { saveInstanceConfig } from "../../src/identity/instance.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
@@ -40,6 +39,7 @@ import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
 import { makeIdentity } from "../helpers/identity.ts";
+import { writeInstanceConfig } from "../helpers/instance-config.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
@@ -219,7 +219,7 @@ describe("runtime.chat — identity-provider gate", () => {
     // Seeding instance.json BEFORE Runtime.start makes createIdentityProvider
     // return a real OidcIdentityProvider — the constructor is lazy (no
     // network), so we don't need a fake issuer to be reachable.
-    await saveInstanceConfig(workDir, {
+    await writeInstanceConfig(workDir, {
       auth: {
         adapter: "oidc",
         issuer: "https://auth.example.com",

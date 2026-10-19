@@ -47,8 +47,3 @@ export class Redacted<T = string> {
     return "[redacted]";
   }
 }
-
-/** Type guard. */
-export function isRedacted(v: unknown): v is Redacted<unknown> {
-  return v instanceof Redacted;
-}

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EngineEvent } from "../../src/engine/types.ts";
 import type { CredentialScope, CredentialStore } from "../../src/tools/credential-store.ts";
-import { isRedacted } from "../../src/tools/redacted.ts";
+import { Redacted } from "../../src/tools/redacted.ts";
 import { payloadsOf } from "./engine-events.ts";
 
 /**
@@ -57,7 +57,7 @@ export function describeCredentialStoreConformance(
         await store.put(WS, "acme.db_url", "supersecret");
         const got = await store.get(WS, "acme.db_url", READ);
         expect(got).not.toBeNull();
-        expect(isRedacted(got)).toBe(true);
+        expect(got).toBeInstanceOf(Redacted);
         expect(got?.reveal()).toBe("supersecret");
         // Logger paths shouldn't leak the value.
         expect(`${got}`).toBe("[redacted]");

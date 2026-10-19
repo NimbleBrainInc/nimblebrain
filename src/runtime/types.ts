@@ -232,12 +232,6 @@ export interface RuntimeConfig {
     enabled?: boolean;
   };
 
-  /** Legacy tenant default; `preferences.timezone` takes precedence. */
-  home?: {
-    /** IANA timezone (e.g., "Pacific/Honolulu"). Empty uses system timezone. */
-    timezone?: string;
-  };
-
   /**
    * Notifications — how the runtime reads the outboxes connectors declare.
    *
@@ -268,7 +262,7 @@ export interface RuntimeConfig {
   preferences?: {
     /** Display name. */
     displayName?: string;
-    /** IANA timezone. Falls back to home.timezone. */
+    /** IANA timezone. */
     timezone?: string;
     /** BCP 47 locale. Default: "en-US". */
     locale?: string;

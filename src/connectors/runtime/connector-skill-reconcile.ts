@@ -38,7 +38,7 @@ import { connectorSkillIdentityFrom } from "../../connectors/catalog/server-deta
 import type { ConnectorCatalogEntry } from "../../connectors/catalog/types.ts";
 import { log } from "../../observability/log.ts";
 import { brokeredRef } from "./brokered.ts";
-import { serverNameFromRef } from "./paths.ts";
+import { isUsableConnectorRef, serverNameFromRef } from "./paths.ts";
 import type { ConnectorRef, ConnectorSkillLockEntry } from "./types.ts";
 
 export interface ConnectorSkillReconcileDeps {
@@ -88,13 +88,6 @@ export async function reconcileConnectorSkills(
     // that order: this loop would answer such a record with a bare TypeError
     // instead of the boundary's error.
     for (const ref of ws.connectors) {
-      if (!("url" in ref)) {
-        // Every ref carries a url by type. A row read off disk without one has
-        // no source to bind an overlay to — carry it through untouched rather
-        // than reconciling something unreachable.
-        nextConnectors.push(ref);
-        continue;
-      }
       const updated = await reconcileRef(ref, ws.id, deps, catalog);
       if (updated !== ref) connectorsRefreshed++;
       changed ||= updated !== ref;
@@ -117,9 +110,10 @@ async function reconcileRef(
   if (boundVersion === deps.pinnedVersion) return ref; // already current
 
   const serverName = serverNameFromRef(ref);
-  // A row this build cannot name has no source to bind an overlay to. Return
-  // it untouched rather than reconciling against a name nothing looks up.
-  if (serverName === null) return ref;
+  // A row boot skips (no serverName, or a url that is not http(s)) has no
+  // source to bind an overlay to. Return it untouched rather than reconciling
+  // something unreachable.
+  if (serverName === null || !isUsableConnectorRef(ref)) return ref;
   const identity = await resolveIdentity(ref, serverName, deps, catalog);
   if (!identity) return ref;
 

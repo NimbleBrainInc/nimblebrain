@@ -421,7 +421,7 @@ export interface ScheduleSpec {
   /** Standard 5-field cron expression. Required when type is "cron". */
   expression?: string;
 
-  /** IANA timezone. Defaults to home.timezone or system timezone. */
+  /** IANA timezone. Defaults to the instance timezone (`NB_TIMEZONE`, else the system's). */
   timezone?: string;
 
   /**

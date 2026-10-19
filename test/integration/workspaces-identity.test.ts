@@ -16,7 +16,6 @@ import { authenticateRequest } from "../../src/api/auth-middleware.ts";
 import { isAddressedWorkspaceMember } from "../../src/api/workspace-address.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { ConversationAccessContext } from "../../src/conversation/types.ts";
-import { saveInstanceConfig } from "../../src/identity/instance.ts";
 import type { CreateUserResult, IdentityProvider } from "../../src/identity/provider.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import type { User } from "../../src/identity/user.ts";
@@ -24,6 +23,7 @@ import { UserStore } from "../../src/identity/user.ts";
 import { buildProcessInventory } from "../../src/runtime/workspace-runtime.ts";
 import type { Workspace } from "../../src/workspace/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { writeInstanceConfig } from "../helpers/instance-config.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -319,7 +319,7 @@ describe("Auth flow", () => {
     };
 
     // Save instance config so this is not dev mode
-    await saveInstanceConfig(workDir, {
+    await writeInstanceConfig(workDir, {
       auth: {
         adapter: "oidc",
         issuer: "https://auth.example.com",

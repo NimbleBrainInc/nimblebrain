@@ -44,12 +44,6 @@ export function cursorWriteContention(): { attempted: number; contended: number 
   return { attempted: attemptedWrites, contended: contendedWrites };
 }
 
-/** Reset the contention counters. Tests only. */
-export function resetCursorWriteContention(): void {
-  contendedWrites = 0;
-  attemptedWrites = 0;
-}
-
 /** The stored cursor for one connector, or `undefined` when it has never been read. */
 export function readCursor(
   ws: Pick<Workspace, "notifications">,

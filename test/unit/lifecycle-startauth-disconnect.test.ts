@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
@@ -12,7 +12,6 @@ import { hasMcpOAuthAuthLost, McpOAuthRecords } from "../../src/tools/mcp-oauth-
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
-import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -97,19 +96,6 @@ describe("ConnectorLifecycleManager.startAuth — validation & idempotence", () 
     ).rejects.toThrow(/not installed/);
   });
 
-  test("rejects when connector ref has no URL (named or local connector)", async () => {
-    seedInstance(
-      lifecycle,
-      "stdio",
-      "ws_0076759dbbe19fcc",
-      "workspace",
-      legacyConnectorRef({ name: "@scope/stdio" }),
-    );
-    await expect(
-      lifecycle.startAuth("stdio", "ws_0076759dbbe19fcc", "_workspace", OPTS),
-    ).rejects.toThrow(/missing URL ref/);
-  });
-
   test("rejects a principal other than the workspace principal", async () => {
     seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
@@ -172,19 +158,6 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
     await expect(
       lifecycle.disconnect("ghost", "ws_0076759dbbe19fcc", "_workspace", { workDir: "/tmp" }),
     ).rejects.toThrow(/not installed/);
-  });
-
-  test("rejects when connector has no URL ref (revocation requires the AS URL)", async () => {
-    seedInstance(
-      lifecycle,
-      "stdio",
-      "ws_0076759dbbe19fcc",
-      "workspace",
-      legacyConnectorRef({ name: "@scope/stdio" }),
-    );
-    await expect(
-      lifecycle.disconnect("stdio", "ws_0076759dbbe19fcc", "_workspace", { workDir: "/tmp" }),
-    ).rejects.toThrow(/missing URL ref/);
   });
 
   test("transitions Connection to not_authenticated, drops the source, emits state_changed", async () => {
@@ -374,5 +347,22 @@ describe("ConnectorLifecycleManager.startAuthBackground — headless / already-a
       .byType("connection.state_changed")
       .filter((e) => (e.data as { state?: string }).state === "running");
     expect(running.length).toBe(1);
+  });
+});
+
+describe("ConnectorLifecycleManager.startIdentityAuth — record validation", () => {
+  test("refuses a personal connector row with no url instead of parsing it", async () => {
+    const userId = "usr_alice";
+    const userDir = join(workDir, "users", userId);
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(
+      join(userDir, "connectors.json"),
+      JSON.stringify({ version: 1, connectors: [{ serverName: "granola" }] }),
+    );
+    const lifecycle = new ConnectorLifecycleManager(new CapturingSink());
+
+    await expect(lifecycle.startIdentityAuth("granola", userId, { workDir })).rejects.toThrow(
+      /"granola" is not a personal connector for usr_alice/,
+    );
   });
 });

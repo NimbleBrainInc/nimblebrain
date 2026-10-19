@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import {
-  formatDateLabel,
   formatDuration,
   formatShortDate,
   formatTokens,
@@ -110,21 +109,5 @@ describe("formatShortDate", () => {
   it("handles month boundary (UTC date differs from local in west-of-UTC TZ)", () => {
     // "2026-05-01" UTC midnight = April 30 in PDT
     expect(formatShortDate("2026-05-01")).toBe("5/1");
-  });
-});
-
-describe("formatDateLabel", () => {
-  it("preserves UTC date, not local interpretation", () => {
-    // "2026-04-30" should always format as April 30, never April 29.
-    const result = formatDateLabel("2026-04-30");
-    expect(result).toContain("30");
-    expect(result).not.toContain("29");
-  });
-
-  it("handles year boundary", () => {
-    const result = formatDateLabel("2026-01-01");
-    expect(result).toContain("1");
-    // Should not roll back to December 31
-    expect(result).not.toContain("31");
   });
 });

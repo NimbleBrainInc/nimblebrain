@@ -53,7 +53,7 @@ import {
 import { brokeredConnectionPresent, connectorHasStaticAuth } from "./connector-auth.ts";
 import { sanitizePlacements } from "./defaults.ts";
 import { resolveStaticOAuthClient, type StaticOAuthClient } from "./oauth-static-client.ts";
-import { defaultWorkDir, validateServerName } from "./paths.ts";
+import { defaultWorkDir, isUsableConnectorRef, validateServerName } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
 import {
   buildUrlOAuthProvider,
@@ -349,7 +349,7 @@ export class ConnectorLifecycleManager {
    * disconnect tool refuses an established connection where it is false.
    */
   isDisconnectable(ref: ConnectorRef | undefined): boolean {
-    if (!ref || !("url" in ref)) return false;
+    if (!ref) return false;
     const brokered = brokeredRef(ref);
     if (brokered) {
       const provider = this.managedConnectors.get(brokered.provider);
@@ -970,7 +970,7 @@ export class ConnectorLifecycleManager {
     if (!instance) {
       throw new Error(`[lifecycle] connector "${serverName}" not installed in workspace ${wsId}`);
     }
-    if (!instance.ref || !("url" in instance.ref)) {
+    if (!instance.ref) {
       throw new Error(`[lifecycle] missing URL ref for "${serverName}" — cannot construct source`);
     }
     // Every URL connector is workspace-scoped, so the only legal principal
@@ -1372,7 +1372,7 @@ export class ConnectorLifecycleManager {
       throw new Error(`[lifecycle] connector "${serverName}" not installed in workspace ${wsId}`);
     }
     const ref = instance.ref;
-    if (!ref || !("url" in ref)) {
+    if (!ref) {
       throw new Error(`[lifecycle] missing URL ref for "${serverName}" — cannot revoke tokens`);
     }
     // Every URL connector is workspace-scoped. The only legal
@@ -2023,7 +2023,9 @@ export class ConnectorLifecycleManager {
         userId,
         serverName,
       );
-      if (!ref || !("url" in ref)) {
+      // The record is read off disk unvalidated: a row without a usable url is
+      // refused here, never handed to the transport to parse.
+      if (!ref || !isUsableConnectorRef(ref)) {
         throw new Error(`[lifecycle] "${serverName}" is not a personal connector for ${userId}`);
       }
 
@@ -2207,7 +2209,7 @@ export class ConnectorLifecycleManager {
     // recover).
     const instance = this.instances.get(key);
     const ref = instance?.ref;
-    if (!ref || !("url" in ref)) return false;
+    if (!ref) return false;
 
     // A rejected credential is not something a re-spawn can fix: only the
     // user's Reconnect replaces it, and that builds its own source. A source

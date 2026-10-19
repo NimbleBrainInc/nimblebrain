@@ -365,9 +365,6 @@ async function finalizeUrlSourceStart(
   };
 }
 
-/** Start a remote (URL) connector source: validate, wire OAuth, race `start()`
- *  against an interactive-auth early return, and register on success or
- *  pending-auth. */
 /**
  * The transport config and SSRF posture a persisted ref resolves to.
  *
@@ -388,13 +385,26 @@ export function resolveRefTransport(ref: ConnectorRef): {
   return { transportConfig, fleetInternal: isMintedFleetSource(transportConfig) };
 }
 
-async function startUrlConnectorSource(
+/**
+ * Create and start an `McpSource` for a `ConnectorRef`, then add it to the
+ * registry. Every ref is a remote MCP endpoint: the runtime connects to a URL
+ * with a credential. It never downloads, unpacks, or spawns server code.
+ *
+ * Validates the ref, wires OAuth, races `start()` against an interactive-auth
+ * early return, and registers the source on success or pending-auth.
+ */
+export async function startConnectorSource(
   ref: ConnectorRef,
   registry: ToolRegistry,
+  // Required. The runtime event sink is threaded into the McpSource so
+  // task-augmented tool calls can emit `tool.task_status` and a crashed or
+  // restarted source its `connector.health`. Callers without a real sink
+  // (rare) must pass `new NoopEventSink()` explicitly, so dropping events is a
+  // decision rather than an omission.
   eventSink: EventSink,
-  wsContext: WorkspaceContext | undefined,
-  opts: StartConnectorOpts | undefined,
+  opts?: StartConnectorOpts,
 ): Promise<StartConnectorResult> {
+  const wsContext = opts?.workspaceContext;
   const serverName = ref.serverName;
   validateServerName(serverName);
   const sourceName = serverName;
@@ -547,23 +557,4 @@ async function startUrlConnectorSource(
 
   // Headless path or already-completed auth. start() succeeded.
   return await startPromise;
-}
-
-/**
- * Create and start an `McpSource` for a `ConnectorRef`, then add it to the
- * registry. Every ref is a remote MCP endpoint: the runtime connects to a URL
- * with a credential. It never downloads, unpacks, or spawns server code.
- */
-export async function startConnectorSource(
-  ref: ConnectorRef,
-  registry: ToolRegistry,
-  // Required. The runtime event sink is threaded into the McpSource so
-  // task-augmented tool calls can emit `tool.task_status` and a crashed or
-  // restarted source its `connector.health`. Callers without a real sink
-  // (rare) must pass `new NoopEventSink()` explicitly, so dropping events is a
-  // decision rather than an omission.
-  eventSink: EventSink,
-  opts?: StartConnectorOpts,
-): Promise<StartConnectorResult> {
-  return startUrlConnectorSource(ref, registry, eventSink, opts?.workspaceContext, opts);
 }
