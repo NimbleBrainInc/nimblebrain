@@ -5,6 +5,7 @@ import {
   isPersonalConnectorName,
   PERSONAL_CONNECTOR_PREFIX,
 } from "../../tools/identity-sources.ts";
+import { isHttpUrl } from "../../util/url.ts";
 import { WorkspaceContext } from "../../workspace/context.ts";
 import type { ConnectorRef } from "./types.ts";
 
@@ -131,6 +132,16 @@ export function slugifyServerName(canonicalName: string): string {
  */
 export function serverNameFromRef(ref: ConnectorRef): string | null {
   return typeof ref.serverName === "string" && ref.serverName.length > 0 ? ref.serverName : null;
+}
+
+/**
+ * Whether a row read off disk is a connector this build can start: it names a
+ * `serverName` and carries an http(s) `url`. The type promises both, but a
+ * hand-edited or partial record does not, so every reader of persisted rows asks
+ * this before using one, and skips or refuses a row that fails it.
+ */
+export function isUsableConnectorRef(ref: ConnectorRef): boolean {
+  return serverNameFromRef(ref) !== null && typeof ref.url === "string" && isHttpUrl(ref.url);
 }
 
 /**

@@ -15,7 +15,11 @@ import {
   brokeredConnectionPresent,
   connectorHasStaticAuth,
 } from "../connectors/runtime/connector-auth.ts";
-import { resolveConnectorDataDirForRef, serverNameFromRef } from "../connectors/runtime/paths.ts";
+import {
+  isUsableConnectorRef,
+  resolveConnectorDataDirForRef,
+  serverNameFromRef,
+} from "../connectors/runtime/paths.ts";
 import { setPendingAuth } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
 import { startConnectorSource } from "../connectors/runtime/startup.ts";
@@ -95,7 +99,7 @@ export function buildProcessInventory(
       // per-entry break ("that entry no longer starts") true, and the warn
       // names the row so it can be fixed.
       const serverName = serverNameFromRef(connector);
-      if (serverName === null || !isHttpUrl(connector.url)) {
+      if (serverName === null || !isUsableConnectorRef(connector)) {
         log.warn(
           `[connectors] ${ws.id}: skipping a connector entry it cannot start — ` +
             `${describeUnusableRef(connector)}. ` +

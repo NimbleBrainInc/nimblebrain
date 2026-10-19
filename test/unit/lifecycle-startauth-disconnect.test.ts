@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
@@ -347,5 +347,22 @@ describe("ConnectorLifecycleManager.startAuthBackground — headless / already-a
       .byType("connection.state_changed")
       .filter((e) => (e.data as { state?: string }).state === "running");
     expect(running.length).toBe(1);
+  });
+});
+
+describe("ConnectorLifecycleManager.startIdentityAuth — record validation", () => {
+  test("refuses a personal connector row with no url instead of parsing it", async () => {
+    const userId = "usr_alice";
+    const userDir = join(workDir, "users", userId);
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(
+      join(userDir, "connectors.json"),
+      JSON.stringify({ version: 1, connectors: [{ serverName: "granola" }] }),
+    );
+    const lifecycle = new ConnectorLifecycleManager(new CapturingSink());
+
+    await expect(lifecycle.startIdentityAuth("granola", userId, { workDir })).rejects.toThrow(
+      /"granola" is not a personal connector for usr_alice/,
+    );
   });
 });

@@ -53,7 +53,7 @@ import {
 import { brokeredConnectionPresent, connectorHasStaticAuth } from "./connector-auth.ts";
 import { sanitizePlacements } from "./defaults.ts";
 import { resolveStaticOAuthClient, type StaticOAuthClient } from "./oauth-static-client.ts";
-import { defaultWorkDir, validateServerName } from "./paths.ts";
+import { defaultWorkDir, isUsableConnectorRef, validateServerName } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
 import {
   buildUrlOAuthProvider,
@@ -2023,7 +2023,9 @@ export class ConnectorLifecycleManager {
         userId,
         serverName,
       );
-      if (!ref) {
+      // The record is read off disk unvalidated: a row without a usable url is
+      // refused here, never handed to the transport to parse.
+      if (!ref || !isUsableConnectorRef(ref)) {
         throw new Error(`[lifecycle] "${serverName}" is not a personal connector for ${userId}`);
       }
 

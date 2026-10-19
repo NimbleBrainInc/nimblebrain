@@ -37,9 +37,8 @@ import { resolveConnectorSkillsConfig } from "../../config/connector-skills.ts";
 import { connectorSkillIdentityFrom } from "../../connectors/catalog/server-detail.ts";
 import type { ConnectorCatalogEntry } from "../../connectors/catalog/types.ts";
 import { log } from "../../observability/log.ts";
-import { isHttpUrl } from "../../util/url.ts";
 import { brokeredRef } from "./brokered.ts";
-import { serverNameFromRef } from "./paths.ts";
+import { isUsableConnectorRef, serverNameFromRef } from "./paths.ts";
 import type { ConnectorRef, ConnectorSkillLockEntry } from "./types.ts";
 
 export interface ConnectorSkillReconcileDeps {
@@ -114,7 +113,7 @@ async function reconcileRef(
   // A row boot skips (no serverName, or a url that is not http(s)) has no
   // source to bind an overlay to. Return it untouched rather than reconciling
   // something unreachable.
-  if (serverName === null || !isHttpUrl(ref.url)) return ref;
+  if (serverName === null || !isUsableConnectorRef(ref)) return ref;
   const identity = await resolveIdentity(ref, serverName, deps, catalog);
   if (!identity) return ref;
 
