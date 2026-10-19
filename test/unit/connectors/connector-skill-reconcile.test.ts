@@ -111,6 +111,32 @@ describe("reconcileConnectorSkills", () => {
     );
   });
 
+  it("skips a named connector whose url is not http(s), and still refreshes a valid one", async () => {
+    const unusable = connector({
+      url: "file:///etc/mcp",
+      serverName: "com-broken-mcp",
+      skillsLock: [lock("broken", "v0.2.0")],
+    });
+    const valid = connector({
+      serverName: "com-outlook-mcp",
+      skillsLock: [lock("outlook", "v0.2.0")],
+    });
+    const { deps, cap } = buildDeps(
+      [{ id: "ws_00079598e311c160", connectors: [unusable, valid] }],
+      (identity) => [lock(identity, PIN)],
+    );
+
+    const result = await reconcileConnectorSkills(deps);
+
+    expect(cap.syncCalls).toEqual([
+      { identity: "outlook", serverName: "com-outlook-mcp", wsId: "ws_00079598e311c160" },
+    ]);
+    expect(result.connectorsRefreshed).toBe(1);
+    const persisted = cap.persisted[0]!.connectors;
+    expect(persisted[0]).toBe(unusable);
+    expect(skillsLockOf(persisted[1]!)?.[0]?.version).toBe(PIN);
+  });
+
   it("is a no-op (no sync, no persist) when every connector is already at the pin", async () => {
     const current = connector({ serverName: "com-gmail-mcp", skillsLock: [lock("gmail", PIN)] });
     const { deps, cap } = buildDeps([{ id: "ws_00079598e311c160", connectors: [current] }], () => [
