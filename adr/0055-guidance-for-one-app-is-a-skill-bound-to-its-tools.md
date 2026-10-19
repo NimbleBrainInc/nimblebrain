@@ -1,4 +1,4 @@
-# 0054. Guidance for one app is a skill bound to its tools
+# 0055. Guidance for one app is a skill bound to its tools
 
 - Status: Accepted
 - Date: 2026-10-19

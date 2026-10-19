@@ -1,6 +1,6 @@
 # 0049. The agent reads a connector's records as resources
 
-- Status: Accepted; amended by ADR-0054
+- Status: Accepted; amended by ADR-0055
 - Date: 2026-10-07
 - Serves: orchestrate remote MCP
 
@@ -28,7 +28,7 @@ The prompt already carries one entry per installed connector
 (`Runtime.buildAppInfo`, rendered by `formatAppsSection`): its description and
 its `initialize.instructions`, each in its own containment tag.
 
-- *Amended by ADR-0054:* the entry carries no instructions overlay read from the
+- *Amended by ADR-0055:* the entry carries no instructions overlay read from the
   connector; guidance a workspace sets for one app is a skill bound to its tools.
 
 ## Decision

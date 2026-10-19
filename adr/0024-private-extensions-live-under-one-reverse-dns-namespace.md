@@ -1,6 +1,6 @@
 # 0024. Private extensions live under `ai.nimblebrain/*`, and reuse the spec's schemas
 
-- Status: Accepted; amended by ADR-0054
+- Status: Accepted; amended by ADR-0055
 - Date: 2026-09-03
 - Serves: orchestrate remote MCP
 
@@ -31,7 +31,7 @@ scheme to its publisher, so a resource the host reads by convention is reserved
 by scheme in `src/tools/resource-schemes.ts`, as MCP Apps reserves `ui://`,
 rather than prefixed.
 
-- *Amended by ADR-0054:* the host reads no instructions resource from a
+- *Amended by ADR-0055:* the host reads no instructions resource from a
   connector, so no scheme is reserved for one.
 
 **A `_meta` key is one of exactly two kinds, and the kind is decided by what
