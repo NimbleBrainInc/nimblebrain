@@ -253,25 +253,30 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0007](adr/0007-offboarding-revokes-active-use.md) — offboarding revokes active use; ownership is necessary, not sufficient
 - [0008](adr/0008-notifications-are-pulled-and-routed-by-the-operator.md) — notifications are pulled into a workspace inbox and routed by the operator
 - [0036](adr/0036-an-mcp-connection-is-addressed-to-one-workspace-by-url.md) — an MCP connection is addressed to one workspace by URL; a token is valid only for its resource; membership authorizes (amended by 0048)
-- [0037](adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md) — a workspace is addressed by URL on every surface; a route is workspace-scoped or identity-scoped, and its path says which
+- [0037](adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md) — a workspace is addressed by URL on every surface; a route is workspace-scoped or identity-scoped, and its path says which (amended by 0044)
 - [0038](adr/0038-a-credential-is-first-party-by-the-client-it-was-issued-to.md) — a credential's audience says where it may be used; the client it was issued to says whose app holds it; only a configured first-party client gets first-party standing
-- [0039](adr/0039-the-first-workspace-is-an-ordinary-workspace.md) — the workspace provisioned for a user is an ordinary workspace; the default a user lands in is a preference
+- [0039](adr/0039-the-first-workspace-is-an-ordinary-workspace.md) — the workspace provisioned for a user is an ordinary workspace (id retention superseded by 0042, the landing preference by 0044)
 - [0040](adr/0040-the-identity-provider-is-chosen-never-defaulted.md) — `instance.json` names the identity provider, `dev` included; with none, the server does not start
+- [0042](adr/0042-a-workspace-id-is-generated-and-boot-refuses-any-other.md) — a workspace id is generated to one grammar; boot refuses a workspace directory with any other
+- [0043](adr/0043-a-tool-that-acts-on-the-caller-or-the-org-needs-no-workspace.md) — a kernel tool that acts on the caller or the org declares that it needs no workspace
+- [0044](adr/0044-the-url-is-the-only-thing-that-names-a-workspace.md) — the URL is the only thing that names a workspace; the server chooses none
 
 Manage skills:
 
 - [0009](adr/0009-skills-are-the-agent-skills-standard-plus-a-nested-runtime-block.md) — a skill is the Agent Skills standard plus one nested runtime block
-- [0010](adr/0010-role-decides-the-channel.md) — a skill's role decides its prompt channel
+- [0010](adr/0010-role-decides-the-channel.md) — a skill's role decides its prompt channel (amended by 0053)
 - [0011](adr/0011-a-server-published-skill-is-a-peer-of-a-filesystem-skill.md) — a server-published skill is a peer of a filesystem skill
 - [0012](adr/0012-vendored-provenance-is-loader-stamped.md) — vendored provenance is loader-stamped, never on disk
-- [0013](adr/0013-connector-overlays-are-curated-pinned-and-reconciled-at-boot.md) — connector overlays: one curated repo, pinned, content-addressed, reconciled at boot
+- [0013](adr/0013-connector-overlays-are-curated-pinned-and-reconciled-at-boot.md) — connector overlays: one curated repo, pinned, content-addressed, reconciled at boot (amended by 0053)
 - [0014](adr/0014-skill-markers-are-host-owned-meta.md) — skill activation and suppression markers are host-owned `_meta`
 - [0015](adr/0015-the-catalog-lists-what-can-be-activated.md) — the catalog lists what can be activated, never what is loaded
-- [0016](adr/0016-binding-home-for-connector-and-skill.md) — *(proposed)* where the connector↔skill binding lives
-- [0017](adr/0017-retiring-the-trigger-matcher.md) — *(proposed)* whether the trigger matcher retires
-- [0018](adr/0018-skill-channels-and-the-cache-breakpoints.md) — *(proposed)* where each skill channel sits relative to the cache breakpoints
-- [0019](adr/0019-scope-precedence-when-two-skills-share-a-name.md) — *(proposed)* scope precedence when two skills share a name
+- [0016](adr/0016-a-curated-overlay-binds-by-the-connectors-derived-identity.md) — a curated overlay binds by the connector's derived identity
+- [0017](adr/0017-the-trigger-matcher-is-the-must-fire-channel.md) — the trigger matcher is the must-fire channel, not a relevance hint
+- [0018](adr/0018-skill-channels-and-the-cache-breakpoints.md) — no system-prompt section depends on the turn's tool set
+- [0019](adr/0019-the-most-local-skill-wins-a-shared-name.md) — the most local skill wins a shared name: user, workspace, platform and org, server-published, overlay
 - [0034](adr/0034-a-skills-scope-names-where-it-is-stored.md) — a skill's scope names where it is stored; its name prefix names who published it
+- [0053](adr/0053-a-bound-skill-reaches-the-model-before-its-tools-first-call.md) — a skill bound to a tool reaches the model before that tool's first call; the engine holds the call until it does
+- [0055](adr/0055-guidance-for-one-app-is-a-skill-bound-to-its-tools.md) — guidance for one app is a skill bound to its tools
 
 Orchestrate over remote MCP:
 
@@ -279,21 +284,22 @@ Orchestrate over remote MCP:
 - [0021](adr/0021-one-run-start-door.md) — one run-start door; delegation is not a kernel capability
 - [0022](adr/0022-one-source-type-over-one-transport-union.md) — every source is one `McpSource` over one transport union
 - [0023](adr/0023-client-capability-advertisement.md) — the client advertises `extensions` and nothing it does not serve; `tasks` only as the 2026 extension (amended by 0046, 0050)
-- [0024](adr/0024-private-extensions-live-under-one-reverse-dns-namespace.md) — private extensions live under `ai.nimblebrain/*`, and reuse the spec's schemas
+- [0024](adr/0024-private-extensions-live-under-one-reverse-dns-namespace.md) — private extensions live under `ai.nimblebrain/*`, and reuse the spec's schemas (amended by 0055)
 - [0025](adr/0025-hook-declarations-come-from-the-operator-trusted-catalog.md) — hook declarations come from operator-trusted catalog metadata
 - [0026](adr/0026-a-brokered-provider-owns-auth-and-session-only.md) — a brokered provider owns auth-and-session only, never invocation
 - [0027](adr/0027-persisted-state-names-the-credential-not-the-value.md) — persisted state names *what* credential it needs, never *where* the value lives
 - [0028](adr/0028-two-disjoint-health-loops.md) — two disjoint health loops: process liveness and credential liveness
 - [0029](adr/0029-long-running-tools-are-task-augmented-and-never-retried.md) — long-running tools are task-augmented; task calls never retry (amended by 0046)
-- [0030](adr/0030-consuming-resource-update-notifications.md) — *(proposed)* how far resource-update consumption generalizes
-- [0031](adr/0031-which-tool-annotations-the-consent-model-reads.md) — *(proposed)* which spec `ToolAnnotations` the consent model reads
-- [0032](adr/0032-provider-typed-ref-blocks-on-persisted-state.md) — *(proposed)* the provider-typed blocks on persisted connector state
+- [0030](adr/0030-a-resource-update-is-a-hint-on-a-poll.md) — a resource update is a latency hint on a reader that already polls; nothing else subscribes
+- [0031](adr/0031-the-consent-model-reads-no-tool-annotation.md) — consent and tool policy read no annotation; no annotation relaxes either
+- [0032](adr/0032-persisted-connector-state-carries-one-brokered-block.md) — a brokered install persists one block, `{ provider, connectorId, providerRef }`; the auth kind is an open string
 - [0033](adr/0033-an-events-family-names-its-subject.md) — an event's family names its subject; process liveness is a connector fact
 - [0035](adr/0035-the-secrets-backend-is-configuration-and-a-sealed-value-opens-or-refuses.md) — the secrets backend is configuration; a value that claims to be sealed opens or refuses
-- [0045](adr/0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) — *(proposed)* a task is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment
+- [0041](adr/0041-event-streams-send-typed-payloads-and-cloudevents-is-for-an-outside-consumer.md) — event streams send `event: <type>` and the typed payload; CloudEvents is for an outside consumer
+- [0045](adr/0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) — a task is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment
 - [0046](adr/0046-task-augmentation-is-the-2026-tasks-extension-only.md) — task augmentation is the 2026-07-28 tasks extension, inbound, outbound and app to host; the 2025-11-25 tasks utility is not spoken (amended by 0048)
 - [0047](adr/0047-the-door-decides-a-run-and-an-execution-provider-runs-it.md) — *(proposed)* the door decides a run and an execution provider runs it; in-process is the default and the reference; a remote execution provider gets a resolved spec and a run-scoped credential, and calls back through `/mcp` and a runtime-hosted model endpoint
 - [0048](adr/0048-mcp-serves-2026-07-28-only.md) — `/mcp/<wsId>` serves 2026-07-28 only, per request, with no session; the runtime as a client still falls back to 2025-11-25 for a connector
-- [0049](adr/0049-the-agent-reads-a-connectors-records-as-resources.md) — a connector's resource templates are named in its prompt entry, bounded; a non-skill `read_resource` returns up to the tool-result limit
+- [0049](adr/0049-the-agent-reads-a-connectors-records-as-resources.md) — a connector's resource templates are named in its prompt entry, bounded; a non-skill `read_resource` returns up to the tool-result limit (amended by 0055)
 - [0050](adr/0050-a-servers-url-request-reaches-a-person-or-comes-back-as-a-link.md) — an inline `/mcp/<wsId>` call carries the outside client's capabilities to the connector and relays its input requests back, each elicitation naming the connector; the connector's `requestState` travels sealed to the caller, workspace, tool and arguments; tasks and the runtime's own turns claim nothing
 - [0052](adr/0052-a-view-opens-what-it-names-by-uri.md) — a view or the agent opens a place by URI (`ai.nimblebrain/open`) and the host finds who shows it: a kernel scheme, an app's `ui://` root, or the one app whose resource template matches; opening one's own connector settings is a separate parameterless request

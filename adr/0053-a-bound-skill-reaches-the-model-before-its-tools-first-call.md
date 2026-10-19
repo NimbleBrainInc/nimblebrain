@@ -15,10 +15,9 @@ Two channels delivered such a skill, and neither keyed on that call.
 
 **Turn-start selection keyed on presence.** It composed every `dynamic` skill
 whose affinity matched a tool in the turn's direct set into the cached system
-prompt. Several things make a tool direct without the job being at hand:
-- focusing an app promotes all of its tools;
-- the `tasks` identity source is always direct;
-- a small workspace has every tool direct.
+prompt. A tool is direct for reasons unrelated to the job at hand: focusing an
+app promotes all of its tools, an identity source can be always direct, and a
+workspace small enough to fit has every tool direct.
 
 So a greeting in a focused app composed every skill its bundle ships, and the
 core task-authoring guide rode every turn of every conversation. The section

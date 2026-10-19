@@ -77,8 +77,9 @@ a formula the provider had in hand.
 - **Folding `dcr` and `static` behind the same seam** — rejected: the seam's
   narrowness is what makes it describable. A "connector auth, somehow" interface
   is the union of every vendor's model, and its methods stop meaning anything.
-- **Per-vendor modules with no seam** — rejected on evidence: the second brokered
-  vendor touched a dozen files outside its own folder.
+- **Per-vendor modules with no seam** — rejected on evidence: without a seam, a
+  brokered vendor is wired into files outside its own folder that are not about
+  that vendor.
 - **Returning only a URL from `createSession`** — rejected: the id has to come
   back somehow, and parsing it out of a path is a formula in the wrong place that
   fails silently when the broker changes its URL shape.

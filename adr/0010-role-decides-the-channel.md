@@ -1,6 +1,6 @@
 # 0010. A skill's role decides its prompt channel
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0053
 - Date: 2026-09-03
 - Serves: manage skills
 
@@ -57,6 +57,9 @@ in this precedence:
 1. **Tool-affinity → turn-start selection.** `selectLayer3Skills`
    (`src/skills/select.ts`) matches the skill's `tool-affinity` globs against the
    active tool set once, at turn start, and composes what matched.
+   - *Amended by ADR-0053:* nothing bound is composed at turn start. A skill
+     with `tool-affinity` reaches the model before its tool's first call in the
+     conversation, by the engine holding that call or by the tool's promotion.
 2. **Triggers → per-message matching.** `SkillMatcher` (`src/skills/matcher.ts`)
    substring-matches the message against the skill's `triggers`, first hit wins.
    This is the deterministic must-fire channel: a phrase the author will not
@@ -93,6 +96,9 @@ rather than silently inert.
 - Turn-start selection composes into the system prompt, so what it selects moves
   the prompt's cached prefix. The interaction between the channels and the cache
   breakpoints is not settled — see ADR-0018.
+  - *Amended by ADR-0053:* both points above follow turn-start selection, which
+    is gone. Promoting a tool delivers the skills bound to it, and the system
+    prompt carries no section that depends on the turn's tool set.
 
 ## Alternatives considered
 

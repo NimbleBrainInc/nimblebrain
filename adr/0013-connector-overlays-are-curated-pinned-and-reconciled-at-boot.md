@@ -1,6 +1,6 @@
 # 0013. Connector overlays: one curated repo, pinned, content-addressed, reconciled at boot
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0053
 - Date: 2026-09-03
 - Serves: manage skills, orchestrate remote MCP
 
@@ -63,6 +63,9 @@ identity, the version, and the sha.
 engine's surface-once hook: matched by tool-affinity at call time and delivered
 into the history a single time per conversation. They never enter the cached
 system prefix, so guidance for a connector the turn never touches costs nothing.
+- *Amended by ADR-0053:* an overlay arrives before the first call to a tool it
+  binds, not after it. The engine holds that call until the body is delivered,
+  or delivers it when the tool is promoted.
 
 **Boot is the reconcile point** (`src/connectors/runtime/connector-skill-reconcile.ts`).
 The pin only changes with a new image, which means a restart, so boot is exactly

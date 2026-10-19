@@ -37,6 +37,11 @@ Each of those guarantees lives somewhere a remote loop would not be:
 - **Admission** is door state. A second queue anywhere else is a second ordering
   that fair share cannot see.
 
+A batch run in-process also competes with chat for the runtime's event loop
+(#1557). The platform's task specification designs a job-service provider to
+this ADR, one Kubernetes Job per run holding a run-scoped credential; no
+provider seam, run credential or runtime-hosted model endpoint exists yet.
+
 ## Decision
 
 **The door decides a run; an execution provider runs it.** The door resolves a
