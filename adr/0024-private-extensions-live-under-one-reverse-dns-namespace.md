@@ -1,6 +1,6 @@
 # 0024. Private extensions live under `ai.nimblebrain/*`, and reuse the spec's schemas
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0054
 - Date: 2026-09-03
 - Serves: orchestrate remote MCP
 
@@ -27,9 +27,12 @@ capability key, catalog-metadata key, and result marker is keyed under it —
 `ai.nimblebrain/skill-activated`. One prefix, one place to grep, and no
 collision with another vendor's keys by construction. The namespace governs
 names in the protocol's own key spaces, not resource URIs: MCP leaves a URI's
-scheme to its publisher, so a resource the host reads by convention (such as
-`app://instructions`) is reserved by scheme in `src/tools/resource-schemes.ts`,
-as MCP Apps reserves `ui://`, rather than prefixed.
+scheme to its publisher, so a resource the host reads by convention is reserved
+by scheme in `src/tools/resource-schemes.ts`, as MCP Apps reserves `ui://`,
+rather than prefixed.
+
+- *Amended by ADR-0054:* the host reads no instructions resource from a
+  connector, so no scheme is reserved for one.
 
 **A `_meta` key is one of exactly two kinds, and the kind is decided by what
 accepting it from a server would widen.**
