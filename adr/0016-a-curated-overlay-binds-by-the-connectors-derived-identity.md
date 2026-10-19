@@ -48,8 +48,8 @@ the install fetches `<identity>/SKILL.md` and nothing else.
 
 The derivation is stated once, in `connectorSkillIdentityFrom`, and shared by
 every caller. A connector whose name the rule maps wrongly is a bug in the
-rule, fixed there: names of the form `io.github.<org>/<server>` derive the org
-(#1800).
+rule, and is fixed there. Names of the form `io.github.<org>/<server>`
+currently derive the org (#1800).
 
 ## Consequences
 

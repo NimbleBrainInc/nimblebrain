@@ -40,9 +40,9 @@ vendor's, and a narrower scope beats a wider one.
 
 `mergeScopedSkills` applies the chain across the filesystem tiers;
 `collectActivatableSkills` applies it across kinds, with the merged filesystem
-pool first. Each states that its order matches the other's. The losing skill
-leaves the catalog, `nb__use_skill` resolution and delivery: one name, one skill,
-one delivery.
+pool first. `collectActivatableSkills` states that its order matches
+`mergeScopedSkills`. The losing skill leaves the catalog, `nb__use_skill`
+resolution and delivery: one name, one skill, one delivery.
 
 The shadowing stays silent. The deciding test was whether collisions happen:
 counting same-name skills across tiers found none, so the rule is documented

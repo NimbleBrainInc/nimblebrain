@@ -38,9 +38,9 @@ Each of those guarantees lives somewhere a remote loop would not be:
   that fair share cannot see.
 
 A batch run in-process also competes with chat for the runtime's event loop
-(#1557). The platform's task specification designs a job-service provider to
-this ADR, one Kubernetes Job per run holding a run-scoped credential; no
-provider seam, run credential or runtime-hosted model endpoint exists yet.
+(#1557). The intended first remote provider runs each run as its own job,
+holding a run-scoped credential; no provider seam, run credential or
+runtime-hosted model endpoint exists yet.
 
 ## Decision
 
