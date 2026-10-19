@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConversationIndex } from "../../../../src/platform/conversations/index-cache.ts";
 import { conversationEventLines, type FixtureTurn } from "../../../helpers/conversation-events.ts";
@@ -31,7 +31,6 @@ function writeConvFile(spec: ConvSpec): string {
     id: spec.id,
     createdAt: spec.createdAt,
     updatedAt: spec.updatedAt,
-    title: spec.title,
     lastModel: spec.lastModel ?? null,
     ...(spec.ownerId ? { ownerId: spec.ownerId } : {}),
     ...(spec.workspaceId ? { workspaceId: spec.workspaceId } : {}),
@@ -60,7 +59,18 @@ function writeConvFile(spec: ConvSpec): string {
     }
   }
 
-  const lines = [JSON.stringify(meta), ...conversationEventLines(messages)];
+  // The title is a `metadata.title` event; line 1 never carries one. It lands
+  // last, at the last message's time, so it moves no derived `updatedAt`.
+  const title = spec.title
+    ? [
+        JSON.stringify({
+          type: "metadata.title",
+          ts: messages.at(-1)?.timestamp ?? spec.updatedAt,
+          title: spec.title,
+        }),
+      ]
+    : [];
+  const lines = [JSON.stringify(meta), ...conversationEventLines(messages), ...title];
 
   const filename = `conv_${spec.id}.jsonl`;
   // The index takes an entry's workspace from its DIRECTORY, so a fixture lives
@@ -584,6 +594,14 @@ describe("incremental invalidation", () => {
     });
   }
 
+  /** Rename a conversation the way the runtime does: append a `metadata.title` event. */
+  function retitle(path: string, title: string): void {
+    appendFileSync(
+      path,
+      `${JSON.stringify({ type: "metadata.title", ts: "2025-01-01T00:01:00.000Z", title })}\n`,
+    );
+  }
+
   test("a named change re-reads only that conversation", async () => {
     const aPath = conv("inc_a", "A");
     const bPath = conv("inc_b", "B");
@@ -648,13 +666,7 @@ describe("incremental invalidation", () => {
     await index.build(TMP_DIR);
 
     for (const title of ["v2", "v3", "v4"]) {
-      writeConvFile({
-        id: "inc_burst",
-        createdAt: "2025-01-01T00:00:00.000Z",
-        updatedAt: "2025-01-01T00:00:00.000Z",
-        title,
-        messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
-      });
+      retitle(path, title);
       index.invalidate({ id: "inc_burst", filePath: path, wsId: null });
     }
 
@@ -689,13 +701,7 @@ describe("incremental invalidation", () => {
     const index = new ConversationIndex();
     await index.build(TMP_DIR);
 
-    writeConvFile({
-      id: "inc_p",
-      createdAt: "2025-01-01T00:00:00.000Z",
-      updatedAt: "2025-01-01T00:00:00.000Z",
-      title: "P renamed",
-      messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
-    });
+    retitle(aPath, "P renamed");
     index.invalidate({ id: "inc_p", filePath: aPath, wsId: null });
     index.invalidate();
     await index.refresh();

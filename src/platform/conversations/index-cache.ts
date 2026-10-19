@@ -50,10 +50,10 @@ export interface IndexEntry {
   preview: string;
   filePath: string;
   /**
-   * Single-owner principal. A file without an `ownerId` is not indexed, as the
-   * runtime's store refuses to load one.
+   * Single-owner principal. A header without an `ownerId` indexes as `null`,
+   * which the dispatcher treats as inaccessible (no synthesis).
    */
-  ownerId: string;
+  ownerId: string | null;
   /**
    * The workspace the conversation lives in, taken from its DIRECTORY — the
    * authoritative binding. The `workspaceId` on line 1 is a denormalised
@@ -313,7 +313,7 @@ export class ConversationIndex {
    * Read one conversation's header into the index.
    *
    * Returns false when the header does not read — the file is gone, or was
-   * caught mid-write — or names no owner. `build()` ignores that (it cleared the map first, so an
+   * caught mid-write. `build()` ignores that (it cleared the map first, so an
    * unreadable file is simply absent); an incremental apply acts on it, because
    * nothing else will drop the entry.
    */
@@ -327,12 +327,8 @@ export class ConversationIndex {
       this.scans.delete(filePath);
       return false;
     }
-    const header = headerOfScan(scan);
-    if (!header.meta.ownerId) {
-      this.scans.delete(filePath);
-      return false;
-    }
     this.scans.set(filePath, scan);
+    const header = headerOfScan(scan);
 
     const entry: IndexEntry = {
       id: header.meta.id,
@@ -345,7 +341,7 @@ export class ConversationIndex {
       lastModel: header.meta.lastModel,
       preview: header.preview,
       filePath,
-      ownerId: header.meta.ownerId,
+      ownerId: header.meta.ownerId ?? null,
       workspaceId: wsId,
     };
 

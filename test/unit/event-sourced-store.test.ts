@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
@@ -521,30 +521,34 @@ describe("EventSourcedConversationStore", () => {
     expect(otherView.conversations.find((c) => c.id === conv.id)).toBeUndefined();
   });
 
-  it("backward compat: old files with title in line 1 still work", async () => {
-    // Simulate an old-format file with title baked into line 1 — but
-    // ownerId is required (the migration script stamps it).
-    const id = "conv_1e9ac4c0000000a1";
-    const path = join(dirs.dir, `${id}.jsonl`);
-    const meta = {
-      model: "anthropic:claude-sonnet-4-6",
-      id,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      title: "Old Title",
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCostUsd: 0,
-      lastModel: null,
-      format: "events",
-      ownerId: "user-1",
-    };
-    writeFileSync(path, `${JSON.stringify(meta)}\n`);
+  it("load() takes the workspace from the directory, not line 1", async () => {
+    const wsRoot = join(
+      mkdtempSync(join(tmpdir(), "es-store-ws-")),
+      "workspaces",
+      "ws_00aa00aa00aa00aa",
+    );
+    mkdirSync(wsRoot, { recursive: true });
+    const dir = join(wsRoot, "conversations", "user-1");
+    const wsStore = new EventSourcedConversationStore({ dir });
+    mkdirSync(dir, { recursive: true });
+    const header = (id: string, extra: Record<string, unknown>) =>
+      `${JSON.stringify({
+        model: "anthropic:claude-sonnet-4-6",
+        id,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastModel: null,
+        ownerId: "user-1",
+        ...extra,
+      })}\n`;
+    writeFileSync(join(dir, "conv_00000000000000a1.jsonl"), header("conv_00000000000000a1", {}));
+    writeFileSync(
+      join(dir, "conv_00000000000000a2.jsonl"),
+      header("conv_00000000000000a2", { workspaceId: "ws_00bb00bb00bb00bb" }),
+    );
 
-    const loaded = await store.load(id);
-    expect(loaded).not.toBeNull();
-    expect(loaded?.title).toBe("Old Title");
-    expect(loaded?.ownerId).toBe("user-1");
+    expect((await wsStore.load("conv_00000000000000a1"))?.workspaceId).toBe("ws_00aa00aa00aa00aa");
+    expect((await wsStore.load("conv_00000000000000a2"))?.workspaceId).toBe("ws_00aa00aa00aa00aa");
   });
 
   it("fork() preserves assistant turns through history() round-trip", async () => {

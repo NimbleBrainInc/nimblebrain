@@ -30,7 +30,6 @@ function writeConversation(
     ownerId: "usr_test",
     createdAt,
     updatedAt,
-    title: opts.title ?? null,
     totalInputTokens: 100,
     totalOutputTokens: 50,
     totalCostUsd: 0.01,
@@ -45,7 +44,11 @@ function writeConversation(
   for (let i = 0; i < (opts.extraMessages ?? 0); i++) {
     turns.push({ role: "user", content: `msg ${i}`, timestamp: updatedAt });
   }
-  const content = [meta, ...conversationEventLines(turns)].map((l) => `${l}\n`).join("");
+  // The title is a `metadata.title` event; line 1 never carries one.
+  const title = opts.title
+    ? [JSON.stringify({ type: "metadata.title", ts: createdAt, title: opts.title })]
+    : [];
+  const content = [meta, ...title, ...conversationEventLines(turns)].map((l) => `${l}\n`).join("");
   writeFileSync(join(dir, `${id}.jsonl`), content);
 }
 
