@@ -78,7 +78,6 @@ import {
 import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import type { IdentityTaskSource } from "../tools/identity-task-source.ts";
 import { McpSource } from "../tools/mcp-source.ts";
-import { bareToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { McpCaller, TaskOwnerContext, ToolSource } from "../tools/types.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
@@ -276,9 +275,8 @@ function createHandlers(
         // `surfaceTools` on the chat path). An agent's `tools/call` that names
         // one is refused too (`assertAgentMayCall`); only an app's call reaches it.
         .filter(isModelVisible)
-        // Feature gating + role visibility apply to the BARE tool name.
-        .filter((t) => isToolEnabled(bareToolName(t.name), features))
-        .filter((t) => isToolVisibleToRole(bareToolName(t.name), orgRole))
+        .filter((t) => isToolEnabled(t.name, features))
+        .filter((t) => isToolVisibleToRole(t.name, orgRole))
         // Both spec metadata namespaces go out under their own names: `_meta`
         // for host conventions, `annotations` for the spec's behavioural hints.
         // A client that reads `destructiveHint` before spending the call can

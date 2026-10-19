@@ -32,7 +32,6 @@ import { formatConnectorSkillBlock } from "../prompt/compose.ts";
 import { toolMatches } from "../skills/select.ts";
 import { MAX_SKILL_BODY_CHARS } from "../skills/truncate.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
-import { bareToolName } from "../tools/namespace.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { addUsage, emptyUsage, tokenUsageFromV4 } from "../usage/types.ts";
@@ -1434,12 +1433,7 @@ export class AgentEngine {
         };
       },
       removeTool: (toolName: string) => {
-        // Match the BARE name. Wire names are bare, so the strip is a no-op for
-        // anything emitted today; it stays because a name replayed from history
-        // can carry the retired `ws_<id>-` prefix, and a raw
-        // `startsWith("nb__")` on one of those would let a system tool be
-        // released.
-        if (bareToolName(toolName).startsWith("nb__")) {
+        if (toolName.startsWith("nb__")) {
           return {
             ok: false,
             toolName,

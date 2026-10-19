@@ -46,7 +46,6 @@ import type {
 import { serverNotificationsRelayedTotal } from "../api/metrics.ts";
 import type { EventSink } from "../engine/types.ts";
 import { isIdentitySource, isPersonalConnectorName } from "./identity-sources.ts";
-import { bareToolName } from "./namespace.ts";
 import type { ToolSource } from "./types.ts";
 
 /** `notifications/resources/list_changed`, typed from the SDK so a spec rename fails the build. */
@@ -218,8 +217,7 @@ function createRelay(
     return opened;
   };
 
-  return (sourceName: string, notification: ServerNotification): void => {
-    const server = bareToolName(sourceName);
+  return (server: string, notification: ServerNotification): void => {
     if (!server || !hasAppViews(server)) return;
 
     const owner = ownerOf();

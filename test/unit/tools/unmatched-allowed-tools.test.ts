@@ -23,10 +23,6 @@ describe("unmatchedAllowedTools", () => {
     expect(unmatchedAllowedTools(["my_gmail__*", "gmail__*"], REACHABLE)).toEqual(["gmail__*"]);
   });
 
-  test("matches an entry that carries the retired ws_<id>- prefix", () => {
-    expect(unmatchedAllowedTools(["ws_0123456789abcdef-crm__search"], REACHABLE)).toEqual([]);
-  });
-
   test("reports every entry when nothing is reachable", () => {
     expect(unmatchedAllowedTools(["crm__*"], [])).toEqual(["crm__*"]);
   });

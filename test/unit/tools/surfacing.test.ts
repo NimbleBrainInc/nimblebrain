@@ -5,7 +5,6 @@ import type { PromptAppInfo } from "../../../src/prompt/compose.ts";
 import { composeSystemPrompt } from "../../../src/prompt/compose.ts";
 import type { Skill } from "../../../src/skills/types.ts";
 import { surfaceTools } from "../../../src/tools/surfacing.ts";
-import { namespacedToolName } from "../../helpers/namespaced-tool-name.ts";
 
 // --- Helpers ---
 
@@ -352,85 +351,6 @@ describe("composeSystemPrompt — apps injection", () => {
     const result = composeSystemPrompt([], null, appWithUi);
 
     expect(result).toContain("- CRM (has UI: Contact Manager)");
-  });
-});
-
-// --- Namespaced (cross-workspace) tool names ---
-//
-// The cross-workspace aggregator namespaces every tool as
-// `ws_<id>-<source>__<tool>` via `namespacedToolName`. System-tool
-// detection and skill-glob matching must see through that prefix. The
-// tests above use only BARE names, so they cannot catch it: in Tier 2,
-// `direct` is the system-tool list, and a raw `startsWith("nb__")` matches
-// zero namespaced names — handing the model an empty tool list and forcing
-// it to hallucinate tool calls.
-
-describe("surfaceTools — namespaced (cross-workspace) names", () => {
-  const WS = "ws_003eba8844413cd9";
-  const ns = (name: string) => namespacedToolName(WS, name);
-  const makeNsSystemTools = (count = 4): ToolSchema[] =>
-    makeSystemTools(count).map((t) => makeTool(ns(t.name)));
-  const makeNsAppTools = (prefix: string, count: number): ToolSchema[] =>
-    makeAppTools(prefix, count).map((t) => makeTool(ns(t.name)));
-
-  it("Tier 2: namespaced nb__* tools are still classified as direct system tools", () => {
-    const all = [
-      ...makeNsSystemTools(4),
-      ...makeNsAppTools("todos", 23),
-      ...makeNsAppTools("weather", 23),
-    ];
-    expect(all).toHaveLength(50);
-
-    const result = surfaceTools(all, null);
-
-    // Regression: pre-fix this was 0 — namespaced names never matched
-    // `startsWith("nb__")`, emptying the direct list.
-    expect(result.direct).toHaveLength(4);
-    expect(result.proxied).toHaveLength(46);
-    for (const t of result.direct) {
-      expect(t.name.startsWith(`${WS}-nb__`)).toBe(true);
-    }
-  });
-
-  it("Tier 2: never yields an empty direct list when system tools are present", () => {
-    // The exact failure mode: a large cross-workspace union with
-    // namespaced system tools must still surface them directly so the
-    // model can search/promote the rest.
-    const all = [...makeNsSystemTools(3), ...makeNsAppTools("crm", 40)];
-
-    const result = surfaceTools(all, null);
-
-    expect(result.direct).toHaveLength(3);
-    expect(result.direct.length).toBeGreaterThan(0);
-  });
-
-  it("Tier 3: a BARE allowedTools glob matches namespaced app tools", () => {
-    const all = [
-      ...makeNsSystemTools(4),
-      ...makeNsAppTools("todos", 10),
-      ...makeNsAppTools("weather", 10),
-    ];
-    const skill = makeSkill({ allowedTools: ["todos__*"] });
-
-    const result = surfaceTools(all, skill);
-
-    // 4 system + 10 tasks = 14 direct (bare glob matches namespaced name)
-    expect(result.direct).toHaveLength(14);
-    expect(result.proxied).toHaveLength(10);
-  });
-
-  it("focusedServerName (namespaced) promotes the focused app's namespaced tools", () => {
-    const all = [
-      ...makeNsSystemTools(4),
-      ...makeNsAppTools("todos", 20),
-      ...makeNsAppTools("weather", 20),
-    ];
-
-    const result = surfaceTools(all, null, { focusedServerName: ns("todos") });
-
-    // 4 system + 20 tasks promoted = 24 direct
-    expect(result.direct).toHaveLength(24);
-    expect(result.proxied).toHaveLength(20);
   });
 });
 

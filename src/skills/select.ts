@@ -37,9 +37,7 @@ export interface SelectedSkill {
  *
  * A thin alias for `toolNameMatchesPattern`, the single matcher shared with
  * `surfacing.ts`. Kept as a named export because `toolAffinity` is its own
- * concept at this layer; see that function for the pattern grammar and for why
- * the retired `ws_<id>-` prefix is normalized on both sides while the `my_`
- * personal-connector marker is normalized on neither.
+ * concept at this layer; see that function for the pattern grammar.
  */
 export function toolMatches(toolName: string, pattern: string): boolean {
   return toolNameMatchesPattern(toolName, pattern);
