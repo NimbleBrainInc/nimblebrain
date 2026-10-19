@@ -1,112 +1,27 @@
 ---
 title: Custom Instructions
-description: Let users save per-app guidance that the agent picks up on every turn — by publishing one resource.
+description: Guidance for one app is a workspace skill bound to its tools.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+Guidance a workspace wants the agent to follow when it uses one app (house rules for a CRM's stages, a brand voice for a document tool) is a **workspace skill bound to the app's tools**. The host does not read instructions from the app itself.
 
-NimbleBrain wraps any app's user-supplied custom instructions in `<app-custom-instructions>` containment in the agent's system prompt — automatically, on every conversation turn, for every active app. As an app author you opt in to that behavior by publishing a single MCP resource at a reserved URI.
+Create the skill in **This Workspace → Skills**, or with `skills__create`, and give it a `tool-affinity` matching the app's tools:
 
-This is the platform's "bottom-up" pattern for per-app guidance: the host enforces the convention, the app owns everything else (storage, UI, tool name, validation).
-
-## The convention
-
-```
-app://instructions
-```
-
-Publish this resource from your app's MCP server. NimbleBrain reads it on every prompt assembly:
-
-- Body is empty / resource not published → no overlay; agent sees nothing.
-- Body has content → wrapped in `<app-custom-instructions>` containment alongside your `<app-instructions>` (from `initialize.instructions`) inside the **Installed Apps** section of the system prompt.
-
-The body is treated as Markdown. There's no schema; it's freeform user-set text.
-
-## What you own
-
-Everything except the URI convention and the prompt-side wrapping:
-
-- **Storage.** Where the body lives, and how it is scoped. The platform hands your server no environment and no directory — it connects to a URL — so this is entirely yours: a path you configure, a row keyed on the workspace id the request carries, whatever fits how you run.
-- **The tool to write/clear.** Any name you want — `set_brand_voice`, `configure_assistant`, `update_conventions`, etc. The agent calls it; the user wires it from your settings UI.
-- **The editor UI.** Settings panel, modal, sidebar — your call. Validation, character cap, placeholder copy.
-- **Schema.** If you want typed config (brand voice + tone + persona as separate fields), serialize to Markdown for the resource body. Or publish multiple resources (e.g. `app://instructions/voice`, `app://instructions/persona`) — but only `app://instructions` flows into containment automatically.
-
-## What the platform owns
-
-- **The URI.** App authors don't pick a scheme; just publish at `app://instructions`.
-- **Containment escape.** If a saved body happens to contain a literal `</app-custom-instructions>` closing tag, the platform HTML-escapes it before wrapping so it can't break out of containment. Prompt-injection mitigation — you don't need to handle it on the app side.
-- **Read on every assembly.** Bodies are read fresh per chat turn (no caching), so edits apply mid-conversation without restart.
-- **Visibility gating.** Tool-only servers that don't publish the resource are naturally excluded — no flag to set, no negotiation.
-
-## Minimal example (Python / FastMCP)
-
-```python title="server.py"
-from pathlib import Path
-
-# Your server's own storage, configured however you deploy it. Nothing is
-# injected by the platform.
-INSTRUCTIONS_FILE = Path("/var/lib/my-app") / "custom-instructions.md"
-
-@mcp.resource("app://instructions", mime_type="text/markdown")
-def custom_instructions() -> str:
-    """User-set custom instructions for this app.
-
-    NimbleBrain reads this on every prompt assembly and wraps a non-empty
-    body in `<app-custom-instructions>` containment in the system prompt.
-    """
-    return INSTRUCTIONS_FILE.read_text(encoding="utf-8") if INSTRUCTIONS_FILE.exists() else ""
-
-
-@mcp.tool()
-async def set_custom_instructions(text: str) -> dict[str, str]:
-    """Save custom instructions for this app. Empty clears."""
-    if text == "":
-        INSTRUCTIONS_FILE.unlink(missing_ok=True)
-        return {"status": "cleared"}
-    INSTRUCTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    INSTRUCTIONS_FILE.write_text(text, encoding="utf-8")
-    return {"status": "saved"}
+```yaml
+---
+name: crm-house-rules
+description: How we use the CRM's stages and fields.
+metadata:
+  nimblebrain:
+    loading-strategy: dynamic
+    tool-affinity:
+      - crm__*
+---
+Move a deal to "Qualified" only after a call is logged.
 ```
 
-That's it. Once installed in a workspace, anything saved via `set_custom_instructions` reaches the agent on every turn.
+It reaches the agent before its first call to one of those tools, on the same call as the app's own skill, and costs nothing on a turn that never touches the app. For guidance that must hold before the agent picks any tool, make the skill always on instead. See [Skills](/using/skills/) for the format and the tiers.
 
-<Aside type="tip">
-  The reference implementation in `synapse-apps/synapse-todo-board` shows the full pattern, including a minimal settings-panel HTML editor wired to the tool via the iframe postMessage bridge.
-</Aside>
+What an app's author wants every workspace to know is the app's own guidance: its `instructions` and the skills it publishes ([Skills published by an MCP server](/using/skills/#skills-published-by-an-mcp-server)).
 
-## Settings section (optional but recommended)
-
-If you want a UI surface where a workspace admin edits the instructions (versus only the agent setting them via tool call), declare a `"settings"` placement in your manifest — a settings section is a placement slot, not a separate object:
-
-```json title="manifest.json"
-{
-  "_meta": {
-    "ai.nimblebrain/host": {
-      "host_version": "1.0",
-      "placements": [
-        {
-          "slot": "settings",
-          "resourceUri": "ui://my-app/settings"
-        }
-      ]
-    }
-  }
-}
-```
-
-Then publish the section's HTML at `ui://my-app/settings` and call your tools via the iframe bridge. NimbleBrain renders it on your connector's settings page, **Settings → Connectors → My App**, under a Settings heading, before tool permissions.
-
-The section is shown to every member who can open that page. Use `hostContext.connector.canManage` to disable the editor for anyone who is not a workspace admin, and name the tool that writes the instructions in [`admin_tools`](/extensions/admin-tools/) if only an admin should change them: the flag shapes the UI, and `admin_tools` is what the host enforces. See [Settings sections](/extensions/settings-sections/) for both, and the [MCP App Bridge](/apps/bridge/) page for iframe → tool call wiring.
-
-## Why this convention
-
-- **Discoverability.** Every app that wants instructions support uses the same URI. Users don't have to learn per-app conventions; agents don't have to discover per-app write tools to know "where do my instructions live for this app."
-- **Security.** Containment escape happens platform-side, uniformly. App authors writing the prompt-injection mitigation is something that *will* be gotten wrong over time.
-- **Composability.** The pattern stacks with `<app-instructions>` (the app author's static guidance) and the host's workspace overlay. The system prompt layers cleanly: workspace policy → per-app author guidance → per-app user instructions.
-- **Bottom-up.** Your app decides if it supports custom instructions and how rich the UX is. The platform doesn't synthesize anything you don't opt into.
-
-## Related
-
-- [The workspace overlay](/guide/settings/) — managed by the host, not by your app. Written by workspace admins in the workspace settings UI; the agent drafts suggested text but does not write the overlay itself. Guidance that should reach every workspace in the organization is an org-tier skill instead.
-- [Settings sections](/extensions/settings-sections/) — where the editor renders, and the manage flag.
-- [Placements & Navigation](/extensions/placements/) — the slots your app's views render in.
+The host no longer reads an `app://instructions` resource from apps; a server that still publishes one is not affected, and its text no longer reaches the prompt. Move that text into a workspace skill as above.

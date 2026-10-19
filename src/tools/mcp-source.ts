@@ -2617,8 +2617,8 @@ export class McpSource implements ToolSource {
       return project(await this.client.readResource({ uri }, request));
     } catch (err) {
       // Route every failure through the shared recovery. A genuine MCP miss
-      // (`shape.miss`) stays a silent null — e.g. a skill:// or app://instructions
-      // probe against a server that has neither. A stale session / mid-roll
+      // (`shape.miss`) stays a silent null — e.g. a skill:// probe against a
+      // server that has none. A stale session / mid-roll
       // gateway blip / torn transport re-initializes and retries (issue #571);
       // an auth loss flips the connection to `reauth_required`. Reads are
       // idempotent, so they retry across the deploy window.

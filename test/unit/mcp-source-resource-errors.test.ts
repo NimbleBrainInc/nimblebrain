@@ -12,7 +12,7 @@ import { stub } from "../helpers/stub.ts";
  * log, so a degraded source was undiagnosable. The contract now: a genuine MCP
  * miss stays a silent null; a real failure is logged — but ONLY on the
  * app-surface proxy path (`logFailures`), so discovery probes against a connector
- * that simply lacks a `skill://` / `app://instructions` resource never spam,
+ * that simply lacks a `skill://` resource never spam,
  * whatever non-standard error shape that connector returns.
  */
 describe("isMcpResourceMiss — allowlist of genuine misses", () => {

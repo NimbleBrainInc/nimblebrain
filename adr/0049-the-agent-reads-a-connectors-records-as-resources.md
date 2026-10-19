@@ -1,6 +1,6 @@
 # 0049. The agent reads a connector's records as resources
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0055
 - Date: 2026-10-07
 - Serves: orchestrate remote MCP
 
@@ -25,9 +25,11 @@ not say where the rest is. So a server keeps a `get_*` tool as the only
 whole-record read, and the resource is decorative.
 
 The prompt already carries one entry per installed connector
-(`Runtime.buildAppInfo`, rendered by `formatAppsSection`): its description, its
-`initialize.instructions`, and its `app://instructions` overlay, each in its own
-containment tag.
+(`Runtime.buildAppInfo`, rendered by `formatAppsSection`): its description and
+its `initialize.instructions`, each in its own containment tag.
+
+- *Amended by ADR-0055:* the entry carries no instructions overlay read from the
+  connector; guidance a workspace sets for one app is a skill bound to its tools.
 
 ## Decision
 

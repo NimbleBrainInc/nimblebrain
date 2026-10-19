@@ -705,12 +705,13 @@ describe("on-demand reconnect of a torn-down (null) client — the fleet-flap fi
     // Discovery/composition probes legitimately race a not-yet-started client — they
     // must stay a cheap null, never trigger a stop()/start().
     const source = remoteSource({
-      readResource: () => Promise.resolve({ contents: [{ uri: "app://instructions", text: "x" }] }),
+      readResource: () =>
+        Promise.resolve({ contents: [{ uri: "skill://probe/SKILL.md", text: "x" }] }),
     });
     mcpSourceInternals(source).client = null;
     const restart = spyRestart(source, true);
     try {
-      expect(await source.readResource("app://instructions")).toBeNull();
+      expect(await source.readResource("skill://probe/SKILL.md")).toBeNull();
       expect(restart).not.toHaveBeenCalled();
     } finally {
       restart.mockRestore();

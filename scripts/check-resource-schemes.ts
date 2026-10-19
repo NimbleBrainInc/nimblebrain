@@ -8,8 +8,7 @@
  * while the host also resolves it — one URI carrying two meanings, decided by
  * whichever reader gets there first. The set has to be **complete** or the
  * refusal is decorative, and completeness is exactly the property a doc comment
- * cannot hold: it was wrong twice in review before this check existed, once for
- * `artifact://` and `files://` and once for `app://`.
+ * cannot hold.
  *
  * The rule is not "these schemes are forbidden" — it is "a scheme appearing in
  * `src/` has been classified". Every hit resolves to one of two lists, and
@@ -23,11 +22,11 @@
  *
  * What it scans, and why both shapes are needed: string and template literals
  * carrying `<scheme>://` catch a scheme written out (`"artifact://"`,
- * `` `app://instructions` ``), and a `*_URI_SCHEME` constant catches one whose
+ * `` `skill://x` ``), and a `*_URI_SCHEME` constant catches one whose
  * only literal spelling is the bare name (`FILE_URI_SCHEME = "files"`, whose
  * `files://` form exists only as a template). Checking one shape alone misses
- * half the population — the `files://` regression was invisible to a literal
- * scan, and the `app://` one to a constant scan.
+ * half the population: a scheme spelled only through a constant is invisible to
+ * a literal scan, and one spelled only as a literal to a constant scan.
  *
  * Scope: `src/**\/*.ts`, minus vendored trees. Comments are not scanned — the
  * AST walk sees literals only, so prose naming a scheme is free. Tests live
@@ -98,7 +97,7 @@ function scanFile(fileName: string) {
   );
 
   const visit = (node: ts.Node) => {
-    // Shape 1: a scheme spelled inside a literal — "artifact://x", `app://instructions`.
+    // Shape 1: a scheme spelled inside a literal — "artifact://x", `skill://x`.
     if (
       ts.isStringLiteral(node) ||
       ts.isNoSubstitutionTemplateLiteral(node) ||
