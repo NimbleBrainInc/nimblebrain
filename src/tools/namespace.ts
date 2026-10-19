@@ -182,31 +182,6 @@ export function parseNamespacedToolName(s: string): { scope: ToolScope; toolName
 }
 
 /**
- * Best-effort bare tool name for read-side consumers.
- *
- * If `s` is a workspace-namespaced name (`ws_<id>-<toolName>`), return the
- * `<toolName>` portion; for a bare/identity name, return it unchanged. It
- * exists for the read-side surfaces (tool surfacing in `runtime/tools.ts`,
- * Layer-3 skill affinity in `skills/select.ts`, the engine's system-tool
- * release guard) that classify tool lists mixing workspace-namespaced and
- * bare names.
- *
- * Implemented in terms of `parseNamespacedToolName` so the separator and
- * the `WORKSPACE_ID_RE` boundary stay defined in one place: an identity name
- * parses to `{ kind: "identity", toolName: s }` (the whole name), so this
- * returns `s`; a workspace name returns the stripped tool name. The
- * try/catch guards the only throwing cases (empty input, malformed
- * `ws_<id>-` prefix) — those pass through unchanged too.
- */
-export function bareToolName(s: string): string {
-  try {
-    return parseNamespacedToolName(s).toolName;
-  } catch {
-    return s;
-  }
-}
-
-/**
  * Parse a workspace-qualified **source** (server) name.
  *
  * A source name has the same `ws_<id>-<rest>` shape as a tool name, but its

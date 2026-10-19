@@ -24,7 +24,7 @@
  * |---|---|---|
  * | `IdentityToolRouter.availableTools` (reachable set) | yes | n/a — not pattern-matched |
  * | `listToolsForWorkspace` (the wire surface) | yes | n/a — not pattern-matched |
- * | `toolNameMatchesPattern` (allowedTools, toolAffinity) | n/a | bare pattern yes, NORMALIZED pattern no |
+ * | `toolNameMatchesPattern` (allowedTools, toolAffinity) | n/a | only by a marked pattern |
  * | `hasAppViews` (server-notification relay key) | yes, and NOT stripped | n/a — a marked name gets no delivery |
  */
 
@@ -33,21 +33,12 @@ import { PERSONAL_CONNECTOR_PREFIX } from "../../../src/tools/identity-sources.t
 import { hasAppViews } from "../../../src/tools/server-notifications.ts";
 import { toolNameMatchesPattern } from "../../../src/tools/tool-pattern.ts";
 
-const WORKSPACE_TOOL = "crm__search";
 const MARKED_TOOL = `${PERSONAL_CONNECTOR_PREFIX}gmail__send`;
 
 describe("seam: pattern matching", () => {
   test("a bare pattern reaches a marked name only when it is itself marked", () => {
     expect(toolNameMatchesPattern(MARKED_TOOL, "gmail__*")).toBe(false);
     expect(toolNameMatchesPattern(MARKED_TOOL, `${PERSONAL_CONNECTOR_PREFIX}gmail__*`)).toBe(true);
-  });
-
-  test("a NORMALIZED (legacy-prefixed) pattern never reaches a marked name", () => {
-    // It could not have named one when it was authored — connectors were bare
-    // then and `ws_<id>-…` only named workspace tools — so normalizing it must
-    // not grant something its author could not write.
-    expect(toolNameMatchesPattern(MARKED_TOOL, "ws_aaaaaaaaaaaaaaaa-*")).toBe(false);
-    expect(toolNameMatchesPattern(WORKSPACE_TOOL, "ws_aaaaaaaaaaaaaaaa-*")).toBe(true);
   });
 });
 
