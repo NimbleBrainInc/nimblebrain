@@ -75,6 +75,12 @@
       "groupName": "mcp sdk"
     },
     {
+      "description": "No cooldown, matching bunfig's exclusion: the runtime tracks the ACP SDK line the agent runtimes it drives are built against, so a dependency reaches this repo on the same terms whether a bot or a person adds it.",
+      "matchPackageNames": ["@agentclientprotocol/sdk"],
+      "minimumReleaseAge": null,
+      "groupName": "acp sdk"
+    },
+    {
       "matchPackageNames": ["@sentry/**"],
       "groupName": "sentry"
     },

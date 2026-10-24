@@ -8,6 +8,23 @@ export class RunInProgressError extends Error {
 }
 
 /**
+ * Thrown at the door when the run would execute on an agent runtime that
+ * cannot hold it to its terms: a run that names spend accounts, on a runtime
+ * with no spend gate. Refused before the run touches anything, so a task run
+ * records it as a failure rather than spending without a check.
+ */
+export class RuntimeCannotHoldRunError extends Error {
+  readonly code = "runtime_cannot_hold_run";
+  constructor(
+    public readonly runtime: string,
+    reason: string,
+  ) {
+    super(`Agent runtime ${runtime} cannot run this run: ${reason}`);
+    this.name = "RuntimeCannotHoldRunError";
+  }
+}
+
+/**
  * Thrown when a caller attempts to read or write a conversation they
  * don't own. Conversations are single-owner: the conversation's
  * `ownerId` must match the requesting identity.

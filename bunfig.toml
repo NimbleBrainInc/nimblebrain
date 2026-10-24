@@ -44,7 +44,12 @@ minimumReleaseAge = 1209600
 # 2.1.0), and a peer on the new revision refuses a request the older release
 # builds. The window's protection is traded for that, deliberately and for
 # these three names only; every other `@modelcontextprotocol/*` package keeps it.
+#
+# `@agentclientprotocol/sdk` is excluded on the same terms: the runtime drives
+# external agent runtimes over ACP and tracks the SDK line those runtimes are
+# built against, and its 2.x line is where the stable v1 API now lives.
 minimumReleaseAgeExcludes = [
+  "@agentclientprotocol/sdk",
   "@types/bun",
   "@nimblebrain/synapse",
   "@modelcontextprotocol/client",

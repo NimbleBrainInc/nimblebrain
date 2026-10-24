@@ -193,6 +193,7 @@ export default defineConfig({
               { label: 'Host Resources', slug: 'extensions/host-resources' },
               { label: 'Resource Arguments', slug: 'extensions/resource-arguments' },
               { label: 'Custom Instructions', slug: 'extensions/custom-instructions' },
+              { label: 'Agent Runtimes', slug: 'extensions/agent-runtimes' },
               {
                 label: 'App Bridge Extensions',
                 link: '/apps/bridge/#nimblebrain-extensions-ainimblebrain',

@@ -98,6 +98,15 @@ These are methods on the [MCP App Bridge](/apps/bridge/#nimblebrain-extensions-a
 | [`ai.nimblebrain/location`](/apps/bridge/#ainimblebrainlocation) | App → host | The specification has no way for an app to say where it is, and the host cannot see inside a sandboxed iframe. The app sends its trail so the shell's top bar can show its title and breadcrumb. |
 | [`ai.nimblebrain/navigate`](/apps/bridge/#ainimblebrainnavigate) | Host → app | Pairs with `location`: when the user picks a breadcrumb (or back) in the top bar, the host asks the app to go to that trail entry. |
 
+### Between the host and an ACP agent
+
+These keys travel in the [Agent Client Protocol](https://agentclientprotocol.com), not MCP, when a run executes on another [agent runtime](/extensions/agent-runtimes/).
+
+| Extension | Direction | Why it exists |
+|---|---|---|
+| [`ai.nimblebrain/run`](/extensions/agent-runtimes/#keys-nimblebrain-adds-to-acp) | Host → agent (`session/new` `_meta`) | ACP v1 has no field for a client's system prompt or for history the agent did not produce. NimbleBrain owns both, so an agent that reads this key is handed them whole. |
+| [`ai.nimblebrain/stopReason`](/extensions/agent-runtimes/#keys-nimblebrain-adds-to-acp) | Agent → host (`session/prompt` response `_meta`) | ACP's stop reasons are coarser than the engine's; an agent that reports its own lets the run record say why it stopped. |
+
 ### Resource conventions
 
 A server can also offer the host something by publishing an ordinary MCP resource at a URI the host knows to look for. These need no capability and no new method: a server that does not publish them simply offers nothing.

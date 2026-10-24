@@ -176,6 +176,34 @@
       }
     },
     {
+      "includes": ["src/execution/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@sentry/**"],
+                    "message": "The kernel stays vendor-neutral OpenTelemetry. A Sentry SDK belongs in web/."
+                  },
+                  {
+                    "group": [
+                      "{../,../../,../../../}runtime/**",
+                      "{../,../../,../../../}tools/**",
+                      "{../,../../,../../../}platform/**"
+                    ],
+                    "message": "execution/ must not import runtime/, tools/, or platform/: a runtime reaches the platform only through the RunIO the door hands it (src/execution/AGENTS.md)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": [
         "src/**/*.ts",
         "!src/observability/log.ts",

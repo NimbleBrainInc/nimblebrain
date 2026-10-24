@@ -94,6 +94,7 @@ describe("loadConfig", () => {
       connectors: {},
       notifications: { poll: { intervalMs: 30000 } },
       tasks: {},
+      execution: {},
       files: {},
       brand: { name: "ACME" },
     };

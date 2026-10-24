@@ -102,6 +102,7 @@
     "typescript": "^5 || ^7.0.0"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "2.0.2",
     "@ai-sdk/anthropic": "^4.0.0",
     "@ai-sdk/google": "^4.0.0",
     "@ai-sdk/openai": "^4.0.0",

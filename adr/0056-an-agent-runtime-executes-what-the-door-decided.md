@@ -1,0 +1,113 @@
+# 0056. An agent runtime executes what the door decided
+
+- Status: Proposed
+- Date: 2026-10-24
+- Serves: orchestrate remote MCP, secure RBAC
+- Refines: ADR-0047 (one seam for where a loop runs and which loop runs)
+
+## Context
+
+`Runtime.startRun` decides a run (ADR-0021): the workspace and the membership
+gate, the composed prompt and skills, the walled tool router, the history read
+back from the conversation log, the model and the limits. It then ran the
+engine loop itself, at one line.
+
+Agents that run their own loop are now common, and several speak the Agent
+Client Protocol (ACP), which lets a client drive any of them the same way. Running
+a turn on one of them, beside the engine and not instead of it, raises two
+questions: where the line between NimbleBrain and the agent falls, and what keeps
+each new agent from becoming a change to the platform.
+
+ADR-0047 already answers the first for one case: the door decides a run and an
+execution provider runs it, and a provider may narrow what a run allows, never
+widen it. It frames a provider as *where* the loop runs (in this process or in
+a durable job). An agent with its own loop is a second axis, *which* loop runs,
+and the line falls in the same place.
+
+What NimbleBrain must keep is the record and the reach. The conversation log is
+the only record of a conversation; the tool router is the only way to a tool;
+the door is the only place a run's tools, prompt, model and limits are decided.
+An agent's own session store, tool configuration or credentials must never
+become any of these.
+
+## Decision
+
+**One seam behind the door: an agent runtime executes a resolved run.**
+`AgentRuntime.execute(run, io)` receives what the door resolved (the system
+prompt, the history, the tools surfaced, the model and limits, the cancellation
+signal) and the run's I/O: its walled tool router and its event sink. The seam
+carries NimbleBrain's types only. ADR-0047's execution providers and agents with
+their own loops are both implementations of it; where a runtime physically runs
+is that runtime's concern.
+
+**Which runtime runs a run is installation configuration** (`execution` in
+`nimblebrain.json`), never a task author's or a model's choice. The native
+engine is the default and the reference.
+
+**Every runtime records in the engine's own vocabulary.** It emits
+`EngineEventPayloads` events stamped with the door's run id, so the conversation
+log and the browser stream are unchanged and a turn on any runtime replays on
+any other. Each run records one `execution.bound` naming its runtime and that
+runtime's own session id: a conversation maps to its runs, a run to the runtime
+and session that executed it. A runtime's session is never reused as the
+conversation: each execution opens a fresh one from the history the door hands
+over, because no runtime's checkpoint is portable to another.
+
+**An external runtime reaches tools through a per-run projection of the router,
+and only through it.** The projection is an MCP endpoint over the run's walled
+router, opened for the run and closed with it, reachable on loopback behind a
+random path and bearer. It applies the checks the engine applies to a model's
+call and the run's call-level hooks, and it emits the run's tool record from
+what it dispatched. It is not `/mcp/<wsId>`, which serves a person's attended
+surface and would widen an unattended run's reach (ADR-0047).
+
+**A runtime declares what it holds, and the door refuses a run it cannot hold.**
+A runtime that does not check each model call against the run's spend accounts
+is refused any run that names one, rather than running it unchecked. The loop
+policy that lives inside the engine (in-turn windowing and compaction, tool
+promotion, the loop supervisor, bound-skill delivery) is declared absent for an
+external runtime; the policy at the tool boundary holds for every runtime,
+because it lives in the projection.
+
+**ACP is the first external transport, behind a generic runtime that names no
+agent.** What one agent needs beyond ACP v1 (how to open it, how the door's
+prompt and history reach it) is a driver. NimbleBrain's own engine, served as an
+ACP agent, is the reference driver: the same resolved run through the native
+runtime and through it must leave the same record. ACP v1 has no slot for a
+client's system prompt or for history the agent did not produce; NimbleBrain's
+agent takes both from `ai.nimblebrain/run` on `session/new`, and an agent that
+does not gets them as contained text ahead of the turn's first message.
+
+## Consequences
+
+- Adding an ACP agent is a driver and a configuration entry. Adding a runtime
+  that is not ACP (an in-process agent SDK, a remote job) is an implementation of
+  the seam. Neither changes the door, the conversation store or the web client.
+- An external runtime runs no spend gate, so it serves chat, not budgeted task
+  runs, until model calls come back through a host-controlled model endpoint
+  (ADR-0047's runtime-hosted model endpoint, or a gateway that meters per run).
+- An external agent manages its own working context within a turn. Between turns
+  the door still windows and compacts the history it hands over, so a
+  conversation's cost is bounded at turn boundaries even when it is not within
+  one.
+- The agent's private reasoning streams to the person but is not persisted as
+  conversation content.
+- Every tool call of an external runtime is an HTTP round trip on loopback; the
+  projection's lifetime is the run's, so nothing listens after it ends.
+- The native engine still mints its own per-loop run id for its events; an
+  external runtime stamps the door's. Unifying them is a separate change.
+
+## Alternatives considered
+
+- **Point the agent at `/mcp/<wsId>`** — rejected: it builds an attended context
+  from the caller's identity, so an unattended run would reach authoring tools
+  its `allowedTools` excludes, and no run-scoped credential exists for it.
+- **Reuse the agent's session across turns (`session/load`)** — deferred: it
+  makes the agent's store a second record of the conversation, which is out of
+  step with the log after compaction or after a turn on another runtime.
+- **A separate seam for "which loop" beside ADR-0047's "where the loop runs"** —
+  rejected: both receive a resolved run and call back through the same I/O, so
+  two abstractions would describe one boundary.
+- **Rewrite the native engine as an ACP server and drive every run over ACP** —
+  rejected: it adds a protocol hop to every native run for no gain; the engine is
+  served over ACP only as the reference agent.
