@@ -262,6 +262,31 @@ describe("acp runtime: the projection holds the run's bound", () => {
     expect(sink.of("run.error")).toEqual([]);
   });
 
+  test("cancelling during session setup ends the run before it prompts", async () => {
+    const controller = new AbortController();
+    let prompted = false;
+    const driver = plainAcpDriver(() => {
+      prompted = true;
+      return createEchoModel({ responses: structuredClone(SCRIPT) });
+    });
+    const runtime = createAcpRuntime("plain-acp", {
+      ...driver,
+      async prepareSession() {
+        controller.abort();
+      },
+    });
+    const sink = collect();
+
+    await expect(
+      runtime.execute(resolvedRun(controller.signal), {
+        tools: new StaticToolRouter([LOOKUP], () => ({ content: [], isError: false })),
+        events: sink,
+      }),
+    ).rejects.toBeDefined();
+    expect(prompted).toBe(false);
+    expect(sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
+  });
+
   test("an agent that fails the session is a run error, not a crash", async () => {
     const sink = collect();
     const runtime = createAcpRuntime("broken", {

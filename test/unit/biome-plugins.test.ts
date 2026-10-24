@@ -10,7 +10,7 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -115,4 +115,34 @@ describe("biome-plugins", () => {
       expect(flaggedLines(plugin, source)).toEqual(expected);
     });
   }
+});
+
+/**
+ * The repo's own `biome.json` over one file at `path`, in a temp tree laid out
+ * like the repo, so path-scoped overrides apply as they do here. Returns the
+ * rule categories reported.
+ */
+function repoLintCategories(path: string, source: string): string[] {
+  const dir = mkdtempSync(join(tmpdir(), "nb-biome-config-"));
+  dirs.push(dir);
+  const config = readFileSync(join(ROOT, "biome.json"), "utf8").replaceAll(
+    '"./biome-plugins/',
+    `"${PLUGINS}/`,
+  );
+  writeFileSync(join(dir, "biome.json"), config);
+  mkdirSync(join(dir, path, ".."), { recursive: true });
+  writeFileSync(join(dir, path), source);
+  const run = Bun.spawnSync([BIOME, "lint", "--reporter=json", path], { cwd: dir });
+  const report = JSON.parse(run.stdout.toString()) as { diagnostics: { category: string }[] };
+  return report.diagnostics.map((d) => d.category);
+}
+
+describe("biome.json import bans", () => {
+  const childProcess = 'import { spawn } from "node:child_process";\n\nexport const s = spawn;\n';
+
+  test("src/execution/ may not import child_process", () => {
+    expect(repoLintCategories("src/execution/probe.ts", childProcess)).toContain(
+      "lint/style/noRestrictedImports",
+    );
+  });
 });

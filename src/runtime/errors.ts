@@ -9,9 +9,10 @@ export class RunInProgressError extends Error {
 
 /**
  * Thrown at the door when the run would execute on an agent runtime that
- * cannot hold it to its terms: a run that names spend accounts, on a runtime
- * with no spend gate. Refused before the run touches anything, so a task run
- * records it as a failure rather than spending without a check.
+ * cannot hold it to its terms: a run that names spend accounts or caps its
+ * input tokens, on a runtime with no spend gate. Refused before the run
+ * touches anything, so a task run records it as a failure rather than
+ * spending without a check.
  */
 export class RuntimeCannotHoldRunError extends Error {
   readonly code = "runtime_cannot_hold_run";

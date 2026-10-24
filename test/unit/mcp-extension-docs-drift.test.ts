@@ -15,11 +15,18 @@ import { join, resolve } from "node:path";
  * A key is "declared" when a source file assigns the literal to a const — the
  * pattern every extension, marker, and method name follows. Tests and
  * generated declarations are skipped: they restate keys, they do not own them.
+ * So is a private wire format between two of NimbleBrain's own components,
+ * which no server author sends or receives.
  */
 
 const ROOT = resolve(import.meta.dir, "../..");
 const SOURCE_DIRS = ["src", "web/src"];
 const DOCS_DIRS = ["extensions", "mcp"].map((dir) => join(ROOT, "docs/src/content/docs", dir));
+/**
+ * The reference ACP driver's wire format with its own agent (ADR-0056,
+ * src/execution/AGENTS.md): nothing outside the two reads these keys.
+ */
+const PRIVATE_WIRE = new Set(["src/execution/acp/nimblebrain-extension.ts"]);
 const DECLARATION = /const\s+[A-Z0-9_]+\s*(?::[^=]+)?=\s*"(ai\.nimblebrain\/[^"]+)"/g;
 
 function sourceFiles(dir: string): string[] {
@@ -46,6 +53,7 @@ function declaredKeys(): Map<string, string> {
   const keys = new Map<string, string>();
   for (const dir of SOURCE_DIRS) {
     for (const file of sourceFiles(join(ROOT, dir))) {
+      if (PRIVATE_WIRE.has(file.slice(ROOT.length + 1))) continue;
       for (const match of readFileSync(file, "utf8").matchAll(DECLARATION)) {
         const key = match[1];
         if (key && !keys.has(key)) keys.set(key, file.slice(ROOT.length + 1));

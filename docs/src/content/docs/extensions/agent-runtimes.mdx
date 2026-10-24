@@ -36,7 +36,7 @@ These live inside NimbleBrain's own loop, so an external agent does its own vers
 
 | Native behaviour | On another runtime |
 |---|---|
-| Spend accounts checked before every model call | Not checked. A run with a budget is refused instead. |
+| Spend accounts and the run's input-token cap checked before every model call | Not checked. A run with a budget or an input-token cap is refused instead. |
 | Context windowing and compaction within a turn | The agent's own. Between turns, NimbleBrain still windows and compacts the history it hands over. |
 | Tool promotion (`nb__manage_tools`) and tool tiers | Not available. The agent sees the run's tools as one flat list. |
 | The loop guard that stops a tool called over and over | Not applied. |

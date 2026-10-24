@@ -54,6 +54,8 @@ async function executeOverAcp(
   try {
     signal?.throwIfAborted();
     const turn = await openSession(runtimeId, driver, run, io, recorder, cleanup);
+    // An abort during setup fired before the listener below exists.
+    signal?.throwIfAborted();
     const cancel = () => {
       void turn.agent
         .notify(acp.methods.agent.session.cancel, { sessionId: turn.sessionId })

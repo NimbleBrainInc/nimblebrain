@@ -30,8 +30,9 @@ import type {
 export interface RuntimeCapabilities {
   /**
    * The runtime checks every model call against the run's spend accounts
-   * before it is sent (`EngineConfig.spend`). A run that names accounts is
-   * refused by a runtime without it.
+   * (`EngineConfig.spend`) and its run-wide input cap
+   * (`EngineConfig.maxRunInputTokens`) before it is sent. A run that names
+   * accounts or sets the cap is refused by a runtime without it.
    */
   spendGate: boolean;
   /**

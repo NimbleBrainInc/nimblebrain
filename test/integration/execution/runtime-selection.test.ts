@@ -150,4 +150,16 @@ describe("runtime selection", () => {
       }),
     ).rejects.toThrow(/cannot run this run/);
   });
+
+  test("a run that caps its input tokens is refused on a runtime with no spend gate", async () => {
+    config.execution = { ...config.execution, default: "nimblebrain-acp" };
+    await expect(
+      runtime.executeTask({
+        prompt: "do it",
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: USER,
+        maxRunInputTokens: 1,
+      }),
+    ).rejects.toThrow(/caps its input tokens/);
+  });
 });

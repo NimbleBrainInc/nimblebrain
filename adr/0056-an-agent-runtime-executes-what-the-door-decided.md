@@ -81,7 +81,8 @@ parity eval.
 
 **A runtime declares what it holds, and the door refuses a run it cannot hold.**
 A runtime that does not check each model call against the run's spend accounts
-is refused any run that names one, rather than running it unchecked. The loop
+and its run-wide input-token cap is refused any run that names an account or
+sets the cap, rather than running it unchecked. The loop
 policy that lives inside the engine (in-turn windowing and compaction, tool
 promotion, the loop supervisor, bound-skill delivery) is declared absent for an
 external runtime; the policy at the tool boundary holds for every runtime,
@@ -112,8 +113,8 @@ implement it, and Reflex's session options are designed with Reflex.
 - Adding an ACP agent that runs out of process is a driver and a configuration
   entry. Adding a runtime that is not ACP (an in-process agent SDK, a remote
   job) is an implementation of the seam. Neither changes the door, the conversation store or the web client.
-- An external runtime runs no spend gate, so it serves chat, not budgeted task
-  runs, until its model calls go through a gateway that enforces a run's budget.
+- An external runtime runs no spend gate, so it serves chat, not budgeted or
+  input-capped task runs, until its model calls go through a gateway that enforces a run's budget.
   Each installation serves one tenant, so the gateway meters that tenant; the
   usage an agent reports in ACP is for display, never the billing record.
 - An external agent manages its own working context within a turn. Between turns

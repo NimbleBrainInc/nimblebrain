@@ -470,7 +470,7 @@
       "additionalProperties": false
     },
     "execution": {
-      "description": "Which agent runtime executes a run. Absent, every run executes on the native engine. A runtime other than native runs no spend gate, so a run that names spend accounts is refused on it.",
+      "description": "Which agent runtime executes a run. Absent, every run executes on the native engine. A runtime other than native runs no spend gate, so a run that names spend accounts or caps its input tokens is refused on it.",
       "type": "object",
       "properties": {
         "default": {

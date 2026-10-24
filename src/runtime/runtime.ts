@@ -1944,13 +1944,17 @@ export class Runtime {
 
   /**
    * The agent runtime a run executes on (`execution.default`), if it can hold
-   * the run to its terms: a run that names spend accounts needs a runtime that
-   * checks every model call against them.
+   * the run to its terms: a run that names spend accounts or caps its input
+   * tokens needs a runtime that checks every model call against them.
    */
   private agentRuntimeFor(spec: RunSpec): AgentRuntime {
     const agentRuntime = this.agentRuntimes.select(this.config.execution?.default);
-    if (spec.budget.spendAccounts?.length && !agentRuntime.capabilities.spendGate) {
+    if (agentRuntime.capabilities.spendGate) return agentRuntime;
+    if (spec.budget.spendAccounts?.length) {
       throw new RuntimeCannotHoldRunError(agentRuntime.id, "the run names spend accounts");
+    }
+    if (spec.budget.maxRunInputTokens !== undefined) {
+      throw new RuntimeCannotHoldRunError(agentRuntime.id, "the run caps its input tokens");
     }
     return agentRuntime;
   }

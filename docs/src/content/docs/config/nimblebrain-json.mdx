@@ -635,7 +635,7 @@ Which agent runtime executes a run. **Experimental.** Absent, every run executes
 
 Whatever runtime runs a turn, NimbleBrain keeps the conversation, decides the run's tools, prompt and limits, and records every turn the same way, so a conversation can move between runtimes and each turn reads the ones before it. What a runtime other than `native` gives up, and how it reaches tools, is on [Agent runtimes](/extensions/agent-runtimes/).
 
-A runtime other than `native` checks no spend account before a model call, so a [task](/using/tasks) run with a budget is refused on it rather than run unchecked. The file is read at startup: changing `default` takes effect on restart.
+A runtime other than `native` checks no spend account or input-token cap before a model call, so a [task](/using/tasks) run with a budget or an input-token cap (its own `maxInputTokens`, or `tasks.maxRunInputTokens`) is refused on it rather than run unchecked. The file is read at startup: changing `default` takes effect on restart.
 
 ## files
 
