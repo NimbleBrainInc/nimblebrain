@@ -76,7 +76,6 @@ import {
 } from "../conversation/types.ts";
 import { applyReasoningReplayPolicy, windowMessages } from "../conversation/window.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import { AgentEngine } from "../engine/engine.ts";
 import type { AdminToolCallPayload } from "../engine/schemas/events.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
@@ -96,6 +95,8 @@ import type {
   ToolSchema,
 } from "../engine/types.ts";
 import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
+import { type AgentRuntimes, createAgentRuntimes } from "../execution/registry.ts";
+import type { AgentRuntime } from "../execution/types.ts";
 import { FileLocator } from "../files/locator.ts";
 import { workspaceFilesDir } from "../files/paths.ts";
 import { rehydrateUserResources } from "../files/rehydrate.ts";
@@ -287,6 +288,7 @@ import {
   DeclaredToolsUnavailableError,
   ModelNotAllowedError,
   RunInProgressError,
+  RuntimeCannotHoldRunError,
   WorkspaceMembershipRevokedError,
 } from "./errors.ts";
 import { IdentityToolRouter } from "./identity-tool-router.ts";
@@ -499,6 +501,8 @@ interface ConnectorGates {
 
 export class Runtime {
   private resolveModelFn: (modelString: string) => LanguageModelV4;
+  /** The agent runtimes runs execute on (`execution` in `nimblebrain.json`). */
+  private agentRuntimes: AgentRuntimes;
   private skillMatcher: SkillMatcher;
   private config: RuntimeConfig;
   private contextSkills: Skill[];
@@ -669,6 +673,7 @@ export class Runtime {
     currentWorkspaceId: () => string | null,
   ) {
     this.resolveModelFn = resolveModelFn;
+    this.agentRuntimes = createAgentRuntimes(config.execution, { resolveModel: resolveModelFn });
     this.skillMatcher = skillMatcher;
     this.config = config;
     this.contextSkills = contextSkills;
@@ -1687,6 +1692,9 @@ export class Runtime {
         : new WorkspaceMembershipRevokedError(ownerId, spec.workspaceId);
     }
 
+    // Refused here, before anything is written or bound, like the gate.
+    const agentRuntime = this.agentRuntimeFor(spec);
+
     // The run's correlation anchor, stamped on the request context for audit
     // and file correlation and returned to the caller. A caller that handed out
     // a handle for the run before it started names the id it minted.
@@ -1837,7 +1845,6 @@ export class Runtime {
       allowedTools: spec.input.allowedTools,
       attended,
     });
-    const engine = new AgentEngine(this.resolveModelFn(spec.model), identityToolRouter, engineSink);
 
     // Tool handlers that need the per-call workspace must come through a
     // `WorkspaceContext` constructed by the orchestrator, NOT via
@@ -1870,8 +1877,24 @@ export class Runtime {
       result = await runWithRequestContext(reqCtx, () =>
         withSpan(
           "agent.turn",
-          { "llm.model": spec.model, "run.trigger": spec.trigger, ...requestIdentityAttrs() },
-          () => engine.run(engineConfig, engineSystem, messages, tools),
+          {
+            "llm.model": spec.model,
+            "run.trigger": spec.trigger,
+            "run.runtime": agentRuntime.id,
+            ...requestIdentityAttrs(),
+          },
+          () =>
+            agentRuntime.execute(
+              {
+                runId,
+                conversationId,
+                system: engineSystem,
+                messages,
+                tools,
+                config: engineConfig,
+              },
+              { tools: identityToolRouter, events: engineSink },
+            ),
         ),
       );
     } catch (err) {
@@ -1918,6 +1941,23 @@ export class Runtime {
   }
 
   // ── run-start door helpers ───────────────────────────────────────
+
+  /**
+   * The agent runtime a run executes on (`execution.default`), if it can hold
+   * the run to its terms: a run that names spend accounts or caps its input
+   * tokens needs a runtime that checks every model call against them.
+   */
+  private agentRuntimeFor(spec: RunSpec): AgentRuntime {
+    const agentRuntime = this.agentRuntimes.select(this.config.execution?.default);
+    if (agentRuntime.capabilities.spendGate) return agentRuntime;
+    if (spec.budget.spendAccounts?.length) {
+      throw new RuntimeCannotHoldRunError(agentRuntime.id, "the run names spend accounts");
+    }
+    if (spec.budget.maxRunInputTokens !== undefined) {
+      throw new RuntimeCannotHoldRunError(agentRuntime.id, "the run caps its input tokens");
+    }
+    return agentRuntime;
+  }
 
   /**
    * Hold the run's spend accounts open and hand them to the engine as

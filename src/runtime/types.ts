@@ -1,5 +1,6 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { Brand } from "../brand/index.ts";
+import type { ExecutionConfig } from "../config/execution.ts";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
@@ -249,6 +250,11 @@ export interface RuntimeConfig {
    * the ceilings on any one run. See `src/config/tasks.ts`.
    */
   tasks?: TasksConfig;
+
+  /**
+   * Which agent runtime executes a run. See `src/config/execution.ts`.
+   */
+  execution?: ExecutionConfig;
 
   /** File context configuration. */
   files?: {

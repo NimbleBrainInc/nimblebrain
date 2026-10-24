@@ -1,0 +1,13 @@
+// No agent runs as a child of the runtime (ADR-0056): an agent with its own
+// loop, run in the runtime's container, shares its uid, network and secrets, so
+// an execution runtime reaches an agent in this process or out of the
+// installation, never by spawning one.
+or {
+  `Bun.spawn($args)`,
+  `Bun.spawnSync($args)`
+} as $spawn where {
+  register_diagnostic(
+    span=$spawn,
+    message="An agent runtime never spawns a process (ADR-0056, src/execution/AGENTS.md). Reach the agent in this process or out of the installation over a remote transport."
+  )
+}

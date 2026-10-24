@@ -836,6 +836,8 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       "skill-instructions",
       "run-input",
       "judge-feedback",
+      "host-instructions",
+      "conversation-history",
     ] as const satisfies readonly ContainmentTag[];
 
     // Exhaustiveness guard: every member of the union must appear in TAGS.
@@ -856,6 +858,8 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       "skill-instructions": true,
       "run-input": true,
       "judge-feedback": true,
+      "host-instructions": true,
+      "conversation-history": true,
     };
     void _exhaustive;
 

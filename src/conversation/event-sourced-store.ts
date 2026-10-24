@@ -117,6 +117,7 @@ const CONVERSATION_EVENT_TYPES = new Set([
   "tool.progress",
   "run.done",
   "run.error",
+  "execution.bound",
   "skills.loaded",
   "context.assembled",
   "connector.skill.injected",
@@ -780,6 +781,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
         return mapRunDone(ts, event.data);
       case "run.error":
         return mapRunError(ts, event.data);
+      case "execution.bound":
+        return { ts, type: "execution.bound", ...event.data };
       case "skills.loaded":
         return mapSkillsLoaded(ts, event.data);
       case "context.assembled":

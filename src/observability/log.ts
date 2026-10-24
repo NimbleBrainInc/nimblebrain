@@ -41,6 +41,7 @@
  *   - `auth` — identity-provider verify rejections (routine reasons: no_token, token_expired)
  *   - `notify` — notification envelopes, outbox declarations and poll results
  *     dropped at parse, and sweeps the poller skipped
+ *   - `execution` — an external agent runtime's stderr and its own tool-call updates
  *
  * Keep this list in sync with the "Debug Logging" section of
  * src/observability/AGENTS.md so it's discoverable without reading source.
