@@ -1,5 +1,7 @@
 /**
  * An ACP agent as a child process speaking newline-delimited JSON-RPC on stdio.
+ * Test-only: no installation runs an agent as a child of the runtime
+ * (ADR-0056).
  *
  * The child gets the environment it is given and nothing else: no variable of
  * this process leaks into it, so a credential reaches an agent only when a
@@ -7,8 +9,8 @@
  */
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
-import { log } from "../../observability/log.ts";
-import type { AcpConnectionTarget } from "./driver.ts";
+import type { AcpConnectionTarget } from "../../../src/execution/acp/driver.ts";
+import { log } from "../../../src/observability/log.ts";
 
 export interface StdioAgentSpec {
   command: string;

@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import type { GooseRuntimeConfig } from "../../../src/config/execution.ts";
+import type { ResolvedRun } from "../../../src/execution/types.ts";
 import {
   createGooseDriver,
   GOOSE_SYSTEM_PROMPT_METHOD,
+  type GooseDriverConfig,
   gooseEnvironment,
   rawTemplate,
-} from "../../../src/execution/acp/drivers/goose.ts";
-import type { ResolvedRun } from "../../../src/execution/types.ts";
+} from "../../helpers/acp/goose-driver.ts";
 
-const CONFIG: GooseRuntimeConfig = { type: "acp", driver: "goose" };
+const CONFIG: GooseDriverConfig = {};
 
 function run(model = "anthropic:claude-sonnet-4-6"): ResolvedRun {
   return {

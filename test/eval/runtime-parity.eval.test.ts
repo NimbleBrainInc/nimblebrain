@@ -18,9 +18,9 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import type { EngineEvent, ToolCall, ToolSchema } from "../../src/engine/types.ts";
 import { createAcpRuntime } from "../../src/execution/acp/acp-runtime.ts";
-import { createGooseDriver } from "../../src/execution/acp/drivers/goose.ts";
 import { createNativeRuntime } from "../../src/execution/native-runtime.ts";
 import type { AgentRuntime, ResolvedRun } from "../../src/execution/types.ts";
+import { createGooseDriver } from "../helpers/acp/goose-driver.ts";
 
 const ready =
   !!process.env.ANTHROPIC_API_KEY && !!process.env.NB_GOOSE_API_KEY && !!process.env.GOOSE_BIN;
@@ -34,14 +34,7 @@ const runtimes: [string, () => AgentRuntime][] = [
       return createNativeRuntime((m) => anthropic(m.slice(m.indexOf(":") + 1)));
     },
   ],
-  [
-    "goose",
-    () =>
-      createAcpRuntime(
-        "goose",
-        createGooseDriver({ type: "acp", driver: "goose", command: process.env.GOOSE_BIN }),
-      ),
-  ],
+  ["goose", () => createAcpRuntime("goose", createGooseDriver({ command: process.env.GOOSE_BIN }))],
 ];
 
 const LOOKUP_ORDER: ToolSchema = {

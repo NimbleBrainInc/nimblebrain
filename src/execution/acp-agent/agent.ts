@@ -8,8 +8,12 @@
  * outcomes are compared against the native runtime's for the same run.
  *
  * It reaches tools only through the MCP servers the client names at
- * `session/new`, and takes its prompt, history and limits from NimbleBrain's
- * `_meta` extension (`../acp/nimblebrain-extension.ts`).
+ * `session/new`. A client that sends NimbleBrain's `_meta` extension
+ * (`../acp/nimblebrain-extension.ts`) hands it the prompt, history and limits
+ * whole; any other ACP client gets a session on the agent's own `defaults`,
+ * with whatever context it sends in the prompt. It is the seed of Reflex, a
+ * standalone ACP agent, so it must work over plain ACP and import nothing of
+ * the platform beyond the engine.
  */
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
@@ -36,8 +40,16 @@ interface AgentSession {
   turn?: AbortController;
 }
 
+/** What a session runs with when the client sends no run `_meta`. */
+export type AgentDefaults = Omit<RunMeta, "system" | "history">;
+
 export interface NimbleBrainAcpAgentOptions {
   resolveModel(model: string): LanguageModelV4;
+  /**
+   * The agent's own model and limits, for a plain ACP client. Absent, a
+   * session without run `_meta` is refused: the agent has nothing to run on.
+   */
+  defaults?: AgentDefaults;
 }
 
 export function createNimbleBrainAcpAgent(opts: NimbleBrainAcpAgentOptions): acp.AgentApp {
@@ -55,7 +67,8 @@ export function createNimbleBrainAcpAgent(opts: NimbleBrainAcpAgentOptions): acp
       agentInfo: { name: "nimblebrain", version: "1" },
     }))
     .onRequest(acp.methods.agent.session.new, async (ctx) => {
-      const meta = ctx.params._meta?.[RUN_META_KEY] as RunMeta | undefined;
+      const sent = ctx.params._meta?.[RUN_META_KEY] as RunMeta | undefined;
+      const meta = sent ?? (opts.defaults && { ...opts.defaults, system: "", history: "[]" });
       if (!meta) {
         throw acp.RequestError.invalidParams(
           undefined,

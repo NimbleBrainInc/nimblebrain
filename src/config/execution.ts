@@ -5,6 +5,12 @@
  * The block is the operator's. Which runtime runs a run is installation
  * configuration, never a task author's or a model's choice (ADR-0047). Absent,
  * every run executes on the native engine.
+ *
+ * Every runtime here runs in this process or outside the installation; none
+ * starts an agent as a child of the runtime (ADR-0056). An external agent
+ * joins once it runs out of process, reached over a remote transport, with its
+ * tools on a run-scoped endpoint and its models on a gateway the installation
+ * controls.
  */
 
 /** NimbleBrain's own engine, served as an ACP agent in this process. */
@@ -13,28 +19,8 @@ export interface NimbleBrainAcpRuntimeConfig {
   driver: "nimblebrain";
 }
 
-/** Goose (`goose acp`), one process per run. */
-export interface GooseRuntimeConfig {
-  type: "acp";
-  driver: "goose";
-  /** The Goose binary: a path, or a name looked up on this process's PATH. Default: `goose`. */
-  command?: string;
-  /**
-   * Goose's approval mode. `auto` runs tools without asking; `approve` and
-   * `smart_approve` send permission requests, which the runtime answers by
-   * policy. Default: `auto`.
-   */
-  mode?: "auto" | "approve" | "smart_approve";
-  /**
-   * The variable in this process's environment that holds the provider key
-   * Goose is given. A dedicated, restricted key, never the runtime's own.
-   * Default: `NB_GOOSE_API_KEY`.
-   */
-  apiKeyEnv?: string;
-}
-
 /** One runtime that reaches its agent over ACP, through a named driver. */
-export type AcpRuntimeConfig = NimbleBrainAcpRuntimeConfig | GooseRuntimeConfig;
+export type AcpRuntimeConfig = NimbleBrainAcpRuntimeConfig;
 
 export type AgentRuntimeConfig = AcpRuntimeConfig;
 
@@ -50,7 +36,4 @@ export interface ExecutionConfig {
 export const EXECUTION_CONFIG_KEYS: (keyof ExecutionConfig)[] = ["default", "runtimes"];
 
 /** Every key any ACP runtime entry may carry, for the config schema drift guard. */
-export const ACP_RUNTIME_CONFIG_KEYS: (
-  | keyof NimbleBrainAcpRuntimeConfig
-  | keyof GooseRuntimeConfig
-)[] = ["type", "driver", "command", "mode", "apiKeyEnv"];
+export const ACP_RUNTIME_CONFIG_KEYS: (keyof NimbleBrainAcpRuntimeConfig)[] = ["type", "driver"];

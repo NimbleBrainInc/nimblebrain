@@ -45,7 +45,8 @@ is that runtime's concern.
 engine is the default and the reference.
 
 **Every runtime records in the engine's own vocabulary.** It emits
-`EngineEventPayloads` events stamped with the door's run id, so the conversation
+`EngineEventPayloads` events stamped with the door's run id (the native engine
+takes it through `EngineConfig.runId`), so the conversation
 log and the browser stream are unchanged and a turn on any runtime replays on
 any other. Each run records one `execution.bound` naming its runtime and that
 runtime's own session id: a conversation maps to its runs, a run to the runtime
@@ -60,6 +61,23 @@ random path and bearer. It applies the checks the engine applies to a model's
 call and the run's call-level hooks, and it emits the run's tool record from
 what it dispatched. It is not `/mcp/<wsId>`, which serves a person's attended
 surface and would widen an unattended run's reach (ADR-0047).
+
+**No agent runs as a child of the runtime.** A runtime reaches its agent in
+the runtime's own process (NimbleBrain's engine) or outside the installation,
+never by spawning one beside it. A child would share the runtime's user, network
+namespace and filesystem, and on Linux a same-user process can read its parent's
+environment, which holds every secret the runtime has; scrubbing the child's own
+environment does not change that. An agent with its own loop is the riskiest
+extension the platform hosts, so it gets isolation of its own or does not run.
+`src/execution/` cannot spawn a process (lint-enforced).
+
+An external agent such as Goose therefore runs out of process and joins when
+three things exist: a remote ACP transport, the tool projection served on the
+runtime's own server behind a run-scoped credential (ADR-0047's callback, so
+local and remote runtimes share one way back to the router), and the
+installation's model gateway as the agent's model endpoint, which holds the keys,
+the model policy and the meter. Until then the Goose driver serves only the live
+parity eval.
 
 **A runtime declares what it holds, and the door refuses a run it cannot hold.**
 A runtime that does not check each model call against the run's spend accounts
@@ -77,16 +95,26 @@ ACP agent, is the reference driver: the same resolved run through the native
 runtime and through it must leave the same record. ACP v1 has no slot for a
 client's system prompt or for history the agent did not produce; NimbleBrain's
 agent takes both from `ai.nimblebrain/run` on `session/new`, and an agent that
-does not gets them as contained text ahead of the turn's first message.
+does not gets them as contained text ahead of the turn's first message. The
+reference agent is driven both ways, so the plain-ACP path every other agent
+takes is held to the same record.
+
+**The reference agent becomes Reflex, a standalone ACP agent.** It is kept
+extractable (it imports the engine and the extension keys, nothing else of the
+platform) and works over plain ACP on its own defaults. `ai.nimblebrain/run` is
+then the published contract between NimbleBrain and Reflex, changed by adding
+fields, never by repurposing one, and the candidate to propose upstream as ACP
+slots for a client's system prompt and prior history.
 
 ## Consequences
 
-- Adding an ACP agent is a driver and a configuration entry. Adding a runtime
-  that is not ACP (an in-process agent SDK, a remote job) is an implementation of
-  the seam. Neither changes the door, the conversation store or the web client.
+- Adding an ACP agent that runs out of process is a driver and a configuration
+  entry. Adding a runtime that is not ACP (an in-process agent SDK, a remote
+  job) is an implementation of the seam. Neither changes the door, the conversation store or the web client.
 - An external runtime runs no spend gate, so it serves chat, not budgeted task
-  runs, until model calls come back through a host-controlled model endpoint
-  (ADR-0047's runtime-hosted model endpoint, or a gateway that meters per run).
+  runs, until its model calls go through a gateway that enforces a run's budget.
+  Each installation serves one tenant, so the gateway meters that tenant; the
+  usage an agent reports in ACP is for display, never the billing record.
 - An external agent manages its own working context within a turn. Between turns
   the door still windows and compacts the history it hands over, so a
   conversation's cost is bounded at turn boundaries even when it is not within
@@ -95,8 +123,6 @@ does not gets them as contained text ahead of the turn's first message.
   conversation content.
 - Every tool call of an external runtime is an HTTP round trip on loopback; the
   projection's lifetime is the run's, so nothing listens after it ends.
-- The native engine still mints its own per-loop run id for its events; an
-  external runtime stamps the door's. Unifying them is a separate change.
 - ACP names a tool call only by a free-text title, so a permission request
   cannot be matched to a tool reliably. A driver declares whether its agent's
   tools are the projection alone; when they are, every request is allowed,

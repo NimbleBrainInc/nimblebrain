@@ -67,6 +67,11 @@ router.get("/b", (c) => c.text("b"));
 const use = (x: unknown) => x;
 use(router);
 `,
+  "no-agent-process.grit": `
+export const a = Bun.spawn(["goose", "acp"]); // flagged
+export const b = Bun.spawnSync(["true"]); // flagged
+export const c = Bun.which("goose");
+`,
 };
 
 const dirs: string[] = [];

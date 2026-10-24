@@ -1,5 +1,7 @@
 /**
- * The driver for Goose (`goose acp`), an agent with its own loop.
+ * The driver for Goose (`goose acp`), an agent with its own loop. Test-only:
+ * it runs Goose as a child of this process, which no installation may do
+ * (ADR-0056), so it serves the live parity eval and nothing in `src/`.
  *
  * Each run gets a Goose process of its own, in a directory of its own that is
  * removed when the run ends, with an environment that names only what Goose
@@ -24,11 +26,23 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { GooseRuntimeConfig } from "../../../config/execution.ts";
-import type { ResolvedRun } from "../../types.ts";
-import type { AcpConnectionTarget, AcpDriver } from "../driver.ts";
-import { spawnStdioAgent } from "../stdio-transport.ts";
-import { historyPrompt } from "../transcript.ts";
+import type { AcpConnectionTarget, AcpDriver } from "../../../src/execution/acp/driver.ts";
+import { historyPrompt } from "../../../src/execution/acp/transcript.ts";
+import type { ResolvedRun } from "../../../src/execution/types.ts";
+import { spawnStdioAgent } from "./stdio-agent-process.ts";
+
+export interface GooseDriverConfig {
+  /** The Goose binary: a path, or a name looked up on PATH. Default: `goose`. */
+  command?: string;
+  /**
+   * Goose's approval mode. `auto` runs tools without asking; `approve` and
+   * `smart_approve` send permission requests, which the runtime answers by
+   * policy. Default: `auto`.
+   */
+  mode?: "auto" | "approve" | "smart_approve";
+  /** The variable holding the provider key Goose is given. Default: `NB_GOOSE_API_KEY`. */
+  apiKeyEnv?: string;
+}
 
 /** Goose's (unstable) method for a session's system prompt. */
 export const GOOSE_SYSTEM_PROMPT_METHOD = "_goose/unstable/session/system-prompt/set";
@@ -55,7 +69,7 @@ export interface GooseDriverDeps {
 }
 
 export function createGooseDriver(
-  config: GooseRuntimeConfig,
+  config: GooseDriverConfig,
   deps: GooseDriverDeps = {},
 ): AcpDriver {
   const env = deps.env ?? process.env;
@@ -110,7 +124,7 @@ export function createGooseDriver(
  * instead of reaching a provider unauthenticated.
  */
 export function gooseEnvironment(
-  config: GooseRuntimeConfig,
+  config: GooseDriverConfig,
   run: ResolvedRun,
   env: Record<string, string | undefined>,
 ): Record<string, string> {

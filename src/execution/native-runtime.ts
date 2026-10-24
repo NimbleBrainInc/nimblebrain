@@ -24,7 +24,7 @@ export function createNativeRuntime(
         io.tools,
         boundAfterStart(io.events, run.runId),
       );
-      return engine.run(run.config, run.system, run.messages, run.tools);
+      return engine.run({ ...run.config, runId: run.runId }, run.system, run.messages, run.tools);
     },
   };
 }

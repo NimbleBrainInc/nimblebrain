@@ -10,8 +10,8 @@ import {
   RUN_META_KEY,
   userMessageToPrompt,
 } from "../../../src/execution/acp/nimblebrain-extension.ts";
-import { spawnStdioAgent } from "../../../src/execution/acp/stdio-transport.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
+import { spawnStdioAgent } from "../../helpers/acp/stdio-agent-process.ts";
 
 // An ACP agent as a real child process: the transport, the environment a
 // driver hands it, and that nothing outlives the run.

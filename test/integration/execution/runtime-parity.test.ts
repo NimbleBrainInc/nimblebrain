@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { LanguageModelV4Message } from "@ai-sdk/provider";
+import { tmpdir } from "node:os";
+import type {
+  LanguageModelV4,
+  LanguageModelV4Message,
+  LanguageModelV4Prompt,
+} from "@ai-sdk/provider";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
 import type {
   EngineEvent,
@@ -9,6 +14,7 @@ import type {
   ToolSchema,
 } from "../../../src/engine/types.ts";
 import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
+import type { AcpDriver } from "../../../src/execution/acp/driver.ts";
 import { createNimbleBrainDriver } from "../../../src/execution/acp/drivers/nimblebrain.ts";
 import { createNimbleBrainAcpAgent } from "../../../src/execution/acp-agent/agent.ts";
 import { createNativeRuntime } from "../../../src/execution/native-runtime.ts";
@@ -17,7 +23,9 @@ import { createEchoModel, type EchoModelResponse } from "../../helpers/echo-mode
 
 // The same resolved run through the native runtime and through ACP to
 // NimbleBrain's own agent must leave the same record: the reply, the tool
-// calls, and events the conversation log can replay.
+// calls, and events the conversation log can replay. The agent is reached two
+// ways: with NimbleBrain's run `_meta`, and over plain ACP, the path every other
+// agent takes (the prompt and history arrive as contained text in the turn).
 
 const LOOKUP: ToolSchema = {
   name: "lookup",
@@ -68,6 +76,44 @@ function resolvedRun(signal?: AbortSignal): ResolvedRun {
   };
 }
 
+/**
+ * The reference agent over plain ACP: no run `_meta` and no prompt of the
+ * driver's own, so the generic runtime sends its transcript prompt and the
+ * agent runs on its own defaults.
+ */
+function plainAcpDriver(resolveModel: () => LanguageModelV4): AcpDriver {
+  return {
+    id: "plain-acp",
+    toolSurface: "projection",
+    async open() {
+      return {
+        target: createNimbleBrainAcpAgent({
+          resolveModel,
+          defaults: {
+            model: "test:echo",
+            maxIterations: 5,
+            maxInputTokens: 100_000,
+            maxOutputTokens: 1_000,
+          },
+        }),
+        cwd: tmpdir(),
+        close: async () => {},
+      };
+    },
+  };
+}
+
+/** A model that keeps every prompt it is sent. */
+function recording(model: LanguageModelV4, prompts: LanguageModelV4Prompt[]): LanguageModelV4 {
+  return {
+    ...model,
+    doStream: (options) => {
+      prompts.push(options.prompt);
+      return model.doStream(options);
+    },
+  };
+}
+
 function runtimes(script: () => EchoModelResponse[]): [string, () => AgentRuntime][] {
   return [
     ["native", () => createNativeRuntime(() => createEchoModel({ responses: script() }))],
@@ -77,6 +123,14 @@ function runtimes(script: () => EchoModelResponse[]): [string, () => AgentRuntim
         createAcpRuntime(
           "nimblebrain-acp",
           createNimbleBrainDriver({ resolveModel: () => createEchoModel({ responses: script() }) }),
+        ),
+    ],
+    [
+      "acp:plain",
+      () =>
+        createAcpRuntime(
+          "plain-acp",
+          plainAcpDriver(() => createEchoModel({ responses: script() })),
         ),
     ],
   ];
@@ -115,6 +169,36 @@ describe.each(runtimes(() => structuredClone(SCRIPT)))("%s runtime", (_name, mak
       done?.data.id,
     ]);
     expect(sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["complete"]);
+  });
+});
+
+describe("acp runtime over plain ACP", () => {
+  test("the door's prompt and history reach the agent's model as contained context", async () => {
+    const prompts: LanguageModelV4Prompt[] = [];
+    const runtime = createAcpRuntime(
+      "plain-acp",
+      plainAcpDriver(() => recording(createEchoModel({ responses: [{ text: "ok" }] }), prompts)),
+    );
+    const run = resolvedRun();
+    run.messages = [
+      { role: "user", content: [{ type: "text", text: "Remember 7." }] },
+      { role: "assistant", content: [{ type: "text", text: "Noted." }] },
+      ...run.messages,
+    ];
+
+    const result = await runtime.execute(run, {
+      tools: new StaticToolRouter([LOOKUP], () => ({ content: [], isError: false })),
+      events: collect(),
+    });
+
+    expect(result.stopReason).toBe("complete");
+    const sent = JSON.stringify(prompts[0]);
+    expect(sent).toContain("<host-instructions>");
+    expect(sent).toContain("You are a test agent.");
+    expect(sent).toContain("<conversation-history>");
+    expect(sent).toContain("User: Remember 7.");
+    expect(sent).toContain("Assistant: Noted.");
+    expect(sent).toContain("What is the answer?");
   });
 });
 

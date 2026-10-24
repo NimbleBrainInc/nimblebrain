@@ -1178,7 +1178,7 @@ export class AgentEngine {
     let cumulativeLlmMs = 0;
     let output = "";
     const allToolCalls: ToolCallRecord[] = [];
-    const runId = crypto.randomUUID();
+    const { runId = crypto.randomUUID() } = config;
     const skills: SkillDelivery = {
       runId,
       candidates: connectorSkillCandidates,

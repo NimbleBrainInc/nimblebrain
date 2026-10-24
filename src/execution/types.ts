@@ -49,10 +49,7 @@ export interface RuntimeCapabilities {
  * a runtime that speaks a protocol translates at its own edge.
  */
 export interface ResolvedRun {
-  /**
-   * The door's run id. An external runtime stamps it on every event it emits;
-   * the native engine still mints its own per-loop id for its events.
-   */
+  /** The door's run id. Every runtime stamps it on every event it emits. */
   runId: string;
   /** The conversation the run belongs to, or `null` for a one-shot run. */
   conversationId: string | null;

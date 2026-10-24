@@ -137,6 +137,10 @@
                     "message": "The kernel stays vendor-neutral OpenTelemetry. A Sentry SDK belongs in web/."
                   },
                   {
+                    "group": ["node:child_process", "child_process"],
+                    "message": "An agent runtime never spawns a process (ADR-0056, src/execution/AGENTS.md)."
+                  },
+                  {
                     "group": [
                       "{../,../../,../../../}runtime/**",
                       "{../,../../,../../../}tools/**",
@@ -177,6 +181,7 @@
     },
     {
       "includes": ["src/execution/**/*.ts"],
+      "plugins": ["./biome-plugins/no-agent-process.grit"],
       "linter": {
         "rules": {
           "style": {

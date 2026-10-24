@@ -441,6 +441,12 @@ export interface SpendGate {
 
 /** Engine configuration per run. */
 export interface EngineConfig {
+  /**
+   * The run's id, stamped on every event the engine emits. The door passes its
+   * own, so a run's events and its `execution.bound` name the same run. Absent,
+   * the engine mints one.
+   */
+  runId?: string;
   model: string;
   maxIterations: number;
   maxInputTokens: number;

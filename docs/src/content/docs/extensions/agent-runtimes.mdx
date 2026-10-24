@@ -24,19 +24,11 @@ The client advertises no filesystem and no terminal, so an agent cannot ask Nimb
 
 ### Permissions
 
-NimbleBrain answers an agent's permission requests by policy; there is no prompt to a person. An agent configured so that its only tools come from the run's MCP server (Goose is) has every request allowed, because the call is checked again by that server when it runs. For any other agent a request is allowed only when its title names one of the run's tools, and rejected otherwise.
+NimbleBrain answers an agent's permission requests by policy; there is no prompt to a person. An agent configured so that its only tools come from the run's MCP server has every request allowed, because the call is checked again by that server when it runs. For any other agent a request is allowed only when its title names one of the run's tools, and rejected otherwise.
 
-## Goose
+## Where an agent runs
 
-The `goose` driver runs [Goose](https://github.com/aaif-goose/goose) with `goose acp`, one process per run, in a directory of its own that is removed when the run ends:
-
-- **Tools:** Goose is given the run's MCP server and nothing else. Its built-in extensions (shell, file editing) are not started.
-- **Environment:** only Goose's provider, model, one provider key (read from `apiKeyEnv`), and paths inside the run's directory. Goose's own config and keyring are not read, and its telemetry is off.
-- **System prompt:** NimbleBrain's composed prompt replaces Goose's own, through Goose's session system-prompt method.
-- **Model:** the run's own model, split into Goose's provider and model. Providers with a key mapping: Anthropic, OpenAI, Google and xAI.
-- **History:** Goose takes no history it did not produce, so the conversation so far reaches it as contained text ahead of the turn's message.
-
-Each run starts a Goose process, which adds a few seconds of startup to every turn.
+An agent runs in NimbleBrain's own process (the `nimblebrain` driver) or outside the installation. NimbleBrain never starts an agent as a child process: an agent with its own loop, run beside the runtime, would share its user, network and secrets. An external agent such as Goose is reached once it runs out of process, over a remote ACP transport, with its tools on a run-scoped endpoint and its model calls through a model gateway the installation controls.
 
 ## What a non-native runtime does not do
 
