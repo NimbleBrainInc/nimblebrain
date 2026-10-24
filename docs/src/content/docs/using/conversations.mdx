@@ -37,12 +37,11 @@ Conversations are stored as append-only JSONL (JSON Lines) files using event sou
   "updatedAt": "2026-03-25T10:42:00.000Z",
   "title": "Weekly meeting summary",
   "lastModel": "anthropic:claude-sonnet-4-6",
-  "ownerId": "user_abc123",
-  "workspaceId": "ws_3f9a1c7e0b2d4856"
+  "ownerId": "user_abc123"
 }
 ```
 
-Each conversation has exactly one owner (`ownerId`), the single authorization principal. Token totals and cost are **not** stored in line 1 — they are derived at read time by scanning `llm.response` events, which avoids drift between a cached total and what re-aggregating the events would produce.
+Each conversation has exactly one owner (`ownerId`), the single authorization principal. Line 1 names no workspace: the conversation's directory supplies its workspace binding. Token totals and cost are **not** stored in line 1 — they are derived at read time by scanning `llm.response` events, which avoids drift between a cached total and what re-aggregating the events would produce.
 
 ### Events (lines 2+)
 
