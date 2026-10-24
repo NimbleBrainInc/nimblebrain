@@ -328,6 +328,23 @@ export const RunDonePayload = Type.Object({
 });
 export type RunDonePayload = Static<typeof RunDonePayload>;
 
+/**
+ * The agent runtime a run executes on, and that runtime's own session for it.
+ * A conversation's runs may each execute on a different runtime; this is the
+ * map from a run to where it ran.
+ */
+export const ExecutionBoundPayload = Type.Object({
+  runId: Type.String(),
+  runtime: Type.String({ description: "The runtime's name in `execution.runtimes`, or `native`." }),
+  runtimeSessionId: Type.Optional(
+    Type.String({
+      description:
+        "The runtime's own session id (an ACP sessionId), when it has one. Meaningful to that runtime only.",
+    }),
+  ),
+});
+export type ExecutionBoundPayload = Static<typeof ExecutionBoundPayload>;
+
 /** A run failed. */
 export const RunErrorPayload = Type.Object({
   runId: Type.String(),
@@ -678,6 +695,7 @@ export interface EngineEventPayloads {
   "run.start": RunStartPayload;
   "run.done": RunDonePayload;
   "run.error": RunErrorPayload;
+  "execution.bound": ExecutionBoundPayload;
   "text.delta": TextDeltaPayload;
   "reasoning.delta": TextDeltaPayload;
   "tool.preparing": ToolPreparingPayload;

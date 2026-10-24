@@ -314,6 +314,7 @@ export type ConversationEventType =
   | "tool.progress"
   | "run.done"
   | "run.error"
+  | "execution.bound"
   | "skills.loaded"
   | "context.assembled"
   | "connector.skill.injected"
@@ -457,6 +458,15 @@ export interface TitleChangeEvent {
   ts: string;
   type: "metadata.title";
   title: string | null;
+}
+
+/** The agent runtime a run executed on. See `ExecutionBoundPayload`. */
+export interface ExecutionBoundEvent {
+  ts: string;
+  type: "execution.bound";
+  runId: string;
+  runtime: string;
+  runtimeSessionId?: string;
 }
 
 export interface SkillsLoadedEvent {
@@ -621,6 +631,7 @@ export type ConversationEvent =
   | ToolProgressEvent
   | RunDoneEvent
   | RunErrorEvent
+  | ExecutionBoundEvent
   | SkillsLoadedEvent
   | ContextAssembledEvent
   | ConnectorSkillInjectedEvent

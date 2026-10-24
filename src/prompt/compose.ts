@@ -26,7 +26,9 @@ export type ContainmentTag =
   | "activated-skill"
   | "skill-instructions"
   | "run-input"
-  | "judge-feedback";
+  | "judge-feedback"
+  | "host-instructions"
+  | "conversation-history";
 
 /**
  * Wrap untrusted `body` in `<tag>…</tag>`, neutralising every closing form of

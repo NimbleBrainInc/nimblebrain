@@ -1,0 +1,51 @@
+---
+title: Agent Runtimes
+description: How NimbleBrain runs a turn on an agent other than its own engine, over the Agent Client Protocol.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="caution">
+  Experimental. The interface below may change between releases.
+</Aside>
+
+A turn normally runs on NimbleBrain's own engine. An operator can name another **agent runtime** in [`execution`](/config/nimblebrain-json/#execution), and runs then execute there. The first kind of runtime is any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP v1).
+
+## What stays with NimbleBrain
+
+The runtime runs the loop: it decides when to call the model, which tool to call next, and when it is done. Everything around the loop stays with NimbleBrain, whichever runtime runs it:
+
+- **The conversation.** Every turn is recorded in NimbleBrain's own log, in the same form as a native turn. Each new turn hands the agent the history from that log, so a conversation can move between runtimes. An agent's own session store is never the record.
+- **Tools.** The agent reaches tools through one MCP server NimbleBrain opens for that run and closes when it ends. It serves the run's tools and nothing else, and every call goes through the same workspace wall, tool allow-list and permission checks as a native call. The tool record comes from that server, not from the agent's description of what it did.
+- **The prompt, skills and model choice.** NimbleBrain composes the system prompt and picks the model as it does for a native run, then hands both to the agent.
+- **Cancellation and errors.** Stop cancels the agent's turn; an agent that fails ends the run with an error, never the server.
+
+The client advertises no filesystem and no terminal, so an agent cannot ask NimbleBrain to read, write or run anything.
+
+### Permissions
+
+NimbleBrain answers an agent's permission requests by policy; there is no prompt to a person. An agent configured so that its only tools come from the run's MCP server has every request allowed, because the call is checked again by that server when it runs. For any other agent a request is allowed only when its title names one of the run's tools, and rejected otherwise.
+
+## Where an agent runs
+
+An agent runs in NimbleBrain's own process (the `nimblebrain` driver) or outside the installation. NimbleBrain never starts an agent as a child process: an agent with its own loop, run beside the runtime, would share its user, network and secrets. An external agent such as Goose is reached once it runs out of process, over a remote ACP transport, with its tools on a run-scoped endpoint and its model calls through a model gateway the installation controls.
+
+## What a non-native runtime does not do
+
+These live inside NimbleBrain's own loop, so an external agent does its own version or none:
+
+| Native behaviour | On another runtime |
+|---|---|
+| Spend accounts and the run's input-token cap checked before every model call | Not checked. A run with a budget or an input-token cap is refused instead. |
+| Context windowing and compaction within a turn | The agent's own. Between turns, NimbleBrain still windows and compacts the history it hands over. |
+| Tool promotion (`nb__manage_tools`) and tool tiers | Not available. The agent sees the run's tools as one flat list. |
+| The loop guard that stops a tool called over and over | Not applied. |
+| Prompt caching policy | The agent's own. |
+
+## NimbleBrain's own agent
+
+The `nimblebrain` driver runs NimbleBrain's engine as an ACP agent, the reference every other runtime is held to. The driver and that agent pass the door's prompt, history and limits to each other in their own `_meta`; that is a private format between the two, not something another agent implements. Any other ACP agent gets the prompt and history as contained text ahead of the turn's first message.
+
+## Related
+
+- [`execution` in nimblebrain.json](/config/nimblebrain-json/#execution): choosing the runtime

@@ -24,6 +24,7 @@ Namespaces (`src/observability/log.ts`):
 | `sse` | Every `tool.progress` / `tool.task_status` / `tool.done` / `server.notification` entering the runtime sink wrap | "Are progress events and relayed notifications reaching the SSE layer?" |
 | `auth` | Identity-provider verify rejections at debug volume (the routine, self-healing reasons `no_token` / `token_expired`). Anomalous reasons — `org_mismatch`, `bad_signature`, `jwks_unavailable`, etc. — log at `warn` and need no flag. | "Why is a user being 401'd / involuntarily logged out?" |
 | `notify` | Notification envelopes, outbox declarations and poll results dropped at parse, with the field that failed; sweeps skipped because a workspace is already being read | "Why is this connector's event not in the inbox?" |
+| `execution` | An external agent runtime's stderr, and every `tool_call` update an ACP agent sends (the run's tool record comes from the tool projection, so these are the agent's own account) | "What did the agent say on stderr?" "Did the agent run a tool outside the platform?" |
 
 Add a namespace by calling `log.debug("ns", "message")` (from `src/observability/log.ts`). Keep this table and the `log.ts` doc comment in sync.
 
