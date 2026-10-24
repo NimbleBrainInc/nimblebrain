@@ -23,6 +23,7 @@ function writeTmpFile(name: string, lines: string[]): string {
 function makeMeta(overrides: Record<string, unknown> = {}) {
   return {
     model: "anthropic:claude-sonnet-4-6",
+    ownerId: "usr_test",
     id: "conv_test001",
     createdAt: "2025-01-01T00:00:00.000Z",
     updatedAt: "2025-01-01T00:05:00.000Z",

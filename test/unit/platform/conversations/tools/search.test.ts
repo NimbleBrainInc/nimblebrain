@@ -39,6 +39,7 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
 
   const meta = JSON.stringify({
     model: "anthropic:claude-sonnet-4-6",
+    ownerId: "usr_test",
     id,
     createdAt,
     updatedAt,

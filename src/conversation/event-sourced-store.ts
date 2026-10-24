@@ -132,7 +132,7 @@ const CONVERSATION_EVENT_TYPES = new Set([
 /**
  * Build the base Conversation from a parsed line-0 header record (ownerId already
  * validated). The title comes from `metadata.title` events (`applyDerivedMeta`),
- * and the workspace from the directory the file is stored under, never line 1.
+ * and the workspace from the directory the file is stored under.
  */
 function parseConversationHeader(
   raw: Record<string, unknown>,
@@ -486,7 +486,9 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
       ...(options.metadata ? { metadata: options.metadata } : {}),
     };
     const path = this.path(id);
-    await writeFile(path, `${JSON.stringify(conversation)}\n`);
+    // Line 1 holds no workspace: the directory the file is stored under is the binding.
+    const { workspaceId: _workspaceId, ...header } = conversation;
+    await writeFile(path, `${JSON.stringify(header)}\n`);
     this.index.invalidate();
     this.onMutate?.({ id, filePath: path });
     return conversation;

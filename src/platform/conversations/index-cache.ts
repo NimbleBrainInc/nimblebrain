@@ -50,14 +50,13 @@ export interface IndexEntry {
   preview: string;
   filePath: string;
   /**
-   * Single-owner principal. A header without an `ownerId` indexes as `null`,
-   * which the dispatcher treats as inaccessible (no synthesis).
+   * Single-owner principal. A file whose header has no `ownerId` is not
+   * indexed: `load()` refuses it, so no caller could open it.
    */
-  ownerId: string | null;
+  ownerId: string;
   /**
    * The workspace the conversation lives in, taken from its DIRECTORY — the
-   * authoritative binding. The `workspaceId` on line 1 is a denormalised
-   * convenience and is deliberately not read here, so this wall and the
+   * only binding (line 1 holds none), so this wall and the
    * `ConversationLocator`'s agree by construction.
    */
   workspaceId: string;
@@ -329,6 +328,8 @@ export class ConversationIndex {
     }
     this.scans.set(filePath, scan);
     const header = headerOfScan(scan);
+    const ownerId = header.meta.ownerId;
+    if (!ownerId) return false;
 
     const entry: IndexEntry = {
       id: header.meta.id,
@@ -341,7 +342,7 @@ export class ConversationIndex {
       lastModel: header.meta.lastModel,
       preview: header.preview,
       filePath,
-      ownerId: header.meta.ownerId ?? null,
+      ownerId,
       workspaceId: wsId,
     };
 

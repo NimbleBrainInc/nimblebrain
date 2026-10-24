@@ -20,7 +20,8 @@ interface ConvSpec {
   totalInputTokens?: number;
   totalOutputTokens?: number;
   lastModel?: string | null;
-  ownerId?: string;
+  /** `null` writes a header with no owner. */
+  ownerId?: string | null;
   workspaceId?: string | null;
   messages?: FixtureTurn[];
 }
@@ -32,7 +33,7 @@ function writeConvFile(spec: ConvSpec): string {
     createdAt: spec.createdAt,
     updatedAt: spec.updatedAt,
     lastModel: spec.lastModel ?? null,
-    ...(spec.ownerId ? { ownerId: spec.ownerId } : {}),
+    ...(spec.ownerId === null ? {} : { ownerId: spec.ownerId ?? "usr_test" }),
     ...(spec.workspaceId ? { workspaceId: spec.workspaceId } : {}),
   };
 
@@ -178,6 +179,28 @@ describe("build", () => {
     expect(result.conversations).toEqual([]);
     expect(result.nextCursor).toBeNull();
     expect(result.totalCount).toBe(0);
+  });
+
+  test("skips a file whose header has no owner", async () => {
+    writeConvFile({
+      id: "conv_owned",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      title: null,
+    });
+    writeConvFile({
+      id: "conv_ownerless",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      title: null,
+      ownerId: null,
+    });
+
+    const index = new ConversationIndex();
+    await index.build(TMP_DIR);
+
+    expect(index.size).toBe(1);
+    expect(index.get("conv_ownerless")).toBeUndefined();
   });
 
   test("skips non-JSONL files and malformed files", async () => {
