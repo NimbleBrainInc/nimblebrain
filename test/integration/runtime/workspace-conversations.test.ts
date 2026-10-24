@@ -137,7 +137,7 @@ describe("conversation persistence — workspace layout", () => {
     await runtime.shutdown();
   });
 
-  it("conversation metadata includes ownerId and a workspace breadcrumb", async () => {
+  it("conversation metadata includes ownerId, and the workspace is the directory", async () => {
     const workDir = join(testDir, "ws-meta");
     mkdirSync(workDir, { recursive: true });
 
@@ -171,11 +171,11 @@ describe("conversation persistence — workspace layout", () => {
     const metadataLine = JSON.parse(content.split("\n")[0]!);
 
     expect(metadataLine.ownerId).toBe("user_alice");
-    // The metadata `workspaceId` is the session's workspace — here the owner's
-    // default one, provisioned with an opaque id. Per-call workspaceId lives
-    // on tool.done events.
-    expect(metadataLine.workspaceId).toBe(await defaultWorkspaceId(runtime, identity.id));
-    expect(metadataLine.workspaceId).toMatch(/^ws_[0-9a-f]{16}$/);
+    // The workspace is the directory the file is stored under; line 1 names none.
+    expect(metadataLine.workspaceId).toBeUndefined();
+    const wsId = await defaultWorkspaceId(runtime, identity.id);
+    expect(wsId).toMatch(/^ws_[0-9a-f]{16}$/);
+    expect(convFile).toContain(`/workspaces/${wsId}/conversations/`);
 
     await runtime.shutdown();
   });

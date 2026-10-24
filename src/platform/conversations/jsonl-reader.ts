@@ -1077,8 +1077,7 @@ function listWorkspaceConversationFiles(convRoot: string): string[] {
  * A conversation file plus the workspace it lives in.
  *
  * `wsId` comes from the directory the walk descended through, which is the
- * authoritative binding — the `workspaceId` on line 1 is a denormalised
- * convenience and can disagree.
+ * only workspace binding: line 1 holds none.
  */
 export interface ConversationFileRef {
   filePath: string;

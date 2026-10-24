@@ -54,6 +54,7 @@ interface ConvOptions {
 function writeConv(opts: ConvOptions): void {
   const meta = {
     model: "anthropic:claude-sonnet-4-6",
+    ownerId: "usr_test",
     id: opts.id,
     createdAt: opts.createdAt,
     updatedAt: opts.updatedAt ?? opts.createdAt,
