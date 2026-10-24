@@ -32,8 +32,8 @@ integration end to end:
 | | Capability | What it does for the integration |
 |---|---|---|
 | 1 | Lifecycle | Creates the vendor-side resource when the connector is installed, and releases it when the connector is removed |
-| 2 | [Inbound webhooks](/extensions/webhooks/) | Receives the vendor's events about that resource |
-| 3 | [Notifications](/extensions/notifications/) | Tells the workspace what happened: the domain went active, a reply landed |
+| 2 | [Inbound webhooks](/host/webhooks/) | Receives the vendor's events about that resource |
+| 3 | [Notifications](/host/notifications/) | Tells the workspace what happened: the domain went active, a reply landed |
 
 ## The two events
 
@@ -419,7 +419,7 @@ asymmetry: Kubernetes `lifecycle: { postStart, preStop }`, VS Code
   extension follows, and the registry.
 - [Protocol support](/mcp/protocol-support/): the client capabilities the host
   advertises, on each era.
-- [Inbound webhooks](/extensions/webhooks/): receiving the vendor's events about
+- [Inbound webhooks](/host/webhooks/): receiving the vendor's events about
   what `ready` set up.
-- [Notifications](/extensions/notifications/): telling the host about facts you
+- [Notifications](/host/notifications/): telling the host about facts you
   learn later, which is the other half of a server that does work between calls.

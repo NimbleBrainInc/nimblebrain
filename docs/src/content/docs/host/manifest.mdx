@@ -1,11 +1,11 @@
 ---
 title: Manifest Reference
-description: Complete reference for the _meta["ai.nimblebrain/host"] host-metadata extension.
+description: Complete reference for the _meta["ai.nimblebrain/host"] block a server declares in its catalog entry.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-NimbleBrain reads host metadata from the `_meta["ai.nimblebrain/host"]` key on your server's catalog entry — the upstream MCP registry [`ServerDetail`](https://github.com/modelcontextprotocol/registry) record an operator adds to the [connectors catalog](/config/connectors-catalog/). `ai.nimblebrain/host` is one [extension](/extensions/overview/) with several capabilities. This page gives the shape of each field; the page linked from each row says what the host does with it. The counts your app shows on the workspace overview are not declared here: your server reports them over MCP with the [facets extension](/extensions/facets/).
+NimbleBrain reads host metadata from the `_meta["ai.nimblebrain/host"]` key on your server's catalog entry — the upstream MCP registry [`ServerDetail`](https://github.com/modelcontextprotocol/registry) record an operator adds to the [connectors catalog](/config/connectors-catalog/). `ai.nimblebrain/host` is one block with several fields, each a grant the operator reviews ([Host integration](/host/overview/)). This page gives the shape of each field; the page linked from each row says what the host does with it. The counts your app shows on the workspace overview are not declared here: your server reports them over MCP with the [facets extension](/extensions/facets/).
 
 The block has a published JSON Schema at
 [`schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json`](https://schemas.nimblebrain.ai/v1/nimblebrain-host.schema.json)
@@ -48,10 +48,10 @@ servers:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `host_version` | `string` | Yes | Contract major version. Write `"1.0"`. It changes only on a breaking change: every field in this table is part of `1.0`, and a block is turned on by declaring it, not by the version. The host accepts any `1.x` and skips a catalog connector that declares another major. |
-| `placements` | `PlacementDeclaration[]` | No | Shell layout placement declarations: sidebar items, main views, and the settings section. Shape [below](#placementdeclaration); behavior in [Placements & navigation](/extensions/placements/) and [Settings sections](/extensions/settings-sections/). |
-| `hooks` | `HookDeclaration[]` | No | Inbound event streams your server accepts from a vendor over plain HTTPS, one entry per vendor: `{ vendor, route, register_tool, description?, header_renames? }`. Read from a catalog entry only. A `route` may not be your MCP endpoint's path or a path under it. See [Inbound webhooks](/extensions/webhooks/). |
-| `notifications` | `object` | No | The outbox your server exposes, one resource the host polls for facts nobody asked for: `{ resource, description? }`. See [Notifications](/extensions/notifications/). |
-| `admin_tools` | `string[]` | No | Names of tools on your server that only a workspace admin may call, at most 64. Read from a catalog entry only. See [Admin-only tools](/extensions/admin-tools/). |
+| `placements` | `PlacementDeclaration[]` | No | Shell layout placement declarations: sidebar items, main views, and the settings section. Shape [below](#placementdeclaration); behavior in [Placements & navigation](/host/placements/) and [Settings sections](/host/settings-sections/). |
+| `hooks` | `HookDeclaration[]` | No | Inbound event streams your server accepts from a vendor over plain HTTPS, one entry per vendor: `{ vendor, route, register_tool, description?, header_renames? }`. Read from a catalog entry only. A `route` may not be your MCP endpoint's path or a path under it. See [Inbound webhooks](/host/webhooks/). |
+| `notifications` | `object` | No | The outbox your server exposes, one resource the host polls for facts nobody asked for: `{ resource, description? }`. See [Notifications](/host/notifications/). |
+| `admin_tools` | `string[]` | No | Names of tools on your server that only a workspace admin may call, at most 64. Read from a catalog entry only. See [Admin-only tools](/host/admin-tools/). |
 
 The block has no `name`, `icon`, `category` or `primaryView`; a block that still declares them loads, and the host ignores them like any unknown key. A connector's display name is its catalog entry's `title` (or `name`), and its icon the entry's `icons`, the fields the MCP Registry `ServerDetail` already defines. A sidebar entry's label is its placement's own `label`.
 
@@ -61,7 +61,7 @@ Each entry in the `placements` array:
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `slot` | `string` | Yes | — | Shell slot to fill: `"sidebar.apps"` (or any `"sidebar.<group>"`), `"sidebar"`, `"sidebar.bottom"`, `"main"`, or `"settings"`. See [Placements](/extensions/placements/). |
+| `slot` | `string` | Yes | — | Shell slot to fill: `"sidebar.apps"` (or any `"sidebar.<group>"`), `"sidebar"`, `"sidebar.bottom"`, `"main"`, or `"settings"`. See [Placements](/host/placements/). |
 | `resourceUri` | `string` | Yes | — | `ui://` URI served by this MCP server. |
 | `priority` | `number` | No | `100` | Sort order within the slot. Lower values appear first. |
 | `label` | `string` | No | — | Human-readable label for sidebar items. Ignored for `"settings"`. |

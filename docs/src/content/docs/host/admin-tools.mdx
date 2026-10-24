@@ -10,7 +10,7 @@ the person or their role. When a tool changes how your connector behaves for
 everyone in the workspace, name it in `admin_tools` and the host enforces the
 role for you.
 
-`admin_tools` is a capability of the [`ai.nimblebrain/host`](/apps/manifest/)
+`admin_tools` is a capability of the [`ai.nimblebrain/host`](/host/manifest/)
 block.
 
 ```json
@@ -53,14 +53,14 @@ A member of that workspace whose role is `admin`. Nothing else:
 - A run acts as the identity it was started under, and is checked as that
   identity.
 
-This is the same rule as the [settings section](/extensions/settings-sections/)'s
+This is the same rule as the [settings section](/host/settings-sections/)'s
 `canManage` flag and the host's own controls on the connector's settings page.
 
 ## Rules
 
 - **Catalog only.** The host reads the list from your server's
   [connectors catalog](/config/connectors-catalog/) entry, like
-  [`hooks`](/extensions/webhooks/). A tool's own `_meta`, an MCPB bundle
+  [`hooks`](/host/webhooks/). A tool's own `_meta`, an MCPB bundle
   manifest, or anything else your running server sends does not change it. So a
   later build of your server cannot widen access by dropping the declaration.
 - **It only narrows.** It removes callers and grants nothing.
@@ -102,7 +102,7 @@ as proof that a human reviewed it.
 ## Pairing it with a settings section
 
 A tool that changes connector-wide behavior is usually driven from your
-[settings section](/extensions/settings-sections/). The section shows every
+[settings section](/host/settings-sections/). The section shows every
 member the page, and uses `hostContext.connector.canManage` to disable the
 controls for anyone who is not an admin. That flag only shapes the UI.
 `admin_tools` is what enforces it, for the section's own calls and for every
@@ -110,6 +110,6 @@ other path to the tool.
 
 ## Related
 
-- [Settings sections](/extensions/settings-sections/): the UI side of the same rule
-- [Manifest Reference](/apps/manifest/): the `admin_tools` field in the `ai.nimblebrain/host` block
+- [Settings sections](/host/settings-sections/): the UI side of the same rule
+- [Manifest Reference](/host/manifest/): the `admin_tools` field in the `ai.nimblebrain/host` block
 - [Connectors](/using/connectors/): tool permissions an admin sets per workspace

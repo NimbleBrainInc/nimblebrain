@@ -1,11 +1,16 @@
 ---
 title: Extensions
-description: What an MCP server can do on NimbleBrain that plain MCP cannot, the rules every ai.nimblebrain/* extension follows, and the registry of extensions grouped by the parties each one connects.
+description: The ai.nimblebrain/* MCP extensions a server negotiates with the host on the wire, the rules every one follows, and why each exists.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-A server written to the [Model Context Protocol](https://modelcontextprotocol.io) specification works on NimbleBrain without modification. The extensions in this section are additions for things the specification does not cover yet. A server that ignores all of them still works; one that uses them can do more.
+A server written to the [Model Context Protocol](https://modelcontextprotocol.io) specification works on NimbleBrain without modification. The extensions in this section are additions to the protocol for things the specification does not cover yet: they travel in MCP messages, are negotiated between the server and the host, and could be implemented by any host. A server that ignores all of them still works; one that uses them can do more.
+
+Two other kinds of `ai.nimblebrain/*` contract are documented elsewhere, because different parties agree to them:
+
+- **[Host integration](/host/overview/)**: what a server asks NimbleBrain to grant it (pages, a settings section, admin-only tools, webhooks, a notification outbox), declared in its catalog entry and reviewed by the operator. It never travels in an MCP message.
+- **[App bridge extensions](/apps/bridge/#nimblebrain-extensions-ainimblebrain)**: methods an app's view uses inside the shell, beside the MCP Apps specification's own.
 
 ## What a server can do here
 
@@ -15,19 +20,11 @@ Each line is one capability, and each links to its page. The last column names t
 |---|---|---|
 | [Lifecycle](/extensions/lifecycle/) | Told when it is installed into a workspace and just before it is removed, so it can set up and release per-workspace state it holds elsewhere | `ai.nimblebrain/lifecycle` |
 | [Facets](/extensions/facets/) | Counts of work waiting on someone, shown on the workspace overview | `ai.nimblebrain/facets` |
-| [Notifications](/extensions/notifications/) | Facts nobody asked for, delivered to the workspace inbox, the agent, and an admin's routes | `ai.nimblebrain/host` (`notifications`) and `ai.nimblebrain/notification` |
-| [Inbound webhooks](/extensions/webhooks/) | A URL a vendor can deliver events to, forwarded to your server | `ai.nimblebrain/host` (`hooks`) |
-| [Settings sections](/extensions/settings-sections/) | Your own settings UI on the connector's settings page | `ai.nimblebrain/host` (`placements`, `settings` slot) |
-| [Admin-only tools](/extensions/admin-tools/) | Tools only a workspace admin may call, enforced by the host on every path | `ai.nimblebrain/host` (`admin_tools`) |
-| [Placements & navigation](/extensions/placements/) | A page in the shell and an entry in the workspace's sidebar | `ai.nimblebrain/host` (`placements`) |
 | [Host resources](/extensions/host-resources/) | Workspace files read by URI, instead of pasted into a tool argument | `ai.nimblebrain/host-resources` |
 | [Resource arguments](/extensions/resource-arguments/) | Resources served in the workspace, such as another server's records, named by URI in your tool's arguments and delivered with the call as their server returned them | `ai.nimblebrain/resource-arguments` |
-| [App bridge extensions](/apps/bridge/#nimblebrain-extensions-ainimblebrain) | From your app's view: ask for a file, move the shell, forward keyboard shortcuts | `ai.nimblebrain/request-file`, `action`, `keydown` |
-| [Theme tokens](/apps/theming/) | From your app's view: the accent and processing colours, which the spec has no theme key for, refreshed on every theme toggle | `ai.nimblebrain/styles` (a host-context field) |
+| [Notification events](/host/notifications/#the-ainimblebrainnotification-block) | The title, body and level the host renders an outbox event with (the outbox itself is [declared in the catalog](/host/notifications/)) | `ai.nimblebrain/notification` |
 
 [Reserved keys](/extensions/reserved-keys/) are the other half of the namespace: `ai.nimblebrain/*` keys only the host sets, which a server must not send.
-
-`ai.nimblebrain/host` is **one** extension, the block on your catalog entry, with several capabilities. The [Manifest Reference](/apps/manifest/) lists its fields; the pages above describe what each field does.
 
 ## Why extensions exist
 
@@ -66,44 +63,11 @@ Each entry names the parties the extension connects, its identifier, and why it 
 | [`ai.nimblebrain/host-resources`](/extensions/host-resources/) | Host → server (capability), then server → host (requests), on 2025-era connections only | MCP resources flow from server to client only. A server that needs a file the user gave the workspace would otherwise have it pasted into a tool argument by the model: slow, expensive in tokens, and capped by the context window. With this extension, the server reads the file from the host by URI. |
 | [`ai.nimblebrain/resource-arguments`](/extensions/resource-arguments/) | Host → server (capability), server → host (marked tools), then host → server (contents in the `tools/call` `_meta`), on both eras | A tool that needs a resource served in its workspace would otherwise have the model copy it into an argument. The motivating case is a server that must check a record another server owns: without this it calls that server directly, coupling the two, or trusts the model's copy. The tool marks which arguments hold resource URIs and which schemes it accepts; before the call, the host reads each URI from the server in the same workspace that serves it and sends the contents with the call. |
 
-### Between an operator's catalog and the host
-
-These keys are metadata on a server's entry in the [connectors catalog](/config/connectors-catalog/), which uses the MCP Registry's `ServerDetail` format. They never travel in an MCP message.
-
-The catalog holds what a server must not grant itself: a declaration that could change what someone other than the server can do, or what they are exposed to, is reviewed by the operator before it takes effect, and a declaration that describes only the server's own behavior is negotiated on the wire instead.
-
-| Extension | Authored by | Why it exists |
-|---|---|---|
-| [`ai.nimblebrain/host`](/apps/manifest/) | The server's publisher | What the server asks the host to grant it. The [webhooks it accepts](/extensions/webhooks/) open a public URL on the host that forwards to the server with a workspace credential. Its [admin-only tools](/extensions/admin-tools/) decide which tools a workspace's members may call, and dropping a name would hand them one. Its [placements](/extensions/placements/), the [settings section](/extensions/settings-sections/) included, claim routes and entries in a shell the user and other apps share. The block also carries the [notification outbox](/extensions/notifications/) until the MCP Events extension ships. |
-| [`ai.nimblebrain/connector`](/config/connectors-catalog/) | The operator | How to install the server: how it authenticates (DCR, a static OAuth client, or a brokered provider), which secrets the workspace supplies, and how it is tagged in Browse. This is decided by whoever runs the platform, not by the server. |
-
 ### Between a server's events and the host
 
 | Extension | Direction | Why it exists |
 |---|---|---|
-| [`ai.nimblebrain/notification`](/extensions/notifications/#the-ainimblebrainnotification-block) | Server → host, on an outbox event | A server that learns something nobody asked for (a reply arrived, a job finished) publishes it as an event on its outbox resource. The host renders and routes these events to people. This block gives the host the title, body, and level to render them with. The event itself follows the shape of the MCP triggers-and-events proposal. |
-
-### Between an app view and the host
-
-These are methods on the [MCP App Bridge](/apps/bridge/#nimblebrain-extensions-ainimblebrain), used by an app's `ui://` view running inside the shell. An app hands the agent its state with the specification's `ui/update-model-context`; there is no NimbleBrain equivalent.
-
-| Extension | Direction | Why it exists |
-|---|---|---|
-| [`ai.nimblebrain/request-file`](/apps/bridge/#ainimblebrainrequest-file) | App → host | The MCP Apps specification can hand a user a file (`ui/download-file`) but cannot ask for one. A sandboxed iframe cannot reach the workspace's file store, so the host opens the picker and stores the chosen files for the app. |
-| [`ai.nimblebrain/upload-files`](/apps/bridge/#ainimblebrainupload-files) | App → host | Files dropped on an app's view are already in the app, so there is nothing to pick; a sandboxed iframe still cannot reach the file store, and a tool call's JSON arguments cannot carry them. The app hands the `File`s to the host, which stores them as it stores a pick. Offered only to the platform's Files app, since nothing the user does stands between the app and the store. |
-| [`ai.nimblebrain/open`](/apps/bridge/#ainimblebrainopen) | App → host | Asks the host to open what a resource URI names: a file, a conversation, another app's record. The specification lets an app open a link or post a message, but not move the shell, and an app cannot know which app shows another server's records. The host finds it by the resource templates servers advertise. |
-| [`ai.nimblebrain/open-connector-settings`](/apps/bridge/#ainimblebrainopen-connector-settings) | App → host | Opens the sending connector's own settings page. "My settings" is a different page for every sender, so it is not an address `open` could take. |
-| [`ai.nimblebrain/notify`](/apps/bridge/#ainimblebrainnotify) | App → host | The specification has no notice: its `notifications/message` is a log line for debugging, and core MCP deprecates it. The app asks the shell to show a notice, which the shell labels with the app's name from its manifest, never a name the message chooses. |
-| [`ai.nimblebrain/keydown`](/apps/bridge/#ainimblebrainkeydown) | App → host | A sandboxed iframe that has focus captures every keystroke, so the shell's keyboard shortcuts stop working while the user is inside an app. This forwards the shortcut keys to the shell. |
-| [`ai.nimblebrain/location`](/apps/bridge/#ainimblebrainlocation) | App → host | The specification has no way for an app to say where it is, and the host cannot see inside a sandboxed iframe. The app sends its trail so the shell's top bar can show its title and breadcrumb. |
-| [`ai.nimblebrain/navigate`](/apps/bridge/#ainimblebrainnavigate) | Host → app | Pairs with `location`: when the user picks a breadcrumb (or back) in the top bar, the host asks the app to go to that trail entry. |
-
-### Resource conventions
-
-A server can also offer the host something by publishing an ordinary MCP resource at a URI the host knows to look for. These need no capability and no new method: a server that does not publish them simply offers nothing.
-
-| URI | Why it exists |
-|---|---|
+| [`ai.nimblebrain/notification`](/host/notifications/#the-ainimblebrainnotification-block) | Server → host, on an outbox event | A server that learns something nobody asked for (a reply arrived, a job finished) publishes it as an event on its outbox resource. The host renders and routes these events to people. This block gives the host the title, body, and level to render them with. The event itself follows the shape of the MCP triggers-and-events proposal. |
 
 ## What is not an extension
 
@@ -122,4 +86,5 @@ this.
 
 - [NimbleBrain and MCP](/mcp/overview/): the three MCP roles NimbleBrain plays
 - [Protocol support](/mcp/protocol-support/): specification revisions, transports, and advertised capabilities
-- [Manifest Reference](/apps/manifest/): the fields of the `ai.nimblebrain/host` block
+- [Host integration](/host/overview/): what a server declares in its catalog entry
+- [App Bridge](/apps/bridge/#nimblebrain-extensions-ainimblebrain): what an app's view asks of the shell
