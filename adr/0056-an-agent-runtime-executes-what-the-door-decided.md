@@ -93,18 +93,19 @@ directory it owns, whether its tools are the projection alone, how the door's
 prompt and history reach it) is a driver. NimbleBrain's own engine, served as an
 ACP agent, is the reference driver: the same resolved run through the native
 runtime and through it must leave the same record. ACP v1 has no slot for a
-client's system prompt or for history the agent did not produce; NimbleBrain's
-agent takes both from `ai.nimblebrain/run` on `session/new`, and an agent that
-does not gets them as contained text ahead of the turn's first message. The
+client's system prompt or for history the agent did not produce. Each driver
+delivers them in its agent's own terms: NimbleBrain's driver in a `_meta` format
+private to it and its agent, Goose's through Goose's own method and the
+generic fallback, and an agent with no means of its own gets them as contained
+text ahead of the turn's first message. The
 reference agent is driven both ways, so the plain-ACP path every other agent
 takes is held to the same record.
 
 **The reference agent becomes Reflex, a standalone ACP agent.** It is kept
-extractable (it imports the engine and the extension keys, nothing else of the
-platform) and works over plain ACP on its own defaults. `ai.nimblebrain/run` is
-then the published contract between NimbleBrain and Reflex, changed by adding
-fields, never by repurposing one, and the candidate to propose upstream as ACP
-slots for a client's system prompt and prior history.
+extractable (it imports the engine and its driver's wire format, nothing else of
+the platform) and works over plain ACP on its own defaults. The `_meta` format
+it shares with its driver is no platform extension: no other agent is asked to
+implement it, and Reflex's session options are designed with Reflex.
 
 ## Consequences
 

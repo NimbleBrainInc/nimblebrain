@@ -1,6 +1,6 @@
 ---
 title: Agent Runtimes
-description: How NimbleBrain runs a turn on an agent other than its own engine, over the Agent Client Protocol, and the two ai.nimblebrain/* keys it adds to ACP.
+description: How NimbleBrain runs a turn on an agent other than its own engine, over the Agent Client Protocol.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -42,16 +42,10 @@ These live inside NimbleBrain's own loop, so an external agent does its own vers
 | The loop guard that stops a tool called over and over | Not applied. |
 | Prompt caching policy | The agent's own. |
 
-## Keys NimbleBrain adds to ACP
+## NimbleBrain's own agent
 
-ACP v1 has no field for a client's system prompt, or for history the agent did not produce. An agent can opt into NimbleBrain's own `_meta` keys to take them whole. An agent that does not gets them as contained text ahead of the turn's first message.
-
-| Key | Sent on | Value |
-|---|---|---|
-| `ai.nimblebrain/run` | `session/new` `_meta`, client to agent | `{ system, history, model, maxIterations, maxInputTokens, maxOutputTokens, thinking? }`. `system` is the system prompt; `history` is the conversation before this turn, as JSON-encoded model messages. The turn's own message is the `session/prompt` content. |
-| `ai.nimblebrain/stopReason` | `session/prompt` response `_meta`, agent to client | The engine's own stop reason (for example `max_input_tokens`), finer than ACP's `stopReason`. Read when present; ACP's value is used otherwise. |
+The `nimblebrain` driver runs NimbleBrain's engine as an ACP agent, the reference every other runtime is held to. The driver and that agent pass the door's prompt, history and limits to each other in their own `_meta`; that is a private format between the two, not something another agent implements. Any other ACP agent gets the prompt and history as contained text ahead of the turn's first message.
 
 ## Related
 
 - [`execution` in nimblebrain.json](/config/nimblebrain-json/#execution): choosing the runtime
-- [Extensions](/extensions/overview/): every `ai.nimblebrain/*` key

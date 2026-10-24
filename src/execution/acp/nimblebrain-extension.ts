@@ -1,12 +1,12 @@
 /**
- * NimbleBrain's own ACP extension: the `_meta` keys our client sends and our
- * agent (`src/execution/acp-agent/`) reads, beyond what ACP v1 carries.
+ * The wire format between the `nimblebrain` driver and NimbleBrain's own agent
+ * (`src/execution/acp-agent/`): the `_meta` keys the driver sends and the agent
+ * reads, beyond what ACP v1 carries.
  *
  * ACP v1 has no slot for a client's system prompt or for history the agent did
- * not produce itself. NimbleBrain owns both (the door composes the prompt and
- * reads the history back from the conversation log), so an agent that honours
- * this extension is handed them whole at `session/new`. An agent that does not
- * gets them by its driver's other means (`AcpDriver`).
+ * not produce itself. Every driver delivers them in its agent's own terms; this
+ * is that driver's, as environment variables and a private method are Goose's.
+ * It is private to the pair: no other agent implements it.
  *
  * Keys are reverse-DNS under `ai.nimblebrain/`, as ACP reserves `_meta` for.
  */

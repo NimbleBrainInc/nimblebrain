@@ -8,9 +8,8 @@
  * outcomes are compared against the native runtime's for the same run.
  *
  * It reaches tools only through the MCP servers the client names at
- * `session/new`. A client that sends NimbleBrain's `_meta` extension
- * (`../acp/nimblebrain-extension.ts`) hands it the prompt, history and limits
- * whole; any other ACP client gets a session on the agent's own `defaults`,
+ * `session/new`. Its own driver hands it the prompt, history and limits whole
+ * in their shared `_meta` format (`../acp/nimblebrain-extension.ts`); any other ACP client gets a session on the agent's own `defaults`,
  * with whatever context it sends in the prompt. It is the seed of Reflex, a
  * standalone ACP agent, so it must work over plain ACP and import nothing of
  * the platform beyond the engine.
