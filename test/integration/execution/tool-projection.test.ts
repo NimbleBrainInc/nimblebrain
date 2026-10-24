@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
-import type { EngineEvent } from "../../../src/engine/types.ts";
+import { type EngineEvent, SKILL_ACTIVATED_META_KEY } from "../../../src/engine/types.ts";
 import { connectMcpToolRouter } from "../../../src/execution/acp-agent/mcp-tool-router.ts";
 import { openToolProjection } from "../../../src/execution/tool-projection.ts";
 
@@ -74,6 +74,46 @@ describe("tool projection", () => {
     ]);
     try {
       expect((await client.availableTools()).map((t) => t.name)).toEqual(["echo"]);
+    } finally {
+      await client.close();
+      await projection.close();
+    }
+  });
+
+  test("records a skill activation once per run, and keeps the marker from the agent", async () => {
+    const skillRouter = new StaticToolRouter(
+      [
+        {
+          name: "nb__use_skill",
+          description: "Load a skill",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+      () => ({
+        content: [{ type: "text", text: "skill body" }],
+        isError: false,
+        _meta: {
+          [SKILL_ACTIVATED_META_KEY]: { skillName: "house-rules", scope: "workspace", tokens: 12 },
+        },
+      }),
+    );
+    const events: EngineEvent[] = [];
+    const projection = await openToolProjection({
+      runId: "r",
+      router: skillRouter,
+      events: { emit: (e) => events.push(e) },
+    });
+    const client = await connectMcpToolRouter([
+      { name: "nimblebrain", url: projection.url, headers: projection.headers },
+    ]);
+    try {
+      const first = await client.execute({ id: "a", name: "nb__use_skill", input: {} });
+      await client.execute({ id: "b", name: "nb__use_skill", input: {} });
+      expect(first._meta).toBeUndefined();
+      const activations = events.filter((e) => e.type === "skill.activated");
+      expect(activations.map((e) => e.type === "skill.activated" && e.data.skillName)).toEqual([
+        "house-rules",
+      ]);
     } finally {
       await client.close();
       await projection.close();

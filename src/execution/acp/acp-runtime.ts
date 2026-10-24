@@ -113,7 +113,7 @@ async function openSession(
 
   const opened = await driver.open(run);
   cleanup.push(() => opened.close());
-  const app = clientApp(recorder, projected);
+  const app = clientApp(recorder, driver.toolSurface, projected);
   const connection =
     opened.target instanceof acp.AgentApp ? app.connect(opened.target) : app.connect(opened.target);
   cleanup.push(async () => connection.close());
@@ -128,17 +128,18 @@ async function openSession(
     throw new Error(`ACP agent ${driver.id} does not accept HTTP MCP servers`);
   }
 
-  const sessionMeta = driver.sessionMeta?.(run);
+  const mcpServers: acp.McpServer[] = [
+    {
+      type: "http",
+      name: PROJECTION_SERVER_NAME,
+      url: projection.url,
+      headers: projection.headers,
+    },
+  ];
+  const sessionMeta = driver.sessionMeta?.(run, { mcpServers });
   const newSession: acp.NewSessionRequest = {
-    cwd: driver.cwd(run),
-    mcpServers: [
-      {
-        type: "http",
-        name: PROJECTION_SERVER_NAME,
-        url: projection.url,
-        headers: projection.headers,
-      },
-    ],
+    cwd: opened.cwd,
+    mcpServers,
     ...(sessionMeta ? { _meta: sessionMeta } : {}),
   };
   const { sessionId } = await agent.request(acp.methods.agent.session.new, newSession);
@@ -154,12 +155,20 @@ async function openSession(
   return { agent, sessionId, projection };
 }
 
-function clientApp(recorder: AcpRunRecorder, projected: Set<string>): acp.ClientApp {
+function clientApp(
+  recorder: AcpRunRecorder,
+  toolSurface: AcpDriver["toolSurface"],
+  projected: Set<string>,
+): acp.ClientApp {
   return acp
     .client({ name: "nimblebrain" })
     .onNotification(acp.methods.client.session.update, (ctx) => recorder.update(ctx.params.update))
     .onRequest(acp.methods.client.session.requestPermission, (ctx) => {
-      const allow = isProjectedToolCall(ctx.params.toolCall, projected);
+      const allow =
+        toolSurface === "projection" || isProjectedToolCall(ctx.params.toolCall, projected);
+      log.debug("execution", `[acp] permission ${allow ? "allowed" : "rejected"}`, {
+        toolCallId: ctx.params.toolCall.toolCallId,
+      });
       const option = ctx.params.options.find((o) =>
         allow ? o.kind === "allow_once" : o.kind === "reject_once",
       );
@@ -169,9 +178,10 @@ function clientApp(recorder: AcpRunRecorder, projected: Set<string>): acp.Client
 }
 
 /**
- * Whether a permission request names a tool the projection serves. ACP names
- * a tool call by a free-text title, so the title must be the tool's name or
- * end with it after a separator (agents prefix a server name).
+ * Whether a permission request's title names a tool the projection serves: the
+ * tool's name, or the name after a separator (agents prefix a server name).
+ * Best effort, for an agent that has tools of its own: ACP names a tool call
+ * only by a free-text title.
  */
 function isProjectedToolCall(toolCall: acp.ToolCallUpdate, projected: Set<string>): boolean {
   const title = toolCall.title ?? "";

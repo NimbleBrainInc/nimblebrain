@@ -7,6 +7,7 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { AcpRuntimeConfig, ExecutionConfig } from "../config/execution.ts";
 import { createAcpRuntime } from "./acp/acp-runtime.ts";
 import type { AcpDriver } from "./acp/driver.ts";
+import { createGooseDriver } from "./acp/drivers/goose.ts";
 import { createNimbleBrainDriver } from "./acp/drivers/nimblebrain.ts";
 import { createNativeRuntime, NATIVE_RUNTIME_ID } from "./native-runtime.ts";
 import type { AgentRuntime } from "./types.ts";
@@ -53,5 +54,7 @@ function driverFor(
   switch (entry.driver) {
     case "nimblebrain":
       return createNimbleBrainDriver(deps);
+    case "goose":
+      return createGooseDriver(entry);
   }
 }

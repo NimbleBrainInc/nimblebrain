@@ -7,6 +7,7 @@
 
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { AgentEngine } from "../engine/engine.ts";
+import type { EventSink } from "../engine/types.ts";
 import type { AgentRuntime } from "./types.ts";
 
 export const NATIVE_RUNTIME_ID = "native";
@@ -18,12 +19,29 @@ export function createNativeRuntime(
     id: NATIVE_RUNTIME_ID,
     capabilities: { spendGate: true, loopPolicy: true },
     execute(run, io) {
-      io.events.emit({
-        type: "execution.bound",
-        data: { runId: run.runId, runtime: NATIVE_RUNTIME_ID },
-      });
-      const engine = new AgentEngine(resolveModel(run.config.model), io.tools, io.events);
+      const engine = new AgentEngine(
+        resolveModel(run.config.model),
+        io.tools,
+        boundAfterStart(io.events, run.runId),
+      );
       return engine.run(run.config, run.system, run.messages, run.tools);
+    },
+  };
+}
+
+/**
+ * The run's sink, with `execution.bound` emitted right after the engine's
+ * `run.start`: the order every runtime records them in.
+ */
+function boundAfterStart(events: EventSink, runId: string): EventSink {
+  let bound = false;
+  return {
+    emit(event) {
+      events.emit(event);
+      if (!bound && event.type === "run.start") {
+        bound = true;
+        events.emit({ type: "execution.bound", data: { runId, runtime: NATIVE_RUNTIME_ID } });
+      }
     },
   };
 }

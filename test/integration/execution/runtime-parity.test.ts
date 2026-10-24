@@ -182,9 +182,10 @@ describe("acp runtime: the projection holds the run's bound", () => {
     const sink = collect();
     const runtime = createAcpRuntime("broken", {
       id: "broken",
-      cwd: () => "/",
+      toolSurface: "projection",
       open: async () => ({
         target: createNimbleBrainAgentWithoutMeta(),
+        cwd: "/",
         close: async () => {},
       }),
     });

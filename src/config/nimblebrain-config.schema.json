@@ -491,8 +491,21 @@
               },
               "driver": {
                 "type": "string",
-                "enum": ["nimblebrain"],
-                "description": "The driver that reaches the agent. nimblebrain: NimbleBrain's own engine, served as an ACP agent in this process."
+                "enum": ["nimblebrain", "goose"],
+                "description": "The driver that reaches the agent. nimblebrain: NimbleBrain's own engine, served as an ACP agent in this process. goose: Goose (goose acp), one isolated process per run."
+              },
+              "command": {
+                "type": "string",
+                "description": "goose only. The Goose binary: a path, or a name looked up on PATH. Default: goose."
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["auto", "approve", "smart_approve"],
+                "description": "goose only. Goose's approval mode. auto runs tools without asking; approve and smart_approve send permission requests, answered by policy. Default: auto."
+              },
+              "apiKeyEnv": {
+                "type": "string",
+                "description": "goose only. The environment variable holding the provider key Goose is given: a dedicated, restricted key. Default: NB_GOOSE_API_KEY."
               }
             },
             "required": ["type", "driver"],

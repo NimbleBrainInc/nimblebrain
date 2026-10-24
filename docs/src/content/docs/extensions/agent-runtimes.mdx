@@ -20,7 +20,23 @@ The runtime runs the loop: it decides when to call the model, which tool to call
 - **The prompt, skills and model choice.** NimbleBrain composes the system prompt and picks the model as it does for a native run, then hands both to the agent.
 - **Cancellation and errors.** Stop cancels the agent's turn; an agent that fails ends the run with an error, never the server.
 
-The client advertises no filesystem and no terminal, so an agent cannot ask NimbleBrain to read, write or run anything. A permission request is allowed only for a tool the run's MCP server serves; anything else is rejected.
+The client advertises no filesystem and no terminal, so an agent cannot ask NimbleBrain to read, write or run anything.
+
+### Permissions
+
+NimbleBrain answers an agent's permission requests by policy; there is no prompt to a person. An agent configured so that its only tools come from the run's MCP server (Goose is) has every request allowed, because the call is checked again by that server when it runs. For any other agent a request is allowed only when its title names one of the run's tools, and rejected otherwise.
+
+## Goose
+
+The `goose` driver runs [Goose](https://github.com/aaif-goose/goose) with `goose acp`, one process per run, in a directory of its own that is removed when the run ends:
+
+- **Tools:** Goose is given the run's MCP server and nothing else. Its built-in extensions (shell, file editing) are not started.
+- **Environment:** only Goose's provider, model, one provider key (read from `apiKeyEnv`), and paths inside the run's directory. Goose's own config and keyring are not read, and its telemetry is off.
+- **System prompt:** NimbleBrain's composed prompt replaces Goose's own, through Goose's session system-prompt method.
+- **Model:** the run's own model, split into Goose's provider and model. Providers with a key mapping: Anthropic, OpenAI, Google and xAI.
+- **History:** Goose takes no history it did not produce, so the conversation so far reaches it as contained text ahead of the turn's message.
+
+Each run starts a Goose process, which adds a few seconds of startup to every turn.
 
 ## What a non-native runtime does not do
 

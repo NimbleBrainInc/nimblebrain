@@ -70,7 +70,8 @@ external runtime; the policy at the tool boundary holds for every runtime,
 because it lives in the projection.
 
 **ACP is the first external transport, behind a generic runtime that names no
-agent.** What one agent needs beyond ACP v1 (how to open it, how the door's
+agent.** What one agent needs beyond ACP v1 (how to open it and the working
+directory it owns, whether its tools are the projection alone, how the door's
 prompt and history reach it) is a driver. NimbleBrain's own engine, served as an
 ACP agent, is the reference driver: the same resolved run through the native
 runtime and through it must leave the same record. ACP v1 has no slot for a
@@ -96,6 +97,14 @@ does not gets them as contained text ahead of the turn's first message.
   projection's lifetime is the run's, so nothing listens after it ends.
 - The native engine still mints its own per-loop run id for its events; an
   external runtime stamps the door's. Unifying them is a separate change.
+- ACP names a tool call only by a free-text title, so a permission request
+  cannot be matched to a tool reliably. A driver declares whether its agent's
+  tools are the projection alone; when they are, every request is allowed,
+  because the projection checks the call again when it runs. Interactive
+  approval by a person has no channel yet, on any runtime.
+- An agent's own session id is meaningful to that runtime only. With a fresh
+  store per run, a runtime may reuse the same id across runs, which is harmless
+  only because nothing keys on it.
 
 ## Alternatives considered
 

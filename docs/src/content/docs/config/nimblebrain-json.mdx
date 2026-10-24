@@ -618,9 +618,10 @@ Which agent runtime executes a run. **Experimental.** Absent, every run executes
 ```json
 {
   "execution": {
-    "default": "nimblebrain-acp",
+    "default": "goose",
     "runtimes": {
-      "nimblebrain-acp": { "type": "acp", "driver": "nimblebrain" }
+      "nimblebrain-acp": { "type": "acp", "driver": "nimblebrain" },
+      "goose": { "type": "acp", "driver": "goose", "command": "/usr/local/bin/goose", "mode": "auto" }
     }
   }
 }
@@ -631,11 +632,14 @@ Which agent runtime executes a run. **Experimental.** Absent, every run executes
 | `default` | `string` | `"native"` | The runtime every run executes on: `native`, or a name under `runtimes`. A name that is not configured fails the boot. |
 | `runtimes` | `object` | — | Runtimes beside the native engine, keyed by the name `default` uses. |
 | `runtimes.<name>.type` | `"acp"` | — | How the runtime is reached. `acp`: an agent speaking the [Agent Client Protocol](https://agentclientprotocol.com). |
-| `runtimes.<name>.driver` | `"nimblebrain"` | — | The driver that reaches the agent. `nimblebrain`: NimbleBrain's own engine, served as an ACP agent in the same process, the reference for every other ACP agent. |
+| `runtimes.<name>.driver` | `"nimblebrain" \| "goose"` | — | The driver that reaches the agent. `nimblebrain`: NimbleBrain's own engine, served as an ACP agent in the same process, the reference for every other ACP agent. `goose`: [Goose](https://github.com/aaif-goose/goose) (`goose acp`), one isolated process per run. |
+| `runtimes.<name>.command` | `string` | `"goose"` | `goose` only. The Goose binary: a path, or a name looked up on `PATH`. |
+| `runtimes.<name>.mode` | `"auto" \| "approve" \| "smart_approve"` | `"auto"` | `goose` only. Goose's approval mode. `auto` runs tools without asking; the other two send permission requests, which NimbleBrain answers by policy (see [Agent runtimes](/extensions/agent-runtimes/#permissions)). |
+| `runtimes.<name>.apiKeyEnv` | `string` | `"NB_GOOSE_API_KEY"` | `goose` only. The environment variable holding the model provider key Goose is given. Use a dedicated, restricted key; Goose never receives the runtime's own. |
 
 Whatever runtime runs a turn, NimbleBrain keeps the conversation, decides the run's tools, prompt and limits, and records every turn the same way, so a conversation can move between runtimes and each turn reads the ones before it. What a runtime other than `native` gives up, and how it reaches tools, is on [Agent runtimes](/extensions/agent-runtimes/).
 
-A runtime other than `native` checks no spend account before a model call, so a [task](/using/tasks) run with a budget is refused on it rather than run unchecked.
+A runtime other than `native` checks no spend account before a model call, so a [task](/using/tasks) run with a budget is refused on it rather than run unchecked. The file is read at startup: changing `default` takes effect on restart.
 
 ## files
 

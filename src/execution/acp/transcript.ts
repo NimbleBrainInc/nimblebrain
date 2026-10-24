@@ -15,13 +15,24 @@ import type { ResolvedRun } from "../types.ts";
 import { userMessageToPrompt } from "./nimblebrain-extension.ts";
 
 export function transcriptPrompt(run: ResolvedRun): ContentBlock[] {
+  return promptWith(run, [wrapContained("host-instructions", run.system)]);
+}
+
+/**
+ * The history and the latest message, without the system prompt: for an agent
+ * whose driver delivers the system prompt by the agent's own means.
+ */
+export function historyPrompt(run: ResolvedRun): ContentBlock[] {
+  return promptWith(run, []);
+}
+
+function promptWith(run: ResolvedRun, context: string[]): ContentBlock[] {
   const latest = run.messages.at(-1);
   const prior = latest?.role === "user" ? run.messages.slice(0, -1) : run.messages;
-  const context = [wrapContained("host-instructions", run.system)];
   const history = transcriptOf(prior);
-  if (history) context.push(wrapContained("conversation-history", history));
+  const blocks = history ? [...context, wrapContained("conversation-history", history)] : context;
   return [
-    { type: "text", text: context.join("\n\n") },
+    ...(blocks.length > 0 ? [{ type: "text" as const, text: blocks.join("\n\n") }] : []),
     ...(latest?.role === "user" ? userMessageToPrompt(latest) : []),
   ];
 }

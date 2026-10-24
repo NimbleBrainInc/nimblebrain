@@ -14,6 +14,12 @@ import type { ResolvedRun } from "../types.ts";
 export interface AcpConnectionTarget {
   /** A byte stream to the agent (stdio, a socket), or an agent app in this process. */
   target: acp.Stream | acp.AgentApp;
+  /**
+   * The session's working directory, absolute. The connection owns it: a
+   * driver that isolates an agent gives it a directory of its own per run, and
+   * `close` removes it.
+   */
+  cwd: string;
   close(): Promise<void>;
 }
 
@@ -22,14 +28,27 @@ export interface AcpSessionCalls {
   request<Response = unknown>(method: string, params: unknown): Promise<Response>;
 }
 
+/** What `session/new` will carry, for a driver that must restate it in its agent's own terms. */
+export interface AcpSessionPlan {
+  /** The MCP servers the session is given: the run's tool projection. */
+  mcpServers: acp.McpServer[];
+}
+
 export interface AcpDriver {
   readonly id: string;
-  /** Open a fresh connection for one run. */
+  /**
+   * Whether every tool the agent can call is one the run's tool projection
+   * serves. A driver says `projection` only when it configures the agent with
+   * no tools of its own; then any permission request is for a projected tool,
+   * which the projection checks again when it runs, and is allowed. Otherwise
+   * a request is allowed only when its title names a projected tool, and ACP
+   * gives no field that names one reliably.
+   */
+  readonly toolSurface: "projection" | "mixed";
+  /** Open a fresh connection, and the agent's workspace, for one run. */
   open(run: ResolvedRun): Promise<AcpConnectionTarget>;
-  /** The session's working directory, absolute. */
-  cwd(run: ResolvedRun): string;
   /** `_meta` for `session/new`, for an agent that takes extensions there. */
-  sessionMeta?(run: ResolvedRun): Record<string, unknown>;
+  sessionMeta?(run: ResolvedRun, plan: AcpSessionPlan): Record<string, unknown>;
   /** After `session/new`, before the first prompt: deliver what the agent takes by its own methods. */
   prepareSession?(calls: AcpSessionCalls, sessionId: string, run: ResolvedRun): Promise<void>;
   /**

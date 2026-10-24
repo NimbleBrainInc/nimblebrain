@@ -37,6 +37,8 @@ import {
   type EngineHooks,
   type EventSink,
   isModelVisible,
+  SKILL_ACTIVATED_META_KEY,
+  SKILL_SUPPRESSION_META_KEY,
   type ToolCall,
   type ToolCallRecord,
   type ToolResult,
@@ -94,11 +96,12 @@ export async function openToolProjection(opts: ToolProjectionOptions): Promise<T
   const token = randomBytes(32).toString("base64url");
   const path = `/mcp/${randomBytes(16).toString("hex")}`;
   const records: ToolCallRecord[] = [];
+  const activatedSkills = new Set<string>();
   const tools = await projectedTools(opts.router);
   const toolsByName = new Map(tools.map((t) => [t.name, t]));
 
   const callTool = (name: string, input: Record<string, unknown>): Promise<CallToolResult> =>
-    runInRunContext(() => dispatch(opts, toolsByName, records, name, input));
+    runInRunContext(() => dispatch(opts, toolsByName, records, activatedSkills, name, input));
 
   const handler = createMcpHandler(() => createServer(tools, callTool), {
     legacy: "reject",
@@ -174,6 +177,7 @@ async function dispatch(
   opts: ToolProjectionOptions,
   toolsByName: Map<string, ToolSchema>,
   records: ToolCallRecord[],
+  activatedSkills: Set<string>,
   name: string,
   rawInput: Record<string, unknown>,
 ): Promise<CallToolResult> {
@@ -219,6 +223,7 @@ async function dispatch(
       verdict: { type: "pass" },
     }),
   });
+  recordSkillMarkers(opts, id, result, activatedSkills);
   records.push({
     id,
     name,
@@ -270,6 +275,53 @@ async function execute(opts: ToolProjectionOptions, call: ToolCall): Promise<Too
       content: textContent(err instanceof Error ? err.message : String(err)),
       isError: true,
     };
+  }
+}
+
+/**
+ * The skill records the engine keeps from a result's host-owned markers: a
+ * skill delivered by activation (so a later turn does not deliver it again)
+ * and a skill muted for the conversation. Only the platform's own in-process
+ * tools can set the markers; a connector's are stripped before they get here.
+ * An activation is recorded once per run, as the engine records it.
+ */
+function recordSkillMarkers(
+  opts: ToolProjectionOptions,
+  toolCallId: string,
+  result: ToolResult,
+  activatedSkills: Set<string>,
+): void {
+  const activated = result._meta?.[SKILL_ACTIVATED_META_KEY] as
+    | { skillName?: unknown; scope?: unknown; tokens?: unknown }
+    | undefined;
+  if (activated && typeof activated.skillName === "string" && activated.skillName) {
+    const skillName = activated.skillName;
+    if (!activatedSkills.has(skillName)) {
+      activatedSkills.add(skillName);
+      opts.events.emit({
+        type: "skill.activated",
+        data: {
+          runId: opts.runId,
+          toolCallId,
+          skillName,
+          scope: typeof activated.scope === "string" ? activated.scope : "org",
+          tokens: typeof activated.tokens === "number" ? activated.tokens : 0,
+        },
+      });
+    }
+  }
+  const suppression = result._meta?.[SKILL_SUPPRESSION_META_KEY] as
+    | { skillName?: unknown; suppressed?: unknown }
+    | undefined;
+  if (suppression && typeof suppression.skillName === "string" && suppression.skillName) {
+    opts.events.emit({
+      type: "skill.suppression",
+      data: {
+        runId: opts.runId,
+        skillName: suppression.skillName,
+        suppressed: suppression.suppressed === true,
+      },
+    });
   }
 }
 

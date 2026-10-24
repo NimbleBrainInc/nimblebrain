@@ -25,10 +25,11 @@ export function createNimbleBrainDriver(opts: {
 }): AcpDriver {
   return {
     id: "nimblebrain",
+    // The agent reaches tools only through the MCP servers the session names.
+    toolSurface: "projection",
     async open() {
-      return { target: createNimbleBrainAcpAgent(opts), close: async () => {} };
+      return { target: createNimbleBrainAcpAgent(opts), cwd: tmpdir(), close: async () => {} };
     },
-    cwd: () => tmpdir(),
     sessionMeta(run) {
       const meta: RunMeta = {
         system: run.system,

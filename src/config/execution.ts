@@ -7,12 +7,34 @@
  * every run executes on the native engine.
  */
 
-/** One runtime that reaches its agent over ACP, through a named driver. */
-export interface AcpRuntimeConfig {
+/** NimbleBrain's own engine, served as an ACP agent in this process. */
+export interface NimbleBrainAcpRuntimeConfig {
   type: "acp";
-  /** The driver that knows how to reach the agent: `nimblebrain` is NimbleBrain's own engine. */
   driver: "nimblebrain";
 }
+
+/** Goose (`goose acp`), one process per run. */
+export interface GooseRuntimeConfig {
+  type: "acp";
+  driver: "goose";
+  /** The Goose binary: a path, or a name looked up on this process's PATH. Default: `goose`. */
+  command?: string;
+  /**
+   * Goose's approval mode. `auto` runs tools without asking; `approve` and
+   * `smart_approve` send permission requests, which the runtime answers by
+   * policy. Default: `auto`.
+   */
+  mode?: "auto" | "approve" | "smart_approve";
+  /**
+   * The variable in this process's environment that holds the provider key
+   * Goose is given. A dedicated, restricted key, never the runtime's own.
+   * Default: `NB_GOOSE_API_KEY`.
+   */
+  apiKeyEnv?: string;
+}
+
+/** One runtime that reaches its agent over ACP, through a named driver. */
+export type AcpRuntimeConfig = NimbleBrainAcpRuntimeConfig | GooseRuntimeConfig;
 
 export type AgentRuntimeConfig = AcpRuntimeConfig;
 
@@ -27,5 +49,8 @@ export interface ExecutionConfig {
 /** Every key of {@link ExecutionConfig}, for the config schema drift guard. */
 export const EXECUTION_CONFIG_KEYS: (keyof ExecutionConfig)[] = ["default", "runtimes"];
 
-/** Every key of {@link AcpRuntimeConfig}, for the config schema drift guard. */
-export const ACP_RUNTIME_CONFIG_KEYS: (keyof AcpRuntimeConfig)[] = ["type", "driver"];
+/** Every key any ACP runtime entry may carry, for the config schema drift guard. */
+export const ACP_RUNTIME_CONFIG_KEYS: (
+  | keyof NimbleBrainAcpRuntimeConfig
+  | keyof GooseRuntimeConfig
+)[] = ["type", "driver", "command", "mode", "apiKeyEnv"];
