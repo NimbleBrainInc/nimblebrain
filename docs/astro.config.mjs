@@ -193,7 +193,6 @@ export default defineConfig({
               { label: 'Host Resources', slug: 'extensions/host-resources' },
               { label: 'Resource Arguments', slug: 'extensions/resource-arguments' },
               { label: 'Custom Instructions', slug: 'extensions/custom-instructions' },
-              { label: 'Agent Runtimes', slug: 'extensions/agent-runtimes' },
               {
                 label: 'App Bridge Extensions',
                 link: '/apps/bridge/#nimblebrain-extensions-ainimblebrain',
@@ -218,6 +217,7 @@ export default defineConfig({
             icon: 'setting',
             items: [
               { label: 'nimblebrain.json', slug: 'config/nimblebrain-json' },
+              { label: 'Agent Runtimes', slug: 'config/agent-runtimes' },
               { label: 'instance.json', slug: 'config/instance-json' },
               { label: 'workspace.json', slug: 'config/workspace-json' },
               { label: 'Connector Configuration', slug: 'config/connectors' },
