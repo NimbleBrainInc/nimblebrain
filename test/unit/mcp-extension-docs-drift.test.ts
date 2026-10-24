@@ -4,8 +4,9 @@ import { join, resolve } from "node:path";
 
 /**
  * Drift guard: every `ai.nimblebrain/*` key the runtime declares is documented
- * in the Extensions or MCP section of the docs (`docs/src/content/docs/extensions/`,
- * `docs/src/content/docs/mcp/`).
+ * where its party reads it: the MCP extensions (`docs/src/content/docs/extensions/`,
+ * `docs/src/content/docs/mcp/`), host integration (`…/host/`), or the app bridge
+ * (`…/apps/`).
  *
  * A key on the wire is a contract whether or not it is written down: a server
  * author sees it in a trace, and a key nobody documented is one they guess at.
@@ -19,7 +20,9 @@ import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "../..");
 const SOURCE_DIRS = ["src", "web/src"];
-const DOCS_DIRS = ["extensions", "mcp"].map((dir) => join(ROOT, "docs/src/content/docs", dir));
+const DOCS_DIRS = ["extensions", "mcp", "host", "apps"].map((dir) =>
+  join(ROOT, "docs/src/content/docs", dir),
+);
 const DECLARATION = /const\s+[A-Z0-9_]+\s*(?::[^=]+)?=\s*"(ai\.nimblebrain\/[^"]+)"/g;
 
 function sourceFiles(dir: string): string[] {
@@ -70,7 +73,7 @@ describe("MCP extension docs", () => {
     expect(keys.has("ai.nimblebrain/open")).toBe(true);
   });
 
-  test("every declared ai.nimblebrain/* key is documented in docs/…/{extensions,mcp}/", () => {
+  test("every declared ai.nimblebrain/* key is documented in docs/…/{extensions,mcp,host,apps}/", () => {
     const undocumented = [...keys]
       .filter(([key]) => !docs.includes(`\`${key}\``))
       .map(([key, file]) => `${key} (declared in ${file})`);

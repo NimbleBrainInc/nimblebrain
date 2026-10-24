@@ -1,0 +1,32 @@
+---
+title: Host Integration
+description: What a server declares in its catalog entry for NimbleBrain to grant it — pages and sidebar entries, a settings section, admin-only tools, inbound webhooks, a notification outbox — and why those declarations are the operator's to review.
+---
+
+A server works on NimbleBrain as written to the [Model Context Protocol](https://modelcontextprotocol.io). Beyond what it negotiates on the wire (the [MCP extensions](/extensions/overview/)), it can ask the host to grant it things: a page in the shell, its own settings section, tools only an admin may call, a URL a vendor can deliver to, an outbox the host routes to people. It asks in the `ai.nimblebrain/host` block of its entry in the [connectors catalog](/config/connectors-catalog/).
+
+## Why these are declared in the catalog
+
+These declarations never travel in an MCP message. Each one changes what someone other than the server can do, or what they are exposed to: a webhook opens a public URL that forwards to the server with a workspace credential, an admin-only list decides which tools a workspace's members may call, and a placement claims routes and entries in a shell the user and other apps share. A server must not grant itself any of that, so the declaration sits in the catalog, where the operator reviews it before it takes effect.
+
+A declaration that describes only the server's own behaviour is negotiated on the wire instead, as an [MCP extension](/extensions/overview/).
+
+The catalog entry carries one more block, `ai.nimblebrain/connector`, which the operator authors rather than the server's publisher: how the server authenticates, which secrets a workspace supplies, and how it is tagged in Browse. See [Connectors Catalog](/config/connectors-catalog/).
+
+## What a server can ask for
+
+| Capability | What your server gets | Field of `ai.nimblebrain/host` |
+|---|---|---|
+| [Placements & navigation](/host/placements/) | A page in the shell and an entry in the workspace's sidebar | `placements` |
+| [Settings sections](/host/settings-sections/) | Your own settings UI on the connector's settings page | `placements` (`settings` slot) |
+| [Admin-only tools](/host/admin-tools/) | Tools only a workspace admin may call, enforced by the host on every path | `admin_tools` |
+| [Inbound webhooks](/host/webhooks/) | A URL a vendor can deliver events to, forwarded to your server | `hooks` |
+| [Notifications](/host/notifications/) | Facts nobody asked for, delivered to the workspace inbox, the agent, and an admin's routes | `notifications` |
+
+`ai.nimblebrain/host` is **one** block with several fields. The [Manifest Reference](/host/manifest/) gives the shape of each and a full catalog entry; the pages above say what the host does with each field.
+
+## Related
+
+- [MCP extensions](/extensions/overview/): what a server negotiates with the host on the wire
+- [App Bridge](/apps/bridge/#nimblebrain-extensions-ainimblebrain): what an app's view asks of the shell
+- [Connectors Catalog](/config/connectors-catalog/): where an operator adds a server's entry

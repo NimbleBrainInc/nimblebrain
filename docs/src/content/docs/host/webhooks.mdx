@@ -10,7 +10,7 @@ platform, a CRM) cannot carry a NimbleBrain token, so it cannot call your server
 directly. Declaring a `hooks` entry asks the host for a URL that it will accept
 those deliveries on and forward to you.
 
-`hooks` is a capability of the [`ai.nimblebrain/host`](/apps/manifest/) block.
+`hooks` is a capability of the [`ai.nimblebrain/host`](/host/manifest/) block.
 The host reads it from your server's [connectors catalog](/config/connectors-catalog/)
 entry only. A `hooks` block in an MCPB bundle manifest has no effect, because the
 route and registration tool decide where a delivery is sent, and that has to come
@@ -84,7 +84,7 @@ def set_webhook_url(vendor: str, url: str) -> dict:
 ```
 
 The host calls `register_tool` itself. That call is not subject to
-[`admin_tools`](/extensions/admin-tools/), so you do not need to, and should not,
+[`admin_tools`](/host/admin-tools/), so you do not need to, and should not,
 name it there.
 
 ## Signature headers
@@ -137,12 +137,12 @@ registrations itself.
 <Aside type="tip" title="Webhooks, lifecycle, and notifications together">
 A server that holds state at a vendor usually wants all three. [Lifecycle](/extensions/lifecycle/)
 creates the vendor-side resource when the connector is installed, `hooks`
-receives the vendor's events about it, and [notifications](/extensions/notifications/)
+receives the vendor's events about it, and [notifications](/host/notifications/)
 tell the workspace what happened.
 </Aside>
 
 ## Related
 
-- [Manifest Reference](/apps/manifest/): the `hooks` field in the `ai.nimblebrain/host` block
-- [Notifications](/extensions/notifications/): the other direction, your server telling the host about something it learned
+- [Manifest Reference](/host/manifest/): the `hooks` field in the `ai.nimblebrain/host` block
+- [Notifications](/host/notifications/): the other direction, your server telling the host about something it learned
 - [Lifecycle](/extensions/lifecycle/): the install and uninstall events

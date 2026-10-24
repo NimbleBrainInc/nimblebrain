@@ -8,9 +8,9 @@ import { Aside } from '@astrojs/starlight/components';
 A settings section is your connector's own UI on its settings page, **Settings →
 Connectors → your connector**. It is for how your connector behaves in this
 workspace: changed rarely, and affecting every member. Work people do daily
-belongs in your app's [main view](/extensions/placements/) instead.
+belongs in your app's [main view](/host/placements/) instead.
 
-It is a capability of the [`ai.nimblebrain/host`](/apps/manifest/) block, declared
+It is a capability of the [`ai.nimblebrain/host`](/host/manifest/) block, declared
 as a placement with `slot: "settings"`, not as a separate top-level object.
 
 ## Declare it
@@ -66,7 +66,7 @@ handshake's host context:
 Use `canManage` to disable or omit controls the viewer cannot use. It does not
 stop anyone. The iframe can call any tool on its own server regardless of the
 flag, and so can the agent. A tool that only a workspace admin may call must be
-declared in [`admin_tools`](/extensions/admin-tools/), so the host refuses it to
+declared in [`admin_tools`](/host/admin-tools/), so the host refuses it to
 everyone else on every path.
 </Aside>
 
@@ -117,6 +117,6 @@ control that would fail, and `admin_tools` is what makes it fail.
 
 ## Related
 
-- [Placements & navigation](/extensions/placements/): every slot, including `settings`
-- [Admin-only tools](/extensions/admin-tools/): enforcing who may call a tool
+- [Placements & navigation](/host/placements/): every slot, including `settings`
+- [Admin-only tools](/host/admin-tools/): enforcing who may call a tool
 - [MCP App Bridge](/apps/bridge/): the handshake and host-context notifications
