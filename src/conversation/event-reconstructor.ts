@@ -10,7 +10,7 @@ import type { LanguageModelV4Content, LanguageModelV4ReasoningPart } from "@ai-s
 import { boundToolResultForModel } from "../engine/content-helpers.ts";
 import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
-import { formatConnectorSkillBlock } from "../prompt/compose.ts";
+import { formatConnectorSkillBlock } from "../prompt/containment.ts";
 import { estimateCost } from "../usage/cost.ts";
 import {
   compactionSummaryMessages,

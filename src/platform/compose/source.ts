@@ -47,8 +47,8 @@ import {
   type TracedLayer,
   type TracedSubItem,
   type WorkspaceContext,
-  wrapContained,
 } from "../../prompt/compose.ts";
+import { wrapContained } from "../../prompt/containment.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";

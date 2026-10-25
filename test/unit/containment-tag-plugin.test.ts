@@ -11,8 +11,8 @@ import { join } from "node:path";
 const ROOT = join(import.meta.dir, "..", "..");
 
 test("the containment-tag plugin guards every ContainmentTag", () => {
-  const compose = readFileSync(join(ROOT, "src/prompt/compose.ts"), "utf-8");
-  const union = /export type ContainmentTag =([^;]+);/.exec(compose)?.[1] ?? "";
+  const containment = readFileSync(join(ROOT, "src/prompt/containment.ts"), "utf-8");
+  const union = /export type ContainmentTag =([^;]+);/.exec(containment)?.[1] ?? "";
   const declared = [...union.matchAll(/"([^"]+)"/g)].map((m) => m[1]).sort();
 
   const plugin = readFileSync(join(ROOT, "biome-plugins/containment-tag.grit"), "utf-8");

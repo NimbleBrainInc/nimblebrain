@@ -28,7 +28,7 @@ import {
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
 import { log } from "../observability/log.ts";
-import { formatConnectorSkillBlock } from "../prompt/compose.ts";
+import { formatConnectorSkillBlock } from "../prompt/containment.ts";
 import { toolMatches } from "../skills/select.ts";
 import { MAX_SKILL_BODY_CHARS } from "../skills/truncate.ts";
 import type { TokenUsage } from "../usage/types.ts";

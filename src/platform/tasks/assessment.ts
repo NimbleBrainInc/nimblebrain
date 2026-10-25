@@ -9,7 +9,7 @@
  * threshold.
  */
 
-import { wrapContained } from "../../prompt/compose.ts";
+import { wrapContained } from "../../prompt/containment.ts";
 import type { TaskRunView } from "../schemas/tasks.ts";
 import {
   type AssessmentVerdict,

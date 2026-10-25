@@ -93,7 +93,7 @@ cannot see comments, so a control byte in a comment is left to review.
 ### Containment tags open only through wrapContained
 
 Fence untrusted content in the system prompt with
-`wrapContained(tag, body)` from `src/prompt/compose.ts`. Never write a
+`wrapContained(tag, body)` from `src/prompt/containment.ts`. Never write a
 containment tag's open, close, or escape by hand.
 
 ```ts
