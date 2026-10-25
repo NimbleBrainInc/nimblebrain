@@ -36,7 +36,7 @@ import {
 } from "../../engine/types.ts";
 import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import { log } from "../../observability/log.ts";
-import { formatActivatedSkillBlock } from "../../prompt/compose.ts";
+import { formatActivatedSkillBlock } from "../../prompt/containment.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import {

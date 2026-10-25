@@ -1,5 +1,5 @@
 // A containment tag is opened, closed, and escaped only inside `wrapContained`
-// (src/prompt/compose.ts), so the three cannot diverge and let a body break out
+// (src/prompt/containment.ts), so the three cannot diverge and let a body break out
 // of its fence (CODE_STYLE.md, "Containment tags open only through
 // wrapContained"). The tag list is the `ContainmentTag` union;
 // test/unit/containment-tag-plugin.test.ts fails when the two differ.

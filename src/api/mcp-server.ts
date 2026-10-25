@@ -67,7 +67,7 @@ import {
   WorkspaceAccessDenied,
 } from "../orchestrator/index.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
-import { wrapContained } from "../prompt/compose.ts";
+import { wrapContained } from "../prompt/containment.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import {

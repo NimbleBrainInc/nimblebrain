@@ -10,7 +10,7 @@
 
 import type { ContentBlock } from "@agentclientprotocol/sdk/unstable";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
-import { wrapContained } from "../../prompt/compose.ts";
+import { wrapContained } from "../../prompt/containment.ts";
 import type { ResolvedRun } from "../types.ts";
 import { userMessageToPrompt } from "./nimblebrain-extension.ts";
 

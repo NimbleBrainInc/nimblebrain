@@ -26,15 +26,17 @@ import type {
 } from "../../src/engine/types.ts";
 import {
   type AppStateInfo,
-  type ContainmentTag,
   composeSystemPrompt,
   type FocusedAppInfo,
-  formatActivatedSkillBlock,
-  formatConnectorSkillBlock,
   type PromptAppInfo,
   type UserPrefs,
-  wrapContained,
 } from "../../src/prompt/compose.ts";
+import {
+  type ContainmentTag,
+  formatActivatedSkillBlock,
+  formatConnectorSkillBlock,
+  wrapContained,
+} from "../../src/prompt/containment.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 

@@ -12,7 +12,7 @@
 
 import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/tasks.ts";
 import type { ThinkingEffort } from "../../engine/types.ts";
-import { wrapContained } from "../../prompt/compose.ts";
+import { wrapContained } from "../../prompt/containment.ts";
 import type { AdmissionLease } from "../../runtime/admission.ts";
 import { checkAgainstSchema, parseJsonDeliverable } from "./json-schema.ts";
 import {
