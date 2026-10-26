@@ -34,7 +34,17 @@ const runtimes: [string, () => AgentRuntime][] = [
       return createNativeRuntime((m) => anthropic(m.slice(m.indexOf(":") + 1)));
     },
   ],
-  ["goose", () => createAcpRuntime("goose", createGooseDriver({ command: process.env.GOOSE_BIN }))],
+  [
+    "goose",
+    () =>
+      createAcpRuntime(
+        "goose",
+        createGooseDriver({
+          command: process.env.GOOSE_BIN,
+          modelEndpoint: process.env.NB_GOOSE_MODEL_ENDPOINT,
+        }),
+      ),
+  ],
 ];
 
 const LOOKUP_ORDER: ToolSchema = {
