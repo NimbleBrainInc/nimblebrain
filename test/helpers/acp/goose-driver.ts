@@ -42,6 +42,12 @@ export interface GooseDriverConfig {
   mode?: "auto" | "approve" | "smart_approve";
   /** The variable holding the provider key Goose is given. Default: `NB_GOOSE_API_KEY`. */
   apiKeyEnv?: string;
+  /**
+   * The model endpoint Goose calls in place of its provider's own, such as the
+   * installation's model gateway. The key Goose is given is then whatever that
+   * endpoint takes (a run token), not a provider key. Default: the provider's.
+   */
+  modelEndpoint?: string;
 }
 
 /** Goose's (unstable) method for a session's system prompt. */
@@ -56,6 +62,11 @@ const PROVIDER_KEY_VARS: Record<string, string> = {
   openai: "OPENAI_API_KEY",
   google: "GOOGLE_API_KEY",
   xai: "XAI_API_KEY",
+};
+
+/** The base URL variable Goose reads, by provider, for those a model endpoint can stand in for. */
+const PROVIDER_HOST_VARS: Record<string, string> = {
+  anthropic: "ANTHROPIC_HOST",
 };
 
 /** A system PATH: enough to start a binary, nothing from this process's own PATH. */
@@ -137,7 +148,12 @@ export function gooseEnvironment(
   const keyEnv = config.apiKeyEnv ?? DEFAULT_GOOSE_API_KEY_ENV;
   const key = env[keyEnv];
   if (!key) throw new Error(`Goose needs the ${provider} key in ${keyEnv}`);
+  const hostVar = PROVIDER_HOST_VARS[provider];
+  if (config.modelEndpoint && !hostVar) {
+    throw new Error(`Goose driver cannot point provider "${provider}" at a model endpoint`);
+  }
   return {
+    ...(config.modelEndpoint && hostVar ? { [hostVar]: config.modelEndpoint } : {}),
     PATH: CHILD_PATH,
     GOOSE_PROVIDER: provider,
     GOOSE_MODEL: model,
