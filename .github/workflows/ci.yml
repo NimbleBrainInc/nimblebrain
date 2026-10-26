@@ -41,7 +41,7 @@ concurrency:
 # Pinned (not `latest`) for deterministic CI; bump here to upgrade.
 env:
   # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
-  BUN_VERSION: "1.4.2"
+  BUN_VERSION: "1.4.3"
 
 # Each job runs a single `bun run verify:*` (or underlying) script. Do not
 # inline individual check steps here — package.json is the source of truth
