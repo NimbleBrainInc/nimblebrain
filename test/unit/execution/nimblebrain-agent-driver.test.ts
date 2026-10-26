@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import {
-  createReflexDriver,
+  AGENT_SESSION_META_KEY,
+  agentEnvironment,
+  createAgentDriver,
   encodeHistory,
-  REFLEX_SESSION_META_KEY,
-  reflexEnvironment,
-} from "../../helpers/acp/reflex-driver.ts";
+} from "../../helpers/acp/nimblebrain-agent-driver.ts";
 
 function run(model = "anthropic:claude-sonnet-4-6"): ResolvedRun {
   return {
@@ -22,29 +22,29 @@ function run(model = "anthropic:claude-sonnet-4-6"): ResolvedRun {
   };
 }
 
-describe("reflex driver", () => {
+describe("nimblebrain-agent driver", () => {
   test("hands the child its model and one key, nothing of this process", () => {
-    const env = reflexEnvironment({ command: "reflex" }, run(), {
-      NB_REFLEX_API_KEY: "sk-reflex",
+    const env = agentEnvironment({ command: "nimblebrain-agent" }, run(), {
+      NB_AGENT_API_KEY: "sk-agent",
       ANTHROPIC_API_KEY: "sk-runtime-own",
       AWS_SECRET_ACCESS_KEY: "nope",
     });
     expect(env).toEqual({
       PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-      REFLEX_MODEL: "anthropic:claude-sonnet-4-6",
-      ANTHROPIC_API_KEY: "sk-reflex",
+      NB_AGENT_MODEL: "anthropic:claude-sonnet-4-6",
+      ANTHROPIC_API_KEY: "sk-agent",
     });
     expect(() =>
-      reflexEnvironment({ command: "reflex" }, run(), { ANTHROPIC_API_KEY: "x" }),
-    ).toThrow(/NB_REFLEX_API_KEY/);
+      agentEnvironment({ command: "nimblebrain-agent" }, run(), { ANTHROPIC_API_KEY: "x" }),
+    ).toThrow(/NB_AGENT_API_KEY/);
   });
 
-  test("sends the door's prompt, prior history and limits as Reflex's session options", () => {
-    const driver = createReflexDriver({ command: "reflex" }, { NB_REFLEX_API_KEY: "k" });
+  test("sends the door's prompt, prior history and limits as nimblebrain-agent's session options", () => {
+    const driver = createAgentDriver({ command: "nimblebrain-agent" }, { NB_AGENT_API_KEY: "k" });
     expect(driver.toolSurface).toBe("projection");
     const meta = driver.sessionMeta?.(run(), { mcpServers: [] });
     expect(meta).toEqual({
-      [REFLEX_SESSION_META_KEY]: {
+      [AGENT_SESSION_META_KEY]: {
         system: "Be brief.",
         history: encodeHistory(run().messages.slice(0, 2)),
         model: "anthropic:claude-sonnet-4-6",
@@ -56,7 +56,7 @@ describe("reflex driver", () => {
     expect(driver.prompt?.(run())).toEqual([{ type: "text", text: "now" }]);
   });
 
-  test("encodes file bytes in Reflex's documented form", () => {
+  test("encodes file bytes in nimblebrain-agent's documented form", () => {
     const encoded = encodeHistory([
       {
         role: "user",
@@ -69,6 +69,6 @@ describe("reflex driver", () => {
         ],
       },
     ]);
-    expect(encoded).toContain('{"__reflex_bytes":"AQI="}');
+    expect(encoded).toContain('{"__nb_agent_bytes":"AQI="}');
   });
 });

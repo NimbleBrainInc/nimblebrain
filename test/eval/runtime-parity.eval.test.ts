@@ -1,5 +1,5 @@
 /**
- * Eval: the same runs on the native engine, on Goose, and on Reflex.
+ * Eval: the same runs on the native engine, on Goose, and on nimblebrain-agent.
  *
  * Holds each agent reached over ACP to the native runtime's record against a
  * real model: the tool reached through the run's projection, the system
@@ -11,7 +11,7 @@
  * Run:
  *   ANTHROPIC_API_KEY=… bun test --no-env-file test/eval/runtime-parity.eval.test.ts
  *     + NB_GOOSE_API_KEY=… GOOSE_BIN=/path/to/goose            for Goose
- *     + NB_REFLEX_API_KEY=… REFLEX_BIN=/path/to/reflex/src/cli.ts  for Reflex
+ *     + NB_AGENT_API_KEY=… NB_AGENT_BIN=/path/to/nimblebrain-agent/src/cli.ts  for nimblebrain-agent
  *
  * Calls a real LLM and costs real money. Not in `bun run test` or `verify`.
  */
@@ -25,7 +25,7 @@ import { createAcpRuntime } from "../../src/execution/acp/acp-runtime.ts";
 import { createNativeRuntime } from "../../src/execution/native-runtime.ts";
 import type { AgentRuntime, ResolvedRun } from "../../src/execution/types.ts";
 import { createGooseDriver } from "../helpers/acp/goose-driver.ts";
-import { createReflexDriver } from "../helpers/acp/reflex-driver.ts";
+import { createAgentDriver } from "../helpers/acp/nimblebrain-agent-driver.ts";
 
 const env = process.env;
 const MODEL = "anthropic:claude-sonnet-4-6";
@@ -59,13 +59,13 @@ const CANDIDATES: Candidate[] = [
       ),
   },
   {
-    name: "reflex",
-    ready: !!env.NB_REFLEX_API_KEY && !!env.REFLEX_BIN,
+    name: "nimblebrain-agent",
+    ready: !!env.NB_AGENT_API_KEY && !!env.NB_AGENT_BIN,
     acp: true,
     make: (keys) =>
       createAcpRuntime(
-        "reflex",
-        createReflexDriver({ command: env.REFLEX_BIN ?? "" }, keys ?? env),
+        "nimblebrain-agent",
+        createAgentDriver({ command: env.NB_AGENT_BIN ?? "" }, keys ?? env),
       ),
   },
 ];
@@ -203,7 +203,7 @@ for (const candidate of CANDIDATES) {
       async () => {
         const events: EngineEvent[] = [];
         const run = candidate
-          .make({ NB_GOOSE_API_KEY: "sk-ant-invalid", NB_REFLEX_API_KEY: "sk-ant-invalid" })
+          .make({ NB_GOOSE_API_KEY: "sk-ant-invalid", NB_AGENT_API_KEY: "sk-ant-invalid" })
           .execute(resolvedRun("hello"), {
             tools: NO_TOOLS,
             events: { emit: (e) => events.push(e) },

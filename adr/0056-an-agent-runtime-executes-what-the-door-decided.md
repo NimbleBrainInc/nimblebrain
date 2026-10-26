@@ -102,11 +102,11 @@ text ahead of the turn's first message. The
 reference agent is driven both ways, so the plain-ACP path every other agent
 takes is held to the same record.
 
-**The reference agent becomes Reflex, a standalone ACP agent.** It is kept
+**The reference agent becomes nimblebrain-agent, a standalone ACP agent.** It is kept
 extractable (it imports the engine and its driver's wire format, nothing else of
 the platform) and works over plain ACP on its own defaults. The `_meta` format
 it shares with its driver is no platform extension: no other agent is asked to
-implement it, and Reflex's session options are designed with Reflex.
+implement it, and the agent's session options are designed with it.
 
 ## Consequences
 

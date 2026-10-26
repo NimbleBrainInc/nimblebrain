@@ -1,17 +1,17 @@
 /**
- * The driver for Reflex (`reflex acp`), NimbleBrain's engine extracted as a
- * standalone ACP agent. Test-only, as Goose's is: it runs Reflex as a child of
+ * The driver for nimblebrain-agent (`nimblebrain-agent acp`), NimbleBrain's engine extracted as a
+ * standalone ACP agent. Test-only, as Goose's is: it runs nimblebrain-agent as a child of
  * this process, which no installation may do (ADR-0056), so it serves the live
  * parity eval and nothing in `src/`.
  *
- * NimbleBrain imports nothing of Reflex. The driver speaks Reflex's documented
- * session options (`reflex/session` on `session/new`: system prompt, history,
- * model, limits) and finds the binary by path, so Reflex is a peer the way
+ * NimbleBrain imports nothing of nimblebrain-agent. The driver speaks nimblebrain-agent's documented
+ * session options (`nimblebrain-agent/session` on `session/new`: system prompt, history,
+ * model, limits) and finds the binary by path, so nimblebrain-agent is a peer the way
  * Goose is, not a dependency.
  *
- * Each run gets a Reflex process of its own, in a directory of its own that is
+ * Each run gets a nimblebrain-agent process of its own, in a directory of its own that is
  * removed when the run ends, with an environment that names only its model and
- * one provider key. Reflex has no tools of its own: everything it calls comes
+ * one provider key. nimblebrain-agent has no tools of its own: everything it calls comes
  * from the run's tool projection.
  */
 
@@ -24,17 +24,17 @@ import { userMessageToPrompt } from "../../../src/execution/acp/nimblebrain-exte
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import { spawnStdioAgent } from "./stdio-agent-process.ts";
 
-export interface ReflexDriverConfig {
-  /** Reflex's entry: its `src/cli.ts` (run with this Bun) or a `reflex` binary. */
+export interface AgentDriverConfig {
+  /** nimblebrain-agent's entry: its `src/cli.ts` (run with this Bun) or a `nimblebrain-agent` binary. */
   command: string;
-  /** The variable holding the provider key Reflex is given. Default: `NB_REFLEX_API_KEY`. */
+  /** The variable holding the provider key nimblebrain-agent is given. Default: `NB_AGENT_API_KEY`. */
   apiKeyEnv?: string;
 }
 
-/** Reflex's session options key (its README, "Session options"). */
-export const REFLEX_SESSION_META_KEY = "reflex/session";
+/** nimblebrain-agent's session options key (its README, "Session options"). */
+export const AGENT_SESSION_META_KEY = "nimblebrain-agent/session";
 
-export const DEFAULT_REFLEX_API_KEY_ENV = "NB_REFLEX_API_KEY";
+export const DEFAULT_AGENT_API_KEY_ENV = "NB_AGENT_API_KEY";
 
 const PROVIDER_KEY_VARS: Record<string, string> = {
   anthropic: "ANTHROPIC_API_KEY",
@@ -43,16 +43,16 @@ const PROVIDER_KEY_VARS: Record<string, string> = {
 
 const CHILD_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 
-export function createReflexDriver(
-  config: ReflexDriverConfig,
+export function createAgentDriver(
+  config: AgentDriverConfig,
   env: Record<string, string | undefined> = process.env,
 ): AcpDriver {
   return {
-    id: "reflex",
+    id: "nimblebrain-agent",
     toolSurface: "projection",
     async open(run) {
-      const childEnv = reflexEnvironment(config, run, env);
-      const root = await mkdtemp(join(tmpdir(), "nb-reflex-"));
+      const childEnv = agentEnvironment(config, run, env);
+      const root = await mkdtemp(join(tmpdir(), "nb-agent-"));
       try {
         const work = join(root, "work");
         await mkdir(work, { recursive: true });
@@ -73,7 +73,7 @@ export function createReflexDriver(
     },
     sessionMeta(run) {
       return {
-        [REFLEX_SESSION_META_KEY]: {
+        [AGENT_SESSION_META_KEY]: {
           system: run.system,
           history: encodeHistory(priorMessages(run)),
           model: run.config.model,
@@ -92,27 +92,30 @@ export function createReflexDriver(
 }
 
 /** The child's environment: its model and the one provider key it needs. */
-export function reflexEnvironment(
-  config: ReflexDriverConfig,
+export function agentEnvironment(
+  config: AgentDriverConfig,
   run: ResolvedRun,
   env: Record<string, string | undefined>,
 ): Record<string, string> {
   const provider = run.config.model.slice(0, run.config.model.indexOf(":"));
   const keyVar = PROVIDER_KEY_VARS[provider];
-  if (!keyVar) throw new Error(`Reflex driver has no key mapping for provider "${provider}"`);
-  const keyEnv = config.apiKeyEnv ?? DEFAULT_REFLEX_API_KEY_ENV;
+  if (!keyVar)
+    throw new Error(`nimblebrain-agent driver has no key mapping for provider "${provider}"`);
+  const keyEnv = config.apiKeyEnv ?? DEFAULT_AGENT_API_KEY_ENV;
   const key = env[keyEnv];
-  if (!key) throw new Error(`Reflex needs the ${provider} key in ${keyEnv}`);
-  return { PATH: CHILD_PATH, REFLEX_MODEL: run.config.model, [keyVar]: key };
+  if (!key) throw new Error(`nimblebrain-agent needs the ${provider} key in ${keyEnv}`);
+  return { PATH: CHILD_PATH, NB_AGENT_MODEL: run.config.model, [keyVar]: key };
 }
 
 /**
- * History in Reflex's documented encoding: JSON, with a file part's bytes as
- * `{ "__reflex_bytes": <base64> }`.
+ * History in nimblebrain-agent's documented encoding: JSON, with a file part's bytes as
+ * `{ "__nb_agent_bytes": <base64> }`.
  */
 export function encodeHistory(messages: LanguageModelV4Message[]): string {
   return JSON.stringify(messages, (_key, value) =>
-    value instanceof Uint8Array ? { __reflex_bytes: Buffer.from(value).toString("base64") } : value,
+    value instanceof Uint8Array
+      ? { __nb_agent_bytes: Buffer.from(value).toString("base64") }
+      : value,
   );
 }
 
