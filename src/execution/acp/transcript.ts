@@ -12,7 +12,6 @@ import type { ContentBlock } from "@agentclientprotocol/sdk/unstable";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { wrapContained } from "../../prompt/containment.ts";
 import type { ResolvedRun } from "../types.ts";
-import { userMessageToPrompt } from "./nimblebrain-extension.ts";
 
 export function transcriptPrompt(run: ResolvedRun): ContentBlock[] {
   return promptWith(run, [wrapContained("host-instructions", run.system)]);
@@ -81,4 +80,35 @@ type ToolResultOutput = Extract<
 
 function resultText(out: ToolResultOutput): string {
   return out.type === "text" || out.type === "error-text" ? out.value : JSON.stringify(out);
+}
+
+type UserMessage = Extract<LanguageModelV4Message, { role: "user" }>;
+
+/**
+ * A user message as ACP prompt content. Text is text; inline image bytes are an
+ * image; other inline bytes are an embedded resource. A part ACP cannot carry
+ * becomes a text note naming it, so the agent knows something was attached.
+ */
+export function userMessageToPrompt(message: UserMessage): ContentBlock[] {
+  return message.content.map((part): ContentBlock => {
+    if (part.type === "text") return { type: "text", text: part.text };
+    const data = part.data;
+    if (data.type === "data") {
+      const base64 =
+        typeof data.data === "string" ? data.data : Buffer.from(data.data).toString("base64");
+      if (part.mediaType.startsWith("image/")) {
+        return { type: "image", data: base64, mimeType: part.mediaType };
+      }
+      return {
+        type: "resource",
+        resource: {
+          uri: `attachment:${part.filename ?? "file"}`,
+          blob: base64,
+          mimeType: part.mediaType,
+        },
+      };
+    }
+    if (data.type === "text") return { type: "text", text: data.text };
+    return { type: "text", text: `[attachment not carried over ACP: ${part.mediaType}]` };
+  });
 }

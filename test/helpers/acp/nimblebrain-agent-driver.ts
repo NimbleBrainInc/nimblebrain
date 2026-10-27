@@ -26,7 +26,7 @@ import {
   knownStopReason,
   type ReportedModelCall,
 } from "../../../src/execution/acp/driver.ts";
-import { userMessageToPrompt } from "../../../src/execution/acp/nimblebrain-extension.ts";
+import { userMessageToPrompt } from "../../../src/execution/acp/transcript.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import { spawnStdioAgent } from "./stdio-agent-process.ts";
 

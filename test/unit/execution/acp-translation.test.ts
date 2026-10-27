@@ -3,19 +3,9 @@ import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { MetricsEventSink } from "../../../src/adapters/metrics-events.ts";
 import { llmCallsTotal } from "../../../src/api/metrics.ts";
 import type { EngineEvent } from "../../../src/engine/types.ts";
-import { createNimbleBrainDriver } from "../../../src/execution/acp/drivers/nimblebrain.ts";
-import {
-  decodeMessages,
-  encodeMessages,
-  promptToUserMessage,
-  STOP_REASON_META_KEY,
-  toAcpStopReason,
-  userMessageToPrompt,
-} from "../../../src/execution/acp/nimblebrain-extension.ts";
 import { createAcpRunRecorder } from "../../../src/execution/acp/run-recorder.ts";
-import { transcriptPrompt } from "../../../src/execution/acp/transcript.ts";
+import { transcriptPrompt, userMessageToPrompt } from "../../../src/execution/acp/transcript.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
 
 function run(messages: LanguageModelV4Message[], system = "Be helpful."): ResolvedRun {
   return {
@@ -173,19 +163,6 @@ describe("run recorder", () => {
     expect((await countCalls()) - before).toBe(2);
   });
 
-  test("the reference driver reads its agent's stop reason, ignoring one it does not know", () => {
-    const driver = createNimbleBrainDriver({ resolveModel: () => createEchoModel() });
-    expect(
-      driver.outcome?.({
-        stopReason: "end_turn",
-        _meta: { [STOP_REASON_META_KEY]: "max_input_tokens" },
-      }),
-    ).toEqual({ stopReason: "max_input_tokens" });
-    expect(
-      driver.outcome?.({ stopReason: "refusal", _meta: { [STOP_REASON_META_KEY]: "nope" } }),
-    ).toEqual({});
-  });
-
   test("records a run's end exactly once", () => {
     const { events, recorder } = recorded();
     recorder.cancelled();
@@ -204,21 +181,8 @@ describe("run recorder", () => {
   });
 });
 
-describe("NimbleBrain ACP extension", () => {
-  test("history survives the trip with file bytes intact", () => {
-    const bytes = new Uint8Array([0, 1, 254, 255]);
-    const messages: LanguageModelV4Message[] = [
-      {
-        role: "user",
-        content: [{ type: "file", mediaType: "image/png", data: { type: "data", data: bytes } }],
-      },
-    ];
-    const back = decodeMessages(encodeMessages(messages));
-    const part = back[0]?.role === "user" ? back[0].content[0] : undefined;
-    expect(part?.type === "file" && part.data.type === "data" && part.data.data).toEqual(bytes);
-  });
-
-  test("a user message and its prompt are inverses for text and images", () => {
+describe("user message as ACP prompt", () => {
+  test("text is text, inline image bytes are an image", () => {
     const message: Extract<LanguageModelV4Message, { role: "user" }> = {
       role: "user",
       content: [
@@ -226,15 +190,10 @@ describe("NimbleBrain ACP extension", () => {
         { type: "file", mediaType: "image/png", data: { type: "data", data: new Uint8Array([7]) } },
       ],
     };
-    const prompt = userMessageToPrompt(message);
-    expect(prompt.map((b) => b.type)).toEqual(["text", "image"]);
-    expect(promptToUserMessage(prompt)).toEqual(message);
-  });
-
-  test("engine stop reasons ACP has no word for end the turn normally", () => {
-    expect(toAcpStopReason("spend_limit")).toBe("end_turn");
-    expect(toAcpStopReason("cancelled")).toBe("cancelled");
-    expect(toAcpStopReason("length")).toBe("max_tokens");
+    expect(userMessageToPrompt(message)).toEqual([
+      { type: "text", text: "look" },
+      { type: "image", data: "Bw==", mimeType: "image/png" },
+    ]);
   });
 });
 

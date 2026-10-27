@@ -10,11 +10,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4Prompt } from "@ai-sdk/provider";
 import type { ConversationEvent } from "../../../src/conversation/types.ts";
+import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import type { RuntimeConfig } from "../../../src/runtime/types.ts";
 import { usageMonthDir, usageMonthOf } from "../../../src/usage/paths.ts";
 import type { UsageLedgerEntry } from "../../../src/usage/types.ts";
+import { emptyLog, scriptedDriver } from "../../helpers/acp/scripted-agent.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
@@ -41,6 +43,9 @@ function recordingModel(): LanguageModelV4 {
   };
 }
 
+/** Everything the ACP agent received, in order. */
+const agentLog = emptyLog();
+
 const workDir = join(tmpdir(), `nimblebrain-exec-select-${Date.now()}`);
 const config: RuntimeConfig = {
   identityProvider: devProvider,
@@ -49,8 +54,17 @@ const config: RuntimeConfig = {
   logging: { disabled: true },
   workDir,
   execution: {
-    default: "nimblebrain-acp",
-    runtimes: { "nimblebrain-acp": { type: "acp", driver: "nimblebrain" } },
+    default: "scripted-acp",
+    runtimes: [
+      createAcpRuntime(
+        "scripted-acp",
+        scriptedDriver({
+          // Echo the turn's last line, as the echo model answers the last message.
+          script: (prompt) => [{ text: prompt.trim().split("\n").at(-1) ?? "" }],
+          log: agentLog,
+        }),
+      ),
+    ],
   },
 };
 let runtime: Runtime;
@@ -108,7 +122,7 @@ describe("runtime selection", () => {
 
     expect(result.response).toContain("first question");
     const events = await eventsOf(result.conversationId);
-    expect(bindings(events)).toEqual([{ runtime: "nimblebrain-acp", hasSession: true }]);
+    expect(bindings(events)).toEqual([{ runtime: "scripted-acp", hasSession: true }]);
     expect(events.filter((e) => e.type === "llm.response")).toHaveLength(1);
     expect(events.filter((e) => e.type === "run.done")).toHaveLength(1);
   });
@@ -131,8 +145,8 @@ describe("runtime selection", () => {
     // The native engine read the turn the ACP runtime ran.
     expect(userTexts(prompts.at(-1)).join(" ")).toContain("turn one");
 
-    config.execution = { ...config.execution, default: "nimblebrain-acp" };
-    prompts.length = 0;
+    config.execution = { ...config.execution, default: "scripted-acp" };
+    agentLog.prompts.length = 0;
     await runtime.chat({
       message: "turn three",
       conversationId: first.conversationId,
@@ -140,19 +154,19 @@ describe("runtime selection", () => {
       identity: USER,
     });
     // And the agent behind ACP read both, from the history the door handed it.
-    const seen = userTexts(prompts.at(-1)).join(" ");
+    const seen = agentLog.prompts.at(-1) ?? "";
     expect(seen).toContain("turn one");
     expect(seen).toContain("turn two");
 
     expect(bindings(await eventsOf(first.conversationId))).toEqual([
-      { runtime: "nimblebrain-acp", hasSession: true },
+      { runtime: "scripted-acp", hasSession: true },
       { runtime: "native", hasSession: false },
-      { runtime: "nimblebrain-acp", hasSession: true },
+      { runtime: "scripted-acp", hasSession: true },
     ]);
   });
 
   test("usage an external runtime reports is recorded as that runtime's", async () => {
-    config.execution = { ...config.execution, default: "nimblebrain-acp" };
+    config.execution = { ...config.execution, default: "scripted-acp" };
     const external = await runtime.chat({
       message: "count me",
       workspaceId: TEST_WORKSPACE_ID,
@@ -164,18 +178,18 @@ describe("runtime selection", () => {
       workspaceId: TEST_WORKSPACE_ID,
       identity: USER,
     });
-    config.execution = { ...config.execution, default: "nimblebrain-acp" };
+    config.execution = { ...config.execution, default: "scripted-acp" };
 
     const externalLines = ledgerLines(external.conversationId);
     expect(externalLines.length).toBeGreaterThan(0);
-    expect(externalLines.every((l) => l.runtime === "nimblebrain-acp")).toBe(true);
+    expect(externalLines.every((l) => l.runtime === "scripted-acp")).toBe(true);
     const nativeLines = ledgerLines(native.conversationId);
     expect(nativeLines.length).toBeGreaterThan(0);
     expect(nativeLines.every((l) => l.runtime === undefined)).toBe(true);
   });
 
   test("a run that names spend accounts is refused on a runtime with no spend gate", async () => {
-    config.execution = { ...config.execution, default: "nimblebrain-acp" };
+    config.execution = { ...config.execution, default: "scripted-acp" };
     await expect(
       runtime.executeTask({
         prompt: "do it",
@@ -187,7 +201,7 @@ describe("runtime selection", () => {
   });
 
   test("a run that caps its input tokens is refused on a runtime with no spend gate", async () => {
-    config.execution = { ...config.execution, default: "nimblebrain-acp" };
+    config.execution = { ...config.execution, default: "scripted-acp" };
     await expect(
       runtime.executeTask({
         prompt: "do it",

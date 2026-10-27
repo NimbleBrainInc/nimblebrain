@@ -5,18 +5,13 @@ import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
 import type { EngineEvent } from "../../../src/engine/types.ts";
 import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
 import type { AcpDriver } from "../../../src/execution/acp/driver.ts";
-import {
-  encodeMessages,
-  RUN_META_KEY,
-  userMessageToPrompt,
-} from "../../../src/execution/acp/nimblebrain-extension.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import { spawnStdioAgent } from "../../helpers/acp/stdio-agent-process.ts";
 
 // An ACP agent as a real child process: the transport, the environment a
 // driver hands it, and that nothing outlives the run.
 
-const AGENT = join(import.meta.dir, "../../helpers/acp-stdio-agent.ts");
+const AGENT = join(import.meta.dir, "../../helpers/acp/stdio-scripted-agent.ts");
 
 function stdioDriver(pids: number[]): AcpDriver {
   return {
@@ -32,20 +27,6 @@ function stdioDriver(pids: number[]): AcpDriver {
       const found = Bun.spawnSync(["pgrep", "-f", AGENT]).stdout.toString().trim();
       pids.push(...found.split("\n").filter(Boolean).map(Number));
       return target;
-    },
-    sessionMeta: (run) => ({
-      [RUN_META_KEY]: {
-        system: run.system,
-        history: encodeMessages([]),
-        model: run.config.model,
-        maxIterations: run.config.maxIterations,
-        maxInputTokens: run.config.maxInputTokens,
-        maxOutputTokens: run.config.maxOutputTokens,
-      },
-    }),
-    prompt: (run) => {
-      const last = run.messages.at(-1);
-      return last?.role === "user" ? userMessageToPrompt(last) : [];
     },
   };
 }
