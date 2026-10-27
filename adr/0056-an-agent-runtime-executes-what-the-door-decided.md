@@ -130,6 +130,12 @@ implement it, and the agent's session options are designed with it.
   tools are the projection alone; when they are, every request is allowed,
   because the projection checks the call again when it runs. Interactive
   approval by a person has no channel yet, on any runtime.
+- An external agent sees every tool the run may call as one flat list: the
+  projection serves the run's callable set and holds back `nb__manage_tools`,
+  whose promotion state belongs to the native engine. `nb__search` therefore
+  tells the model to call a match directly when it is already listed. A large
+  connector set costs a larger tool prefix on every model call; deferring tools
+  over MCP (`tools/list_changed`) waits until that cost is measured.
 - An agent's own session id is meaningful to that runtime only. With a fresh
   store per run, a runtime may reuse the same id across runs, which is harmless
   only because nothing keys on it.
