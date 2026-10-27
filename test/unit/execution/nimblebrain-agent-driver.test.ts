@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import {
   AGENT_SESSION_META_KEY,
+  AGENT_STOP_REASON_META_KEY,
+  AGENT_USAGE_META_KEY,
   agentEnvironment,
+  agentOutcome,
   createAgentDriver,
   encodeHistory,
 } from "../../helpers/acp/nimblebrain-agent-driver.ts";
@@ -51,9 +54,44 @@ describe("nimblebrain-agent driver", () => {
         maxIterations: 7,
         maxInputTokens: 1000,
         maxOutputTokens: 100,
+        compaction: false,
       },
     });
     expect(driver.prompt?.(run())).toEqual([{ type: "text", text: "now" }]);
+  });
+
+  test("lets the agent fold mid-turn only when the door allows it, with the door's model", () => {
+    const driver = createAgentDriver({ command: "nimblebrain-agent" }, { NB_AGENT_API_KEY: "k" });
+    const allowed = { ...run(), compaction: { model: "anthropic:claude-haiku-4-5" } };
+    const meta = driver.sessionMeta?.(allowed, { mcpServers: [] })?.[AGENT_SESSION_META_KEY];
+    expect(meta).toMatchObject({ compaction: { model: "anthropic:claude-haiku-4-5" } });
+  });
+
+  test("reads the agent's stop reason and model calls, dropping what it does not recognize", () => {
+    const usage = { inputTokens: 10, outputTokens: 2, cacheWrite1hTokens: 4 };
+    expect(
+      agentOutcome({
+        _meta: {
+          [AGENT_STOP_REASON_META_KEY]: "max_input_tokens",
+          [AGENT_USAGE_META_KEY]: {
+            calls: [
+              { model: "m", purpose: "turn", usage },
+              { model: "f", purpose: "summary", usage },
+              { model: "m", purpose: "other", usage },
+            ],
+            total: usage,
+          },
+        },
+      }),
+    ).toEqual({
+      stopReason: "max_input_tokens",
+      calls: [
+        { model: "m", purpose: "turn", usage },
+        { model: "f", purpose: "summary", usage },
+      ],
+    });
+    expect(agentOutcome({ _meta: { [AGENT_STOP_REASON_META_KEY]: "nope" } })).toEqual({});
+    expect(agentOutcome({})).toEqual({});
   });
 
   test("encodes file bytes in nimblebrain-agent's documented form", () => {

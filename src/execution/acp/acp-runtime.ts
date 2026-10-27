@@ -25,7 +25,7 @@ import type { EngineResult } from "../../engine/types.ts";
 import { log } from "../../observability/log.ts";
 import { openToolProjection, type ToolProjection } from "../tool-projection.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../types.ts";
-import type { AcpDriver } from "./driver.ts";
+import type { AcpDriver, AcpOutcome } from "./driver.ts";
 import { type AcpRunRecorder, createAcpRunRecorder } from "./run-recorder.ts";
 import { transcriptPrompt } from "./transcript.ts";
 
@@ -35,7 +35,7 @@ export const PROJECTION_SERVER_NAME = "nimblebrain";
 export function createAcpRuntime(id: string, driver: AcpDriver): AgentRuntime {
   return {
     id,
-    capabilities: { spendGate: false, loopPolicy: false },
+    capabilities: driver.capabilities ?? { spendGate: false },
     execute: (run, io) => executeOverAcp(id, driver, run, io),
   };
 }
@@ -47,7 +47,7 @@ async function executeOverAcp(
   io: RunIO,
 ): Promise<EngineResult> {
   const signal = run.config.signal;
-  const recorder = createAcpRunRecorder(run, io.events);
+  const recorder = createAcpRunRecorder(run, io);
   recorder.start();
 
   const cleanup: (() => Promise<void>)[] = [];
@@ -72,7 +72,7 @@ async function executeOverAcp(
       recorder.cancelled();
       throw signal?.reason ?? new DOMException("The agent cancelled the turn", "AbortError");
     }
-    return recorder.finish(response, turn.projection.calls());
+    return recorder.finish(response, outcomeOf(driver, response), turn.projection.calls());
   } catch (err) {
     if (!recorder.ended()) {
       if (signal?.aborted) recorder.cancelled();
@@ -86,6 +86,11 @@ async function executeOverAcp(
       );
     }
   }
+}
+
+/** What the driver read from its agent's response, or nothing for a driver that reads none. */
+function outcomeOf(driver: AcpDriver, response: acp.PromptResponse): AcpOutcome {
+  return driver.outcome?.(response) ?? {};
 }
 
 /**

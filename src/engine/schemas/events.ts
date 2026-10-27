@@ -451,6 +451,12 @@ export const LlmDonePayload = Type.Object({
   estimatedInputTokens: Type.Number(),
   finishReason: opaque<FinishReason>("AI SDK unified finish reason."),
   finishReasonRaw: Type.Optional(Type.String({ description: "The provider's own stop reason." })),
+  transcriptOnly: Type.Optional(
+    Type.Boolean({
+      description:
+        "Content an external agent's turn produced, recorded for replay: not a model call, so not counted or priced.",
+    }),
+  ),
 });
 export type LlmDonePayload = Static<typeof LlmDonePayload>;
 

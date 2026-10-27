@@ -151,6 +151,7 @@ export function recordLlmCall(args: {
     ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {}),
     ...(ctx.runId ? { taskRunId: ctx.runId } : {}),
     ...(typeof args.event?.runId === "string" ? { runId: args.event.runId } : {}),
+    ...(ctx.agentRuntime ? { runtime: ctx.agentRuntime } : {}),
     ...(rates ? { rates } : {}),
   };
   ledger.append(entry);

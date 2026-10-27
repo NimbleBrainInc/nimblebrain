@@ -66,6 +66,7 @@ describe("an ACP agent over stdio", () => {
     const result = await createAcpRuntime("stdio-test", stdioDriver(pids)).execute(run, {
       tools: new StaticToolRouter([], () => ({ content: [], isError: false })),
       events: { emit: (e) => events.push(e) },
+      billSummary: () => {},
     });
 
     expect(result.stopReason).toBe("complete");

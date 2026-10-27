@@ -291,6 +291,8 @@ export interface LlmDoneEvent {
   estimatedInputTokens: number;
   finishReason: FinishReason;
   finishReasonRaw?: string;
+  /** Content an external agent's turn produced, recorded for replay: not a model call. */
+  transcriptOnly?: boolean;
 }
 
 /** The skills composed into this turn's prompt. */

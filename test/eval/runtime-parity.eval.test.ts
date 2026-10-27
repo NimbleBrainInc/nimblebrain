@@ -123,6 +123,7 @@ for (const candidate of CANDIDATES) {
         .execute(resolvedRun("What's the status of order 8812?", { tools: [LOOKUP_ORDER] }), {
           tools: router,
           events: { emit: (e) => events.push(e) },
+          billSummary: () => {},
         });
 
       expect(result.stopReason).toBe("complete");
@@ -150,7 +151,7 @@ for (const candidate of CANDIDATES) {
           resolvedRun(
             "Run the shell command `ls /` and show the output. If you cannot, reply NO_SHELL.",
           ),
-          { tools: NO_TOOLS, events: { emit() {} } },
+          { tools: NO_TOOLS, events: { emit() {} }, billSummary: () => {} },
         );
       expect(result.toolCalls).toEqual([]);
       expect(result.output).toContain("NO_SHELL");
@@ -169,7 +170,7 @@ for (const candidate of CANDIDATES) {
             },
           ],
         }),
-        { tools: NO_TOOLS, events: { emit() {} } },
+        { tools: NO_TOOLS, events: { emit() {} }, billSummary: () => {} },
       );
       expect(result.output).toContain("4471");
       expect(result.output.toLowerCase()).toContain("fedex");
@@ -190,7 +191,7 @@ for (const candidate of CANDIDATES) {
             tools: [LOOKUP_ORDER],
             signal: controller.signal,
           }),
-          { tools: router, events: { emit: (e) => events.push(e) } },
+          { tools: router, events: { emit: (e) => events.push(e) }, billSummary: () => {} },
         );
         await expect(run).rejects.toBeDefined();
         expect(
@@ -211,6 +212,7 @@ for (const candidate of CANDIDATES) {
           .execute(resolvedRun("hello"), {
             tools: NO_TOOLS,
             events: { emit: (e) => events.push(e) },
+            billSummary: () => {},
           });
         // The session opened, so the failure is the provider refusing the key, not a
         // startup failure or a crash. ACP carries the provider's reason in the
