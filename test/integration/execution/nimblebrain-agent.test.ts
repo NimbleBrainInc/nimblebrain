@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
+import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk/unstable";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
 import type {
@@ -66,7 +67,8 @@ function nativeRuntime(): AgentRuntime {
 interface Opened {
   root?: string;
   pids: number[];
-  projectionUrl?: string;
+  /** The MCP server the run declared for its projection. */
+  projection?: AcpMcpServer;
 }
 
 /** The pinned agent's driver, recording the run's directory, process and projection. */
@@ -85,8 +87,7 @@ function agentDriver(opened: Opened): AcpDriver {
       return connection;
     },
     sessionMeta(run, plan) {
-      const [server] = plan.mcpServers;
-      if (server && "url" in server) opened.projectionUrl = server.url;
+      opened.projection = plan.mcpServers[0];
       return driver.sessionMeta?.(run, plan) ?? {};
     },
   };
@@ -153,7 +154,12 @@ describe("nimblebrain-agent against the native runtime", () => {
     for (const pid of opened.pids) expect(() => process.kill(pid, 0)).toThrow();
     expect(opened.root).toBeDefined();
     expect(existsSync(opened.root ?? "")).toBe(false);
-    expect(opened.projectionUrl).toBeDefined();
-    await expect(fetch(opened.projectionUrl ?? "", { method: "POST" })).rejects.toThrow();
+    // The agent takes MCP servers on its ACP connection, so its tools travelled
+    // there: an `acp` server under a random id, and nothing listening for it.
+    expect(opened.projection).toMatchObject({ type: "acp", name: "nimblebrain" });
+    expect(
+      opened.projection && "serverId" in opened.projection && opened.projection.serverId,
+    ).toMatch(/^nb_[0-9a-f]{32}$/);
+    expect(opened.projection && "url" in opened.projection).toBe(false);
   }, 30_000);
 });
