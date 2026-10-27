@@ -41,6 +41,7 @@ import {
 } from "../../../../src/platform/tasks/store.ts";
 import type {
   Batch,
+  BatchItem,
   RunAssessment,
   Task,
   TaskRun,
@@ -850,6 +851,49 @@ describe("tasks__batch reads", () => {
       if (cursor === undefined) break;
     }
     expect(seen).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it("with output full, bounds a row's error and earlier runs so its cursor stays readable", async () => {
+    const h = harness();
+    makeTask();
+    const out = handleRunBatch({ taskId: "enrich", items: items("pass", "pass") }, h.ctx);
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    // An item retried many times whose last run failed with a long message.
+    const port = h.ctx.batches;
+    if (!port) throw new Error("batches not wired");
+    const ctx: ToolContext = {
+      ...h.ctx,
+      batches: new Proxy(port, {
+        get(target, prop) {
+          if (prop !== "get") {
+            const value = Reflect.get(target, prop);
+            return typeof value === "function" ? value.bind(target) : value;
+          }
+          return (id: string) => {
+            const found = target.get(id);
+            if (!found) return found;
+            const [first, ...rest] = found.items;
+            if (!first) return found;
+            const worn: BatchItem = {
+              ...first,
+              error: "e".repeat(60_000),
+              previousRunIds: Array.from(
+                { length: 3_000 },
+                (_, i) => `run_${String(i).padStart(12, "0")}`,
+              ),
+            };
+            return { ...found, items: [worn, ...rest] };
+          };
+        },
+      }),
+    };
+
+    const answer = handleBatch({ batchId: out.batch.id, output: "full" }, ctx);
+    expect(JSON.stringify(answer, null, 2).length).toBeLessThanOrEqual(FULL_OUTPUT_PAGE_CHARS);
+    const row = answer.results?.[0];
+    expect(row?.error?.length).toBeLessThanOrEqual(1_001);
+    expect(row?.previousRunIds).toHaveLength(20);
+    expect(row?.previousRunIds?.at(-1)).toBe(`run_${String(2_999).padStart(12, "0")}`);
   });
 });
 

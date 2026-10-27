@@ -289,13 +289,33 @@ function toItemView(item: BatchItem, output: TaskBatchItemView["output"]): TaskB
   };
 }
 
+/** In a full row: the longest `error` kept, and how many of the newest earlier run ids. */
+const FULL_ROW_ERROR_CHARS = 1_000;
+const FULL_ROW_PREVIOUS_RUNS = 20;
+
+/**
+ * A full row's metadata, bounded, so the row without its output always fits an
+ * answer: an item retried many times, or a run that failed with a long message,
+ * cannot push the page past the budget or hide its cursor.
+ */
+function boundedRow(item: BatchItem): TaskBatchItemView {
+  const row = toItemView(item, undefined);
+  if (row.error && row.error.length > FULL_ROW_ERROR_CHARS) {
+    row.error = `${row.error.slice(0, FULL_ROW_ERROR_CHARS)}…`;
+  }
+  if (row.previousRunIds && row.previousRunIds.length > FULL_ROW_PREVIOUS_RUNS) {
+    row.previousRunIds = row.previousRunIds.slice(-FULL_ROW_PREVIOUS_RUNS);
+  }
+  return row;
+}
+
 /**
  * A row carrying its run's whole structured output. One that alone would not fit
  * an answer says so instead of carrying it, so the page stays readable and the
  * row points at tasks__run_result.
  */
 function fullRow(item: BatchItem, structured: unknown, room: number): TaskBatchItemView {
-  const base = toItemView(item, undefined);
+  const base = boundedRow(item);
   if (structured === undefined) return base;
   const row = { ...base, structured };
   return rowChars(row) > room ? { ...base, structuredOmitted: true } : row;
@@ -355,12 +375,10 @@ export function handleBatch(args: TasksBatchInput, ctx: ToolContext): TasksBatch
     limit !== undefined ||
     output !== undefined;
   if (!wantResults) return { batch: view };
-  // The answer's text with no rows and the largest cursor it could carry.
-  const baseChars = JSON.stringify(
-    { batch: view, results: [], nextCursor: items.length },
-    null,
-    2,
-  ).length;
+  // The answer's text with no rows and the largest cursor it could carry, plus
+  // the two characters a non-empty `results` array adds over `[]`.
+  const baseChars =
+    JSON.stringify({ batch: view, results: [], nextCursor: items.length }, null, 2).length + 2;
   const { page, nextCursor } = resultsPage(
     items,
     {

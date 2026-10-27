@@ -860,7 +860,9 @@ export const TasksBatchInput = Type.Object(
           "What each result row carries of its run's structured output. summary (default): its " +
           "top-level scalar fields, for a table. full: the whole structured output as " +
           "`structured`, so a task that answers with a list or nested object can be read here; " +
-          "a page then also ends when its rows reach a size budget, so follow `nextCursor`.",
+          "a page then also ends when its rows reach a size budget, so follow `nextCursor`. " +
+          "Full rows keep an item's newest 20 earlier run ids and the first 1,000 characters " +
+          "of its error.",
       }),
     ),
   },
