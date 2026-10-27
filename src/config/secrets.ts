@@ -20,6 +20,15 @@ export interface SecretsConfig {
   backend?: string;
   /** Passed to that backend verbatim. Never key material — see below. */
   config?: Record<string, unknown>;
+  /**
+   * The NAME of the environment variable that holds the installation's run key
+   * (a JWK Set; `src/runtime/run-key.ts`). Named, the run key is read from that
+   * variable at boot and never from the store, so a managed deployment delivers
+   * it the way it delivers every other per-tenant key: from its secret manager
+   * into the pod's environment. Named but unset, the runtime refuses to start.
+   * Omitted, the run key is the instance secret `nimblebrain.run_key`, if any.
+   */
+  runKeyEnv?: string;
 }
 
 /** The backend a deployment gets when its config says nothing. */
@@ -41,6 +50,7 @@ export function credentialStoreBackendName(secrets: SecretsConfig | undefined): 
 const SECRETS_FIELDS: Record<keyof Required<SecretsConfig>, true> = {
   backend: true,
   config: true,
+  runKeyEnv: true,
 };
 
 /** Every key the `secrets` block accepts. */

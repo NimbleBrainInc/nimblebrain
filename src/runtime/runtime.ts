@@ -303,7 +303,13 @@ import {
   runWithRequestContext,
 } from "./request-context.ts";
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
-import { createRunKey, parseRunKeyRing, RUN_KEY_CREDENTIAL, type RunKey } from "./run-key.ts";
+import {
+  createRunKey,
+  parseRunKeyRing,
+  RUN_KEY_CREDENTIAL,
+  type RunKey,
+  RunKeyError,
+} from "./run-key.ts";
 import type {
   DeclaredSkill,
   RunComposition,
@@ -411,31 +417,60 @@ export type DeclaredRuntimeConfig = Pick<RuntimeConfig, PreStoreConfigKey> &
   WithCredentialRefs<Omit<RuntimeConfig, PreStoreConfigKey>>;
 
 /**
- * Read the installation's run key from the instance scope of the credential
- * store, at boot.
+ * Read the installation's run key at boot: from the environment variable
+ * `secrets.runKeyEnv` names, or else from the instance scope of the credential
+ * store.
  *
- * Absent is a legitimate state: an installation that runs no external agent
- * needs no key, so it starts with none and mints nothing. Present, it either
- * opens and parses or the runtime refuses to start: a sealed value that does
- * not open throws on `reveal()` (ADR-0035), and a malformed ring throws in the
- * parse, so no key is served that this runtime cannot sign with.
+ * A named variable is the only source: a managed deployment delivers the key
+ * from its secret manager into the environment, as it does every per-tenant key,
+ * and a stored copy would be a second value nobody rotates. Named but unset is a
+ * deployment that asked for a key and did not get one, so the runtime refuses to
+ * start rather than start without it.
+ *
+ * With no variable named, absent is a legitimate state: an installation that runs
+ * no external agent needs no key, so it starts with none and mints nothing.
+ * Present, the key either opens and parses or the runtime refuses to start: a
+ * sealed value that does not open throws on `reveal()` (ADR-0035), and a
+ * malformed ring throws in the parse, so no key is served that this runtime
+ * cannot sign with.
  */
 async function loadRunKey(
   store: CredentialStore,
-  config: Pick<RuntimeConfig, "tasks">,
+  config: Pick<RuntimeConfig, "tasks" | "secrets">,
 ): Promise<RunKey | null> {
-  const stored = await store.get({ kind: "instance" }, RUN_KEY_CREDENTIAL, {
-    caller: "runtime",
-    purpose: "run key",
-  });
-  if (!stored) return null;
+  const ringJson = await readRunKeyRingJson(store, config.secrets?.runKeyEnv);
+  if (ringJson === null) return null;
   return createRunKey({
-    ring: parseRunKeyRing(stored.reveal()),
+    ring: parseRunKeyRing(ringJson),
     issuer: publicOrigin(),
     // The operator's wall-clock ceiling on a run is the longest turn this
     // installation allows; a model credential outlives it by the leeway only.
     maxRunMs: resolveTasksConfig(config.tasks).maxRunDurationMs,
   });
+}
+
+/**
+ * The run key's JWK Set as text, from the named environment variable or the
+ * instance secret, or `null` when no variable is named and no secret is stored.
+ * Errors name the variable, never its value.
+ */
+async function readRunKeyRingJson(
+  store: CredentialStore,
+  envName: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  if (envName !== undefined) {
+    const value = env[envName]?.trim();
+    if (!value) {
+      throw new RunKeyError(`secrets.runKeyEnv names ${envName}, which holds no run key`);
+    }
+    return value;
+  }
+  const stored = await store.get({ kind: "instance" }, RUN_KEY_CREDENTIAL, {
+    caller: "runtime",
+    purpose: "run key",
+  });
+  return stored ? stored.reveal() : null;
 }
 
 function resolveWorkDir(config: Pick<RuntimeConfig, "workDir">): string {
