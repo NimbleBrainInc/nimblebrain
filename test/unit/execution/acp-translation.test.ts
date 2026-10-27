@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
+import { MetricsEventSink } from "../../../src/adapters/metrics-events.ts";
+import { llmCallsTotal } from "../../../src/api/metrics.ts";
 import type { EngineEvent } from "../../../src/engine/types.ts";
 import { createNimbleBrainDriver } from "../../../src/execution/acp/drivers/nimblebrain.ts";
 import {
@@ -138,6 +140,37 @@ describe("run recorder", () => {
     // The run's usage is its loop calls, as the engine's is; ACP's total is not read.
     expect(result.usage.inputTokens).toBe(130);
     expect(result.iterations).toBe(2);
+  });
+
+  test("each reported model call is counted once, however many segments the turn cut", async () => {
+    const model = "tm-acp-calls";
+    const countCalls = async () =>
+      (await llmCallsTotal.get()).values
+        .filter((v) => v.labels.model === model)
+        .reduce((sum, v) => sum + v.value, 0);
+    const before = await countCalls();
+    const metrics = new MetricsEventSink();
+    const resolved = run([ask]);
+    resolved.config.model = model;
+    const recorder = createAcpRunRecorder(resolved, {
+      events: metrics,
+      billSummary: () => {},
+    });
+    recorder.start();
+    recorder.callStarting({ id: "call_1", name: "lookup", input: {} });
+    recorder.callStarting({ id: "call_2", name: "lookup", input: {} });
+    recorder.finish(
+      { stopReason: "end_turn" },
+      {
+        calls: [
+          { model, purpose: "turn", usage: usage(100) },
+          { model, purpose: "turn", usage: usage(30) },
+        ],
+      },
+      [],
+    );
+
+    expect((await countCalls()) - before).toBe(2);
   });
 
   test("the reference driver reads its agent's stop reason, ignoring one it does not know", () => {

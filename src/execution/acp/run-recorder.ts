@@ -12,7 +12,9 @@
  *  - A turn is cut into segments at each tool call, and each segment is one
  *    `llm.done` holding its text and the `tool-call` that ends it. That is the
  *    shape history replays from (`reconstructMessages`), so a later turn on any
- *    runtime, the native engine included, reads this one back.
+ *    runtime, the native engine included, reads this one back. A segment cut
+ *    at a tool call is `transcriptOnly`: usage is known only when the turn
+ *    ends, so it is not a model call and nothing counts or prices it.
  *  - Tool calls are recorded from the tool projection, which dispatched them,
  *    not from the agent's `tool_call` updates, which describe them.
  *  - Usage is priced per model call when the driver reads the agent's calls
@@ -86,6 +88,25 @@ export function createAcpRunRecorder(
         llmMs: 0,
         estimatedInputTokens: 0,
         finishReason: finish,
+      },
+    });
+  };
+
+  // A segment cut before the turn's usage is known: replayed, but not a model
+  // call, so usage consumers neither count nor price it.
+  const emitTranscript = (content: LanguageModelV4Content[], finish: FinishReason) => {
+    segments++;
+    events.emit({
+      type: "llm.done",
+      data: {
+        runId,
+        model,
+        content,
+        usage: emptyUsage(),
+        llmMs: 0,
+        estimatedInputTokens: 0,
+        finishReason: finish,
+        transcriptOnly: true,
       },
     });
   };
@@ -210,7 +231,7 @@ export function createAcpRunRecorder(
     },
 
     callStarting(call) {
-      emitSegment(
+      emitTranscript(
         [
           ...takeText(),
           {
@@ -220,7 +241,6 @@ export function createAcpRunRecorder(
             input: JSON.stringify(call.input),
           },
         ],
-        emptyUsage(),
         "tool-calls",
       );
     },
@@ -244,7 +264,7 @@ export function createAcpRunRecorder(
 
     cancelled() {
       const content = takeText();
-      if (content.length > 0) emitSegment(content, emptyUsage(), "other");
+      if (content.length > 0) emitTranscript(content, "other");
       done("cancelled");
     },
 

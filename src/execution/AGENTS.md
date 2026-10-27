@@ -20,7 +20,7 @@ Scope: `src/execution/`, the agent runtimes a run executes on. The door that dec
 - **The client advertises no `fs` and no `terminal`.** A permission request is allowed when the driver declares `toolSurface: "projection"` (the agent has no tool of its own, and the projection re-checks the call), and otherwise only when its title names a projected tool. ACP has no field that names a tool reliably, so never widen the title match.
 - **An agent's own session id is meaningful to that runtime only.** With a fresh store per run it can repeat across runs; never key anything on it.
 - **Reasoning streams, it does not persist.** `agent_thought_chunk` becomes `reasoning.delta`, which the conversation store does not keep.
-- **Per-call usage arrives with the response.** Segments are emitted as the turn runs, before any usage is known, so each loop call's usage is recorded at the end as an `llm.done` with empty content and finish `stop`, which replays as nothing; the last call carries the turn's closing text. Without reported calls, ACP's turn total rides the last segment.
+- **Per-call usage arrives with the response.** Segments are emitted as the turn runs, before any usage is known, as `transcriptOnly` `llm.done` events that usage consumers neither count nor price, so each loop call is recorded at the end as an `llm.done` with empty content and finish `stop`, which replays as nothing; the last call carries the turn's closing text. Without reported calls, ACP's turn total rides the last segment.
 
 ## The reference agent (`acp-agent/`)
 

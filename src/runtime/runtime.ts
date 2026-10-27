@@ -6261,6 +6261,7 @@ function createPartialRunAccumulator(): {
     emit(event: EngineEvent): void {
       if (event.type === "llm.done") {
         const { data } = event;
+        if (data.transcriptOnly) return;
         totals.iterations += 1;
         totals.llmMs += data.llmMs;
         totals.inputTokens += data.usage.inputTokens;
