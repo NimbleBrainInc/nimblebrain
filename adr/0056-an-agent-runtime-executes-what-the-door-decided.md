@@ -84,9 +84,13 @@ A runtime that does not check each model call against the run's spend accounts
 and its run-wide input-token cap is refused any run that names an account or
 sets the cap, rather than running it unchecked. The loop
 policy that lives inside the engine (in-turn windowing and compaction, tool
-promotion, the loop supervisor, bound-skill delivery) is declared absent for an
-external runtime; the policy at the tool boundary holds for every runtime,
-because it lives in the projection.
+promotion, the loop supervisor) is declared absent for an external runtime; the
+policy at the tool boundary holds for every runtime, because it lives in the
+projection. Bound-skill delivery is tool-boundary policy: the projection holds
+the first call to a bound tool until its guidance is read, with the engine's own
+module, and returns the guidance in that call's result, since an external
+agent's history is its own. The record is the engine's (`connector.skill.injected`),
+so a later turn on any runtime replays the guidance where the native engine puts it.
 
 **ACP is the first external transport, behind a generic runtime that names no
 agent.** What one agent needs beyond ACP v1 (how to open it and the working

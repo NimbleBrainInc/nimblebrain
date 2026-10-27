@@ -108,6 +108,10 @@ async function openSession(
     signal: run.config.signal,
     maxToolResultSize: run.config.maxToolResultSize,
     ...(run.config.hooks ? { hooks: run.config.hooks } : {}),
+    skills: {
+      candidates: run.config.connectorSkillCandidates ?? [],
+      delivered: run.config.alreadyInjectedConnectorSkills ?? [],
+    },
     observer: recorder,
   });
   cleanup.push(() => projection.close());

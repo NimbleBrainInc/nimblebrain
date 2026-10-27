@@ -14,6 +14,14 @@
  * the tool returned, so the conversation log holds what ran, not an agent's
  * description of it.
  *
+ * Skills bound to tools are delivered here as the engine delivers them, by the
+ * same module (`src/engine/skill-delivery.ts`): the first call to a bound tool
+ * is held until its guidance has been read, and a call that runs first gets the
+ * guidance after it. An external agent's history is its own, so the guidance
+ * travels in the call's result. The record is the engine's: the held result in
+ * `tool.done`, and each body in `connector.skill.injected`, from which a later
+ * turn on any runtime replays it in the native engine's position.
+ *
  * It listens on loopback only, on a random port, at a random path, behind a
  * random bearer token. The endpoint dies with the run.
  */
@@ -28,12 +36,14 @@ import {
   extractTextForModel,
   textContent,
 } from "../engine/content-helpers.ts";
+import { createSkillDelivery, type SkillDelivery } from "../engine/skill-delivery.ts";
 import {
   buildToolDoneData,
   coerceAndValidateToolInput,
   enforceMaxToolResultSize,
 } from "../engine/tool-call.ts";
 import {
+  type ConnectorSkillCandidate,
   type EngineHooks,
   type EventSink,
   isModelVisible,
@@ -46,6 +56,7 @@ import {
   type ToolSchema,
 } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { formatConnectorSkillBlock } from "../prompt/containment.ts";
 
 /**
  * Tools an external loop cannot use, because they act on the native engine's
@@ -72,6 +83,12 @@ export interface ToolProjectionOptions {
    * them, so a gate the door installed holds for an external agent too.
    */
   hooks?: Pick<EngineHooks, "beforeToolCall" | "afterToolCall">;
+  /**
+   * The run's tool-bound skills (`EngineConfig.connectorSkillCandidates`) and
+   * those the conversation already delivered
+   * (`EngineConfig.alreadyInjectedConnectorSkills`).
+   */
+  skills?: { candidates: ConnectorSkillCandidate[]; delivered: string[] };
   observer?: ToolProjectionObserver;
 }
 
@@ -96,12 +113,17 @@ export async function openToolProjection(opts: ToolProjectionOptions): Promise<T
   const token = randomBytes(32).toString("base64url");
   const path = `/mcp/${randomBytes(16).toString("hex")}`;
   const records: ToolCallRecord[] = [];
-  const activatedSkills = new Set<string>();
+  const skills = createSkillDelivery({
+    runId: opts.runId,
+    candidates: opts.skills?.candidates ?? [],
+    delivered: opts.skills?.delivered ?? [],
+    events: opts.events,
+  });
   const tools = await projectedTools(opts.router);
   const toolsByName = new Map(tools.map((t) => [t.name, t]));
 
   const callTool = (name: string, input: Record<string, unknown>): Promise<CallToolResult> =>
-    runInRunContext(() => dispatch(opts, toolsByName, records, activatedSkills, name, input));
+    runInRunContext(() => dispatch(opts, toolsByName, records, skills, name, input));
 
   const handler = createMcpHandler(() => createServer(tools, callTool), {
     legacy: "reject",
@@ -170,14 +192,15 @@ function toMcpTool(tool: ToolSchema): Tool {
 
 /**
  * One call, end to end: the checks the engine applies to a model's call, the
- * router, the result bound, and the record. An unknown or hidden tool is an
- * error result, never a thrown request, so the agent sees why and can recover.
+ * hold for bound guidance, the router, the result bound, and the record. An
+ * unknown or hidden tool is an error result, never a thrown request, so the
+ * agent sees why and can recover.
  */
 async function dispatch(
   opts: ToolProjectionOptions,
   toolsByName: Map<string, ToolSchema>,
   records: ToolCallRecord[],
-  activatedSkills: Set<string>,
+  skills: SkillDelivery,
   name: string,
   rawInput: Record<string, unknown>,
 ): Promise<CallToolResult> {
@@ -186,7 +209,11 @@ async function dispatch(
   if (!schema) {
     return toCallToolResult({ content: textContent(`Tool not available: ${name}`), isError: true });
   }
-  const { call, refusal } = await gate(opts, schema, { id, name, input: rawInput });
+  const { call, refusal, held, denied } = await gate(opts, schema, skills, {
+    id,
+    name,
+    input: rawInput,
+  });
   const uiMeta = schema.meta?.ui as Record<string, unknown> | undefined;
   const resourceUri = typeof uiMeta?.resourceUri === "string" ? uiMeta.resourceUri : undefined;
 
@@ -195,15 +222,19 @@ async function dispatch(
     type: "tool.start",
     data: { runId: opts.runId, name, id, resourceUri, input: rawInput },
   });
+  // A call that runs gets its tool's guidance after it, as in the engine.
+  if (!held && !denied) skills.claimFor(name);
 
   const start = performance.now();
   let result = refusal ?? (await execute(opts, call));
   result = enforceMaxToolResultSize(result, opts.maxToolResultSize);
   const ms = performance.now() - start;
-  if (opts.hooks?.afterToolCall) result = await opts.hooks.afterToolCall(call, result);
+  if (!held && opts.hooks?.afterToolCall) result = await opts.hooks.afterToolCall(call, result);
 
   const outputText = extractTextForModel(result.content);
-  const modelOutput = boundToolResultForModel(outputText, { hasUiResource: !!resourceUri });
+  const modelOutput = held
+    ? outputText
+    : boundToolResultForModel(outputText, { hasUiResource: !!resourceUri });
   const bounded = modelOutput !== outputText;
   const resourceLinks = extractResourceLinks(result.content);
 
@@ -215,15 +246,16 @@ async function dispatch(
       id,
       finalResult: result,
       ms,
-      resourceUri,
+      resourceUri: held ? undefined : resourceUri,
       outputText,
       bounded,
       modelOutput,
       resourceLinks,
       verdict: { type: "pass" },
+      ...(held ? { held: true as const } : {}),
     }),
   });
-  recordSkillMarkers(opts, id, result, activatedSkills);
+  recordSkillMarkers(opts, id, result, skills);
   records.push({
     id,
     name,
@@ -235,23 +267,40 @@ async function dispatch(
     ...(resourceLinks.length > 0 ? { resourceLinks } : {}),
   });
 
-  // The agent's model sees what the native engine's model would: the bounded text.
-  return toCallToolResult(bounded ? { ...result, content: textContent(modelOutput) } : result);
+  // The agent's model sees what the native engine's model would: the bounded
+  // text, then any guidance delivered with this call.
+  const guidance = (await skills.settle()).map((d) =>
+    formatConnectorSkillBlock(d.skillName, d.scope, d.skillBody, d.heldToolCallId !== undefined),
+  );
+  const seen = bounded || guidance.length > 0 ? textContent(modelOutput) : result.content;
+  return toCallToolResult({
+    ...result,
+    content: [...seen, ...guidance.flatMap((text) => textContent(text))],
+  });
 }
 
 /**
- * The engine's checks on a model's call: coerce and validate the input, then
- * the run's `beforeToolCall` gate, whose rewrite is checked again. A refused
- * call carries the result the agent sees in place of running.
+ * The engine's checks on a model's call, in its order: coerce and validate the
+ * input, hold it for bound guidance the model has not read, then the run's
+ * `beforeToolCall` gate, whose rewrite is checked again. A refused call carries
+ * the result the agent sees in place of running; `held` and `denied` say why
+ * it did not run.
  */
 async function gate(
   opts: ToolProjectionOptions,
   schema: ToolSchema,
+  skills: SkillDelivery,
   offered: ToolCall,
-): Promise<{ call: ToolCall; refusal?: ToolResult }> {
+): Promise<{ call: ToolCall; refusal?: ToolResult; held?: true; denied?: true }> {
   const checked = coerceAndValidateToolInput(offered.input, schema);
   const call: ToolCall = { ...offered, input: checked.input };
   if (checked.errorResult) return { call, refusal: checked.errorResult };
+  // Ahead of the hook, so no person approves a call that is then held.
+  const heldResult = await skills.hold(call, {
+    readOnly: schema.annotations?.readOnlyHint === true,
+    signal: opts.signal,
+  });
+  if (heldResult) return { call, refusal: heldResult, held: true };
   const beforeToolCall = opts.hooks?.beforeToolCall;
   if (!beforeToolCall) return { call };
   const hooked = await beforeToolCall(call);
@@ -260,6 +309,7 @@ async function gate(
     return {
       call,
       refusal: { content: textContent("Tool call was denied by policy."), isError: true },
+      denied: true,
     };
   }
   const rechecked = coerceAndValidateToolInput(hooked.input, schema);
@@ -283,21 +333,21 @@ async function execute(opts: ToolProjectionOptions, call: ToolCall): Promise<Too
  * skill delivered by activation (so a later turn does not deliver it again)
  * and a skill muted for the conversation. Only the platform's own in-process
  * tools can set the markers; a connector's are stripped before they get here.
- * An activation is recorded once per run, as the engine records it.
+ * An activation is recorded once, as the engine records it: not again in a run,
+ * nor for a skill the conversation already delivered.
  */
 function recordSkillMarkers(
   opts: ToolProjectionOptions,
   toolCallId: string,
   result: ToolResult,
-  activatedSkills: Set<string>,
+  skills: SkillDelivery,
 ): void {
   const activated = result._meta?.[SKILL_ACTIVATED_META_KEY] as
     | { skillName?: unknown; scope?: unknown; tokens?: unknown }
     | undefined;
   if (activated && typeof activated.skillName === "string" && activated.skillName) {
     const skillName = activated.skillName;
-    if (!activatedSkills.has(skillName)) {
-      activatedSkills.add(skillName);
+    if (skills.activated(skillName)) {
       opts.events.emit({
         type: "skill.activated",
         data: {

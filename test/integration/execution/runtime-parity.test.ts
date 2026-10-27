@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   LanguageModelV4,
   LanguageModelV4Message,
   LanguageModelV4Prompt,
 } from "@ai-sdk/provider";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
+import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
+import type { StoredMessage } from "../../../src/conversation/types.ts";
 import type {
   EngineEvent,
   EngineEventOf,
@@ -313,3 +317,123 @@ describe("acp runtime: the projection holds the run's bound", () => {
 function createNimbleBrainAgentWithoutMeta() {
   return createNimbleBrainAcpAgent({ resolveModel: () => createEchoModel() });
 }
+
+describe("bound skill guidance", () => {
+  const GUIDE = {
+    name: "lookup-guide",
+    body: "Always quote the answer.",
+    scope: "connector",
+    toolAffinity: ["lookup"],
+  };
+  // The first call is held for its guidance, the second runs, then the reply.
+  const HELD_SCRIPT: EchoModelResponse[] = [
+    { toolCalls: [{ toolCallId: "m1", toolName: "lookup", input: '{"q":"answer"}' }] },
+    { toolCalls: [{ toolCallId: "m2", toolName: "lookup", input: '{"q":"answer"}' }] },
+    { text: "The answer is 42." },
+  ];
+
+  /** Replay a run's events from a conversation log, as the next turn reads them. */
+  async function replayed(events: EngineEvent[]): Promise<StoredMessage[]> {
+    const dir = join(mkdtempSync(join(tmpdir(), "acp-replay-")), "conversations");
+    const store = new EventSourcedConversationStore({ dir });
+    const conversation = await store.create({ model: "test:echo", ownerId: "user_test" });
+    store.setActiveConversation(conversation.id);
+    for (const event of events) store.emit(event);
+    await store.flush();
+    return store.history(conversation);
+  }
+
+  const shape = (messages: StoredMessage[]) =>
+    messages.map((m) => [
+      m.role,
+      (Array.isArray(m.content) ? m.content : []).map((p) =>
+        // Whitespace between segments differs by runtime, as `output` does.
+        p.type === "text" ? `text:${p.text.trim()}` : p.type,
+      ),
+    ]);
+
+  function boundRun(): ResolvedRun {
+    const run = resolvedRun();
+    run.config = { ...run.config, connectorSkillCandidates: [GUIDE] };
+    return run;
+  }
+
+  async function runOn(make: () => AgentRuntime) {
+    const calls: ToolCall[] = [];
+    const router = new StaticToolRouter([LOOKUP], (call) => {
+      calls.push(call);
+      return { content: [{ type: "text", text: "42" }], isError: false };
+    });
+    const sink = collect();
+    const result = await make().execute(boundRun(), { tools: router, events: sink });
+    return { calls, sink, result };
+  }
+
+  test("holds the first call on every runtime and leaves the engine's record", async () => {
+    const prompts: LanguageModelV4Prompt[] = [];
+    const native = await runOn(() =>
+      createNativeRuntime(() => createEchoModel({ responses: structuredClone(HELD_SCRIPT) })),
+    );
+    const acp = await runOn(() =>
+      createAcpRuntime(
+        "nimblebrain-acp",
+        createNimbleBrainDriver({
+          resolveModel: () =>
+            recording(createEchoModel({ responses: structuredClone(HELD_SCRIPT) }), prompts),
+        }),
+      ),
+    );
+
+    for (const { calls, sink, result } of [native, acp]) {
+      expect(result.output.trim()).toBe("The answer is 42.");
+      // The tool ran once: the held call did not reach it.
+      expect(calls).toHaveLength(1);
+      expect(sink.of("tool.done").map((e) => [e.data.ok, e.data.held ?? false])).toEqual([
+        [false, true],
+        [true, false],
+      ]);
+      const [injected] = sink.of("connector.skill.injected");
+      expect(injected?.data).toMatchObject({
+        skillName: "lookup-guide",
+        skillBody: "Always quote the answer.",
+        toolName: "lookup",
+      });
+      expect(injected?.data.heldToolCallId).toBe(sink.of("tool.done")[0]?.data.id);
+    }
+
+    // The agent's model read the guidance, carried in the held call's result.
+    const afterHold = JSON.stringify(prompts[1]);
+    expect(afterHold).toContain("<connector-skill>");
+    expect(afterHold).toContain("Always quote the answer.");
+
+    // And a later turn replays the guidance where the native turn put it.
+    expect(shape(await replayed(acp.sink.events))).toEqual(
+      shape(await replayed(native.sink.events)),
+    );
+  });
+
+  test("a skill the conversation already delivered holds nothing", async () => {
+    const SCRIPT_ONCE: EchoModelResponse[] = [
+      { toolCalls: [{ toolCallId: "m1", toolName: "lookup", input: '{"q":"answer"}' }] },
+      { text: "The answer is 42." },
+    ];
+    const run = boundRun();
+    run.config = { ...run.config, alreadyInjectedConnectorSkills: ["lookup-guide"] };
+    const sink = collect();
+    const calls: ToolCall[] = [];
+    await createAcpRuntime(
+      "nimblebrain-acp",
+      createNimbleBrainDriver({
+        resolveModel: () => createEchoModel({ responses: structuredClone(SCRIPT_ONCE) }),
+      }),
+    ).execute(run, {
+      tools: new StaticToolRouter([LOOKUP], (call) => {
+        calls.push(call);
+        return { content: [{ type: "text", text: "42" }], isError: false };
+      }),
+      events: sink,
+    });
+    expect(calls).toHaveLength(1);
+    expect(sink.of("connector.skill.injected")).toEqual([]);
+  });
+});
