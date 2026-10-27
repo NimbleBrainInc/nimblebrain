@@ -1,9 +1,10 @@
 # 0058. A turn on an external agent carries credentials only the runtime can mint and end
 
 - Status: Proposed
-- Date: 2026-10-26
+- Date: 2026-10-27
 - Serves: secure RBAC, orchestrate remote MCP
-- Refines: ADR-0056 (the run-scoped credential it requires), ADR-0057 (what a pooled worker holds)
+- Refines: ADR-0056 (the run-scoped credential it requires)
+- Amends: ADR-0057 (what a worker of an agent that reads provider configuration per process holds)
 
 ## Context
 
@@ -11,7 +12,7 @@ ADR-0056 lets an agent with its own loop join an installation once three things
 exist: a remote ACP transport, the tool projection served on the runtime's own
 server behind a run-scoped credential, and the installation's model gateway.
 ADR-0057 hosts such agents as a pool of long-lived workers, one ACP session per
-turn, and keeps every secret off the workers.
+turn, holding no secret, with the gateway checking each run's budget.
 
 An out-of-process agent calls back in two directions during a turn, and each
 callee must know which turn is calling:
@@ -28,9 +29,12 @@ What an agent accepts per session is set by ACP and by the agent, not by us.
 ACP's `session/new` carries MCP servers with headers, so a tool credential per
 session reaches any agent that takes HTTP MCP servers. ACP has no slot for a
 model credential; agents read provider keys from their own process
-configuration. An agent built on NimbleBrain's engine takes whatever its driver
-sends at `session/new`; an agent we do not maintain may take nothing per session,
-which makes a model credential per turn impossible for it while it is pooled.
+configuration. nimblebrain-agent takes whatever its driver sends at
+`session/new`; an agent we do not maintain may take nothing per session, which
+makes a model credential per turn impossible for it while it is pooled. Such an
+agent cannot meet both of ADR-0057's terms at once: a worker that holds no
+secret has nothing to present to the gateway, and a gateway that cannot tell
+one turn from another cannot hold a run to its budget.
 
 The platform's trust model has one minter for platform tokens, and lets a
 service mint scoped tokens for the work it owns (a task worker's token is the
@@ -75,16 +79,21 @@ where it cannot.** A driver declares which (`modelCredential: "session" |
   budget. Its expiry bounds it: the turn's longest allowed duration, plus the
   gateway's clock leeway.
 - `process`: the worker is started with a pool credential, minted with the same
-  key, audience the gateway, subject the pool. It is the one secret a worker of
-  such an agent holds, it is useless anywhere but this installation's gateway,
-  and it rotates with the run key. The gateway can attribute calls to the pool
-  only, so the door treats such a runtime as having no spend gate (ADR-0056) and
-  serves it chat, not budgeted runs.
+  key, audience the gateway, subject the pool. This amends ADR-0057's "workers
+  hold no secret" for such agents: the pool credential is the one secret their
+  workers hold, it is useless anywhere but this installation's gateway, and it
+  rotates with the run key. The gateway can attribute calls to the pool only, so
+  the door treats such a runtime as having no spend gate (ADR-0056) and serves it
+  chat, not budgeted runs.
 
 **A worker's ACP endpoint is reachable only by its installation's runtime.** The
 pool accepts connections from the runtime alone, by network policy and by a
 connection credential the runtime presents. Opening a session grants nothing by
 itself: everything a session can reach, it reaches with the turn's credentials.
+A worker verifies the connection with a public key where the agent supports
+one; an agent that checks only a shared secret holds that secret too, which is
+the second and last exception to ADR-0057's rule, and it grants nothing beyond
+opening sessions on that pool.
 
 **Development needs no cluster.** A developer runs one worker on their machine
 (a pool of one), points the installation's `execution` entry at its address,

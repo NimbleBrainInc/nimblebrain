@@ -1,6 +1,6 @@
 # 0057. An external agent runs in a pool of long-lived workers, one session per turn
 
-- Status: Proposed
+- Status: Proposed; amended by ADR-0058 (what a worker of an agent that reads provider configuration per process holds)
 - Date: 2026-10-26
 - Serves: orchestrate remote MCP, secure RBAC
 - Refines: ADR-0047 (how its remote execution provider is hosted), ADR-0056 (where an out-of-process agent runs)
