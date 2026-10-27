@@ -1,6 +1,6 @@
 # 0056. An agent runtime executes what the door decided
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0057
 - Date: 2026-10-24
 - Serves: orchestrate remote MCP, secure RBAC
 - Supersedes: ADR-0047 (the door decides a run and an execution provider runs it); its out-of-process half is ADR-0057
