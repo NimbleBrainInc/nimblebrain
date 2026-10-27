@@ -59,7 +59,7 @@ describe("boundToolResultForModel", () => {
 
   it("bounds oversized text and appends an explicit, actionable marker", () => {
     const text = `${"a".repeat(40)}\n`.repeat(50); // ~2050 chars, line-delimited
-    const out = boundToolResultForModel(text, { limit: 200 });
+    const out = boundToolResultForModel(text, { limit: 1000 });
     expect(out.length).toBeLessThan(text.length);
     expect(out).toContain("bounded for model context");
     expect(out).toContain("user's screen");
@@ -67,7 +67,7 @@ describe("boundToolResultForModel", () => {
 
   it("trims on a line boundary so records are not cut mid-line", () => {
     const text = `${"a".repeat(40)}\n`.repeat(50);
-    const out = boundToolResultForModel(text, { limit: 200 });
+    const out = boundToolResultForModel(text, { limit: 1000 });
     const head = out.split("\n\n[Result bounded")[0]!;
     // Every retained line is a complete 40-char record (no partial last line).
     for (const line of head.split("\n").filter(Boolean)) {
@@ -77,14 +77,14 @@ describe("boundToolResultForModel", () => {
 
   it("falls back to a hard slice when a single line exceeds the limit", () => {
     const text = "a".repeat(5000); // one line, no newline
-    const out = boundToolResultForModel(text, { limit: 100 });
-    expect(out.startsWith("a".repeat(100))).toBe(true);
+    const out = boundToolResultForModel(text, { limit: 1000 });
+    expect(out.startsWith("a".repeat(500))).toBe(true);
     expect(out).toContain("bounded for model context");
   });
 
   it("returns an inline-UI pointer (not the payload) when hasUiResource", () => {
     const text = "z".repeat(5000);
-    const out = boundToolResultForModel(text, { limit: 100, hasUiResource: true });
+    const out = boundToolResultForModel(text, { limit: 1000, hasUiResource: true });
     expect(out).toContain("displayed in the inline UI");
     expect(out).not.toContain("z".repeat(100));
   });
@@ -94,6 +94,30 @@ describe("boundToolResultForModel", () => {
     expect(boundToolResultForModel(text, { limit: 200 })).toBe(
       boundToolResultForModel(text, { limit: 200 }),
     );
+  });
+
+  it("never exceeds the limit, marker included", () => {
+    const text = `${"a".repeat(40)}\n`.repeat(10_000);
+    for (const limit of [300, 1000, 50_000]) {
+      expect(boundToolResultForModel(text, { limit }).length).toBeLessThanOrEqual(limit);
+      expect(
+        boundToolResultForModel(text, { limit, hasUiResource: true }).length,
+      ).toBeLessThanOrEqual(limit);
+    }
+  });
+
+  it("is idempotent, so a second bound keeps the original size in the marker", () => {
+    const text = "b".repeat(350_001);
+    for (const hasUiResource of [false, true]) {
+      const once = boundToolResultForModel(text, { hasUiResource });
+      expect(boundToolResultForModel(once, { hasUiResource })).toBe(once);
+      expect(once).toContain("350,001");
+    }
+  });
+
+  it("falls back to a plain slice when the limit cannot hold the marker", () => {
+    const text = "a".repeat(5000);
+    expect(boundToolResultForModel(text, { limit: 50 })).toBe("a".repeat(50));
   });
 
   it("treats limit <= 0 as unbounded", () => {

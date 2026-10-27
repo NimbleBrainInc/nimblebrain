@@ -165,9 +165,12 @@ function sliceOnLineBoundary(text: string, limit: number): string {
  *   specific items (filter / narrower scope / pagination) without blindly
  *   re-calling the same tool.
  *
- * `limit` is a soft target: when trimming occurs the returned string exceeds
- * it by the marker length (~200 chars). Callers needing a hard ceiling must
- * clamp the result themselves.
+ * `limit` is a hard ceiling: the marker is reserved inside it, so the result
+ * is never longer than `limit` and bounding an already-bounded result returns
+ * it unchanged. That idempotence matters when a result crosses two bounds (the
+ * tool projection, then an external agent's own engine): the model sees the
+ * original size in the marker, and the persisted `modelOutput` matches what it
+ * saw. A `limit` too small to hold the marker yields a plain slice.
  */
 export function boundToolResultForModel(
   text: string,
@@ -182,20 +185,23 @@ export function boundToolResultForModel(
   const n = (v: number) => v.toLocaleString("en-US");
 
   if (opts.hasUiResource) {
-    return (
+    const pointer =
       `[Tool completed successfully. Result (${n(text.length)} chars) is ` +
       `displayed in the inline UI. Do not ask the user to view it separately — it is ` +
-      `already visible.]`
-    );
+      `already visible.]`;
+    return pointer.slice(0, limit);
   }
 
-  const head = sliceOnLineBoundary(text, limit);
-  const omitted = text.length - head.length;
-  return (
-    head +
-    `\n\n[Result bounded for model context: showing ${n(head.length)} of ` +
+  const marker = (shown: number, omitted: number) =>
+    `\n\n[Result bounded for model context: showing ${n(shown)} of ` +
     `${n(text.length)} chars (${n(omitted)} omitted). The full ` +
     `result is on the user's screen. Re-query with a filter, a narrower scope, or a ` +
-    `pagination cursor to bring specific items into context.]`
-  );
+    `pagination cursor to bring specific items into context.]`;
+
+  // Reserve the marker at its widest (both counts at their largest possible
+  // values), so the real marker always fits in what is left after the head.
+  const budget = limit - marker(limit, text.length).length;
+  if (budget <= 0) return text.slice(0, limit);
+  const head = sliceOnLineBoundary(text, budget);
+  return head + marker(head.length, text.length - head.length);
 }
