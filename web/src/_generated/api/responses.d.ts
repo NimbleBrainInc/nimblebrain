@@ -306,6 +306,22 @@ export interface WellKnownErrorBody {
     error: string;
     message?: string;
 }
+/** One public run key (RFC 8037 Ed25519), as the run key set publishes it. */
+export interface RunPublicJwk {
+    kty: "OKP";
+    crv: "Ed25519";
+    x: string;
+    kid: string;
+    alg: "EdDSA";
+    use: "sig";
+}
+/**
+ * The installation's run key set: the keys a turn's credentials are signed
+ * with, read by a gateway to verify them (ADR-0057). Public halves only.
+ */
+export interface RunKeySetResponse {
+    keys: RunPublicJwk[];
+}
 export interface JsonRpcErrorBody {
     jsonrpc: "2.0";
     error: {
