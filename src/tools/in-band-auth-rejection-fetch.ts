@@ -14,13 +14,15 @@ import type { FetchLike } from "@modelcontextprotocol/client";
  *
  * Only a `tools/call` answer is read. A rejected token means the server refused
  * the call before running it, so the SDK's retry does not repeat its work. A
- * `tasks/result` is never rewritten: it returns a stored outcome, and replaying
- * it on a fresh token would read the same rejection and wrongly flip the
- * connection to `reauth_required`.
+ * task's later outcome (`tasks/get`) is never rewritten: it is stored, and
+ * replaying it on a fresh token would read the same rejection and wrongly flip
+ * the connection to `reauth_required`.
  *
- * The answer to a matching request is read in full before the SDK sees it,
- * which holds an SSE stream's progress notifications until the result arrives.
- * Every other request passes through untouched.
+ * For the same reason the rejection is the answer's first message, so only that
+ * message is waited for. An SSE answer is handed on as soon as its first
+ * message is not a rejection, and streams from there: a server's own request
+ * on that stream (a host resource, elicitation) must reach the client while the
+ * tool waits for the reply.
  */
 export function createInBandAuthRejectionFetch(
   inner: FetchLike,
@@ -30,22 +32,76 @@ export function createInBandAuthRejectionFetch(
   return async (input, init) => {
     const response = await inner(input, init);
     const ids = toolCallIds(init?.body);
-    if (ids.size === 0 || response.status !== 200) return response;
-    const body = await response.text();
-    const messages = mediaType(response) === "text/event-stream" ? sseMessages(body) : [body];
-    if (messages.some((message) => isRejection(message, ids, needles))) {
-      return new Response(null, {
-        status: 401,
-        statusText: "Unauthorized",
-        headers: { "www-authenticate": 'Bearer error="invalid_token"' },
-      });
+    if (ids.size === 0 || response.status !== 200 || !response.body) return response;
+    if (mediaType(response) === "text/event-stream") {
+      return answerSse(response, response.body, (message) => isRejection(message, ids, needles));
     }
-    return new Response(body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
+    const body = await response.text();
+    return isRejection(body, ids, needles) ? unauthorized() : rebuilt(response, body);
   };
+}
+
+/**
+ * Read an SSE answer up to its first message: a 401 when that message is a
+ * rejection, otherwise the answer as it came, the bytes already read first.
+ */
+async function answerSse(
+  response: Response,
+  stream: ReadableStream<Uint8Array>,
+  rejects: (message: string) => boolean,
+): Promise<Response> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const read: Uint8Array[] = [];
+  let text = "";
+  let first: string | undefined;
+  let done = false;
+  while (first === undefined && !done) {
+    const chunk = await reader.read();
+    if (chunk.done) {
+      done = true;
+      first = sseMessages(text + decoder.decode())[0];
+    } else {
+      read.push(chunk.value);
+      text += decoder.decode(chunk.value, { stream: true });
+      first = sseMessages(completeEvents(text))[0];
+    }
+  }
+  if (first !== undefined && rejects(first)) {
+    await reader.cancel().catch(() => {});
+    return unauthorized();
+  }
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of read) controller.enqueue(chunk);
+      if (done) controller.close();
+    },
+    async pull(controller) {
+      const chunk = await reader.read();
+      if (chunk.done) controller.close();
+      else controller.enqueue(chunk.value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  return rebuilt(response, body);
+}
+
+function unauthorized(): Response {
+  return new Response(null, {
+    status: 401,
+    statusText: "Unauthorized",
+    headers: { "www-authenticate": 'Bearer error="invalid_token"' },
+  });
+}
+
+function rebuilt(response: Response, body: string | ReadableStream<Uint8Array>): Response {
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 /** The JSON-RPC ids of the `tools/call` requests in a POST body. */
@@ -69,7 +125,15 @@ function mediaType(response: Response): string {
   return (response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
 }
 
-/** The `data` payload of each event in an SSE body. */
+/** The events of an SSE body that a blank line has ended. */
+function completeEvents(text: string): string {
+  return text
+    .split(/\r?\n\r?\n/)
+    .slice(0, -1)
+    .join("\n\n");
+}
+
+/** The `data` payload of each event in an SSE body; an event with none (a priming id, a comment) has no message. */
 function sseMessages(body: string): string[] {
   return body.split(/\r?\n\r?\n/).flatMap((event) => {
     const data = event
