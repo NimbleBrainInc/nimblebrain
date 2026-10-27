@@ -212,8 +212,19 @@ for (const candidate of CANDIDATES) {
             tools: NO_TOOLS,
             events: { emit: (e) => events.push(e) },
           });
-        await expect(run).rejects.toBeDefined();
-        expect(events.some((e) => e.type === "run.error")).toBe(true);
+        // The session opened, so the failure is the provider refusing the key, not a
+        // startup failure or a crash. ACP carries the provider's reason in the
+        // message or in the error's data.
+        const err = (await run.then(
+          () => undefined,
+          (e: unknown) => e,
+        )) as { message?: string; data?: unknown } | undefined;
+        expect(err).toBeDefined();
+        expect(`${err?.message} ${JSON.stringify(err?.data ?? null)}`).toMatch(
+          /authentication|api[-_ ]?key/i,
+        );
+        expect(events.filter((e) => e.type === "execution.bound")).toHaveLength(1);
+        expect(events.filter((e) => e.type === "run.error")).toHaveLength(1);
       },
       120_000,
     );
