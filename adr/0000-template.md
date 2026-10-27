@@ -1,6 +1,8 @@
 # 0000. <Title — imperative, e.g. "Files resolve by bare id">
 
 - Status: Proposed | Accepted | Superseded by ADR-XXXX
+  (a Proposed ADR is a draft: change it in place, title and file name included,
+  until it is Accepted; a new ADR amends or supersedes only an Accepted one)
 - Date: YYYY-MM-DD
 - Serves: <which golden rule(s) — manage skills / orchestrate remote MCP / secure RBAC>
 

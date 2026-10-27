@@ -3,7 +3,7 @@
  * run (`src/execution/`).
  *
  * The block is the operator's. Which runtime runs a run is installation
- * configuration, never a task author's or a model's choice (ADR-0047). Absent,
+ * configuration, never a task author's or a model's choice (ADR-0056). Absent,
  * every run executes on the native engine.
  *
  * Every runtime here runs in this process or outside the installation; none
