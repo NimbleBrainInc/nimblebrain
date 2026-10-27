@@ -234,8 +234,10 @@ export const TOOL_SCHEMAS = toolSchemas({
       "One batch by `batchId`: its state (and why it paused), counts (pending, queued, running, " +
       "pass, fail, uncertain, not_assessed, failed, skipped, cancelled), cost, and pass rate. " +
       "With `results: true` (or a `filter`), one page of item results: index, input preview, " +
-      "run id, label, verdict, cost, and the structured output's top-level fields. Page with " +
-      "`nextCursor`. A run's whole deliverable is tasks__run_result (its runId).",
+      "run id, label, verdict, cost, and the structured output's top-level scalar fields; with " +
+      '`output: "full"`, each run\'s whole structured output instead, in pages bounded by size. ' +
+      "Page with `nextCursor`. A run's whole deliverable, with its activity log, is " +
+      "tasks__run_result (its runId).",
     inputSchema: TasksBatchInput,
     outputSchema: TasksBatchOutput,
     annotations: READ,

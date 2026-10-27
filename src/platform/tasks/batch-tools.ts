@@ -41,6 +41,14 @@ const INPUT_SUMMARY_CHARS = 200;
 const OUTPUT_FIELDS = 12;
 const OUTPUT_VALUE_CHARS = 200;
 
+/**
+ * The most a page of `output: "full"` rows holds, measured as each row's compact
+ * JSON length. Sized, like `DEFAULT_GET_CHAR_CAP`, to stay under the engine's
+ * `MAX_TOOL_RESULT_CHARS` once the batch view is added and the result is
+ * pretty-printed, so a model caller never reads a page the engine has cut.
+ */
+export const FULL_OUTPUT_PAGE_CHARS = 30_000;
+
 /** The batch tools need the driver; say so plainly where it is not wired. */
 function portOf(ctx: ToolContext): NonNullable<ToolContext["batches"]> {
   if (!ctx.batches) throw new Error("Batches are not available in this runtime.");
@@ -268,32 +276,82 @@ function toItemView(item: BatchItem, output: TaskBatchItemView["output"]): TaskB
   };
 }
 
+/**
+ * A row carrying its run's whole structured output. One that alone would not fit
+ * a page says so instead of carrying it, so the page stays readable and the row
+ * points at tasks__run_result.
+ */
+function fullRow(item: BatchItem, structured: unknown): TaskBatchItemView {
+  const base = toItemView(item, undefined);
+  if (structured === undefined) return base;
+  const row = { ...base, structured };
+  return JSON.stringify(row).length > FULL_OUTPUT_PAGE_CHARS
+    ? { ...base, structuredOmitted: true }
+    : row;
+}
+
+/** What a results page is asked for. */
+interface PageRequest {
+  filter: ResultFilter | undefined;
+  start: number;
+  pageSize: number;
+  full: boolean;
+}
+
+/**
+ * One page of item results: rows in index order from `start`, closed by
+ * `pageSize`, and for full rows also by {@link FULL_OUTPUT_PAGE_CHARS}.
+ */
+function resultsPage(
+  items: BatchItem[],
+  req: PageRequest,
+  readStructured: (runId: string) => unknown,
+): { page: TaskBatchItemView[]; nextCursor?: number } {
+  const page: TaskBatchItemView[] = [];
+  let pageChars = 0;
+  for (const item of items) {
+    if (item.index < req.start || !matchesFilter(item, req.filter)) continue;
+    if (page.length === req.pageSize) return { page, nextCursor: item.index };
+    const structured = item.state === "done" && item.runId ? readStructured(item.runId) : undefined;
+    if (!req.full) {
+      page.push(toItemView(item, scalarFields(structured)));
+      continue;
+    }
+    const row = fullRow(item, structured);
+    const rowChars = JSON.stringify(row).length;
+    if (page.length > 0 && pageChars + rowChars > FULL_OUTPUT_PAGE_CHARS) {
+      return { page, nextCursor: item.index };
+    }
+    page.push(row);
+    pageChars += rowChars;
+  }
+  return { page };
+}
+
 export function handleBatch(args: TasksBatchInput, ctx: ToolContext): TasksBatchOutput {
-  const { batchId, results, filter, cursor, limit } = args;
+  const { batchId, results, filter, cursor, limit, output } = args;
   const found = portOf(ctx).get(batchId);
   if (!found) throw new Error(`Batch not found: "${batchId}".`);
   const { batch, items } = found;
   const view = toBatchView(batch);
-  // A filter or a page asks for results even without `results: true`.
+  // A filter, a page, or an output choice asks for results even without `results: true`.
   const wantResults =
-    results === true || filter !== undefined || cursor !== undefined || limit !== undefined;
+    results === true ||
+    filter !== undefined ||
+    cursor !== undefined ||
+    limit !== undefined ||
+    output !== undefined;
   if (!wantResults) return { batch: view };
-  const pageSize = limit ?? DEFAULT_RESULTS_LIMIT;
-  const start = cursor ?? 0;
-  const page: TaskBatchItemView[] = [];
-  let nextCursor: number | undefined;
-  for (const item of items) {
-    if (item.index < start || !matchesFilter(item, filter)) continue;
-    if (page.length === pageSize) {
-      nextCursor = item.index;
-      break;
-    }
-    const structured =
-      item.state === "done" && item.runId
-        ? ctx.readRunResult(batch.taskId, item.runId)?.structured
-        : undefined;
-    page.push(toItemView(item, scalarFields(structured)));
-  }
+  const { page, nextCursor } = resultsPage(
+    items,
+    {
+      filter,
+      start: cursor ?? 0,
+      pageSize: limit ?? DEFAULT_RESULTS_LIMIT,
+      full: output === "full",
+    },
+    (runId) => ctx.readRunResult(batch.taskId, runId)?.structured,
+  );
   return {
     batch: view,
     results: page,

@@ -20,6 +20,7 @@ import {
   readBatchItems,
 } from "../../../../src/platform/tasks/batch-store.ts";
 import {
+  FULL_OUTPUT_PAGE_CHARS,
   handleBatch,
   handleBatchControl,
   handleBatches,
@@ -778,6 +779,56 @@ describe("tasks__batch reads", () => {
 
     expect(() => handleBatch({ batchId: "batch_000000000000" }, h.ctx)).toThrow(/not found/);
     expect(handleBatches({}, h.ctx).batches.map((b) => b.id)).toEqual([out.batch.id]);
+  });
+
+  it("with output full, carries each run's whole structured output, nested fields included", async () => {
+    const h = harness();
+    makeTask();
+    const out = handleRunBatch({ taskId: "enrich", items: items("pass", "fail") }, h.ctx);
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+
+    const summary = handleBatch({ batchId: out.batch.id, results: true }, h.ctx);
+    expect(summary.results?.[0]?.output).toEqual({ company: 'co-{"v":"pass"}', score: 3 });
+    expect(summary.results?.[0]?.structured).toBeUndefined();
+
+    const full = handleBatch({ batchId: out.batch.id, output: "full" }, h.ctx);
+    expect(full.results?.map((r) => r.index)).toEqual([0, 1]);
+    expect(full.results?.[0]?.structured).toEqual({
+      company: 'co-{"v":"pass"}',
+      score: 3,
+      nested: { a: 1 },
+    });
+    expect(full.results?.[0]?.output).toBeUndefined();
+    expect(full.nextCursor).toBeUndefined();
+  });
+
+  it("with output full, ends a page at the size budget and omits a row too large for any page", async () => {
+    const h = harness();
+    makeTask();
+    const third = "x".repeat(Math.floor(FULL_OUTPUT_PAGE_CHARS / 3));
+    const huge = "y".repeat(FULL_OUTPUT_PAGE_CHARS + 1);
+    const out = handleRunBatch(
+      { taskId: "enrich", items: items(third, third, third, huge, "small") },
+      h.ctx,
+    );
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+
+    const first = handleBatch({ batchId: out.batch.id, output: "full" }, h.ctx);
+    expect(first.results?.map((r) => r.index)).toEqual([0, 1]);
+    expect(first.nextCursor).toBe(2);
+    expect(JSON.stringify(first.results).length).toBeLessThanOrEqual(FULL_OUTPUT_PAGE_CHARS);
+
+    const second = handleBatch(
+      { batchId: out.batch.id, output: "full", cursor: first.nextCursor },
+      h.ctx,
+    );
+    expect(second.results?.map((r) => r.index)).toEqual([2, 3, 4]);
+    const oversized = second.results?.find((r) => r.index === 3);
+    expect(oversized?.structuredOmitted).toBe(true);
+    expect(oversized?.structured).toBeUndefined();
+    expect(oversized?.runId).toMatch(/^run_/);
+    expect(second.results?.find((r) => r.index === 4)?.structured).toBeDefined();
+    expect(second.nextCursor).toBeUndefined();
   });
 });
 
