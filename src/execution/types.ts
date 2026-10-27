@@ -6,7 +6,7 @@
  * limits. An {@link AgentRuntime} executes what the door decided and reports
  * back through the same event sink every runtime writes to. It may narrow what
  * the run allows and never widens it, so the door stays the only place a run's
- * reach is decided (ADR-0021, ADR-0047).
+ * reach is decided (ADR-0021, ADR-0056).
  *
  * Nothing here names a protocol or a vendor. The native engine, an agent
  * reached over ACP, and a runtime that runs elsewhere are all implementations;

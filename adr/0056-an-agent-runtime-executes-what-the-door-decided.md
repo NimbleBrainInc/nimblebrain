@@ -1,9 +1,9 @@
 # 0056. An agent runtime executes what the door decided
 
-- Status: Proposed; amended by ADR-0057 (how an out-of-process agent is hosted); its run-scoped credential decided by ADR-0058
+- Status: Accepted
 - Date: 2026-10-24
 - Serves: orchestrate remote MCP, secure RBAC
-- Refines: ADR-0047 (one seam for where a loop runs and which loop runs)
+- Supersedes: ADR-0047 (the door decides a run and an execution provider runs it); its out-of-process half is ADR-0057
 
 ## Context
 
@@ -18,11 +18,13 @@ a turn on one of them, beside the engine and not instead of it, raises two
 questions: where the line between NimbleBrain and the agent falls, and what keeps
 each new agent from becoming a change to the platform.
 
-ADR-0047 already answers the first for one case: the door decides a run and an
-execution provider runs it, and a provider may narrow what a run allows, never
-widen it. It frames a provider as *where* the loop runs (in this process or in
-a durable job). An agent with its own loop is a second axis, *which* loop runs,
-and the line falls in the same place.
+The same question arises for *where* a loop runs (in this process, or in a
+durable job that survives a restart) as for *which* loop runs (NimbleBrain's
+engine, or an agent with its own), and it has one answer for both. Every
+guarantee the door makes lives in the runtime: the unattended policy and the
+tool bound, spend checked before each model call, credentials used where they
+are stored, and admission. A loop that decided any of these for itself would be
+a second door.
 
 What NimbleBrain must keep is the record and the reach. The conversation log is
 the only record of a conversation; the tool router is the only way to a tool;
@@ -36,9 +38,10 @@ become any of these.
 `AgentRuntime.execute(run, io)` receives what the door resolved (the system
 prompt, the history, the tools surfaced, the model and limits, the cancellation
 signal) and the run's I/O: its walled tool router and its event sink. The seam
-carries NimbleBrain's types only. ADR-0047's execution providers and agents with
-their own loops are both implementations of it; where a runtime physically runs
-is that runtime's concern.
+carries NimbleBrain's types only. A runtime may narrow what a run allows and
+never widens it. A loop run elsewhere and an agent with its own loop are both
+implementations of the seam; where a runtime physically runs is that runtime's
+concern.
 
 **Which runtime runs a run is installation configuration** (`execution` in
 `nimblebrain.json`), never a task author's or a model's choice. The native
@@ -60,7 +63,7 @@ router, opened for the run and closed with it, reachable on loopback behind a
 random path and bearer. It applies the checks the engine applies to a model's
 call and the run's call-level hooks, and it emits the run's tool record from
 what it dispatched. It is not `/mcp/<wsId>`, which serves a person's attended
-surface and would widen an unattended run's reach (ADR-0047).
+surface and would widen an unattended run's reach.
 
 **No agent runs as a child of the runtime.** A runtime reaches its agent in
 the runtime's own process (NimbleBrain's engine) or outside the installation,
@@ -71,13 +74,9 @@ environment does not change that. An agent with its own loop is the riskiest
 extension the platform hosts, so it gets isolation of its own or does not run.
 `src/execution/` cannot spawn a process (lint-enforced).
 
-An external agent such as Goose therefore runs out of process and joins when
-three things exist: a remote ACP transport, the tool projection served on the
-runtime's own server behind a run-scoped credential (ADR-0047's callback, so
-local and remote runtimes share one way back to the router), and the
-installation's model gateway as the agent's model endpoint, which holds the keys,
-the model policy and the meter. Until then the Goose driver serves only the live
-parity eval.
+An external agent such as Goose therefore runs out of process: how it is
+reached, hosted, and given credentials for tools and models is ADR-0057. Until
+that is built, the Goose driver serves only the live parity eval.
 
 **A runtime declares what it holds, and the door refuses a run it cannot hold.**
 A runtime that does not check each model call against the run's spend accounts
@@ -148,7 +147,7 @@ implement it, and the agent's session options are designed with it.
 - **Reuse the agent's session across turns (`session/load`)** — deferred: it
   makes the agent's store a second record of the conversation, which is out of
   step with the log after compaction or after a turn on another runtime.
-- **A separate seam for "which loop" beside ADR-0047's "where the loop runs"** —
+- **A separate seam for "which loop runs" beside "where the loop runs"** —
   rejected: both receive a resolved run and call back through the same I/O, so
   two abstractions would describe one boundary.
 - **Rewrite the native engine as an ACP server and drive every run over ACP** —
