@@ -65,6 +65,22 @@ describe("goose environment", () => {
       gooseEnvironment(CONFIG, run("nebius:some/model"), { NB_GOOSE_API_KEY: "k" }),
     ).toThrow(/no key mapping/);
   });
+
+  test("points the provider at a model endpoint, with the key that endpoint takes", () => {
+    const env = gooseEnvironment({ ...CONFIG, modelEndpoint: "http://127.0.0.1:4000" }, run(), {
+      NB_GOOSE_API_KEY: "run-token",
+    });
+    expect(env.ANTHROPIC_HOST).toBe("http://127.0.0.1:4000");
+    expect(env.ANTHROPIC_API_KEY).toBe("run-token");
+  });
+
+  test("refuses a model endpoint for a provider it cannot redirect", () => {
+    expect(() =>
+      gooseEnvironment({ ...CONFIG, modelEndpoint: "http://127.0.0.1:4000" }, run("openai:gpt-5"), {
+        NB_GOOSE_API_KEY: "k",
+      }),
+    ).toThrow(/cannot point provider "openai"/);
+  });
 });
 
 describe("raw template", () => {
