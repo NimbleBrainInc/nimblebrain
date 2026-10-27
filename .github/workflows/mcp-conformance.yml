@@ -36,7 +36,8 @@ permissions:
   contents: read
 
 env:
-  BUN_VERSION: "1.4.2"
+  # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
+  BUN_VERSION: "1.4.3"
 
 jobs:
   conformance:

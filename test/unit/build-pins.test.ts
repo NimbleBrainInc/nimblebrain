@@ -48,12 +48,16 @@ describe("build inputs are pinned", () => {
       "docs-pages.yml": read(".github/workflows/docs-pages.yml").match(
         /bun-version:\s*"([^"]+)"/,
       )?.[1],
+      "mcp-conformance.yml": read(".github/workflows/mcp-conformance.yml").match(
+        /^\s*BUN_VERSION:\s*"([^"]+)"/m,
+      )?.[1],
     };
     expect(versions).toEqual({
       Dockerfile: ci,
       "web/Dockerfile": ci,
       "docs-ci.yml": ci,
       "docs-pages.yml": ci,
+      "mcp-conformance.yml": ci,
     });
   });
 
