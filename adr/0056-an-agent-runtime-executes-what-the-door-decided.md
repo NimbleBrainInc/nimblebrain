@@ -1,6 +1,6 @@
 # 0056. An agent runtime executes what the door decided
 
-- Status: Proposed
+- Status: Proposed; amended by ADR-0057 (how an out-of-process agent is hosted)
 - Date: 2026-10-24
 - Serves: orchestrate remote MCP, secure RBAC
 - Refines: ADR-0047 (one seam for where a loop runs and which loop runs)

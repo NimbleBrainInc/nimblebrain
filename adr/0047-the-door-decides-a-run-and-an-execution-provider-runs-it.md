@@ -1,6 +1,6 @@
 # 0047. The door decides a run, and an execution provider runs it
 
-- Status: Proposed
+- Status: Proposed; the model-endpoint rule superseded by ADR-0056 (the installation's model gateway), the remote provider's hosting refined by ADR-0057
 - Date: 2026-10-04
 - Serves: orchestrate remote MCP, secure RBAC
 
