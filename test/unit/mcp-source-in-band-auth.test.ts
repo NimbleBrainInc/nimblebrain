@@ -16,6 +16,7 @@ import {
 } from "../../src/connectors/runtime/in-band-auth-errors.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { TASKS_EXTENSION_ID, type TaskClient } from "../../src/tools/mcp-task-client.ts";
 import { resetRefreshExchanges } from "../../src/tools/oauth-refresh-fetch.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import {
@@ -177,6 +178,46 @@ function startedSource(opts: {
   return { source, calls };
 }
 
+/**
+ * The same source on a 2026-07-28 connection whose server advertises the tasks
+ * extension, so every call takes the task path: each `tools/call` opens a task
+ * that answers by the bearer the provider serves.
+ */
+function startedTaskSource(opts: { provider: WorkspaceOAuthProvider; accepted: Set<string> }) {
+  const { source, calls } = startedSource({ ...opts, inBandAuthErrors: [PHRASE] });
+  const internal = mcpSourceInternals(source);
+  internal.client = stub<Client>({
+    close: () => Promise.resolve(),
+    getServerCapabilities: () => ({ extensions: { [TASKS_EXTENSION_ID]: {} } }),
+  });
+  internal.protocolEra = "modern";
+  internal.taskClient = stub<TaskClient>({
+    callToolStream: async function* () {
+      const bearer = (await opts.provider.tokens())?.access_token ?? "none";
+      calls.push(bearer);
+      const now = new Date().toISOString();
+      yield {
+        type: "taskCreated",
+        task: {
+          taskId: `t${calls.length}`,
+          status: "working",
+          ttl: 60_000,
+          createdAt: now,
+          lastUpdatedAt: now,
+        },
+      };
+      yield {
+        type: "result",
+        result: opts.accepted.has(bearer)
+          ? { content: [{ type: "text", text: "ok" }] }
+          : { content: [{ type: "text", text: REJECTION }], isError: true },
+      };
+    },
+    getTask: () => Promise.reject(new Error("getTask not expected")),
+  });
+  return { source, calls };
+}
+
 describe("McpSource — in-band access-token rejection", () => {
   let server: ReturnType<typeof vendor>;
   let fetchSpy: ReturnType<typeof spyOn>;
@@ -252,6 +293,65 @@ describe("McpSource — in-band access-token rejection", () => {
     const second = await source.execute("executeQuery", {});
     expect(second.structuredContent?.reason).toBe("reauth_required");
     expect(server.refreshPosts()).toBe(1);
+    expect(onAuthLost).toHaveBeenCalledTimes(1);
+  });
+
+  it("test_in_band_rejection_after_refreshed_token_worked_refreshes_again", async () => {
+    useVendor(vendor());
+    const onAuthLost = mock(() => {});
+    const accepted = new Set(["at_2"]);
+    const { source, calls } = startedSource({
+      provider: makeProvider(onAuthLost),
+      accepted,
+      inBandAuthErrors: [PHRASE],
+    });
+
+    expect((await source.execute("executeQuery", {})).isError).toBe(false);
+    expect((await source.execute("executeQuery", {})).isError).toBe(false);
+    // The refreshed token expires later; the next refresh is still owed.
+    accepted.clear();
+    accepted.add("at_3");
+    const result = await source.execute("executeQuery", {});
+
+    expect(result.isError).toBe(false);
+    expect(server.refreshPosts()).toBe(2);
+    expect(calls).toEqual(["at_1", "at_2", "at_2", "at_2", "at_3"]);
+    expect(onAuthLost).not.toHaveBeenCalled();
+  });
+
+  it("test_in_band_rejection_on_task_path_refreshes_without_replaying_the_task", async () => {
+    useVendor(vendor());
+    const onAuthLost = mock(() => {});
+    const { source, calls } = startedTaskSource({
+      provider: makeProvider(onAuthLost),
+      accepted: new Set(["at_2"]),
+    });
+
+    const rejected = await source.execute("executeQuery", {});
+    expect(rejected.isError).toBe(true);
+    expect(rejected.structuredContent?.reason).not.toBe("reauth_required");
+    expect(textOf(rejected)).toContain(REJECTION);
+    expect(calls).toEqual(["at_1"]);
+    expect(server.refreshPosts()).toBe(1);
+
+    const next = await source.execute("executeQuery", {});
+    expect(next.isError).toBe(false);
+    expect(calls).toEqual(["at_1", "at_2"]);
+    expect(onAuthLost).not.toHaveBeenCalled();
+  });
+
+  it("test_in_band_rejection_on_task_path_refresh_refused_flips_reauth", async () => {
+    useVendor(vendor({ refuse: true }));
+    const onAuthLost = mock(() => {});
+    const { source, calls } = startedTaskSource({
+      provider: makeProvider(onAuthLost),
+      accepted: new Set(),
+    });
+
+    const result = await source.execute("executeQuery", {});
+
+    expect(result.structuredContent?.reason).toBe("reauth_required");
+    expect(calls).toEqual(["at_1"]);
     expect(onAuthLost).toHaveBeenCalledTimes(1);
   });
 

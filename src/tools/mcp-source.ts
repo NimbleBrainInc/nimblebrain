@@ -614,9 +614,10 @@ export class McpSource implements ToolSource {
   private taskClient: TaskClient | null = null;
   /**
    * The hash of the access token this source's own in-band refresh produced
-   * (never the token). When that token is rejected in-band too, a refresh did not
-   * help, so the next rejection goes straight to `reauth_required` instead of
-   * spending another refresh on every call.
+   * (never the token), until a call carrying it succeeds. A rejection of that
+   * token while it is held means the refresh did not help, so it goes straight
+   * to `reauth_required` instead of spending another refresh on every call; once
+   * the token has worked, a later rejection is an ordinary expiry and refreshes.
    */
   private inBandRefreshedBearerHash: string | null = null;
 
@@ -2838,6 +2839,7 @@ export class McpSource implements ToolSource {
       }
       return this.callToolInline(toolName, args, signal, caller, meta, true);
     }
+    this.retireInBandRefreshGuard(bearer);
     // An outside client reads `structuredContent` itself; only the agent loop
     // needs it as text.
     return caller ? promoted : this.forAgent(toolName, promoted);
@@ -2972,12 +2974,13 @@ export class McpSource implements ToolSource {
     }
     // A task is never retried (ADR-0029), so a rejected token is refreshed for
     // the next call and this one is surfaced as the server answered it.
-    if (
-      this.isInBandAuthRejection(promoted) &&
-      (await this.recoverInBandAuthRejection(bearer)) === "reauth"
-    ) {
-      this.flagAuthLost();
-      return this.reauthResult();
+    if (this.isInBandAuthRejection(promoted)) {
+      if ((await this.recoverInBandAuthRejection(bearer)) === "reauth") {
+        this.flagAuthLost();
+        return this.reauthResult();
+      }
+    } else {
+      this.retireInBandRefreshGuard(bearer);
     }
     return this.forAgent(toolName, promoted);
   }
@@ -2992,6 +2995,18 @@ export class McpSource implements ToolSource {
     if (this.mode.type !== "remote" || !this.mode.authProvider) return undefined;
     if (!this.mode.inBandAuthErrors?.length) return undefined;
     return (await this.mode.authProvider.tokens())?.access_token;
+  }
+
+  /**
+   * A call that carried the token this source's own refresh issued was not
+   * rejected, so that refresh worked: drop the guard, and the token's later
+   * expiry refreshes again.
+   */
+  private retireInBandRefreshGuard(bearerAtCall: string | undefined): void {
+    if (bearerAtCall === undefined || this.inBandRefreshedBearerHash === null) return;
+    if (bearerHash(bearerAtCall) === this.inBandRefreshedBearerHash) {
+      this.inBandRefreshedBearerHash = null;
+    }
   }
 
   /**
@@ -3020,8 +3035,9 @@ export class McpSource implements ToolSource {
    *
    *  - Another call renewed the token since this one was sent: retry, without a
    *    refresh, so a burst of rejected calls spends one refresh.
-   *  - The token rejected is the one this source's own refresh produced: a
-   *    refresh already failed to help, so `reauth` without spending another.
+   *  - The token rejected is the one this source's own refresh produced, and no
+   *    call has succeeded on it yet: a refresh already failed to help, so
+   *    `reauth` without spending another.
    *  - Otherwise refresh through the SDK's `auth()`, on the transport's own fetch
    *    chain (`createOAuthAuthorizationFetch`), so the refresh is shared and
    *    guarded exactly as the 401 path's is. A refused refresh reaches the
