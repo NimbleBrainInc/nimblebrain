@@ -4,7 +4,7 @@
 - Date: 2026-10-27
 - Serves: orchestrate remote MCP, secure RBAC
 - Supersedes: ADR-0047's remote execution provider (the seam half is ADR-0056)
-- Amends: ADR-0056 (no agent runs in the runtime's process; its reference agent is retired)
+- Amends: ADR-0056 (no agent runs in the runtime's process; its reference agent is retired; the tool projection's transport is the ACP connection, not a listener)
 
 ## Context
 
@@ -25,16 +25,31 @@ history the door hands over (ADR-0056), so which process takes a turn does not
 matter.
 
 **An out-of-process agent calls back in two directions, and each callee must
-know which turn is calling.** The tool projection listens on loopback behind a
-random per-run bearer, which only an agent on the same host can reach. The
-installation's model gateway holds the provider keys, applies model policy and
-meters, and must refuse a caller that is not a turn of its installation; to hold
-a run to its budget it must know which turn a call belongs to.
+know which turn is calling.** It calls the run's tools, and it calls a model. A
+loopback listener reaches only an agent on the same host, so it cannot serve an
+agent in a pod of its own. The installation's model gateway holds the provider
+keys, applies model policy and meters, and must refuse a caller that is not a
+turn of its installation; to hold a run to its budget it must know which turn a
+call belongs to.
 
-**What an agent accepts per session is set by ACP and by the agent.** ACP's
-`session/new` carries MCP servers with headers, so a tool credential per session
-reaches any agent that takes HTTP MCP servers. ACP has no slot for a model
-credential. nimblebrain-agent takes whatever its driver sends at `session/new`;
+**ACP can carry a session's tools on the session's own connection.** In ACP the
+agent is the MCP client: a client gives it tools only by naming MCP servers at
+`session/new`. Naming an HTTP server means opening a network path into the
+runtime and a credential to guard it. ACP's MCP-over-ACP proposal adds an `acp`
+MCP transport instead: the client declares a server by id, and the agent sends
+each MCP request back as an `mcp/message` on the ACP connection, cancelled with
+ACP's own `$/cancel_request`. An agent advertises it as `mcpCapabilities.acp`.
+For an agent that takes only HTTP MCP servers, a bridge beside the agent serves
+the declared server to it on the agent's own loopback and relays over ACP. The
+proposal is a draft against MCP revision 2026-07-28, and the ACP SDK's unstable
+schema carries it.
+
+**ACP can reach an agent over the network.** ACP's Streamable HTTP and WebSocket
+transport proposal serves a session's messages at one `/acp` endpoint. Goose's
+`goose serve` implements it, behind a shared secret.
+
+**What an agent accepts per session is set by ACP and by the agent.** ACP has no
+slot for a model credential. nimblebrain-agent takes whatever its driver sends at `session/new`;
 an agent we do not maintain may read provider keys only from its own process
 configuration, which makes a model credential per turn impossible for it while
 it serves many turns.
@@ -66,8 +81,8 @@ agent at a configured address, `nimblebrain.json` names no runtime but the
 native engine. A scripted ACP agent in the test suite holds the generic runtime
 to the native record, and the live eval holds each real agent to it.
 
-**An external agent is reached over a network transport, at an address the
-installation configures.** Who starts it is not the runtime's concern: a
+**An external agent is reached over ACP's network transport (Streamable HTTP or
+WebSocket), at an address the installation configures.** Who starts it is not the runtime's concern: a
 developer starts one by hand; an installation's runtime provisioning runs the
 pool. The runtime never starts an agent (ADR-0056).
 
@@ -84,10 +99,12 @@ and no handoff on a rollout.
 
 **The runtime holds one persistent connection per runtime process to the pool,**
 and opens each turn as a session on it. The generic ACP runtime today opens a
-connection per run; pooling moves the connection's lifetime out of the run and
-routes each session's updates and tool calls to its run by session id. A run
-still enters through the resolved run, and each driver still delivers its context
-its own way.
+connection per run; pooling moves the connection's lifetime out of the run. It
+routes each session's updates to its run by session id, and each tool call by
+the server id the driver declared: the runtime binds that id to the resolved run
+before declaring it, because a call can arrive before `session/new` returns a
+session id, and releases it when the run ends. A run still enters through the
+resolved run, and each driver still delivers its context its own way.
 
 **One pool per installation.** An installation serves one tenant, so its pool
 serves one tenant, and a compromised worker reaches only that tenant's turns in
@@ -102,8 +119,9 @@ finishes the ones it holds, within the longest turn the installation allows. A
 turn whose worker or connection is lost ends as an error the door records.
 
 **A run that must survive a restart runs as a durable job instead.** The job
-receives the same resolved run and the same credentials as a pooled turn, and
-nothing else. The resolved run is stored beside the run record when the run
+receives the same resolved run and the same model credential as a pooled turn,
+and nothing else. Its tools outlive any one ACP connection, so how it reaches
+them is decided with the job path. The resolved run is stored beside the run record when the run
 starts; on boot the source re-enqueues queued runs it may resume, asks the job
 service for the status of runs it recorded as running, and reseeds the run's
 spend accounts from the usage ledger before authorizing any call from one of
@@ -130,16 +148,14 @@ and an expiry. Allowed tools, the unattended policy, spend accounts and limits
 stay in the runtime, looked up by run id, so a credential never claims more than
 the door decided.
 
-**Each callee gets its own credential.** A turn holds one for the tool
-projection and one for the model gateway, with different audiences, so a leaked
-model credential cannot call a tool and a leaked tool credential cannot spend.
-
-**The tool credential ends with the turn.** For a remote agent the projection is
-a path on the runtime's own server, opened for the turn, behind the tool
-credential, and handed to the agent as the session's one MCP server with the
-credential as its header. Closing the turn closes the path, so the credential
-stops working at the turn's end whatever its expiry says. An agent on the same
-host keeps the loopback projection and its random bearer.
+**A turn's tools travel on its ACP connection, so they need no credential.**
+The driver declares the run's projection as the session's one MCP server, with
+the `acp` transport, and the runtime answers each `mcp/message` addressed to that
+server's id through the projection's checks, hooks and record. The runtime
+opens no listener and mints no tool credential: the connection it dialed is the
+only way in, and the session's tools end with the session. An agent without
+`mcpCapabilities.acp` runs behind the bridge, in its own pod or sandbox, so the
+bridge's loopback never leaves the agent's host. A credential is minted only for the model gateway.
 
 **The model credential is per turn where the agent takes one, and per pool where
 it cannot.** A driver declares which (`modelCredential: "session" | "process"`).
@@ -154,17 +170,17 @@ it cannot.** A driver declares which (`modelCredential: "session" | "process"`).
   (ADR-0056) and serves it chat, not budgeted runs.
 
 **A worker holds no secret, with two named exceptions.** It holds no connector
-credential, no provider key and no tenant state; a turn reaches tools and models
-only with the turn's credentials. A worker of a `process` agent holds its pool
+credential, no provider key and no tenant state; a turn reaches tools only over
+its session and models only with its credential. A worker of a `process` agent holds its pool
 credential, useful nowhere but this installation's gateway, rotated with the run
 key. A worker whose agent can check only a shared secret on its ACP endpoint
 holds that secret, which grants nothing beyond opening sessions on that pool.
 
 **A worker's ACP endpoint is reachable only by its installation's runtime,** by
 network policy and by a connection credential the runtime presents, verified
-with a public key where the agent supports one. Opening a session grants nothing
-by itself: everything a session can reach, it reaches with the turn's
-credentials.
+with a public key where the agent supports one. The runtime dials the worker,
+never the reverse: a session reaches the run's tools only over the connection the
+runtime opened, and its models only with the turn's credential.
 
 ### Models and development
 
@@ -175,8 +191,8 @@ record for the calls it meters, and replaces the agent's own count, which the
 runtime records (ADR-0056) only where no gateway meters the call.
 
 **Development needs no cluster.** A developer runs one worker on their machine (a
-pool of one) and points the installation's `execution` entry at it; the runtime
-serves the projection on its own server as in an installation. A gateway is
+pool of one) and points the installation's `execution` entry at it; tools
+travel over the ACP connection as in an installation. A gateway is
 optional only when the instance runs the `dev` identity provider (ADR-0040): with
 no gateway named, the driver may hand the agent a provider key from
 configuration. Under any other identity provider the runtime refuses to start an
@@ -198,8 +214,12 @@ external runtime without a gateway.
   traded for one tenant per pool.
 - An installation gains a run key and a public-key endpoint; both rotate by key
   id, the old key verifying until its last credential expires.
-- The tool projection gains a second listener shape, a path on the runtime's
-  server that only a live turn's credential opens.
+- The tool projection has no listener. It serves `mcp/message` on the ACP
+  connection, so nothing in the runtime listens for an agent, and the loopback
+  listener ADR-0056 describes is retired once a driver declares `acp` servers.
+- An agent's tool calls depend on a draft ACP proposal. Until an agent advertises
+  `mcpCapabilities.acp`, it runs behind the bridge: one more component in each
+  worker, and a loopback hop inside the agent's own host.
 - Any gateway that verifies JWTs against a published key set can be the model
   gateway; nothing in it is specific to NimbleBrain beyond the audience.
 - Agents we maintain can be held to a run's budget at the gateway. An agent that
@@ -208,12 +228,14 @@ external runtime without a gateway.
   as a durable job per run.
 - A model credential can outlive its turn: it lasts as long as the longest turn
   the installation allows, plus the gateway's clock leeway, so raising that limit
-  lengthens every model credential's exposure. The tool side ends with the turn.
+  lengthens every model credential's exposure. The tool side ends with the session.
 - Agents split into two hosting tiers by what they can do, decided by the
   driver's declaration, so the platform never guesses.
 - Development and installation differ only in who starts the worker and whether a
   gateway stands between it and the provider; the driver, transport and
   projection are the same code.
+- A durable job's tool path is open: it must reach tools across a restart, which
+  a single ACP connection does not survive.
 
 ## Alternatives considered
 
@@ -236,8 +258,13 @@ external runtime without a gateway.
 - **The platform's token service minting turn credentials** — rejected: a turn's
   bounds and its end live in the runtime, so a central minter would need both to
   revoke anything. Revisit if a gateway is shared across installations.
-- **One credential for tools and models** — rejected: a leak in either direction
-  would reach both.
+- **The projection as a loopback listener** — rejected: it reaches only an agent
+  on the runtime's host, and ADR-0056 runs no agent there.
+- **The projection as a path on the runtime's server behind a per-turn tool
+  credential** — rejected: it opens a network path into the runtime and a
+  credential to mint and revoke, for calls the ACP connection the runtime already
+  holds can carry. Kept as a candidate for the durable job's tool path.
+- **One credential for tools and models** — moot: tools need no credential.
 - **The turn's bounds carried in the credential** — rejected: the runtime holds
   them, and a copy in a token can only drift or be stretched.
 - **Callbacks through `/mcp/<wsId>`** — rejected (ADR-0056): it is a person's
