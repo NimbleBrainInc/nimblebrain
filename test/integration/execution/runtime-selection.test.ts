@@ -5,7 +5,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4Prompt } from "@ai-sdk/provider";
@@ -13,6 +13,8 @@ import type { ConversationEvent } from "../../../src/conversation/types.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import type { RuntimeConfig } from "../../../src/runtime/types.ts";
+import { usageMonthDir, usageMonthOf } from "../../../src/usage/paths.ts";
+import type { UsageLedgerEntry } from "../../../src/usage/types.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
@@ -86,6 +88,16 @@ function userTexts(prompt: LanguageModelV4Prompt | undefined): string[] {
     .flatMap((m) => m.content.flatMap((p) => (p.type === "text" ? [p.text] : [])));
 }
 
+/** The usage ledger's lines for one conversation. */
+function ledgerLines(conversationId: string): UsageLedgerEntry[] {
+  const dir = usageMonthDir(workDir, usageMonthOf(new Date()));
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".jsonl"))
+    .flatMap((f) => readFileSync(join(dir, f), "utf-8").split("\n").filter(Boolean))
+    .map((l) => JSON.parse(l) as UsageLedgerEntry)
+    .filter((l) => l.conversationId === conversationId);
+}
+
 describe("runtime selection", () => {
   test("a chat runs on the configured ACP runtime, and its turn is recorded", async () => {
     const result = await runtime.chat({
@@ -137,6 +149,29 @@ describe("runtime selection", () => {
       { runtime: "native", hasSession: false },
       { runtime: "nimblebrain-acp", hasSession: true },
     ]);
+  });
+
+  test("usage an external runtime reports is recorded as that runtime's", async () => {
+    config.execution = { ...config.execution, default: "nimblebrain-acp" };
+    const external = await runtime.chat({
+      message: "count me",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+    });
+    config.execution = { ...config.execution, default: "native" };
+    const native = await runtime.chat({
+      message: "count me too",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+    });
+    config.execution = { ...config.execution, default: "nimblebrain-acp" };
+
+    const externalLines = ledgerLines(external.conversationId);
+    expect(externalLines.length).toBeGreaterThan(0);
+    expect(externalLines.every((l) => l.runtime === "nimblebrain-acp")).toBe(true);
+    const nativeLines = ledgerLines(native.conversationId);
+    expect(nativeLines.length).toBeGreaterThan(0);
+    expect(nativeLines.every((l) => l.runtime === undefined)).toBe(true);
   });
 
   test("a run that names spend accounts is refused on a runtime with no spend gate", async () => {

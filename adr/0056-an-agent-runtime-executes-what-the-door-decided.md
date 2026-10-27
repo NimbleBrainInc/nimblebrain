@@ -115,8 +115,18 @@ implement it, and the agent's session options are designed with it.
   job) is an implementation of the seam. Neither changes the door, the conversation store or the web client.
 - An external runtime runs no spend gate, so it serves chat, not budgeted or
   input-capped task runs, until its model calls go through a gateway that enforces a run's budget.
-  Each installation serves one tenant, so the gateway meters that tenant; the
-  usage an agent reports in ACP is for display, never the billing record.
+  A driver whose agent calls through such a gateway declares the spend gate.
+- An external runtime's usage is recorded like the engine's, so usage reports
+  are accurate whichever runtime ran a turn. Its driver reads the agent's own
+  count of each model call: loop calls become `llm.done` events priced one by
+  one, and summaries are billed as the door bills a fold. An agent that reports
+  only ACP's turn total is priced as one call. Each usage ledger line an
+  external runtime writes names that runtime, because the count is the agent's
+  rather than one NimbleBrain measured. Once a gateway meters a tenant's model
+  calls, its count replaces the agent's.
+- The door decides whether a run may fold its history mid-turn and which model
+  writes the summary (`ResolvedRun.compaction`). An agent that folds on its own
+  is told when it may not.
 - An external agent manages its own working context within a turn. Between turns
   the door still windows and compacts the history it hands over, so a
   conversation's cost is bounded at turn boundaries even when it is not within

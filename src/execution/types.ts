@@ -22,6 +22,7 @@ import type {
   ToolRouter,
   ToolSchema,
 } from "../engine/types.ts";
+import type { TokenUsage } from "../usage/types.ts";
 
 /**
  * What a runtime does on its own, so the door can refuse a run it cannot hold
@@ -35,14 +36,6 @@ export interface RuntimeCapabilities {
    * accounts or sets the cap is refused by a runtime without it.
    */
   spendGate: boolean;
-  /**
-   * The runtime runs NimbleBrain's own loop policy: in-turn context windowing,
-   * mid-turn compaction, tool promotion, the loop supervisor, and bound-skill
-   * delivery (`EngineConfig.hooks`, `toolPromotion`, `connectorSkillCandidates`).
-   * Without it the agent manages its own working context, and only the policy
-   * at the tool boundary applies (`src/execution/tool-projection.ts`).
-   */
-  loopPolicy: boolean;
 }
 
 /**
@@ -66,11 +59,19 @@ export interface ResolvedRun {
   tools: ToolSchema[];
   /**
    * The run's model, limits, thinking and cancellation signal, plus the native
-   * loop's policy. A runtime without {@link RuntimeCapabilities.loopPolicy}
-   * reads `model`, `maxIterations`, `maxOutputTokens`, `thinking` and `signal`
-   * and nothing else.
+   * loop's policy (`hooks`, `toolPromotion`, the supervisor, bound skills). A
+   * runtime that runs its own loop reads `model`, `maxIterations`,
+   * `maxInputTokens`, `maxOutputTokens`, `thinking` and `signal`; of the
+   * policy, only what applies at the tool boundary reaches it
+   * (`src/execution/tool-projection.ts`).
    */
   config: EngineConfig;
+  /**
+   * Whether the run may fold its own history mid-turn, and with which model.
+   * Absent, it may not: the door allows a fold only where there is a
+   * conversation to bill the summary to and compaction is on.
+   */
+  compaction?: { model: string };
 }
 
 /** How a runtime reaches the platform for the length of one run. */
@@ -87,6 +88,11 @@ export interface RunIO {
    * stamped with {@link ResolvedRun.runId}.
    */
   events: EventSink;
+  /**
+   * Bill a summary the runtime wrote to fold its history mid-turn, as the door
+   * bills its own folds: to the conversation and the usage ledger.
+   */
+  billSummary(model: string, usage: TokenUsage, llmMs: number): void;
 }
 
 export interface AgentRuntime {

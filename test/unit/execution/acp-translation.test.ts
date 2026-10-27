@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { EngineEvent } from "../../../src/engine/types.ts";
+import { createNimbleBrainDriver } from "../../../src/execution/acp/drivers/nimblebrain.ts";
 import {
   decodeMessages,
   encodeMessages,
@@ -12,6 +13,7 @@ import {
 import { createAcpRunRecorder } from "../../../src/execution/acp/run-recorder.ts";
 import { transcriptPrompt } from "../../../src/execution/acp/transcript.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
 
 function run(messages: LanguageModelV4Message[], system = "Be helpful."): ResolvedRun {
   return {
@@ -29,9 +31,15 @@ const ask: LanguageModelV4Message = { role: "user", content: [{ type: "text", te
 describe("run recorder", () => {
   function recorded() {
     const events: EngineEvent[] = [];
-    const recorder = createAcpRunRecorder(run([ask]), { emit: (e) => events.push(e) });
-    return { events, recorder };
+    const summaries: { model: string; inputTokens: number }[] = [];
+    const recorder = createAcpRunRecorder(run([ask]), {
+      events: { emit: (e) => events.push(e) },
+      billSummary: (model, usage) => summaries.push({ model, inputTokens: usage.inputTokens }),
+    });
+    return { events, summaries, recorder };
   }
+
+  const usage = (inputTokens: number, outputTokens = 1) => ({ inputTokens, outputTokens });
 
   test("cuts the turn into replayable segments at each tool call", () => {
     const { events, recorder } = recorded();
@@ -47,6 +55,7 @@ describe("run recorder", () => {
     });
     const result = recorder.finish(
       { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 4, totalTokens: 14 } },
+      {},
       [],
     );
 
@@ -79,32 +88,69 @@ describe("run recorder", () => {
       sessionUpdate: "agent_message_chunk",
       content: { type: "text", text: "ok" },
     });
-    recorder.finish({ stopReason: "end_turn" }, []);
+    recorder.finish({ stopReason: "end_turn" }, {}, []);
 
     expect(events.some((e) => e.type === "reasoning.delta" && e.data.text === "secret")).toBe(true);
     const persisted = JSON.stringify(events.filter((e) => e.type === "llm.done"));
     expect(persisted).not.toContain("secret");
   });
 
-  test("prefers the agent's own stop reason, else maps ACP's", () => {
+  test("takes the stop reason the driver read, else maps ACP's", () => {
     const own = recorded();
     expect(
-      own.recorder.finish(
-        { stopReason: "end_turn", _meta: { [STOP_REASON_META_KEY]: "max_input_tokens" } },
-        [],
-      ).stopReason,
+      own.recorder.finish({ stopReason: "end_turn" }, { stopReason: "max_input_tokens" }, [])
+        .stopReason,
     ).toBe("max_input_tokens");
     const mapped = recorded();
-    expect(mapped.recorder.finish({ stopReason: "max_turn_requests" }, []).stopReason).toBe(
+    expect(mapped.recorder.finish({ stopReason: "max_turn_requests" }, {}, []).stopReason).toBe(
       "max_iterations",
     );
-    const bogus = recorded();
+  });
+
+  test("prices each reported model call on its own and bills summaries as folds", () => {
+    const { events, summaries, recorder } = recorded();
+    recorder.start();
+    recorder.callStarting({ id: "call_1", name: "lookup", input: {} });
+    recorder.update({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Done." },
+    });
+    const result = recorder.finish(
+      { stopReason: "end_turn", usage: { inputTokens: 999, outputTokens: 9, totalTokens: 1008 } },
+      {
+        calls: [
+          { model: "m", purpose: "turn", usage: usage(100) },
+          { model: "fast", purpose: "summary", usage: usage(40) },
+          { model: "m", purpose: "turn", usage: usage(30) },
+        ],
+      },
+      [],
+    );
+
+    const calls = events.flatMap((e) => (e.type === "llm.done" ? [e.data] : []));
+    // The tool-call segment, then each model call priced on its own.
+    expect(calls.map((c) => [c.usage.inputTokens, c.content.length])).toEqual([
+      [0, 1],
+      [100, 0],
+      [30, 1],
+    ]);
+    expect(summaries).toEqual([{ model: "fast", inputTokens: 40 }]);
+    // The run's usage is its loop calls, as the engine's is; ACP's total is not read.
+    expect(result.usage.inputTokens).toBe(130);
+    expect(result.iterations).toBe(2);
+  });
+
+  test("the reference driver reads its agent's stop reason, ignoring one it does not know", () => {
+    const driver = createNimbleBrainDriver({ resolveModel: () => createEchoModel() });
     expect(
-      bogus.recorder.finish(
-        { stopReason: "refusal", _meta: { [STOP_REASON_META_KEY]: "nope" } },
-        [],
-      ).stopReason,
-    ).toBe("content_filter");
+      driver.outcome?.({
+        stopReason: "end_turn",
+        _meta: { [STOP_REASON_META_KEY]: "max_input_tokens" },
+      }),
+    ).toEqual({ stopReason: "max_input_tokens" });
+    expect(
+      driver.outcome?.({ stopReason: "refusal", _meta: { [STOP_REASON_META_KEY]: "nope" } }),
+    ).toEqual({});
   });
 
   test("records a run's end exactly once", () => {

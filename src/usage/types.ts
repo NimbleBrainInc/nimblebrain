@@ -117,6 +117,12 @@ export interface UsageLedgerEntry {
    * to a stored run.
    */
   taskRunId?: string;
+  /**
+   * The agent runtime that reported this usage, when it was not the native
+   * engine. Such a line is the agent's own count of its model calls, not one
+   * NimbleBrain measured (ADR-0056).
+   */
+  runtime?: string;
   /** Resolved unit prices. Absent when the catalog did not know the model. */
   rates?: UsageRates;
 }

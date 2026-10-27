@@ -15,34 +15,25 @@
  *    runtime, the native engine included, reads this one back.
  *  - Tool calls are recorded from the tool projection, which dispatched them,
  *    not from the agent's `tool_call` updates, which describe them.
+ *  - Usage is priced per model call when the driver reads the agent's calls
+ *    (`AcpOutcome.calls`): each loop call is its own `llm.done`, as the engine
+ *    records them, and each summary is billed as the door bills a fold. An agent
+ *    that reports only ACP's turn total is priced as one call.
  */
 
 import type * as acp from "@agentclientprotocol/sdk/unstable";
 import type { LanguageModelV4Content } from "@ai-sdk/provider";
 import type {
   EngineResult,
-  EventSink,
   FinishReason,
   StopReason,
   ToolCall,
   ToolCallRecord,
 } from "../../engine/types.ts";
 import { log } from "../../observability/log.ts";
-import { emptyUsage, type TokenUsage } from "../../usage/types.ts";
-import type { ResolvedRun } from "../types.ts";
-import { STOP_REASON_META_KEY } from "./nimblebrain-extension.ts";
-
-const STOP_REASONS = new Set<StopReason>([
-  "complete",
-  "max_iterations",
-  "max_input_tokens",
-  "spend_limit",
-  "length",
-  "content_filter",
-  "error",
-  "other",
-  "cancelled",
-]);
+import { addUsage, emptyUsage, type TokenUsage } from "../../usage/types.ts";
+import type { ResolvedRun, RunIO } from "../types.ts";
+import type { AcpOutcome } from "./driver.ts";
 
 export interface AcpRunRecorder {
   start(): void;
@@ -50,8 +41,12 @@ export interface AcpRunRecorder {
   update(update: acp.SessionUpdate): void;
   /** The tool projection is about to run a call: close the segment it ends. */
   callStarting(call: ToolCall): void;
-  /** The turn ended with a response. */
-  finish(response: acp.PromptResponse, toolCalls: ToolCallRecord[]): EngineResult;
+  /** The turn ended with a response, and what the driver read from it. */
+  finish(
+    response: acp.PromptResponse,
+    outcome: AcpOutcome,
+    toolCalls: ToolCallRecord[],
+  ): EngineResult;
   /** The turn was cancelled. */
   cancelled(): void;
   /** The turn failed. */
@@ -60,7 +55,11 @@ export interface AcpRunRecorder {
   ended(): boolean;
 }
 
-export function createAcpRunRecorder(run: ResolvedRun, events: EventSink): AcpRunRecorder {
+export function createAcpRunRecorder(
+  run: ResolvedRun,
+  io: Pick<RunIO, "events" | "billSummary">,
+): AcpRunRecorder {
+  const { events } = io;
   const { runId } = run;
   const model = run.config.model;
   const started = performance.now();
@@ -74,18 +73,38 @@ export function createAcpRunRecorder(run: ResolvedRun, events: EventSink): AcpRu
     content: LanguageModelV4Content[],
     usage: TokenUsage,
     finish: FinishReason,
+    callModel: string = model,
   ) => {
     segments++;
     events.emit({
       type: "llm.done",
       data: {
         runId,
-        model,
+        model: callModel,
         content,
         usage,
         llmMs: 0,
         estimatedInputTokens: 0,
         finishReason: finish,
+      },
+    });
+  };
+
+  // A model call's usage on its own, for a call whose content an earlier
+  // segment already recorded: priced, but no segment of its own. Empty content
+  // with finish `stop` replays as nothing (`reconstructMessages`); any other
+  // finish would replay as a truncation marker.
+  const emitUsage = (callModel: string, usage: TokenUsage) => {
+    events.emit({
+      type: "llm.done",
+      data: {
+        runId,
+        model: callModel,
+        content: [],
+        usage,
+        llmMs: 0,
+        estimatedInputTokens: 0,
+        finishReason: "stop",
       },
     });
   };
@@ -99,11 +118,38 @@ export function createAcpRunRecorder(run: ResolvedRun, events: EventSink): AcpRu
     return [text];
   };
 
-  const done = (stopReason: StopReason) => {
+  // The turn's closing segment and its usage: each reported model call priced
+  // on its own, as the engine records them, or ACP's turn total on the last
+  // segment. Summaries are billed as the door bills a fold.
+  const recordUsage = (
+    response: acp.PromptResponse,
+    outcome: AcpOutcome,
+    content: LanguageModelV4Content[],
+    finishReason: FinishReason,
+  ): { usage: TokenUsage; iterations: number } => {
+    const reported = outcome.calls ?? [];
+    for (const call of reported) {
+      if (call.purpose === "summary") io.billSummary(call.model, call.usage, 0);
+    }
+    const loopCalls = reported.filter((c) => c.purpose === "turn");
+    const last = loopCalls.at(-1);
+    if (last) {
+      for (const call of loopCalls.slice(0, -1)) emitUsage(call.model, call.usage);
+      emitSegment(content, last.usage, finishReason, last.model);
+      return { usage: sumUsage(loopCalls), iterations: loopCalls.length };
+    }
+    const usage = usageOf(response);
+    if (content.length > 0 || segments === 0 || usage.inputTokens + usage.outputTokens > 0) {
+      emitSegment(content, usage, finishReason);
+    }
+    return { usage, iterations: segments };
+  };
+
+  const done = (stopReason: StopReason, iterations = segments) => {
     ended = true;
     events.emit({
       type: "run.done",
-      data: { runId, stopReason, iterations: segments, totalMs: performance.now() - started },
+      data: { runId, stopReason, iterations, totalMs: performance.now() - started },
     });
   };
 
@@ -179,20 +225,15 @@ export function createAcpRunRecorder(run: ResolvedRun, events: EventSink): AcpRu
       );
     },
 
-    finish(response, toolCalls) {
-      const stopReason = stopReasonOf(response);
-      const usage = usageOf(response);
+    finish(response, outcome, toolCalls) {
+      const stopReason = outcome.stopReason ?? stopReasonOf(response.stopReason);
       const finishReason = finishReasonOf(response.stopReason);
-      const content = takeText();
-      // The turn's usage rides its last segment, so the run is priced once.
-      if (content.length > 0 || segments === 0 || usage.inputTokens + usage.outputTokens > 0) {
-        emitSegment(content, usage, finishReason);
-      }
-      done(stopReason);
+      const { usage, iterations } = recordUsage(response, outcome, takeText(), finishReason);
+      done(stopReason, iterations);
       return {
         output,
         toolCalls,
-        iterations: segments,
+        iterations,
         usage,
         llmMs: performance.now() - started,
         stopReason,
@@ -223,11 +264,9 @@ export function createAcpRunRecorder(run: ResolvedRun, events: EventSink): AcpRu
   };
 }
 
-/** The agent's own finer stop reason when it reports one, else ACP's mapped. */
-function stopReasonOf(response: acp.PromptResponse): StopReason {
-  const own = response._meta?.[STOP_REASON_META_KEY];
-  if (typeof own === "string" && STOP_REASONS.has(own as StopReason)) return own as StopReason;
-  switch (response.stopReason) {
+/** ACP's stop reason in the engine's terms, for an agent that reports none of its own. */
+function stopReasonOf(stop: acp.StopReason): StopReason {
+  switch (stop) {
     case "end_turn":
       return "complete";
     case "max_tokens":
@@ -254,6 +293,12 @@ function finishReasonOf(stop: acp.StopReason): FinishReason {
     default:
       return "other";
   }
+}
+
+function sumUsage(calls: { usage: TokenUsage }[]): TokenUsage {
+  const total = emptyUsage();
+  for (const call of calls) addUsage(total, call.usage);
+  return total;
 }
 
 /** The turn's usage, when the agent reports it (an unstable ACP field). */
