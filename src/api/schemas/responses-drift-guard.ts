@@ -19,6 +19,7 @@ import type { FileEntry } from "../../files/types.ts";
 import type { OrgRole } from "../../identity/types.ts";
 import type { UserPreferences } from "../../identity/user.ts";
 import type { CatalogModel } from "../../model/catalog.ts";
+import type { RunKeySet, RunPublicJwk } from "../../runtime/run-key.ts";
 import type { ChatResult, ModelSlots, TurnUsage } from "../../runtime/types.ts";
 import type { TokenUsage } from "../../usage/types.ts";
 import type { WorkspaceRole } from "../../workspace/types.ts";
@@ -53,6 +54,8 @@ export type DriftPlacementEntry = AssertTrue<Identical<Wire.PlacementEntry, Plac
 export type DriftFileEntry = AssertTrue<Identical<Wire.FileEntry, FileEntry>>;
 export type DriftTokenUsage = AssertTrue<Identical<Wire.TokenUsage, TokenUsage>>;
 export type DriftTurnUsage = AssertTrue<Identical<Wire.TurnUsage, TurnUsage>>;
+export type DriftRunPublicJwk = AssertTrue<Identical<Wire.RunPublicJwk, RunPublicJwk>>;
+export type DriftRunKeySet = AssertTrue<Identical<Wire.RunKeySetResponse, RunKeySet>>;
 export type DriftChatToolCall = AssertTrue<
   Identical<Wire.ChatToolCall, ChatResult["toolCalls"][number]>
 >;

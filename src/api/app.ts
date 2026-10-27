@@ -18,6 +18,7 @@ import { mcpRoutes } from "./routes/mcp.ts";
 import { mcpAuthRoutes } from "./routes/mcp-auth.ts";
 import { metricsRoutes } from "./routes/metrics.ts";
 import { resourceRoutes } from "./routes/resources.ts";
+import { runKeyRoutes } from "./routes/run-keys.ts";
 import { toolRoutes } from "./routes/tools.ts";
 import { wellKnownRoutes } from "./routes/well-known.ts";
 import { type AppContext, apiError } from "./types.ts";
@@ -51,6 +52,8 @@ export function createApp(ctx: AppContext, allowedOrigins: Set<string> | null) {
   // precedes the handler that answers.
   app.route("/", wellKnownRoutes(ctx));
   app.route("/", healthRoutes());
+  // The run key set a gateway verifies turn credentials against; public, like health.
+  app.route("/", runKeyRoutes(ctx.runtime));
   // The brand the login page paints before anyone signs in; public, like health.
   app.route("/", brandRoutes());
   // Prometheus scrape endpoint. Bare /metrics (never /v1/metrics) so the web

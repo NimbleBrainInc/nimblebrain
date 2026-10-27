@@ -42,9 +42,9 @@ class CountingProvider extends TestAuthAdapter {
 
 /**
  * The routes that answer without credentials, as `METHOD path` from the route
- * table: discovery, health, the brand the sign-in page paints, metrics, the
- * sign-in flow, the OAuth callbacks a vendor's browser returns to, hook
- * deliveries, and bare `/mcp` (refused with 404 before auth). Every other route
+ * table: discovery, the run key set a gateway verifies with, health, the brand
+ * the sign-in page paints, metrics, the sign-in flow, the OAuth callbacks a
+ * vendor's browser returns to, hook deliveries, and bare `/mcp` (refused with 404 before auth). Every other route
  * in the table authenticates.
  */
 const PUBLIC = new Set([
@@ -52,6 +52,7 @@ const PUBLIC = new Set([
   "GET /.well-known/oauth-protected-resource/*",
   "GET /.well-known/oauth-protected-resource/mcp/:wsId",
   "GET /.well-known/oauth-authorization-server",
+  "GET /.well-known/run-keys.json",
   "GET /v1/health",
   "GET /v1/brand.js",
   "GET /metrics",

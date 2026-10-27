@@ -145,6 +145,7 @@ import { positionOutbox } from "../notifications/position.ts";
 import { NotificationStore } from "../notifications/store.ts";
 import type { NotificationsDeclaration } from "../notifications/types.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
+import { publicOrigin } from "../oauth/public-origin.ts";
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
 import {
@@ -302,6 +303,13 @@ import {
   runWithRequestContext,
 } from "./request-context.ts";
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
+import {
+  createRunKey,
+  parseRunKeyRing,
+  RUN_KEY_CREDENTIAL,
+  type RunKey,
+  RunKeyError,
+} from "./run-key.ts";
 import type {
   DeclaredSkill,
   RunComposition,
@@ -407,6 +415,63 @@ type PreStoreConfigKey = "workDir" | "secrets" | "telemetry" | "logging" | "even
  */
 export type DeclaredRuntimeConfig = Pick<RuntimeConfig, PreStoreConfigKey> &
   WithCredentialRefs<Omit<RuntimeConfig, PreStoreConfigKey>>;
+
+/**
+ * Read the installation's run key at boot: from the environment variable
+ * `secrets.runKeyEnv` names, or else from the instance scope of the credential
+ * store.
+ *
+ * A named variable is the only source: a managed deployment delivers the key
+ * from its secret manager into the environment, as it does every per-tenant key,
+ * and a stored copy would be a second value nobody rotates. Named but unset is a
+ * deployment that asked for a key and did not get one, so the runtime refuses to
+ * start rather than start without it.
+ *
+ * With no variable named, absent is a legitimate state: an installation that runs
+ * no external agent needs no key, so it starts with none and mints nothing.
+ * Present, the key either opens and parses or the runtime refuses to start: a
+ * sealed value that does not open throws on `reveal()` (ADR-0035), and a
+ * malformed ring throws in the parse, so no key is served that this runtime
+ * cannot sign with.
+ */
+async function loadRunKey(
+  store: CredentialStore,
+  config: Pick<RuntimeConfig, "tasks" | "secrets">,
+): Promise<RunKey | null> {
+  const ringJson = await readRunKeyRingJson(store, config.secrets?.runKeyEnv);
+  if (ringJson === null) return null;
+  return createRunKey({
+    ring: parseRunKeyRing(ringJson),
+    issuer: publicOrigin(),
+    // The operator's wall-clock ceiling on a run is the longest turn this
+    // installation allows; a model credential outlives it by the leeway only.
+    maxRunMs: resolveTasksConfig(config.tasks).maxRunDurationMs,
+  });
+}
+
+/**
+ * The run key's JWK Set as text, from the named environment variable or the
+ * instance secret, or `null` when no variable is named and no secret is stored.
+ * Errors name the variable, never its value.
+ */
+async function readRunKeyRingJson(
+  store: CredentialStore,
+  envName: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  if (envName !== undefined) {
+    const value = env[envName]?.trim();
+    if (!value) {
+      throw new RunKeyError(`secrets.runKeyEnv names ${envName}, which holds no run key`);
+    }
+    return value;
+  }
+  const stored = await store.get({ kind: "instance" }, RUN_KEY_CREDENTIAL, {
+    caller: "runtime",
+    purpose: "run key",
+  });
+  return stored ? stored.reveal() : null;
+}
 
 function resolveWorkDir(config: Pick<RuntimeConfig, "workDir">): string {
   if (config.workDir) return config.workDir;
@@ -526,6 +591,8 @@ export class Runtime {
   private _workspaceStore: WorkspaceStore;
   private _permissionStore: PermissionStore | null = null;
   private _credentialStore: CredentialStore | null = null;
+  /** The installation's run key; see {@link getRunKey}. */
+  private _runKey: RunKey | null = null;
   private _managedConnectorRegistry: ManagedConnectorRegistry | null = null;
   private _identityProvider: IdentityProvider;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
@@ -748,6 +815,7 @@ export class Runtime {
     await credentialStore.reconcile?.();
     let config = await resolveInstanceCredentialRefs(declaredConfig);
     assertQualifiedModelConfig(config);
+    const runKey = await loadRunKey(credentialStore, config);
     // `loadConfig` already did this for a file-backed boot; a config built in
     // code reaches here without it, and the brand is process state every
     // reader below shares, so the composition root installs it too.
@@ -1004,6 +1072,7 @@ export class Runtime {
       // The runtime shares the store `start` opened above rather than building a
       // second one — same instance, same sink, same audit trail.
       rt._credentialStore = credentialStore;
+      rt._runKey = runKey;
       // The `credential` transport credential resolves a secret from the
       // connection's workspace, so it can only be registered once the store is
       // installed — which is why it is not in `registerBuiltinCredentialProviders`
@@ -4234,6 +4303,16 @@ export class Runtime {
    */
   getCredentialStore(): CredentialStore {
     return this._credentialStore ?? requireCredentialStore();
+  }
+
+  /**
+   * The installation's run key, or `null` when none is configured: the key
+   * the door mints a turn's credentials with, and whose public halves the
+   * runtime serves for a gateway to verify them (ADR-0057). Absent, the runtime
+   * runs every turn in process and mints nothing.
+   */
+  getRunKey(): RunKey | null {
+    return this._runKey;
   }
 
   /**

@@ -282,6 +282,11 @@
           "type": "object",
           "description": "That backend's own settings, passed through verbatim. MUST NOT contain key material: this file is commonly rendered from a values file in version control, so a key written here is a key committed to a repository. Name an environment variable instead — a property whose name ends in \"Env\" holds the NAME of one.",
           "nbNoInlineKeyMaterial": true
+        },
+        "runKeyEnv": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "description": "The NAME of the environment variable holding the installation's run key (a JWK Set of Ed25519 private keys), never the key. Named, the run key is read from it at boot instead of the instance secret nimblebrain.run_key; named but unset, the runtime refuses to start. See /config/secrets/#the-run-key."
         }
       },
       "additionalProperties": false

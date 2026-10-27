@@ -28,6 +28,7 @@ The exceptions are real but narrow: add a route only when the endpoint genuinely
 - Is itself the redirect target of an external flow (`/v1/mcp-auth/callback` is loaded by the vendor's browser, not by our client).
 - Streams non-JSON bytes (multipart upload, SSE for the chat stream).
 - Serves raw bytes the browser loads directly, where it cannot send headers (`GET /v1/files/:fileId` behind an `<img>`).
+- Is a key set a verifier fetches by URL with no credential before it can check one (`GET /.well-known/run-keys.json`: the run key's public halves, which the model gateway verifies a turn's credential against, ADR-0057).
 - Is read before anyone signs in and loaded by a `<script>` tag before the bundle, so it is public and unauthenticated, and can neither be a tool call nor carry headers (`GET /v1/brand.js`: the brand the sign-in page paints).
 
 If none of those apply, write a tool action. A simple JSON read like "what's the OAuth redirect URI?" is a tool action, not a route.
