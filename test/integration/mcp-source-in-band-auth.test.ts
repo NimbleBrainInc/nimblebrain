@@ -41,6 +41,8 @@ interface Vendor {
   /** Bearer of each `tools/call`, in order. */
   calls: string[];
   refreshPosts: () => number;
+  /** Accept every access token the token endpoint issues from now on, as a real vendor would. */
+  acceptIssued: () => void;
   stop: () => void;
 }
 
@@ -50,6 +52,7 @@ function startVendor(opts: { json: boolean; refuse?: boolean; toolError?: string
   let current = "rt_1";
   let issued = 1;
   let refreshPosts = 0;
+  let acceptIssued = false;
 
   const httpServer = Bun.serve({
     port: 0,
@@ -77,6 +80,7 @@ function startVendor(opts: { json: boolean; refuse?: boolean; toolError?: string
           return Response.json({ error: "invalid_grant" }, { status: 400 });
         }
         current = `rt_${++issued}`;
+        if (acceptIssued) accepted.add(`at_${issued}`);
         return Response.json({
           access_token: `at_${issued}`,
           token_type: "Bearer",
@@ -127,6 +131,9 @@ function startVendor(opts: { json: boolean; refuse?: boolean; toolError?: string
     accepted,
     calls,
     refreshPosts: () => refreshPosts,
+    acceptIssued: () => {
+      acceptIssued = true;
+    },
     stop: () => httpServer.stop(true),
   };
 }
@@ -248,16 +255,18 @@ for (const json of [true, false]) {
       expect(onAuthLost).not.toHaveBeenCalled();
     }, 15_000);
 
-    it("parallel rejections spend one refresh and all recover", async () => {
+    it("parallel rejections all recover on a renewed token", async () => {
       const { source, onAuthLost } = await started({ inBandAuthErrors: [PHRASE] });
-      vendor.accepted.add("at_2");
+      vendor.acceptIssued();
 
       const results = await Promise.all(
         Array.from({ length: 5 }, () => source.execute("executeQuery", {})),
       );
 
+      // Not asserted: how many refreshes the burst costs. Rejections that
+      // overlap share one exchange (`createOAuthRefreshFetch`), but one that
+      // lands after that exchange is saved refreshes again, as on a real 401.
       expect(results.every((r) => r.isError === false)).toBe(true);
-      expect(vendor.refreshPosts()).toBe(1);
       expect(onAuthLost).not.toHaveBeenCalled();
     }, 15_000);
 
