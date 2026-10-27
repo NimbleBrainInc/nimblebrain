@@ -242,7 +242,10 @@ and absent from the on-disk schema, so a file cannot forge it (ADR-0012).
 
 ## Decisions
 
-The decision log is `adr/`. Foundational (secure RBAC):
+The decision log is `adr/`. A proposed ADR is a draft and changes in place until
+it is accepted; a new ADR amends or supersedes only an accepted one.
+
+Foundational (secure RBAC):
 
 - [0001](adr/0001-workspace-is-the-boundary-not-identity.md) — the workspace is the boundary, not the identity
 - [0002](adr/0002-files-resolve-by-bare-id.md) — files resolve by bare id via a workspace locator
@@ -298,8 +301,10 @@ Orchestrate over remote MCP:
 - [0041](adr/0041-event-streams-send-typed-payloads-and-cloudevents-is-for-an-outside-consumer.md) — event streams send `event: <type>` and the typed payload; CloudEvents is for an outside consumer
 - [0045](adr/0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) — a task is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment
 - [0046](adr/0046-task-augmentation-is-the-2026-tasks-extension-only.md) — task augmentation is the 2026-07-28 tasks extension, inbound, outbound and app to host; the 2025-11-25 tasks utility is not spoken (amended by 0048)
-- [0047](adr/0047-the-door-decides-a-run-and-an-execution-provider-runs-it.md) — *(proposed)* the door decides a run and an execution provider runs it; in-process is the default and the reference; a remote execution provider gets a resolved spec and a run-scoped credential, and calls back through `/mcp` and a runtime-hosted model endpoint
+- [0047](adr/0047-the-door-decides-a-run-and-an-execution-provider-runs-it.md) — *(superseded by 0056 and 0057)* the door decides a run and an execution provider runs it
 - [0048](adr/0048-mcp-serves-2026-07-28-only.md) — `/mcp/<wsId>` serves 2026-07-28 only, per request, with no session; the runtime as a client still falls back to 2025-11-25 for a connector
 - [0049](adr/0049-the-agent-reads-a-connectors-records-as-resources.md) — a connector's resource templates are named in its prompt entry, bounded; a non-skill `read_resource` returns up to the tool-result limit (amended by 0055)
 - [0050](adr/0050-a-servers-url-request-reaches-a-person-or-comes-back-as-a-link.md) — an inline `/mcp/<wsId>` call carries the outside client's capabilities to the connector and relays its input requests back, each elicitation naming the connector; the connector's `requestState` travels sealed to the caller, workspace, tool and arguments; tasks and the runtime's own turns claim nothing
 - [0052](adr/0052-a-view-opens-what-it-names-by-uri.md) — a view or the agent opens a place by URI (`ai.nimblebrain/open`) and the host finds who shows it: a kernel scheme, an app's `ui://` root, or the one app whose resource template matches; opening one's own connector settings is a separate parameterless request
+- [0056](adr/0056-an-agent-runtime-executes-what-the-door-decided.md) — the door decides a run and an agent runtime executes it, narrowing and never widening; which runtime is installation configuration; no agent runs as a child of the runtime; an external agent reaches tools only through a per-run projection of the router
+- [0057](adr/0057-an-external-agent-runs-out-of-process-on-credentials-only-the-runtime-mints.md) — *(proposed)* an external agent runs out of process in a pool of long-lived workers, one session per turn, or as a durable job when a run must survive a restart; the runtime mints each turn a tool credential and a model credential; the installation's model gateway holds the keys and the meter

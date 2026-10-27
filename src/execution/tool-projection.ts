@@ -7,7 +7,7 @@
  * for the run, so the workspace wall, `allowedTools`, the unattended policy and
  * connector permissions hold for an external agent exactly as for the native
  * engine. `/mcp/<wsId>` is not used: it serves a person's attended surface, not
- * a run's bound (ADR-0047).
+ * a run's bound (ADR-0056).
  *
  * The projection is also where the run's tool record comes from. It emits
  * `tool.start` / `tool.done` itself, from the call it dispatched and the result
