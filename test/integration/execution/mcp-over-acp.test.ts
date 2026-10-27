@@ -18,17 +18,24 @@ const LOOKUP = {
   inputSchema: { type: "object", properties: {} },
 };
 
-async function projection(handler = () => Bun.sleep(0).then(() => "42")) {
+async function projection(
+  handler: (signal?: AbortSignal) => Promise<string> = () => Bun.sleep(0).then(() => "42"),
+) {
   const events: EngineEvent[] = [];
+  const signals: (AbortSignal | undefined)[] = [];
+  const router = new StaticToolRouter([LOOKUP], () => {
+    throw new Error("unreachable");
+  });
+  router.execute = async (_call, signal) => {
+    signals.push(signal);
+    return { content: [{ type: "text", text: await handler(signal) }], isError: false };
+  };
   const opened = await openToolProjection({
     runId: "r",
-    router: new StaticToolRouter([LOOKUP], async () => ({
-      content: [{ type: "text", text: await handler() }],
-      isError: false,
-    })),
+    router,
     events: { emit: (e) => events.push(e) },
   });
-  return { opened, events };
+  return { opened, events, signals };
 }
 
 /** A client app serving one declared server, and an agent that sends whatever the test asks. */
@@ -99,25 +106,59 @@ describe("mcp/message routing", () => {
     await opened.close();
   });
 
-  test("cancelling the mcp/message cancels the inner request", async () => {
-    let release = () => {};
-    const { opened, events } = await projection(
-      () => new Promise<string>((resolve) => (release = () => resolve("late"))),
+  test("cancelling the mcp/message cancels the tool call it carries", async () => {
+    const { opened, events, signals } = await projection(
+      (signal) =>
+        new Promise<string>((resolve) =>
+          signal?.addEventListener("abort", () => resolve("late"), { once: true }),
+        ),
     );
-    const channel = opened.channel();
-    await channel.request("1", "initialize", INIT);
-    channel.notify("notifications/initialized", undefined);
+    let serverId = "";
+    const { agent, close } = await connected((servers) => {
+      const declared = servers.declare("nimblebrain", opened.channel());
+      serverId = "serverId" in declared ? declared.serverId : "";
+    });
+    await agent.request(MCP_MESSAGE, {
+      serverId,
+      requestId: "1",
+      method: "initialize",
+      params: INIT,
+    });
+    await agent.notify(MCP_MESSAGE, { serverId, method: "notifications/initialized" });
     const controller = new AbortController();
-    const call = channel.request(
-      "2",
-      "tools/call",
-      { name: "lookup", arguments: {} },
-      controller.signal,
+    const call = agent.request(
+      MCP_MESSAGE,
+      {
+        serverId,
+        requestId: "2",
+        method: "tools/call",
+        params: { name: "lookup", arguments: {} },
+      },
+      { cancellationSignal: controller.signal },
     );
     while (!events.some((e) => e.type === "tool.start")) await Bun.sleep(1);
     controller.abort();
     expect(await call).toEqual({ error: { code: -32800, message: "request cancelled" } });
-    release();
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(true);
+    close();
+    await opened.close();
+  });
+
+  test("a request cancelled before it is sent runs nothing", async () => {
+    const { opened, events } = await projection();
+    const channel = opened.channel();
+    await channel.request("1", "initialize", INIT);
+    channel.notify("notifications/initialized", undefined);
+    const call = channel.request(
+      "2",
+      "tools/call",
+      { name: "lookup", arguments: {} },
+      AbortSignal.abort(),
+    );
+    expect(await call).toEqual({ error: { code: -32800, message: "request cancelled" } });
+    await Bun.sleep(5);
+    expect(events.filter((e) => e.type === "tool.start")).toHaveLength(0);
     await opened.close();
   });
 
