@@ -135,6 +135,16 @@ agent has tools beyond the projection (`toolSurface` other than `projection`)
 gets one isolated sandbox per session, not a shared worker. An agent whose tools
 are the projection alone uses the shared pool.
 
+### Tool-boundary policy
+
+**Bound-skill guidance reaches an external agent at the projection.** Of the
+loop policy ADR-0056 declares absent for an external runtime, bound-skill
+delivery acts at the tool boundary, so the projection runs it with the engine's
+own module: the first call to a bound tool is held until its guidance is read,
+and the guidance travels in that call's result, since the agent's history is
+its own. The record is the engine's (`connector.skill.injected`), so a later
+turn on any runtime replays the guidance where the native engine puts it.
+
 ### Credentials
 
 **The runtime mints a turn's credentials with the installation's run key.** The

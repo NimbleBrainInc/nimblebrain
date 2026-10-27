@@ -251,28 +251,28 @@ describe("acp runtime: the projection holds the run's bound", () => {
   });
 });
 
+/** Replay a run's events from a conversation log, as the next turn reads them. */
+async function replayed(events: EngineEvent[]): Promise<StoredMessage[]> {
+  const dir = join(mkdtempSync(join(tmpdir(), "acp-replay-")), "conversations");
+  const store = new EventSourcedConversationStore({ dir });
+  const conversation = await store.create({ model: "test:echo", ownerId: "user_test" });
+  store.setActiveConversation(conversation.id);
+  for (const event of events) store.emit(event);
+  await store.flush();
+  return store.history(conversation);
+}
+
+const shape = (messages: StoredMessage[]) =>
+  messages.map((m) => [
+    m.role,
+    (Array.isArray(m.content) ? m.content : []).map((p) =>
+      // Whitespace between segments differs by runtime, as `output` does.
+      p.type === "text" ? `text:${p.text.trim()}` : p.type,
+    ),
+  ]);
+
 describe("acp runtime with the driver's per-call usage", () => {
   const callUsage = (inputTokens: number): TokenUsage => ({ inputTokens, outputTokens: 5 });
-
-  /** Replay a run's events from a conversation log, as the next turn reads them. */
-  async function replayed(events: EngineEvent[]): Promise<StoredMessage[]> {
-    const dir = join(mkdtempSync(join(tmpdir(), "acp-replay-")), "conversations");
-    const store = new EventSourcedConversationStore({ dir });
-    const conversation = await store.create({ model: "test:echo", ownerId: "user_test" });
-    store.setActiveConversation(conversation.id);
-    for (const event of events) store.emit(event);
-    await store.flush();
-    return store.history(conversation);
-  }
-
-  const shape = (messages: StoredMessage[]) =>
-    messages.map((m) => [
-      m.role,
-      (Array.isArray(m.content) ? m.content : []).map((p) =>
-        // Whitespace between segments differs by runtime, as `output` does.
-        p.type === "text" ? `text:${p.text.trim()}` : p.type,
-      ),
-    ]);
 
   test("prices each call, bills summaries, and replays as the native turn does", async () => {
     const steps = stepsFrom(structuredClone(SCRIPT));
@@ -315,5 +315,79 @@ describe("acp runtime with the driver's per-call usage", () => {
     expect(result.usage.inputTokens).toBe(130);
     expect(result.iterations).toBe(2);
     expect(shape(await replayed(acpSink.events))).toEqual(shape(await replayed(nativeSink.events)));
+  });
+});
+
+describe("bound skill guidance", () => {
+  const GUIDE = {
+    name: "lookup-guide",
+    body: "Always quote the answer.",
+    scope: "connector",
+    toolAffinity: ["lookup"],
+  };
+  // The first call is held for its guidance, the second runs, then the reply.
+  const HELD_SCRIPT: EchoModelResponse[] = [
+    { toolCalls: [{ toolCallId: "m1", toolName: "lookup", input: '{"q":"answer"}' }] },
+    { toolCalls: [{ toolCallId: "m2", toolName: "lookup", input: '{"q":"answer"}' }] },
+    { text: "The answer is 42." },
+  ];
+
+  function boundRun(): ResolvedRun {
+    const run = resolvedRun();
+    run.config = { ...run.config, connectorSkillCandidates: [GUIDE] };
+    return run;
+  }
+
+  async function runOn(runtime: AgentRuntime, run = boundRun()) {
+    const calls: ToolCall[] = [];
+    const router = new StaticToolRouter([LOOKUP], (call) => {
+      calls.push(call);
+      return { content: [{ type: "text", text: "42" }], isError: false };
+    });
+    const sink = collect();
+    const result = await runtime.execute(run, io(router, sink));
+    return { calls, sink, result };
+  }
+
+  test("holds the first call on every runtime and leaves the engine's record", async () => {
+    const log = emptyLog();
+    const native = await runOn(
+      createNativeRuntime(() => createEchoModel({ responses: structuredClone(HELD_SCRIPT) })),
+    );
+    const acp = await runOn(scriptedRuntime(structuredClone(HELD_SCRIPT), { log }));
+
+    for (const { calls, sink, result } of [native, acp]) {
+      expect(result.output.trim()).toBe("The answer is 42.");
+      // The tool ran once: the held call did not reach it.
+      expect(calls).toHaveLength(1);
+      expect(sink.of("tool.done").map((e) => [e.data.ok, e.data.held ?? false])).toEqual([
+        [false, true],
+        [true, false],
+      ]);
+      const [injected] = sink.of("connector.skill.injected");
+      expect(injected?.data).toMatchObject({
+        skillName: "lookup-guide",
+        skillBody: "Always quote the answer.",
+        toolName: "lookup",
+      });
+      expect(injected?.data.heldToolCallId).toBe(sink.of("tool.done")[0]?.data.id);
+    }
+
+    // The agent read the guidance in the held call's result.
+    expect(log.toolResults[0]).toContain("<connector-skill>");
+    expect(log.toolResults[0]).toContain("Always quote the answer.");
+
+    // And a later turn replays the guidance where the native turn put it.
+    expect(shape(await replayed(acp.sink.events))).toEqual(
+      shape(await replayed(native.sink.events)),
+    );
+  });
+
+  test("a skill the conversation already delivered holds nothing", async () => {
+    const run = boundRun();
+    run.config = { ...run.config, alreadyInjectedConnectorSkills: ["lookup-guide"] };
+    const { calls, sink } = await runOn(scriptedRuntime(structuredClone(SCRIPT)), run);
+    expect(calls).toHaveLength(1);
+    expect(sink.of("connector.skill.injected")).toEqual([]);
   });
 });
