@@ -4,6 +4,7 @@
  * through `ToolContext.batches`.
  */
 
+import { MAX_TOOL_RESULT_CHARS } from "../../limits.ts";
 import type {
   TaskBatchItemView,
   TaskBatchView,
@@ -42,12 +43,24 @@ const OUTPUT_FIELDS = 12;
 const OUTPUT_VALUE_CHARS = 200;
 
 /**
- * The most a page of `output: "full"` rows holds, measured as each row's compact
- * JSON length. Sized, like `DEFAULT_GET_CHAR_CAP`, to stay under the engine's
- * `MAX_TOOL_RESULT_CHARS` once the batch view is added and the result is
- * pretty-printed, so a model caller never reads a page the engine has cut.
+ * The most an `output: "full"` answer's text may be: the tool's result is
+ * `JSON.stringify(answer, null, 2)` (`withErrorHandling` in `source.ts`), which is
+ * what the model reads and what the engine cuts at `MAX_TOOL_RESULT_CHARS`. A page
+ * is budgeted on that text itself, batch view and cursor included, because
+ * indentation inflates arrays and deep nesting several times over their compact
+ * size. The reserve covers the engine's truncation note.
  */
-export const FULL_OUTPUT_PAGE_CHARS = 30_000;
+export const FULL_OUTPUT_PAGE_CHARS = MAX_TOOL_RESULT_CHARS - 2_000;
+
+/** How deep a result row sits in the answer (`results[i]`), in two-space indents. */
+const ROW_INDENT = "    ";
+
+/** A row's length in the pretty-printed answer, separator included. */
+function rowChars(row: TaskBatchItemView): number {
+  const text = JSON.stringify(row, null, 2);
+  const lines = text.split("\n").length;
+  return text.length + lines * ROW_INDENT.length + ",\n".length;
+}
 
 /** The batch tools need the driver; say so plainly where it is not wired. */
 function portOf(ctx: ToolContext): NonNullable<ToolContext["batches"]> {
@@ -278,16 +291,14 @@ function toItemView(item: BatchItem, output: TaskBatchItemView["output"]): TaskB
 
 /**
  * A row carrying its run's whole structured output. One that alone would not fit
- * a page says so instead of carrying it, so the page stays readable and the row
- * points at tasks__run_result.
+ * an answer says so instead of carrying it, so the page stays readable and the
+ * row points at tasks__run_result.
  */
-function fullRow(item: BatchItem, structured: unknown): TaskBatchItemView {
+function fullRow(item: BatchItem, structured: unknown, room: number): TaskBatchItemView {
   const base = toItemView(item, undefined);
   if (structured === undefined) return base;
   const row = { ...base, structured };
-  return JSON.stringify(row).length > FULL_OUTPUT_PAGE_CHARS
-    ? { ...base, structuredOmitted: true }
-    : row;
+  return rowChars(row) > room ? { ...base, structuredOmitted: true } : row;
 }
 
 /** What a results page is asked for. */
@@ -296,11 +307,14 @@ interface PageRequest {
   start: number;
   pageSize: number;
   full: boolean;
+  /** For full rows: the answer's characters before any row (batch view, cursor). */
+  baseChars: number;
 }
 
 /**
  * One page of item results: rows in index order from `start`, closed by
- * `pageSize`, and for full rows also by {@link FULL_OUTPUT_PAGE_CHARS}.
+ * `pageSize`, and for full rows also when the pretty-printed answer would pass
+ * {@link FULL_OUTPUT_PAGE_CHARS}.
  */
 function resultsPage(
   items: BatchItem[],
@@ -308,7 +322,8 @@ function resultsPage(
   readStructured: (runId: string) => unknown,
 ): { page: TaskBatchItemView[]; nextCursor?: number } {
   const page: TaskBatchItemView[] = [];
-  let pageChars = 0;
+  const room = FULL_OUTPUT_PAGE_CHARS - req.baseChars;
+  let used = 0;
   for (const item of items) {
     if (item.index < req.start || !matchesFilter(item, req.filter)) continue;
     if (page.length === req.pageSize) return { page, nextCursor: item.index };
@@ -317,13 +332,11 @@ function resultsPage(
       page.push(toItemView(item, scalarFields(structured)));
       continue;
     }
-    const row = fullRow(item, structured);
-    const rowChars = JSON.stringify(row).length;
-    if (page.length > 0 && pageChars + rowChars > FULL_OUTPUT_PAGE_CHARS) {
-      return { page, nextCursor: item.index };
-    }
+    const row = fullRow(item, structured, room);
+    const chars = rowChars(row);
+    if (page.length > 0 && used + chars > room) return { page, nextCursor: item.index };
     page.push(row);
-    pageChars += rowChars;
+    used += chars;
   }
   return { page };
 }
@@ -342,6 +355,12 @@ export function handleBatch(args: TasksBatchInput, ctx: ToolContext): TasksBatch
     limit !== undefined ||
     output !== undefined;
   if (!wantResults) return { batch: view };
+  // The answer's text with no rows and the largest cursor it could carry.
+  const baseChars = JSON.stringify(
+    { batch: view, results: [], nextCursor: items.length },
+    null,
+    2,
+  ).length;
   const { page, nextCursor } = resultsPage(
     items,
     {
@@ -349,6 +368,7 @@ export function handleBatch(args: TasksBatchInput, ctx: ToolContext): TasksBatch
       start: cursor ?? 0,
       pageSize: limit ?? DEFAULT_RESULTS_LIMIT,
       full: output === "full",
+      baseChars,
     },
     (runId) => ctx.readRunResult(batch.taskId, runId)?.structured,
   );

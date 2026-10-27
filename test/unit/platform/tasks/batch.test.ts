@@ -250,7 +250,12 @@ function harness(opts: HarnessOptions = {}): Harness {
         activityLog: [],
         outputFiles: [],
         usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
-        structured: { company: `co-${JSON.stringify(input?.data)}`, score: 3, nested: { a: 1 } },
+        // An item may bring its own structured output, to shape the result read back.
+        structured: (input?.data as { structured?: unknown } | undefined)?.structured ?? {
+          company: `co-${JSON.stringify(input?.data)}`,
+          score: 3,
+          nested: { a: 1 },
+        },
       };
       return { run, result };
     } finally {
@@ -802,33 +807,49 @@ describe("tasks__batch reads", () => {
     expect(full.nextCursor).toBeUndefined();
   });
 
-  it("with output full, ends a page at the size budget and omits a row too large for any page", async () => {
+  it("with output full, keeps each answer's model-visible text within budget, lists and deep nesting included", async () => {
     const h = harness();
     makeTask();
-    const third = "x".repeat(Math.floor(FULL_OUTPUT_PAGE_CHARS / 3));
-    const huge = "y".repeat(FULL_OUTPUT_PAGE_CHARS + 1);
+    // Each: small compact JSON, large once pretty-printed.
+    const list = (n: number) => ({ v: `list-${n}`, structured: { results: Array(n).fill(0) } });
+    let deep: unknown = 1;
+    for (let i = 0; i < 300; i++) deep = { a: deep };
     const out = handleRunBatch(
-      { taskId: "enrich", items: items(third, third, third, huge, "small") },
+      {
+        taskId: "enrich",
+        items: [
+          list(2_500),
+          list(2_500),
+          list(2_500),
+          { v: "too-long-list", structured: { results: Array(8_000).fill(0) } },
+          { v: "too-deep", structured: deep },
+          { v: "small" },
+        ],
+      },
       h.ctx,
     );
     await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
 
-    const first = handleBatch({ batchId: out.batch.id, output: "full" }, h.ctx);
-    expect(first.results?.map((r) => r.index)).toEqual([0, 1]);
-    expect(first.nextCursor).toBe(2);
-    expect(JSON.stringify(first.results).length).toBeLessThanOrEqual(FULL_OUTPUT_PAGE_CHARS);
-
-    const second = handleBatch(
-      { batchId: out.batch.id, output: "full", cursor: first.nextCursor },
-      h.ctx,
-    );
-    expect(second.results?.map((r) => r.index)).toEqual([2, 3, 4]);
-    const oversized = second.results?.find((r) => r.index === 3);
-    expect(oversized?.structuredOmitted).toBe(true);
-    expect(oversized?.structured).toBeUndefined();
-    expect(oversized?.runId).toMatch(/^run_/);
-    expect(second.results?.find((r) => r.index === 4)?.structured).toBeDefined();
-    expect(second.nextCursor).toBeUndefined();
+    const seen: number[] = [];
+    let cursor: number | undefined;
+    for (let pages = 0; pages < 10; pages++) {
+      const answer = handleBatch({ batchId: out.batch.id, output: "full", cursor }, h.ctx);
+      // What the model reads: the tool's pretty-printed answer.
+      expect(JSON.stringify(answer, null, 2).length).toBeLessThanOrEqual(FULL_OUTPUT_PAGE_CHARS);
+      expect(answer.results?.length).toBeGreaterThan(0);
+      seen.push(...(answer.results ?? []).map((r) => r.index));
+      for (const row of answer.results ?? []) {
+        if (row.index === 3 || row.index === 4) {
+          expect(row.structuredOmitted).toBe(true);
+          expect(row.structured).toBeUndefined();
+        } else {
+          expect(row.structured).toBeDefined();
+        }
+      }
+      cursor = answer.nextCursor;
+      if (cursor === undefined) break;
+    }
+    expect(seen).toEqual([0, 1, 2, 3, 4, 5]);
   });
 });
 
