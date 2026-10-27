@@ -208,7 +208,7 @@ FIX=<merge commit on main>
 
 # 1. Branch from the release (or check out the existing line) and cherry-pick
 git fetch origin --tags
-git worktree add -b "$LINE" ../hotfix "$BASE"     # existing line: git worktree add ../hotfix "origin/$LINE"
+git worktree add -b "$LINE" ../hotfix "$BASE"     # existing line: git worktree add -B "$LINE" ../hotfix "origin/$LINE"
 cd ../hotfix
 git cherry-pick -x "$FIX"
 
