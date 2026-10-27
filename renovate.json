@@ -81,6 +81,13 @@
       "groupName": "acp sdk"
     },
     {
+      "description": "nimblebrain-agent is pinned to a commit of its main branch (a test-only dev dependency the hosted parity test runs), so its updates are digest bumps. No cooldown: it is our own repo, and a commit has no publish to wait out.",
+      "matchPackageNames": ["nimblebrain-agent"],
+      "matchUpdateTypes": ["digest"],
+      "minimumReleaseAge": null,
+      "groupName": "nimblebrain-agent"
+    },
+    {
       "matchPackageNames": ["@sentry/**"],
       "groupName": "sentry"
     },

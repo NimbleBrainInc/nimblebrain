@@ -145,4 +145,32 @@ describe("biome.json import bans", () => {
       "lint/style/noRestrictedImports",
     );
   });
+
+  // Each src/ override restates its own pattern list, so the ban is checked in every one.
+  const agentImports = {
+    static:
+      'import { createAgent } from "nimblebrain-agent/src/acp/agent.ts";\n\nexport const a = createAgent;\n',
+    bare: 'import * as agent from "nimblebrain-agent";\n\nexport const a = agent;\n',
+    dynamic: 'export const a = () => import("nimblebrain-agent");\n',
+  };
+  const srcPaths = [
+    "src/probe.ts",
+    "src/runtime/probe.ts",
+    "src/config/probe.ts",
+    "src/engine/probe.ts",
+    "src/execution/acp/probe.ts",
+  ];
+  for (const path of srcPaths) {
+    for (const [kind, source] of Object.entries(agentImports)) {
+      test(`${path} may not import nimblebrain-agent (${kind})`, () => {
+        expect(repoLintCategories(path, source)).toContain("lint/style/noRestrictedImports");
+      });
+    }
+  }
+
+  test("test/ may import nimblebrain-agent", () => {
+    expect(repoLintCategories("test/helpers/acp/probe.ts", agentImports.static)).not.toContain(
+      "lint/style/noRestrictedImports",
+    );
+  });
 });

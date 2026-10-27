@@ -12,7 +12,8 @@
  *   ANTHROPIC_API_KEY=… bun test --no-env-file test/eval/runtime-parity.eval.test.ts
  *     + NB_GOOSE_API_KEY=… GOOSE_BIN=/path/to/goose            for Goose
  *       (NB_GOOSE_MODEL_ENDPOINT=… to send its model calls to an endpoint, such as the gateway)
- *     + NB_AGENT_API_KEY=… NB_AGENT_BIN=/path/to/nimblebrain-agent/src/cli.ts  for nimblebrain-agent
+ *     + NB_AGENT_API_KEY=…                                     for nimblebrain-agent
+ *       (the pinned dev dependency; NB_AGENT_BIN=/path/to/nimblebrain-agent/src/cli.ts runs another)
  *
  * Calls a real LLM and costs real money. Not in `bun run test` or `verify`.
  */
@@ -64,12 +65,12 @@ const CANDIDATES: Candidate[] = [
   },
   {
     name: "nimblebrain-agent",
-    ready: !!env.NB_AGENT_API_KEY && !!env.NB_AGENT_BIN,
+    ready: !!env.NB_AGENT_API_KEY,
     acp: true,
     make: (keys) =>
       createAcpRuntime(
         "nimblebrain-agent",
-        createAgentDriver({ command: env.NB_AGENT_BIN ?? "" }, keys ?? env),
+        createAgentDriver({ command: env.NB_AGENT_BIN }, keys ?? env),
       ),
   },
 ];
