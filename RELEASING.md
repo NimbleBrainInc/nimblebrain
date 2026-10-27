@@ -192,7 +192,53 @@ Artifact map:
 
 ECR repositories have immutable tags enabled — `:latest` is deliberately not pushed there; deploys pin to version or sha. ECR and GHCR repo names now match (`nimblebrain-runtime`, `nimblebrain-web`). `ghcr.io/nimblebraininc/nimblebrain` is a transitional alias for the runtime image kept so existing OSS pulls don't break; drop it once consumers have moved.
 
-## 8. Out of scope for this runbook
+## 8. Hotfixing a released version
+
+Use this when one fix must reach a deployment running `vX.Y.Z` without the rest of what `main` has gained since. The hotfix is that release plus cherry-picks of merged commits, and nothing else.
+
+**The fix lands on `main` first**, by the normal PR, review and merge queue. The hotfix branch only ever carries cherry-picks of commits already on `main`, so the next release from `main` contains every hotfix and nothing has to be merged back.
+
+**A hotfix tag is a pre-release: `vX.Y.(Z+1)-hotfix.N`.** A GA tag would promote the image to every stable deployment and move `:latest`, and this image never rode staging. The hyphen keeps it out of both (§1, §7). It sorts below the `vX.Y.(Z+1)` that `main` cuts later.
+
+```bash
+BASE=v0.52.0                 # the release the deployment runs
+LINE=hotfix/v0.52            # one branch per minor line
+TAG=v0.52.1-hotfix.1         # bump N for each further hotfix on the line
+FIX=<merge commit on main>
+
+# 1. Branch from the release (or check out the existing line) and cherry-pick
+git fetch origin --tags
+git worktree add -b "$LINE" ../hotfix "$BASE"     # existing line: git worktree add ../hotfix "origin/$LINE"
+cd ../hotfix
+git cherry-pick -x "$FIX"
+
+# 2. Verify locally. CI runs only on main and on PRs into it, so nothing else checks this tree.
+bun install --frozen-lockfile && (cd web && bun install --frozen-lockfile) && bun run install:platform-apps
+bun run verify && bun run test:integration
+
+# 3. Push the branch and an annotated tag
+git push -u origin "$LINE"
+git tag -a "$TAG" -m "$TAG: $BASE plus <what the fix does> (#<PR>)"
+git push origin "$TAG"
+```
+
+The tag push starts `release.yml`, and that run **fails by design** at `No staging-built image … it never rode staging-edge`. The guard runs before any image is written, so nothing is half-published. Then build from source:
+
+```bash
+# 4. Release with the emergency rebuild
+gh workflow run release.yml --ref "$TAG" -f tag="$TAG" -f rebuild=true
+gh run list --workflow=release.yml --limit 1        # then: gh run watch <id> --exit-status
+
+# 5. Confirm both images exist in ECR
+for repo in nimblebrain-runtime nimblebrain-web; do
+  aws ecr describe-images --repository-name "nimblebrain/$repo" --image-ids "imageTag=$TAG" \
+    --region us-east-1 --query 'imageDetails[0].imagePushedAt'
+done
+```
+
+Releasing still deploys nothing (§9). The deployment that needs the fix is pinned to `$TAG` in its deploy configuration, and the pin comes out once a GA release containing the fix reaches that deployment's channel. A pinned deployment does not move when stable does, so an unremoved pin silently holds it back.
+
+## 9. Out of scope for this runbook
 
 These are things you might be tempted to do during a release but should NOT unless explicitly requested:
 
