@@ -91,7 +91,10 @@ import {
   type ToolExecuteOptions,
   type ToolSource,
 } from "./types.ts";
-import type { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
+import {
+  BackgroundReauthRequiredError,
+  type WorkspaceOAuthProvider,
+} from "./workspace-oauth-provider.ts";
 
 /**
  * How long a task handle is kept after its last update when the task declares
@@ -202,6 +205,14 @@ export type McpTransportMode =
        * retries `connect()` exactly once.
        */
       authProvider?: WorkspaceOAuthProvider;
+      /**
+       * Text the server puts in an `isError` result when it rejects the access
+       * token in-band (HTTP 200) instead of with a 401, from the connector's
+       * catalog entry (`inBandAuthErrors`). With an `authProvider`, the
+       * transport answers a matching `tools/call` result as the 401 it should
+       * have been; see `createInBandAuthRejectionFetch`.
+       */
+      inBandAuthErrors?: readonly string[];
     }
   | {
       type: "inProcess";
@@ -782,6 +793,7 @@ export class McpSource implements ToolSource {
         {
           workspaceId: this.connectorContext?.workspaceId,
           allowInsecure: this.mode.allowInsecure ?? false,
+          inBandAuthErrors: this.mode.inBandAuthErrors,
         },
       );
 
@@ -1196,6 +1208,7 @@ export class McpSource implements ToolSource {
       {
         workspaceId: this.connectorContext?.workspaceId,
         allowInsecure: this.mode.allowInsecure ?? false,
+        inBandAuthErrors: this.mode.inBandAuthErrors,
       },
     );
     // onclose is wired in `start()` AFTER the connect succeeds — same
@@ -3565,7 +3578,9 @@ function isClientActionable(err: unknown): boolean {
  *   next call; only the caller's rate is wrong. Surfaces, never restarts — see the
  *   branch comment for why restarting here is actively harmful.
  * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
- * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
+ * - **auth-lost** — a rejected credential: `UnauthorizedError`, the SDK's
+ *   `ClientHttpAuthentication` when the retry after a refresh was refused too,
+ *   or the provider's `BackgroundReauthRequiredError` for a refused refresh;
  *   note its recovery *policy* is config-dependent — a static-auth remote can't
  *   reauth — but that decision is the recovery policy's (`policyFor`), not this function's.
  * - **transport-dead** — a RECOGNIZED torn-transport shape (closed / refused /
@@ -3661,7 +3676,7 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   ) {
     return "transient";
   }
-  if (err instanceof UnauthorizedError) return "auth-lost";
+  if (isAuthLost(err, code)) return "auth-lost";
   // Standard JSON-RPC protocol errors the server *answered* with — the transport
   // is fine, restarting won't help.
   if (
@@ -3677,6 +3692,20 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   if (isTornTransport(code, msg)) return "transport-dead";
   // Couldn't positively classify it — let the caller decide (recover vs surface).
   return "unknown";
+}
+
+/**
+ * A refused credential: the SDK's 401, the retry after a refresh refused too
+ * (`ClientHttpAuthentication`), or a refused refresh in the background, where
+ * the provider has already flipped `reauth_required` rather than open a
+ * browser flow (`BackgroundReauthRequiredError`).
+ */
+function isAuthLost(err: unknown, code: unknown): boolean {
+  return (
+    err instanceof UnauthorizedError ||
+    err instanceof BackgroundReauthRequiredError ||
+    code === SdkErrorCode.ClientHttpAuthentication
+  );
 }
 
 /**

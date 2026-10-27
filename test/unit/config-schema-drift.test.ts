@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { ACP_RUNTIME_CONFIG_KEYS, EXECUTION_CONFIG_KEYS } from "../../src/config/execution.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
 import {
@@ -56,9 +55,6 @@ const schema = JSON.parse(
       properties: { poll: SchemaObject };
     };
     secrets: SchemaObject;
-    execution: SchemaObject & {
-      properties: { runtimes: { additionalProperties: SchemaObject } };
-    };
     connectors: SchemaObject & {
       properties: {
         providers: SchemaObject & {
@@ -97,17 +93,6 @@ describe("config schema ↔ feature flags", () => {
   // resolveFeatures() with no argument returns the complete default set, so its
   // keys are the authoritative list of every feature flag the runtime knows.
   expectLockstep("features", schema.properties.features, Object.keys(resolveFeatures()));
-});
-
-describe("config schema ↔ execution config", () => {
-  const execution = schema.properties.execution;
-  expectLockstep("execution", execution, EXECUTION_CONFIG_KEYS);
-  // Runtime names are the operator's, so the map is open; one runtime's block is closed.
-  expectLockstep(
-    "execution.runtimes.<name>",
-    execution.properties.runtimes.additionalProperties,
-    ACP_RUNTIME_CONFIG_KEYS,
-  );
 });
 
 describe("config schema ↔ model slots", () => {

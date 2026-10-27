@@ -6,8 +6,8 @@ import {
   SKILL_ACTIVATED_META_KEY,
   type ToolSchema,
 } from "../../../src/engine/types.ts";
-import { connectMcpToolRouter } from "../../../src/execution/acp-agent/mcp-tool-router.ts";
 import { openToolProjection } from "../../../src/execution/tool-projection.ts";
+import { connectMcpToolRouter } from "../../helpers/acp/mcp-tool-router.ts";
 
 const router = new StaticToolRouter(
   [

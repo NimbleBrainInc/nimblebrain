@@ -5,6 +5,7 @@ import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { getCredentialProvider } from "./credential-provider.ts";
 import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
 import { type CredentialScope, resolveCredentialValue } from "./credential-store.ts";
+import { createInBandAuthRejectionFetch } from "./in-band-auth-rejection-fetch.ts";
 import { createOAuthRefreshFetch } from "./oauth-refresh-fetch.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 
@@ -256,6 +257,10 @@ export async function createRemoteTransport(
      *  guard so http://localhost endpoints still work under local development.
      *  Defaults to false (production posture). */
     allowInsecure?: boolean;
+    /** The catalog entry's in-band token-rejection text. An OAuth connection
+     *  that declares it reads a matching `tools/call` answer as a 401
+     *  (`createInBandAuthRejectionFetch`). */
+    inBandAuthErrors?: readonly string[];
   },
 ): Promise<Transport> {
   // The last source for a name wins, compared case-insensitively as header names
@@ -297,10 +302,17 @@ export async function createRemoteTransport(
   });
   // No header, no wrapper. A connection carrying only literals still reads
   // nothing from the store on any request: `perRequest` is empty.
-  const requestFetch =
+  const headerFetch =
     Object.keys(fixed).length > 0 || perRequest.length > 0
       ? createConnectorHeaderFetch(guardedFetch, fixed, perRequest, url, opts?.workspaceId)
       : guardedFetch;
+  // Only a token the SDK can renew is worth a 401: a static-auth or minting
+  // remote has no refresh, and its in-band rejection surfaces as the server sent it.
+  const inBandAuthErrors = opts?.inBandAuthErrors ?? [];
+  const requestFetch =
+    effectiveAuthProvider && !mintingFetch && inBandAuthErrors.length > 0
+      ? createInBandAuthRejectionFetch(headerFetch, inBandAuthErrors)
+      : headerFetch;
 
   if (config?.type === "sse") {
     return new SSEClientTransport(url, {

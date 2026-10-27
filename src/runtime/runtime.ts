@@ -39,6 +39,7 @@ import {
 } from "../connectors/runtime/catalog-ui.ts";
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
+import { setInBandAuthErrorsCatalog } from "../connectors/runtime/in-band-auth-errors.ts";
 import { bindInstanceOAuthClients } from "../connectors/runtime/instance-oauth-clients.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
@@ -782,6 +783,10 @@ export class Runtime {
     // bind, and it is what keeps the operator's secret on the catalog's server.
     // Throws on a declared client with no client id or secret.
     await bindInstanceOAuthClients(() => new ConnectorCatalog(catalogPath()).catalogByIdMap());
+    // Each remote connection reads its entry's in-band auth errors from the
+    // catalog when its source is built: a fresh read, so an edit reaches the
+    // next connection without a copy on the ref going stale.
+    setInBandAuthErrorsCatalog(() => new ConnectorCatalog(catalogPath()).catalogEntries());
 
     // Derive the override-file path when the caller supplied a configPath
     // but not an explicit override path. The CLI's loadConfig already
