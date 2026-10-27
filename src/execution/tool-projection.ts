@@ -22,14 +22,18 @@
  * `tool.done`, and each body in `connector.skill.injected`, from which a later
  * turn on any runtime replays it in the native engine's position.
  *
- * It listens on loopback only, on a random port, at a random path, behind a
- * random bearer token. The endpoint dies with the run.
+ * It is served one of two ways, and dies with the run either way. Over the
+ * agent's own ACP connection ({@link ToolProjection.channel}), when the agent
+ * takes MCP servers on ACP's `acp` transport: nothing listens, and only the
+ * connection the runtime dialed reaches the tools (ADR-0057). Or on loopback
+ * ({@link ToolProjection.listen}), on a random port, at a random path, behind a
+ * random bearer token, for an agent that takes only HTTP MCP servers.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
-import { createMcpHandler, Server } from "@modelcontextprotocol/server";
+import { createMcpHandler, InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import {
   boundToolResultForModel,
   extractResourceLinks,
@@ -92,16 +96,45 @@ export interface ToolProjectionOptions {
   observer?: ToolProjectionObserver;
 }
 
-/** A live projection: where an agent reaches it, and how it ends. */
+/** A live projection: how an agent reaches it, and how it ends. */
 export interface ToolProjection {
-  /** The MCP Streamable HTTP endpoint. */
-  url: string;
-  /** Headers every request must carry. Secret: never logged or persisted. */
-  headers: { name: string; value: string }[];
+  /**
+   * Serve the projection over MCP messages the caller carries: one MCP session
+   * for the run, whatever transport brings its messages.
+   */
+  channel(): McpChannel;
+  /**
+   * Serve the projection on loopback, for an agent that takes only HTTP MCP
+   * servers. Started on the first call; the same endpoint after that.
+   */
+  listen(): { url: string; headers: { name: string; value: string }[] };
   /** Every call the projection dispatched, in the order they started. */
   calls(): ToolCallRecord[];
   close(): Promise<void>;
 }
+
+/** An inner MCP error, as JSON-RPC carries it. */
+export interface McpErrorObject {
+  code: number;
+  message: string;
+  data?: unknown;
+}
+
+/** One MCP session with the projection, fed message by message. */
+export interface McpChannel {
+  /** Send one MCP request; resolves with its result or error. Aborting cancels it. */
+  request(
+    id: string,
+    method: string,
+    params: Record<string, unknown> | undefined,
+    signal?: AbortSignal,
+  ): Promise<{ result: unknown } | { error: McpErrorObject }>;
+  /** Send one MCP notification. */
+  notify(method: string, params: Record<string, unknown> | undefined): void;
+}
+
+/** JSON-RPC's "request cancelled" code, as MCP uses it. */
+const REQUEST_CANCELLED = -32800;
 
 /**
  * Open a projection for one run. Call it from inside the run's request
@@ -110,8 +143,6 @@ export interface ToolProjection {
  */
 export async function openToolProjection(opts: ToolProjectionOptions): Promise<ToolProjection> {
   const runInRunContext = AsyncLocalStorage.snapshot();
-  const token = randomBytes(32).toString("base64url");
-  const path = `/mcp/${randomBytes(16).toString("hex")}`;
   const records: ToolCallRecord[] = [];
   const skills = createSkillDelivery({
     runId: opts.runId,
@@ -125,12 +156,46 @@ export async function openToolProjection(opts: ToolProjectionOptions): Promise<T
   const callTool = (name: string, input: Record<string, unknown>): Promise<CallToolResult> =>
     runInRunContext(() => dispatch(opts, toolsByName, records, skills, name, input));
 
-  const handler = createMcpHandler(() => createServer(tools, callTool), {
+  let http: {
+    url: string;
+    headers: { name: string; value: string }[];
+    stop(): Promise<void>;
+  } | null = null;
+  let mcp: (McpChannel & { close(): Promise<void> }) | null = null;
+
+  let closed = false;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    await Promise.all([http?.stop(), mcp?.close()]);
+  };
+  opts.signal?.addEventListener("abort", () => void close(), { once: true });
+
+  return {
+    channel() {
+      if (closed) throw new Error("tool projection is closed");
+      mcp ??= openChannel(() => createServer(tools, callTool));
+      return mcp;
+    },
+    listen() {
+      if (closed) throw new Error("tool projection is closed");
+      http ??= listenOnLoopback(() => createServer(tools, callTool));
+      return { url: http.url, headers: http.headers };
+    },
+    calls: () => [...records],
+    close,
+  };
+}
+
+/** The projection behind a random path and bearer on loopback. */
+function listenOnLoopback(server: () => Server) {
+  const token = randomBytes(32).toString("base64url");
+  const path = `/mcp/${randomBytes(16).toString("hex")}`;
+  const handler = createMcpHandler(server, {
     legacy: "reject",
     onerror: (err) => log.warn(`[execution] tool projection request failed: ${err.message}`),
   });
-
-  const server = Bun.serve({
+  const listener = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     fetch(request) {
@@ -141,20 +206,76 @@ export async function openToolProjection(opts: ToolProjectionOptions): Promise<T
       return handler.fetch(request);
     },
   });
-
-  let closed = false;
-  const close = async () => {
-    if (closed) return;
-    closed = true;
-    await server.stop(true);
-  };
-  opts.signal?.addEventListener("abort", () => void close(), { once: true });
-
   return {
-    url: `http://127.0.0.1:${server.port}${path}`,
+    url: `http://127.0.0.1:${listener.port}${path}`,
     headers: [{ name: "Authorization", value: `Bearer ${token}` }],
-    calls: () => [...records],
-    close,
+    stop: () => listener.stop(true),
+  };
+}
+
+/**
+ * The projection's MCP server on an in-memory link, fed by the caller: each
+ * request is matched to its response by its id. The server never asks the
+ * agent anything, so a message it sends that is not a response is dropped.
+ */
+function openChannel(server: () => Server): McpChannel & { close(): Promise<void> } {
+  const [agentSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const pending = new Map<
+    string,
+    (answer: { result: unknown } | { error: McpErrorObject }) => void
+  >();
+  agentSide.onmessage = (message) => {
+    const id = "id" in message ? String(message.id) : undefined;
+    const settle = id === undefined ? undefined : pending.get(id);
+    if (!settle || !("result" in message || "error" in message)) {
+      log.debug("execution", "[projection] dropped a message the server sent unprompted");
+      return;
+    }
+    pending.delete(id as string);
+    settle("error" in message ? { error: message.error } : { result: message.result });
+  };
+  const ready = server().connect(serverSide);
+  return {
+    async request(id, method, params, signal) {
+      await ready;
+      if (pending.has(id)) {
+        return { error: { code: -32600, message: `request id ${id} is already in flight` } };
+      }
+      const answer = new Promise<{ result: unknown } | { error: McpErrorObject }>((resolve) =>
+        pending.set(id, resolve),
+      );
+      const cancel = () => {
+        const settle = pending.get(id);
+        if (!settle) return;
+        pending.delete(id);
+        void agentSide.send({
+          jsonrpc: "2.0",
+          method: "notifications/cancelled",
+          params: { requestId: id },
+        });
+        settle({ error: { code: REQUEST_CANCELLED, message: "request cancelled" } });
+      };
+      if (signal?.aborted) cancel();
+      else signal?.addEventListener("abort", cancel, { once: true });
+      await agentSide.send({ jsonrpc: "2.0", id, method, ...(params ? { params } : {}) });
+      try {
+        return await answer;
+      } finally {
+        signal?.removeEventListener("abort", cancel);
+      }
+    },
+    notify(method, params) {
+      void ready.then(() =>
+        agentSide.send({ jsonrpc: "2.0", method, ...(params ? { params } : {}) }),
+      );
+    },
+    async close() {
+      for (const settle of pending.values()) {
+        settle({ error: { code: REQUEST_CANCELLED, message: "the run ended" } });
+      }
+      pending.clear();
+      await agentSide.close();
+    },
   };
 }
 
