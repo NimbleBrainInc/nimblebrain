@@ -4,6 +4,7 @@ import {
   AGENT_SESSION_META_KEY,
   AGENT_STOP_REASON_META_KEY,
   AGENT_USAGE_META_KEY,
+  agentCommand,
   agentEnvironment,
   agentOutcome,
   createAgentDriver,
@@ -40,6 +41,23 @@ describe("nimblebrain-agent driver", () => {
     expect(() =>
       agentEnvironment({ command: "nimblebrain-agent" }, run(), { ANTHROPIC_API_KEY: "x" }),
     ).toThrow(/NB_AGENT_API_KEY/);
+  });
+
+  test("points the child's provider at the configured model endpoint", () => {
+    const keys = { NB_AGENT_API_KEY: "k" };
+    const endpoint = "http://127.0.0.1:1/v1";
+    expect(agentEnvironment({ modelEndpoint: endpoint }, run(), keys).ANTHROPIC_BASE_URL).toBe(
+      endpoint,
+    );
+    expect(
+      agentEnvironment({ modelEndpoint: endpoint }, run("openai:gpt-5"), keys).OPENAI_BASE_URL,
+    ).toBe(endpoint);
+    expect(agentEnvironment({}, run(), keys)).not.toHaveProperty("ANTHROPIC_BASE_URL");
+  });
+
+  test("runs the pinned dev dependency's entry unless given a command", () => {
+    expect(agentCommand({})).toEndWith("/node_modules/nimblebrain-agent/src/cli.ts");
+    expect(agentCommand({ command: "/opt/agent/src/cli.ts" })).toBe("/opt/agent/src/cli.ts");
   });
 
   test("sends the door's prompt, prior history and limits as nimblebrain-agent's session options", () => {
