@@ -78,7 +78,7 @@ export async function createSystemTools(
     {
       name: "search",
       description:
-        "Search installed tools by keyword (scope: tools) or the connector catalog for servers to install (scope: catalog). Returns matches as a list; to call a matched tool, activate it first with nb__manage_tools.",
+        "Search installed tools by keyword (scope: tools) or the connector catalog for servers to install (scope: catalog). Returns matches as a list; to call a matched tool that is not already in your tool list, activate it first with nb__manage_tools.",
       inputSchema: {
         type: "object",
         properties: {
@@ -902,7 +902,7 @@ async function searchTools(
     lines.push(`- **${t.name}**: ${desc.length > 100 ? `${desc.slice(0, 100)}…` : desc}`);
   }
   lines.push(
-    "\nTo call one, activate it with nb__manage_tools first. Its schema reaches you on your next message, so promote and call in separate messages, never in the same one.",
+    "\nA match already in your tool list can be called directly. To call one that is not, activate it with nb__manage_tools first. Its schema reaches you on your next message, so promote and call in separate messages, never in the same one.",
   );
   return {
     content: textContent(lines.join("\n")),
