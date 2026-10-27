@@ -90,10 +90,12 @@ and no handoff on a rollout.
 
 **The runtime holds one persistent connection per runtime process to the pool,**
 and opens each turn as a session on it. The generic ACP runtime today opens a
-connection per run; pooling moves the connection's lifetime out of the run and
-routes each session's updates and tool calls to its run by session id. A run
-still enters through the resolved run, and each driver still delivers its context
-its own way.
+connection per run; pooling moves the connection's lifetime out of the run. It
+routes each session's updates to its run by session id, and each tool call by
+the server id the driver declared: the runtime binds that id to the resolved run
+before declaring it, because a call can arrive before `session/new` returns a
+session id, and releases it when the run ends. A run still enters through the
+resolved run, and each driver still delivers its context its own way.
 
 **One pool per installation.** An installation serves one tenant, so its pool
 serves one tenant, and a compromised worker reaches only that tenant's turns in
@@ -139,12 +141,12 @@ the door decided.
 
 **A turn's tools travel on its ACP connection, so they need no credential.**
 The driver declares the run's projection as the session's one MCP server, with
-the `acp` transport, and the runtime answers each `mcp/message` for that session
-through the projection's checks, hooks and record. The runtime opens no listener
-and mints no tool credential: the connection it dialed is the only way in, and
-the session's tools end with the session. An agent without `mcpCapabilities.acp`
-runs behind the bridge, in its own pod or sandbox, so the bridge's loopback never
-leaves the agent's host. A credential is minted only for the model gateway.
+the `acp` transport, and the runtime answers each `mcp/message` addressed to that
+server's id through the projection's checks, hooks and record. The runtime
+opens no listener and mints no tool credential: the connection it dialed is the
+only way in, and the session's tools end with the session. An agent without
+`mcpCapabilities.acp` runs behind the bridge, in its own pod or sandbox, so the
+bridge's loopback never leaves the agent's host. A credential is minted only for the model gateway.
 
 **The model credential is per turn where the agent takes one, and per pool where
 it cannot.** A driver declares which (`modelCredential: "session" | "process"`).
