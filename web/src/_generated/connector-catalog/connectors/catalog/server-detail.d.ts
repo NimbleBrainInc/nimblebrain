@@ -275,6 +275,17 @@ export interface NimbleBrainConnectorMeta {
     requiredScopes?: string[];
     /** Optional extra authorize-URL params (e.g. Google's access_type=offline). */
     additionalAuthorizationParams?: Record<string, string>;
+    /**
+     * Text this server puts in an `isError` tool result when it rejects the
+     * access token, for a server that answers a rejected token in-band (HTTP 200)
+     * instead of with the 401 the MCP authorization spec requires. Matched as
+     * case-insensitive substrings of the result's text. A match is handled as a
+     * 401 would be: refresh once and retry, else `reauth_required`. Declared per
+     * entry because only the vendor's own wording is safe to read as "this
+     * credential was refused"; a pattern applied to every connector would read a
+     * tool reporting on some other credential the same way.
+     */
+    inBandAuthErrors?: string[];
     /** Search/filter tags surfaced on the Browse card. */
     tags?: string[];
     /** Marks the connector as exposing a UI surface — sets the "Interactive" badge. */
