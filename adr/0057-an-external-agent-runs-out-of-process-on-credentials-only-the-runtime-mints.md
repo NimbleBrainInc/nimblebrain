@@ -160,8 +160,9 @@ credentials.
 
 **The installation's model gateway is every external agent's model endpoint.**
 It holds the provider keys, applies model policy, meters every call, and checks
-a run's budget where the credential names the run. Usage an agent reports over
-ACP is for display, never the billing record.
+a run's budget where the credential names the run. Its count is the usage
+record for the calls it meters, and replaces the agent's own count, which the
+runtime records (ADR-0056) only where no gateway meters the call.
 
 **Development needs no cluster.** A developer runs one worker on their machine (a
 pool of one) and points the installation's `execution` entry at it; the runtime
