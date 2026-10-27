@@ -13,7 +13,13 @@ import { tmpdir } from "node:os";
 import * as acp from "@agentclientprotocol/sdk/unstable";
 import type { AcpDriver } from "../../../src/execution/acp/driver.ts";
 import type { EchoModelResponse } from "../echo-model.ts";
-import { connectMcpToolRouter, type McpToolRouter } from "./mcp-tool-router.ts";
+import { acpMcpClientTransport } from "./acp-mcp-client-transport.ts";
+import {
+  connectMcpToolRouter,
+  httpMcpServer,
+  type McpToolRouter,
+  type ReachableMcpServer,
+} from "./mcp-tool-router.ts";
 
 /** One model call's worth of a turn: its text, then its tool calls. */
 export interface ScriptStep {
@@ -29,6 +35,8 @@ export interface ScriptedAgentLog {
   toolResults: string[];
   /** Each session's `_meta`. */
   sessionMeta: (Record<string, unknown> | undefined)[];
+  /** Each session's MCP servers, as declared. */
+  mcpServers: acp.McpServer[][];
 }
 
 export interface ScriptedAgentOptions {
@@ -36,6 +44,11 @@ export interface ScriptedAgentOptions {
   script(prompt: string): ScriptStep[];
   /** Refuse `session/new`, as an agent that cannot run the session would. */
   refuseSession?: boolean;
+  /**
+   * The MCP transports the agent advertises. Default: HTTP only, as most
+   * agents today; `acp` takes the client's tools on the ACP connection itself.
+   */
+  mcp?: { http?: boolean; acp?: boolean };
   log?: ScriptedAgentLog;
 }
 
@@ -55,7 +68,7 @@ export function stepsFrom(responses: EchoModelResponse[]): ScriptStep[] {
 }
 
 export function emptyLog(): ScriptedAgentLog {
-  return { prompts: [], toolResults: [], sessionMeta: [] };
+  return { prompts: [], toolResults: [], sessionMeta: [], mcpServers: [] };
 }
 
 export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
@@ -67,19 +80,25 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
       agentCapabilities: {
         loadSession: false,
         promptCapabilities: { image: true, embeddedContext: true },
-        mcpCapabilities: { http: true },
+        mcpCapabilities: opts.mcp ?? { http: true },
       },
       agentInfo: { name: "scripted", version: "1" },
     }))
     .onRequest(acp.methods.agent.session.new, async (ctx) => {
       if (opts.refuseSession) throw acp.RequestError.invalidParams(undefined, "no session");
       opts.log?.sessionMeta.push(ctx.params._meta ?? undefined);
+      opts.log?.mcpServers.push(ctx.params.mcpServers);
       const router = await connectMcpToolRouter(
-        ctx.params.mcpServers.flatMap((s) =>
-          "type" in s && s.type === "http"
-            ? [{ name: s.name, url: s.url, headers: s.headers }]
-            : [],
-        ),
+        ctx.params.mcpServers.flatMap((s): ReachableMcpServer[] => {
+          if (!("type" in s)) return [];
+          if (s.type === "http") return [httpMcpServer(s)];
+          if (s.type === "acp") {
+            return [
+              { name: s.name, transport: () => acpMcpClientTransport(ctx.client, s.serverId) },
+            ];
+          }
+          return [];
+        }),
       );
       const sessionId = crypto.randomUUID();
       sessions.set(sessionId, { router });

@@ -22,14 +22,18 @@
  * `tool.done`, and each body in `connector.skill.injected`, from which a later
  * turn on any runtime replays it in the native engine's position.
  *
- * It listens on loopback only, on a random port, at a random path, behind a
- * random bearer token. The endpoint dies with the run.
+ * It is served one of two ways, and dies with the run either way. Over the
+ * agent's own ACP connection ({@link ToolProjection.channel}), when the agent
+ * takes MCP servers on ACP's `acp` transport: nothing listens, and only the
+ * connection the runtime dialed reaches the tools (ADR-0057). Or on loopback
+ * ({@link ToolProjection.listen}), on a random port, at a random path, behind a
+ * random bearer token, for an agent that takes only HTTP MCP servers.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
-import { createMcpHandler, Server } from "@modelcontextprotocol/server";
+import { createMcpHandler, InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import {
   boundToolResultForModel,
   extractResourceLinks,
@@ -92,16 +96,45 @@ export interface ToolProjectionOptions {
   observer?: ToolProjectionObserver;
 }
 
-/** A live projection: where an agent reaches it, and how it ends. */
+/** A live projection: how an agent reaches it, and how it ends. */
 export interface ToolProjection {
-  /** The MCP Streamable HTTP endpoint. */
-  url: string;
-  /** Headers every request must carry. Secret: never logged or persisted. */
-  headers: { name: string; value: string }[];
+  /**
+   * Serve the projection over MCP messages the caller carries: one MCP session
+   * for the run, whatever transport brings its messages.
+   */
+  channel(): McpChannel;
+  /**
+   * Serve the projection on loopback, for an agent that takes only HTTP MCP
+   * servers. Started on the first call; the same endpoint after that.
+   */
+  listen(): { url: string; headers: { name: string; value: string }[] };
   /** Every call the projection dispatched, in the order they started. */
   calls(): ToolCallRecord[];
   close(): Promise<void>;
 }
+
+/** An inner MCP error, as JSON-RPC carries it. */
+export interface McpErrorObject {
+  code: number;
+  message: string;
+  data?: unknown;
+}
+
+/** One MCP session with the projection, fed message by message. */
+export interface McpChannel {
+  /** Send one MCP request; resolves with its result or error. Aborting cancels it. */
+  request(
+    id: string,
+    method: string,
+    params: Record<string, unknown> | undefined,
+    signal?: AbortSignal,
+  ): Promise<{ result: unknown } | { error: McpErrorObject }>;
+  /** Send one MCP notification. */
+  notify(method: string, params: Record<string, unknown> | undefined): void;
+}
+
+/** JSON-RPC's "request cancelled" code, as MCP uses it. */
+const REQUEST_CANCELLED = -32800;
 
 /**
  * Open a projection for one run. Call it from inside the run's request
@@ -110,8 +143,6 @@ export interface ToolProjection {
  */
 export async function openToolProjection(opts: ToolProjectionOptions): Promise<ToolProjection> {
   const runInRunContext = AsyncLocalStorage.snapshot();
-  const token = randomBytes(32).toString("base64url");
-  const path = `/mcp/${randomBytes(16).toString("hex")}`;
   const records: ToolCallRecord[] = [];
   const skills = createSkillDelivery({
     runId: opts.runId,
@@ -122,15 +153,52 @@ export async function openToolProjection(opts: ToolProjectionOptions): Promise<T
   const tools = await projectedTools(opts.router);
   const toolsByName = new Map(tools.map((t) => [t.name, t]));
 
-  const callTool = (name: string, input: Record<string, unknown>): Promise<CallToolResult> =>
-    runInRunContext(() => dispatch(opts, toolsByName, records, skills, name, input));
+  // A call ends with the run or with its own request, whichever is cancelled first.
+  const callTool: CallTool = (name, input, request) => {
+    const signal = opts.signal ? AbortSignal.any([opts.signal, request]) : request;
+    return runInRunContext(() => dispatch(opts, toolsByName, records, skills, name, input, signal));
+  };
 
-  const handler = createMcpHandler(() => createServer(tools, callTool), {
+  let http: {
+    url: string;
+    headers: { name: string; value: string }[];
+    stop(): Promise<void>;
+  } | null = null;
+  let mcp: (McpChannel & { close(): Promise<void> }) | null = null;
+
+  let closed = false;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    await Promise.all([http?.stop(), mcp?.close()]);
+  };
+  opts.signal?.addEventListener("abort", () => void close(), { once: true });
+
+  return {
+    channel() {
+      if (closed) throw new Error("tool projection is closed");
+      mcp ??= openChannel(() => createServer(tools, callTool));
+      return mcp;
+    },
+    listen() {
+      if (closed) throw new Error("tool projection is closed");
+      http ??= listenOnLoopback(() => createServer(tools, callTool));
+      return { url: http.url, headers: http.headers };
+    },
+    calls: () => [...records],
+    close,
+  };
+}
+
+/** The projection behind a random path and bearer on loopback. */
+function listenOnLoopback(server: () => Server) {
+  const token = randomBytes(32).toString("base64url");
+  const path = `/mcp/${randomBytes(16).toString("hex")}`;
+  const handler = createMcpHandler(server, {
     legacy: "reject",
     onerror: (err) => log.warn(`[execution] tool projection request failed: ${err.message}`),
   });
-
-  const server = Bun.serve({
+  const listener = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     fetch(request) {
@@ -141,20 +209,78 @@ export async function openToolProjection(opts: ToolProjectionOptions): Promise<T
       return handler.fetch(request);
     },
   });
-
-  let closed = false;
-  const close = async () => {
-    if (closed) return;
-    closed = true;
-    await server.stop(true);
-  };
-  opts.signal?.addEventListener("abort", () => void close(), { once: true });
-
   return {
-    url: `http://127.0.0.1:${server.port}${path}`,
+    url: `http://127.0.0.1:${listener.port}${path}`,
     headers: [{ name: "Authorization", value: `Bearer ${token}` }],
-    calls: () => [...records],
-    close,
+    stop: () => listener.stop(true),
+  };
+}
+
+/**
+ * The projection's MCP server on an in-memory link, fed by the caller: each
+ * request is matched to its response by its id. The server never asks the
+ * agent anything, so a message it sends that is not a response is dropped.
+ */
+function openChannel(server: () => Server): McpChannel & { close(): Promise<void> } {
+  const [agentSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const pending = new Map<
+    string,
+    (answer: { result: unknown } | { error: McpErrorObject }) => void
+  >();
+  agentSide.onmessage = (message) => {
+    const id = "id" in message ? String(message.id) : undefined;
+    const settle = id === undefined ? undefined : pending.get(id);
+    if (!settle || !("result" in message || "error" in message)) {
+      log.debug("execution", "[projection] dropped a message the server sent unprompted");
+      return;
+    }
+    pending.delete(id as string);
+    settle("error" in message ? { error: message.error } : { result: message.result });
+  };
+  const ready = server().connect(serverSide);
+  return {
+    async request(id, method, params, signal) {
+      await ready;
+      // A request cancelled before it was sent is never sent.
+      if (signal?.aborted)
+        return { error: { code: REQUEST_CANCELLED, message: "request cancelled" } };
+      if (pending.has(id)) {
+        return { error: { code: -32600, message: `request id ${id} is already in flight` } };
+      }
+      const answer = new Promise<{ result: unknown } | { error: McpErrorObject }>((resolve) =>
+        pending.set(id, resolve),
+      );
+      const cancel = () => {
+        const settle = pending.get(id);
+        if (!settle) return;
+        pending.delete(id);
+        void agentSide.send({
+          jsonrpc: "2.0",
+          method: "notifications/cancelled",
+          params: { requestId: id },
+        });
+        settle({ error: { code: REQUEST_CANCELLED, message: "request cancelled" } });
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      await agentSide.send({ jsonrpc: "2.0", id, method, ...(params ? { params } : {}) });
+      try {
+        return await answer;
+      } finally {
+        signal?.removeEventListener("abort", cancel);
+      }
+    },
+    notify(method, params) {
+      void ready.then(() =>
+        agentSide.send({ jsonrpc: "2.0", method, ...(params ? { params } : {}) }),
+      );
+    },
+    async close() {
+      for (const settle of pending.values()) {
+        settle({ error: { code: REQUEST_CANCELLED, message: "the run ended" } });
+      }
+      pending.clear();
+      await agentSide.close();
+    },
   };
 }
 
@@ -164,17 +290,24 @@ async function projectedTools(router: ToolRouter): Promise<ToolSchema[]> {
   return all.filter((t) => isModelVisible(t) && !ENGINE_STATE_TOOLS.has(t.name));
 }
 
-function createServer(
-  tools: ToolSchema[],
-  callTool: (name: string, input: Record<string, unknown>) => Promise<CallToolResult>,
-): Server {
+type CallTool = (
+  name: string,
+  input: Record<string, unknown>,
+  request: AbortSignal,
+) => Promise<CallToolResult>;
+
+function createServer(tools: ToolSchema[], callTool: CallTool): Server {
   const server = new Server(
     { name: "nimblebrain-run", version: "1" },
     { capabilities: { tools: {} } },
   );
   server.setRequestHandler("tools/list", () => ({ tools: tools.map(toMcpTool) }));
-  server.setRequestHandler("tools/call", (request) =>
-    callTool(request.params.name, (request.params.arguments ?? {}) as Record<string, unknown>),
+  server.setRequestHandler("tools/call", (request, ctx) =>
+    callTool(
+      request.params.name,
+      (request.params.arguments ?? {}) as Record<string, unknown>,
+      ctx.mcpReq.signal,
+    ),
   );
   return server;
 }
@@ -203,13 +336,14 @@ async function dispatch(
   skills: SkillDelivery,
   name: string,
   rawInput: Record<string, unknown>,
+  signal: AbortSignal,
 ): Promise<CallToolResult> {
   const id = `call_${crypto.randomUUID().slice(0, 12)}`;
   const schema = toolsByName.get(name);
   if (!schema) {
     return toCallToolResult({ content: textContent(`Tool not available: ${name}`), isError: true });
   }
-  const { call, refusal, held, denied } = await gate(opts, schema, skills, {
+  const { call, refusal, held, denied } = await gate(opts, schema, skills, signal, {
     id,
     name,
     input: rawInput,
@@ -226,7 +360,7 @@ async function dispatch(
   if (!held && !denied) skills.claimFor(name);
 
   const start = performance.now();
-  let result = refusal ?? (await execute(opts, call));
+  let result = refusal ?? (await execute(opts.router, call, signal));
   result = enforceMaxToolResultSize(result, opts.maxToolResultSize);
   const ms = performance.now() - start;
   if (!held && opts.hooks?.afterToolCall) result = await opts.hooks.afterToolCall(call, result);
@@ -290,6 +424,7 @@ async function gate(
   opts: ToolProjectionOptions,
   schema: ToolSchema,
   skills: SkillDelivery,
+  signal: AbortSignal,
   offered: ToolCall,
 ): Promise<{ call: ToolCall; refusal?: ToolResult; held?: true; denied?: true }> {
   const checked = coerceAndValidateToolInput(offered.input, schema);
@@ -298,7 +433,7 @@ async function gate(
   // Ahead of the hook, so no person approves a call that is then held.
   const heldResult = await skills.hold(call, {
     readOnly: schema.annotations?.readOnlyHint === true,
-    signal: opts.signal,
+    signal,
   });
   if (heldResult) return { call, refusal: heldResult, held: true };
   const beforeToolCall = opts.hooks?.beforeToolCall;
@@ -317,9 +452,13 @@ async function gate(
 }
 
 /** The router's answer, or the error it threw as an error result. */
-async function execute(opts: ToolProjectionOptions, call: ToolCall): Promise<ToolResult> {
+async function execute(
+  router: ToolRouter,
+  call: ToolCall,
+  signal: AbortSignal,
+): Promise<ToolResult> {
   try {
-    return await opts.router.execute(call, opts.signal);
+    return await router.execute(call, signal);
   } catch (err) {
     return {
       content: textContent(err instanceof Error ? err.message : String(err)),

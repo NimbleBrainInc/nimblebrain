@@ -6,8 +6,10 @@
  * no agent-side session is the record of anything. The steps:
  *
  *   1. Open the run's tool projection, the only way the agent reaches tools.
- *   2. Open a connection through the driver, and negotiate: the agent must
- *      take HTTP MCP servers, since that is how it is given the projection.
+ *   2. Open a connection through the driver, and negotiate how the agent is
+ *      given the projection: on this connection, as an `acp` MCP server, when
+ *      the agent takes one (`./mcp-over-acp.ts`), so nothing listens; on
+ *      loopback when it takes only HTTP MCP servers.
  *   3. `session/new` naming the projection, then the driver's own preparation.
  *   4. `session/prompt`, recording every update in the engine's vocabulary
  *      (`./run-recorder.ts`), until the agent answers.
@@ -26,6 +28,7 @@ import { log } from "../../observability/log.ts";
 import { openToolProjection, type ToolProjection } from "../tool-projection.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../types.ts";
 import type { AcpDriver, AcpOutcome } from "./driver.ts";
+import { type AcpMcpServers, createAcpMcpServers } from "./mcp-over-acp.ts";
 import { type AcpRunRecorder, createAcpRunRecorder } from "./run-recorder.ts";
 import { transcriptPrompt } from "./transcript.ts";
 
@@ -124,7 +127,8 @@ async function openSession(
 
   const opened = await driver.open(run);
   cleanup.push(() => opened.close());
-  const app = clientApp(recorder, driver.toolSurface, projected);
+  const acpServers = createAcpMcpServers();
+  const app = acpServers.serve(clientApp(recorder, driver.toolSurface, projected));
   const connection =
     opened.target instanceof acp.AgentApp ? app.connect(opened.target) : app.connect(opened.target);
   cleanup.push(async () => connection.close());
@@ -135,17 +139,8 @@ async function openSession(
     clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
     clientInfo: { name: "nimblebrain", version: "1" },
   });
-  if (!init.agentCapabilities?.mcpCapabilities?.http) {
-    throw new Error(`ACP agent ${driver.id} does not accept HTTP MCP servers`);
-  }
-
-  const mcpServers: acp.McpServer[] = [
-    {
-      type: "http",
-      name: PROJECTION_SERVER_NAME,
-      url: projection.url,
-      headers: projection.headers,
-    },
+  const mcpServers = [
+    projectionServer(driver.id, init.agentCapabilities?.mcpCapabilities, projection, acpServers),
   ];
   const sessionMeta = driver.sessionMeta?.(run, { mcpServers });
   const newSession: acp.NewSessionRequest = {
@@ -164,6 +159,21 @@ async function openSession(
     run,
   );
   return { agent, sessionId, projection };
+}
+
+/**
+ * How the agent reaches the projection: on its own connection when it takes
+ * `acp` MCP servers, so nothing listens; on loopback when it takes only HTTP.
+ */
+function projectionServer(
+  agentId: string,
+  mcp: acp.McpCapabilities | null | undefined,
+  projection: ToolProjection,
+  acpServers: AcpMcpServers,
+): acp.McpServer {
+  if (mcp?.acp) return acpServers.declare(PROJECTION_SERVER_NAME, projection.channel());
+  if (mcp?.http) return { type: "http", name: PROJECTION_SERVER_NAME, ...projection.listen() };
+  throw new Error(`ACP agent ${agentId} takes neither acp nor HTTP MCP servers`);
 }
 
 function clientApp(

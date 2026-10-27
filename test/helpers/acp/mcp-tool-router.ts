@@ -4,22 +4,39 @@
  * reaches whatever the client exposed, the way any ACP agent would.
  */
 
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+  type Transport,
+} from "@modelcontextprotocol/client";
 import type { ContentBlock } from "@modelcontextprotocol/server";
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../../../src/engine/types.ts";
 
-/** The HTTP shape of an ACP `McpServer` entry, the only one this agent reaches. */
-export interface HttpMcpServer {
+/** An MCP server the agent was given, and how to reach it. */
+export interface ReachableMcpServer {
+  name: string;
+  transport(): Transport;
+}
+
+/** An ACP `McpServer` of the HTTP shape, reached over Streamable HTTP. */
+export function httpMcpServer(server: {
   name: string;
   url: string;
   headers: { name: string; value: string }[];
+}): ReachableMcpServer {
+  const headers = Object.fromEntries(server.headers.map((h) => [h.name, h.value]));
+  return {
+    name: server.name,
+    transport: () =>
+      new StreamableHTTPClientTransport(new URL(server.url), { requestInit: { headers } }),
+  };
 }
 
 export interface McpToolRouter extends ToolRouter {
   close(): Promise<void>;
 }
 
-export async function connectMcpToolRouter(servers: HttpMcpServer[]): Promise<McpToolRouter> {
+export async function connectMcpToolRouter(servers: ReachableMcpServer[]): Promise<McpToolRouter> {
   const connections: { client: Client; tools: ToolSchema[] }[] = [];
   const owner = new Map<string, Client>();
   try {
@@ -28,10 +45,7 @@ export async function connectMcpToolRouter(servers: HttpMcpServer[]): Promise<Mc
         { name: "scripted-acp-agent", version: "1" },
         { capabilities: {}, versionNegotiation: { mode: "auto" } },
       );
-      const headers = Object.fromEntries(server.headers.map((h) => [h.name, h.value]));
-      await client.connect(
-        new StreamableHTTPClientTransport(new URL(server.url), { requestInit: { headers } }),
-      );
+      await client.connect(server.transport());
       const listed = await client.listTools();
       const tools = listed.tools.map(
         (t): ToolSchema => ({
