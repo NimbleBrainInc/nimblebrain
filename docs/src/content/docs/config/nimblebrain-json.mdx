@@ -115,7 +115,6 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
 | `tasks` | `object` | — | Task run slots, queue, and per-run ceilings. See [tasks](#tasks). |
-| `execution` | `object` | native engine | Which agent runtime executes a run. Experimental. See [execution](#execution). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote connector connections. Dev only. |
 | `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
@@ -610,32 +609,6 @@ Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight an
 The three per-run ceilings apply when a run starts, so they cover every stored task however it was written. A cap a task sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: a task with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not. The create and update tools report the caps that result.
 
 A scheduled run that finds every slot busy is deferred rather than queued: it keeps its next-run time and runs on the first scheduler tick with a free slot, so its place survives a restart. The queue is held in memory: runs still queued when the runtime stops are recorded as skipped.
-
-## execution
-
-Which agent runtime executes a run. **Experimental.** Absent, every run executes on NimbleBrain's own engine, as it always has.
-
-```json
-{
-  "execution": {
-    "default": "nimblebrain-acp",
-    "runtimes": {
-      "nimblebrain-acp": { "type": "acp", "driver": "nimblebrain" }
-    }
-  }
-}
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `default` | `string` | `"native"` | The runtime every run executes on: `native`, or a name under `runtimes`. A name that is not configured fails the boot. |
-| `runtimes` | `object` | — | Runtimes beside the native engine, keyed by the name `default` uses. |
-| `runtimes.<name>.type` | `"acp"` | — | How the runtime is reached. `acp`: an agent speaking the [Agent Client Protocol](https://agentclientprotocol.com). |
-| `runtimes.<name>.driver` | `"nimblebrain"` | — | The driver that reaches the agent. `nimblebrain`: NimbleBrain's own engine, served as an ACP agent in the same process, the reference for every other ACP agent. |
-
-Whatever runtime runs a turn, NimbleBrain keeps the conversation, decides the run's tools, prompt and limits, and records every turn the same way, so a conversation can move between runtimes and each turn reads the ones before it. What a runtime other than `native` gives up, and how it reaches tools, is on [Agent runtimes](/config/agent-runtimes/).
-
-A runtime other than `native` checks no spend account or input-token cap before a model call, so a [task](/using/tasks) run with a budget or an input-token cap (its own `maxInputTokens`, or `tasks.maxRunInputTokens`) is refused on it rather than run unchecked. The file is read at startup: changing `default` takes effect on restart.
 
 ## files
 

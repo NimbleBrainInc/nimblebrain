@@ -6,7 +6,7 @@
 
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { ContentBlock } from "@modelcontextprotocol/server";
-import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../../engine/types.ts";
+import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../../../src/engine/types.ts";
 
 /** The HTTP shape of an ACP `McpServer` entry, the only one this agent reaches. */
 export interface HttpMcpServer {
@@ -25,7 +25,7 @@ export async function connectMcpToolRouter(servers: HttpMcpServer[]): Promise<Mc
   try {
     for (const server of servers) {
       const client = new Client(
-        { name: "nimblebrain-acp-agent", version: "1" },
+        { name: "scripted-acp-agent", version: "1" },
         { capabilities: {}, versionNegotiation: { mode: "auto" } },
       );
       const headers = Object.fromEntries(server.headers.map((h) => [h.name, h.value]));

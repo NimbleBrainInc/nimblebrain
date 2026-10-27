@@ -469,39 +469,6 @@
       },
       "additionalProperties": false
     },
-    "execution": {
-      "description": "Which agent runtime executes a run. Absent, every run executes on the native engine. A runtime other than native runs no spend gate, so a run that names spend accounts or caps its input tokens is refused on it.",
-      "type": "object",
-      "properties": {
-        "default": {
-          "type": "string",
-          "description": "The runtime every run executes on: native, or a name under runtimes. Default: native.",
-          "default": "native"
-        },
-        "runtimes": {
-          "type": "object",
-          "description": "Runtimes beside the native engine, keyed by the name default refers to.",
-          "additionalProperties": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": ["acp"],
-                "description": "How the runtime is reached. acp: an agent speaking the Agent Client Protocol."
-              },
-              "driver": {
-                "type": "string",
-                "enum": ["nimblebrain"],
-                "description": "The driver that reaches the agent. nimblebrain: NimbleBrain's own engine, served as an ACP agent in this process."
-              }
-            },
-            "required": ["type", "driver"],
-            "additionalProperties": false
-          }
-        }
-      },
-      "additionalProperties": false
-    },
     "tasks": {
       "description": "Guardrails for unattended (task) runs: how many runs the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound each task's own caps, and the runtime defaults for caps it leaves unset, at execution time.",
       "type": "object",

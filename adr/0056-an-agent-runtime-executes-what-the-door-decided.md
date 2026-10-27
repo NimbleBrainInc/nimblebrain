@@ -91,22 +91,22 @@ because it lives in the projection.
 **ACP is the first external transport, behind a generic runtime that names no
 agent.** What one agent needs beyond ACP v1 (how to open it and the working
 directory it owns, whether its tools are the projection alone, how the door's
-prompt and history reach it) is a driver. NimbleBrain's own engine, served as an
-ACP agent, is the reference driver: the same resolved run through the native
-runtime and through it must leave the same record. ACP v1 has no slot for a
-client's system prompt or for history the agent did not produce. Each driver
-delivers them in its agent's own terms: NimbleBrain's driver in a `_meta` format
-private to it and its agent, Goose's through Goose's own method and the
-generic fallback, and an agent with no means of its own gets them as contained
-text ahead of the turn's first message. The
-reference agent is driven both ways, so the plain-ACP path every other agent
-takes is held to the same record.
+prompt and history reach it) is a driver. The same resolved run through the
+native runtime and through the generic ACP runtime must leave the same record;
+a scripted ACP agent in the test suite holds the generic runtime to it, and the
+live eval holds each real agent. ACP v1 has no slot for a client's system
+prompt or for history the agent did not produce. Each driver delivers them in
+its agent's own terms: nimblebrain-agent's through its documented session
+options, Goose's through Goose's own method and the generic fallback, and an
+agent with no means of its own gets them as contained text ahead of the turn's
+first message.
 
-**The reference agent becomes nimblebrain-agent, a standalone ACP agent.** It is kept
-extractable (it imports the engine and its driver's wire format, nothing else of
-the platform) and works over plain ACP on its own defaults. The `_meta` format
-it shares with its driver is no platform extension: no other agent is asked to
-implement it, and the agent's session options are designed with it.
+**NimbleBrain's engine, as an ACP agent, is nimblebrain-agent, a standalone
+repository.** It mirrors the engine's files byte for byte and documents its own
+session options; NimbleBrain imports none of it. No ACP runtime is configured
+from `nimblebrain.json` until an agent can be reached out of process (ADR-0057):
+until then the native engine runs every run, and other runtimes exist only
+where an embedder or a test hands them to the runtime.
 
 ## Consequences
 
@@ -163,4 +163,4 @@ implement it, and the agent's session options are designed with it.
   two abstractions would describe one boundary.
 - **Rewrite the native engine as an ACP server and drive every run over ACP** —
   rejected: it adds a protocol hop to every native run for no gain; the engine is
-  served over ACP only as the reference agent.
+  served over ACP only as nimblebrain-agent.
