@@ -1,6 +1,6 @@
 # 0057. An external agent runs out of process, on credentials only the runtime mints
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-27
 - Serves: orchestrate remote MCP, secure RBAC
 - Supersedes: ADR-0047's remote execution provider (the seam half is ADR-0056)
