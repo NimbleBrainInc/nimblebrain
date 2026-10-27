@@ -88,6 +88,13 @@ export interface ConnectorCatalogEntry {
         clientSecretKey: string;
     };
     /**
+     * The server's in-band access-token rejection text
+     * (`NimbleBrainConnectorMeta.inBandAuthErrors`). Read per connection through
+     * `bindCatalogEntry`, never copied onto the ConnectorRef, so an edit reaches
+     * connections installed before it.
+     */
+    inBandAuthErrors?: string[];
+    /**
      * A brokered entry's provider config block, carried under the key naming its
      * provider — the convention `brokeredCatalogConfig` reads. The two typed
      * fields document the shapes we ship; the install path never reads either by

@@ -17,6 +17,7 @@ import { WorkspaceOAuthProvider } from "../../tools/workspace-oauth-provider.ts"
 import type { WorkspaceContext } from "../../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../../workspace/workspace-store.ts";
 import { connectorHasStaticAuth } from "./connector-auth.ts";
+import { inBandAuthErrorsOption } from "./in-band-auth-errors.ts";
 import { resolveStaticOAuthClient } from "./oauth-static-client.ts";
 import { validateServerName } from "./paths.ts";
 import { notifyConnectionRunning } from "./pending-auth-buffer.ts";
@@ -469,6 +470,7 @@ export async function startConnectorSource(
       transportConfig,
       allowInsecure: opts?.allowInsecureRemotes === true,
       authProvider,
+      ...(authProvider ? await inBandAuthErrorsOption(ref) : {}),
     },
     eventSink,
     composeConnectorMcpContext(opts?.connectorMcp, sourceName),

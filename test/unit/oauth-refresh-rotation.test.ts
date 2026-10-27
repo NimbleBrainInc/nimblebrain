@@ -228,6 +228,33 @@ describe("refresh under rotation never deletes a credential that is still good",
     expect(await storedRefreshToken()).toBe(vendor.current());
   });
 
+  it("test_refresh_overlapping_saves_keep_the_newest_rotation", async () => {
+    // One provider saves rt_2 (spent rt_1) and, before that write lands, rt_3
+    // (spent rt_2, read from the cache the first save set). The second save's
+    // stale check must see the first's write, or it drops rt_3 and the store
+    // ends on rt_2, which the vendor has revoked.
+    const vendor = rotatingServer();
+    await seedConnection();
+    const fetchFn = createOAuthRefreshFetch({ fetchImpl: vendor.fetchImpl, ...fast });
+    const exchange = async (refreshToken: string) => {
+      const body = new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      });
+      const res = await fetchFn(TOKEN_URL, { method: "POST", body });
+      const issued = (await res.json()) as { access_token: string; refresh_token: string };
+      return { ...issued, token_type: "Bearer" };
+    };
+    const second = await exchange("rt_1");
+    const third = await exchange("rt_2");
+    const provider = makeProvider();
+
+    await Promise.all([provider.saveTokens(second), provider.saveTokens(third)]);
+
+    expect(vendor.current()).toBe("rt_3");
+    expect(await storedRefreshToken()).toBe("rt_3");
+  });
+
   it("test_refresh_stale_copy_after_replay_window_keeps_stored_tokens", async () => {
     const vendor = rotatingServer();
     await seedConnection();

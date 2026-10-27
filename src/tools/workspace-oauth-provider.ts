@@ -627,6 +627,14 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private cachedClientInfo: OAuthClientInformationFull | null = null;
   private cachedTokens: OAuthTokens | null = null;
   /**
+   * The tail of this provider's token saves. Saves run one at a time, so a
+   * save's stale check never reads the store before a sibling's write lands:
+   * a sibling sets `cachedTokens` before its write, and a caller that refreshed
+   * from that cache would otherwise see the older stored token, drop the newer
+   * result as stale, and let the sibling's older write win.
+   */
+  private savingTokens: Promise<void> = Promise.resolve();
+  /**
    * The refresh tokens recent `tokens()` calls handed the SDK, most recent last.
    * An `invalid_grant` the SDK answers by invalidating was for one of these; the
    * refresh fetch records which (`refreshTokenRefusal`).
@@ -1107,7 +1115,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     return data ?? undefined;
   }
 
-  async saveTokens(tokens: OAuthTokens): Promise<void> {
+  saveTokens(tokens: OAuthTokens): Promise<void> {
+    const saved = this.savingTokens.then(() => this.saveTokensInTurn(tokens));
+    this.savingTokens = saved.catch(() => {});
+    return saved;
+  }
+
+  private async saveTokensInTurn(tokens: OAuthTokens): Promise<void> {
     // A refresh result answers for the refresh token its exchange spent, which
     // the refresh fetch recorded against the token the result carries. When the
     // store holds neither the spent token nor this result's, the result is for
