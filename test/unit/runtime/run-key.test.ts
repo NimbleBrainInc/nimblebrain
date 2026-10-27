@@ -46,11 +46,11 @@ describe("model credential", () => {
     expect(Object.keys(claims).sort()).toEqual(["aud", "exp", "iat", "iss", "sub", "workspace"]);
   });
 
-  it("still verifies at the longest run, and not past the leeway", async () => {
-    const atLimit = NOW + MAX_RUN_MS + MODEL_CREDENTIAL_LEEWAY_MS;
-    await verifyAsGateway(token, runKey.keySet(), { ...GATEWAY, nowMs: atLimit });
+  it("still verifies at the longest run, and not at the end of the leeway", async () => {
+    const expiry = NOW + MAX_RUN_MS + MODEL_CREDENTIAL_LEEWAY_MS;
+    await verifyAsGateway(token, runKey.keySet(), { ...GATEWAY, nowMs: expiry - 1_000 });
     await expect(
-      verifyAsGateway(token, runKey.keySet(), { ...GATEWAY, nowMs: atLimit + 1_000 }),
+      verifyAsGateway(token, runKey.keySet(), { ...GATEWAY, nowMs: expiry }),
     ).rejects.toThrow("expired");
   });
 

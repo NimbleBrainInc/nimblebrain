@@ -57,6 +57,6 @@ export async function verifyAsGateway(
   if (claims.aud !== expected.audience) throw new Error("audience");
   const now = (expected.nowMs ?? Date.now()) / 1000;
   const leeway = (expected.leewayMs ?? 0) / 1000;
-  if (typeof claims.exp !== "number" || now > claims.exp + leeway) throw new Error("expired");
+  if (typeof claims.exp !== "number" || now >= claims.exp + leeway) throw new Error("expired");
   return { header, claims };
 }
