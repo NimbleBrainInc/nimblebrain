@@ -272,7 +272,7 @@ async function dispatch(
   const guidance = (await skills.settle()).map((d) =>
     formatConnectorSkillBlock(d.skillName, d.scope, d.skillBody, d.heldToolCallId !== undefined),
   );
-  const seen = bounded || guidance.length > 0 ? textContent(modelOutput) : result.content;
+  const seen = bounded ? textContent(modelOutput) : result.content;
   return toCallToolResult({
     ...result,
     content: [...seen, ...guidance.flatMap((text) => textContent(text))],

@@ -115,7 +115,11 @@ export function createSkillDelivery(opts: SkillDeliveryOptions): SkillDelivery {
   const { runId, candidates, events } = opts;
   /** Delivered earlier in the conversation, or claimed in this run. */
   const injected = new Set(opts.delivered);
-  /** Claimed this iteration, by name: what a same-message call waits on. Cleared at settle. */
+  /**
+   * Claimed this iteration, by name: what a same-message call waits on. A claim
+   * leaves when the settle that took it completes, so a call arriving while its
+   * body is still on its way waits on it too.
+   */
   const queued = new Map<string, PendingOverlayFetch>();
   /** Every claim of this iteration, settled at once. */
   const fetches: PendingOverlayFetch[] = [];
@@ -159,6 +163,13 @@ export function createSkillDelivery(opts: SkillDeliveryOptions): SkillDelivery {
     fetches.push(pending);
     queued.set(candidate.name, pending);
     return pending;
+  };
+
+  /** Release settled claims from the queue, leaving any a later claim replaced. */
+  const unqueue = (settled: PendingOverlayFetch[]) => {
+    for (const pending of settled) {
+      if (queued.get(pending.data.skillName) === pending) queued.delete(pending.data.skillName);
+    }
   };
 
   /**
@@ -225,7 +236,9 @@ export function createSkillDelivery(opts: SkillDeliveryOptions): SkillDelivery {
     },
 
     async settle() {
-      const claims = fetches
+      const taken = [...fetches];
+      fetches.length = 0;
+      const claims = taken
         .filter((c) => !c.dropped)
         .sort(
           (a, b) =>
@@ -237,7 +250,6 @@ export function createSkillDelivery(opts: SkillDeliveryOptions): SkillDelivery {
                 ? 1
                 : 0),
         );
-      fetches.length = 0;
       const deliveries: ConnectorSkillInjectedPayload[] = [];
       let chars = 0;
       for (const pending of claims) {
@@ -261,7 +273,7 @@ export function createSkillDelivery(opts: SkillDeliveryOptions): SkillDelivery {
         deliveries.push(data);
         chars += skillBody.length;
       }
-      queued.clear();
+      unqueue(taken);
       return deliveries;
     },
 
