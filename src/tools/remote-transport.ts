@@ -5,6 +5,7 @@ import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { getCredentialProvider } from "./credential-provider.ts";
 import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
 import { type CredentialScope, resolveCredentialValue } from "./credential-store.ts";
+import { createInBandAuthRejectionFetch } from "./in-band-auth-rejection-fetch.ts";
 import { createOAuthRefreshFetch } from "./oauth-refresh-fetch.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 
@@ -191,21 +192,21 @@ function selectAuthProvider(
   return config?.auth && config.auth.type !== "none" ? undefined : authProvider;
 }
 
-/**
- * The fetch an OAuth connection's authorization requests go through: refresh
- * calls are shared and retried by `createOAuthRefreshFetch`, and every hop is
- * SSRF-guarded. The transport uses it for the refresh the SDK runs on a 401, and
- * `McpSource` for one it runs itself when a server rejects the token in-band,
- * so the two can never spend a refresh token by different rules.
- *
- * Wrapping the refresh POST is what keeps a transient token-endpoint failure
- * from bubbling up as a fabricated `UnauthorizedError` that wrongly flips the
- * connection to `reauth_required`: the SDK threads this `fetch` into its
- * refresh, the one seam where the transient-vs-dead-token distinction is still
- * recoverable (see `oauth-refresh-fetch.ts`).
- */
-export function createOAuthAuthorizationFetch(allowInsecure: boolean): FetchLike {
-  return createSsrfGuardedFetch(createOAuthRefreshFetch(), { allowInsecure, fleetInternal: false });
+/** Transport fetch: the minting fetch, else an OAuth-refresh fetch for an OAuth connector, else none. */
+function selectTransportFetch(
+  mintingFetch: FetchLike | undefined,
+  effectiveAuthProvider: OAuthClientProvider | undefined,
+): FetchLike | undefined {
+  // For an OAuth connector (no static auth, no minting provider), wrap the
+  // transport's `fetch` so transient token-endpoint refresh failures are
+  // retried in place instead of bubbling up as a fabricated `UnauthorizedError`
+  // that wrongly flips the connection to `reauth_required`. The SDK threads
+  // this `fetch` into its refresh POST, the one seam where the
+  // transient-vs-dead-token distinction is still recoverable — see
+  // `oauth-refresh-fetch.ts`. `mintingFetch` and OAuth are mutually exclusive
+  // (a `provider` auth is not `none`, so `effectiveAuthProvider` is unset when
+  // `mintingFetch` is set), so the `??` never drops a minting fetch.
+  return mintingFetch ?? (effectiveAuthProvider ? createOAuthRefreshFetch() : undefined);
 }
 
 /** Streamable-HTTP reconnection options derived from config, or undefined when not configured. */
@@ -256,6 +257,10 @@ export async function createRemoteTransport(
      *  guard so http://localhost endpoints still work under local development.
      *  Defaults to false (production posture). */
     allowInsecure?: boolean;
+    /** The catalog entry's in-band token-rejection text. An OAuth connection
+     *  that declares it reads a matching `tools/call` answer as a 401
+     *  (`createInBandAuthRejectionFetch`). */
+    inBandAuthErrors?: readonly string[];
   },
 ): Promise<Transport> {
   // The last source for a name wins, compared case-insensitively as header names
@@ -278,6 +283,7 @@ export async function createRemoteTransport(
   const fixedNames = new Set(Object.keys(fixed).map((name) => name.toLowerCase()));
   const perRequest = referenced.filter((source) => !fixedNames.has(source.name.toLowerCase()));
   const effectiveAuthProvider = selectAuthProvider(config, authProvider);
+  const transportFetch = selectTransportFetch(mintingFetch, effectiveAuthProvider);
 
   // SSRF redirect guard: the SDK transports follow redirects automatically
   // (fetch default `redirect: "follow"`). For a tenant-supplied remote URL,
@@ -289,24 +295,24 @@ export async function createRemoteTransport(
   // with `fleetInternal`. Redirect targets inherit it too — deliberately: hops
   // are same-origin only (`resolveRedirect`), which is the primary control, and
   // the per-hop `validateConnectorUrl` is its backstop. Other credential providers
-  // (brokered connectors) get no such exception at all. An OAuth connector takes
-  // `createOAuthAuthorizationFetch`; `mintingFetch` and OAuth are mutually
-  // exclusive (a `provider` auth is not `none`, so `effectiveAuthProvider` is
-  // unset when `mintingFetch` is set).
-  const allowInsecure = opts?.allowInsecure ?? false;
-  const guardedFetch: FetchLike =
-    !mintingFetch && effectiveAuthProvider
-      ? createOAuthAuthorizationFetch(allowInsecure)
-      : createSsrfGuardedFetch(mintingFetch, {
-          allowInsecure,
-          fleetInternal: isMintedFleetSource(config),
-        });
+  // (brokered connectors) get no such exception at all.
+  const guardedFetch: FetchLike = createSsrfGuardedFetch(transportFetch, {
+    allowInsecure: opts?.allowInsecure ?? false,
+    fleetInternal: isMintedFleetSource(config),
+  });
   // No header, no wrapper. A connection carrying only literals still reads
   // nothing from the store on any request: `perRequest` is empty.
-  const requestFetch =
+  const headerFetch =
     Object.keys(fixed).length > 0 || perRequest.length > 0
       ? createConnectorHeaderFetch(guardedFetch, fixed, perRequest, url, opts?.workspaceId)
       : guardedFetch;
+  // Only a token the SDK can renew is worth a 401: a static-auth or minting
+  // remote has no refresh, and its in-band rejection surfaces as the server sent it.
+  const inBandAuthErrors = opts?.inBandAuthErrors ?? [];
+  const requestFetch =
+    effectiveAuthProvider && !mintingFetch && inBandAuthErrors.length > 0
+      ? createInBandAuthRejectionFetch(headerFetch, inBandAuthErrors)
+      : headerFetch;
 
   if (config?.type === "sse") {
     return new SSEClientTransport(url, {

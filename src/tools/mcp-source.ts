@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type {
   CallToolResult,
   ClientCapabilities,
@@ -17,7 +16,6 @@ import type {
   Transport,
 } from "@modelcontextprotocol/client";
 import {
-  auth,
   CLIENT_CAPABILITIES_META_KEY,
   Client,
   isInputRequiredResult,
@@ -75,7 +73,7 @@ import {
   taskClientFor,
 } from "./mcp-task-client.ts";
 import { promoteHiddenErrors } from "./promote-hidden-errors.ts";
-import { createOAuthAuthorizationFetch, createRemoteTransport } from "./remote-transport.ts";
+import { createRemoteTransport } from "./remote-transport.ts";
 import { scrubArgsForDispatch } from "./scrub-args.ts";
 import {
   RELAYED_SERVER_NOTIFICATIONS,
@@ -93,7 +91,10 @@ import {
   type ToolExecuteOptions,
   type ToolSource,
 } from "./types.ts";
-import type { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
+import {
+  BackgroundReauthRequiredError,
+  type WorkspaceOAuthProvider,
+} from "./workspace-oauth-provider.ts";
 
 /**
  * How long a task handle is kept after its last update when the task declares
@@ -207,9 +208,9 @@ export type McpTransportMode =
       /**
        * Text the server puts in an `isError` result when it rejects the access
        * token in-band (HTTP 200) instead of with a 401, from the connector's
-       * catalog entry (`inBandAuthErrors`). With an `authProvider`, a matching
-       * result is handled as a 401 would be: refresh once and retry, else
-       * `reauth_required`. See {@link McpSource.recoverInBandAuthRejection}.
+       * catalog entry (`inBandAuthErrors`). With an `authProvider`, the
+       * transport answers a matching `tools/call` result as the 401 it should
+       * have been; see `createInBandAuthRejectionFetch`.
        */
       inBandAuthErrors?: readonly string[];
     }
@@ -612,14 +613,6 @@ export class McpSource implements ToolSource {
    * it is as single-use as the transport is.
    */
   private taskClient: TaskClient | null = null;
-  /**
-   * The hash of the access token this source's own in-band refresh produced
-   * (never the token), until a call carrying it succeeds. A rejection of that
-   * token while it is held means the refresh did not help, so it goes straight
-   * to `reauth_required` instead of spending another refresh on every call; once
-   * the token has worked, a later rejection is an ordinary expiry and refreshes.
-   */
-  private inBandRefreshedBearerHash: string | null = null;
 
   /**
    * The era the current connection negotiated, recorded once at connect
@@ -800,6 +793,7 @@ export class McpSource implements ToolSource {
         {
           workspaceId: this.connectorContext?.workspaceId,
           allowInsecure: this.mode.allowInsecure ?? false,
+          inBandAuthErrors: this.mode.inBandAuthErrors,
         },
       );
 
@@ -1214,6 +1208,7 @@ export class McpSource implements ToolSource {
       {
         workspaceId: this.connectorContext?.workspaceId,
         allowInsecure: this.mode.allowInsecure ?? false,
+        inBandAuthErrors: this.mode.inBandAuthErrors,
       },
     );
     // onclose is wired in `start()` AFTER the connect succeeds — same
@@ -2432,36 +2427,26 @@ export class McpSource implements ToolSource {
             ...infra,
           };
         },
-        reauth: () => this.reauthResult(),
+        reauth: () => ({
+          content: textContent(
+            `${this.name} needs to be reconnected — its authorization has expired. Open the connector and click Reconnect.`,
+          ),
+          isError: true,
+          structuredContent: {
+            error: "auth_required",
+            reason: "reauth_required",
+            source: this.eventSourceName,
+          },
+          // Deliberately NOT marked infrastructure, matching `not started` and the
+          // absence of `auth-lost` from INFRA_FAILURE_CLASSES. One rule across all
+          // three: a failure with no IN-RUN remedy still counts. `onAuthLost` only
+          // records `reauth_required` — it does not stop the source or drop the
+          // client — so every later call returns this same result, and exempting
+          // it would leave the tool in the model's toolset for the rest of the run
+          // with nothing able to fix it until a human clicks Reconnect.
+        }),
       },
     );
-  }
-
-  /**
-   * What a call returns once the connection's credential is refused for good:
-   * the transport's `UnauthorizedError` and an in-band rejection a refresh could
-   * not clear both end here.
-   *
-   * Deliberately NOT marked infrastructure, matching `not started` and the
-   * absence of `auth-lost` from INFRA_FAILURE_CLASSES. One rule across all
-   * three: a failure with no IN-RUN remedy still counts. `onAuthLost` only
-   * records `reauth_required` — it does not stop the source or drop the
-   * client — so every later call returns this same result, and exempting
-   * it would leave the tool in the model's toolset for the rest of the run
-   * with nothing able to fix it until a human clicks Reconnect.
-   */
-  private reauthResult(): ToolResult {
-    return {
-      content: textContent(
-        `${this.name} needs to be reconnected — its authorization has expired. Open the connector and click Reconnect.`,
-      ),
-      isError: true,
-      structuredContent: {
-        error: "auth_required",
-        reason: "reauth_required",
-        source: this.eventSourceName,
-      },
-    };
   }
 
   /**
@@ -2818,41 +2803,13 @@ export class McpSource implements ToolSource {
     signal?: AbortSignal,
     caller?: McpCaller,
     meta?: Record<string, unknown>,
-    inBandRetry = false,
   ): Promise<ToolResult> {
-    const bearer = await this.inBandWatchedBearer();
     const result = caller
       ? await this.callToolForCaller(toolName, args, caller, signal, meta)
       : await this.client?.callTool(
           { name: toolName, arguments: args, ...(meta ? { _meta: meta } : {}) },
           signal ? { signal } : undefined,
         );
-    const promoted = this.inlineToolResult(toolName, result);
-    if (promoted.inputRequired) return promoted;
-    if (this.isInBandAuthRejection(promoted)) {
-      // A rejected token means the server refused the call before running it,
-      // so one retry on a fresh token does not repeat its work.
-      const next = inBandRetry ? "reauth" : await this.recoverInBandAuthRejection(bearer);
-      if (next === "reauth") {
-        this.flagAuthLost();
-        return this.reauthResult();
-      }
-      return this.callToolInline(toolName, args, signal, caller, meta, true);
-    }
-    this.retireInBandRefreshGuard(bearer);
-    // An outside client reads `structuredContent` itself; only the agent loop
-    // needs it as text.
-    return caller ? promoted : this.forAgent(toolName, promoted);
-  }
-
-  /**
-   * An inline `tools/call` answer as a `ToolResult`: an `input_required` answer
-   * as it came, anything else projected and lie-normalized.
-   */
-  private inlineToolResult(
-    toolName: string,
-    result: Awaited<ReturnType<Client["callTool"]>> | undefined,
-  ): ToolResult {
     if (!result) return { content: [], isError: true };
     if (isInputRequiredResult(result)) {
       const { inputRequests, requestState } = result;
@@ -2882,7 +2839,9 @@ export class McpSource implements ToolSource {
     if (promoted !== toolResult) {
       log.debug("mcp", `lie-normalized source=${this.name} tool=${toolName} path=inline`);
     }
-    return promoted;
+    // An outside client reads `structuredContent` itself; only the agent loop
+    // needs it as text.
+    return caller ? promoted : this.forAgent(toolName, promoted);
   }
 
   /**
@@ -2936,7 +2895,6 @@ export class McpSource implements ToolSource {
     signal?: AbortSignal,
     meta?: Record<string, unknown>,
   ): Promise<ToolResult> {
-    const bearer = await this.inBandWatchedBearer();
     const start = await this.startToolAsTask(toolName, args, {
       // Resolved by `execute` already; passed so the task path does not resolve again.
       meta: meta ?? null,
@@ -2972,110 +2930,7 @@ export class McpSource implements ToolSource {
     if (promoted !== toolResult) {
       log.debug("mcp", `lie-normalized source=${this.name} tool=${toolName} path=task`);
     }
-    // A task is never retried (ADR-0029), so a rejected token is refreshed for
-    // the next call and this one is surfaced as the server answered it.
-    if (this.isInBandAuthRejection(promoted)) {
-      if ((await this.recoverInBandAuthRejection(bearer)) === "reauth") {
-        this.flagAuthLost();
-        return this.reauthResult();
-      }
-    } else {
-      this.retireInBandRefreshGuard(bearer);
-    }
     return this.forAgent(toolName, promoted);
-  }
-
-  /**
-   * The access token a call is about to carry, when this connection watches for
-   * in-band rejections; undefined otherwise, so an ordinary connection reads
-   * nothing extra. Read before the call so a rejection can tell whether another
-   * call has renewed the token since.
-   */
-  private async inBandWatchedBearer(): Promise<string | undefined> {
-    if (this.mode.type !== "remote" || !this.mode.authProvider) return undefined;
-    if (!this.mode.inBandAuthErrors?.length) return undefined;
-    return (await this.mode.authProvider.tokens())?.access_token;
-  }
-
-  /**
-   * A call that carried the token this source's own refresh issued was not
-   * rejected, so that refresh worked: drop the guard, and the token's later
-   * expiry refreshes again.
-   */
-  private retireInBandRefreshGuard(bearerAtCall: string | undefined): void {
-    if (bearerAtCall === undefined || this.inBandRefreshedBearerHash === null) return;
-    if (bearerHash(bearerAtCall) === this.inBandRefreshedBearerHash) {
-      this.inBandRefreshedBearerHash = null;
-    }
-  }
-
-  /**
-   * Whether a result is this server's in-band rejection of the access token:
-   * an error whose text carries one of the catalog entry's declared phrases,
-   * compared case-insensitively. Only a remote with an OAuth provider qualifies;
-   * a static-auth remote has no token the runtime could renew.
-   */
-  private isInBandAuthRejection(result: ToolResult): boolean {
-    if (!result.isError || this.mode.type !== "remote" || !this.mode.authProvider) return false;
-    const phrases = this.mode.inBandAuthErrors;
-    if (!phrases?.length) return false;
-    const text = result.content
-      .filter((b): b is ContentBlock & { type: "text"; text: string } => b.type === "text")
-      .map((b) => b.text)
-      .join("\n")
-      .toLowerCase();
-    return phrases.some((phrase) => text.includes(phrase.toLowerCase()));
-  }
-
-  /**
-   * Answer an in-band token rejection the way the transport answers a 401: renew
-   * the token with the stored refresh token. Returns `retry` when the call should
-   * go again on a token newer than the one it carried, `reauth` when renewing
-   * cannot help.
-   *
-   *  - Another call renewed the token since this one was sent: retry, without a
-   *    refresh, so a burst of rejected calls spends one refresh.
-   *  - The token rejected is the one this source's own refresh produced, and no
-   *    call has succeeded on it yet: a refresh already failed to help, so
-   *    `reauth` without spending another.
-   *  - Otherwise refresh through the SDK's `auth()`, on the transport's own fetch
-   *    chain (`createOAuthAuthorizationFetch`), so the refresh is shared and
-   *    guarded exactly as the 401 path's is. A refused refresh reaches the
-   *    provider's background gate, which flips `reauth_required` itself.
-   */
-  private async recoverInBandAuthRejection(
-    bearerAtCall: string | undefined,
-  ): Promise<"retry" | "reauth"> {
-    if (this.mode.type !== "remote" || !this.mode.authProvider) return "reauth";
-    const provider = this.mode.authProvider;
-    const current = (await provider.tokens())?.access_token;
-    if (current === undefined) return "reauth";
-    const currentHash = bearerHash(current);
-    if (bearerAtCall !== undefined && bearerHash(bearerAtCall) !== currentHash) {
-      log.info(`[oauth] ${this.name} rejected a token already renewed — retrying on the new one`);
-      return "retry";
-    }
-    if (currentHash === this.inBandRefreshedBearerHash) {
-      log.warn(`[oauth] ${this.name} rejected the token its own refresh issued`);
-      return "reauth";
-    }
-    log.info(`[oauth] ${this.name} rejected its access token in-band — refreshing`);
-    try {
-      const outcome = await auth(provider, {
-        serverUrl: this.mode.url,
-        fetchFn: createOAuthAuthorizationFetch(this.mode.allowInsecure ?? false),
-      });
-      if (outcome !== "AUTHORIZED") return "reauth";
-    } catch (err) {
-      log.warn(
-        `[oauth] ${this.name} refresh after an in-band rejection failed: ${errMessage(err)}`,
-      );
-      return "reauth";
-    }
-    const renewed = (await provider.tokens())?.access_token;
-    if (renewed === undefined) return "reauth";
-    this.inBandRefreshedBearerHash = bearerHash(renewed);
-    return "retry";
   }
 
   /**
@@ -3723,7 +3578,9 @@ function isClientActionable(err: unknown): boolean {
  *   next call; only the caller's rate is wrong. Surfaces, never restarts — see the
  *   branch comment for why restarting here is actively harmful.
  * - **transient** — a mid-roll gateway blip (502/503/504, `bad_gateway`). Back off.
- * - **auth-lost** — a rejected credential. Detectable only as `UnauthorizedError`;
+ * - **auth-lost** — a rejected credential: `UnauthorizedError`, the SDK's
+ *   `ClientHttpAuthentication` when the retry after a refresh was refused too,
+ *   or the provider's `BackgroundReauthRequiredError` for a refused refresh;
  *   note its recovery *policy* is config-dependent — a static-auth remote can't
  *   reauth — but that decision is the recovery policy's (`policyFor`), not this function's.
  * - **transport-dead** — a RECOGNIZED torn-transport shape (closed / refused /
@@ -3819,7 +3676,7 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   ) {
     return "transient";
   }
-  if (err instanceof UnauthorizedError) return "auth-lost";
+  if (isAuthLost(err, code)) return "auth-lost";
   // Standard JSON-RPC protocol errors the server *answered* with — the transport
   // is fine, restarting won't help.
   if (
@@ -3835,6 +3692,20 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   if (isTornTransport(code, msg)) return "transport-dead";
   // Couldn't positively classify it — let the caller decide (recover vs surface).
   return "unknown";
+}
+
+/**
+ * A refused credential: the SDK's 401, the retry after a refresh refused too
+ * (`ClientHttpAuthentication`), or a refused refresh in the background, where
+ * the provider has already flipped `reauth_required` rather than open a
+ * browser flow (`BackgroundReauthRequiredError`).
+ */
+function isAuthLost(err: unknown, code: unknown): boolean {
+  return (
+    err instanceof UnauthorizedError ||
+    err instanceof BackgroundReauthRequiredError ||
+    code === SdkErrorCode.ClientHttpAuthentication
+  );
 }
 
 /**
@@ -4072,11 +3943,6 @@ function hostOwnedMetaStripped(
 }
 
 /** Extract a human-readable message from an unknown throw. */
-/** The sha256 of an access token, hex: how a source remembers one without holding it. */
-function bearerHash(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
 function errMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
 }

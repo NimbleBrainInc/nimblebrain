@@ -275,7 +275,7 @@ Declare the server's wording with `inBandAuthErrors`:
           - "authentication token has expired or is invalid"
 ```
 
-Each entry is matched as a case-insensitive substring of the error's text, and must be at least 12 characters so it names one failure rather than many. On a match the runtime refreshes with the stored refresh token and retries the call once. When the refresh is refused, or the server rejects the new token too, the connection moves to **needs reconnect** and the user gets a Reconnect button. A burst of rejected calls spends one refresh. A long-running (task) call is refreshed for the next call but not retried.
+Each entry is matched as a case-insensitive substring of the error's text, and must be at least 12 characters so it names one failure rather than many. On a match the runtime refreshes with the stored refresh token and retries the call once. When the refresh is refused, or the server rejects the new token too, the connection moves to **needs reconnect** and the user gets a Reconnect button. A burst of rejected calls spends one refresh. A long-running (task) call whose result arrives later is shown as the server sent it, and the next call refreshes.
 
 The field applies to existing connections without a reinstall: it is read from the catalog each time a connection starts.
 
