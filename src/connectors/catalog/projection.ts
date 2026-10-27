@@ -169,6 +169,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(iconUrl ? { iconUrl } : {}),
     url: remote.url,
     ...connectorMetaAuthFields(meta),
+    ...(meta?.inBandAuthErrors?.length ? { inBandAuthErrors: meta.inBandAuthErrors } : {}),
     ...(meta?.tags ? { tags: meta.tags } : {}),
     ...(interactive ? { interactive: true } : {}),
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),
@@ -202,6 +203,8 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
  *   - additionalAuthorizationParams reserved-key smuggling (RFC 6749
  *     params client_id, redirect_uri, state, etc. — would let a
  *     catalog override OAuth-flow-critical parameters)
+ *   - inBandAuthErrors that is not a list of specific-enough strings (a short
+ *     fragment would read unrelated failures as a refused credential)
  *   - a host block whose host_version is not major 1 (see
  *     {@link isSupportedHostVersion})
  */
@@ -224,7 +227,29 @@ export function validateServerDetailSafety(s: ServerDetail): string | null {
   if (meta?.docsUrl !== undefined && !isHttpUrl(meta.docsUrl)) {
     return `docsUrl must be http(s): "${meta.docsUrl}"`;
   }
+  const inBandError = inBandAuthErrorsViolation(meta?.inBandAuthErrors);
+  if (inBandError) return inBandError;
   return hostVersionViolation(s);
+}
+
+/**
+ * Shortest in-band rejection text an entry may declare. A fragment such as
+ * "token" or "error" would match failures that have nothing to do with the
+ * connection's credential, and every match spends a refresh and can flip the
+ * connection to `reauth_required`.
+ */
+const MIN_IN_BAND_AUTH_ERROR_LENGTH = 12;
+
+/** `inBandAuthErrors`, when present, is a list of strings each long enough to name one failure. */
+function inBandAuthErrorsViolation(v: unknown): string | null {
+  if (v === undefined) return null;
+  if (!Array.isArray(v)) return "inBandAuthErrors must be an array of strings";
+  for (const text of v) {
+    if (typeof text !== "string" || text.trim().length < MIN_IN_BAND_AUTH_ERROR_LENGTH) {
+      return `inBandAuthErrors entries must be strings of at least ${MIN_IN_BAND_AUTH_ERROR_LENGTH} characters: ${JSON.stringify(text)}`;
+    }
+  }
+  return null;
 }
 
 /**
