@@ -1,6 +1,6 @@
 # 0047. The door decides a run, and an execution provider runs it
 
-- Status: Proposed; the model-endpoint rule superseded by ADR-0056 (the installation's model gateway), the remote provider's hosting refined by ADR-0057
+- Status: Superseded by ADR-0056 (the seam: the door decides, a runtime executes) and ADR-0057 (an agent or loop out of process)
 - Date: 2026-10-04
 - Serves: orchestrate remote MCP, secure RBAC
 
