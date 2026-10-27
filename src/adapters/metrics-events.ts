@@ -74,6 +74,9 @@ export class MetricsEventSink implements EventSink {
 
   /** Record main-loop LLM usage and per-call latency for a completed provider call. */
   private onLlmDone(data: LlmDonePayload): void {
+    // A transcript segment of an external agent's turn is not a call; the
+    // calls it reported arrive as their own `llm.done`.
+    if (data.transcriptOnly) return;
     const { model, usage } = data;
     // `data` carries the engine's `runId`; `recordLlmCall` reads attribution
     // off the event and the ambient request scope rather than being told, so a

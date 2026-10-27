@@ -94,6 +94,13 @@ export interface RequestContext {
    * there is no turn to describe.
    */
   model?: string;
+  /**
+   * The agent runtime running this turn, when it is not the native engine
+   * (`execution.runtimes`). Stamped on every usage ledger line the turn writes,
+   * so a reader can tell usage NimbleBrain measured from usage an external
+   * agent reported. Undefined for the native engine and outside a run.
+   */
+  agentRuntime?: string;
   toolPromotion?: ToolPromotionControls;
   /**
    * True when this context belongs to an unattended run (`executeTask` — a

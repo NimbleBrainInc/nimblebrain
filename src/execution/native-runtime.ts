@@ -17,7 +17,7 @@ export function createNativeRuntime(
 ): AgentRuntime {
   return {
     id: NATIVE_RUNTIME_ID,
-    capabilities: { spendGate: true, loopPolicy: true },
+    capabilities: { spendGate: true },
     execute(run, io) {
       const engine = new AgentEngine(
         resolveModel(run.config.model),

@@ -12,11 +12,12 @@ import { tmpdir } from "node:os";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { createNimbleBrainAcpAgent } from "../../acp-agent/agent.ts";
 import type { ResolvedRun } from "../../types.ts";
-import type { AcpDriver } from "../driver.ts";
+import { type AcpDriver, knownStopReason } from "../driver.ts";
 import {
   encodeMessages,
   RUN_META_KEY,
   type RunMeta,
+  STOP_REASON_META_KEY,
   userMessageToPrompt,
 } from "../nimblebrain-extension.ts";
 
@@ -45,6 +46,10 @@ export function createNimbleBrainDriver(opts: {
     prompt(run) {
       const latest = run.messages.at(-1);
       return latest?.role === "user" ? userMessageToPrompt(latest) : [];
+    },
+    outcome(response) {
+      const stopReason = knownStopReason(response._meta?.[STOP_REASON_META_KEY]);
+      return stopReason ? { stopReason } : {};
     },
   };
 }

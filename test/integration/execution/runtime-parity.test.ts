@@ -22,7 +22,8 @@ import type { AcpDriver } from "../../../src/execution/acp/driver.ts";
 import { createNimbleBrainDriver } from "../../../src/execution/acp/drivers/nimblebrain.ts";
 import { createNimbleBrainAcpAgent } from "../../../src/execution/acp-agent/agent.ts";
 import { createNativeRuntime } from "../../../src/execution/native-runtime.ts";
-import type { AgentRuntime, ResolvedRun } from "../../../src/execution/types.ts";
+import type { AgentRuntime, ResolvedRun, RunIO } from "../../../src/execution/types.ts";
+import type { TokenUsage } from "../../../src/usage/types.ts";
 import { createEchoModel, type EchoModelResponse } from "../../helpers/echo-model.ts";
 
 // The same resolved run through the native runtime and through ACP to
@@ -58,6 +59,11 @@ function collect(): Collected {
     of: <T extends EngineEvent["type"]>(type: T) =>
       events.filter((e): e is EngineEventOf<T> => e.type === type),
   };
+}
+
+/** A run's IO with summaries billed nowhere, for a run that folds nothing. */
+function io(tools: RunIO["tools"], events: RunIO["events"]): RunIO {
+  return { tools, events, billSummary: () => {} };
 }
 
 function resolvedRun(signal?: AbortSignal): ResolvedRun {
@@ -149,7 +155,7 @@ describe.each(runtimes(() => structuredClone(SCRIPT)))("%s runtime", (_name, mak
     });
     const sink = collect();
 
-    const result = await make().execute(resolvedRun(), { tools: router, events: sink });
+    const result = await make().execute(resolvedRun(), io(router, sink));
 
     expect(result.stopReason).toBe("complete");
     expect(result.output.trim()).toBe("Let me check. \n\nThe answer is 42.");
@@ -190,10 +196,10 @@ describe("acp runtime over plain ACP", () => {
       ...run.messages,
     ];
 
-    const result = await runtime.execute(run, {
-      tools: new StaticToolRouter([LOOKUP], () => ({ content: [], isError: false })),
-      events: collect(),
-    });
+    const result = await runtime.execute(
+      run,
+      io(new StaticToolRouter([LOOKUP], () => ({ content: [], isError: false })), collect()),
+    );
 
     expect(result.stopReason).toBe("complete");
     const sent = JSON.stringify(prompts[0]);
@@ -227,7 +233,7 @@ describe("acp runtime: the projection holds the run's bound", () => {
       }),
     );
 
-    const result = await runtime.execute(resolvedRun(), { tools: router, events: sink });
+    const result = await runtime.execute(resolvedRun(), io(router, sink));
 
     expect(result.stopReason).toBe("complete");
     expect(reached).toEqual([]);
@@ -258,6 +264,7 @@ describe("acp runtime: the projection holds the run's bound", () => {
           if (e.type === "tool.start") toolStarted = true;
         },
       },
+      billSummary: () => {},
     });
 
     await expect(run).rejects.toBeDefined();
@@ -285,6 +292,7 @@ describe("acp runtime: the projection holds the run's bound", () => {
       runtime.execute(resolvedRun(controller.signal), {
         tools: new StaticToolRouter([LOOKUP], () => ({ content: [], isError: false })),
         events: sink,
+        billSummary: () => {},
       }),
     ).rejects.toBeDefined();
     expect(prompted).toBe(false);
@@ -307,6 +315,7 @@ describe("acp runtime: the projection holds the run's bound", () => {
       runtime.execute(resolvedRun(), {
         tools: new StaticToolRouter([], () => ({ content: [], isError: false })),
         events: sink,
+        billSummary: () => {},
       }),
     ).rejects.toThrow(/Invalid params/);
     expect(sink.of("run.error")).toHaveLength(1);
@@ -317,6 +326,74 @@ describe("acp runtime: the projection holds the run's bound", () => {
 function createNimbleBrainAgentWithoutMeta() {
   return createNimbleBrainAcpAgent({ resolveModel: () => createEchoModel() });
 }
+
+/** Replay a run's events from a conversation log, as the next turn reads them. */
+async function replayed(events: EngineEvent[]): Promise<StoredMessage[]> {
+  const dir = join(mkdtempSync(join(tmpdir(), "acp-replay-")), "conversations");
+  const store = new EventSourcedConversationStore({ dir });
+  const conversation = await store.create({ model: "test:echo", ownerId: "user_test" });
+  store.setActiveConversation(conversation.id);
+  for (const event of events) store.emit(event);
+  await store.flush();
+  return store.history(conversation);
+}
+
+const shape = (messages: StoredMessage[]) =>
+  messages.map((m) => [
+    m.role,
+    (Array.isArray(m.content) ? m.content : []).map((p) =>
+      // Whitespace between segments differs by runtime, as `output` does.
+      p.type === "text" ? `text:${p.text.trim()}` : p.type,
+    ),
+  ]);
+
+describe("acp runtime with the driver's per-call usage", () => {
+  const callUsage = (inputTokens: number): TokenUsage => ({ inputTokens, outputTokens: 5 });
+
+  test("prices each call, bills summaries, and replays as the native turn does", async () => {
+    const reported = createNimbleBrainDriver({
+      resolveModel: () => createEchoModel({ responses: structuredClone(SCRIPT) }),
+    });
+    const runtime = createAcpRuntime("reported-usage", {
+      ...reported,
+      outcome: () => ({
+        stopReason: "complete",
+        calls: [
+          { model: "test:echo", purpose: "turn", usage: callUsage(100) },
+          { model: "test:fast", purpose: "summary", usage: callUsage(40) },
+          { model: "test:echo", purpose: "turn", usage: callUsage(30) },
+        ],
+      }),
+    });
+    const router = () =>
+      new StaticToolRouter([LOOKUP], () => ({
+        content: [{ type: "text", text: "42" }],
+        isError: false,
+      }));
+    const acpSink = collect();
+    const summaries: [string, number][] = [];
+    const result = await runtime.execute(resolvedRun(), {
+      tools: router(),
+      events: acpSink,
+      billSummary: (model, usage) => summaries.push([model, usage.inputTokens]),
+    });
+    const nativeSink = collect();
+    await createNativeRuntime(() =>
+      createEchoModel({ responses: structuredClone(SCRIPT) }),
+    ).execute(resolvedRun(), io(router(), nativeSink));
+
+    expect(
+      acpSink
+        .of("llm.done")
+        .map((e) => e.data.usage.inputTokens)
+        .filter((n) => n > 0),
+    ).toEqual([100, 30]);
+    expect(summaries).toEqual([["test:fast", 40]]);
+    expect(result.usage.inputTokens).toBe(130);
+    expect(result.iterations).toBe(2);
+    expect(shape(await replayed(acpSink.events))).toEqual(shape(await replayed(nativeSink.events)));
+  });
+});
 
 describe("bound skill guidance", () => {
   const GUIDE = {
@@ -332,26 +409,6 @@ describe("bound skill guidance", () => {
     { text: "The answer is 42." },
   ];
 
-  /** Replay a run's events from a conversation log, as the next turn reads them. */
-  async function replayed(events: EngineEvent[]): Promise<StoredMessage[]> {
-    const dir = join(mkdtempSync(join(tmpdir(), "acp-replay-")), "conversations");
-    const store = new EventSourcedConversationStore({ dir });
-    const conversation = await store.create({ model: "test:echo", ownerId: "user_test" });
-    store.setActiveConversation(conversation.id);
-    for (const event of events) store.emit(event);
-    await store.flush();
-    return store.history(conversation);
-  }
-
-  const shape = (messages: StoredMessage[]) =>
-    messages.map((m) => [
-      m.role,
-      (Array.isArray(m.content) ? m.content : []).map((p) =>
-        // Whitespace between segments differs by runtime, as `output` does.
-        p.type === "text" ? `text:${p.text.trim()}` : p.type,
-      ),
-    ]);
-
   function boundRun(): ResolvedRun {
     const run = resolvedRun();
     run.config = { ...run.config, connectorSkillCandidates: [GUIDE] };
@@ -365,7 +422,7 @@ describe("bound skill guidance", () => {
       return { content: [{ type: "text", text: "42" }], isError: false };
     });
     const sink = collect();
-    const result = await make().execute(boundRun(), { tools: router, events: sink });
+    const result = await make().execute(boundRun(), io(router, sink));
     return { calls, sink, result };
   }
 
@@ -426,13 +483,16 @@ describe("bound skill guidance", () => {
       createNimbleBrainDriver({
         resolveModel: () => createEchoModel({ responses: structuredClone(SCRIPT_ONCE) }),
       }),
-    ).execute(run, {
-      tools: new StaticToolRouter([LOOKUP], (call) => {
-        calls.push(call);
-        return { content: [{ type: "text", text: "42" }], isError: false };
-      }),
-      events: sink,
-    });
+    ).execute(
+      run,
+      io(
+        new StaticToolRouter([LOOKUP], (call) => {
+          calls.push(call);
+          return { content: [{ type: "text", text: "42" }], isError: false };
+        }),
+        sink,
+      ),
+    );
     expect(calls).toHaveLength(1);
     expect(sink.of("connector.skill.injected")).toEqual([]);
   });

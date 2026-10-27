@@ -8,7 +8,9 @@
  */
 
 import type * as acp from "@agentclientprotocol/sdk/unstable";
-import type { ResolvedRun } from "../types.ts";
+import type { StopReason } from "../../engine/types.ts";
+import type { TokenUsage } from "../../usage/types.ts";
+import type { ResolvedRun, RuntimeCapabilities } from "../types.ts";
 
 /** An open connection to an agent, and how to end it and everything it started. */
 export interface AcpConnectionTarget {
@@ -34,8 +36,52 @@ export interface AcpSessionPlan {
   mcpServers: acp.McpServer[];
 }
 
+const STOP_REASONS = new Set<string>([
+  "complete",
+  "max_iterations",
+  "max_input_tokens",
+  "spend_limit",
+  "length",
+  "content_filter",
+  "error",
+  "other",
+  "cancelled",
+] satisfies StopReason[]);
+
+/** A stop reason an agent reported, when it is one the engine knows. */
+export function knownStopReason(value: unknown): StopReason | undefined {
+  return typeof value === "string" && STOP_REASONS.has(value) ? (value as StopReason) : undefined;
+}
+
+/** One model call an agent says its turn made. */
+export interface ReportedModelCall {
+  model: string;
+  /** A loop iteration, or a summary written to fold the turn's history. */
+  purpose: "turn" | "summary";
+  usage: TokenUsage;
+}
+
+/**
+ * What an agent reported about its turn beyond ACP's response, in
+ * NimbleBrain's terms. Every field is optional: what a driver cannot read
+ * falls back to ACP's `stopReason` and `usage`.
+ */
+export interface AcpOutcome {
+  /** The agent's own stop reason, finer than ACP's. */
+  stopReason?: StopReason;
+  /** Every model call of the turn, in the order they finished. */
+  calls?: ReportedModelCall[];
+}
+
 export interface AcpDriver {
   readonly id: string;
+  /**
+   * What the agent holds a run to on its own (`RuntimeCapabilities`). Absent,
+   * nothing: an agent reached over ACP is given no spend gate, so only one
+   * whose model calls pass through a gateway that enforces the run's budget
+   * may claim it.
+   */
+  readonly capabilities?: RuntimeCapabilities;
   /**
    * Whether every tool the agent can call is one the run's tool projection
    * serves. A driver says `projection` only when it configures the agent with
@@ -57,4 +103,6 @@ export interface AcpDriver {
    * the one delivery every ACP agent can read.
    */
   prompt?(run: ResolvedRun): acp.ContentBlock[];
+  /** Read what the agent reported about its turn in its own terms (`_meta` on the response). */
+  outcome?(response: acp.PromptResponse): AcpOutcome;
 }

@@ -76,7 +76,7 @@ export class PostHogEventSink implements EventSink {
   /** Fold an llm.done event's iteration count, latency, and token usage into the run's metrics. */
   private accumulateLlm(data: LlmDonePayload): void {
     const metrics = this.runs.get(data.runId);
-    if (!metrics) return;
+    if (!metrics || data.transcriptOnly) return;
 
     metrics.iterations++;
     metrics.llmMs += data.llmMs;
