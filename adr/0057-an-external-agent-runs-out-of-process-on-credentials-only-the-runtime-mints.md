@@ -4,7 +4,7 @@
 - Date: 2026-10-27
 - Serves: orchestrate remote MCP, secure RBAC
 - Supersedes: ADR-0047's remote execution provider (the seam half is ADR-0056)
-- Amends: ADR-0056 (the tool projection's transport: the ACP connection, not a listener)
+- Amends: ADR-0056 (no agent runs in the runtime's process; its reference agent is retired; the tool projection's transport is the ACP connection, not a listener)
 
 ## Context
 
@@ -71,6 +71,15 @@ started by hand and the runtime, as local processes.
 ## Decision
 
 ### Reach and hosting
+
+**Every external agent runs out of process; none runs in the runtime's.**
+NimbleBrain's engine served as an ACP agent is nimblebrain-agent, a standalone
+repository that mirrors the engine and documents its own session options. The
+in-process reference agent ADR-0056 describes is retired, and with it the
+private `_meta` format it shared with its driver. Until a driver reaches an
+agent at a configured address, `nimblebrain.json` names no runtime but the
+native engine. A scripted ACP agent in the test suite holds the generic runtime
+to the native record, and the live eval holds each real agent to it.
 
 **An external agent is reached over ACP's network transport (Streamable HTTP or
 WebSocket), at an address the installation configures.** Who starts it is not the runtime's concern: a
@@ -177,8 +186,9 @@ runtime opened, and its models only with the turn's credential.
 
 **The installation's model gateway is every external agent's model endpoint.**
 It holds the provider keys, applies model policy, meters every call, and checks
-a run's budget where the credential names the run. Usage an agent reports over
-ACP is for display, never the billing record.
+a run's budget where the credential names the run. Its count is the usage
+record for the calls it meters, and replaces the agent's own count, which the
+runtime records (ADR-0056) only where no gateway meters the call.
 
 **Development needs no cluster.** A developer runs one worker on their machine (a
 pool of one) and points the installation's `execution` entry at it; tools

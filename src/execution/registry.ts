@@ -1,25 +1,31 @@
 /**
- * The runtimes an installation can execute runs on, built once at boot from
- * the `execution` block. The native runtime is always present.
+ * The runtimes an installation can execute runs on. The native engine is
+ * always present; any other is handed to the runtime at start
+ * (`RuntimeConfig.execution`), since none is configured from `nimblebrain.json`
+ * until an external agent can be reached out of process (ADR-0056, ADR-0057).
  */
 
 import type { LanguageModelV4 } from "@ai-sdk/provider";
-import type { AcpRuntimeConfig, ExecutionConfig } from "../config/execution.ts";
-import { createAcpRuntime } from "./acp/acp-runtime.ts";
-import type { AcpDriver } from "./acp/driver.ts";
-import { createNimbleBrainDriver } from "./acp/drivers/nimblebrain.ts";
 import { createNativeRuntime, NATIVE_RUNTIME_ID } from "./native-runtime.ts";
 import type { AgentRuntime } from "./types.ts";
+
+/** Which runtime executes a run, and the runtimes beside the native engine. */
+export interface ExecutionConfig {
+  /** The runtime every run executes on: `native`, or the id of one in `runtimes`. Default: `native`. */
+  default?: string;
+  /** Runtimes beside the native engine, each under its own `id`. */
+  runtimes?: AgentRuntime[];
+}
 
 export interface AgentRuntimes {
   /**
    * The runtime `execution.default` names (`native` when unset). Read per
-   * run, so changing the default retargets the next run without a restart.
+   * run, so changing the default retargets the next run.
    */
   select(defaultId: string | undefined): AgentRuntime;
 }
 
-/** Build every configured runtime. Throws when `execution.default` names a runtime that does not exist. */
+/** Index every runtime. Throws when `execution.default` names a runtime that does not exist. */
 export function createAgentRuntimes(
   config: ExecutionConfig | undefined,
   deps: { resolveModel(model: string): LanguageModelV4 },
@@ -27,11 +33,11 @@ export function createAgentRuntimes(
   const runtimes = new Map<string, AgentRuntime>([
     [NATIVE_RUNTIME_ID, createNativeRuntime(deps.resolveModel)],
   ]);
-  for (const [id, entry] of Object.entries(config?.runtimes ?? {})) {
-    if (id === NATIVE_RUNTIME_ID) {
-      throw new Error(`execution.runtimes: "${NATIVE_RUNTIME_ID}" is the built-in engine's name`);
+  for (const runtime of config?.runtimes ?? []) {
+    if (runtimes.has(runtime.id)) {
+      throw new Error(`execution.runtimes: "${runtime.id}" is named twice`);
     }
-    runtimes.set(id, createAcpRuntime(id, driverFor(entry, deps)));
+    runtimes.set(runtime.id, runtime);
   }
   const select = (defaultId: string | undefined): AgentRuntime => {
     const id = defaultId ?? NATIVE_RUNTIME_ID;
@@ -43,15 +49,4 @@ export function createAgentRuntimes(
   // A default that names nothing fails the boot, not the first run.
   select(config?.default);
   return { select };
-}
-
-/** The driver an ACP runtime entry names. A new ACP agent is a new case here. */
-function driverFor(
-  entry: AcpRuntimeConfig,
-  deps: { resolveModel(model: string): LanguageModelV4 },
-): AcpDriver {
-  switch (entry.driver) {
-    case "nimblebrain":
-      return createNimbleBrainDriver(deps);
-  }
 }

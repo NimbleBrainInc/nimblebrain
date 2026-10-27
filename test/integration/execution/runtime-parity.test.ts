@@ -2,11 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  LanguageModelV4,
-  LanguageModelV4Message,
-  LanguageModelV4Prompt,
-} from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
 import type { StoredMessage } from "../../../src/conversation/types.ts";
@@ -18,19 +14,23 @@ import type {
   ToolSchema,
 } from "../../../src/engine/types.ts";
 import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
-import type { AcpDriver } from "../../../src/execution/acp/driver.ts";
-import { createNimbleBrainDriver } from "../../../src/execution/acp/drivers/nimblebrain.ts";
-import { createNimbleBrainAcpAgent } from "../../../src/execution/acp-agent/agent.ts";
 import { createNativeRuntime } from "../../../src/execution/native-runtime.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../../../src/execution/types.ts";
 import type { TokenUsage } from "../../../src/usage/types.ts";
+import {
+  emptyLog,
+  type ScriptedAgentOptions,
+  scriptedDriver,
+  stepsFrom,
+} from "../../helpers/acp/scripted-agent.ts";
 import { createEchoModel, type EchoModelResponse } from "../../helpers/echo-model.ts";
 
-// The same resolved run through the native runtime and through ACP to
-// NimbleBrain's own agent must leave the same record: the reply, the tool
-// calls, and events the conversation log can replay. The agent is reached two
-// ways: with NimbleBrain's run `_meta`, and over plain ACP, the path every other
-// agent takes (the prompt and history arrive as contained text in the turn).
+// The same resolved run through the native runtime and through the generic
+// ACP runtime must leave the same record: the reply, the tool calls, and events
+// the conversation log can replay. The ACP side is a scripted agent playing the
+// echo model's script over plain ACP, so the prompt and history reach it as
+// contained text in the turn, the path every ACP agent without a driver of its
+// own takes.
 
 const LOOKUP: ToolSchema = {
   name: "lookup",
@@ -86,63 +86,16 @@ function resolvedRun(signal?: AbortSignal): ResolvedRun {
   };
 }
 
-/**
- * The reference agent over plain ACP: no run `_meta` and no prompt of the
- * driver's own, so the generic runtime sends its transcript prompt and the
- * agent runs on its own defaults.
- */
-function plainAcpDriver(resolveModel: () => LanguageModelV4): AcpDriver {
-  return {
-    id: "plain-acp",
-    toolSurface: "projection",
-    async open() {
-      return {
-        target: createNimbleBrainAcpAgent({
-          resolveModel,
-          defaults: {
-            model: "test:echo",
-            maxIterations: 5,
-            maxInputTokens: 100_000,
-            maxOutputTokens: 1_000,
-          },
-        }),
-        cwd: tmpdir(),
-        close: async () => {},
-      };
-    },
-  };
-}
-
-/** A model that keeps every prompt it is sent. */
-function recording(model: LanguageModelV4, prompts: LanguageModelV4Prompt[]): LanguageModelV4 {
-  return {
-    ...model,
-    doStream: (options) => {
-      prompts.push(options.prompt);
-      return model.doStream(options);
-    },
-  };
+/** An ACP runtime over the scripted agent playing `script`. */
+function scriptedRuntime(script: EchoModelResponse[], opts: Partial<ScriptedAgentOptions> = {}) {
+  const steps = stepsFrom(script);
+  return createAcpRuntime("scripted-acp", scriptedDriver({ script: () => steps, ...opts }));
 }
 
 function runtimes(script: () => EchoModelResponse[]): [string, () => AgentRuntime][] {
   return [
     ["native", () => createNativeRuntime(() => createEchoModel({ responses: script() }))],
-    [
-      "acp:nimblebrain",
-      () =>
-        createAcpRuntime(
-          "nimblebrain-acp",
-          createNimbleBrainDriver({ resolveModel: () => createEchoModel({ responses: script() }) }),
-        ),
-    ],
-    [
-      "acp:plain",
-      () =>
-        createAcpRuntime(
-          "plain-acp",
-          plainAcpDriver(() => createEchoModel({ responses: script() })),
-        ),
-    ],
+    ["acp", () => scriptedRuntime(script())],
   ];
 }
 
@@ -183,12 +136,9 @@ describe.each(runtimes(() => structuredClone(SCRIPT)))("%s runtime", (_name, mak
 });
 
 describe("acp runtime over plain ACP", () => {
-  test("the door's prompt and history reach the agent's model as contained context", async () => {
-    const prompts: LanguageModelV4Prompt[] = [];
-    const runtime = createAcpRuntime(
-      "plain-acp",
-      plainAcpDriver(() => recording(createEchoModel({ responses: [{ text: "ok" }] }), prompts)),
-    );
+  test("the door's prompt and history reach the agent as contained context", async () => {
+    const log = emptyLog();
+    const runtime = scriptedRuntime([{ text: "ok" }], { log });
     const run = resolvedRun();
     run.messages = [
       { role: "user", content: [{ type: "text", text: "Remember 7." }] },
@@ -202,7 +152,7 @@ describe("acp runtime over plain ACP", () => {
     );
 
     expect(result.stopReason).toBe("complete");
-    const sent = JSON.stringify(prompts[0]);
+    const sent = log.prompts[0] ?? "";
     expect(sent).toContain("<host-instructions>");
     expect(sent).toContain("You are a test agent.");
     expect(sent).toContain("<conversation-history>");
@@ -220,18 +170,10 @@ describe("acp runtime: the projection holds the run's bound", () => {
       return { content: [{ type: "text", text: "ok" }], isError: false };
     });
     const sink = collect();
-    const runtime = createAcpRuntime(
-      "nimblebrain-acp",
-      createNimbleBrainDriver({
-        resolveModel: () =>
-          createEchoModel({
-            responses: [
-              { toolCalls: [{ toolCallId: "m1", toolName: "secret_tool", input: "{}" }] },
-              { text: "done" },
-            ],
-          }),
-      }),
-    );
+    const runtime = scriptedRuntime([
+      { toolCalls: [{ toolCallId: "m1", toolName: "secret_tool", input: "{}" }] },
+      { text: "done" },
+    ]);
 
     const result = await runtime.execute(resolvedRun(), io(router, sink));
 
@@ -249,12 +191,7 @@ describe("acp runtime: the projection holds the run's bound", () => {
       return { content: [{ type: "text", text: "late" }], isError: false };
     });
     const sink = collect();
-    const runtime = createAcpRuntime(
-      "nimblebrain-acp",
-      createNimbleBrainDriver({
-        resolveModel: () => createEchoModel({ responses: structuredClone(SCRIPT) }),
-      }),
-    );
+    const runtime = scriptedRuntime(structuredClone(SCRIPT));
 
     const run = runtime.execute(resolvedRun(controller.signal), {
       tools: router,
@@ -275,12 +212,9 @@ describe("acp runtime: the projection holds the run's bound", () => {
 
   test("cancelling during session setup ends the run before it prompts", async () => {
     const controller = new AbortController();
-    let prompted = false;
-    const driver = plainAcpDriver(() => {
-      prompted = true;
-      return createEchoModel({ responses: structuredClone(SCRIPT) });
-    });
-    const runtime = createAcpRuntime("plain-acp", {
+    const log = emptyLog();
+    const driver = scriptedDriver({ script: () => stepsFrom(structuredClone(SCRIPT)), log });
+    const runtime = createAcpRuntime("scripted-acp", {
       ...driver,
       async prepareSession() {
         controller.abort();
@@ -295,21 +229,16 @@ describe("acp runtime: the projection holds the run's bound", () => {
         billSummary: () => {},
       }),
     ).rejects.toBeDefined();
-    expect(prompted).toBe(false);
+    expect(log.prompts).toEqual([]);
     expect(sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
   });
 
   test("an agent that fails the session is a run error, not a crash", async () => {
     const sink = collect();
-    const runtime = createAcpRuntime("broken", {
-      id: "broken",
-      toolSurface: "projection",
-      open: async () => ({
-        target: createNimbleBrainAgentWithoutMeta(),
-        cwd: "/",
-        close: async () => {},
-      }),
-    });
+    const runtime = createAcpRuntime(
+      "broken",
+      scriptedDriver({ script: () => [], refuseSession: true }, "broken"),
+    );
 
     await expect(
       runtime.execute(resolvedRun(), {
@@ -321,11 +250,6 @@ describe("acp runtime: the projection holds the run's bound", () => {
     expect(sink.of("run.error")).toHaveLength(1);
   });
 });
-
-/** The reference agent without its driver: it refuses a session with no run `_meta`. */
-function createNimbleBrainAgentWithoutMeta() {
-  return createNimbleBrainAcpAgent({ resolveModel: () => createEchoModel() });
-}
 
 describe("acp runtime with the driver's per-call usage", () => {
   const callUsage = (inputTokens: number): TokenUsage => ({ inputTokens, outputTokens: 5 });
@@ -351,9 +275,8 @@ describe("acp runtime with the driver's per-call usage", () => {
     ]);
 
   test("prices each call, bills summaries, and replays as the native turn does", async () => {
-    const reported = createNimbleBrainDriver({
-      resolveModel: () => createEchoModel({ responses: structuredClone(SCRIPT) }),
-    });
+    const steps = stepsFrom(structuredClone(SCRIPT));
+    const reported = scriptedDriver({ script: () => steps });
     const runtime = createAcpRuntime("reported-usage", {
       ...reported,
       outcome: () => ({
