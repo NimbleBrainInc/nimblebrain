@@ -47,13 +47,19 @@ once. A worker starts once and serves turns until it is drained; nothing starts
 a process per turn or per conversation.
 
 **A session is one turn, and a worker keeps nothing between turns.** The door
-hands each turn its whole context (system prompt, history, limits) at
-`session/new`, so any worker in the pool can take any turn. There is no
-session affinity, no session store, and no handoff on a rollout.
+hands each turn its whole context (system prompt, history, limits) when the
+session opens, through the driver's own delivery (`session/new`, then
+`prepareSession`, then the opening prompt), so any worker in the pool can take
+any turn. There is no session affinity, no session store, and no handoff on a
+rollout.
 
 **The runtime holds one persistent connection per runtime process to the
-pool**, and opens each turn as a session on it. The runtime's ACP transport is
-that connection; the generic ACP runtime and the driver are unchanged by it.
+pool**, and opens each turn as a session on it. The generic ACP runtime opens
+a connection per run (through `AcpDriver.open`), initializes it and closes it,
+and its client handler records every update to that one run. Pooling moves the connection's lifetime out of
+the run and routes each session's updates and tool calls to its run by session
+ID. A run still enters through the resolved run (ADR-0056), and each driver
+still delivers its context its own way.
 
 **Workers hold no secret and no tenant state.** A turn reaches tools through
 the tool projection on the runtime's own server, with the run-scoped credential
@@ -90,7 +96,7 @@ An agent whose tools are the projection alone uses the shared pool.
 
 ## Consequences
 
-- A turn's start-up cost is one ACP request on an open connection; an agent's
+- A turn's start-up cost is opening a session on an open connection; an agent's
   own start-up is paid once per worker.
 - Rollouts and scaling need no coordination with conversations, because no
   worker holds one. A drained worker's turns finish or end as errors; none moves.
