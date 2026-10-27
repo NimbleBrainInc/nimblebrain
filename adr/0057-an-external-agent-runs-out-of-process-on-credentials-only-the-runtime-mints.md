@@ -103,7 +103,10 @@ connection per run; pooling moves the connection's lifetime out of the run. It
 routes each session's updates to its run by session id, and each tool call by
 the server id the driver declared: the runtime binds that id to the resolved run
 before declaring it, because a call can arrive before `session/new` returns a
-session id, and releases it when the run ends. A run still enters through the
+session id, and releases it when the run ends. The id is random per run and
+never reused, because one connection carries many people's turns: a session
+must not be able to name another's server, and an `mcp/message` that carries a
+session id other than the one the server was declared on is refused. A run still enters through the
 resolved run, and each driver still delivers its context its own way.
 
 **One pool per installation.** An installation serves one tenant, so its pool
