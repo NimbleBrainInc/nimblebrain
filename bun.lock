@@ -44,7 +44,7 @@
         "@types/bun": "latest",
         "happy-dom": "^20.0.0",
         "mcp-sdk-v1": "npm:@modelcontextprotocol/sdk@1.30.1",
-        "nimblebrain-agent": "github:NimbleBrainInc/nimblebrain-agent#1a534c3da537a1526211fb81e6781ee2f784090a",
+        "nimblebrain-agent": "github:NimbleBrainInc/nimblebrain-agent#15c7f3f66a6982fbee02e7815e2d6468cedd1d4c",
         "typescript": "^5.9.3",
       },
       "peerDependencies": {
@@ -380,7 +380,7 @@
 
     "negotiator": ["negotiator@1.1.0", "", { "dependencies": { "content-type": "^2.1.0" } }, "sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg=="],
 
-    "nimblebrain-agent": ["nimblebrain-agent@github:NimbleBrainInc/nimblebrain-agent#1a534c3", { "dependencies": { "@agentclientprotocol/sdk": "2.0.2", "@ai-sdk/anthropic": "4.0.57", "@ai-sdk/openai": "4.0.70", "@ai-sdk/provider": "4.0.17", "@modelcontextprotocol/client": "2.3.0", "@modelcontextprotocol/core": "2.3.0", "@modelcontextprotocol/ext-apps": "2.0.0", "@modelcontextprotocol/server": "2.3.0", "@opentelemetry/api": "1.9.1", "@opentelemetry/exporter-trace-otlp-http": "0.222.0", "@opentelemetry/resources": "2.11.0", "@opentelemetry/sdk-trace-base": "2.11.0", "@opentelemetry/sdk-trace-node": "2.11.0", "@opentelemetry/semantic-conventions": "1.43.0", "@sinclair/typebox": "0.34.52", "ai": "7.0.106", "ajv": "8.20.0", "zod": "4.6.5" }, "bin": { "nimblebrain-agent": "./src/cli.ts" } }, "NimbleBrainInc-nimblebrain-agent-1a534c3", "sha512-BoS9SrZSJaIWNJqSTIZ5iUpVhmR+gmgB6j8cRjvoo2Qtc4R/HxWaM46Nrp45+m54kGx1C3cdNu4qGYtHM6NQ5w=="],
+    "nimblebrain-agent": ["nimblebrain-agent@github:NimbleBrainInc/nimblebrain-agent#15c7f3f", { "dependencies": { "@agentclientprotocol/sdk": "2.0.2", "@ai-sdk/anthropic": "4.0.57", "@ai-sdk/openai": "4.0.70", "@ai-sdk/provider": "4.0.17", "@modelcontextprotocol/client": "2.3.0", "@modelcontextprotocol/core": "2.3.0", "@modelcontextprotocol/ext-apps": "2.0.0", "@modelcontextprotocol/server": "2.3.0", "@opentelemetry/api": "1.9.1", "@opentelemetry/exporter-trace-otlp-http": "0.222.0", "@opentelemetry/resources": "2.11.0", "@opentelemetry/sdk-trace-base": "2.11.0", "@opentelemetry/sdk-trace-node": "2.11.0", "@opentelemetry/semantic-conventions": "1.43.0", "@sinclair/typebox": "0.34.52", "ai": "7.0.106", "ajv": "8.20.0", "zod": "4.6.5" }, "bin": { "nimblebrain-agent": "./src/cli.ts" } }, "NimbleBrainInc-nimblebrain-agent-15c7f3f", "sha512-gN8wCsngXsPLylGboFzYmMxTPFuFdeIaZ9cazdKmz1BGDUWsCO78B+2wYpkMpyQxYe8FSpF5XmDofmq0vynXVw=="],
 
     "object-assign": ["object-assign@4.1.1", "", {}, "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg=="],
 

@@ -96,7 +96,7 @@
     "@types/bun": "latest",
     "happy-dom": "^20.0.0",
     "mcp-sdk-v1": "npm:@modelcontextprotocol/sdk@1.30.1",
-    "nimblebrain-agent": "github:NimbleBrainInc/nimblebrain-agent#1a534c3da537a1526211fb81e6781ee2f784090a",
+    "nimblebrain-agent": "github:NimbleBrainInc/nimblebrain-agent#15c7f3f66a6982fbee02e7815e2d6468cedd1d4c",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
