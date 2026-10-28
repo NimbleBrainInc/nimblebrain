@@ -53,19 +53,17 @@ const config: RuntimeConfig = {
   models: { default: "anthropic:claude-sonnet-4-6" },
   logging: { disabled: true },
   workDir,
-  execution: {
-    default: "scripted-acp",
-    runtimes: [
-      createAcpRuntime(
-        "scripted-acp",
-        scriptedDriver({
-          // Echo the turn's last line, as the echo model answers the last message.
-          script: (prompt) => [{ text: prompt.trim().split("\n").at(-1) ?? "" }],
-          log: agentLog,
-        }),
-      ),
-    ],
-  },
+  execution: { default: "scripted-acp" },
+  agentRuntimes: [
+    createAcpRuntime(
+      "scripted-acp",
+      scriptedDriver({
+        // Echo the turn's last line, as the echo model answers the last message.
+        script: (prompt) => [{ text: prompt.trim().split("\n").at(-1) ?? "" }],
+        log: agentLog,
+      }),
+    ),
+  ],
 };
 let runtime: Runtime;
 

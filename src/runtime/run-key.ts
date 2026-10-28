@@ -37,6 +37,18 @@ export const RUN_KEY_CREDENTIAL = "nimblebrain.run_key";
 export const MODEL_GATEWAY_AUDIENCE = "model-gateway";
 
 /**
+ * The audience of every connection credential: what the runtime presents to an
+ * external agent's worker on each request it sends it (ADR-0057, "A worker's
+ * ACP endpoint is reachable only by its installation's runtime"). A worker
+ * accepts this audience and no other, so a model credential cannot open a
+ * connection and a connection credential cannot spend.
+ */
+export const CONNECTION_AUDIENCE = "acp-worker";
+
+/** How long a connection credential lasts: the worker checks it on every request of a run. */
+export const CONNECTION_CREDENTIAL_TTL_MS = 60 * 60_000;
+
+/**
  * Clock skew allowed between the runtime and the gateway, added to a model
  * credential's lifetime so a turn that runs to the installation's longest
  * allowed duration is not refused by a gateway whose clock runs ahead.
@@ -199,6 +211,15 @@ export interface PoolCredentialClaims {
   exp: number;
 }
 
+/** The claims of a connection credential: the installation, and nothing about a run. */
+export interface ConnectionCredentialClaims {
+  iss: string;
+  aud: typeof CONNECTION_AUDIENCE;
+  sub: "runtime";
+  iat: number;
+  exp: number;
+}
+
 /** The installation's run key, ready to mint and publish. */
 export interface RunKey {
   /** The key set served at {@link RUN_KEY_SET_PATH}. Public halves only. */
@@ -217,6 +238,12 @@ export interface RunKey {
    * is provisioned into, and it is rotated with the run key.
    */
   mintPoolCredential(pool: { poolId: string; ttlMs: number }, nowMs?: number): string;
+  /**
+   * Mint the credential the runtime presents to an external agent's worker on
+   * every request of a connection. It names the installation and no run, so it
+   * opens sessions and grants nothing a session's own credentials do not.
+   */
+  mintConnectionCredential(nowMs?: number): string;
 }
 
 /**
@@ -274,6 +301,17 @@ export function createRunKey(opts: { ring: RunKeyRing; issuer: string; maxRunMs:
       return signJwt(signing, claims);
     },
 
+    mintConnectionCredential(nowMs = Date.now()) {
+      const iat = Math.floor(nowMs / 1000);
+      const claims: ConnectionCredentialClaims = {
+        iss: issuer,
+        aud: CONNECTION_AUDIENCE,
+        sub: "runtime",
+        iat,
+        exp: Math.ceil((nowMs + CONNECTION_CREDENTIAL_TTL_MS) / 1000),
+      };
+      return signJwt(signing, claims);
+    },
     mintPoolCredential({ poolId, ttlMs }, nowMs = Date.now()) {
       if (!poolId) throw new RunKeyError("a pool credential names a pool");
       if (!Number.isFinite(ttlMs) || ttlMs <= 0) {

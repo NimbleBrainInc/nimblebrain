@@ -72,6 +72,12 @@ export interface ResolvedRun {
    * conversation to bill the summary to and compaction is on.
    */
   compaction?: { model: string };
+  /**
+   * The turn's model credential, minted by the door when the run starts, for
+   * a runtime whose agent calls the installation's model gateway. Held in
+   * memory only. Absent for the native engine and where there is no run key.
+   */
+  modelCredential?: string;
 }
 
 /** How a runtime reaches the platform for the length of one run. */
