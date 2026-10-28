@@ -1,8 +1,24 @@
 import { describe, expect, it, spyOn } from "bun:test";
+import { APICallError } from "ai";
 import { isRetryable, withRetry } from "../../src/engine/retry.ts";
 import { ModelStreamStallError } from "../../src/model/stream.ts";
 
-/** Helper: create an error with an HTTP status code. */
+/**
+ * Helper: the error a provider's `doStream` throws on a non-2xx response. It
+ * carries the code in `statusCode` (not `status`) and sets `isRetryable` from
+ * it unless the provider passes its own verdict.
+ */
+function apiCallError(statusCode: number | undefined, isRetryable?: boolean): APICallError {
+  return new APICallError({
+    message: `HTTP ${statusCode}`,
+    url: "https://provider.test/v1/messages",
+    requestBodyValues: {},
+    statusCode,
+    ...(isRetryable === undefined ? {} : { isRetryable }),
+  });
+}
+
+/** Helper: an error that carries its code in `status` (a vendor SDK's shape). */
 function httpError(status: number, message = `HTTP ${status}`): Error & { status: number } {
   const err = new Error(message) as Error & { status: number };
   err.status = status;
@@ -22,8 +38,16 @@ describe("isRetryable", () => {
     expect(isRetryable(httpError(401))).toBe(false);
   });
 
-  it("returns false for 500", () => {
-    expect(isRetryable(httpError(500))).toBe(false);
+  it("returns true for transient 5xx and 408", () => {
+    for (const status of [408, 500, 502, 503, 504]) {
+      expect(isRetryable(httpError(status))).toBe(true);
+    }
+  });
+
+  it("returns false for other 4xx", () => {
+    for (const status of [400, 403, 404, 413, 422]) {
+      expect(isRetryable(httpError(status))).toBe(false);
+    }
   });
 
   it("returns false for plain Error (no status)", () => {
@@ -184,6 +208,82 @@ describe("withRetry", () => {
   });
 });
 
+describe("isRetryable — AI SDK APICallError", () => {
+  it("returns true for a provider rate limit or overload (statusCode)", () => {
+    expect(isRetryable(apiCallError(429))).toBe(true);
+    expect(isRetryable(apiCallError(503))).toBe(true);
+    expect(isRetryable(apiCallError(529))).toBe(true);
+  });
+
+  it("returns false for a provider client error", () => {
+    expect(isRetryable(apiCallError(400))).toBe(false);
+    expect(isRetryable(apiCallError(401))).toBe(false);
+  });
+
+  it("follows the provider's own verdict over the status", () => {
+    // OpenAI's insufficient_quota is a 429 the provider marks non-retryable.
+    expect(isRetryable(apiCallError(429, false))).toBe(false);
+    expect(isRetryable(apiCallError(400, true))).toBe(true);
+  });
+
+  it("returns true for a network failure, which has no status", () => {
+    expect(isRetryable(apiCallError(undefined, true))).toBe(true);
+  });
+
+  it("lets the retryable marker override the provider's verdict", () => {
+    const err = Object.assign(apiCallError(503), { retryable: false });
+    expect(isRetryable(err)).toBe(false);
+  });
+});
+
+describe("withRetry — AI SDK APICallError", () => {
+  it("retries a 503 high-demand error and succeeds", async () => {
+    let calls = 0;
+    const result = await withRetry(
+      async () => {
+        calls++;
+        if (calls < 3) throw apiCallError(503);
+        return "recovered";
+      },
+      3,
+      0,
+    );
+    expect(result).toBe("recovered");
+    expect(calls).toBe(3);
+  });
+
+  it("fails immediately on a 401 carried in statusCode", async () => {
+    let calls = 0;
+    await expect(
+      withRetry(
+        async () => {
+          calls++;
+          throw apiCallError(401);
+        },
+        3,
+        0,
+      ),
+    ).rejects.toThrow("Authentication failed (401)");
+    expect(calls).toBe(1);
+  });
+
+  it("fails immediately on a 400", async () => {
+    let calls = 0;
+    const err = apiCallError(400);
+    await expect(
+      withRetry(
+        async () => {
+          calls++;
+          throw err;
+        },
+        3,
+        0,
+      ),
+    ).rejects.toThrow(err);
+    expect(calls).toBe(1);
+  });
+});
+
 describe("isRetryable — retryable marker", () => {
   it("returns true for an error flagged retryable === true", () => {
     expect(isRetryable({ retryable: true })).toBe(true);
@@ -284,9 +384,9 @@ describe("withRetry logging", () => {
     expect(retries[0]).toContain("reason=ModelStreamStallError");
   });
 
-  // The `retryable` branch of isRetryable never inspects `status`, and getStatus
-  // is an unchecked cast — so an error can be retryable AND carry a `status` of
-  // any shape. `reason` must fall back to the name rather than interpolate it.
+  // The `retryable` branch of isRetryable never inspects `status`, so an error
+  // can be retryable AND carry a `status` of any shape. `reason` must fall back
+  // to the name rather than interpolate it.
   it("ignores a non-retryable status on an error flagged retryable", async () => {
     const { lines, restore } = captureWarnings();
     const err = new ModelStreamStallError(1000, { retryable: true }) as Error & {
