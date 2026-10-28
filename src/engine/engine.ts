@@ -1848,8 +1848,12 @@ export class AgentEngine {
       try {
         return await callOnce(callMessages);
       } catch (err) {
+        // A call that failed after its output reached the client is marked
+        // `retryable: false`; re-issuing it would re-stream those deltas, so it
+        // is never recovered, whatever its message says.
         if (
           overflowAttempt === 0 &&
+          (err as { retryable?: unknown } | null)?.retryable !== false &&
           isContextOverflowError(err) &&
           config.hooks?.transformContext
         ) {

@@ -4,8 +4,14 @@ import type {
   LanguageModelV4CallOptions,
   LanguageModelV4StreamPart,
 } from "@ai-sdk/provider";
+import { createProviderStreamError } from "@ai-sdk/provider-utils";
 import { withRetry } from "../../src/engine/retry.ts";
-import { callModel, ModelStreamStallError, NO_FINISH_PART_RAW } from "../../src/model/stream.ts";
+import {
+  callModel,
+  ModelStreamError,
+  ModelStreamStallError,
+  NO_FINISH_PART_RAW,
+} from "../../src/model/stream.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 function userPrompt(text: string): LanguageModelV4CallOptions {
@@ -562,5 +568,153 @@ describe("callModel — raw finish reason", () => {
       () => {},
     );
     expect(result.finishReason).toEqual({ unified: "stop", raw: undefined });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Error parts inside the stream
+// ---------------------------------------------------------------------------
+
+/** Anthropic's in-stream `overloaded_error`, as its provider enqueues it. */
+const overloaded = createProviderStreamError({
+  message: "Overloaded",
+  type: "overloaded_error",
+  statusCode: 529,
+  isRetryable: true,
+  data: { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+});
+
+/**
+ * A stream that emits `parts` in order, then closes, or stays open if
+ * `keepOpen`. Records whether the consumer cancelled it, which is what closes
+ * the provider's response body.
+ */
+function partsStream(
+  parts: LanguageModelV4StreamPart[],
+  opts: { keepOpen?: boolean; onCancel?: () => void } = {},
+): ReadableStream<LanguageModelV4StreamPart> {
+  return new ReadableStream({
+    start(controller) {
+      for (const part of parts) controller.enqueue(part);
+      if (!opts.keepOpen) controller.close();
+    },
+    cancel() {
+      opts.onCancel?.();
+    },
+  });
+}
+
+const textParts: LanguageModelV4StreamPart[] = [
+  { type: "text-start", id: "t0" },
+  { type: "text-delta", id: "t0", delta: "hi" },
+  { type: "text-end", id: "t0" },
+];
+
+const parseFailure = new TypeError("Type validation failed: unknown chunk type");
+
+async function streamError(promise: Promise<unknown>): Promise<ModelStreamError> {
+  const err = await promise.then(
+    () => undefined,
+    (e: unknown) => e,
+  );
+  expect(err).toBeInstanceOf(ModelStreamError);
+  return err as ModelStreamError;
+}
+
+describe("callModel — error parts", () => {
+  it("test_provider_error_before_output_throws_with_provider_verdict", async () => {
+    let cancelled = false;
+    const model = scriptedModel([
+      () =>
+        partsStream(
+          [
+            { type: "stream-start", warnings: [] },
+            { type: "error", error: overloaded },
+          ],
+          {
+            keepOpen: true,
+            onCancel: () => {
+              cancelled = true;
+            },
+          },
+        ),
+    ]);
+    const err = await streamError(callModel(model, userPrompt("x"), () => {}));
+    expect(err.message).toBe("Overloaded");
+    expect(err.statusCode).toBe(529);
+    expect(err.isRetryable).toBe(true);
+    // Left for withRetry to classify from the provider's verdict.
+    expect(err.retryable).toBeUndefined();
+    expect(err.cause).toBe(overloaded);
+    expect(cancelled).toBe(true);
+  });
+
+  it("test_provider_error_after_output_is_not_retryable", async () => {
+    const deltas: string[] = [];
+    const model = scriptedModel([
+      () => partsStream([...textParts.slice(0, 2), { type: "error", error: overloaded }]),
+    ]);
+    const err = await streamError(callModel(model, userPrompt("x"), (d) => deltas.push(d)));
+    expect(err.retryable).toBe(false);
+    expect(deltas).toEqual(["hi"]);
+
+    let calls = 0;
+    await expect(
+      withRetry(
+        () => {
+          calls += 1;
+          return callModel(model, userPrompt("x"), () => {});
+        },
+        3,
+        1,
+      ),
+    ).rejects.toBeInstanceOf(ModelStreamError);
+    expect(calls).toBe(1);
+  });
+
+  it("test_parse_failure_then_clean_finish_returns_the_turn", async () => {
+    const model = scriptedModel([
+      () =>
+        partsStream([
+          { type: "error", error: parseFailure },
+          ...textParts,
+          { type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: "end_turn" } },
+        ]),
+    ]);
+    const result = await callModel(model, userPrompt("x"), () => {});
+    expect(result.content).toEqual([{ type: "text", text: "hi" }]);
+    expect(result.finishReason).toEqual({ unified: "stop", raw: "end_turn" });
+  });
+
+  it("test_parse_failure_before_output_without_clean_finish_throws", async () => {
+    const endings: Array<LanguageModelV4StreamPart[]> = [
+      [],
+      [{ type: "finish", usage: USAGE, finishReason: { unified: "error", raw: undefined } }],
+      // The SDK's default finish when the provider never saw a stop reason.
+      [{ type: "finish", usage: USAGE, finishReason: { unified: "other", raw: undefined } }],
+    ];
+    for (const ending of endings) {
+      const model = scriptedModel([
+        () => partsStream([{ type: "error", error: parseFailure }, ...ending]),
+      ]);
+      const err = await streamError(callModel(model, userPrompt("x"), () => {}));
+      expect(err.cause).toBe(parseFailure);
+      expect(err.retryable).toBeUndefined();
+    }
+  });
+
+  it("test_parse_failure_after_output_keeps_content_and_usage", async () => {
+    const model = scriptedModel([
+      () =>
+        partsStream([
+          ...textParts,
+          { type: "error", error: parseFailure },
+          { type: "finish", usage: USAGE, finishReason: { unified: "error", raw: undefined } },
+        ]),
+    ]);
+    const result = await callModel(model, userPrompt("x"), () => {});
+    expect(result.content).toEqual([{ type: "text", text: "hi" }]);
+    expect(result.usage).toEqual(USAGE);
+    expect(result.finishReason.unified).toBe("error");
   });
 });

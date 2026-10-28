@@ -279,6 +279,7 @@
 
 ### Fixed
 
+- **A provider error sent mid-stream fails the model call instead of ending the turn silently.** An in-stream `overloaded_error` or `rate_limit_error` now throws `ModelStreamError` with the provider's `statusCode` and `isRetryable`, so it is retried before output and reported after it, rather than ending as `no_finish_part`. A chunk that fails to parse still lets the turn finish ([#1836](https://github.com/NimbleBrainInc/nimblebrain/issues/1836)).
 - **A connector whose credential was rejected stays reported, and stops retrying, across a restart.** New gauge `nb_connector_reauth_required{source}` counts connections that need Reconnect; `nb_connector_unhealthy` now means a transport outage only. The runtime no longer restarts such a connection in the background, and a brokered connection keeps `reauth_required` after a restart ([docs](https://docs.nimblebrain.ai/deploy/observability/#connector-metrics)).
 - **A static-auth catalog entry without a complete `oauthClientSetup` is dropped at catalog load**, with the reason [the docs](https://docs.nimblebrain.ai/config/connectors-catalog/#validation) already gave, and the deployments catalog check reports it. It used to reach Browse and fail at install.
 - **A promotion no longer delivers unlimited skill guidance.** Every delivery of tool-bound skills is held to the same limit as a held call (about three skill bodies), so promoting one tool of a multi-skill bundle no longer adds every body at once.
