@@ -277,6 +277,7 @@ export declare const TasksBatchInput: import("@sinclair/typebox").TObject<{
     filter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"cancelled" | "fail" | "failed" | "failing" | "not_assessed" | "pass" | "pending" | "skipped" | "uncertain">>;
     cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+    output: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"full" | "summary">>;
 }>;
 export type TasksBatchInput = Static<typeof TasksBatchInput>;
 export declare const TasksBatchControlInput: import("@sinclair/typebox").TObject<{
@@ -795,13 +796,13 @@ export declare const TasksRunResultOutput: import("@sinclair/typebox").TUnsafe<{
             name: string;
             loadedBy: "activation" | "before_call" | "declared" | "tool_use";
         }[] | undefined;
+        output: string;
         usage: {
             inputTokens: number;
             outputTokens: number;
             iterations: number;
         };
         completedAt: string;
-        output: string;
         activityLog: {
             input?: unknown;
             held?: true | undefined;
@@ -1254,13 +1255,13 @@ export declare const TasksRunOutput: import("@sinclair/typebox").TUnsafe<{
             name: string;
             loadedBy: "activation" | "before_call" | "declared" | "tool_use";
         }[] | undefined;
+        output: string;
         usage: {
             inputTokens: number;
             outputTokens: number;
             iterations: number;
         };
         completedAt: string;
-        output: string;
         activityLog: {
             input?: unknown;
             held?: true | undefined;
@@ -1834,6 +1835,10 @@ export declare const TaskBatchItemView: import("@sinclair/typebox").TObject<{
     error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     /** The top-level scalar fields of the run's structured output, when it has one. */
     output: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TNull]>>>;
+    /** With `output: "full"`: the run's whole structured output. */
+    structured: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
+    /** With `output: "full"`: the structured output was too large for a page; read it with tasks__run_result. */
+    structuredOmitted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
 }>;
 export type TaskBatchItemView = Static<typeof TaskBatchItemView>;
 export declare const TasksRunBatchOutput: import("@sinclair/typebox").TObject<{
@@ -1943,6 +1948,10 @@ export declare const TasksBatchOutput: import("@sinclair/typebox").TObject<{
         error: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         /** The top-level scalar fields of the run's structured output, when it has one. */
         output: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TRecord<import("@sinclair/typebox").TString, import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TNull]>>>;
+        /** With `output: "full"`: the run's whole structured output. */
+        structured: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnknown>;
+        /** With `output: "full"`: the structured output was too large for a page; read it with tasks__run_result. */
+        structuredOmitted: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     }>>>;
     /** Pass as `cursor` for the next page; absent on the last. */
     nextCursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;

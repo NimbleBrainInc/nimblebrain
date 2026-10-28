@@ -20,6 +20,7 @@ import {
   readBatchItems,
 } from "../../../../src/platform/tasks/batch-store.ts";
 import {
+  FULL_OUTPUT_PAGE_CHARS,
   handleBatch,
   handleBatchControl,
   handleBatches,
@@ -40,6 +41,7 @@ import {
 } from "../../../../src/platform/tasks/store.ts";
 import type {
   Batch,
+  BatchItem,
   RunAssessment,
   Task,
   TaskRun,
@@ -249,7 +251,12 @@ function harness(opts: HarnessOptions = {}): Harness {
         activityLog: [],
         outputFiles: [],
         usage: { inputTokens: 100, outputTokens: 50, iterations: 1 },
-        structured: { company: `co-${JSON.stringify(input?.data)}`, score: 3, nested: { a: 1 } },
+        // An item may bring its own structured output, to shape the result read back.
+        structured: (input?.data as { structured?: unknown } | undefined)?.structured ?? {
+          company: `co-${JSON.stringify(input?.data)}`,
+          score: 3,
+          nested: { a: 1 },
+        },
       };
       return { run, result };
     } finally {
@@ -778,6 +785,115 @@ describe("tasks__batch reads", () => {
 
     expect(() => handleBatch({ batchId: "batch_000000000000" }, h.ctx)).toThrow(/not found/);
     expect(handleBatches({}, h.ctx).batches.map((b) => b.id)).toEqual([out.batch.id]);
+  });
+
+  it("with output full, carries each run's whole structured output, nested fields included", async () => {
+    const h = harness();
+    makeTask();
+    const out = handleRunBatch({ taskId: "enrich", items: items("pass", "fail") }, h.ctx);
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+
+    const summary = handleBatch({ batchId: out.batch.id, results: true }, h.ctx);
+    expect(summary.results?.[0]?.output).toEqual({ company: 'co-{"v":"pass"}', score: 3 });
+    expect(summary.results?.[0]?.structured).toBeUndefined();
+
+    const full = handleBatch({ batchId: out.batch.id, output: "full" }, h.ctx);
+    expect(full.results?.map((r) => r.index)).toEqual([0, 1]);
+    expect(full.results?.[0]?.structured).toEqual({
+      company: 'co-{"v":"pass"}',
+      score: 3,
+      nested: { a: 1 },
+    });
+    expect(full.results?.[0]?.output).toBeUndefined();
+    expect(full.nextCursor).toBeUndefined();
+  });
+
+  it("with output full, keeps each answer's model-visible text within budget, lists and deep nesting included", async () => {
+    const h = harness();
+    makeTask();
+    // Each: small compact JSON, large once pretty-printed.
+    const list = (n: number) => ({ v: `list-${n}`, structured: { results: Array(n).fill(0) } });
+    let deep: unknown = 1;
+    for (let i = 0; i < 300; i++) deep = { a: deep };
+    const out = handleRunBatch(
+      {
+        taskId: "enrich",
+        items: [
+          list(2_500),
+          list(2_500),
+          list(2_500),
+          { v: "too-long-list", structured: { results: Array(8_000).fill(0) } },
+          { v: "too-deep", structured: deep },
+          { v: "small" },
+        ],
+      },
+      h.ctx,
+    );
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+
+    const seen: number[] = [];
+    let cursor: number | undefined;
+    for (let pages = 0; pages < 10; pages++) {
+      const answer = handleBatch({ batchId: out.batch.id, output: "full", cursor }, h.ctx);
+      // What the model reads: the tool's pretty-printed answer.
+      expect(JSON.stringify(answer, null, 2).length).toBeLessThanOrEqual(FULL_OUTPUT_PAGE_CHARS);
+      expect(answer.results?.length).toBeGreaterThan(0);
+      seen.push(...(answer.results ?? []).map((r) => r.index));
+      for (const row of answer.results ?? []) {
+        if (row.index === 3 || row.index === 4) {
+          expect(row.structuredOmitted).toBe(true);
+          expect(row.structured).toBeUndefined();
+        } else {
+          expect(row.structured).toBeDefined();
+        }
+      }
+      cursor = answer.nextCursor;
+      if (cursor === undefined) break;
+    }
+    expect(seen).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it("with output full, bounds a row's error and earlier runs so its cursor stays readable", async () => {
+    const h = harness();
+    makeTask();
+    const out = handleRunBatch({ taskId: "enrich", items: items("pass", "pass") }, h.ctx);
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    // An item retried many times whose last run failed with a long message.
+    const port = h.ctx.batches;
+    if (!port) throw new Error("batches not wired");
+    const ctx: ToolContext = {
+      ...h.ctx,
+      batches: new Proxy(port, {
+        get(target, prop) {
+          if (prop !== "get") {
+            const value = Reflect.get(target, prop);
+            return typeof value === "function" ? value.bind(target) : value;
+          }
+          return (id: string) => {
+            const found = target.get(id);
+            if (!found) return found;
+            const [first, ...rest] = found.items;
+            if (!first) return found;
+            const worn: BatchItem = {
+              ...first,
+              error: "e".repeat(60_000),
+              previousRunIds: Array.from(
+                { length: 3_000 },
+                (_, i) => `run_${String(i).padStart(12, "0")}`,
+              ),
+            };
+            return { ...found, items: [worn, ...rest] };
+          };
+        },
+      }),
+    };
+
+    const answer = handleBatch({ batchId: out.batch.id, output: "full" }, ctx);
+    expect(JSON.stringify(answer, null, 2).length).toBeLessThanOrEqual(FULL_OUTPUT_PAGE_CHARS);
+    const row = answer.results?.[0];
+    expect(row?.error?.length).toBeLessThanOrEqual(1_001);
+    expect(row?.previousRunIds).toHaveLength(20);
+    expect(row?.previousRunIds?.at(-1)).toBe(`run_${String(2_999).padStart(12, "0")}`);
   });
 });
 

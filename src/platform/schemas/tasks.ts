@@ -854,6 +854,17 @@ export const TasksBatchInput = Type.Object(
     limit: Type.Optional(
       Type.Integer({ minimum: 1, maximum: 500, description: "Items per page. Default 50." }),
     ),
+    output: Type.Optional(
+      StringEnum(["summary", "full"] as const, {
+        description:
+          "What each result row carries of its run's structured output. summary (default): its " +
+          "top-level scalar fields, for a table. full: the whole structured output as " +
+          "`structured`, so a task that answers with a list or nested object can be read here; " +
+          "a page then also ends when its rows reach a size budget, so follow `nextCursor`. " +
+          "Full rows keep an item's newest 20 earlier run ids and the first 1,000 characters " +
+          "of its error.",
+      }),
+    ),
   },
   { required: ["batchId"], additionalProperties: false },
 );
@@ -1678,6 +1689,10 @@ export const TaskBatchItemView = Type.Object({
       Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]),
     ),
   ),
+  /** With `output: "full"`: the run's whole structured output. */
+  structured: Type.Optional(Type.Unknown()),
+  /** With `output: "full"`: the structured output was too large for a page; read it with tasks__run_result. */
+  structuredOmitted: Type.Optional(Type.Boolean()),
 });
 export type TaskBatchItemView = Static<typeof TaskBatchItemView>;
 
