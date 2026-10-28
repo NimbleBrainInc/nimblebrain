@@ -649,6 +649,19 @@ describe("callModel — error parts", () => {
     expect(cancelled).toBe(true);
   });
 
+  it("test_provider_error_before_output_is_retried_by_withRetry", async () => {
+    const model = scriptedModel([
+      () =>
+        partsStream([
+          { type: "stream-start", warnings: [] },
+          { type: "error", error: overloaded },
+        ]),
+      () => textStream("recovered"),
+    ]);
+    const result = await withRetry(() => callModel(model, userPrompt("x"), () => {}), 3, 1);
+    expect(result.content).toEqual([{ type: "text", text: "recovered" }]);
+  });
+
   it("test_provider_error_after_output_is_not_retryable", async () => {
     const deltas: string[] = [];
     const model = scriptedModel([
