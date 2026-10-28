@@ -10,20 +10,14 @@
  * to throwing the original error unchanged when we're unsure.
  */
 
+import { providerStatus } from "./provider-error.ts";
+
 interface ErrorLike {
-  status?: number;
-  statusCode?: number;
   message?: unknown;
   // Vercel AI SDK wraps provider errors and sometimes nests them.
   cause?: unknown;
   data?: unknown;
   responseBody?: unknown;
-}
-
-function getStatus(err: ErrorLike): number | undefined {
-  if (typeof err.status === "number") return err.status;
-  if (typeof err.statusCode === "number") return err.statusCode;
-  return undefined;
 }
 
 function getMessages(err: ErrorLike): string[] {
@@ -76,7 +70,7 @@ const OVERFLOW_PHRASES: readonly string[] = [
 export function isContextOverflowError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const errLike = err as ErrorLike;
-  const status = getStatus(errLike);
+  const status = providerStatus(errLike);
   // Every observed overflow error is a 400 (invalid_request_error). Status
   // is not strictly required — when missing we still match on the message
   // — but a non-4xx status almost certainly means something else (network,

@@ -1,52 +1,60 @@
 import { log } from "../observability/log.ts";
+import { providerStatus } from "./provider-error.ts";
 
-/** Retryable HTTP status codes: rate limit (429) and overload (529). */
-const RETRYABLE_STATUSES = new Set([429, 529]);
+/**
+ * Transient HTTP statuses: request timeout (408), rate limit (429), server
+ * error and overload (500, 502, 503, 504), and Anthropic's overload (529).
+ * The fallback for an error that does not state its own retryability.
+ */
+const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504, 529]);
 
 /** Auth errors that should never be retried. */
 const AUTH_STATUS = 401;
 
-/** Extract HTTP status from an error object (Anthropic SDK convention). */
-function getStatus(err: unknown): number | undefined {
-  if (err && typeof err === "object" && "status" in err) {
-    return (err as { status: number }).status;
-  }
-  return undefined;
+/** Read a boolean field off a foreign error object, or `undefined`. */
+function booleanField(err: object, key: "retryable" | "isRetryable"): boolean | undefined {
+  const value = (err as Record<string, unknown>)[key];
+  return typeof value === "boolean" ? value : undefined;
 }
 
 /**
- * Returns true if the error is retryable: a retryable HTTP status (429 / 529),
- * or an error that flags itself with `retryable === true`. The marker keeps
- * this generic — callers (e.g. the model-stream stall watchdog) opt in by
- * throwing a `retryable` error, without this module depending on their types.
+ * Returns true if the error is retryable. The first source that answers wins:
+ *
+ * 1. Our own `retryable` marker. Callers opt in or out without this module
+ *    depending on their types: the model-stream stall watchdog throws
+ *    `retryable: false` once output reached the client, and that must hold
+ *    whatever the underlying status says.
+ * 2. The provider's `isRetryable`. The AI SDK's `APICallError` always sets it
+ *    (from the status, or the provider's own verdict, such as Anthropic's
+ *    `overloaded_error` or OpenAI's non-retryable `insufficient_quota`), and it
+ *    covers a network failure, which has no status at all.
+ * 3. The HTTP status (`status` or `statusCode`) in `RETRYABLE_STATUSES`.
  */
 export function isRetryable(err: unknown): boolean {
-  if (
-    err !== null &&
-    typeof err === "object" &&
-    (err as { retryable?: unknown }).retryable === true
-  ) {
-    return true;
-  }
-  const status = getStatus(err);
+  if (err === null || typeof err !== "object") return false;
+  const own = booleanField(err, "retryable");
+  if (own !== undefined) return own;
+  const provider = booleanField(err, "isRetryable");
+  if (provider !== undefined) return provider;
+  const status = providerStatus(err);
   return status !== undefined && RETRYABLE_STATUSES.has(status);
 }
 
 /**
- * Why an error was retried, for the log line: the HTTP status when membership of
- * `RETRYABLE_STATUSES` is what made it retryable, and the error's name
- * otherwise — `isRetryable` also admits anything flagged `retryable` (the
- * model-stream stall watchdog throws one), and that path carries no status.
+ * Why an error was retried, for the log line: the HTTP status when the error
+ * carries a valid one, and the error's name otherwise (a stalled stream or a
+ * network failure carries no status).
  *
- * Membership, not presence. `getStatus` is an unchecked cast over a foreign
- * object, so `status` can hold a value of any shape, and the `retryable` branch
- * never constrains it. Interpolating on presence alone would put an unexamined
- * value into a log message — the one part the field redactor does not scan,
- * which is the same reason the provider's error text is left out entirely.
+ * A range check, not presence. `providerStatus` reads a foreign object, and
+ * only a plausible HTTP code goes into the message: the message is the one
+ * part of a log line the field redactor does not scan, which is the same
+ * reason the provider's error text is left out entirely.
  */
 function retryReason(err: unknown): string | number {
-  const status = getStatus(err);
-  if (status !== undefined && RETRYABLE_STATUSES.has(status)) return status;
+  const status = providerStatus(err);
+  if (status !== undefined && Number.isInteger(status) && status >= 100 && status <= 599) {
+    return status;
+  }
   return err instanceof Error ? err.name : "unknown";
 }
 
@@ -82,8 +90,9 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
 /**
  * Retry wrapper with exponential backoff and jitter.
  *
- * - Retries on 429 (rate limit), 529 (overload), and errors flagged
- *   `retryable` (e.g. a stalled model stream).
+ * - Retries what `isRetryable` admits: a transient provider error (rate
+ *   limit, overload, 5xx, network failure) or an error flagged `retryable`
+ *   (e.g. a stalled model stream).
  * - Fails immediately on 401 (auth) with a clear message.
  * - Fails immediately on all other errors.
  * - Backoff: baseDelay * 2^attempt + random(0, 500ms).
@@ -106,7 +115,7 @@ export async function withRetry<T>(
     try {
       return await fn();
     } catch (err) {
-      const status = getStatus(err);
+      const status = providerStatus(err);
 
       if (status === AUTH_STATUS) {
         throw new Error(`Authentication failed (401). Check your API key.`, { cause: err });
