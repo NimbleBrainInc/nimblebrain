@@ -36,6 +36,21 @@ export interface RuntimeCapabilities {
    * accounts or sets the cap is refused by a runtime without it.
    */
   spendGate: boolean;
+  /**
+   * Which model credential the runtime's agent takes (ADR-0057). `session`:
+   * the door mints the turn's credential as the run starts
+   * (`ResolvedRun.modelCredential`). `process`: the agent's worker was started
+   * with a pool credential, so nothing is minted per turn. Absent, the
+   * runtime takes none.
+   */
+  modelCredential?: "session" | "process";
+  /**
+   * Who counts the runtime's model calls. `measured`: NimbleBrain, from the
+   * calls it makes itself. `reported`: the agent, whose count the door
+   * records as its own, naming the runtime on each usage ledger line
+   * (ADR-0056).
+   */
+  usage: "measured" | "reported";
 }
 
 /**
@@ -72,6 +87,13 @@ export interface ResolvedRun {
    * conversation to bill the summary to and compaction is on.
    */
   compaction?: { model: string };
+  /**
+   * The turn's model credential, minted by the door when the run starts, for
+   * a runtime that takes one per session (`RuntimeCapabilities.modelCredential`).
+   * Held in memory only. Absent for any other runtime and where there is no
+   * run key.
+   */
+  modelCredential?: string;
 }
 
 /** How a runtime reaches the platform for the length of one run. */

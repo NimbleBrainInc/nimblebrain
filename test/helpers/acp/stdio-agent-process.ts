@@ -48,6 +48,7 @@ export function spawnStdioAgent(spec: StdioAgentSpec): AcpConnectionTarget {
   return {
     target: acp.ndJsonStream(stdin, child.stdout),
     cwd: spec.cwd,
+    sameHost: true,
     async close() {
       if (child.exitCode !== null || child.signalCode !== null) return;
       child.kill("SIGTERM");

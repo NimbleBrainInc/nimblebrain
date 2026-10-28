@@ -96,7 +96,6 @@ import type {
   ToolSchema,
 } from "../engine/types.ts";
 import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
-import { NATIVE_RUNTIME_ID } from "../execution/native-runtime.ts";
 import { type AgentRuntimes, createAgentRuntimes } from "../execution/registry.ts";
 import type { AgentRuntime } from "../execution/types.ts";
 import { FileLocator } from "../files/locator.ts";
@@ -118,6 +117,7 @@ import { loadInstanceConfig, missingInstanceConfigError } from "../identity/inst
 import { requireRequestIdentity, resolveRequestOwnerId } from "../identity/owner.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { createIdentityProvider } from "../identity/provider.ts";
+import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import { UserStore } from "../identity/user.ts";
 import {
   forgetLifecycleBinding,
@@ -724,6 +724,7 @@ export class Runtime {
 
   private constructor(
     resolveModelFn: (modelString: string) => LanguageModelV4,
+    agentRuntimes: AgentRuntimes,
     skillMatcher: SkillMatcher,
     config: RuntimeConfig,
     contextSkills: Skill[],
@@ -742,7 +743,7 @@ export class Runtime {
     currentWorkspaceId: () => string | null,
   ) {
     this.resolveModelFn = resolveModelFn;
-    this.agentRuntimes = createAgentRuntimes(config.execution, { resolveModel: resolveModelFn });
+    this.agentRuntimes = agentRuntimes;
     this.skillMatcher = skillMatcher;
     this.config = config;
     this.contextSkills = contextSkills;
@@ -1034,8 +1035,16 @@ export class Runtime {
     const toolEligibilityCtx = { isToolEligible: isToolEligibleForCurrentRequest };
 
     // Create Runtime with empty workspace registries first — needed by system tools
+    // Built here, where the run key and the identity provider are known, so a
+    // runtime entry that cannot run as configured fails the boot.
+    const agentRuntimes = createAgentRuntimes(config.execution, config.agentRuntimes ?? [], {
+      resolveModel: resolveModelFn,
+      connectionCredential: runKey ? () => runKey.mintConnectionCredential() : null,
+      dev: identityProvider instanceof DevIdentityProvider,
+    });
     const rt = new Runtime(
       resolveModelFn,
+      agentRuntimes,
       skillMatcher,
       config,
       contextSkills,
@@ -1777,7 +1786,7 @@ export class Runtime {
 
     const { workWorkspace, activeWorkspace } = await this.resolveRunWorkspaces(spec);
     const briefingWsId = spec.briefingWorkspaceId;
-    const reqCtx = buildRunContext(spec, runId, workWorkspace, attended, agentRuntime.id);
+    const reqCtx = buildRunContext(spec, runId, workWorkspace, attended, agentRuntime);
 
     // ── The opening message ─────────────────────────────────────────────────
     // A run with a conversation appends it to the log and reads the whole
@@ -1969,6 +1978,15 @@ export class Runtime {
                 config: engineConfig,
                 ...(engineConfig.hooks?.rewriteHistory
                   ? { compaction: { model: this.getModelSlot("fast") } }
+                  : {}),
+                // Minted as the run starts, held in memory only (ADR-0057).
+                ...(agentRuntime.capabilities.modelCredential === "session" && this._runKey
+                  ? {
+                      modelCredential: this._runKey.mintModelCredential({
+                        runId,
+                        workspaceId: spec.workspaceId,
+                      }),
+                    }
                   : {}),
               },
               {
@@ -6231,7 +6249,7 @@ function buildRunContext(
   runId: string,
   workWorkspace: Workspace | null,
   attended: boolean,
-  agentRuntimeId: string,
+  agentRuntime: AgentRuntime,
 ): RequestContext {
   return {
     identity: spec.principal.identity,
@@ -6247,7 +6265,7 @@ function buildRunContext(
     // restamp, so the wall is enforced at the tasks source rather than
     // per-router-construction. See `createTasksSource`.
     ...(attended ? {} : { unattended: true }),
-    ...(agentRuntimeId !== NATIVE_RUNTIME_ID ? { agentRuntime: agentRuntimeId } : {}),
+    ...(agentRuntime.capabilities.usage === "reported" ? { agentRuntime: agentRuntime.id } : {}),
   };
 }
 

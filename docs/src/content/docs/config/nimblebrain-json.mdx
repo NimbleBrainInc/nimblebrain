@@ -115,6 +115,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
 | `tasks` | `object` | — | Task run slots, queue, and per-run ceilings. See [tasks](#tasks). |
+| `execution` | `object` | native engine | Which agent runtime executes a run: the native engine, or an agent worker the runtime dials. Experimental. See [execution](#execution). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote connector connections. Dev only. |
 | `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
@@ -609,6 +610,40 @@ Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight an
 The three per-run ceilings apply when a run starts, so they cover every stored task however it was written. A cap a task sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: a task with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not. The create and update tools report the caps that result.
 
 A scheduled run that finds every slot busy is deferred rather than queued: it keeps its next-run time and runs on the first scheduler tick with a free slot, so its place survives a restart. The queue is held in memory: runs still queued when the runtime stops are recorded as skipped.
+
+## execution
+
+Experimental. Runs a turn on an agent other than NimbleBrain's own engine: a [nimblebrain-agent](https://github.com/NimbleBrainInc/nimblebrain-agent) worker (`nimblebrain-agent serve`), which the runtime dials over the [Agent Client Protocol](https://agentclientprotocol.com)'s Streamable HTTP transport. NimbleBrain never starts the worker; you run it, and in a cluster you put it behind an internal Service that only the runtime can reach.
+
+```json
+{
+  "execution": {
+    "default": "pool",
+    "modelGateway": "http://model-gateway.my-namespace.svc/v1",
+    "runtimes": {
+      "pool": {
+        "driver": "nimblebrain-agent",
+        "url": "http://agent-pool.my-namespace.svc:8080/acp"
+      }
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `default` | The runtime every run executes on: `native`, or a name under `runtimes`. Default `native`. |
+| `modelGateway` | The installation's model gateway: the one model endpoint every external agent calls, with a per-turn credential. Required outside the `dev` identity provider. |
+| `runtimes.<name>.driver` | The agent the worker serves: `nimblebrain-agent`. |
+| `runtimes.<name>.url` | The worker's ACP endpoint. |
+
+What stays with NimbleBrain, whichever runtime runs a turn:
+
+- **The conversation.** Every turn is recorded in NimbleBrain's own log, the same way as a native turn, so a conversation can move between runtimes.
+- **Tools.** The agent reaches the run's tools on its own connection to the runtime, through the same workspace wall, tool allow-list and permission checks as a native call. Nothing listens for it.
+- **Credentials.** The runtime signs a connection credential with the installation's [run key](/config/secrets/), which the worker checks against the runtime's `/.well-known/run-keys.json`. Each turn's model calls carry a credential minted for that turn, which the gateway verifies against the same key set.
+
+A worker runtime does not check a run's spend accounts or input-token cap before each model call, so a run that sets either is refused on it; chat runs. Outside the `dev` identity provider external runtimes need the run key and a `modelGateway`, and the runtime refuses to start without them. On a developer's machine, run a worker on loopback with `NB_AGENT_AUTH=none` and leave out `modelGateway`: it calls its provider with its own key.
 
 ## files
 

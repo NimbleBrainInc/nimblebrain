@@ -21,6 +21,8 @@ export interface FakeAnthropic {
   /** The provider base URL (`…/v1`), for `baseURL` or `ANTHROPIC_BASE_URL`. */
   baseUrl: string;
   requests: MessagesRequest[];
+  /** Each request's `Authorization` header (`null` when absent), in the same order. */
+  authorizations: (string | null)[];
   close(): Promise<void>;
 }
 
@@ -31,6 +33,7 @@ export interface FakeAnthropicOptions {
 
 export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
   const requests: MessagesRequest[] = [];
+  const authorizations: (string | null)[] = [];
   const http = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -39,6 +42,7 @@ export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
         return new Response(null, { status: 404 });
       const body = (await req.json()) as MessagesRequest;
       requests.push(body);
+      authorizations.push(req.headers.get("authorization"));
       return new Response(stream(reply(body, opts)), {
         headers: { "content-type": "text/event-stream" },
       });
@@ -47,6 +51,7 @@ export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
   return {
     baseUrl: `http://127.0.0.1:${http.port}/v1`,
     requests,
+    authorizations,
     close: async () => {
       await http.stop(true);
     },

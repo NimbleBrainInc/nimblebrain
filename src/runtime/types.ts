@@ -1,12 +1,13 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { Brand } from "../brand/index.ts";
+import type { ExecutionConfig } from "../config/execution.ts";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
 import type { TasksConfig } from "../config/tasks.ts";
 import type { ConnectorsConfig } from "../connectors/providers/config.ts";
 import type { EventSink, ThinkingEffort } from "../engine/types.ts";
-import type { ExecutionConfig } from "../execution/registry.ts";
+import type { AgentRuntime } from "../execution/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import type { UserStore } from "../identity/user.ts";
@@ -252,11 +253,16 @@ export interface RuntimeConfig {
   tasks?: TasksConfig;
 
   /**
-   * Which agent runtime executes a run, and the runtimes beside the native
-   * engine. Handed in by an embedder; not read from `nimblebrain.json`. See
-   * `src/execution/registry.ts`.
+   * Which agent runtime executes a run, and the external runtimes the
+   * installation reaches. See `src/config/execution.ts`.
    */
   execution?: ExecutionConfig;
+
+  /**
+   * Runtimes an embedder or a test hands the runtime directly, beside those
+   * `execution.runtimes` configures. `execution.default` may name any of them.
+   */
+  agentRuntimes?: AgentRuntime[];
 
   /** File context configuration. */
   files?: {

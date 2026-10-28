@@ -1,7 +1,10 @@
 /**
- * What one ACP agent needs that ACP v1 does not say: how to reach it, and how
- * the door's prompt and history reach it. Everything else is the generic ACP
- * runtime's (`./acp-runtime.ts`), which never names an agent.
+ * An ACP runtime is a connection and a driver. The connection is how the agent
+ * is reached (a worker over the network, `./http-connection.ts`), whichever
+ * agent it is. The driver is what one agent needs that ACP v1 does not say:
+ * how the door's prompt, history, model and credential reach it, and what it
+ * reports back. Everything else is the generic ACP runtime's
+ * (`./acp-runtime.ts`), which never names an agent.
  *
  * A new ACP agent is a new driver. If a driver needs more than these hooks,
  * that is a finding about the seam, not a reason to branch the runtime.
@@ -22,7 +25,18 @@ export interface AcpConnectionTarget {
    * `close` removes it.
    */
   cwd: string;
+  /**
+   * Whether the agent runs on this host, so a loopback endpoint reaches it. An
+   * agent on another host that takes no `acp` MCP server is refused: it runs
+   * behind the bridge on its own host (ADR-0057).
+   */
+  sameHost: boolean;
   close(): Promise<void>;
+}
+
+/** How an agent is reached: a fresh connection, and the agent's workspace, for one run. */
+export interface AcpConnection {
+  open(run: ResolvedRun): Promise<AcpConnectionTarget>;
 }
 
 /** The agent-side calls a driver may make while preparing a session. */
@@ -74,14 +88,13 @@ export interface AcpOutcome {
 }
 
 export interface AcpDriver {
-  readonly id: string;
   /**
-   * What the agent holds a run to on its own (`RuntimeCapabilities`). Absent,
-   * nothing: an agent reached over ACP is given no spend gate, so only one
-   * whose model calls pass through a gateway that enforces the run's budget
-   * may claim it.
+   * What the agent holds a run to on its own, and which model credential it
+   * takes (`RuntimeCapabilities`). Absent, nothing: an agent reached over ACP
+   * is given no spend gate, so only one whose model calls pass through a
+   * gateway that enforces the run's budget may claim it.
    */
-  readonly capabilities?: RuntimeCapabilities;
+  readonly capabilities?: Omit<RuntimeCapabilities, "usage">;
   /**
    * Whether every tool the agent can call is one the run's tool projection
    * serves. A driver says `projection` only when it configures the agent with
@@ -91,8 +104,6 @@ export interface AcpDriver {
    * gives no field that names one reliably.
    */
   readonly toolSurface: "projection" | "mixed";
-  /** Open a fresh connection, and the agent's workspace, for one run. */
-  open(run: ResolvedRun): Promise<AcpConnectionTarget>;
   /** `_meta` for `session/new`, for an agent that takes extensions there. */
   sessionMeta?(run: ResolvedRun, plan: AcpSessionPlan): Record<string, unknown>;
   /** After `session/new`, before the first prompt: deliver what the agent takes by its own methods. */

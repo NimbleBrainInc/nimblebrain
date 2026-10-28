@@ -11,7 +11,7 @@
 
 import { tmpdir } from "node:os";
 import * as acp from "@agentclientprotocol/sdk/unstable";
-import type { AcpDriver } from "../../../src/execution/acp/driver.ts";
+import type { AcpConnection, AcpDriver } from "../../../src/execution/acp/driver.ts";
 import type { EchoModelResponse } from "../echo-model.ts";
 import { acpMcpClientTransport } from "./acp-mcp-client-transport.ts";
 import {
@@ -166,13 +166,21 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
     });
 }
 
-/** A driver for the scripted agent, in this process, on plain ACP: the transcript prompt and no `_meta`. */
-export function scriptedDriver(opts: ScriptedAgentOptions, id = "scripted"): AcpDriver {
+/** The scripted agent's driver: plain ACP, so the transcript prompt and no `_meta`. */
+export function scriptedDriver(): AcpDriver {
+  return { toolSurface: "projection" };
+}
+
+/** A connection to the scripted agent, in this process. */
+export function scriptedConnection(opts: ScriptedAgentOptions): AcpConnection {
   return {
-    id,
-    toolSurface: "projection",
     async open() {
-      return { target: createScriptedAgent(opts), cwd: tmpdir(), close: async () => {} };
+      return {
+        target: createScriptedAgent(opts),
+        cwd: tmpdir(),
+        sameHost: true,
+        close: async () => {},
+      };
     },
   };
 }

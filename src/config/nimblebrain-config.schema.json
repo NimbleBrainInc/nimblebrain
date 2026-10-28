@@ -474,6 +474,42 @@
       },
       "additionalProperties": false
     },
+    "execution": {
+      "description": "Which agent runtime executes a run. Absent, every run executes on the native engine. An external runtime is an ACP agent served as a worker the runtime dials (nimblebrain-agent serve); it runs no spend gate, so a run that names spend accounts or caps its input tokens is refused on it. Outside the dev identity provider, external runtimes need a modelGateway and the installation's run key.",
+      "type": "object",
+      "properties": {
+        "default": {
+          "type": "string",
+          "description": "The runtime every run executes on: native, or a name under runtimes. Default: native.",
+          "default": "native"
+        },
+        "modelGateway": {
+          "type": "string",
+          "description": "The installation's model gateway: every external agent's model endpoint, reached with a per-turn credential the runtime mints. Required outside the dev identity provider. Absent, a worker calls its own provider with its own key."
+        },
+        "runtimes": {
+          "type": "object",
+          "description": "Runtimes beside the native engine, keyed by the name default refers to.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "driver": {
+                "type": "string",
+                "enum": ["nimblebrain-agent"],
+                "description": "The agent the worker serves, which names the driver that speaks to it. nimblebrain-agent: NimbleBrain's agent loop as a standalone worker."
+              },
+              "url": {
+                "type": "string",
+                "description": "The worker's ACP endpoint, dialed over Streamable HTTP, e.g. http://agent-pool.<namespace>.svc:8080/acp. In a cluster, an internal Service only the runtime can reach."
+              }
+            },
+            "required": ["driver", "url"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "tasks": {
       "description": "Guardrails for unattended (task) runs: how many runs the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound each task's own caps, and the runtime defaults for caps it leaves unset, at execution time.",
       "type": "object",

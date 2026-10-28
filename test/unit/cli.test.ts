@@ -93,6 +93,7 @@ describe("loadConfig", () => {
       features: {},
       connectors: {},
       notifications: { poll: { intervalMs: 30000 } },
+      execution: { default: "native" },
       tasks: {},
       files: {},
       brand: { name: "ACME" },

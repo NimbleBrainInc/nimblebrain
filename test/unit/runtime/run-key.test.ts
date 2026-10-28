@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
+  CONNECTION_AUDIENCE,
+  CONNECTION_CREDENTIAL_TTL_MS,
   createRunKey,
   MODEL_CREDENTIAL_LEEWAY_MS,
   MODEL_GATEWAY_AUDIENCE,
@@ -97,6 +99,29 @@ describe("pool credential", () => {
       iat: NOW / 1000,
       exp: (NOW + 3_600_000) / 1000,
     });
+  });
+});
+
+describe("connection credential", () => {
+  it("names the installation and no run, for the worker's audience alone", async () => {
+    const runKey = runKeyOver(runKeyJwk("run-2026-01"));
+    const token = runKey.mintConnectionCredential(NOW);
+    const { claims } = await verifyAsGateway(token, runKey.keySet(), {
+      issuer: ISSUER,
+      audience: CONNECTION_AUDIENCE,
+      nowMs: NOW,
+    });
+    expect(claims).toEqual({
+      iss: ISSUER,
+      aud: CONNECTION_AUDIENCE,
+      sub: "runtime",
+      iat: NOW / 1000,
+      exp: (NOW + CONNECTION_CREDENTIAL_TTL_MS) / 1000,
+    });
+    // A gateway refuses it: it opens a worker connection and spends nothing.
+    await expect(
+      verifyAsGateway(token, runKey.keySet(), { ...GATEWAY, nowMs: NOW }),
+    ).rejects.toThrow();
   });
 });
 

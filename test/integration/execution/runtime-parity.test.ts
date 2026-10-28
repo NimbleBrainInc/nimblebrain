@@ -20,6 +20,7 @@ import type { TokenUsage } from "../../../src/usage/types.ts";
 import {
   emptyLog,
   type ScriptedAgentOptions,
+  scriptedConnection,
   scriptedDriver,
   stepsFrom,
 } from "../../helpers/acp/scripted-agent.ts";
@@ -89,7 +90,11 @@ function resolvedRun(signal?: AbortSignal): ResolvedRun {
 /** An ACP runtime over the scripted agent playing `script`. */
 function scriptedRuntime(script: EchoModelResponse[], opts: Partial<ScriptedAgentOptions> = {}) {
   const steps = stepsFrom(script);
-  return createAcpRuntime("scripted-acp", scriptedDriver({ script: () => steps, ...opts }));
+  return createAcpRuntime(
+    "scripted-acp",
+    scriptedDriver(),
+    scriptedConnection({ script: () => steps, ...opts }),
+  );
 }
 
 function runtimes(script: () => EchoModelResponse[]): [string, () => AgentRuntime][] {
@@ -217,13 +222,16 @@ describe("acp runtime: the projection holds the run's bound", () => {
   test("cancelling during session setup ends the run before it prompts", async () => {
     const controller = new AbortController();
     const log = emptyLog();
-    const driver = scriptedDriver({ script: () => stepsFrom(structuredClone(SCRIPT)), log });
-    const runtime = createAcpRuntime("scripted-acp", {
-      ...driver,
-      async prepareSession() {
-        controller.abort();
+    const runtime = createAcpRuntime(
+      "scripted-acp",
+      {
+        ...scriptedDriver(),
+        async prepareSession() {
+          controller.abort();
+        },
       },
-    });
+      scriptedConnection({ script: () => stepsFrom(structuredClone(SCRIPT)), log }),
+    );
     const sink = collect();
 
     await expect(
@@ -241,7 +249,8 @@ describe("acp runtime: the projection holds the run's bound", () => {
     const sink = collect();
     const runtime = createAcpRuntime(
       "broken",
-      scriptedDriver({ script: () => [], refuseSession: true }, "broken"),
+      scriptedDriver(),
+      scriptedConnection({ script: () => [], refuseSession: true }),
     );
 
     await expect(
@@ -280,18 +289,21 @@ describe("acp runtime with the driver's per-call usage", () => {
 
   test("prices each call, bills summaries, and replays as the native turn does", async () => {
     const steps = stepsFrom(structuredClone(SCRIPT));
-    const reported = scriptedDriver({ script: () => steps });
-    const runtime = createAcpRuntime("reported-usage", {
-      ...reported,
-      outcome: () => ({
-        stopReason: "complete",
-        calls: [
-          { model: "test:echo", purpose: "turn", usage: callUsage(100) },
-          { model: "test:fast", purpose: "summary", usage: callUsage(40) },
-          { model: "test:echo", purpose: "turn", usage: callUsage(30) },
-        ],
-      }),
-    });
+    const runtime = createAcpRuntime(
+      "reported-usage",
+      {
+        ...scriptedDriver(),
+        outcome: () => ({
+          stopReason: "complete",
+          calls: [
+            { model: "test:echo", purpose: "turn", usage: callUsage(100) },
+            { model: "test:fast", purpose: "summary", usage: callUsage(40) },
+            { model: "test:echo", purpose: "turn", usage: callUsage(30) },
+          ],
+        }),
+      },
+      scriptedConnection({ script: () => steps }),
+    );
     const router = () =>
       new StaticToolRouter([LOOKUP], () => ({
         content: [{ type: "text", text: "42" }],
@@ -442,6 +454,26 @@ describe("how the agent reaches the projection", () => {
     );
     expect(ids[0]).toMatch(/^nb_[0-9a-f]{32}$/);
     expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  test("an agent on another host that takes only HTTP is refused, never handed loopback", async () => {
+    const log = emptyLog();
+    const sink = collect();
+    const elsewhere = scriptedConnection({
+      script: () => stepsFrom(structuredClone(SCRIPT)),
+      mcp: { http: true },
+      log,
+    });
+    const runtime = createAcpRuntime("remote", scriptedDriver(), {
+      async open(run) {
+        return { ...(await elsewhere.open(run)), sameHost: false };
+      },
+    });
+    await expect(runtime.execute(resolvedRun(), io(router(), sink))).rejects.toThrow(
+      /takes no acp MCP server and is not on this host/,
+    );
+    expect(log.mcpServers).toEqual([]);
+    expect(sink.of("run.error")).toHaveLength(1);
   });
 
   test("an agent that takes neither is a run error", async () => {

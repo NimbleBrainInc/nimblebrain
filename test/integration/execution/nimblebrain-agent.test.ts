@@ -12,10 +12,10 @@ import type {
   ToolSchema,
 } from "../../../src/engine/types.ts";
 import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
-import type { AcpDriver } from "../../../src/execution/acp/driver.ts";
+import { createNimbleBrainAgentDriver } from "../../../src/execution/acp/drivers/nimblebrain-agent.ts";
 import { createNativeRuntime } from "../../../src/execution/native-runtime.ts";
 import type { AgentRuntime, ResolvedRun } from "../../../src/execution/types.ts";
-import { agentCommand, createAgentDriver } from "../../helpers/acp/nimblebrain-agent-driver.ts";
+import { agentCommand, agentConnection } from "../../helpers/acp/nimblebrain-agent-driver.ts";
 import { type FakeAnthropic, startFakeAnthropic } from "../../helpers/fake-anthropic.ts";
 
 // nimblebrain-agent, the pinned dev dependency, against the native runtime on
@@ -71,26 +71,32 @@ interface Opened {
   projection?: AcpMcpServer;
 }
 
-/** The pinned agent's driver, recording the run's directory, process and projection. */
-function agentDriver(opened: Opened): AcpDriver {
-  const driver = createAgentDriver(
+/** The pinned agent as a child, recording the run's directory, process and projection. */
+function agentRuntime(opened: Opened): AgentRuntime {
+  const driver = createNimbleBrainAgentDriver();
+  const connection = agentConnection(
     { modelEndpoint: fake.baseUrl },
     { NB_AGENT_API_KEY: "sk-test" },
   );
-  return {
-    ...driver,
-    async open(run) {
-      const connection = await driver.open(run);
-      opened.root = dirname(connection.cwd);
-      const found = Bun.spawnSync(["pgrep", "-f", agentCommand({})]).stdout.toString();
-      opened.pids.push(...found.split("\n").filter(Boolean).map(Number));
-      return connection;
+  return createAcpRuntime(
+    "nimblebrain-agent",
+    {
+      ...driver,
+      sessionMeta(run, plan) {
+        opened.projection = plan.mcpServers[0];
+        return driver.sessionMeta?.(run, plan) ?? {};
+      },
     },
-    sessionMeta(run, plan) {
-      opened.projection = plan.mcpServers[0];
-      return driver.sessionMeta?.(run, plan) ?? {};
+    {
+      async open(run) {
+        const target = await connection.open(run);
+        opened.root = dirname(target.cwd);
+        const found = Bun.spawnSync(["pgrep", "-f", agentCommand({})]).stdout.toString();
+        opened.pids.push(...found.split("\n").filter(Boolean).map(Number));
+        return target;
+      },
     },
-  };
+  );
 }
 
 interface Outcome {
@@ -130,7 +136,7 @@ describe("nimblebrain-agent against the native runtime", () => {
     const opened: Opened = { pids: [] };
     const native = await execute(nativeRuntime());
     const nativeRequests = fake.requests.length;
-    const agent = await execute(createAcpRuntime("nimblebrain-agent", agentDriver(opened)));
+    const agent = await execute(agentRuntime(opened));
 
     // Each runtime's model calls reached the fake endpoint: the tool call, then the answer.
     expect(nativeRequests).toBe(2);

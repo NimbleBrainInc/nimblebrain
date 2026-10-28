@@ -1,7 +1,8 @@
 /**
- * The driver for Goose (`goose acp`), an agent with its own loop. Test-only:
- * it runs Goose as a child of this process, which no installation may do
- * (ADR-0056), so it serves the live parity eval and nothing in `src/`.
+ * The driver for Goose (`goose acp`), an agent with its own loop, and a stdio
+ * connection that runs it. Test-only: the connection runs Goose as a child of
+ * this process, which no installation may do (ADR-0056), so both serve the
+ * live parity eval and nothing in `src/`.
  *
  * Each run gets a Goose process of its own, in a directory of its own that is
  * removed when the run ends, with an environment that names only what Goose
@@ -26,7 +27,11 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AcpConnectionTarget, AcpDriver } from "../../../src/execution/acp/driver.ts";
+import type {
+  AcpConnection,
+  AcpConnectionTarget,
+  AcpDriver,
+} from "../../../src/execution/acp/driver.ts";
 import { historyPrompt } from "../../../src/execution/acp/transcript.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import { spawnStdioAgent } from "./stdio-agent-process.ts";
@@ -79,16 +84,33 @@ export interface GooseDriverDeps {
   which?(command: string): string | null;
 }
 
-export function createGooseDriver(
+/** What Goose takes beyond ACP: its extension set, its system prompt method, and a transcript. */
+export function createGooseDriver(): AcpDriver {
+  return {
+    // The session's extension set is the projection alone.
+    toolSurface: "projection",
+    sessionMeta(_run, plan) {
+      return { enabledExtensions: plan.mcpServers.map((server) => ({ type: "mcp", server })) };
+    },
+    async prepareSession(calls, sessionId, run) {
+      await calls.request(GOOSE_SYSTEM_PROMPT_METHOD, {
+        sessionId,
+        mode: "set",
+        text: rawTemplate(run.system),
+      });
+    },
+    prompt: historyPrompt,
+  };
+}
+
+/** Goose as a child process per run, over stdio. */
+export function gooseConnection(
   config: GooseDriverConfig,
   deps: GooseDriverDeps = {},
-): AcpDriver {
+): AcpConnection {
   const env = deps.env ?? process.env;
   const which = deps.which ?? ((command: string) => Bun.which(command));
   return {
-    id: "goose",
-    // The session's extension set is the projection alone.
-    toolSurface: "projection",
     async open(run) {
       const command = config.command ?? "goose";
       const binary = command.includes("/") ? command : which(command);
@@ -114,17 +136,6 @@ export function createGooseDriver(
         throw err;
       }
     },
-    sessionMeta(_run, plan) {
-      return { enabledExtensions: plan.mcpServers.map((server) => ({ type: "mcp", server })) };
-    },
-    async prepareSession(calls, sessionId, run) {
-      await calls.request(GOOSE_SYSTEM_PROMPT_METHOD, {
-        sessionId,
-        mode: "set",
-        text: rawTemplate(run.system),
-      });
-    },
-    prompt: historyPrompt,
   };
 }
 

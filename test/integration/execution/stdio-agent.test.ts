@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
 import type { EngineEvent } from "../../../src/engine/types.ts";
 import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
-import type { AcpDriver } from "../../../src/execution/acp/driver.ts";
+import type { AcpConnection } from "../../../src/execution/acp/driver.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import { spawnStdioAgent } from "../../helpers/acp/stdio-agent-process.ts";
 
@@ -13,10 +13,8 @@ import { spawnStdioAgent } from "../../helpers/acp/stdio-agent-process.ts";
 
 const AGENT = join(import.meta.dir, "../../helpers/acp/stdio-scripted-agent.ts");
 
-function stdioDriver(pids: number[]): AcpDriver {
+function stdioConnection(pids: number[]): AcpConnection {
   return {
-    id: "stdio-test",
-    toolSurface: "projection",
     async open() {
       const target = spawnStdioAgent({
         command: process.execPath,
@@ -44,7 +42,11 @@ describe("an ACP agent over stdio", () => {
   test("sees only the environment its driver names, and is gone when the run ends", async () => {
     const pids: number[] = [];
     const events: EngineEvent[] = [];
-    const result = await createAcpRuntime("stdio-test", stdioDriver(pids)).execute(run, {
+    const result = await createAcpRuntime(
+      "stdio-test",
+      { toolSurface: "projection" },
+      stdioConnection(pids),
+    ).execute(run, {
       tools: new StaticToolRouter([], () => ({ content: [], isError: false })),
       events: { emit: (e) => events.push(e) },
       billSummary: () => {},

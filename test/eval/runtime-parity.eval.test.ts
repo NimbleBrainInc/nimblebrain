@@ -24,10 +24,11 @@ import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import type { EngineEvent, ToolCall, ToolSchema } from "../../src/engine/types.ts";
 import { createAcpRuntime } from "../../src/execution/acp/acp-runtime.ts";
+import { createNimbleBrainAgentDriver } from "../../src/execution/acp/drivers/nimblebrain-agent.ts";
 import { createNativeRuntime } from "../../src/execution/native-runtime.ts";
 import type { AgentRuntime, ResolvedRun } from "../../src/execution/types.ts";
-import { createGooseDriver } from "../helpers/acp/goose-driver.ts";
-import { createAgentDriver } from "../helpers/acp/nimblebrain-agent-driver.ts";
+import { createGooseDriver, gooseConnection } from "../helpers/acp/goose-driver.ts";
+import { agentConnection } from "../helpers/acp/nimblebrain-agent-driver.ts";
 
 const env = process.env;
 const MODEL = "anthropic:claude-sonnet-4-6";
@@ -57,7 +58,8 @@ const CANDIDATES: Candidate[] = [
     make: (keys) =>
       createAcpRuntime(
         "goose",
-        createGooseDriver(
+        createGooseDriver(),
+        gooseConnection(
           { command: env.GOOSE_BIN, modelEndpoint: env.NB_GOOSE_MODEL_ENDPOINT },
           keys ? { env: keys } : undefined,
         ),
@@ -70,7 +72,8 @@ const CANDIDATES: Candidate[] = [
     make: (keys) =>
       createAcpRuntime(
         "nimblebrain-agent",
-        createAgentDriver({ command: env.NB_AGENT_BIN }, keys ?? env),
+        createNimbleBrainAgentDriver(),
+        agentConnection({ command: env.NB_AGENT_BIN }, keys ?? env),
       ),
   },
 ];
