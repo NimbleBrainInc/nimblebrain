@@ -7,7 +7,9 @@ import type {
   LanguageModelV4Usage,
   SharedV4ProviderMetadata,
 } from "@ai-sdk/provider";
+import { isProviderStreamError } from "@ai-sdk/provider-utils";
 import { withSpan } from "../observability/index.ts";
+import { log } from "../observability/log.ts";
 import { registerLiveness, unregisterLiveness } from "./fetch-liveness.ts";
 
 /**
@@ -70,6 +72,43 @@ export class ModelStreamStallError extends Error {
 }
 
 /**
+ * Thrown when a model stream carries an `error` part: the provider reported a
+ * failure after the HTTP response opened (e.g. Anthropic's SSE
+ * `overloaded_error`), or the stream broke and never finished cleanly.
+ *
+ * `statusCode` and `isRetryable` are the provider's own verdict, copied so
+ * `withRetry` classifies this error as it would the same failure thrown by
+ * `doStream`. `retryable: false` is set only once output reached the client,
+ * the same rule as {@link ModelStreamStallError}: re-issuing would re-stream
+ * deltas. The provider's error is kept as `cause`.
+ */
+export class ModelStreamError extends Error {
+  readonly statusCode: number | undefined;
+  readonly isRetryable: boolean | undefined;
+  readonly retryable: boolean | undefined;
+  constructor(error: unknown, opts: { sawOutput: boolean }) {
+    super(streamErrorMessage(error), { cause: error });
+    this.name = "ModelStreamError";
+    const fields = (typeof error === "object" && error !== null ? error : {}) as {
+      statusCode?: unknown;
+      isRetryable?: unknown;
+    };
+    this.statusCode = typeof fields.statusCode === "number" ? fields.statusCode : undefined;
+    this.isRetryable = typeof fields.isRetryable === "boolean" ? fields.isRetryable : undefined;
+    this.retryable = opts.sawOutput ? false : undefined;
+  }
+}
+
+function streamErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null) {
+    const { message } = error as { message?: unknown };
+    if (typeof message === "string" && message) return message;
+  }
+  return "Model stream reported an error";
+}
+
+/**
  * `finishReason.raw` recorded when a stream ends without a `finish` part. The
  * unified value is then "other", the same bucket the AI SDK uses for provider
  * stops it does not recognize, so this marker is what tells "the provider sent
@@ -115,6 +154,13 @@ interface StreamState {
   // reasoning block — the AI SDK provider drops it as "unsupported
   // reasoning metadata" and Anthropic 400s the request.
   reasoningProviderMetadata: SharedV4ProviderMetadata | undefined;
+  // True once a `finish` part arrived; until then `finishReason` is our default.
+  sawFinish: boolean;
+  // The first `error` part that was not a provider-reported failure: a chunk
+  // that failed to parse, or a provider's malformed-stream error. Providers
+  // keep streaming after one, so it fails the call only if the stream then
+  // ends without a clean finish (see `deferredStreamError`).
+  streamError: unknown;
 }
 
 /**
@@ -195,6 +241,8 @@ async function callModelInner(
     accumulatedText: "",
     accumulatedReasoning: "",
     reasoningProviderMetadata: undefined,
+    sawFinish: false,
+    streamError: undefined,
   };
   const callbacks: StreamCallbacks = {
     onTextDelta,
@@ -217,6 +265,8 @@ async function callModelInner(
     watchdog.arm();
     const { stream } = await model.doStream({ ...options, abortSignal: watchdog.signal });
     await pumpStream(stream, state, callbacks, watchdog);
+    const deferred = deferredStreamError(state, watchdog.sawOutput);
+    if (deferred) throw deferred;
   } catch (err) {
     // Our watchdog fired (the stream stalled) and the run itself was NOT
     // cancelled → surface a stall. Retryable only before output began; a
@@ -252,7 +302,8 @@ async function callModelInner(
 /**
  * Read the stream to completion, folding each part into `state` and re-arming
  * the watchdog on every part (switching to the idle regime once output begins).
- * Returns when the stream ends; rejects if a read is aborted (stall or cancel).
+ * Returns when the stream ends; rejects if a read is aborted (stall or cancel)
+ * or the provider reports an error mid-stream.
  */
 async function pumpStream(
   stream: ReadableStream<LanguageModelV4StreamPart>,
@@ -267,11 +318,51 @@ async function pumpStream(
       if (done) break;
       if (isOutputPart(part)) watchdog.noteOutput();
       watchdog.arm();
+      if (part.type === "error") {
+        recordStreamError(state, part.error, watchdog.sawOutput);
+        continue;
+      }
       applyPart(state, part, callbacks);
     }
+  } catch (err) {
+    // Close the provider's response body: releasing the lock alone leaves it
+    // open. Not awaited, so a body that never settles cannot hold the throw.
+    reader.cancel(err).catch(() => {});
+    throw err;
   } finally {
     reader.releaseLock();
   }
+}
+
+/**
+ * Handle an `error` part. A provider-reported failure (rate limit, overload,
+ * server error; marked by the SDK's `createProviderStreamError`) fails the call
+ * now. Anything else is a chunk that did not parse or a malformed stream, which
+ * providers follow with more parts and often a valid finish, so it is recorded
+ * and only fails the call if the stream ends without one. The log line names
+ * the error only: its message can quote the chunk, which is model output.
+ */
+function recordStreamError(state: StreamState, error: unknown, sawOutput: boolean): void {
+  if (isProviderStreamError(error)) throw new ModelStreamError(error, { sawOutput });
+  log.warn(`[model] stream error part: ${error instanceof Error ? error.name : typeof error}`);
+  if (state.streamError === undefined) state.streamError = error;
+}
+
+/**
+ * The error to throw once the stream has ended, if any. A recorded error part
+ * fails the call when the stream did not finish cleanly: no `finish` part, a
+ * finish of `error`, or the SDK's default finish (`other` with no raw reason,
+ * which a provider sends when it never saw a stop reason).
+ *
+ * Only before output. After output the turn returns as it ended, keeping its
+ * content and usage; a non-retryable throw would discard both and gain nothing.
+ */
+function deferredStreamError(state: StreamState, sawOutput: boolean): ModelStreamError | undefined {
+  if (state.streamError === undefined || sawOutput) return undefined;
+  const { unified, raw } = state.finishReason;
+  const clean =
+    state.sawFinish && unified !== "error" && !(unified === "other" && raw === undefined);
+  return clean ? undefined : new ModelStreamError(state.streamError, { sawOutput });
 }
 
 /**
@@ -453,6 +544,7 @@ function applyPart(
     case "finish":
       state.usage = part.usage;
       state.finishReason = part.finishReason;
+      state.sawFinish = true;
       break;
   }
 }

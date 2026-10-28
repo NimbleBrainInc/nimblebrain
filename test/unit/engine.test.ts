@@ -4874,6 +4874,39 @@ describe("malformed tool call input", () => {
       // No recovery — the auth error is non-retryable and surfaces immediately.
       expect(callCount).toBe(1);
     });
+
+    it("does NOT recover an overflow-shaped error from a call whose output already streamed", async () => {
+      let callCount = 0;
+      const model = createMockModel(() => {
+        callCount += 1;
+        // `retryable: false` is how a stream marks a failure after deltas
+        // reached the client; recovering would re-stream them.
+        throw Object.assign(new Error("prompt is too long: 1257504 tokens > 1000000 maximum"), {
+          status: 400,
+          retryable: false,
+        });
+      });
+
+      const engine = new AgentEngine(
+        model,
+        new StaticToolRouter([], () => ({ content: textContent(""), isError: false })),
+        new NoopEventSink(),
+      );
+
+      await expect(
+        engine.run(
+          {
+            ...defaultConfig,
+            hooks: { transformContext: (msgs) => msgs },
+          },
+          "",
+          [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          [],
+        ),
+      ).rejects.toThrow(/prompt is too long/);
+
+      expect(callCount).toBe(1);
+    });
   });
 
   describe("cancellation via config.signal", () => {
