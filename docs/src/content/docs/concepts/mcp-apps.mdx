@@ -25,6 +25,8 @@ When you install a connector that declares UI resources, NimbleBrain:
 
 The result: apps appear as native views inside NimbleBrain, with bidirectional communication to the agent and MCP tools.
 
+NimbleBrain declares the MCP Apps extension when it connects to a server: its client capabilities include `extensions["io.modelcontextprotocol/ui"]` with `mimeTypes: ["text/html;profile=mcp-app"]`. A server that checks for that declaration before attaching UI to its tools (ext-apps `getUiCapability`) therefore offers its apps to NimbleBrain.
+
 Tools, resources and UI all begin with someone asking. [Notifications](/host/notifications/) are the one thing an app contributes that does not: a server declares an **outbox** resource holding facts it learned on its own, the host pulls from it on its own schedule, and each event lands in the workspace's inbox — where the agent can read it, the shell renders it live, and an operator's route can carry it to Slack, mail, or an agent run. The server never learns the host's address and never holds a human's credential; it writes a row and exposes a resource.
 
 ## What MCP Apps can do
