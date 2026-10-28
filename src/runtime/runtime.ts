@@ -96,7 +96,6 @@ import type {
   ToolSchema,
 } from "../engine/types.ts";
 import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
-import { NATIVE_RUNTIME_ID } from "../execution/native-runtime.ts";
 import { type AgentRuntimes, createAgentRuntimes } from "../execution/registry.ts";
 import type { AgentRuntime } from "../execution/types.ts";
 import { FileLocator } from "../files/locator.ts";
@@ -1787,7 +1786,7 @@ export class Runtime {
 
     const { workWorkspace, activeWorkspace } = await this.resolveRunWorkspaces(spec);
     const briefingWsId = spec.briefingWorkspaceId;
-    const reqCtx = buildRunContext(spec, runId, workWorkspace, attended, agentRuntime.id);
+    const reqCtx = buildRunContext(spec, runId, workWorkspace, attended, agentRuntime);
 
     // ── The opening message ─────────────────────────────────────────────────
     // A run with a conversation appends it to the log and reads the whole
@@ -6250,7 +6249,7 @@ function buildRunContext(
   runId: string,
   workWorkspace: Workspace | null,
   attended: boolean,
-  agentRuntimeId: string,
+  agentRuntime: AgentRuntime,
 ): RequestContext {
   return {
     identity: spec.principal.identity,
@@ -6266,7 +6265,7 @@ function buildRunContext(
     // restamp, so the wall is enforced at the tasks source rather than
     // per-router-construction. See `createTasksSource`.
     ...(attended ? {} : { unattended: true }),
-    ...(agentRuntimeId !== NATIVE_RUNTIME_ID ? { agentRuntime: agentRuntimeId } : {}),
+    ...(agentRuntime.capabilities.usage === "reported" ? { agentRuntime: agentRuntime.id } : {}),
   };
 }
 

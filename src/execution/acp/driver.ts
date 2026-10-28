@@ -94,7 +94,7 @@ export interface AcpDriver {
    * is given no spend gate, so only one whose model calls pass through a
    * gateway that enforces the run's budget may claim it.
    */
-  readonly capabilities?: RuntimeCapabilities;
+  readonly capabilities?: Omit<RuntimeCapabilities, "usage">;
   /**
    * Whether every tool the agent can call is one the run's tool projection
    * serves. A driver says `projection` only when it configures the agent with

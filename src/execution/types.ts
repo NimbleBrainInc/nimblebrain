@@ -44,6 +44,13 @@ export interface RuntimeCapabilities {
    * runtime takes none.
    */
   modelCredential?: "session" | "process";
+  /**
+   * Who counts the runtime's model calls. `measured`: NimbleBrain, from the
+   * calls it makes itself. `reported`: the agent, whose count the door
+   * records as its own, naming the runtime on each usage ledger line
+   * (ADR-0056).
+   */
+  usage: "measured" | "reported";
 }
 
 /**

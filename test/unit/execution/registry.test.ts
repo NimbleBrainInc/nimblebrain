@@ -15,7 +15,7 @@ const deps = (over: Partial<AgentRuntimeDeps> = {}): AgentRuntimeDeps => ({
 function stubRuntime(id: string): AgentRuntime {
   return {
     id,
-    capabilities: { spendGate: false },
+    capabilities: { spendGate: false, usage: "reported" },
     execute: () => Promise.reject(new Error("not run")),
   };
 }
@@ -58,7 +58,7 @@ describe("createAgentRuntimes", () => {
     const runtimes = createAgentRuntimes(pooled({ default: "pool" }), [], deps());
     expect(runtimes.select("pool")).toMatchObject({
       id: "pool",
-      capabilities: { spendGate: false, modelCredential: "session" },
+      capabilities: { spendGate: false, modelCredential: "session", usage: "reported" },
     });
   });
 
