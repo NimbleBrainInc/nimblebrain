@@ -74,7 +74,7 @@ Identity comes only from the verified request context, never the wire, and never
 
 A model call that fails with a transient error is retried up to three times, after about 1 s, 2 s and 4 s, each plus up to 0.5 s of jitter. Whether an error is transient is decided by the first of these that answers:
 
-1. The runtime's own verdict, for errors it raises itself. A stalled model stream is retried until output has reached the client, and not after.
+1. The runtime's own verdict, for errors it raises itself. A stalled model stream is retried until output has reached the client, and not after. An error the provider reports inside a stream is not retried after that point either.
 2. The provider's verdict (`isRetryable` on the AI SDK's error). It covers network failures, which carry no status, and provider-specific cases such as a quota-exhausted 429, which is not retried.
 3. The HTTP status: 408, 429, 500, 502, 503, 504 and 529 are retried.
 
@@ -82,7 +82,7 @@ Because the provider's verdict comes before the status list, a provider can mark
 
 Each retried attempt logs one `warn` line, such as `[engine] retry attempt=1/3 reason=503 delayMs=1234`. `reason` is the HTTP status, or the error's name when it has none. A retry that later succeeds moves no counter, so this line is the only record of it.
 
-An error the provider reports inside a stream that has already started is not retried ([#1836](https://github.com/NimbleBrainInc/nimblebrain/issues/1836)).
+Before any output, a stalled stream is retried, and an error the provider reports inside a stream (such as an `overloaded_error` or `rate_limit_error` event) is retried on the provider's verdict and status, like any other provider error. After output has reached the client, either one fails the turn, so deltas are never streamed twice. An in-stream error the provider does not mark as its own, such as a chunk that fails to parse, fails the call only when the stream produced no output and did not finish cleanly.
 
 ## Error reporting (Sentry, optional)
 
