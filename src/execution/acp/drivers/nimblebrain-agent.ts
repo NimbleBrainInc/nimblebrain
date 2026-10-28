@@ -54,12 +54,29 @@ export function createNimbleBrainAgentDriver(opts: NimbleBrainAgentDriverOptions
   return {
     id: opts.id,
     toolSurface: "projection",
-    async open() {
+    async open(run) {
       const headers: Record<string, string> = opts.connectionCredential
         ? { authorization: `Bearer ${opts.connectionCredential()}` }
         : {};
+      // Every request ends with the run, so a cancel during session setup, before
+      // the runtime's own cancel listener exists, aborts the request in flight.
+      const signal = run.config.signal;
+      const fetch = signal
+        ? Object.assign(
+            (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) =>
+              globalThis.fetch(input, {
+                ...init,
+                signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
+              }),
+            { preconnect: globalThis.fetch.preconnect },
+          )
+        : undefined;
       // The worker keeps nothing on disk for a session, so its cwd names nothing.
-      return { target: createHttpStream(opts.url, { headers }), cwd: "/", close: async () => {} };
+      return {
+        target: createHttpStream(opts.url, { headers, ...(fetch ? { fetch } : {}) }),
+        cwd: "/",
+        close: async () => {},
+      };
     },
     sessionMeta: (run) => agentSessionMeta(run, opts.modelEndpoint),
     prompt: agentPrompt,
