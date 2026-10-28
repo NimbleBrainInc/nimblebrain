@@ -16,6 +16,7 @@ import type { PlacementDeclaration } from "../connectors/runtime/types.ts";
 import type { EventSink, ToolResult } from "../engine/types.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { toWireJson } from "../util/wire-json.ts";
+import { MCP_APP_MIME_TYPE } from "./apps-extension.ts";
 import { coerceInputForSchema } from "./coerce-input.ts";
 import { McpSource } from "./mcp-source.ts";
 import { validateToolInput } from "./validate-input.ts";
@@ -114,13 +115,6 @@ export function typedTool<S extends TSchema, O extends OutputSchema | undefined 
   // that parameter type cannot express. Identical at runtime: the same object.
   return tool as InProcessTool;
 }
-
-/**
- * The MIME type the MCP Apps spec gives a `ui://` resource. The parameter is
- * what tells a public MCP Apps host an app panel from plain HTML, so it is
- * claimed only for `ui://` URIs — see {@link defaultMimeType}.
- */
-export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
 
 /**
  * The label for a bare-string resource: an app panel when it is served at a

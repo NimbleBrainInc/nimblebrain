@@ -62,6 +62,7 @@ import {
   SkillsListResultSchema,
   skillsClientExtension,
 } from "../skills/skills-extension.ts";
+import { appsClientExtension } from "./apps-extension.ts";
 import { coerceInputForSchema } from "./coerce-input.ts";
 import {
   inlineTaskClient,
@@ -1233,6 +1234,9 @@ export class McpSource implements ToolSource {
    * that would opt every SDK call in, and the SDK cannot read a task result;
    * the task wire claims it per request instead (`mcp-task-client.ts`).
    *
+   * `io.modelcontextprotocol/ui` (MCP Apps) is claimed on both eras: the web
+   * shell renders a `ui://` resource from any connector, and a server that
+   * checks the claim attaches no UI to a client without it.
    * `io.modelcontextprotocol/skills` (SEP-2640) is claimed on both eras
    * because skill discovery runs on both: {@link listSkills} enumerates, and
    * the runtime verifies each `SKILL.md` it later reads against the listing.
@@ -1245,6 +1249,7 @@ export class McpSource implements ToolSource {
    */
   private static readonly CAPABILITIES: ClientCapabilities = {
     extensions: {
+      ...appsClientExtension(),
       ...skillsClientExtension(),
       ...facetsClientExtension(),
       ...lifecycleClientExtension(),

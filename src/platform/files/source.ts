@@ -28,12 +28,12 @@ import type { FileEntry } from "../../files/types.ts";
 import { FILE_URI_SCHEME, fileIdToUri, uriToFileId } from "../../files/uri.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
+import { MCP_APP_MIME_TYPE } from "../../tools/apps-extension.ts";
 import {
   type DynamicResourceEntry,
   defineInProcessApp,
   type InProcessResource,
   type InProcessTool,
-  MCP_APP_MIME_TYPE,
   type ToolErrorResult,
   type ToolSuccessResult,
   type TypedToolResult,
