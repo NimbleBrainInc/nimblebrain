@@ -18,6 +18,7 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import { HOST_RESOURCES_CAPABILITY_KEY } from "../../src/host-resources/capability.ts";
 import { FACETS_EXTENSION_ID } from "../../src/services/facets-extension.ts";
 import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
+import { APPS_EXTENSION_ID, MCP_APP_MIME_TYPE } from "../../src/tools/apps-extension.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { mcpSourceInternals } from "../helpers/mcp-source-internals.ts";
@@ -50,6 +51,14 @@ describe("McpSource client capabilities", () => {
     const declared = declaredCapabilities(source);
     expect(declared?.tasks).toBeUndefined();
     expect(declared?.extensions?.["io.modelcontextprotocol/tasks"]).toBeUndefined();
+  });
+
+  test("declares the MCP Apps extension, which the web shell's app host consumes", async () => {
+    source = await makeInProcessSource("caps-apps", []);
+    // Exercised by the iframe bridge rendering a connector's `ui://` resource.
+    expect(declaredCapabilities(source)?.extensions?.[APPS_EXTENSION_ID]).toEqual({
+      mimeTypes: [MCP_APP_MIME_TYPE],
+    });
   });
 
   test("declares the Skills extension, which skill discovery consumes", async () => {

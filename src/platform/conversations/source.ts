@@ -4,10 +4,10 @@ import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
+import { MCP_APP_MIME_TYPE } from "../../tools/apps-extension.ts";
 import {
   defineInProcessApp,
   type InProcessTool,
-  MCP_APP_MIME_TYPE,
   type ToolErrorResult,
   type ToolSuccessResult,
   typedTool,
