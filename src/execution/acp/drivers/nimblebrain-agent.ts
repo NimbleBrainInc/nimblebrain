@@ -1,23 +1,20 @@
 /**
  * The driver for nimblebrain-agent, NimbleBrain's agent loop as a standalone
- * ACP agent, served as a worker (`nimblebrain-agent serve`) that the runtime
- * dials over ACP's Streamable HTTP transport (ADR-0057). The runtime never
- * starts it.
+ * ACP agent. Its workers are dialed like any other (`../http-connection.ts`);
+ * this is what nimblebrain-agent takes beyond ACP.
  *
  * NimbleBrain imports nothing of nimblebrain-agent. The driver speaks its
  * documented session options (`nimblebrain-agent/session` on `session/new`:
  * system prompt, history, model, limits, compaction, and the turn's model
- * credential and endpoint) and reads its documented response keys.
+ * credential and gateway) and reads its documented response keys.
  *
- * - Every request carries the runtime's connection credential, which the
- *   worker verifies against the runtime's published key set.
- * - The turn's model credential, minted by the door when the run starts, goes
- *   to the worker beside the configured model endpoint, and only beside it:
- *   with no gateway the worker calls its own provider with its own key.
- * - The agent's tools are the run's projection alone, on the ACP connection.
+ * - It takes the turn's model credential per session, which the door mints
+ *   when the run starts. The credential goes to the agent beside the
+ *   installation's model gateway, and only beside it: with no gateway the
+ *   worker calls its own provider with its own key.
+ * - The agent's tools are the run's projection alone.
  */
 
-import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { ResolvedRun } from "../../types.ts";
 import {
@@ -36,49 +33,15 @@ export const AGENT_STOP_REASON_META_KEY = "nimblebrain-agent/stopReason";
 export const AGENT_USAGE_META_KEY = "nimblebrain-agent/usage";
 
 export interface NimbleBrainAgentDriverOptions {
-  /** The runtime's name for it (`execution.runtimes`). */
-  id: string;
-  /** The worker's ACP endpoint. */
-  url: string;
-  /** The model gateway the turn's calls go to, with its credential. */
-  modelEndpoint?: string;
-  /**
-   * The connection credential presented on every request, or null where the
-   * installation has no run key (dev only: the worker then runs on loopback
-   * with no connection check).
-   */
-  connectionCredential: (() => string) | null;
+  /** The installation's model gateway (`execution.modelGateway`), where the turn's calls go. */
+  modelGateway?: string;
 }
 
-export function createNimbleBrainAgentDriver(opts: NimbleBrainAgentDriverOptions): AcpDriver {
+export function createNimbleBrainAgentDriver(opts: NimbleBrainAgentDriverOptions = {}): AcpDriver {
   return {
-    id: opts.id,
+    capabilities: { spendGate: false, modelCredential: "session" },
     toolSurface: "projection",
-    async open(run) {
-      const headers: Record<string, string> = opts.connectionCredential
-        ? { authorization: `Bearer ${opts.connectionCredential()}` }
-        : {};
-      // Every request ends with the run, so a cancel during session setup, before
-      // the runtime's own cancel listener exists, aborts the request in flight.
-      const signal = run.config.signal;
-      const fetch = signal
-        ? Object.assign(
-            (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) =>
-              globalThis.fetch(input, {
-                ...init,
-                signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
-              }),
-            { preconnect: globalThis.fetch.preconnect },
-          )
-        : undefined;
-      // The worker keeps nothing on disk for a session, so its cwd names nothing.
-      return {
-        target: createHttpStream(opts.url, { headers, ...(fetch ? { fetch } : {}) }),
-        cwd: "/",
-        close: async () => {},
-      };
-    },
-    sessionMeta: (run) => agentSessionMeta(run, opts.modelEndpoint),
+    sessionMeta: (run) => agentSessionMeta(run, opts.modelGateway),
     prompt: agentPrompt,
     outcome: agentOutcome,
   };
@@ -86,17 +49,15 @@ export function createNimbleBrainAgentDriver(opts: NimbleBrainAgentDriverOptions
 
 /**
  * The session options for one run, in nimblebrain-agent's documented shape.
- * The model credential goes only beside an endpoint: the agent refuses an
- * endpoint without one, and a credential without one would be presented to
- * the worker's own provider instead of its key.
+ * The model credential goes only beside the gateway, as the agent's
+ * `modelEndpoint`: the agent refuses an endpoint without a credential, and a
+ * credential without one would be presented to the worker's own provider
+ * instead of its key.
  */
-export function agentSessionMeta(
-  run: ResolvedRun,
-  modelEndpoint?: string,
-): Record<string, unknown> {
+export function agentSessionMeta(run: ResolvedRun, modelGateway?: string): Record<string, unknown> {
   const modelAccess =
-    modelEndpoint && run.modelCredential
-      ? { modelCredential: run.modelCredential, modelEndpoint }
+    modelGateway && run.modelCredential
+      ? { modelCredential: run.modelCredential, modelEndpoint: modelGateway }
       : {};
   return {
     [AGENT_SESSION_META_KEY]: {

@@ -16,7 +16,7 @@ import { Runtime } from "../../../src/runtime/runtime.ts";
 import type { RuntimeConfig } from "../../../src/runtime/types.ts";
 import { usageMonthDir, usageMonthOf } from "../../../src/usage/paths.ts";
 import type { UsageLedgerEntry } from "../../../src/usage/types.ts";
-import { emptyLog, scriptedDriver } from "../../helpers/acp/scripted-agent.ts";
+import { emptyLog, scriptedConnection, scriptedDriver } from "../../helpers/acp/scripted-agent.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
@@ -57,7 +57,8 @@ const config: RuntimeConfig = {
   agentRuntimes: [
     createAcpRuntime(
       "scripted-acp",
-      scriptedDriver({
+      scriptedDriver(),
+      scriptedConnection({
         // Echo the turn's last line, as the echo model answers the last message.
         script: (prompt) => [{ text: prompt.trim().split("\n").at(-1) ?? "" }],
         log: agentLog,

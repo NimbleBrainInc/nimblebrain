@@ -36,6 +36,14 @@ export interface RuntimeCapabilities {
    * accounts or sets the cap is refused by a runtime without it.
    */
   spendGate: boolean;
+  /**
+   * Which model credential the runtime's agent takes (ADR-0057). `session`:
+   * the door mints the turn's credential as the run starts
+   * (`ResolvedRun.modelCredential`). `process`: the agent's worker was started
+   * with a pool credential, so nothing is minted per turn. Absent, the
+   * runtime takes none.
+   */
+  modelCredential?: "session" | "process";
 }
 
 /**
@@ -74,8 +82,9 @@ export interface ResolvedRun {
   compaction?: { model: string };
   /**
    * The turn's model credential, minted by the door when the run starts, for
-   * a runtime whose agent calls the installation's model gateway. Held in
-   * memory only. Absent for the native engine and where there is no run key.
+   * a runtime that takes one per session (`RuntimeCapabilities.modelCredential`).
+   * Held in memory only. Absent for any other runtime and where there is no
+   * run key.
    */
   modelCredential?: string;
 }

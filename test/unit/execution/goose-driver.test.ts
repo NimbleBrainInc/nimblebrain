@@ -4,6 +4,7 @@ import {
   createGooseDriver,
   GOOSE_SYSTEM_PROMPT_METHOD,
   type GooseDriverConfig,
+  gooseConnection,
   gooseEnvironment,
   rawTemplate,
 } from "../../helpers/acp/goose-driver.ts";
@@ -99,7 +100,7 @@ describe("raw template", () => {
 });
 
 describe("goose driver", () => {
-  const driver = createGooseDriver(CONFIG, { env: { NB_GOOSE_API_KEY: "k" }, which: () => null });
+  const driver = createGooseDriver();
 
   test("configures Goose with the projection as its whole tool surface", () => {
     const server = {
@@ -135,6 +136,10 @@ describe("goose driver", () => {
   });
 
   test("fails before spawning when the binary is not found", async () => {
-    await expect(driver.open(run())).rejects.toThrow(/not found/);
+    const connection = gooseConnection(CONFIG, {
+      env: { NB_GOOSE_API_KEY: "k" },
+      which: () => null,
+    });
+    await expect(connection.open(run())).rejects.toThrow(/not found/);
   });
 });

@@ -619,12 +619,11 @@ Experimental. Runs a turn on an agent other than NimbleBrain's own engine: a [ni
 {
   "execution": {
     "default": "pool",
+    "modelGateway": "http://model-gateway.my-namespace.svc/v1",
     "runtimes": {
       "pool": {
-        "type": "acp",
         "driver": "nimblebrain-agent",
-        "url": "http://agent-pool.my-namespace.svc:8080/acp",
-        "modelEndpoint": "http://model-gateway.my-namespace.svc/v1"
+        "url": "http://agent-pool.my-namespace.svc:8080/acp"
       }
     }
   }
@@ -634,8 +633,9 @@ Experimental. Runs a turn on an agent other than NimbleBrain's own engine: a [ni
 | Field | Meaning |
 |---|---|
 | `default` | The runtime every run executes on: `native`, or a name under `runtimes`. Default `native`. |
+| `modelGateway` | The installation's model gateway: the one model endpoint every external agent calls, with a per-turn credential. Required outside the `dev` identity provider. |
+| `runtimes.<name>.driver` | The agent the worker serves: `nimblebrain-agent`. |
 | `runtimes.<name>.url` | The worker's ACP endpoint. |
-| `runtimes.<name>.modelEndpoint` | The model gateway the agent's calls go to. Required outside the `dev` identity provider. |
 
 What stays with NimbleBrain, whichever runtime runs a turn:
 
@@ -643,7 +643,7 @@ What stays with NimbleBrain, whichever runtime runs a turn:
 - **Tools.** The agent reaches the run's tools on its own connection to the runtime, through the same workspace wall, tool allow-list and permission checks as a native call. Nothing listens for it.
 - **Credentials.** The runtime signs a connection credential with the installation's [run key](/config/secrets/), which the worker checks against the runtime's `/.well-known/run-keys.json`. Each turn's model calls carry a credential minted for that turn, which the gateway verifies against the same key set.
 
-A worker runtime does not check a run's spend accounts or input-token cap before each model call, so a run that sets either is refused on it; chat runs. Outside the `dev` identity provider an external runtime needs the run key and a `modelEndpoint`, and the runtime refuses to start without them. On a developer's machine, run a worker on loopback with `NB_AGENT_AUTH=none` and leave out `modelEndpoint`: it calls its provider with its own key.
+A worker runtime does not check a run's spend accounts or input-token cap before each model call, so a run that sets either is refused on it; chat runs. Outside the `dev` identity provider external runtimes need the run key and a `modelGateway`, and the runtime refuses to start without them. On a developer's machine, run a worker on loopback with `NB_AGENT_AUTH=none` and leave out `modelGateway`: it calls its provider with its own key.
 
 ## files
 

@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
 import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
 import { createNimbleBrainAgentDriver } from "../../../src/execution/acp/drivers/nimblebrain-agent.ts";
+import { createHttpConnection } from "../../../src/execution/acp/http-connection.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 
 // A worker that accepts the connection and never answers it.
@@ -43,11 +44,8 @@ test("cancelling while the worker stalls on initialize aborts the request and en
   };
   const runtime = createAcpRuntime(
     "worker",
-    createNimbleBrainAgentDriver({
-      id: "worker",
-      url: `http://127.0.0.1:${server.port}/acp`,
-      connectionCredential: null,
-    }),
+    createNimbleBrainAgentDriver(),
+    createHttpConnection({ url: `http://127.0.0.1:${server.port}/acp`, credential: null }),
   );
 
   const execution = runtime.execute(run, {

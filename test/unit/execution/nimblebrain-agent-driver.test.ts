@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createNimbleBrainAgentDriver } from "../../../src/execution/acp/drivers/nimblebrain-agent.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import {
   AGENT_SESSION_META_KEY,
@@ -7,7 +8,6 @@ import {
   agentCommand,
   agentEnvironment,
   agentOutcome,
-  createAgentDriver,
   encodeHistory,
 } from "../../helpers/acp/nimblebrain-agent-driver.ts";
 
@@ -61,7 +61,7 @@ describe("nimblebrain-agent driver", () => {
   });
 
   test("sends the door's prompt, prior history and limits as nimblebrain-agent's session options", () => {
-    const driver = createAgentDriver({ command: "nimblebrain-agent" }, { NB_AGENT_API_KEY: "k" });
+    const driver = createNimbleBrainAgentDriver();
     expect(driver.toolSurface).toBe("projection");
     const meta = driver.sessionMeta?.(run(), { mcpServers: [] });
     expect(meta).toEqual({
@@ -78,8 +78,26 @@ describe("nimblebrain-agent driver", () => {
     expect(driver.prompt?.(run())).toEqual([{ type: "text", text: "now" }]);
   });
 
+  test("takes the turn's model credential per session, and sends it beside the gateway only", () => {
+    const gateway = "http://model-gateway.test/v1";
+    const minted = { ...run(), modelCredential: "turn-jwt" };
+    const meta = (driver: ReturnType<typeof createNimbleBrainAgentDriver>, r: ResolvedRun) =>
+      driver.sessionMeta?.(r, { mcpServers: [] })?.[AGENT_SESSION_META_KEY];
+
+    const gated = createNimbleBrainAgentDriver({ modelGateway: gateway });
+    expect(gated.capabilities).toEqual({ spendGate: false, modelCredential: "session" });
+    expect(meta(gated, minted)).toMatchObject({
+      modelCredential: "turn-jwt",
+      modelEndpoint: gateway,
+    });
+    // No gateway: the worker calls its own provider, so the credential stays home.
+    expect(meta(createNimbleBrainAgentDriver(), minted)).not.toHaveProperty("modelCredential");
+    // No credential: the agent refuses an endpoint without one, so neither is sent.
+    expect(meta(gated, run())).not.toHaveProperty("modelEndpoint");
+  });
+
   test("lets the agent fold mid-turn only when the door allows it, with the door's model", () => {
-    const driver = createAgentDriver({ command: "nimblebrain-agent" }, { NB_AGENT_API_KEY: "k" });
+    const driver = createNimbleBrainAgentDriver();
     const allowed = { ...run(), compaction: { model: "anthropic:claude-haiku-4-5" } };
     const meta = driver.sessionMeta?.(allowed, { mcpServers: [] })?.[AGENT_SESSION_META_KEY];
     expect(meta).toMatchObject({ compaction: { model: "anthropic:claude-haiku-4-5" } });

@@ -1981,7 +1981,7 @@ export class Runtime {
                   ? { compaction: { model: this.getModelSlot("fast") } }
                   : {}),
                 // Minted as the run starts, held in memory only (ADR-0057).
-                ...(agentRuntime.id !== NATIVE_RUNTIME_ID && this._runKey
+                ...(agentRuntime.capabilities.modelCredential === "session" && this._runKey
                   ? {
                       modelCredential: this._runKey.mintModelCredential({
                         runId,

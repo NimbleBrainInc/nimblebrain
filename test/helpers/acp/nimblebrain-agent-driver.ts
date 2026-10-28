@@ -1,14 +1,14 @@
 /**
- * The driver for nimblebrain-agent (`nimblebrain-agent acp`), NimbleBrain's engine extracted as a
- * standalone ACP agent. Test-only, as Goose's is: it runs nimblebrain-agent as a child of
- * this process, which no installation may do (ADR-0056), so it serves the parity
- * tests (the hosted one and the live eval) and nothing in `src/`.
+ * A stdio connection that runs nimblebrain-agent (`nimblebrain-agent acp`) as a child
+ * process, for the parity tests (the hosted one and the live eval). Test-only, as
+ * Goose's is: no installation runs an agent as its child (ADR-0056). The driver is
+ * the one an installation uses (`src/execution/acp/drivers/nimblebrain-agent.ts`), with
+ * no gateway: this child calls its provider with the key in its own environment.
  *
- * NimbleBrain imports nothing of nimblebrain-agent. The driver speaks nimblebrain-agent's documented
- * session options (`nimblebrain-agent/session` on `session/new`: system prompt, history,
- * model, limits) and finds the binary by path, so nimblebrain-agent is a peer the way
- * Goose is. The repo pins it as a dev dependency, which the production image does
- * not install, and the driver runs that pinned binary unless given another.
+ * NimbleBrain imports nothing of nimblebrain-agent, and the connection finds the binary
+ * by path, so nimblebrain-agent is a peer the way Goose is. The repo pins it as a dev
+ * dependency, which the production image does not install, and the connection runs
+ * that pinned binary unless given another.
  *
  * Each run gets a nimblebrain-agent process of its own, in a directory of its own that is
  * removed when the run ends, with an environment that names only its model and
@@ -20,12 +20,7 @@ import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AcpConnectionTarget, AcpDriver } from "../../../src/execution/acp/driver.ts";
-import {
-  agentOutcome,
-  agentPrompt,
-  agentSessionMeta,
-} from "../../../src/execution/acp/drivers/nimblebrain-agent.ts";
+import type { AcpConnection, AcpConnectionTarget } from "../../../src/execution/acp/driver.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import { spawnStdioAgent } from "./stdio-agent-process.ts";
 
@@ -88,13 +83,11 @@ export function agentCommand(config: AgentDriverConfig): string {
   return config.command ?? realpathSync(PINNED_AGENT_BIN);
 }
 
-export function createAgentDriver(
+export function agentConnection(
   config: AgentDriverConfig,
   env: Record<string, string | undefined> = process.env,
-): AcpDriver {
+): AcpConnection {
   return {
-    id: "nimblebrain-agent",
-    toolSurface: "projection",
     async open(run) {
       const childEnv = agentEnvironment(config, run, env);
       const root = await mkdtemp(join(tmpdir(), "nb-agent-"));
@@ -117,11 +110,6 @@ export function createAgentDriver(
         throw err;
       }
     },
-    // The session options the network driver sends, without a model credential:
-    // this child calls its provider with the key in its own environment.
-    sessionMeta: (run) => agentSessionMeta(run),
-    prompt: agentPrompt,
-    outcome: agentOutcome,
   };
 }
 

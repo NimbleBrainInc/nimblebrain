@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentRuntimeConfig } from "../../../src/config/execution.ts";
+import type { AgentRuntimeConfig, ExecutionConfig } from "../../../src/config/execution.ts";
 import { type AgentRuntimeDeps, createAgentRuntimes } from "../../../src/execution/registry.ts";
 import type { AgentRuntime } from "../../../src/execution/types.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
@@ -20,11 +20,18 @@ function stubRuntime(id: string): AgentRuntime {
   };
 }
 
+const GATEWAY = "http://model-gateway.tenant-a.svc/v1";
+
 const worker = (over: Partial<AgentRuntimeConfig> = {}): AgentRuntimeConfig => ({
-  type: "acp",
   driver: "nimblebrain-agent",
-  url: "http://agent-pool.tenant.svc:8080/acp",
-  modelEndpoint: "http://model-gateway.tenant.svc/v1",
+  url: "http://agent-pool.tenant-a.svc:8080/acp",
+  ...over,
+});
+
+/** An `execution` block with one worker, `pool`, behind the gateway. */
+const pooled = (over: Partial<ExecutionConfig> = {}): ExecutionConfig => ({
+  modelGateway: GATEWAY,
+  runtimes: { pool: worker() },
   ...over,
 });
 
@@ -42,20 +49,16 @@ describe("createAgentRuntimes", () => {
     expect(() => createAgentRuntimes(undefined, [stubRuntime("native")], deps())).toThrow(
       '"native" is named twice',
     );
-    expect(() =>
-      createAgentRuntimes({ runtimes: { pool: worker() } }, [stubRuntime("pool")], deps()),
-    ).toThrow('"pool" is named twice');
+    expect(() => createAgentRuntimes(pooled(), [stubRuntime("pool")], deps())).toThrow(
+      '"pool" is named twice',
+    );
   });
 
-  test("builds a configured worker as an ACP runtime with no spend gate", () => {
-    const runtimes = createAgentRuntimes(
-      { default: "pool", runtimes: { pool: worker() } },
-      [],
-      deps(),
-    );
+  test("builds a configured worker as an ACP runtime that takes a session credential and holds no spend gate", () => {
+    const runtimes = createAgentRuntimes(pooled({ default: "pool" }), [], deps());
     expect(runtimes.select("pool")).toMatchObject({
       id: "pool",
-      capabilities: { spendGate: false },
+      capabilities: { spendGate: false, modelCredential: "session" },
     });
   });
 
@@ -67,53 +70,53 @@ describe("createAgentRuntimes", () => {
 });
 
 describe("a configured worker, at boot", () => {
-  test("needs a model gateway outside the dev identity provider", () => {
-    expect(() =>
-      createAgentRuntimes({ runtimes: { pool: worker({ modelEndpoint: undefined }) } }, [], deps()),
-    ).toThrow(/execution.runtimes.pool needs a modelEndpoint/);
+  test("needs the model gateway outside the dev identity provider", () => {
+    expect(() => createAgentRuntimes(pooled({ modelGateway: undefined }), [], deps())).toThrow(
+      /execution.runtimes needs execution.modelGateway/,
+    );
   });
 
   test("needs the run key outside the dev identity provider", () => {
     expect(() =>
       createAgentRuntimes(
-        { runtimes: { pool: worker({ modelEndpoint: undefined }) } },
+        pooled({ modelGateway: undefined }),
         [],
         deps({ connectionCredential: null }),
       ),
-    ).toThrow(/needs the installation's run key to sign its connection credential/);
+    ).toThrow(/needs the installation's run key to sign the connection credential/);
   });
 
   test("a model gateway needs the run key, which mints the turn's credential, even in dev", () => {
     expect(() =>
-      createAgentRuntimes(
-        { runtimes: { pool: worker() } },
-        [],
-        deps({ connectionCredential: null, dev: true }),
-      ),
-    ).toThrow(/modelEndpoint needs the installation's run key/);
+      createAgentRuntimes(pooled(), [], deps({ connectionCredential: null, dev: true })),
+    ).toThrow(/modelGateway needs the installation's run key/);
   });
 
   test("in dev, a worker on the developer's machine needs neither", () => {
     const runtimes = createAgentRuntimes(
-      {
-        runtimes: { local: worker({ url: "http://127.0.0.1:8080/acp", modelEndpoint: undefined }) },
-      },
+      { runtimes: { local: worker({ url: "http://127.0.0.1:8080/acp" }) } },
       [],
       deps({ connectionCredential: null, dev: true }),
     );
     expect(runtimes.select("local").id).toBe("local");
   });
 
+  test("a gateway with no runtimes configured is not checked", () => {
+    expect(() =>
+      createAgentRuntimes({ modelGateway: GATEWAY }, [], deps({ connectionCredential: null })),
+    ).not.toThrow();
+  });
+
   test("its addresses are http(s) URLs", () => {
     expect(() =>
-      createAgentRuntimes({ runtimes: { pool: worker({ url: "agent-pool:8080" }) } }, [], deps()),
-    ).toThrow(/url must be an http\(s\) URL/);
-    expect(() =>
       createAgentRuntimes(
-        { runtimes: { pool: worker({ modelEndpoint: "ftp://gateway" }) } },
+        pooled({ runtimes: { pool: worker({ url: "agent-pool:8080" }) } }),
         [],
         deps(),
       ),
-    ).toThrow(/modelEndpoint must be an http\(s\) URL/);
+    ).toThrow(/execution.runtimes.pool.url must be an http\(s\) URL/);
+    expect(() =>
+      createAgentRuntimes(pooled({ modelGateway: "ftp://gateway" }), [], deps()),
+    ).toThrow(/execution.modelGateway must be an http\(s\) URL/);
   });
 });

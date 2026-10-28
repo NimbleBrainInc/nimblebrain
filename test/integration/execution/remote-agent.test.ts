@@ -6,6 +6,7 @@ import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
 import type { EngineEvent, ToolCall, ToolSchema } from "../../../src/engine/types.ts";
 import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
 import { createNimbleBrainAgentDriver } from "../../../src/execution/acp/drivers/nimblebrain-agent.ts";
+import { createHttpConnection } from "../../../src/execution/acp/http-connection.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import { publicOrigin } from "../../../src/oauth/public-origin.ts";
 import { createRunKey, parseRunKeyRing, type RunKey } from "../../../src/runtime/run-key.ts";
@@ -131,11 +132,10 @@ describe("an external runtime over the network", () => {
     const credential = runKey.mintModelCredential({ runId: "run_remote", workspaceId: "ws_test" });
     const runtime = createAcpRuntime(
       "pool",
-      createNimbleBrainAgentDriver({
-        id: "pool",
+      createNimbleBrainAgentDriver({ modelGateway: gateway.baseUrl }),
+      createHttpConnection({
         url: workerUrl,
-        modelEndpoint: gateway.baseUrl,
-        connectionCredential: () => runKey.mintConnectionCredential(),
+        credential: () => runKey.mintConnectionCredential(),
       }),
     );
     const calls: ToolCall[] = [];
@@ -166,10 +166,10 @@ describe("an external runtime over the network", () => {
     });
     const runtime = createAcpRuntime(
       "pool",
-      createNimbleBrainAgentDriver({
-        id: "pool",
+      createNimbleBrainAgentDriver(),
+      createHttpConnection({
         url: workerUrl,
-        connectionCredential: () => stranger.mintConnectionCredential(),
+        credential: () => stranger.mintConnectionCredential(),
       }),
     );
     const events: EngineEvent[] = [];
@@ -199,14 +199,8 @@ describe("the door, with the worker configured in execution", () => {
       secrets: { runKeyEnv: RUN_KEY_ENV },
       execution: {
         default: "pool",
-        runtimes: {
-          pool: {
-            type: "acp",
-            driver: "nimblebrain-agent",
-            url: workerUrl,
-            modelEndpoint: gateway.baseUrl,
-          },
-        },
+        modelGateway: gateway.baseUrl,
+        runtimes: { pool: { driver: "nimblebrain-agent", url: workerUrl } },
       },
     });
     await provisionTestWorkspace(runtime);

@@ -207,8 +207,8 @@ runtime records (ADR-0056) only where no gateway meters the call.
 pool of one) and points the installation's `execution` entry at it; tools
 travel over the ACP connection as in an installation. A gateway is
 optional only when the instance runs the `dev` identity provider (ADR-0040): with
-no gateway named, the driver may hand the agent a provider key from
-configuration. Under any other identity provider the runtime refuses to start an
+no gateway named, the worker calls its provider with its own key, and the runtime
+hands it no model credential. Under any other identity provider the runtime refuses to start an
 external runtime without a gateway.
 
 ## Consequences

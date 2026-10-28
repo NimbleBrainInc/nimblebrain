@@ -6,15 +6,15 @@
  * no agent-side session is the record of anything. The steps:
  *
  *   1. Open the run's tool projection, the only way the agent reaches tools.
- *   2. Open a connection through the driver, and negotiate how the agent is
- *      given the projection: on this connection, as an `acp` MCP server, when
- *      the agent takes one (`./mcp-over-acp.ts`), so nothing listens; on
- *      loopback when it takes only HTTP MCP servers.
+ *   2. Open the connection, and negotiate how the agent is given the
+ *      projection: on this connection, as an `acp` MCP server, when the agent
+ *      takes one (`./mcp-over-acp.ts`), so nothing listens; on loopback when
+ *      it takes only HTTP MCP servers and runs on this host.
  *   3. `session/new` naming the projection, then the driver's own preparation.
  *   4. `session/prompt`, recording every update in the engine's vocabulary
  *      (`./run-recorder.ts`), until the agent answers.
- *   5. Close the connection, the projection, and whatever the driver started,
- *      whatever happened.
+ *   5. Close the connection, the projection, and whatever the connection
+ *      started, whatever happened.
  *
  * The client advertises no filesystem and no terminal, so an agent cannot ask
  * this process to read, write, or run anything. It answers a permission
@@ -27,7 +27,7 @@ import type { EngineResult } from "../../engine/types.ts";
 import { log } from "../../observability/log.ts";
 import { openToolProjection, type ToolProjection } from "../tool-projection.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../types.ts";
-import type { AcpDriver, AcpOutcome } from "./driver.ts";
+import type { AcpConnection, AcpDriver, AcpOutcome } from "./driver.ts";
 import { type AcpMcpServers, createAcpMcpServers } from "./mcp-over-acp.ts";
 import { type AcpRunRecorder, createAcpRunRecorder } from "./run-recorder.ts";
 import { transcriptPrompt } from "./transcript.ts";
@@ -35,17 +35,22 @@ import { transcriptPrompt } from "./transcript.ts";
 /** The name an agent sees NimbleBrain's tools under. */
 export const PROJECTION_SERVER_NAME = "nimblebrain";
 
-export function createAcpRuntime(id: string, driver: AcpDriver): AgentRuntime {
+export function createAcpRuntime(
+  id: string,
+  driver: AcpDriver,
+  connection: AcpConnection,
+): AgentRuntime {
   return {
     id,
     capabilities: driver.capabilities ?? { spendGate: false },
-    execute: (run, io) => executeOverAcp(id, driver, run, io),
+    execute: (run, io) => executeOverAcp(id, driver, connection, run, io),
   };
 }
 
 async function executeOverAcp(
   runtimeId: string,
   driver: AcpDriver,
+  connection: AcpConnection,
   run: ResolvedRun,
   io: RunIO,
 ): Promise<EngineResult> {
@@ -56,7 +61,7 @@ async function executeOverAcp(
   const cleanup: (() => Promise<void>)[] = [];
   try {
     signal?.throwIfAborted();
-    const turn = await openSession(runtimeId, driver, run, io, recorder, cleanup);
+    const turn = await openSession(runtimeId, driver, connection, run, io, recorder, cleanup);
     // An abort during setup fired before the listener below exists.
     signal?.throwIfAborted();
     const cancel = () => {
@@ -104,6 +109,7 @@ function outcomeOf(driver: AcpDriver, response: acp.PromptResponse): AcpOutcome 
 async function openSession(
   runtimeId: string,
   driver: AcpDriver,
+  agentConnection: AcpConnection,
   run: ResolvedRun,
   io: RunIO,
   recorder: AcpRunRecorder,
@@ -125,7 +131,7 @@ async function openSession(
   cleanup.push(() => projection.close());
   const projected = new Set((await io.tools.availableTools()).map((t) => t.name));
 
-  const opened = await driver.open(run);
+  const opened = await agentConnection.open(run);
   cleanup.push(() => opened.close());
   const acpServers = createAcpMcpServers();
   const app = acpServers.serve(clientApp(recorder, driver.toolSurface, projected));
@@ -140,7 +146,13 @@ async function openSession(
     clientInfo: { name: "nimblebrain", version: "1" },
   });
   const mcpServers = [
-    projectionServer(driver.id, init.agentCapabilities?.mcpCapabilities, projection, acpServers),
+    projectionServer(
+      runtimeId,
+      init.agentCapabilities?.mcpCapabilities,
+      opened.sameHost,
+      projection,
+      acpServers,
+    ),
   ];
   const sessionMeta = driver.sessionMeta?.(run, { mcpServers });
   const newSession: acp.NewSessionRequest = {
@@ -163,17 +175,27 @@ async function openSession(
 
 /**
  * How the agent reaches the projection: on its own connection when it takes
- * `acp` MCP servers, so nothing listens; on loopback when it takes only HTTP.
+ * `acp` MCP servers, so nothing listens; on loopback when it takes only HTTP
+ * and runs on this host. An agent elsewhere cannot reach this host's loopback,
+ * so one without `acp` is refused: it runs behind the bridge (ADR-0057).
  */
 function projectionServer(
-  agentId: string,
+  runtimeId: string,
   mcp: acp.McpCapabilities | null | undefined,
+  sameHost: boolean,
   projection: ToolProjection,
   acpServers: AcpMcpServers,
 ): acp.McpServer {
   if (mcp?.acp) return acpServers.declare(PROJECTION_SERVER_NAME, projection.channel());
-  if (mcp?.http) return { type: "http", name: PROJECTION_SERVER_NAME, ...projection.listen() };
-  throw new Error(`ACP agent ${agentId} takes neither acp nor HTTP MCP servers`);
+  if (mcp?.http && sameHost) {
+    return { type: "http", name: PROJECTION_SERVER_NAME, ...projection.listen() };
+  }
+  if (mcp?.http) {
+    throw new Error(
+      `ACP agent ${runtimeId} takes no acp MCP server and is not on this host: it must run behind the bridge`,
+    );
+  }
+  throw new Error(`ACP agent ${runtimeId} takes neither acp nor HTTP MCP servers`);
 }
 
 function clientApp(

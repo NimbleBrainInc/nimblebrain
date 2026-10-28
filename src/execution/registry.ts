@@ -10,6 +10,7 @@ import type { AgentRuntimeConfig, ExecutionConfig } from "../config/execution.ts
 import { createAcpRuntime } from "./acp/acp-runtime.ts";
 import type { AcpDriver } from "./acp/driver.ts";
 import { createNimbleBrainAgentDriver } from "./acp/drivers/nimblebrain-agent.ts";
+import { createHttpConnection } from "./acp/http-connection.ts";
 import { createNativeRuntime, NATIVE_RUNTIME_ID } from "./native-runtime.ts";
 import type { AgentRuntime } from "./types.ts";
 
@@ -55,8 +56,16 @@ export function createAgentRuntimes(
     }
     runtimes.set(runtime.id, runtime);
   };
-  for (const [id, entry] of Object.entries(config?.runtimes ?? {})) {
-    add(createAcpRuntime(id, driverFor(id, entry, deps)));
+  const entries = Object.entries(config?.runtimes ?? {});
+  if (entries.length > 0) assertGatewayed(config ?? {}, deps);
+  for (const [id, entry] of entries) {
+    if (!isHttpUrl(entry.url))
+      throw new Error(`execution.runtimes.${id}.url must be an http(s) URL`);
+    const connection = createHttpConnection({
+      url: entry.url,
+      credential: deps.connectionCredential,
+    });
+    add(createAcpRuntime(id, driverFor(entry, config?.modelGateway), connection));
   }
   for (const runtime of injected) add(runtime);
 
@@ -71,42 +80,40 @@ export function createAgentRuntimes(
   return { select };
 }
 
-/** The driver a runtime entry names, once the entry is known to run as configured. */
-function driverFor(id: string, entry: AgentRuntimeConfig, deps: AgentRuntimeDeps): AcpDriver {
-  assertRunnable(id, entry, deps);
-  return createNimbleBrainAgentDriver({
-    id,
-    url: entry.url,
-    ...(entry.modelEndpoint ? { modelEndpoint: entry.modelEndpoint } : {}),
-    connectionCredential: deps.connectionCredential,
-  });
+/** The driver for the agent a runtime entry names. */
+function driverFor(entry: AgentRuntimeConfig, modelGateway: string | undefined): AcpDriver {
+  switch (entry.driver) {
+    case "nimblebrain-agent":
+      return createNimbleBrainAgentDriver(modelGateway ? { modelGateway } : {});
+  }
 }
 
 /**
- * An external runtime reaches its worker over HTTP(S), and outside the dev
- * identity provider it needs the installation's run key (the worker accepts
- * only a connection credential signed with it) and a model gateway (the only
- * model endpoint an installation's agents may call, ADR-0057). A model
- * gateway is reached with the turn's credential, which only a run key mints.
+ * External runtimes reach models through the installation's one gateway (the
+ * only model endpoint an installation's agents may call, ADR-0057), with the
+ * turn's credential, which only the run key mints; and a worker accepts only
+ * a connection credential signed with that key. Outside the dev identity
+ * provider both are required.
  */
-function assertRunnable(id: string, entry: AgentRuntimeConfig, deps: AgentRuntimeDeps): void {
-  const where = `execution.runtimes.${id}`;
-  if (!isHttpUrl(entry.url)) throw new Error(`${where}.url must be an http(s) URL`);
-  if (entry.modelEndpoint !== undefined && !isHttpUrl(entry.modelEndpoint)) {
-    throw new Error(`${where}.modelEndpoint must be an http(s) URL`);
+function assertGatewayed(config: ExecutionConfig, deps: AgentRuntimeDeps): void {
+  const gateway = config.modelGateway;
+  if (gateway !== undefined && !isHttpUrl(gateway)) {
+    throw new Error("execution.modelGateway must be an http(s) URL");
   }
-  if (entry.modelEndpoint && !deps.connectionCredential) {
+  if (gateway && !deps.connectionCredential) {
     throw new Error(
-      `${where}.modelEndpoint needs the installation's run key, which mints the turn's model credential`,
+      "execution.modelGateway needs the installation's run key, which mints the turn's model credential",
     );
   }
   if (deps.dev) return;
   if (!deps.connectionCredential) {
-    throw new Error(`${where} needs the installation's run key to sign its connection credential`);
-  }
-  if (!entry.modelEndpoint) {
     throw new Error(
-      `${where} needs a modelEndpoint: outside the dev identity provider an external agent calls models only through the installation's gateway`,
+      "execution.runtimes needs the installation's run key to sign the connection credential",
+    );
+  }
+  if (!gateway) {
+    throw new Error(
+      "execution.runtimes needs execution.modelGateway: outside the dev identity provider an external agent calls models only through the installation's gateway",
     );
   }
 }
