@@ -31,7 +31,7 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
     }
     ```
 
-    No login. Every request authenticates as one built-in identity (`usr_default`, org role `admin`), with no credential checked. It passes the same authorization checks as any other user, as an org admin and an admin of its workspaces. Use it on your own machine only: anyone who can reach the server is that admin.
+    No login. Every request authenticates as one built-in identity (`usr_default`, org role `admin`), with no credential checked. Its display name and preferences are read from its stored profile, like any other user's. It passes the same authorization checks as any other user, as an org admin and an admin of its workspaces. Use it on your own machine only: anyone who can reach the server is that admin.
   </TabItem>
   <TabItem label="OIDC">
     ```json title="instance.json"
