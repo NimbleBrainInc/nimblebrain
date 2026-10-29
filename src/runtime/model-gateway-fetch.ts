@@ -1,8 +1,7 @@
 /**
- * The fetch every call to the installation's model gateway goes through, for a
- * provider configured `gateway: true` (ADR-0057). The runtime holds no key for
- * such a provider: each call carries a model credential minted for it, signed
- * with the run key, naming the run it belongs to.
+ * The fetch every call to the installation's model gateway goes through
+ * (ADR-0057). The runtime holds no provider key: each call carries a model
+ * credential minted for it, signed with the run key, naming the run it belongs to.
  *
  * - The subject is the run's (`RequestContext.credentialSubject`), so the
  *   gateway attributes the call and charges the run's budget. Work a run forks

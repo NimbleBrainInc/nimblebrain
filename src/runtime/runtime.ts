@@ -139,7 +139,12 @@ import {
   isModelInPolicy,
 } from "../model/catalog.ts";
 import { isQualifiedModelId, requireQualifiedModelId } from "../model/model-id.ts";
-import { buildModelResolver, providerModelAllowlists } from "../model/registry.ts";
+import {
+  buildModelResolver,
+  MODEL_PROVIDERS,
+  type ModelGatewayAccess,
+  providerModelAllowlists,
+} from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { type ResolvedPollConfig, resolvePollConfig } from "../notifications/poll-config.ts";
 import { positionOutbox } from "../notifications/position.ts";
@@ -297,6 +302,7 @@ import {
 } from "./errors.ts";
 import { IdentityToolRouter } from "./identity-tool-router.ts";
 import { modelGatewayFetch } from "./model-gateway-fetch.ts";
+import { type GatewayProviders, watchGatewayProviders } from "./model-gateway-providers.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
 import {
   callMayUseTool,
@@ -596,6 +602,8 @@ export class Runtime {
   private _credentialStore: CredentialStore | null = null;
   /** The installation's run key; see {@link getRunKey}. */
   private _runKey: RunKey | null = null;
+  /** Which providers the model gateway serves, when there is one (`watchGatewayProviders`). */
+  private _gatewayProviders: GatewayProviders | null = null;
   private _managedConnectorRegistry: ManagedConnectorRegistry | null = null;
   private _identityProvider: IdentityProvider;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
@@ -868,7 +876,9 @@ export class Runtime {
       config = { ...config, configOverridePath: deriveOverridePath(config.configPath) };
     }
 
-    const resolveModelFn = resolveModel(config, runKey);
+    const gateway = modelGatewayAccess(config, runKey);
+    const resolveModelFn = resolveModel(config, gateway);
+    const gatewayProviders = gateway ? watchGatewayProviders(gateway) : null;
 
     // Install the durable half of the spend chokepoint. Module-level in
     // `usage/record.ts` rather than threaded to each call site, because the four
@@ -1087,6 +1097,7 @@ export class Runtime {
       // second one — same instance, same sink, same audit trail.
       rt._credentialStore = credentialStore;
       rt._runKey = runKey;
+      rt._gatewayProviders = gatewayProviders;
       // The `credential` transport credential resolves a secret from the
       // connection's workspace, so it can only be registered once the store is
       // installed — which is why it is not in `registerBuiltinCredentialProviders`
@@ -5171,7 +5182,7 @@ export class Runtime {
     // allowlist is an explicit operator statement, so when one exists it binds
     // whether or not providers are configured.
     if (!isModelInPolicy(modelString, this.config.modelPolicy?.allowed)) return false;
-    if (!this.config.providers) return true;
+    if (!this.config.providers && !this._gatewayProviders) return true;
     return isModelAllowed(modelString, this.getProviderConfigs());
   }
 
@@ -5314,16 +5325,35 @@ export class Runtime {
     }
   }
 
-  /** Get the list of configured provider names (e.g., ["anthropic", "openai"]). */
+  /** The watch on which providers the model gateway serves, when there is a gateway. */
+  getGatewayProviders(): GatewayProviders | null {
+    return this._gatewayProviders;
+  }
+
+  /**
+   * The providers this runtime can reach (e.g. `["anthropic", "openai"]`). With a
+   * model gateway, the ones it serves, or every provider the runtime knows until
+   * it has answered; without one, the configured providers.
+   */
   getConfiguredProviders(): string[] {
+    if (this._gatewayProviders) {
+      return [...(this._gatewayProviders.served() ?? MODEL_PROVIDERS)];
+    }
     if (this.config.providers) {
       return Object.keys(this.config.providers);
     }
     return ["anthropic"];
   }
 
-  /** Get provider configs with optional model allowlists. */
+  /**
+   * The reachable providers with their model allowlists. Behind a gateway no
+   * provider has one (the boot refuses `providers.<id>.models`; `modelPolicy`
+   * narrows instead).
+   */
   getProviderConfigs(): Record<string, { models?: string[] }> {
+    if (this._gatewayProviders) {
+      return Object.fromEntries(this.getConfiguredProviders().map((id) => [id, {}]));
+    }
     return providerModelAllowlists(this.config);
   }
 
@@ -6010,6 +6040,7 @@ export class Runtime {
     // Nothing drains the run queue once the sources are gone, so a run still
     // waiting for a slot is refused rather than left waiting forever.
     this._runAdmission?.stop();
+    this._gatewayProviders?.stop();
     // Release the ledger last: a turn aborted just above can still be inside a
     // `doStream()` that has already spent, and that call is recordable until it
     // returns. Ownership-checked, so a sibling runtime that installed its own
@@ -6124,19 +6155,25 @@ async function seedWorkspaceConnectorInstances(
   }
 }
 
-function resolveModel(
+/**
+ * The installation's model gateway, when it has one: every provider is then
+ * reached through it with a credential minted per call, which needs the run key.
+ */
+function modelGatewayAccess(
   config: RuntimeConfig,
   runKey: RunKey | null,
+): ModelGatewayAccess | undefined {
+  if (config.languageModel) return undefined;
+  const gatewayUrl = config.execution?.modelGateway;
+  return gatewayUrl && runKey ? { url: gatewayUrl, fetch: modelGatewayFetch(runKey) } : undefined;
+}
+
+function resolveModel(
+  config: RuntimeConfig,
+  gateway: ModelGatewayAccess | undefined,
 ): (modelString: string) => LanguageModelV4 {
   const adapter = config.languageModel;
   if (adapter) return () => adapter;
-  // A provider set `gateway: true` is reached through the installation's model
-  // gateway with a credential minted per call; that needs both the gateway and
-  // the run key, and `buildRegistry` refuses the boot for a provider that asks
-  // without them.
-  const gatewayUrl = config.execution?.modelGateway;
-  const gateway =
-    gatewayUrl && runKey ? { url: gatewayUrl, fetch: modelGatewayFetch(runKey) } : undefined;
   // No providers configured means Anthropic, keyed from the environment.
   return buildModelResolver({ providers: config.providers ?? { anthropic: {} } }, gateway);
 }

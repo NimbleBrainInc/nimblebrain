@@ -302,7 +302,7 @@ describe("anthropic request shape", () => {
 describe("providers through the model gateway", () => {
   const GATEWAY = "http://model-gateway.test";
 
-  /** Resolve `model` on a provider set `gateway: true` and return the URL and key header of its call. */
+  /** Resolve `model` with the installation's gateway and no provider config, and return where its call went. */
   async function gatewayCall(
     id: "anthropic" | "openai" | "google" | "xai" | "nebius" | "greenpt",
     model: string,
@@ -314,10 +314,7 @@ describe("providers through the model gateway", () => {
       url = String(input instanceof Request ? input.url : input);
       return new Response("{}", { status: 500 });
     });
-    const resolve = buildModelResolver(
-      { providers: { [id]: { gateway: true } } },
-      { url: `${GATEWAY}/`, fetch: gatewayFetch },
-    );
+    const resolve = buildModelResolver({}, { url: `${GATEWAY}/`, fetch: gatewayFetch });
     try {
       await resolve(`${id}:${model}`).doStream({
         prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
@@ -354,12 +351,36 @@ describe("providers through the model gateway", () => {
     );
   });
 
-  it("refuses a gateway provider that also sets a key, so the runtime holds none", () => {
+  it("refuses a key, a base URL or a model allowlist beside the gateway, naming where each belongs", () => {
+    const via = { url: GATEWAY, fetch: fakeFetch(async () => new Response()) };
+    expect(() => buildRegistry({ providers: { xai: { apiKey: "xai-key" } } }, via)).toThrow(
+      /providers.xai.apiKey is set, but execution.modelGateway reaches every provider: the gateway holds the provider's key/,
+    );
     expect(() =>
-      buildRegistry(
-        { providers: { xai: { gateway: true, apiKey: "xai-key" } } },
-        { url: GATEWAY, fetch: fakeFetch(async () => new Response()) },
-      ),
-    ).toThrow(/providers.xai sets both gateway and apiKey/);
+      buildRegistry({ providers: { nebius: { baseURL: "https://example.invalid/v1" } } }, via),
+    ).toThrow(/providers.nebius.baseURL is set/);
+    expect(() => buildRegistry({ providers: { openai: { models: ["gpt-5"] } } }, via)).toThrow(
+      /providers.openai.models is set.*modelPolicy.allowed/,
+    );
+  });
+
+  it("takes the deprecated gateway flag beside the gateway, and builds providers it does not name", async () => {
+    let url = "";
+    const via = {
+      url: GATEWAY,
+      fetch: fakeFetch(async (input) => {
+        url = String(input instanceof Request ? input.url : input);
+        return new Response("{}", { status: 500 });
+      }),
+    };
+    const resolve = buildModelResolver({ providers: { anthropic: { gateway: true } } }, via);
+    try {
+      await resolve("xai:grok-4").doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+      });
+    } catch {
+      // The stand-in answers 500; only where the call went matters.
+    }
+    expect(url).toBe(`${GATEWAY}/xai/v1/chat/completions`);
   });
 });

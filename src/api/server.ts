@@ -16,7 +16,11 @@ import { createApp } from "./app.ts";
 import { ConversationEventManager } from "./conversation-events.ts";
 import { SseEventManager } from "./events.ts";
 import { McpServerHost } from "./mcp-server.ts";
-import { registerConnectorHealthGauge, registerConnectorReauthGauge } from "./metrics.ts";
+import {
+  registerConnectorHealthGauge,
+  registerConnectorReauthGauge,
+  registerGatewayProvidersGauge,
+} from "./metrics.ts";
 import { RequestRateLimiter } from "./rate-limiter.ts";
 import {
   HOOK_ANON_BUCKET_MAX,
@@ -107,6 +111,11 @@ export function startServer(options: ServerOptions): ServerHandle {
   // that state across a restart whether or not a source is registered.
   registerConnectorReauthGauge(() =>
     lifecycle.reauthRequiredConnections().map((conn) => conn.serverName),
+  );
+  // Whether the model gateway has said which providers it serves.
+  const gatewayProviders = runtime.getGatewayProviders();
+  registerGatewayProvidersGauge(
+    gatewayProviders ? () => ({ known: gatewayProviders.served() !== undefined }) : null,
   );
 
   // Connection credential re-validation (a disjoint concern from HealthMonitor's
