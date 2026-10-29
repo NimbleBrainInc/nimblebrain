@@ -5,6 +5,7 @@ import {
   createResourceArgumentsResolver,
   parseResourceArgumentsDeclaration,
   RESOURCE_ARGUMENTS_EXTENSION_ID,
+  type RecordArgumentsGrant,
   type ResourceServingSource,
   TokenBucketRateLimit,
 } from "../../src/host-resources/index.ts";
@@ -39,9 +40,11 @@ function resolverOver(
     maxSize?: number;
     maxUris?: number;
     rateLimit?: TokenBucketRateLimit;
+    grant?: RecordArgumentsGrant | null;
   } = {},
 ) {
   const resolver = createResourceArgumentsResolver({
+    recordGrantOf: async () => ("grant" in opts ? (opts.grant ?? null) : { sources: "all" }),
     sourcesOf: (wsId) => byWorkspace[wsId] ?? [],
     isHostScheme: isReservedResourceScheme,
     rateLimit: opts.rateLimit ?? new TokenBucketRateLimit(),
@@ -88,7 +91,10 @@ describe("parseResourceArgumentsDeclaration", () => {
         arguments: { citations: { schemes: ["CRM", "notes"] } },
       },
     });
-    expect(declared?.get("citations")).toEqual(new Set(["crm", "notes"]));
+    expect(declared?.get("citations")).toEqual({
+      kind: "schemes",
+      schemes: new Set(["crm", "notes"]),
+    });
   });
 
   it("declares nothing without a non-empty list of valid schemes: there is no wildcard", () => {
@@ -313,11 +319,142 @@ describe("createResourceArgumentsResolver", () => {
 
   it("advertises its limits", () => {
     const resolver = createResourceArgumentsResolver({
+      recordGrantOf: async () => null,
       sourcesOf: () => [],
       isHostScheme: () => false,
       rateLimit: new TokenBucketRateLimit(),
       maxChars: 500,
     });
     expect(resolver.limits).toEqual({ maxChars: 500, maxSize: 10 * 1024 * 1024, maxUris: 32 });
+  });
+});
+
+describe("record arguments (ADR-0058)", () => {
+  const record = (...uris: string[]) => uris.map((uri) => ({ uri, declared: true }));
+
+  it("parses `records: true` as a record argument; a scheme list wins over it", () => {
+    const declaration = parseResourceArgumentsDeclaration({
+      [RESOURCE_ARGUMENTS_EXTENSION_ID]: {
+        arguments: {
+          account: { records: true },
+          both: { records: true, schemes: ["crm"] },
+          off: { records: "yes" },
+        },
+      },
+    });
+    expect(declaration?.get("account")).toEqual({ kind: "records" });
+    expect(declaration?.get("both")).toEqual({ kind: "schemes", schemes: new Set(["crm"]) });
+    expect(declaration?.has("off")).toBe(false);
+  });
+
+  it("accepts any scheme in a record argument, and no string without a scheme", () => {
+    const declaration = parseResourceArgumentsDeclaration({
+      [RESOURCE_ARGUMENTS_EXTENSION_ID]: {
+        arguments: { account: { records: true }, citation: { schemes: ["crm"] } },
+      },
+    });
+    if (!declaration) throw new Error("fixture declares nothing");
+    expect(
+      collectResourceArgumentUris(declaration, {
+        account: ["people://organizations/1", "acme.com", "crm://signals/1"],
+        citation: "crm://signals/1",
+      }),
+    ).toEqual([
+      { uri: "people://organizations/1", declared: true },
+      { uri: "acme.com", declared: false },
+      { uri: "crm://signals/1", declared: true },
+    ]);
+  });
+
+  it("refuses every URI unread when the calling connector holds no grant", async () => {
+    const people = servingSource("people", ["people://organizations/{id}"], {
+      "people://organizations/1": '{"lead_score":"4"}',
+    });
+    const crm = servingSource("crm", ["crm://signals/{id}"], { "crm://signals/1": "{}" });
+    const entries = await resolverOver({ [WS_A]: [people, crm] }, { grant: null }).resolve([
+      ...record("people://organizations/1"),
+      ...declared("crm://signals/1"),
+    ]);
+    expect(entries["people://organizations/1"]).toEqual({
+      error: { code: "not_granted", message: expect.any(String) },
+    });
+    // A scheme the tool declares is no way around the grant.
+    expect(entries["crm://signals/1"]).toMatchObject({ error: { code: "not_granted" } });
+    expect(people.reads).toEqual([]);
+    expect(crm.reads).toEqual([]);
+  });
+
+  it("reads a record from any connector in the workspace under a grant for all sources", async () => {
+    const people = servingSource("people", ["people://organizations/{id}"], {
+      "people://organizations/1": '{"lead_score":"4"}',
+    });
+    const crm = servingSource("crm", ["crm://accounts/{id}"], { "crm://accounts/7": "{}" });
+    const entries = await resolverOver(
+      { [WS_A]: [people, crm] },
+      { grant: { sources: "all" } },
+    ).resolve(record("people://organizations/1", "crm://accounts/7"));
+    expect(entries["people://organizations/1"]).toMatchObject({
+      contents: [{ text: '{"lead_score":"4"}' }],
+    });
+    expect(entries["crm://accounts/7"]).toMatchObject({ contents: [{ text: "{}" }] });
+  });
+
+  it("reads only from the sources a narrowed grant names; another reads as not_found", async () => {
+    const people = servingSource("people", ["people://organizations/{id}"], {
+      "people://organizations/1": "{}",
+    });
+    const crm = servingSource("crm", ["crm://accounts/{id}"], { "crm://accounts/7": "{}" });
+    const entries = await resolverOver(
+      { [WS_A]: [people, crm] },
+      { grant: { sources: new Set(["people"]) } },
+    ).resolve(record("people://organizations/1", "crm://accounts/7"));
+    expect(entries["people://organizations/1"]).toMatchObject({ contents: [{ text: "{}" }] });
+    expect(entries["crm://accounts/7"]).toMatchObject({ error: { code: "not_found" } });
+    expect(crm.reads).toEqual([]);
+  });
+
+  it("narrows a declared scheme by the grant too", async () => {
+    const crm = servingSource("crm", ["crm://signals/{id}"], { "crm://signals/1": "{}" });
+    const entries = await resolverOver(
+      { [WS_A]: [crm] },
+      { grant: { sources: new Set(["people"]) } },
+    ).resolve(declared("crm://signals/1"));
+    expect(entries["crm://signals/1"]).toMatchObject({ error: { code: "not_found" } });
+    expect(crm.reads).toEqual([]);
+  });
+
+  it("hides a non-granted connector that also claims the URI: no ambiguity, no read", async () => {
+    const people = servingSource("people", ["people://organizations/{id}"], {
+      "people://organizations/1": "{}",
+    });
+    const squatter = servingSource("squatter", ["people://organizations/{id}"]);
+    const entries = await resolverOver(
+      { [WS_A]: [people, squatter] },
+      { grant: { sources: new Set(["people"]) } },
+    ).resolve(record("people://organizations/1"));
+    expect(entries["people://organizations/1"]).toMatchObject({ contents: [{ text: "{}" }] });
+    expect(squatter.reads).toEqual([]);
+  });
+
+  it("asks for the grant only when a call has a URI to read, and refuses when the lookup fails", async () => {
+    let asked = 0;
+    const people = servingSource("people", ["people://organizations/{id}"], {
+      "people://organizations/1": "{}",
+    });
+    const resolver = createResourceArgumentsResolver({
+      recordGrantOf: async () => {
+        asked += 1;
+        throw new Error("workspace store unavailable");
+      },
+      sourcesOf: () => [people],
+      isHostScheme: isReservedResourceScheme,
+      rateLimit: new TokenBucketRateLimit(),
+      maxChars: 1000,
+    });
+    await resolver.resolve([{ uri: "people://organizations/1", declared: false }], ctx);
+    expect(asked).toBe(0);
+    const { entries } = await resolver.resolve(record("people://organizations/1"), ctx);
+    expect(asked).toBe(1);
+    expect(entries["people://organizations/1"]).toMatchObject({ error: { code: "not_granted" } });
   });
 });

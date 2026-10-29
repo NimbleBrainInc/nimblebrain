@@ -200,6 +200,15 @@ export type ConnectorRef = {
    * the kernel never reads. Read it through `brokeredRef()` (`./brokered.ts`).
    */
   brokered?: BrokeredRef;
+  /**
+   * The connectors in this workspace this connector may receive records from
+   * through record arguments, by server name, when its catalog entry grants
+   * record arguments (ADR-0058). Absent means every connector in the
+   * workspace; an empty list revokes the grant. A workspace admin sets it with
+   * `manage_connectors set_record_sources`. Without the catalog grant it grants
+   * nothing.
+   */
+  recordSources?: string[];
 };
 
 /**
@@ -335,6 +344,15 @@ export interface HostManifestMeta {
    * `src/permissions/admin-tools.ts`.
    */
   admin_tools?: string[];
+  /**
+   * Whether the host reads resources for this server through its tools'
+   * declared arguments (`ai.nimblebrain/resource-arguments`, ADR-0058), from
+   * other connectors in the workspace; without it the host reads none. `true` grants it
+   * in every workspace that installs the server, narrowed or revoked per
+   * workspace by `ConnectorRef.recordSources`. Read from the operator-trusted
+   * catalog only, like {@link admin_tools}: the grant is the operator's.
+   */
+  record_arguments?: boolean;
 }
 
 /** Runtime tracking for an installed connector. One per source. */

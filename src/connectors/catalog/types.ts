@@ -169,6 +169,13 @@ export interface ConnectorCatalogEntry {
    * of the server stops saying it. Absent for connectors that declare none.
    */
   adminTools?: AdminToolsDeclaration;
+  /**
+   * `true` when `ServerDetail._meta["ai.nimblebrain/host"].record_arguments`
+   * is: the operator grants this server record arguments in every workspace
+   * that installs it (ADR-0058), narrowed per workspace by
+   * `ConnectorRef.recordSources`. Absent otherwise.
+   */
+  recordArguments?: true;
 }
 
 /**

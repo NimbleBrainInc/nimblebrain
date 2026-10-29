@@ -109,6 +109,7 @@ import { readHookIdentity } from "../hooks/token.ts";
 import {
   createResourceArgumentsResolver,
   FileBackedHostResourcesResolver,
+  type RecordArgumentsGrant,
   TokenBucketRateLimit,
 } from "../host-resources/index.ts";
 import { IdentityContext } from "../identity/context.ts";
@@ -934,8 +935,9 @@ export class Runtime {
       return store;
     });
     const hostResourcesRateLimit = new TokenBucketRateLimit();
-    // `ai.nimblebrain/resource-arguments`: a tool's declared URIs are read from
-    // the connectors of the calling connection's own workspace, and nowhere
+    // `ai.nimblebrain/resource-arguments`: a tool's declared URIs are read,
+    // under the calling connector's record-arguments grant, from the
+    // connectors of the calling connection's own workspace, and nowhere
     // else, and only from those the caller could read itself: an unattended
     // run whose tool limit (stamped on the call's request context) excludes the
     // agent's own read reads none. What is handed on is the agent's read too:
@@ -950,6 +952,7 @@ export class Runtime {
         if (!registry) return [];
         return registry.getSources().filter((s): s is McpSource => s instanceof McpSource);
       },
+      recordGrantOf: (wsId, connectorId) => rt.recordArgumentsGrantFor(wsId, connectorId),
       maxChars: RECORD_READ_MAX_CHARS,
       isHostScheme: isReservedResourceScheme,
       rateLimit: hostResourcesRateLimit,
@@ -4748,6 +4751,34 @@ export class Runtime {
       if (e.adminTools) out.set(slugifyServerName(e.id), { adminTools: e.adminTools });
     }
     return out;
+  }
+
+  /**
+   * The record-arguments grant `serverName` holds in `wsId` (ADR-0058), or null
+   * when it holds none: its operator-trusted catalog entry must declare
+   * `record_arguments`, and the workspace's `recordSources` narrows it to the
+   * named connectors, or revokes it when empty. A `recordSources` that is not a
+   * list of names grants nothing.
+   */
+  async recordArgumentsGrantFor(
+    wsId: string,
+    serverName: string,
+  ): Promise<RecordArgumentsGrant | null> {
+    if (!(await this.catalogGrantsRecordArguments(wsId, serverName))) return null;
+    const ws = await this._workspaceStore.get(wsId);
+    const ref = ws?.connectors.find((r) => serverNameFromRef(r) === serverName);
+    if (!ref) return null;
+    // `recordSources` is read from workspace.json, so its declared type is a
+    // claim about the bytes, not a guarantee.
+    const sources: unknown = ref.recordSources;
+    if (sources === undefined) return { sources: "all" };
+    if (!Array.isArray(sources) || !sources.every((s) => typeof s === "string")) return null;
+    return sources.length > 0 ? { sources: new Set(sources) } : null;
+  }
+
+  /** Whether the operator's catalog grants `serverName`, as installed in `wsId`, record arguments. */
+  async catalogGrantsRecordArguments(wsId: string, serverName: string): Promise<boolean> {
+    return (await this.trustedCatalogEntryFor(wsId, serverName))?.recordArguments === true;
   }
 
   /** The operator-trusted catalog entry a connector installed in `wsId` is. */
