@@ -48,7 +48,7 @@ The capability is absent where the host resolves nothing: on a personal connecto
 
 ## Declare which arguments hold URIs
 
-Mark the tool in `_meta`, naming each argument and the URI schemes you accept in it:
+Mark the tool in `_meta`, naming each argument and what it accepts: the URI schemes you accept in it, or a record from any server in the workspace (see [Record arguments](#record-arguments)).
 
 ```json
 {
@@ -75,18 +75,42 @@ Mark the tool in `_meta`, naming each argument and the URI schemes you accept in
 | Field | Rule |
 |---|---|
 | `…arguments` | Required. An object keyed by top-level argument name. |
-| `…arguments.<name>.schemes` | Required. A non-empty array of URI scheme names, without `://`. Matched case-insensitively. There is no wildcard: an entry without a valid scheme declares nothing. |
+| `…arguments.<name>.schemes` | A non-empty array of URI scheme names, without `://`. Matched case-insensitively. There is no wildcard. |
+| `…arguments.<name>.records` | `true` to accept a record from any server in the workspace, resolved only under your server's [grant](#record-arguments). Ignored when `schemes` is present. |
+
+An entry with neither a valid `schemes` list nor `records: true` declares nothing.
 
 A declared argument is read as a string or an array of strings. Values nested inside an object are not resolved.
 
 The declaration lives on the tool, not inside `inputSchema`, because the input schema is passed to model providers, and some reject keywords JSON Schema does not define.
 
-<Aside type="tip" title="Keep the scheme list out of your code">
-The scheme list is the one place your server names another server's
-namespace. If the record source is a choice the workspace makes, read the list
-from your configuration and publish it in `tools/list`, rather than writing a
-scheme into the tool definition.
-</Aside>
+## Record arguments
+
+A scheme list names another server's namespace, so a tool that declares one works with that one server. When the record your tool needs can live in whichever system a workspace keeps it in (a People organization, a Salesforce account, a HubSpot company), declare the argument as a record argument instead:
+
+```json
+{
+  "_meta": {
+    "ai.nimblebrain/resource-arguments": {
+      "arguments": {
+        "account": { "records": true }
+      }
+    }
+  }
+}
+```
+
+The host resolves a record argument's URIs from any server in the workspace, by the same rules as a declared scheme, but only for a server **granted** record arguments. The grant is the operator's: your server's catalog entry declares `record_arguments: true` in its [host manifest](/host/manifest/), and that grants it in every workspace that installs it, with nothing to configure. A workspace admin can narrow the grant to named source servers, or revoke it, with `manage_connectors` `set_record_sources`. Without the grant, every URI in a record argument comes back `not_granted`. A URI served by a server outside a narrowed grant comes back `not_found`, as one no server serves.
+
+A grant adds no source the agent could not already read. The host still reads only in the calling connection's workspace, only what the agent's own read reaches, within the same limits.
+
+When your tool needs one fact from the record, take the field to read as a second argument and let the agent fill it, from a workspace skill or the source's own field listing:
+
+```json
+{ "account": "people://organizations/123", "score_field": "lead_score" }
+```
+
+The agent chooses the field; it cannot change the value, which comes from the record the host read. Record which field you read, so a wrong choice is visible.
 
 ## What arrives with the call
 
@@ -158,11 +182,12 @@ Each resolution is recorded on the host's trace of the tool call: one `resource_
 | `code` | Meaning |
 |---|---|
 | `scheme_not_declared` | The string's scheme is not one the argument declares, or the string has no scheme. The host did not read it. |
+| `not_granted` | The string is in a record argument, and your server holds no record-arguments grant in this workspace. The host did not read it. |
 | `not_found` | No server in the workspace serves the URI, or its server returned nothing or failed. These are one code on purpose, as in [host resources](/extensions/host-resources/#scope-which-files-a-server-can-see): a read tells your server nothing about what exists beyond the contents it is handed. |
 | `ambiguous` | More than one server in the workspace serves the URI. A workspace admin resolves it by removing one. |
 | `not_text` | The resource's contents include a non-text (`blob`) entry. The host hands on text only. |
 | `too_large` | The resource has more than `maxChars` characters of text. Permanent: the same resource is refused on every call, so drop the citation. |
-| `over_limit` | This call is over its limits: it names more than `maxUris` distinct URIs with declared schemes, or reading the URI would take the call past `maxSize`. URIs are admitted in argument order, so the first ones that fit are read; a URI refused here is not read. Retry by splitting the call. |
+| `over_limit` | This call is over its limits: it names more than `maxUris` distinct URIs the host would read, or reading the URI would take the call past `maxSize`. URIs are admitted in argument order, so the first ones that fit are read; a URI refused here is not read. Retry by splitting the call. |
 | `rate_limited` | Your server's resource budget in this workspace is spent. Reads made here and [host-resources](/extensions/host-resources/) requests share one budget per server per workspace. |
 
 The `message` is for people. Match on `code`.

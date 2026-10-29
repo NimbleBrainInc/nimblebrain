@@ -102,6 +102,7 @@ describe("McpSource resource arguments", () => {
     // The same narrowing the runtime applies: the call's own workspace, and
     // nothing when its run's tool limit excludes the agent's own read.
     const resolver = createResourceArgumentsResolver({
+      recordGrantOf: async () => null,
       sourcesOf: (wsId) => (wsId === WS && callMayUseTool(READ_RESOURCE_TOOL) ? [crm] : []),
       isHostScheme: isReservedResourceScheme,
       rateLimit,

@@ -109,6 +109,7 @@ import { readHookIdentity } from "../hooks/token.ts";
 import {
   createResourceArgumentsResolver,
   FileBackedHostResourcesResolver,
+  type RecordArgumentsGrant,
   TokenBucketRateLimit,
 } from "../host-resources/index.ts";
 import { IdentityContext } from "../identity/context.ts";
@@ -950,6 +951,7 @@ export class Runtime {
         if (!registry) return [];
         return registry.getSources().filter((s): s is McpSource => s instanceof McpSource);
       },
+      recordGrantOf: (wsId, connectorId) => rt.recordArgumentsGrantFor(wsId, connectorId),
       maxChars: RECORD_READ_MAX_CHARS,
       isHostScheme: isReservedResourceScheme,
       rateLimit: hostResourcesRateLimit,
@@ -4751,6 +4753,25 @@ export class Runtime {
   }
 
   /** The operator-trusted catalog entry a connector installed in `wsId` is. */
+  /**
+   * The record-arguments grant `serverName` holds in `wsId` (ADR-0058), or null
+   * when it holds none: its operator-trusted catalog entry must declare
+   * `record_arguments`, and the workspace's `recordSources` narrows it to the
+   * named connectors, or revokes it when empty.
+   */
+  async recordArgumentsGrantFor(
+    wsId: string,
+    serverName: string,
+  ): Promise<RecordArgumentsGrant | null> {
+    const entry = await this.trustedCatalogEntryFor(wsId, serverName);
+    if (!entry?.recordArguments) return null;
+    const ws = await this._workspaceStore.get(wsId);
+    const ref = ws?.connectors.find((r) => serverNameFromRef(r) === serverName);
+    if (!ref) return null;
+    if (ref.recordSources === undefined) return { sources: "all" };
+    return ref.recordSources.length > 0 ? { sources: new Set(ref.recordSources) } : null;
+  }
+
   private async trustedCatalogEntryFor(
     wsId: string,
     serverName: string,

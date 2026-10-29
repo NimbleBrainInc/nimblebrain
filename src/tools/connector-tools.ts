@@ -261,6 +261,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "uninstall",
             "get_permissions",
             "set_permissions",
+            "set_record_sources",
             "set_oauth_client",
             "remove_oauth_client",
             "get_redirect_uri",
@@ -302,7 +303,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
         serverName: {
           type: "string",
           description:
-            "Connector server name (required for disconnect, list_tools, get_permissions, set_permissions, grant_connector, revoke_connector, read_bound_skill).",
+            "Connector server name (required for disconnect, list_tools, get_permissions, set_permissions, set_record_sources, grant_connector, revoke_connector, read_bound_skill).",
         },
         skillName: {
           type: "string",
@@ -320,6 +321,12 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           description:
             'For set_permissions: map of tool name → "allow" | "disallow". Tools omitted are unchanged.',
           additionalProperties: { type: "string", enum: ["allow", "disallow"] },
+        },
+        sources: {
+          type: ["array", "null"],
+          items: { type: "string" },
+          description:
+            "For set_record_sources (workspace admin): the server names of the connectors in this workspace that `serverName` may receive records from through record arguments. An empty list revokes the grant; null clears the narrowing, so every connector in the workspace may be a source. Grants nothing unless the connector's catalog entry declares record_arguments.",
         },
         fields: {
           type: "object",
@@ -392,6 +399,8 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             args.tools,
             args.scope,
           );
+        case "set_record_sources":
+          return handleSetRecordSources(ctx, args.wsId, args.serverName, args.sources);
         case "set_oauth_client":
           return handleSetOAuthClient(
             ctx,
@@ -484,6 +493,8 @@ interface DispatchArgs {
   clientSecret: string;
   fields: Record<string, unknown>;
   tools: Record<string, unknown>;
+  /** For `set_record_sources`: the raw `sources` input (validated by the handler). */
+  sources: unknown;
   entry: unknown;
   installWsId: string | undefined;
   /** Explicit grant/revoke target workspace (input `wsId`, no header fallback). */
@@ -520,6 +531,7 @@ function resolveDispatchArgs(
     clientSecret: str(input.clientSecret),
     fields: (input.fields as Record<string, unknown>) ?? {},
     tools: (input.tools as Record<string, unknown>) ?? {},
+    sources: input.sources,
     entry: input.entry as unknown,
     // Default the install target to the request's workspace — the same
     // `ctx.getWorkspaceId()` (the workspace in the request URL) every other
@@ -3213,6 +3225,7 @@ async function workspacePolicyAdmission(
   ctx: ManageConnectorsContext,
   wsId: string,
   serverName: string,
+  what = "set tool permissions",
 ): Promise<ToolResult | null> {
   // Reject unknown serverName up front. Permission entries for a non-existent
   // connector would sit unused (the runtime gate keys on installed-source
@@ -3226,7 +3239,7 @@ async function workspacePolicyAdmission(
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
   if (!isWorkspaceAdmin(ws, identity)) {
     return {
-      content: textContent("Workspace admin role required to set tool permissions."),
+      content: textContent(`Workspace admin role required to ${what}.`),
       structuredContent: { error: "permission_denied" },
       isError: true,
     };
@@ -3284,6 +3297,61 @@ async function handleSetPermissions(
   return {
     content: textContent(`Updated ${Object.keys(tools).length} tool policies.`),
     structuredContent: { ok: true, scope: owner.scope, serverName },
+    isError: false,
+  };
+}
+
+/**
+ * `set_record_sources` — narrow or revoke a connector's record-arguments grant
+ * in this workspace (ADR-0058). The grant itself is the operator's, from the
+ * catalog entry's `record_arguments`; this only says which connectors here may
+ * be its sources. A list names them (empty revokes), `null` removes the
+ * narrowing. Workspace admin only, like tool policy: it decides what reaches a
+ * connector on every member's calls.
+ */
+async function handleSetRecordSources(
+  ctx: ManageConnectorsContext,
+  wsId: string | null,
+  serverName: string,
+  sourcesInput: unknown,
+): Promise<ToolResult> {
+  if (!wsId) return errResult("set_record_sources acts on a workspace connector.");
+  if (!serverName) return errResult("serverName is required.");
+  const sources =
+    sourcesInput === null
+      ? null
+      : Array.isArray(sourcesInput) && sourcesInput.every((v) => typeof v === "string" && v !== "")
+        ? [...new Set(sourcesInput as string[])]
+        : undefined;
+  if (sources === undefined) {
+    return errResult("sources must be a list of connector server names, or null.");
+  }
+  const refused = await workspacePolicyAdmission(
+    ctx,
+    wsId,
+    serverName,
+    "set a connector's record sources",
+  );
+  if (refused) return refused;
+  const store = ctx.runtime.getWorkspaceStore();
+  const ws = await store.get(wsId);
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+  const connectors = ws.connectors.map((ref) => {
+    if (serverNameFromRef(ref) !== serverName) return ref;
+    const { recordSources: _prior, ...rest } = ref;
+    return sources === null ? rest : { ...rest, recordSources: sources };
+  });
+  await store.update(wsId, { connectors });
+  const granted = (await ctx.runtime.recordArgumentsGrantFor(wsId, serverName)) !== null;
+  return {
+    content: textContent(
+      sources === null
+        ? `"${serverName}" may receive records from every connector in this workspace.`
+        : sources.length === 0
+          ? `"${serverName}" may no longer receive records in this workspace.`
+          : `"${serverName}" may receive records from: ${sources.join(", ")}.`,
+    ),
+    structuredContent: { ok: true, serverName, recordSources: sources, granted },
     isError: false,
   };
 }

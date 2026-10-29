@@ -155,6 +155,7 @@ describe.each([
         },
         rateLimit,
         resourceArguments: createResourceArgumentsResolver({
+          recordGrantOf: async () => null,
           sourcesOf: (wsId) => (wsId === WS ? [crm] : []),
           isHostScheme: isReservedResourceScheme,
           rateLimit,
@@ -225,6 +226,7 @@ describe("resource arguments beside the client capabilities in one 2026-07-28 _m
         },
         rateLimit,
         resourceArguments: createResourceArgumentsResolver({
+          recordGrantOf: async () => null,
           sourcesOf: (wsId) => (wsId === WS ? [crm] : []),
           isHostScheme: isReservedResourceScheme,
           rateLimit,

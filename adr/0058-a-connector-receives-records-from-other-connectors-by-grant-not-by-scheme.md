@@ -1,6 +1,6 @@
 # 0058. A connector receives records from other connectors by grant, not by scheme
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-28
 - Serves: orchestrate remote MCP, secure RBAC
 - Amends: the `ai.nimblebrain/resource-arguments` extension (a declared argument's scheme list becomes optional)
@@ -44,12 +44,15 @@ tool may declare a record argument with no `schemes`:
 { "ai.nimblebrain/resource-arguments": { "arguments": { "account": { "records": true } } } }
 ```
 
-The host resolves such an argument only for a connector the workspace has
-granted record arguments. The grant is part of installing the connector: its
-manifest says it accepts records, the install shows that once, and installing it
-grants it. An admin can revoke the grant or narrow it to named source connectors.
-A connector without the grant gets each URI in a schemeless argument back as a
-refusal entry, as an undeclared URI is today. A declaration with `schemes` keeps
+The host resolves such an argument only for a connector granted record
+arguments in the workspace. The grant is the operator's: the connector's
+catalog entry declares `record_arguments` in its host manifest, read from the
+catalog only, like `admin_tools`, so nothing the running server sends can claim
+it. That grants it in every workspace that installs the connector, with nothing
+to configure. A workspace admin can narrow the grant to named source connectors
+or revoke it, stored on the workspace's record of the connector. A connector
+without the grant gets each URI in a schemeless argument back refused as
+`not_granted`. A declaration with `schemes` keeps
 its current meaning and needs no grant, so the host-owned `files` scheme and
 every existing tool are unchanged.
 
@@ -89,8 +92,8 @@ its threshold. A workspace on Salesforce passes its account URI and
   which field it read so a wrong choice is visible.
 - The grant becomes the review point for which connectors receive records. A
   prompt-injected agent can still pass a record to a granted connector, as it can
-  already pass any text it read; the grant bounds that to connectors someone
-  installed knowing they accept records.
+  already pass any text it read; the grant bounds that to connectors the
+  operator's catalog says accept records, and a workspace admin can narrow it.
 - `ai.nimblebrain/resource-arguments` gains the `records` form and the grant; its
   documentation drops the advice to keep a scheme list in configuration.
 

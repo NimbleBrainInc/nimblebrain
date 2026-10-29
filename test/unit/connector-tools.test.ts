@@ -201,6 +201,9 @@ function buildHarness(): Harness {
       }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
+    // The fixture catalog declares no record arguments, so no connector here
+    // holds a grant; `set_record_sources` reports that back.
+    recordArgumentsGrantFor: async () => null,
     // No broker is configured here; the personal-catalog filter asks.
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
     // The lifecycle notification the install and uninstall handlers make. No
@@ -1398,6 +1401,73 @@ describe("manage_connectors.set_permissions", () => {
     const last = h.permissionWrites.at(-1);
     expect(last?.owner.scope).toBe("workspace");
     expect(last?.tools).toEqual({ read: "disallow" });
+  });
+});
+
+describe("manage_connectors.set_record_sources", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+    await seedConnector(h);
+    await h.workspaceStore.update(h.wsId, {
+      connectors: [{ url: STUB_URL, serverName: STUB_SERVER_NAME }],
+    });
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  const recordSources = async () =>
+    (await h.workspaceStore.get(h.wsId))?.connectors.find((r) => r.serverName === STUB_SERVER_NAME)
+      ?.recordSources;
+
+  test("a workspace member cannot set a connector's record sources", async () => {
+    const result = await buildTool(h, NON_ADMIN_USER).handler({
+      action: "set_record_sources",
+      serverName: STUB_SERVER_NAME,
+      sources: [],
+    });
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { error?: string } | undefined)?.error).toBe(
+      "permission_denied",
+    );
+    expect(await recordSources()).toBeUndefined();
+  });
+
+  test("a workspace admin narrows, revokes, and clears them on the connector's record", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const set = (sources: unknown) =>
+      tool.handler({ action: "set_record_sources", serverName: STUB_SERVER_NAME, sources });
+
+    const narrowed = await set(["people", "people", "crm"]);
+    expect(narrowed.isError).toBe(false);
+    expect(narrowed.structuredContent).toMatchObject({
+      recordSources: ["people", "crm"],
+      granted: false,
+    });
+    expect(await recordSources()).toEqual(["people", "crm"]);
+
+    await set([]);
+    expect(await recordSources()).toEqual([]);
+
+    await set(null);
+    expect(await recordSources()).toBeUndefined();
+  });
+
+  test("refuses sources that are not a list of names or null", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    for (const sources of [undefined, "people", [""], [3]]) {
+      const result = await tool.handler({
+        action: "set_record_sources",
+        serverName: STUB_SERVER_NAME,
+        sources,
+      });
+      expect(result.isError).toBe(true);
+    }
+    expect(await recordSources()).toBeUndefined();
   });
 });
 

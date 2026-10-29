@@ -153,6 +153,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
   const hooks = parseHookDeclarations(getNimbleBrainHostMeta(s));
   const notifications = parseNotificationsDeclaration(getNimbleBrainHostMeta(s));
   const adminTools = parseAdminToolsDeclaration(getNimbleBrainHostMeta(s), s.name);
+  const recordArguments = getNimbleBrainHostMeta(s)?.record_arguments === true;
   const account = parseAccountLookup(meta?.account);
   // The "interactive" chip is cosmetic catalog metadata (no runtime behavior). Derive
   // it from whether the connector renders a VALID UI: an explicit connector flag OR a
@@ -179,6 +180,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(hooks.length > 0 ? { hooks } : {}),
     ...(notifications ? { notifications } : {}),
     ...(adminTools ? { adminTools } : {}),
+    ...(recordArguments ? { recordArguments: true as const } : {}),
   };
 }
 

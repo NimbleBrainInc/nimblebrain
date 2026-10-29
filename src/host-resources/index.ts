@@ -20,10 +20,13 @@ export type {
 } from "./resolver.ts";
 export { FileBackedHostResourcesResolver } from "./resolver.ts";
 export type {
+  RecordArgumentsGrant,
+  ResourceArgumentAdmission,
   ResourceArgumentEntries,
   ResourceArgumentEntry,
   ResourceArgumentErrorCode,
   ResourceArgumentResolution,
+  ResourceArgumentSpec,
   ResourceArgumentsContext,
   ResourceArgumentsDeclaration,
   ResourceArgumentsLimits,
