@@ -190,6 +190,11 @@ export interface ModelCredentialSubject {
   /** The door's run id. The gateway's budget lookups key on it. */
   runId: string;
   workspaceId: string;
+  /**
+   * The run's wall-clock limit. The credential expires at it plus the leeway,
+   * held to the installation's ceiling. Absent = the ceiling.
+   */
+  maxRunDurationMs?: number;
 }
 
 /** The claims of a model credential. Nothing here bounds the run; the runtime does. */
@@ -226,7 +231,8 @@ export interface RunKey {
   keySet(): RunKeySet;
   /**
    * Mint the model credential for one run, when the run starts. It lasts the
-   * longest run the installation allows plus {@link MODEL_CREDENTIAL_LEEWAY_MS}.
+   * run's own limit, held to the longest run the installation allows, plus
+   * {@link MODEL_CREDENTIAL_LEEWAY_MS}.
    * Hold it in memory only: never write it to disk, a log, or a job store.
    */
   mintModelCredential(subject: ModelCredentialSubject, nowMs?: number): string;
@@ -286,9 +292,15 @@ export function createRunKey(opts: { ring: RunKeyRing; issuer: string; maxRunMs:
   return {
     keySet: () => ({ keys: keys.map((key) => ({ ...key })) }),
 
-    mintModelCredential({ runId, workspaceId }, nowMs = Date.now()) {
+    mintModelCredential({ runId, workspaceId, maxRunDurationMs }, nowMs = Date.now()) {
       if (!runId) throw new RunKeyError("a model credential names a run id");
       if (!workspaceId) throw new RunKeyError("a model credential names a workspace");
+      if (maxRunDurationMs !== undefined && !(maxRunDurationMs > 0)) {
+        throw new RunKeyError(
+          `a run's limit must be a positive duration (got ${maxRunDurationMs})`,
+        );
+      }
+      const lifetimeMs = Math.min(maxRunDurationMs ?? maxRunMs, maxRunMs);
       const iat = Math.floor(nowMs / 1000);
       const claims: ModelCredentialClaims = {
         iss: issuer,
@@ -296,7 +308,7 @@ export function createRunKey(opts: { ring: RunKeyRing; issuer: string; maxRunMs:
         sub: runId,
         workspace: workspaceId,
         iat,
-        exp: Math.ceil((nowMs + maxRunMs + MODEL_CREDENTIAL_LEEWAY_MS) / 1000),
+        exp: Math.ceil((nowMs + lifetimeMs + MODEL_CREDENTIAL_LEEWAY_MS) / 1000),
       };
       return signJwt(signing, claims);
     },

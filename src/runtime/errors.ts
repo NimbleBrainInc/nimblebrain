@@ -26,6 +26,24 @@ export class RuntimeCannotHoldRunError extends Error {
 }
 
 /**
+ * The reason a run the door held to a time limit ends with: a run on a runtime
+ * that takes a per-run model credential, with no limit of its own, is held to
+ * the installation's longest run, because its credential lasts no longer.
+ */
+export class RunDeadlineExceededError extends Error {
+  readonly code = "run_deadline_exceeded";
+  constructor(
+    public readonly runtime: string,
+    public readonly limitMs: number,
+  ) {
+    super(
+      `The run on agent runtime ${runtime} reached its ${Math.round(limitMs / 1000)}s limit (tasks.maxRunDurationMs) and was stopped`,
+    );
+    this.name = "RunDeadlineExceededError";
+  }
+}
+
+/**
  * Thrown when a caller attempts to read or write a conversation they
  * don't own. Conversations are single-owner: the conversation's
  * `ownerId` must match the requesting identity.

@@ -176,7 +176,10 @@ it cannot.** A driver declares which (`modelCredential: "session" | "process"`).
 - `session`: the driver hands the turn's model credential at `session/new`. The
   gateway verifies it, attributes each call to the run, and holds the run to its
   budget. It expires at the turn's longest allowed duration plus the gateway's
-  clock leeway.
+  clock leeway: a task's own cap, held to the installation's longest run. A turn
+  with no cap of its own, a chat turn, is held by the door to the installation's
+  longest run, and ends there with an error naming the limit rather than losing
+  model access partway through.
 - `process`: the worker is started with a pool credential, minted with the same
   key, audience the gateway, subject the pool. The gateway can attribute calls to
   the pool only, so the door treats such a runtime as having no spend gate

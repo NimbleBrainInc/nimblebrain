@@ -198,6 +198,20 @@ describe("createDirectExecutor", () => {
 
     expect(captured?.admission).toBe(ticket.lease);
   });
+
+  // The door mints the run's model credential to this cap, so it must be the
+  // one the executor's own timer enforces.
+  test("sends the run's duration cap, the one its timer enforces", async () => {
+    let captured: Parameters<TaskFn>[0] | undefined;
+    const taskFn: TaskFn = async (req) => {
+      captured = req;
+      return makeDirectTaskFn()(req);
+    };
+
+    await createDirectExecutor(taskFn, () => ({}))(makeTask({ maxRunDurationMs: 45_000 }));
+
+    expect(captured?.maxRunDurationMs).toBe(45_000);
+  });
 });
 
 // ---------------------------------------------------------------------------

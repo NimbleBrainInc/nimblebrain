@@ -605,7 +605,7 @@ Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight an
 | `maxQueuedRuns` | `integer` | `50` | Run now and event runs held waiting for a slot. A freed slot goes to the waiting run whose workspace holds the fewest slots, oldest first among equals. Beyond it a run is refused and recorded as skipped. `0` refuses at the limit. Range: 0--1000. |
 | `maxRunIterations` | `integer` | `50` | Ceiling on one run's agentic iterations. Range: 1--50. |
 | `maxRunInputTokens` | `integer` | none | Ceiling on one run's input tokens, summed over every model call. Unset, there is no ceiling. Range: 1,000--100,000,000. |
-| `maxRunDurationMs` | `integer` (ms) | `600000` | Ceiling on one run's wall-clock time. Range: 10,000--600,000. |
+| `maxRunDurationMs` | `integer` (ms) | `600000` | Ceiling on one run's wall-clock time. Range: 10,000--600,000. A chat turn on an external runtime is held to it too, since its model credential lasts no longer. |
 
 The three per-run ceilings apply when a run starts, so they cover every stored task however it was written. A cap a task sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: a task with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not. The create and update tools report the caps that result.
 
@@ -643,7 +643,7 @@ What stays with NimbleBrain, whichever runtime runs a turn:
 - **Tools.** The agent reaches the run's tools on its own connection to the runtime, through the same workspace wall, tool allow-list and permission checks as a native call. Nothing listens for it.
 - **Credentials.** The runtime signs a connection credential with the installation's [run key](/config/secrets/), which the worker checks against the runtime's `/.well-known/run-keys.json`. Each turn's model calls carry a credential minted for that turn, which the gateway verifies against the same key set.
 
-A worker runtime does not check a run's spend accounts or input-token cap before each model call, so a run that sets either is refused on it; chat runs. Outside the `dev` identity provider external runtimes need the run key and a `modelGateway`, and the runtime refuses to start without them. On a developer's machine, run a worker on loopback with `NB_AGENT_AUTH=none` and leave out `modelGateway`: it calls its provider with its own key.
+A worker runtime does not check a run's spend accounts or input-token cap before each model call, so a run that sets either is refused on it; chat runs. Each turn's model credential lasts as long as the turn may run: a task's own duration cap, or for a chat turn `tasks.maxRunDurationMs`, at which the turn is stopped with an error naming the limit. Outside the `dev` identity provider external runtimes need the run key and a `modelGateway`, and the runtime refuses to start without them. On a developer's machine, run a worker on loopback with `NB_AGENT_AUTH=none` and leave out `modelGateway`: it calls its provider with its own key.
 
 ## files
 

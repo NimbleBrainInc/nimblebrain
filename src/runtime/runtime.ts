@@ -304,6 +304,7 @@ import {
   runWithRequestContext,
 } from "./request-context.ts";
 import { type BufferedRunEvent, RunBus } from "./run-bus.ts";
+import { type RunDeadline, runDeadline } from "./run-deadline.ts";
 import {
   createRunKey,
   parseRunKeyRing,
@@ -1687,6 +1688,9 @@ export class Runtime {
         ...(request.maxRunInputTokens !== undefined
           ? { maxRunInputTokens: request.maxRunInputTokens }
           : {}),
+        ...(request.maxRunDurationMs !== undefined
+          ? { maxRunDurationMs: request.maxRunDurationMs }
+          : {}),
         ...(request.spendAccounts ? { spendAccounts: request.spendAccounts } : {}),
       },
       model: this.resolveRequestModelString(request.model),
@@ -1878,6 +1882,13 @@ export class Runtime {
     // message to carry it (keeps the content, forgoes the cache win).
     const engineSystem = resolveEngineSystem(messages, stableSystem, volatileHead);
 
+    const deadline = runDeadline({
+      signal: spec.signal,
+      ownLimitMs: spec.budget.maxRunDurationMs,
+      credentialed: this.mintsModelCredential(agentRuntime),
+      ceilingMs: this.getTasksConfig().maxRunDurationMs,
+      runtimeId: agentRuntime.id,
+    });
     const engineConfig = this.buildTurnEngineConfig({
       model: spec.model,
       requestMaxIterations: spec.budget.maxIterations,
@@ -1897,7 +1908,7 @@ export class Runtime {
         ...this.collectInjectedConnectorSkills(effectiveHistory),
         ...composed.declaredSkills.map((s) => s.name),
       ],
-      signal: spec.signal,
+      signal: deadline.signal,
     });
 
     // The per-run accumulator prices every run, and stands in for the engine's
@@ -1982,15 +1993,7 @@ export class Runtime {
                 ...(engineConfig.hooks?.rewriteHistory
                   ? { compaction: { model: this.getModelSlot("fast") } }
                   : {}),
-                // Minted as the run starts, held in memory only (ADR-0057).
-                ...(agentRuntime.capabilities.modelCredential === "session" && this._runKey
-                  ? {
-                      modelCredential: this._runKey.mintModelCredential({
-                        runId,
-                        workspaceId: spec.workspaceId,
-                      }),
-                    }
-                  : {}),
+                ...this.runModelCredential(agentRuntime, runId, spec.workspaceId, deadline),
               },
               {
                 tools: identityToolRouter,
@@ -2029,6 +2032,7 @@ export class Runtime {
         skillsDelivered: deliveries.list,
       };
     } finally {
+      deadline.clear();
       releaseSpend();
     }
 
@@ -2053,6 +2057,32 @@ export class Runtime {
   }
 
   // ── run-start door helpers ───────────────────────────────────────
+
+  /** Whether a run on this runtime carries a per-run model credential the door mints. */
+  private mintsModelCredential(agentRuntime: AgentRuntime): boolean {
+    return agentRuntime.capabilities.modelCredential === "session" && this._runKey !== null;
+  }
+
+  /**
+   * The run's model credential, minted as the run starts and held in memory
+   * only (ADR-0057), lasting as long as the run may (`runDeadline`). Empty for a
+   * run on a runtime that takes none.
+   */
+  private runModelCredential(
+    agentRuntime: AgentRuntime,
+    runId: string,
+    workspaceId: string,
+    deadline: RunDeadline,
+  ): { modelCredential?: string } {
+    if (!this._runKey || !this.mintsModelCredential(agentRuntime)) return {};
+    return {
+      modelCredential: this._runKey.mintModelCredential({
+        runId,
+        workspaceId,
+        ...(deadline.limitMs !== undefined ? { maxRunDurationMs: deadline.limitMs } : {}),
+      }),
+    };
+  }
 
   /**
    * The agent runtime a run executes on (`execution.default`), if it can hold

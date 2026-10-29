@@ -485,6 +485,12 @@ export interface TaskRequest {
    */
   maxRunInputTokens?: number;
   /**
+   * The run's wall-clock limit, which the caller enforces with `signal` (the
+   * tasks executor's timeout). The door bounds the run's model credential by it
+   * (`RunBudget.maxRunDurationMs`). Absent = the installation's ceiling.
+   */
+  maxRunDurationMs?: number;
+  /**
    * The spend accounts the run draws on: opaque ids the caller chose, each with
    * a unit and the amount remaining. Runs in flight that name the same id share
    * one balance. Each model call's output is clamped to what they allow, and
