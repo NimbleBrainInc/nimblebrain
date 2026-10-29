@@ -132,6 +132,14 @@ export interface RunBudget {
   /** Input tokens the whole run may spend across every model call. Absent = no cap. */
   maxRunInputTokens?: number;
   /**
+   * The run's wall-clock limit, enforced by the caller that set it (the tasks
+   * executor ends a task run at its cap). A model credential the door mints for
+   * the run expires at it plus the gateway's leeway. Absent = the run has no
+   * limit of its own (a chat turn); the door then holds a run that carries a
+   * model credential to the installation's ceiling itself.
+   */
+  maxRunDurationMs?: number;
+  /**
    * The spend accounts the run draws on (`src/runtime/spend.ts`). Each model
    * call's output is clamped to what they allow and its worst case reserved
    * against them, then debited after it; the run ends with stopReason

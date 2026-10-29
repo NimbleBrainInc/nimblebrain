@@ -72,6 +72,8 @@ export interface TaskFnRequest {
   thinkingEffort?: ThinkingEffort;
   maxIterations?: number;
   maxRunInputTokens?: number;
+  /** The run's duration cap, which the executor enforces; it bounds the run's model credential. */
+  maxRunDurationMs?: number;
   /**
    * The task's token budget as spend accounts (`budgetSpendAccounts`).
    * The runtime clamps each model call's output to what they allow and stops
@@ -263,6 +265,7 @@ function buildRequest(
   // the definition or the operator sets a cap.
   req.maxIterations = limits.maxIterations;
   if (limits.maxInputTokens != null) req.maxRunInputTokens = limits.maxInputTokens;
+  req.maxRunDurationMs = limits.maxRunDurationMs;
   const spendAccounts = [...budgetSpendAccounts(task, Date.now()), ...extraAccounts];
   if (spendAccounts.length > 0) req.spendAccounts = spendAccounts;
   // An empty list means no narrowing, as the form shows it ("all"), not a run

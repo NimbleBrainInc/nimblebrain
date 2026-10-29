@@ -77,6 +77,32 @@ describe("model credential", () => {
     ).rejects.toThrow("signature");
   });
 
+  it("lasts the run's own limit when it has one", async () => {
+    const limited = runKey.mintModelCredential(
+      { runId: "run_abc", workspaceId: "ws_acme", maxRunDurationMs: 30_000 },
+      NOW,
+    );
+    const { claims } = await verifyAsGateway(limited, runKey.keySet(), { ...GATEWAY, nowMs: NOW });
+    expect(claims.exp).toBe((NOW + 30_000 + MODEL_CREDENTIAL_LEEWAY_MS) / 1000);
+  });
+
+  it("is held to the longest run the installation allows", async () => {
+    const long = runKey.mintModelCredential(
+      { runId: "run_abc", workspaceId: "ws_acme", maxRunDurationMs: MAX_RUN_MS * 3 },
+      NOW,
+    );
+    const { claims } = await verifyAsGateway(long, runKey.keySet(), { ...GATEWAY, nowMs: NOW });
+    expect(claims.exp).toBe((NOW + MAX_RUN_MS + MODEL_CREDENTIAL_LEEWAY_MS) / 1000);
+  });
+
+  it("refuses a run limit that is not a positive duration", () => {
+    for (const maxRunDurationMs of [0, -1, Number.NaN]) {
+      expect(() =>
+        runKey.mintModelCredential({ runId: "run_abc", workspaceId: "ws_acme", maxRunDurationMs }),
+      ).toThrow(RunKeyError);
+    }
+  });
+
   it("refuses to mint without a run or a workspace", () => {
     expect(() => runKey.mintModelCredential({ runId: "", workspaceId: "ws_acme" })).toThrow(
       RunKeyError,

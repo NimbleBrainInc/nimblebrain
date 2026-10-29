@@ -8,6 +8,7 @@ import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
 import { createNimbleBrainAgentDriver } from "../../../src/execution/acp/drivers/nimblebrain-agent.ts";
 import { createHttpConnection } from "../../../src/execution/acp/http-connection.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { publicOrigin } from "../../../src/oauth/public-origin.ts";
 import { createRunKey, parseRunKeyRing, type RunKey } from "../../../src/runtime/run-key.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
@@ -230,5 +231,26 @@ describe("the door, with the worker configured in execution", () => {
       workspace: TEST_WORKSPACE_ID,
     });
     expect(typeof claims.sub).toBe("string");
+    // A chat turn has no limit of its own, so the door holds it to the
+    // installation's longest run (600s by default) and mints to that.
+    expect(claims.exp - claims.iat).toBeGreaterThanOrEqual(660);
+    expect(claims.exp - claims.iat).toBeLessThanOrEqual(661);
+  });
+
+  test("mints a task run's credential to the run's own duration cap", async () => {
+    const before = gateway.authorizations.length;
+    await runtime.executeTask({
+      identity: DEV_IDENTITY,
+      workspaceId: TEST_WORKSPACE_ID,
+      prompt: "Where is order 8812?",
+      trigger: "manual",
+      maxRunDurationMs: 30_000,
+    });
+
+    const [authorization] = gateway.authorizations.slice(before);
+    const token = authorization?.replace(/^Bearer /, "") ?? "";
+    const claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString());
+    expect(claims.exp - claims.iat).toBeGreaterThanOrEqual(90);
+    expect(claims.exp - claims.iat).toBeLessThanOrEqual(91);
   });
 });
