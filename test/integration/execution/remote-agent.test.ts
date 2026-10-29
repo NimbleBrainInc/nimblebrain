@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { createHttpConnection } from "../../../src/execution/acp/http-connection
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { publicOrigin } from "../../../src/oauth/public-origin.ts";
+import { RunDeadlineExceededError } from "../../../src/runtime/errors.ts";
 import { createRunKey, parseRunKeyRing, type RunKey } from "../../../src/runtime/run-key.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { PINNED_AGENT_BIN } from "../../helpers/acp/nimblebrain-agent-driver.ts";
@@ -252,5 +253,68 @@ describe("the door, with the worker configured in execution", () => {
     const claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString());
     expect(claims.exp - claims.iat).toBeGreaterThanOrEqual(90);
     expect(claims.exp - claims.iat).toBeLessThanOrEqual(91);
+  });
+});
+
+describe("the door, holding a credentialed chat turn to the installation's longest run", () => {
+  const workDir = join(tmpdir(), `nb-remote-agent-deadline-${Date.now()}`);
+  let stalled: ReturnType<typeof Bun.serve>;
+  let runtime: Runtime;
+
+  beforeAll(async () => {
+    // A gateway that takes each model call and never answers, so the turn
+    // stalls on the worker until something ends it.
+    stalled = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (req) =>
+        new Promise<Response>((resolve) =>
+          req.signal.addEventListener("abort", () => resolve(new Response(null)), { once: true }),
+        ),
+    });
+    mkdirSync(workDir, { recursive: true });
+    process.env[RUN_KEY_ENV] = ring;
+    runtime = await Runtime.start({
+      identityProvider: devProvider,
+      models: { default: MODEL },
+      logging: { disabled: true },
+      workDir,
+      secrets: { runKeyEnv: RUN_KEY_ENV },
+      execution: {
+        default: "pool",
+        modelGateway: `http://127.0.0.1:${stalled.port}/v1`,
+        runtimes: { pool: { driver: "nimblebrain-agent", url: workerUrl } },
+      },
+    });
+    await provisionTestWorkspace(runtime);
+  });
+
+  afterAll(async () => {
+    await runtime?.shutdown();
+    delete process.env[RUN_KEY_ENV];
+    rmSync(workDir, { recursive: true, force: true });
+    await stalled?.stop(true);
+  });
+
+  test("ends a stalled turn at the limit with RunDeadlineExceededError", async () => {
+    // The configured ceiling's floor is 10s; a shorter one keeps the test fast.
+    const tasks = runtime.getTasksConfig();
+    const ceiling = spyOn(runtime, "getTasksConfig").mockReturnValue({
+      ...tasks,
+      maxRunDurationMs: 1_000,
+    });
+    try {
+      const started = Date.now();
+      const turn = runtime.chat({
+        message: "hello",
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: makeIdentity({ id: "usr_dev", email: "dev@example.com", orgRole: "admin" }),
+      });
+      await expect(turn).rejects.toBeInstanceOf(RunDeadlineExceededError);
+      await expect(turn).rejects.toThrow("reached its 1s limit (tasks.maxRunDurationMs)");
+      expect(Date.now() - started).toBeGreaterThanOrEqual(1_000);
+    } finally {
+      ceiling.mockRestore();
+    }
   });
 });
