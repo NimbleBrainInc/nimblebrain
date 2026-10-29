@@ -437,10 +437,12 @@ jobs:
         if: steps.cfg.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          DEPLOY_CONFIG_REPO: ${{ vars.DEPLOY_CONFIG_REPO }}
+          SHA: ${{ needs.build-and-push.outputs.sha }}
         run: |
           # -f (raw string), NOT -F: -F type-coerces all-digit values to JSON
           # numbers, which mangles all-digit SHAs (esp. leading-zero). A SHA is an
           # opaque string.
-          gh api "repos/${{ github.repository_owner }}/${{ vars.DEPLOY_CONFIG_REPO }}/dispatches" \
+          gh api "repos/$GITHUB_REPOSITORY_OWNER/$DEPLOY_CONFIG_REPO/dispatches" \
             -f event_type=runtime-image-pushed \
-            -f "client_payload[sha]=${{ needs.build-and-push.outputs.sha }}"
+            -f "client_payload[sha]=$SHA"

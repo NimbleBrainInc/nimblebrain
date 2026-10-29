@@ -76,9 +76,13 @@ jobs:
 
       - name: Resolve version + source SHA
         id: r
+        # The tag reaches the script through env, never pasted into it: a pasted
+        # `${{ }}` is shell source, so a tag like `v1$(cmd)` would run before the
+        # semver check below could reject it.
+        env:
+          VERSION: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${{ github.event.inputs.tag || github.ref_name }}"
           # Require vX.Y.Z (optional -prerelease / +build). A garbage version would
           # burn an immutable tag, so reject it before anything is written.
           if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
@@ -148,7 +152,9 @@ jobs:
           tags: ${{ steps.rb.outputs.web_tags }}
       - name: Flag emergency rebuild
         if: ${{ github.event.inputs.rebuild == 'true' }}
-        run: echo "::warning::REBUILT runtime+web for ${{ steps.r.outputs.version }} from source — NOT the staging-verified image. Prod will not be byte-for-byte what staging proved."
+        env:
+          VERSION: ${{ steps.r.outputs.version }}
+        run: echo "::warning::REBUILT runtime+web for $VERSION from source — NOT the staging-verified image. Prod will not be byte-for-byte what staging proved."
 
       # ── Normal path: promote-by-retag ─────────────────────────────────────────
       # ECR: retag the staging-verified :<sha> manifest -> :vX.Y.Z for runtime + web,
@@ -307,9 +313,10 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+          DEPLOY_CONFIG_REPO: ${{ vars.DEPLOY_CONFIG_REPO }}
         run: |
           # -f keeps client_payload values as raw strings (target + version are strings).
-          gh api "repos/${{ github.repository_owner }}/${{ vars.DEPLOY_CONFIG_REPO }}/dispatches" \
+          gh api "repos/$GITHUB_REPOSITORY_OWNER/$DEPLOY_CONFIG_REPO/dispatches" \
             -f event_type=prod-image-promoted \
             -f "client_payload[target]=agent" \
             -f "client_payload[version]=$VERSION"
