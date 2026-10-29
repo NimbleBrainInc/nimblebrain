@@ -5,9 +5,10 @@
  * with the run key, naming the run it belongs to.
  *
  * - The subject is the run's (`RequestContext.credentialSubject`), so the
- *   gateway attributes the call and charges the run's budget. A call outside any
- *   run (a conversation's title, a background job) gets a subject of its own, so
- *   it shares no budget with anything else.
+ *   gateway attributes the call and charges the run's budget. Work a run forks
+ *   (a conversation's title) runs in the run's context and carries its subject.
+ *   A call outside any run gets a single-use subject of its own, so it shares no
+ *   budget with anything else.
  * - The credential is minted per call and lives a minute (plus the gateway's
  *   leeway): the gateway checks it when the call starts, so it needs to outlive
  *   only the request, and a long chat never holds one that runs out.

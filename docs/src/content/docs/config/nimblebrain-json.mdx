@@ -323,7 +323,7 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the runtime 
 ```
 
 - **Each provider at its own path.** The provider's client calls `<modelGateway>/<provider>` (`/anthropic/v1/messages`, `/google/v1beta/...`) in its own API, so caching, reasoning and file inputs work as they do direct.
-- **A credential per call.** Each call presents a model credential the runtime mints from its [run key](/config/secrets/) for that call alone, naming the run it belongs to, so the gateway attributes and budgets per run. A call outside any run (a conversation's title) gets a subject of its own.
+- **A credential per call.** Each call presents a model credential the runtime mints from its [run key](/config/secrets/) for that call alone, naming the run it belongs to, so the gateway attributes and budgets per run. Work a run forks, such as a conversation's title, carries that run's subject; a call outside any run gets a single-use subject of its own.
 - **No key in the runtime.** A provider with `gateway: true` and an `apiKey` refuses to start, as does one with no `modelGateway` or no run key.
 - **Policy stays here.** Which models a workspace may use (`modelPolicy`, slots, the model picker) and the spend checks before each call are the runtime's, whichever path a call takes.
 
