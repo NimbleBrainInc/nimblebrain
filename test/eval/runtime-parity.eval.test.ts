@@ -11,7 +11,7 @@
  * Run:
  *   ANTHROPIC_API_KEY=… bun test --no-env-file test/eval/runtime-parity.eval.test.ts
  *     + NB_GOOSE_API_KEY=… GOOSE_BIN=/path/to/goose            for Goose
- *       (NB_GOOSE_MODEL_ENDPOINT=… to send its model calls to an endpoint, such as the gateway)
+ *       (NB_GOOSE_MODEL_GATEWAY=… to send its model calls through the installation's model gateway)
  *     + NB_AGENT_API_KEY=…                                     for nimblebrain-agent
  *       (the pinned dev dependency; NB_AGENT_BIN=/path/to/nimblebrain-agent/src/cli.ts runs another)
  *
@@ -60,7 +60,7 @@ const CANDIDATES: Candidate[] = [
         "goose",
         createGooseDriver(),
         gooseConnection(
-          { command: env.GOOSE_BIN, modelEndpoint: env.NB_GOOSE_MODEL_ENDPOINT },
+          { command: env.GOOSE_BIN, modelGateway: env.NB_GOOSE_MODEL_GATEWAY },
           keys ? { env: keys } : undefined,
         ),
       ),

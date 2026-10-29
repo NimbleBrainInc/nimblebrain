@@ -91,14 +91,26 @@ describe("nimblebrain-agent driver", () => {
       modelCredential: "turn-jwt",
       modelEndpoint: "http://model-gateway.test/anthropic/v1",
     });
+    // Every provider's base URL, so a summary on another provider's model reaches it.
+    expect(meta(gated, minted)).toMatchObject({
+      modelEndpoints: {
+        anthropic: "http://model-gateway.test/anthropic/v1",
+        openai: "http://model-gateway.test/openai/v1",
+        google: "http://model-gateway.test/google/v1beta",
+        xai: "http://model-gateway.test/xai/v1",
+        nebius: "http://model-gateway.test/nebius/v1",
+        greenpt: "http://model-gateway.test/greenpt/v1",
+      },
+    });
     const onGoogle = { ...minted, config: { ...minted.config, model: "google:gemini-3-pro" } };
     expect(meta(gated, onGoogle)).toMatchObject({
       modelEndpoint: "http://model-gateway.test/google/v1beta",
     });
     // No gateway: the worker calls its own provider, so the credential stays home.
     expect(meta(createNimbleBrainAgentDriver(), minted)).not.toHaveProperty("modelCredential");
-    // No credential: the agent refuses an endpoint without one, so neither is sent.
+    // No credential: the agent refuses an endpoint without one, so none is sent.
     expect(meta(gated, run())).not.toHaveProperty("modelEndpoint");
+    expect(meta(gated, run())).not.toHaveProperty("modelEndpoints");
   });
 
   test("lets the agent fold mid-turn only when the door allows it, with the door's model", () => {

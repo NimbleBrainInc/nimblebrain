@@ -34,6 +34,7 @@ import type {
 } from "../../../src/execution/acp/driver.ts";
 import { historyPrompt } from "../../../src/execution/acp/transcript.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
+import { modelGatewayBaseURL } from "../../../src/model/registry.ts";
 import { spawnStdioAgent } from "./stdio-agent-process.ts";
 
 export interface GooseDriverConfig {
@@ -48,11 +49,12 @@ export interface GooseDriverConfig {
   /** The variable holding the provider key Goose is given. Default: `NB_GOOSE_API_KEY`. */
   apiKeyEnv?: string;
   /**
-   * The model endpoint Goose calls in place of its provider's own, such as the
-   * installation's model gateway. The key Goose is given is then whatever that
-   * endpoint takes (a run token), not a provider key. Default: the provider's.
+   * The installation's model gateway, by its root URL (`execution.modelGateway`):
+   * Goose calls the run's provider at its path there instead of the provider,
+   * and the key Goose is given is whatever the gateway takes (a run token), not
+   * a provider key. Default: the provider's own endpoint.
    */
-  modelEndpoint?: string;
+  modelGateway?: string;
 }
 
 /** Goose's (unstable) method for a session's system prompt. */
@@ -61,17 +63,57 @@ export const GOOSE_SYSTEM_PROMPT_METHOD = "_goose/unstable/session/system-prompt
 /** The variable this process reads Goose's provider key from, unless configured. */
 export const DEFAULT_GOOSE_API_KEY_ENV = "NB_GOOSE_API_KEY";
 
-/** The provider key variable Goose reads, by the provider half of a model string. */
-const PROVIDER_KEY_VARS: Record<string, string> = {
-  anthropic: "ANTHROPIC_API_KEY",
-  openai: "OPENAI_API_KEY",
-  google: "GOOGLE_API_KEY",
-  xai: "XAI_API_KEY",
-};
-
-/** The base URL variable Goose reads, by provider, for those a model endpoint can stand in for. */
-const PROVIDER_HOST_VARS: Record<string, string> = {
-  anthropic: "ANTHROPIC_HOST",
+/**
+ * How Goose reaches each provider: the Goose provider that speaks its API, the
+ * variable Goose reads its key from, and the variable Goose reads its host from,
+ * with the host on the gateway (Goose appends the rest of each path: Anthropic's
+ * `v1/messages`, Gemini's `v1beta/...`; an OpenAI-style host ending in `/v1`
+ * keeps it and gets `v1/chat/completions`) or, for a provider Goose has no
+ * provider of its own for, the provider's own host. Nebius and GreenPT speak the
+ * OpenAI API, so they run as Goose's OpenAI provider pointed at their host.
+ */
+const GOOSE_PROVIDERS: Record<
+  string,
+  { goose: string; keyVar: string; hostVar: string; host: (gateway?: string) => string | undefined }
+> = {
+  anthropic: {
+    goose: "anthropic",
+    keyVar: "ANTHROPIC_API_KEY",
+    hostVar: "ANTHROPIC_HOST",
+    host: (gateway) => gateway && `${gateway}/anthropic`,
+  },
+  openai: {
+    goose: "openai",
+    keyVar: "OPENAI_API_KEY",
+    hostVar: "OPENAI_HOST",
+    host: (gateway) => gateway && modelGatewayBaseURL(gateway, "openai"),
+  },
+  google: {
+    goose: "google",
+    keyVar: "GOOGLE_API_KEY",
+    hostVar: "GOOGLE_HOST",
+    host: (gateway) => gateway && `${gateway}/google`,
+  },
+  xai: {
+    goose: "xai",
+    keyVar: "XAI_API_KEY",
+    hostVar: "XAI_HOST",
+    host: (gateway) => gateway && modelGatewayBaseURL(gateway, "xai"),
+  },
+  nebius: {
+    goose: "openai",
+    keyVar: "OPENAI_API_KEY",
+    hostVar: "OPENAI_HOST",
+    host: (gateway) =>
+      gateway ? modelGatewayBaseURL(gateway, "nebius") : "https://api.tokenfactory.nebius.com/v1",
+  },
+  greenpt: {
+    goose: "openai",
+    keyVar: "OPENAI_API_KEY",
+    hostVar: "OPENAI_HOST",
+    host: (gateway) =>
+      gateway ? modelGatewayBaseURL(gateway, "greenpt") : "https://api.greenpt.ai/v1",
+  },
 };
 
 /** A system PATH: enough to start a binary, nothing from this process's own PATH. */
@@ -154,21 +196,19 @@ export function gooseEnvironment(
   if (separator < 0) throw new Error(`Model "${run.config.model}" names no provider`);
   const provider = run.config.model.slice(0, separator);
   const model = run.config.model.slice(separator + 1);
-  const keyVar = PROVIDER_KEY_VARS[provider];
-  if (!keyVar) throw new Error(`Goose driver has no key mapping for provider "${provider}"`);
+  const reach = GOOSE_PROVIDERS[provider];
+  if (!reach) throw new Error(`Goose driver has no key mapping for provider "${provider}"`);
   const keyEnv = config.apiKeyEnv ?? DEFAULT_GOOSE_API_KEY_ENV;
   const key = env[keyEnv];
   if (!key) throw new Error(`Goose needs the ${provider} key in ${keyEnv}`);
-  const hostVar = PROVIDER_HOST_VARS[provider];
-  if (config.modelEndpoint && !hostVar) {
-    throw new Error(`Goose driver cannot point provider "${provider}" at a model endpoint`);
-  }
+  const gateway = config.modelGateway?.replace(/\/+$/, "");
+  const host = reach.host(gateway);
   return {
-    ...(config.modelEndpoint && hostVar ? { [hostVar]: config.modelEndpoint } : {}),
+    ...(host ? { [reach.hostVar]: host } : {}),
     PATH: CHILD_PATH,
-    GOOSE_PROVIDER: provider,
+    GOOSE_PROVIDER: reach.goose,
     GOOSE_MODEL: model,
-    [keyVar]: key,
+    [reach.keyVar]: key,
     GOOSE_MODE: config.mode ?? "auto",
     GOOSE_MAX_TURNS: String(run.config.maxIterations),
     GOOSE_DISABLE_KEYRING: "1",
