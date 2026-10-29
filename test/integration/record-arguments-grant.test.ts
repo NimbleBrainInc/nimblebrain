@@ -90,7 +90,8 @@ afterAll(async () => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
-async function setRecordSources(sources: string[] | undefined): Promise<void> {
+/** Writes `sources` as stored, typed `unknown` so a test can persist a malformed value. */
+async function setRecordSources(sources: unknown): Promise<void> {
   const store = runtime.getWorkspaceStore();
   const ws = await store.get(WS);
   if (!ws) throw new Error("workspace missing");
@@ -98,7 +99,7 @@ async function setRecordSources(sources: string[] | undefined): Promise<void> {
     connectors: ws.connectors.map((ref) => {
       if (ref.serverName !== OUTBOUND) return ref;
       const { recordSources: _prior, ...rest } = ref;
-      return sources === undefined ? rest : { ...rest, recordSources: sources };
+      return sources === undefined ? rest : { ...rest, recordSources: sources as string[] };
     }),
   });
 }
@@ -124,6 +125,15 @@ describe("record-arguments grant", () => {
     });
     await setRecordSources([]);
     expect(await runtime.recordArgumentsGrantFor(WS, OUTBOUND)).toBeNull();
+    await setRecordSources(undefined);
+    expect(await runtime.recordArgumentsGrantFor(WS, OUTBOUND)).toEqual({ sources: "all" });
+  });
+
+  it("grants nothing when the stored recordSources is not a list of names", async () => {
+    for (const malformed of [null, "ai-nimblebrain-people", ["ai-nimblebrain-people", 7]]) {
+      await setRecordSources(malformed);
+      expect(await runtime.recordArgumentsGrantFor(WS, OUTBOUND)).toBeNull();
+    }
     await setRecordSources(undefined);
     expect(await runtime.recordArgumentsGrantFor(WS, OUTBOUND)).toEqual({ sources: "all" });
   });
