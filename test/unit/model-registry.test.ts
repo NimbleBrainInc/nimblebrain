@@ -298,3 +298,68 @@ describe("anthropic request shape", () => {
     ).toBeUndefined();
   });
 });
+
+describe("providers through the model gateway", () => {
+  const GATEWAY = "http://model-gateway.test";
+
+  /** Resolve `model` on a provider set `gateway: true` and return the URL and key header of its call. */
+  async function gatewayCall(
+    id: "anthropic" | "openai" | "google" | "xai" | "nebius" | "greenpt",
+    model: string,
+  ): Promise<{ url: string; usedGatewayFetch: boolean }> {
+    let url = "";
+    let usedGatewayFetch = false;
+    const gatewayFetch = fakeFetch(async (input) => {
+      usedGatewayFetch = true;
+      url = String(input instanceof Request ? input.url : input);
+      return new Response("{}", { status: 500 });
+    });
+    const resolve = buildModelResolver(
+      { providers: { [id]: { gateway: true } } },
+      { url: `${GATEWAY}/`, fetch: gatewayFetch },
+    );
+    try {
+      await resolve(`${id}:${model}`).doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+      });
+    } catch {
+      // The stand-in answers 500; only the request it was sent matters here.
+    }
+    return { url, usedGatewayFetch };
+  }
+
+  it("calls each provider at its own path on the gateway, through the gateway's fetch", async () => {
+    const cases = [
+      ["anthropic", "claude-sonnet-4-6", `${GATEWAY}/anthropic/v1/messages`],
+      ["openai", "gpt-5", `${GATEWAY}/openai/v1/responses`],
+      [
+        "google",
+        "gemini-3-pro",
+        `${GATEWAY}/google/v1beta/models/gemini-3-pro:streamGenerateContent?alt=sse`,
+      ],
+      ["xai", "grok-4", `${GATEWAY}/xai/v1/chat/completions`],
+      ["nebius", "Qwen/Qwen3-235B-A22B-Instruct-2507", `${GATEWAY}/nebius/v1/chat/completions`],
+      ["greenpt", "gpt-oss-120b", `${GATEWAY}/greenpt/v1/chat/completions`],
+    ] as const;
+    for (const [id, model, expected] of cases) {
+      const call = await gatewayCall(id, model);
+      expect(call.usedGatewayFetch).toBe(true);
+      expect(call.url).toBe(expected);
+    }
+  });
+
+  it("refuses a gateway provider without the installation's gateway", () => {
+    expect(() => buildRegistry({ providers: { anthropic: { gateway: true } } })).toThrow(
+      /providers.anthropic.gateway needs execution.modelGateway and the installation's run key/,
+    );
+  });
+
+  it("refuses a gateway provider that also sets a key, so the runtime holds none", () => {
+    expect(() =>
+      buildRegistry(
+        { providers: { xai: { gateway: true, apiKey: "xai-key" } } },
+        { url: GATEWAY, fetch: fakeFetch(async () => new Response()) },
+      ),
+    ).toThrow(/providers.xai sets both gateway and apiKey/);
+  });
+});

@@ -26,9 +26,11 @@ export interface ExecutionConfig {
   /** The runtime every run executes on: `native`, or a name under `runtimes`. Default: `native`. */
   default?: string;
   /**
-   * The installation's model gateway: every external agent's model endpoint,
-   * reached with the turn's credential. Required outside the dev identity
-   * provider; absent, a worker calls its own provider with its own key.
+   * The installation's model gateway, by its root URL: each provider is served
+   * at `<gateway>/<provider>`. Every external agent's model endpoint, reached
+   * with the turn's credential, and the endpoint of each provider configured
+   * `gateway: true`. Required outside the dev identity provider for external
+   * runtimes; absent, a worker calls its own provider with its own key.
    */
   modelGateway?: string;
   /** Runtimes beside the native engine, by the name `default` refers to them. */

@@ -307,6 +307,26 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the runtime 
   Prefer environment variables for API keys in production. Config files end up in version control and backup snapshots by accident.
 </Aside>
 
+### Through a model gateway
+
+`"gateway": true` on a provider sends its calls through the installation's model gateway ([`execution.modelGateway`](#execution)) instead of to the provider, and the runtime holds no key for it: the gateway does.
+
+```json
+{
+  "providers": {
+    "anthropic": { "gateway": true },
+    "openai":    { "gateway": true },
+    "google":    { "gateway": true }
+  },
+  "execution": { "modelGateway": "http://model-gateway.my-namespace.svc" }
+}
+```
+
+- **Each provider at its own path.** The provider's client calls `<modelGateway>/<provider>` (`/anthropic/v1/messages`, `/google/v1beta/...`) in its own API, so caching, reasoning and file inputs work as they do direct.
+- **A credential per call.** Each call presents a model credential the runtime mints from its [run key](/config/secrets/) for that call alone, naming the run it belongs to, so the gateway attributes and budgets per run. A call outside any run (a conversation's title) gets a subject of its own.
+- **No key in the runtime.** A provider with `gateway: true` and an `apiKey` refuses to start, as does one with no `modelGateway` or no run key.
+- **Policy stays here.** Which models a workspace may use (`modelPolicy`, slots, the model picker) and the spend checks before each call are the runtime's, whichever path a call takes.
+
 ### GreenPT
 
 GreenPT is a European AI provider with an OpenAI-compatible API, optimized infrastructure, and data centers powered by 100% renewable energy. Configure it with the `greenpt:` prefix:
@@ -619,7 +639,7 @@ Experimental. Runs a turn on an agent other than NimbleBrain's own engine: a [ni
 {
   "execution": {
     "default": "pool",
-    "modelGateway": "http://model-gateway.my-namespace.svc/v1",
+    "modelGateway": "http://model-gateway.my-namespace.svc",
     "runtimes": {
       "pool": {
         "driver": "nimblebrain-agent",
@@ -633,7 +653,7 @@ Experimental. Runs a turn on an agent other than NimbleBrain's own engine: a [ni
 | Field | Meaning |
 |---|---|
 | `default` | The runtime every run executes on: `native`, or a name under `runtimes`. Default `native`. |
-| `modelGateway` | The installation's model gateway: the one model endpoint every external agent calls, with a per-turn credential. Required outside the `dev` identity provider. |
+| `modelGateway` | The installation's model gateway, by its root URL: each provider is at `<modelGateway>/<provider>`. The one model endpoint every external agent calls, with a per-turn credential, at its session model's provider; and the endpoint of each [provider set `gateway: true`](#through-a-model-gateway). Required for external runtimes outside the `dev` identity provider. |
 | `runtimes.<name>.driver` | The agent the worker serves: `nimblebrain-agent`. |
 | `runtimes.<name>.url` | The worker's ACP endpoint. |
 

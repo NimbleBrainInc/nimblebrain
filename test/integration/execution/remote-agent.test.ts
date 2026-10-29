@@ -134,7 +134,7 @@ describe("an external runtime over the network", () => {
     const credential = runKey.mintModelCredential({ runId: "run_remote", workspaceId: "ws_test" });
     const runtime = createAcpRuntime(
       "pool",
-      createNimbleBrainAgentDriver({ modelGateway: gateway.baseUrl }),
+      createNimbleBrainAgentDriver({ modelGateway: gateway.rootUrl }),
       createHttpConnection({
         url: workerUrl,
         credential: () => runKey.mintConnectionCredential(),
@@ -157,6 +157,9 @@ describe("an external runtime over the network", () => {
     const authorizations = gateway.authorizations.slice(before);
     expect(authorizations.length).toBe(2);
     expect(new Set(authorizations)).toEqual(new Set([`Bearer ${credential}`]));
+    // At the session model's provider on the gateway, with no provider key.
+    expect(new Set(gateway.paths.slice(before))).toEqual(new Set(["/anthropic/v1/messages"]));
+    expect(new Set(gateway.apiKeys.slice(before))).toEqual(new Set([null]));
     expect(events.some((e) => e.type === "execution.bound")).toBe(true);
   });
 
@@ -201,7 +204,7 @@ describe("the door, with the worker configured in execution", () => {
       secrets: { runKeyEnv: RUN_KEY_ENV },
       execution: {
         default: "pool",
-        modelGateway: gateway.baseUrl,
+        modelGateway: gateway.rootUrl,
         runtimes: { pool: { driver: "nimblebrain-agent", url: workerUrl } },
       },
     });
@@ -282,7 +285,7 @@ describe("the door, holding a credentialed chat turn to the installation's longe
       secrets: { runKeyEnv: RUN_KEY_ENV },
       execution: {
         default: "pool",
-        modelGateway: `http://127.0.0.1:${stalled.port}/v1`,
+        modelGateway: `http://127.0.0.1:${stalled.port}`,
         runtimes: { pool: { driver: "nimblebrain-agent", url: workerUrl } },
       },
     });
@@ -316,5 +319,65 @@ describe("the door, holding a credentialed chat turn to the installation's longe
     } finally {
       ceiling.mockRestore();
     }
+  });
+});
+
+describe("the native engine, its provider reached through the gateway", () => {
+  const workDir = join(tmpdir(), `nb-native-gateway-${Date.now()}`);
+  let runtime: Runtime;
+
+  beforeAll(async () => {
+    mkdirSync(workDir, { recursive: true });
+    process.env[RUN_KEY_ENV] = ring;
+    runtime = await Runtime.start({
+      identityProvider: devProvider,
+      models: { default: MODEL },
+      providers: { anthropic: { gateway: true } },
+      logging: { disabled: true },
+      workDir,
+      secrets: { runKeyEnv: RUN_KEY_ENV },
+      execution: { modelGateway: gateway.rootUrl },
+    });
+    await provisionTestWorkspace(runtime);
+  });
+
+  afterAll(async () => {
+    await runtime?.shutdown();
+    delete process.env[RUN_KEY_ENV];
+    rmSync(workDir, { recursive: true, force: true });
+  });
+
+  /** The claims of each credential the gateway saw since `before`. */
+  const claimsSince = (before: number) =>
+    gateway.authorizations.slice(before).map((a) => {
+      const token = a?.replace(/^Bearer /, "") ?? "";
+      return JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString());
+    });
+
+  test("calls the provider at its path on the gateway, with a credential per call and no key", async () => {
+    const turn = async () => {
+      const before = gateway.authorizations.length;
+      const result = await runtime.chat({
+        message: "hello",
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: DEV_IDENTITY,
+      });
+      expect(result.response.length).toBeGreaterThan(0);
+      expect(new Set(gateway.paths.slice(before))).toEqual(new Set(["/anthropic/v1/messages"]));
+      expect(new Set(gateway.apiKeys.slice(before))).toEqual(new Set([null]));
+      return claimsSince(before);
+    };
+    const firstTurn = await turn();
+    expect(firstTurn[0]).toMatchObject({
+      iss: publicOrigin(),
+      aud: "model-gateway",
+      workspace: TEST_WORKSPACE_ID,
+    });
+    // The subject is the turn's run, so the gateway budgets per turn. (A
+    // conversation's title is written after its first turn, inside it, so the
+    // second turn's window may also hold a call charged to the first.)
+    const firstSubjects = new Set(firstTurn.map((c) => c.sub));
+    const secondTurn = await turn();
+    expect(secondTurn.some((c) => !firstSubjects.has(c.sub))).toBe(true);
   });
 });

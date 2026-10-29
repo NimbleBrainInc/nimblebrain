@@ -80,6 +80,14 @@ export interface RequestContext {
    */
   runId?: string;
   /**
+   * The door's run id for every run, a chat turn included: the subject a model
+   * credential minted inside the run names, so a model gateway attributes and
+   * budgets each call per run. Not a correlation id (that is
+   * {@link conversationId} or {@link runId}); only what mints a credential reads
+   * it. Undefined outside a run.
+   */
+  credentialSubject?: string;
+  /**
    * The model this turn is actually running on, already resolved and
    * provider-qualified.
    *
