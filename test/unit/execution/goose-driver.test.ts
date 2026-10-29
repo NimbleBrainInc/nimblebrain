@@ -63,24 +63,54 @@ describe("goose environment", () => {
       OPENAI_API_KEY: "k",
     });
     expect(() =>
-      gooseEnvironment(CONFIG, run("nebius:some/model"), { NB_GOOSE_API_KEY: "k" }),
+      gooseEnvironment(CONFIG, run("mistral:some-model"), { NB_GOOSE_API_KEY: "k" }),
     ).toThrow(/no key mapping/);
   });
 
-  test("points the provider at a model endpoint, with the key that endpoint takes", () => {
-    const env = gooseEnvironment({ ...CONFIG, modelEndpoint: "http://127.0.0.1:4000" }, run(), {
-      NB_GOOSE_API_KEY: "run-token",
-    });
-    expect(env.ANTHROPIC_HOST).toBe("http://127.0.0.1:4000");
-    expect(env.ANTHROPIC_API_KEY).toBe("run-token");
-  });
-
-  test("refuses a model endpoint for a provider it cannot redirect", () => {
-    expect(() =>
-      gooseEnvironment({ ...CONFIG, modelEndpoint: "http://127.0.0.1:4000" }, run("openai:gpt-5"), {
+  test("runs an OpenAI-compatible provider as Goose's OpenAI provider at its own host", () => {
+    expect(
+      gooseEnvironment(CONFIG, run("nebius:Qwen/Qwen3-235B-A22B-Instruct-2507"), {
         NB_GOOSE_API_KEY: "k",
       }),
-    ).toThrow(/cannot point provider "openai"/);
+    ).toMatchObject({
+      GOOSE_PROVIDER: "openai",
+      GOOSE_MODEL: "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      OPENAI_API_KEY: "k",
+      OPENAI_HOST: "https://api.tokenfactory.nebius.com/v1",
+    });
+  });
+
+  test("points each provider at its path on the gateway, with the key the gateway takes", () => {
+    const gateway = "http://model-gateway.test/";
+    const cases: [string, Record<string, string>][] = [
+      [
+        "anthropic:claude-sonnet-4-6",
+        { ANTHROPIC_HOST: "http://model-gateway.test/anthropic", ANTHROPIC_API_KEY: "run-token" },
+      ],
+      [
+        "openai:gpt-5",
+        { OPENAI_HOST: "http://model-gateway.test/openai/v1", OPENAI_API_KEY: "run-token" },
+      ],
+      [
+        "google:gemini-3-pro",
+        { GOOGLE_HOST: "http://model-gateway.test/google", GOOGLE_API_KEY: "run-token" },
+      ],
+      ["xai:grok-4", { XAI_HOST: "http://model-gateway.test/xai/v1", XAI_API_KEY: "run-token" }],
+      [
+        "nebius:some/model",
+        { GOOSE_PROVIDER: "openai", OPENAI_HOST: "http://model-gateway.test/nebius/v1" },
+      ],
+      [
+        "greenpt:gpt-oss-120b",
+        { GOOSE_PROVIDER: "openai", OPENAI_HOST: "http://model-gateway.test/greenpt/v1" },
+      ],
+    ];
+    for (const [model, expected] of cases) {
+      const env = gooseEnvironment({ ...CONFIG, modelGateway: gateway }, run(model), {
+        NB_GOOSE_API_KEY: "run-token",
+      });
+      expect(env).toMatchObject(expected);
+    }
   });
 });
 

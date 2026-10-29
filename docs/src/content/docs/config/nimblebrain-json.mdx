@@ -653,7 +653,7 @@ Experimental. Runs a turn on an agent other than NimbleBrain's own engine: a [ni
 | Field | Meaning |
 |---|---|
 | `default` | The runtime every run executes on: `native`, or a name under `runtimes`. Default `native`. |
-| `modelGateway` | The installation's model gateway, by its root URL: each provider is at `<modelGateway>/<provider>`. The one model endpoint every external agent calls, with a per-turn credential, at its session model's provider; and the endpoint of each [provider set `gateway: true`](#through-a-model-gateway). Required for external runtimes outside the `dev` identity provider. |
+| `modelGateway` | The installation's model gateway, by its root URL: each provider is at `<modelGateway>/<provider>`. The one model endpoint every external agent calls, with a per-turn credential, at each call's provider; and the endpoint of each [provider set `gateway: true`](#through-a-model-gateway). Required for external runtimes outside the `dev` identity provider. |
 | `runtimes.<name>.driver` | The agent the worker serves: `nimblebrain-agent`. |
 | `runtimes.<name>.url` | The worker's ACP endpoint. |
 

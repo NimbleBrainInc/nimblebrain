@@ -51,6 +51,16 @@ export interface ModelGatewayAccess {
  */
 const GATEWAY_KEY_PLACEHOLDER = "via-model-gateway";
 
+/** Every provider the runtime builds, by the provider half of a model id. */
+export const MODEL_PROVIDERS = [
+  "anthropic",
+  "openai",
+  "google",
+  "xai",
+  "nebius",
+  "greenpt",
+] as const;
+
 /**
  * A provider's base URL on the model gateway: its own path, then the version
  * prefix its client expects (Gemini's API is `v1beta`, every other one `v1`).

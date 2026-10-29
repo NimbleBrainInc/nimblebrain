@@ -17,7 +17,7 @@
 
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { providerOfModelId } from "../../../model/model-id.ts";
-import { modelGatewayBaseURL } from "../../../model/registry.ts";
+import { MODEL_PROVIDERS, modelGatewayBaseURL } from "../../../model/registry.ts";
 import type { ResolvedRun } from "../../types.ts";
 import {
   type AcpDriver,
@@ -54,9 +54,11 @@ export function createNimbleBrainAgentDriver(opts: NimbleBrainAgentDriverOptions
  * The model credential goes only beside the gateway, as the agent's
  * `modelEndpoint`: the agent refuses an endpoint without a credential, and a
  * credential without one would be presented to the worker's own provider
- * instead of its key. The endpoint is the session model's provider on the
- * gateway (`<gateway>/<provider>/v1`), the base URL that provider's client
- * expects.
+ * instead of its key. `modelEndpoints` names every provider's base URL on the
+ * gateway (`<gateway>/<provider>/v1`), so each of the session's calls (a
+ * summary on another provider's model included) reaches its own provider;
+ * `modelEndpoint` is the session model's, for a worker older than
+ * `modelEndpoints`.
  */
 export function agentSessionMeta(run: ResolvedRun, modelGateway?: string): Record<string, unknown> {
   const modelAccess =
@@ -64,6 +66,12 @@ export function agentSessionMeta(run: ResolvedRun, modelGateway?: string): Recor
       ? {
           modelCredential: run.modelCredential,
           modelEndpoint: modelGatewayBaseURL(modelGateway, providerOfModelId(run.config.model)),
+          modelEndpoints: Object.fromEntries(
+            MODEL_PROVIDERS.map((provider) => [
+              provider,
+              modelGatewayBaseURL(modelGateway, provider),
+            ]),
+          ),
         }
       : {};
   return {
