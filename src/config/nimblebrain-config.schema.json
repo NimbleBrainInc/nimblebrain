@@ -24,7 +24,7 @@
           "properties": {
             "gateway": {
               "type": "boolean",
-              "description": "Reach this provider through the installation's model gateway (execution.modelGateway) at <gateway>/<provider>, with a model credential the runtime mints per call from its run key, instead of a key of its own. The gateway holds the provider's key; setting apiKey too refuses the boot."
+              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
             },
             "apiKey": {
               "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
@@ -43,7 +43,7 @@
           "properties": {
             "gateway": {
               "type": "boolean",
-              "description": "Reach this provider through the installation's model gateway (execution.modelGateway) at <gateway>/<provider>, with a model credential the runtime mints per call from its run key, instead of a key of its own. The gateway holds the provider's key; setting apiKey too refuses the boot."
+              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
             },
             "apiKey": {
               "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
@@ -64,7 +64,7 @@
           "properties": {
             "gateway": {
               "type": "boolean",
-              "description": "Reach this provider through the installation's model gateway (execution.modelGateway) at <gateway>/<provider>, with a model credential the runtime mints per call from its run key, instead of a key of its own. The gateway holds the provider's key; setting apiKey too refuses the boot."
+              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
             },
             "apiKey": {
               "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
@@ -84,7 +84,7 @@
           "properties": {
             "gateway": {
               "type": "boolean",
-              "description": "Reach this provider through the installation's model gateway (execution.modelGateway) at <gateway>/<provider>, with a model credential the runtime mints per call from its run key, instead of a key of its own. The gateway holds the provider's key; setting apiKey too refuses the boot."
+              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
             },
             "apiKey": {
               "type": "string",
@@ -108,7 +108,7 @@
           "properties": {
             "gateway": {
               "type": "boolean",
-              "description": "Reach this provider through the installation's model gateway (execution.modelGateway) at <gateway>/<provider>, with a model credential the runtime mints per call from its run key, instead of a key of its own. The gateway holds the provider's key; setting apiKey too refuses the boot."
+              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
             },
             "apiKey": {
               "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
@@ -132,7 +132,7 @@
           "properties": {
             "gateway": {
               "type": "boolean",
-              "description": "Reach this provider through the installation's model gateway (execution.modelGateway) at <gateway>/<provider>, with a model credential the runtime mints per call from its run key, instead of a key of its own. The gateway holds the provider's key; setting apiKey too refuses the boot."
+              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
             },
             "apiKey": {
               "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
@@ -509,7 +509,7 @@
         },
         "modelGateway": {
           "type": "string",
-          "description": "The installation's model gateway, by its root URL: each provider is served at <gateway>/<provider>. Every external agent's model endpoint, reached with a per-turn credential the runtime mints, and the endpoint of each provider configured gateway: true. Required outside the dev identity provider for external runtimes. Absent, a worker calls its own provider with its own key."
+          "description": "The installation's model gateway, by its root URL: each provider is served at <gateway>/<provider>. Every external agent's model endpoint, reached with a per-turn credential the runtime mints, and the native engine's for every provider: the runtime asks the gateway which providers it serves (GET <gateway>/providers) and holds no provider config, so providers.<id>.apiKey, baseURL and models refuse the boot beside it (narrow models with modelPolicy). Required outside the dev identity provider for external runtimes. Absent, a worker calls its own provider with its own key."
         },
         "runtimes": {
           "type": "object",

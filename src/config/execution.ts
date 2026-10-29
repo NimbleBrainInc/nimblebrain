@@ -28,8 +28,8 @@ export interface ExecutionConfig {
   /**
    * The installation's model gateway, by its root URL: each provider is served
    * at `<gateway>/<provider>`. Every external agent's model endpoint, reached
-   * with the turn's credential, and the endpoint of each provider configured
-   * `gateway: true`. Required outside the dev identity provider for external
+   * with the turn's credential, and the native engine's for every provider (the
+   * runtime then holds no provider config). Required outside the dev identity provider for external
    * runtimes; absent, a worker calls its own provider with its own key.
    */
   modelGateway?: string;

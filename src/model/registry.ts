@@ -31,11 +31,10 @@ export interface ProvidersConfig {
 }
 
 /**
- * How a provider with `gateway: true` is reached: through the installation's
- * model gateway (`execution.modelGateway`), which holds the provider's key and
- * serves each provider at `/<provider>/` in its own API (ADR-0057). The runtime
- * holds no key for such a provider; `fetch` presents a model credential the
- * runtime mints for each call instead.
+ * The installation's model gateway (`execution.modelGateway`), which holds the
+ * providers' keys and serves each provider at `/<provider>/` in its own API
+ * (ADR-0057). With one, every provider is reached through it: the runtime holds
+ * no key, and `fetch` presents a model credential it mints for each call.
  */
 export interface ModelGatewayAccess {
   /** The gateway's root URL. */
@@ -72,25 +71,22 @@ export function modelGatewayBaseURL(gatewayUrl: string, provider: string): strin
 
 /**
  * Where and how one provider's client calls: through the gateway (its base URL
- * there, the placeholder key, the gateway's fetch) when its config says
- * `gateway: true`, and `undefined` otherwise. A gateway provider takes no key of
- * its own, so the runtime holds none; one configured anyway refuses the boot.
+ * there, the placeholder key, the gateway's fetch) when the installation has
+ * one, and `undefined` otherwise. `gateway: true` without a gateway refuses the
+ * boot; with one the flag changes nothing, since every provider goes through it.
  */
 function gatewayClient(
   id: string,
-  cfg: { apiKey?: string; gateway?: boolean },
+  cfg: { gateway?: boolean },
   gateway: ModelGatewayAccess | undefined,
 ): { baseURL: string; apiKey: string; fetch: typeof fetch } | undefined {
-  if (!cfg.gateway) return undefined;
   if (!gateway) {
-    throw new Error(
-      `providers.${id}.gateway needs execution.modelGateway and the installation's run key, which mints each call's credential`,
-    );
-  }
-  if (cfg.apiKey) {
-    throw new Error(
-      `providers.${id} sets both gateway and apiKey: through the gateway, the gateway holds the key; remove providers.${id}.apiKey`,
-    );
+    if (cfg.gateway) {
+      throw new Error(
+        `providers.${id}.gateway needs execution.modelGateway and the installation's run key, which mints each call's credential`,
+      );
+    }
+    return undefined;
   }
   return {
     baseURL: modelGatewayBaseURL(gateway.url, id),
@@ -106,11 +102,41 @@ const GREENPT_DEFAULT_BASE_URL = "https://api.greenpt.ai/v1";
 const NEBIUS_DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1";
 
 /**
- * Build a provider registry from config. Creates AI SDK provider instances
- * for each configured provider.
+ * The fields a provider may not set behind a gateway, and why: the gateway
+ * holds the key and decides where each provider is, and which models an
+ * organization may use is `modelPolicy`'s. Each refuses the boot rather than
+ * being ignored, so no setting stops working without a word.
+ */
+const GATEWAY_REFUSED_FIELDS = {
+  apiKey: "the gateway holds the provider's key",
+  baseURL: "the gateway decides where the provider is",
+  models: "narrow models with modelPolicy.allowed",
+} as const;
+
+function assertNothingBesideGateway(config: ProvidersConfig): void {
+  for (const [id, cfg] of Object.entries(config.providers ?? {})) {
+    for (const [field, why] of Object.entries(GATEWAY_REFUSED_FIELDS)) {
+      if (cfg && (cfg as Record<string, unknown>)[field] !== undefined) {
+        throw new Error(
+          `providers.${id}.${field} is set, but execution.modelGateway reaches every provider: ${why}; remove providers.${id}.${field}`,
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Build a provider registry from config. With the installation's gateway, every
+ * provider the runtime knows (`MODEL_PROVIDERS`) is built through it, whatever
+ * `providers` names; which of them the gateway serves is its own answer
+ * (`watchGatewayProviders`). Without one, each configured provider is built
+ * with its own key.
  */
 export function buildRegistry(config: ProvidersConfig, gateway?: ModelGatewayAccess): Provider {
-  const providersCfg = config.providers ?? { anthropic: {} };
+  if (gateway) assertNothingBesideGateway(config);
+  const providersCfg = gateway
+    ? Object.fromEntries(MODEL_PROVIDERS.map((id) => [id, config.providers?.[id] ?? {}]))
+    : (config.providers ?? { anthropic: {} });
 
   const providers: Record<string, ProviderV4> = {};
 

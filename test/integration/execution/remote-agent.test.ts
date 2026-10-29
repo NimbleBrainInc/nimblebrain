@@ -251,9 +251,17 @@ describe("the door, with the worker configured in execution", () => {
       maxRunDurationMs: 30_000,
     });
 
-    const [authorization] = gateway.authorizations.slice(before);
-    const token = authorization?.replace(/^Bearer /, "") ?? "";
-    const claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString());
+    // The previous chat's title is written through the gateway too, under that
+    // chat's run, and may land in this window: take the first call of a new run.
+    const decode = (a: string | null) =>
+      JSON.parse(
+        Buffer.from(a?.replace(/^Bearer /, "").split(".")[1] ?? "", "base64url").toString(),
+      );
+    const earlier = new Set(gateway.authorizations.slice(0, before).map((a) => decode(a).sub));
+    const claims = gateway.authorizations
+      .slice(before)
+      .map(decode)
+      .find((c) => !earlier.has(c.sub));
     expect(claims.exp - claims.iat).toBeGreaterThanOrEqual(90);
     expect(claims.exp - claims.iat).toBeLessThanOrEqual(91);
   });
@@ -322,7 +330,7 @@ describe("the door, holding a credentialed chat turn to the installation's longe
   });
 });
 
-describe("the native engine, its provider reached through the gateway", () => {
+describe("the native engine, every provider reached through the gateway", () => {
   const workDir = join(tmpdir(), `nb-native-gateway-${Date.now()}`);
   let runtime: Runtime;
 
@@ -332,7 +340,6 @@ describe("the native engine, its provider reached through the gateway", () => {
     runtime = await Runtime.start({
       identityProvider: devProvider,
       models: { default: MODEL },
-      providers: { anthropic: { gateway: true } },
       logging: { disabled: true },
       workDir,
       secrets: { runKeyEnv: RUN_KEY_ENV },
@@ -379,5 +386,23 @@ describe("the native engine, its provider reached through the gateway", () => {
     const firstSubjects = new Set(firstTurn.map((c) => c.sub));
     const secondTurn = await turn();
     expect(secondTurn.some((c) => !firstSubjects.has(c.sub))).toBe(true);
+  });
+
+  test("offers the providers the gateway says it serves, with no provider config of its own", async () => {
+    const deadline = Date.now() + 5_000;
+    while (runtime.getGatewayProviders()?.served() === undefined && Date.now() < deadline) {
+      await Bun.sleep(10);
+    }
+    expect(runtime.getConfiguredProviders()).toEqual(["anthropic"]);
+    expect(runtime.getProviderConfigs()).toEqual({ anthropic: {} });
+    expect(runtime.isModelPermitted(MODEL)).toBe(true);
+    expect(runtime.isModelPermitted("openai:gpt-5")).toBe(false);
+    // The gateway was asked with a model credential of its own, like any call outside a run.
+    const [listing] = gateway.providerListings;
+    const claims = JSON.parse(
+      Buffer.from(listing?.replace(/^Bearer /, "").split(".")[1] ?? "", "base64url").toString(),
+    );
+    expect(claims).toMatchObject({ aud: "model-gateway", iss: publicOrigin() });
+    expect(claims.sub).toMatch(/^call_/);
   });
 });

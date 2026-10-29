@@ -309,22 +309,18 @@ Each provider key is optional. If a provider's `apiKey` is omitted, the runtime 
 
 ### Through a model gateway
 
-`"gateway": true` on a provider sends its calls through the installation's model gateway ([`execution.modelGateway`](#execution)) instead of to the provider, and the runtime holds no key for it: the gateway does.
+With [`execution.modelGateway`](#execution) set, every provider's calls go through the installation's model gateway instead of to the provider, and the runtime holds no provider config: the gateway holds the keys and says which providers it serves.
 
 ```json
 {
-  "providers": {
-    "anthropic": { "gateway": true },
-    "openai":    { "gateway": true },
-    "google":    { "gateway": true }
-  },
   "execution": { "modelGateway": "http://model-gateway.my-namespace.svc" }
 }
 ```
 
 - **Each provider at its own path.** The provider's client calls `<modelGateway>/<provider>` (`/anthropic/v1/messages`, `/google/v1beta/...`) in its own API, so caching, reasoning and file inputs work as they do direct.
 - **A credential per call.** Each call presents a model credential the runtime mints from its [run key](/config/secrets/) for that call alone, naming the run it belongs to, so the gateway attributes and budgets per run. Work a run forks, such as a conversation's title, carries that run's subject; a call outside any run gets a single-use subject of its own.
-- **No key in the runtime.** A provider with `gateway: true` and an `apiKey` refuses to start, as does one with no `modelGateway` or no run key.
+- **The gateway says which providers it serves.** At startup the runtime asks `GET <modelGateway>/providers` and offers only those providers' models. Until the gateway answers it offers every provider, and keeps asking, waiting longer each time; `nb_model_gateway_providers_unknown` is 1 meanwhile.
+- **No provider config in the runtime.** `providers.<id>.apiKey`, `baseURL` or `models` beside a gateway refuses to start: the gateway holds the keys and decides where each provider is, and `modelPolicy` narrows models. A gateway also needs the run key. `"gateway": true` on a provider is deprecated and changes nothing beside a gateway; without one it refuses to start.
 - **Policy stays here.** Which models a workspace may use (`modelPolicy`, slots, the model picker) and the spend checks before each call are the runtime's, whichever path a call takes.
 
 ### GreenPT
@@ -653,7 +649,7 @@ Experimental. Runs a turn on an agent other than NimbleBrain's own engine: a [ni
 | Field | Meaning |
 |---|---|
 | `default` | The runtime every run executes on: `native`, or a name under `runtimes`. Default `native`. |
-| `modelGateway` | The installation's model gateway, by its root URL: each provider is at `<modelGateway>/<provider>`. The one model endpoint every external agent calls, with a per-turn credential, at each call's provider; and the endpoint of each [provider set `gateway: true`](#through-a-model-gateway). Required for external runtimes outside the `dev` identity provider. |
+| `modelGateway` | The installation's model gateway, by its root URL: each provider is at `<modelGateway>/<provider>`. The one model endpoint every external agent calls, with a per-turn credential, at each call's provider; and the native engine's for [every provider](#through-a-model-gateway). Required for external runtimes outside the `dev` identity provider. |
 | `runtimes.<name>.driver` | The agent the worker serves: `nimblebrain-agent`. |
 | `runtimes.<name>.url` | The worker's ACP endpoint. |
 

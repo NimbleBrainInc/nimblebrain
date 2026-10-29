@@ -771,3 +771,33 @@ export const notificationsTemplateMissesTotal = new Counter({
 export function notificationSourceLabel(source: string | undefined): string {
   return source && SAFE_SOURCE.test(source) ? source : "other";
 }
+
+/**
+ * Whether the model gateway has said which providers it serves, read through
+ * this provider at scrape time. `null` without a gateway (the gauge then reports
+ * nothing).
+ */
+let gatewayProvidersStatus: (() => { known: boolean }) | null = null;
+
+/** Wire `nb_model_gateway_providers_unknown` to the runtime's gateway provider watch. */
+export function registerGatewayProvidersGauge(status: (() => { known: boolean }) | null): void {
+  gatewayProvidersStatus = status;
+}
+
+/**
+ * Gauge: 1 while the runtime has a model gateway that has not yet said which
+ * providers it serves (`GET <gateway>/providers`), 0 once it has. Until then the
+ * runtime offers every provider it knows, so a model the gateway does not serve
+ * stays selectable and fails when called; a steady 1 means the runtime cannot
+ * reach or authenticate to its gateway. Absent without a gateway.
+ */
+export const modelGatewayProvidersUnknown = new Gauge({
+  name: "nb_model_gateway_providers_unknown",
+  help: "1 while the model gateway has not answered which providers it serves (every provider is offered meanwhile); 0 once it has. Absent without a gateway.",
+  registers: [metricsRegistry],
+  collect() {
+    this.reset();
+    const status = gatewayProvidersStatus?.();
+    if (status) this.set(status.known ? 0 : 1);
+  },
+});

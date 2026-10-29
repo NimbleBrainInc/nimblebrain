@@ -29,12 +29,16 @@ export interface FakeAnthropic {
   paths: string[];
   /** Each request's `x-api-key` header (`null` when absent), in the same order. */
   apiKeys: (string | null)[];
+  /** The `Authorization` header of each `GET /providers`, as a gateway answers it. */
+  providerListings: (string | null)[];
   close(): Promise<void>;
 }
 
 export interface FakeAnthropicOptions {
   /** The arguments of the tool call, as JSON. */
   toolInput: string;
+  /** What `GET /providers` names, as a model gateway answers. Default: `["anthropic"]`. */
+  providers?: string[];
 }
 
 export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
@@ -42,10 +46,15 @@ export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
   const authorizations: (string | null)[] = [];
   const paths: string[] = [];
   const apiKeys: (string | null)[] = [];
+  const providerListings: (string | null)[] = [];
   const http = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(req) {
+      if (req.method === "GET" && new URL(req.url).pathname === "/providers") {
+        providerListings.push(req.headers.get("authorization"));
+        return Response.json({ providers: opts.providers ?? ["anthropic"] });
+      }
       if (!new URL(req.url).pathname.endsWith("/messages"))
         return new Response(null, { status: 404 });
       const body = (await req.json()) as MessagesRequest;
@@ -65,6 +74,7 @@ export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
     authorizations,
     paths,
     apiKeys,
+    providerListings,
     close: async () => {
       await http.stop(true);
     },
