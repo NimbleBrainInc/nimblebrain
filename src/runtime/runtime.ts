@@ -6158,6 +6158,8 @@ async function seedWorkspaceConnectorInstances(
 /**
  * The installation's model gateway, when it has one: every provider is then
  * reached through it with a credential minted per call, which needs the run key.
+ * A gateway without the run key refuses the boot, since building the providers
+ * without it would call them directly, around the gateway.
  */
 function modelGatewayAccess(
   config: RuntimeConfig,
@@ -6165,7 +6167,13 @@ function modelGatewayAccess(
 ): ModelGatewayAccess | undefined {
   if (config.languageModel) return undefined;
   const gatewayUrl = config.execution?.modelGateway;
-  return gatewayUrl && runKey ? { url: gatewayUrl, fetch: modelGatewayFetch(runKey) } : undefined;
+  if (!gatewayUrl) return undefined;
+  if (!runKey) {
+    throw new Error(
+      "execution.modelGateway needs the installation's run key, which mints each model call's credential",
+    );
+  }
+  return { url: gatewayUrl, fetch: modelGatewayFetch(runKey) };
 }
 
 function resolveModel(

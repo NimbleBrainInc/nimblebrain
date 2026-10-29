@@ -1,7 +1,8 @@
 /**
  * `secrets.runKeyEnv` names the variable the run key is read from at boot: the
  * named variable is the only source, a stored copy is ignored, and a named
- * variable that holds nothing refuses the start.
+ * variable that holds nothing refuses the start. A model gateway with no run key
+ * refuses the start too.
  */
 
 import { afterEach, expect, test } from "bun:test";
@@ -80,4 +81,14 @@ test("with no variable named, the stored run key is used as before", async () =>
       ?.keySet()
       .keys.map((key) => key.kid),
   ).toEqual(["run-store"]);
+});
+
+test("a model gateway without the run key refuses the start, with no external runtime", async () => {
+  const start = Runtime.start({
+    identityProvider: devProvider,
+    logging: { disabled: true },
+    workDir: workDir(),
+    execution: { modelGateway: "http://gateway.test" },
+  });
+  await expect(start).rejects.toThrow(/execution\.modelGateway needs the installation's run key/);
 });
