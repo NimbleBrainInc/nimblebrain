@@ -15,10 +15,15 @@ import type { HostResourcesRateLimit } from "./rate-limit.ts";
  *   - the host's client capability, claimed on both eras by a workspace
  *     connector's connection (`resourceArgumentsClientExtension`);
  *   - the tool's `_meta`, where the tool names which arguments hold resource
- *     URIs and, for each, either the schemes it accepts or that it takes a
- *     record from any connector (`parseResourceArgumentsDeclaration`);
+ *     URIs and, for each, the schemes it accepts or that it accepts any
+ *     (`parseResourceArgumentsDeclaration`);
  *   - the `tools/call` request's `_meta`, where the host puts one entry per URI,
  *     resolved or not (`ResourceArgumentEntry`).
+ *
+ * The host reads for a connector only under its record-arguments grant
+ * (ADR-0058): the operator's catalog grants it, and the workspace narrows it to
+ * named source connectors or revokes it. A declaration says what a tool
+ * accepts; it never grants a read.
  *
  * Nothing travels from server to host, so the same mechanism works on a 2025-era
  * connection and on `2026-07-28`, which has no server-to-client requests.
@@ -61,8 +66,8 @@ export function resourceArgumentsClientExtension(
 
 /**
  * What one declared argument accepts: URIs of the schemes it names (lowercase),
- * or a record from any connector in the workspace, which the host resolves only
- * for a connector the workspace granted record arguments (ADR-0058).
+ * or a URI of any scheme (`records`). Either is read only under the calling
+ * connector's grant.
  */
 export type ResourceArgumentSpec =
   | { readonly kind: "schemes"; readonly schemes: ReadonlySet<string> }
@@ -72,18 +77,11 @@ export type ResourceArgumentSpec =
 export type ResourceArgumentsDeclaration = ReadonlyMap<string, ResourceArgumentSpec>;
 
 /**
- * Which records a connector may receive through its record arguments: from
- * every connector in the workspace, or only from the named ones. No grant at
- * all is `null` wherever a grant is asked for.
+ * Which connectors a connector may receive records from through its resource
+ * arguments: every connector in the workspace, or only the named ones. No
+ * grant at all is `null` wherever a grant is asked for.
  */
 export type RecordArgumentsGrant = { readonly sources: "all" | ReadonlySet<string> };
-
-/**
- * How the host treats one URI a call carries: `declared` (its scheme is one
- * its argument names), `record` (it sits in a record argument, so it needs the
- * calling connector's grant), or `undeclared` (refused unread).
- */
-export type ResourceArgumentAdmission = "declared" | "record" | "undeclared";
 
 /** RFC 3986 scheme grammar. */
 const SCHEME_RE = /^[a-z][a-z0-9+.-]*$/;
@@ -101,9 +99,8 @@ const SCHEME_RE = /^[a-z][a-z0-9+.-]*$/;
  *
  * Lenient on what it does not know, strict on what it reads: an argument entry
  * with neither a non-empty `schemes` list of valid scheme names nor
- * `records: true` declares nothing. There is no scheme wildcard: a record
- * argument accepts any connector's records, and is resolved only under the
- * calling connector's grant. An entry with both is a scheme argument.
+ * `records: true` declares nothing, and `*` is not a scheme. An entry with both
+ * accepts only its schemes.
  */
 export function parseResourceArgumentsDeclaration(
   meta: Record<string, unknown> | undefined,
@@ -127,28 +124,22 @@ export function parseResourceArgumentsDeclaration(
 
 /**
  * Every string a declared argument holds, in first-seen order, deduplicated,
- * each with how the host treats it ({@link ResourceArgumentAdmission}). A string
- * with a scheme in a record argument is a record; one without a scheme is
- * undeclared wherever it sits. A string in more than one argument takes the
- * most permissive treatment any of them gives it. Reads only the top-level
- * argument, as a string or an array of strings; anything else in it is not a
- * URI and is skipped.
+ * each with whether an argument it sits in accepts it: a string with a scheme
+ * that argument names, or any scheme in a `records` argument. A string without
+ * a scheme is never accepted. Reads only the top-level argument, as a string or
+ * an array of strings; anything else in it is not a URI and is skipped.
  */
 export function collectResourceArgumentUris(
   declaration: ResourceArgumentsDeclaration,
   args: Record<string, unknown>,
-): { uri: string; admission: ResourceArgumentAdmission }[] {
-  const seen = new Map<string, ResourceArgumentAdmission>();
+): { uri: string; declared: boolean }[] {
+  const seen = new Map<string, boolean>();
   for (const [name, spec] of declaration) {
     for (const v of stringsIn(args[name])) {
-      const admission = admissionOf(spec, v);
-      const prior = seen.get(v);
-      if (prior === undefined || ADMISSION_RANK[admission] > ADMISSION_RANK[prior]) {
-        seen.set(v, admission);
-      }
+      seen.set(v, (seen.get(v) ?? false) || accepts(spec, v));
     }
   }
-  return [...seen].map(([uri, admission]) => ({ uri, admission }));
+  return [...seen].map(([uri, declared]) => ({ uri, declared }));
 }
 
 /** The non-empty strings an argument holds, as a string or an array of strings. */
@@ -157,25 +148,16 @@ function stringsIn(value: unknown): string[] {
   return values.filter((v): v is string => typeof v === "string" && v.length > 0);
 }
 
-/** How one argument's spec treats one string in it. */
-function admissionOf(spec: ResourceArgumentSpec, value: string): ResourceArgumentAdmission {
+/** Whether one argument's spec accepts one string in it. */
+function accepts(spec: ResourceArgumentSpec, value: string): boolean {
   const scheme = schemeOf(value);
-  if (scheme === null) return "undeclared";
-  if (spec.kind === "records") return "record";
-  return spec.schemes.has(scheme) ? "declared" : "undeclared";
+  if (scheme === null) return false;
+  return spec.kind === "records" || spec.schemes.has(scheme);
 }
-
-/** A declared scheme needs no grant, so it outranks a record, which outranks a refusal. */
-const ADMISSION_RANK: Record<ResourceArgumentAdmission, number> = {
-  undeclared: 0,
-  record: 1,
-  declared: 2,
-};
 
 /**
  * Why the host could not hand a URI's contents to the tool. `not_granted` is the
- * workspace's (the calling connector may not receive records, or not from the
- * connector that serves this one); `too_large` is the
+ * workspace's (the calling connector holds no record-arguments grant); `too_large` is the
  * resource's own (over `maxChars`: drop the citation); `over_limit` is the
  * call's (too many URIs, or past the per-call size budget: split the call).
  */
@@ -235,7 +217,7 @@ export interface ResourceArgumentsContext {
 export interface ResourceArgumentsResolver {
   readonly limits: ResourceArgumentsLimits;
   resolve(
-    uris: readonly { uri: string; admission: ResourceArgumentAdmission }[],
+    uris: readonly { uri: string; declared: boolean }[],
     ctx: ResourceArgumentsContext,
   ): Promise<{ entries: ResourceArgumentEntries; resolutions: ResourceArgumentResolution[] }>;
 }
@@ -250,7 +232,7 @@ export interface ResourceArgumentsResolverDeps {
   sourcesOf(workspaceId: string): readonly ResourceServingSource[];
   /**
    * The calling connector's record-arguments grant in this workspace, or null
-   * when it has none. Asked only for a call that carries a record URI.
+   * when it has none. Asked only for a call that has a declared URI to read.
    */
   recordGrantOf(workspaceId: string, connectorId: string): Promise<RecordArgumentsGrant | null>;
   /** Whether the host resolves this URI's scheme itself (`files://`, `ui://`, …), so no connector may claim it. */
@@ -287,10 +269,10 @@ const MAX_UTF8_BYTES_PER_CHAR = 3;
  * text only (a blob is `not_text`, never bytes), and no more characters than
  * `maxChars`, the agent's read limit (`too_large`, never cut).
  *
- * A URI in a record argument is read only under the calling connector's grant
- * (`not_granted` without one), and only from the connectors the grant names. A
- * URI served by a connector outside a narrowed grant reads as `not_found`, the
- * same answer as one no connector serves.
+ * Every URI is read only under the calling connector's grant (`not_granted`
+ * without one), and only from the connectors the grant names. A URI served by a
+ * connector outside a narrowed grant reads as `not_found`, the same answer as
+ * one no connector serves.
  *
  * "No connector serves it", "the read failed", and "the read returned nothing"
  * all collapse to `not_found`, as `ai.nimblebrain/resources/read` collapses
@@ -393,14 +375,14 @@ export function createResourceArgumentsResolver(
    * response is held waiting for the others to settle.
    */
   function admit(
-    uris: readonly { uri: string; admission: ResourceArgumentAdmission }[],
+    uris: readonly { uri: string; declared: boolean }[],
     grant: RecordArgumentsGrant | null,
   ) {
     const admitted: string[] = [];
     const refused = new Map<string, Outcome>();
     let reserved = 0;
-    for (const { uri, admission } of uris) {
-      const unread = unreadable(uri, admission, grant);
+    for (const { uri, declared } of uris) {
+      const unread = unreadable(uri, declared, grant);
       if (unread) {
         refused.set(uri, unread);
       } else if (admitted.length >= limits.maxUris) {
@@ -429,12 +411,12 @@ export function createResourceArgumentsResolver(
     return { admitted, refused };
   }
 
-  /** The calling connector's grant, asked only when the call carries a record; a failed lookup grants nothing. */
+  /** The calling connector's grant, asked only when the call has a URI to read; a failed lookup grants nothing. */
   async function grantFor(
-    uris: readonly { admission: ResourceArgumentAdmission }[],
+    uris: readonly { declared: boolean }[],
     ctx: ResourceArgumentsContext,
   ): Promise<RecordArgumentsGrant | null> {
-    if (!uris.some((u) => u.admission === "record")) return null;
+    if (!uris.some((u) => u.declared)) return null;
     try {
       return await deps.recordGrantOf(ctx.workspaceId, ctx.connectorId);
     } catch (err) {
@@ -453,10 +435,7 @@ export function createResourceArgumentsResolver(
       const sources = admitted.length > 0 ? deps.sourcesOf(ctx.workspaceId) : [];
       const only = grant && grant.sources !== "all" ? grant.sources : null;
       const granted = only ? sources.filter((s) => only.has(s.name)) : sources;
-      const isRecord = new Set(uris.filter((u) => u.admission === "record").map((u) => u.uri));
-      const read = await Promise.all(
-        admitted.map((uri) => readOne(uri, ctx, isRecord.has(uri) ? granted : sources)),
-      );
+      const read = await Promise.all(admitted.map((uri) => readOne(uri, ctx, granted)));
       const byUri = new Map(admitted.map((uri, i) => [uri, read[i]]));
 
       const entries: ResourceArgumentEntries = {};
@@ -475,17 +454,17 @@ export function createResourceArgumentsResolver(
 /** The refusal for a URI the host may not read at all, whatever the call's limits, or null. */
 function unreadable(
   uri: string,
-  admission: ResourceArgumentAdmission,
+  declared: boolean,
   grant: RecordArgumentsGrant | null,
 ): Outcome | null {
-  if (admission === "undeclared") {
+  if (!declared) {
     return outcome(
       uri,
       "scheme_not_declared",
       "This argument does not declare the URI's scheme, so the host did not read it.",
     );
   }
-  if (admission === "record" && !grant) {
+  if (!grant) {
     return outcome(
       uri,
       "not_granted",

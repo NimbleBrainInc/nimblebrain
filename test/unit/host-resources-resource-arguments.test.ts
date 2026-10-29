@@ -6,7 +6,6 @@ import {
   parseResourceArgumentsDeclaration,
   RESOURCE_ARGUMENTS_EXTENSION_ID,
   type RecordArgumentsGrant,
-  type ResourceArgumentAdmission,
   type ResourceServingSource,
   TokenBucketRateLimit,
 } from "../../src/host-resources/index.ts";
@@ -45,7 +44,7 @@ function resolverOver(
   } = {},
 ) {
   const resolver = createResourceArgumentsResolver({
-    recordGrantOf: async () => opts.grant ?? null,
+    recordGrantOf: async () => ("grant" in opts ? (opts.grant ?? null) : { sources: "all" }),
     sourcesOf: (wsId) => byWorkspace[wsId] ?? [],
     isHostScheme: isReservedResourceScheme,
     rateLimit: opts.rateLimit ?? new TokenBucketRateLimit(),
@@ -55,10 +54,10 @@ function resolverOver(
   });
   return {
     /** The entries a call carries. */
-    resolve: async (uris: { uri: string; admission: ResourceArgumentAdmission }[]) =>
+    resolve: async (uris: { uri: string; declared: boolean }[]) =>
       (await resolver.resolve(uris, ctx)).entries,
     /** The audit records of the same resolution. */
-    resolutions: async (uris: { uri: string; admission: ResourceArgumentAdmission }[]) =>
+    resolutions: async (uris: { uri: string; declared: boolean }[]) =>
       (await resolver.resolve(uris, ctx)).resolutions,
   };
 }
@@ -81,8 +80,7 @@ function answering(
   };
 }
 
-const declared = (...uris: string[]) =>
-  uris.map((uri) => ({ uri, admission: "declared" as const }));
+const declared = (...uris: string[]) => uris.map((uri) => ({ uri, declared: true }));
 
 const ctx = { workspaceId: WS_A, connectorId: "outbound" };
 
@@ -132,8 +130,8 @@ describe("collectResourceArgumentUris", () => {
       body: "crm://signals/3",
     });
     expect(uris).toEqual([
-      { uri: "crm://signals/1", admission: "declared" as const },
-      { uri: "crm://signals/2", admission: "declared" as const },
+      { uri: "crm://signals/1", declared: true },
+      { uri: "crm://signals/2", declared: true },
     ]);
   });
 
@@ -142,8 +140,8 @@ describe("collectResourceArgumentUris", () => {
       citations: ["mail://inbox/9", "not a uri"],
     });
     expect(uris).toEqual([
-      { uri: "mail://inbox/9", admission: "undeclared" as const },
-      { uri: "not a uri", admission: "undeclared" as const },
+      { uri: "mail://inbox/9", declared: false },
+      { uri: "not a uri", declared: false },
     ]);
   });
 });
@@ -166,7 +164,7 @@ describe("createResourceArgumentsResolver", () => {
   it("never reads a URI whose scheme is undeclared, and says so", async () => {
     const mail = servingSource("mail", ["mail://inbox/{id}"], { "mail://inbox/9": "secret" });
     const entries = await resolverOver({ [WS_A]: [mail] }).resolve([
-      { uri: "mail://inbox/9", admission: "undeclared" as const },
+      { uri: "mail://inbox/9", declared: false },
     ]);
     expect(entries["mail://inbox/9"]).toEqual({
       error: { code: "scheme_not_declared", message: expect.any(String) },
@@ -307,9 +305,9 @@ describe("createResourceArgumentsResolver", () => {
   it("records each URI's outcome for the audit trail, in argument order, never its contents", async () => {
     const crm = servingSource("crm", ["crm://signals/{id}"], { "crm://signals/1": "héllo" });
     const resolutions = await resolverOver({ [WS_A]: [crm] }).resolutions([
-      { uri: "crm://signals/1", admission: "declared" as const },
-      { uri: "crm://signals/9", admission: "declared" as const },
-      { uri: "mail://inbox/1", admission: "undeclared" as const },
+      { uri: "crm://signals/1", declared: true },
+      { uri: "crm://signals/9", declared: true },
+      { uri: "mail://inbox/1", declared: false },
     ]);
     expect(resolutions).toEqual([
       { uri: "crm://signals/1", source: "crm", outcome: "resolved", bytes: 6 },
@@ -332,7 +330,7 @@ describe("createResourceArgumentsResolver", () => {
 });
 
 describe("record arguments (ADR-0058)", () => {
-  const record = (...uris: string[]) => uris.map((uri) => ({ uri, admission: "record" as const }));
+  const record = (...uris: string[]) => uris.map((uri) => ({ uri, declared: true }));
 
   it("parses `records: true` as a record argument; a scheme list wins over it", () => {
     const declaration = parseResourceArgumentsDeclaration({
@@ -349,7 +347,7 @@ describe("record arguments (ADR-0058)", () => {
     expect(declaration?.has("off")).toBe(false);
   });
 
-  it("collects a record argument's URIs as records, a string without a scheme as undeclared", () => {
+  it("accepts any scheme in a record argument, and no string without a scheme", () => {
     const declaration = parseResourceArgumentsDeclaration({
       [RESOURCE_ARGUMENTS_EXTENSION_ID]: {
         arguments: { account: { records: true }, citation: { schemes: ["crm"] } },
@@ -362,23 +360,28 @@ describe("record arguments (ADR-0058)", () => {
         citation: "crm://signals/1",
       }),
     ).toEqual([
-      { uri: "people://organizations/1", admission: "record" },
-      { uri: "acme.com", admission: "undeclared" },
-      { uri: "crm://signals/1", admission: "declared" },
+      { uri: "people://organizations/1", declared: true },
+      { uri: "acme.com", declared: false },
+      { uri: "crm://signals/1", declared: true },
     ]);
   });
 
-  it("refuses a record unread when the calling connector holds no grant", async () => {
+  it("refuses every URI unread when the calling connector holds no grant", async () => {
     const people = servingSource("people", ["people://organizations/{id}"], {
       "people://organizations/1": '{"lead_score":"4"}',
     });
-    const entries = await resolverOver({ [WS_A]: [people] }).resolve(
-      record("people://organizations/1"),
-    );
+    const crm = servingSource("crm", ["crm://signals/{id}"], { "crm://signals/1": "{}" });
+    const entries = await resolverOver({ [WS_A]: [people, crm] }, { grant: null }).resolve([
+      ...record("people://organizations/1"),
+      ...declared("crm://signals/1"),
+    ]);
     expect(entries["people://organizations/1"]).toEqual({
       error: { code: "not_granted", message: expect.any(String) },
     });
+    // A scheme the tool declares is no way around the grant.
+    expect(entries["crm://signals/1"]).toMatchObject({ error: { code: "not_granted" } });
     expect(people.reads).toEqual([]);
+    expect(crm.reads).toEqual([]);
   });
 
   it("reads a record from any connector in the workspace under a grant for all sources", async () => {
@@ -410,16 +413,30 @@ describe("record arguments (ADR-0058)", () => {
     expect(crm.reads).toEqual([]);
   });
 
-  it("never narrows a declared scheme by the record grant", async () => {
+  it("narrows a declared scheme by the grant too", async () => {
     const crm = servingSource("crm", ["crm://signals/{id}"], { "crm://signals/1": "{}" });
     const entries = await resolverOver(
       { [WS_A]: [crm] },
       { grant: { sources: new Set(["people"]) } },
     ).resolve(declared("crm://signals/1"));
-    expect(entries["crm://signals/1"]).toMatchObject({ contents: [{ text: "{}" }] });
+    expect(entries["crm://signals/1"]).toMatchObject({ error: { code: "not_found" } });
+    expect(crm.reads).toEqual([]);
   });
 
-  it("asks for the grant only when a call carries a record, and refuses when the lookup fails", async () => {
+  it("hides a non-granted connector that also claims the URI: no ambiguity, no read", async () => {
+    const people = servingSource("people", ["people://organizations/{id}"], {
+      "people://organizations/1": "{}",
+    });
+    const squatter = servingSource("squatter", ["people://organizations/{id}"]);
+    const entries = await resolverOver(
+      { [WS_A]: [people, squatter] },
+      { grant: { sources: new Set(["people"]) } },
+    ).resolve(record("people://organizations/1"));
+    expect(entries["people://organizations/1"]).toMatchObject({ contents: [{ text: "{}" }] });
+    expect(squatter.reads).toEqual([]);
+  });
+
+  it("asks for the grant only when a call has a URI to read, and refuses when the lookup fails", async () => {
     let asked = 0;
     const people = servingSource("people", ["people://organizations/{id}"], {
       "people://organizations/1": "{}",
@@ -434,7 +451,7 @@ describe("record arguments (ADR-0058)", () => {
       rateLimit: new TokenBucketRateLimit(),
       maxChars: 1000,
     });
-    await resolver.resolve(declared("people://organizations/1"), ctx);
+    await resolver.resolve([{ uri: "people://organizations/1", declared: false }], ctx);
     expect(asked).toBe(0);
     const { entries } = await resolver.resolve(record("people://organizations/1"), ctx);
     expect(asked).toBe(1);

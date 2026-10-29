@@ -76,13 +76,23 @@ Mark the tool in `_meta`, naming each argument and what it accepts: the URI sche
 |---|---|
 | `…arguments` | Required. An object keyed by top-level argument name. |
 | `…arguments.<name>.schemes` | A non-empty array of URI scheme names, without `://`. Matched case-insensitively. There is no wildcard. |
-| `…arguments.<name>.records` | `true` to accept a record from any server in the workspace, resolved only under your server's [grant](#record-arguments). Ignored when `schemes` is present. |
+| `…arguments.<name>.records` | `true` to accept a URI of any scheme: a record from whichever server in the workspace serves it. Ignored when `schemes` is present. |
 
 An entry with neither a valid `schemes` list nor `records: true` declares nothing.
+
+A declaration says what your tool accepts. It never lets the host read for your server: that takes your server's [grant](#the-grant).
 
 A declared argument is read as a string or an array of strings. Values nested inside an object are not resolved.
 
 The declaration lives on the tool, not inside `inputSchema`, because the input schema is passed to model providers, and some reject keywords JSON Schema does not define.
+
+## The grant
+
+The host reads URIs for your server only when your server holds a **record-arguments grant** in the workspace. The grant is the operator's: your server's catalog entry declares `record_arguments: true` in its [host manifest](/host/manifest/), read from the catalog only, so nothing your running server sends can claim it. That grants it in every workspace that installs your server, with nothing to configure.
+
+A workspace admin can narrow the grant to named source servers, or revoke it, with `manage_connectors` `set_record_sources`. Without the grant, every URI in a declared argument comes back `not_granted`, whatever schemes the argument declares. A URI served by a server outside a narrowed grant comes back `not_found`, as one no server serves.
+
+A grant adds no source the agent could not already read. The host still reads only in the calling connection's workspace, only what the agent's own read reaches, within the same limits.
 
 ## Record arguments
 
@@ -100,9 +110,7 @@ A scheme list names another server's namespace, so a tool that declares one work
 }
 ```
 
-The host resolves a record argument's URIs from any server in the workspace, by the same rules as a declared scheme, but only for a server **granted** record arguments. The grant is the operator's: your server's catalog entry declares `record_arguments: true` in its [host manifest](/host/manifest/), and that grants it in every workspace that installs it, with nothing to configure. A workspace admin can narrow the grant to named source servers, or revoke it, with `manage_connectors` `set_record_sources`. Without the grant, every URI in a record argument comes back `not_granted`. A URI served by a server outside a narrowed grant comes back `not_found`, as one no server serves.
-
-A grant adds no source the agent could not already read. The host still reads only in the calling connection's workspace, only what the agent's own read reaches, within the same limits.
+The host resolves a record argument's URIs from any server in the workspace, by the same rules as a declared scheme, under the same [grant](#the-grant).
 
 When your tool needs one fact from the record, take the field to read as a second argument and let the agent fill it, from a workspace skill or the source's own field listing:
 
@@ -182,7 +190,7 @@ Each resolution is recorded on the host's trace of the tool call: one `resource_
 | `code` | Meaning |
 |---|---|
 | `scheme_not_declared` | The string's scheme is not one the argument declares, or the string has no scheme. The host did not read it. |
-| `not_granted` | The string is in a record argument, and your server holds no record-arguments grant in this workspace. The host did not read it. |
+| `not_granted` | Your server holds no record-arguments grant in this workspace. The host did not read it. |
 | `not_found` | No server in the workspace serves the URI, or its server returned nothing or failed. These are one code on purpose, as in [host resources](/extensions/host-resources/#scope-which-files-a-server-can-see): a read tells your server nothing about what exists beyond the contents it is handed. |
 | `ambiguous` | More than one server in the workspace serves the URI. A workspace admin resolves it by removing one. |
 | `not_text` | The resource's contents include a non-text (`blob`) entry. The host hands on text only. |

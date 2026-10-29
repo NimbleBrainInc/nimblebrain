@@ -44,17 +44,20 @@ tool may declare a record argument with no `schemes`:
 { "ai.nimblebrain/resource-arguments": { "arguments": { "account": { "records": true } } } }
 ```
 
-The host resolves such an argument only for a connector granted record
-arguments in the workspace. The grant is the operator's: the connector's
+The host resolves a declared argument, with or without `schemes`, only for a
+connector granted record arguments in the workspace. The grant is the operator's: the connector's
 catalog entry declares `record_arguments` in its host manifest, read from the
 catalog only, like `admin_tools`, so nothing the running server sends can claim
 it. That grants it in every workspace that installs the connector, with nothing
 to configure. A workspace admin can narrow the grant to named source connectors
 or revoke it, stored on the workspace's record of the connector. A connector
-without the grant gets each URI in a schemeless argument back refused as
-`not_granted`. A declaration with `schemes` keeps
-its current meaning and needs no grant, so the host-owned `files` scheme and
-every existing tool are unchanged.
+without the grant gets every declared URI back refused as `not_granted`. A
+declaration says what a tool accepts and never grants a read: the running
+server writes its own declarations, so a grant that a scheme list could stand
+in for would bound nothing. `schemes` stays as a filter on what one argument
+accepts. The extension resolves no host-owned scheme (`files` and the rest find
+no owner), so every read it makes is a read from another connector, under the
+grant.
 
 **Resolution is the reach the agent already has.** The host still resolves only
 against connectors of the calling workspace, narrowed to what the caller could
@@ -96,6 +99,8 @@ its threshold. A workspace on Salesforce passes its account URI and
   operator's catalog says accept records, and a workspace admin can narrow it.
 - `ai.nimblebrain/resource-arguments` gains the `records` form and the grant; its
   documentation drops the advice to keep a scheme list in configuration.
+- A connector that declared schemes and read without a grant needs its catalog
+  entry to declare `record_arguments` before the host reads for it again.
 
 ## Alternatives considered
 
@@ -108,6 +113,9 @@ its threshold. A workspace on Salesforce passes its account URI and
   configuration, owned by the workspace instead of the deployment.
 - **Schemeless arguments with no grant** — rejected: any connector could receive
   any record the agent can read, with nothing an admin approved.
+- **A grant for schemeless arguments only, schemes reading without one** —
+  rejected: a server that lists every source's scheme reads without the grant,
+  and a revoke does not stop it.
 - **Server-to-host reads** — rejected: 2025-era only, and the 2026 protocol
   removes the request.
 - **Copying the fact into the receiving connector** — rejected: a second source

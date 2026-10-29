@@ -327,8 +327,9 @@ export interface HostManifestMeta {
      */
     admin_tools?: string[];
     /**
-     * Whether this server accepts records from other connectors through record
-     * arguments (`ai.nimblebrain/resource-arguments`, ADR-0058): `true` grants it
+     * Whether the host reads resources for this server through its tools'
+     * declared arguments (`ai.nimblebrain/resource-arguments`, ADR-0058), from
+     * other connectors in the workspace; without it the host reads none. `true` grants it
      * in every workspace that installs the server, narrowed or revoked per
      * workspace by `ConnectorRef.recordSources`. Read from the operator-trusted
      * catalog only, like {@link admin_tools}: the grant is the operator's.

@@ -3342,18 +3342,46 @@ async function handleSetRecordSources(
     return sources === null ? rest : { ...rest, recordSources: sources };
   });
   await store.update(wsId, { connectors });
-  const granted = (await ctx.runtime.recordArgumentsGrantFor(wsId, serverName)) !== null;
+  const catalogGrants = await ctx.runtime.catalogGrantsRecordArguments(wsId, serverName);
+  const installed = new Set(ws.connectors.map((ref) => serverNameFromRef(ref)));
+  const unknownSources = (sources ?? []).filter((name) => !installed.has(name));
   return {
     content: textContent(
-      sources === null
-        ? `"${serverName}" may receive records from every connector in this workspace.`
-        : sources.length === 0
-          ? `"${serverName}" may no longer receive records in this workspace.`
-          : `"${serverName}" may receive records from: ${sources.join(", ")}.`,
+      recordSourcesSummary(serverName, sources, catalogGrants) +
+        (unknownSources.length > 0
+          ? ` Not installed in this workspace, so they serve nothing: ${unknownSources.join(", ")}.`
+          : ""),
     ),
-    structuredContent: { ok: true, serverName, recordSources: sources, granted },
+    structuredContent: {
+      ok: true,
+      serverName,
+      recordSources: sources,
+      granted: catalogGrants && sources?.length !== 0,
+      ...(unknownSources.length > 0 ? { unknownSources } : {}),
+    },
     isError: false,
   };
+}
+
+/** What a saved `recordSources` means for `serverName`, given whether its catalog entry grants it. */
+function recordSourcesSummary(
+  serverName: string,
+  sources: string[] | null,
+  catalogGrants: boolean,
+): string {
+  if (!catalogGrants) {
+    return (
+      `Saved. "${serverName}" receives no records from other connectors in any case: ` +
+      "its catalog entry does not grant it record arguments."
+    );
+  }
+  if (sources === null) {
+    return `"${serverName}" may receive records from every connector in this workspace.`;
+  }
+  if (sources.length === 0) {
+    return `"${serverName}" may not receive records from any connector in this workspace.`;
+  }
+  return `"${serverName}" may receive records only from: ${sources.join(", ")}.`;
 }
 
 // ── personal-connector grants ─────────────────────────────────────

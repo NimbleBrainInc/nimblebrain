@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -152,6 +152,9 @@ interface PermissionWrite {
  * Build a stub Runtime exposing the methods the connector-tool handlers
  * actually call.
  */
+/** What the stub runtime answers for `catalogGrantsRecordArguments`; reset per test. */
+const catalogGrantsRecordArguments = { value: false };
+
 function buildHarness(): Harness {
   const permissionWrites: PermissionWrite[] = [];
   const workDir = mkdtempSync(join(tmpdir(), "nb-connector-tools-"));
@@ -201,9 +204,9 @@ function buildHarness(): Harness {
       }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
     getAllowInsecureRemotes: () => false,
-    // The fixture catalog declares no record arguments, so no connector here
-    // holds a grant; `set_record_sources` reports that back.
-    recordArgumentsGrantFor: async () => null,
+    // Whether the catalog grants record arguments: the fixture catalog declares
+    // none, and a test may flip it to read `set_record_sources`'s reply.
+    catalogGrantsRecordArguments: async () => catalogGrantsRecordArguments.value,
     // No broker is configured here; the personal-catalog filter asks.
     getManagedConnectorRegistry: () => buildManagedConnectorRegistry(),
     // The lifecycle notification the install and uninstall handlers make. No
@@ -1408,12 +1411,20 @@ describe("manage_connectors.set_record_sources", () => {
   let h: Harness;
 
   beforeEach(async () => {
+    catalogGrantsRecordArguments.value = true;
     h = buildHarness();
     await provisionWorkspace(h);
     await seedConnector(h);
     await h.workspaceStore.update(h.wsId, {
-      connectors: [{ url: STUB_URL, serverName: STUB_SERVER_NAME }],
+      connectors: [
+        { url: STUB_URL, serverName: STUB_SERVER_NAME },
+        { url: "https://people.example.com/mcp", serverName: "people" },
+      ],
     });
+  });
+
+  afterAll(() => {
+    catalogGrantsRecordArguments.value = false;
   });
 
   afterEach(() => {
@@ -1442,19 +1453,42 @@ describe("manage_connectors.set_record_sources", () => {
     const set = (sources: unknown) =>
       tool.handler({ action: "set_record_sources", serverName: STUB_SERVER_NAME, sources });
 
-    const narrowed = await set(["people", "people", "crm"]);
+    const narrowed = await set(["people", "people"]);
     expect(narrowed.isError).toBe(false);
-    expect(narrowed.structuredContent).toMatchObject({
-      recordSources: ["people", "crm"],
-      granted: false,
-    });
-    expect(await recordSources()).toEqual(["people", "crm"]);
+    expect(narrowed.structuredContent).toMatchObject({ recordSources: ["people"], granted: true });
+    expect(await recordSources()).toEqual(["people"]);
 
-    await set([]);
+    const revoked = await set([]);
+    expect(revoked.structuredContent).toMatchObject({ recordSources: [], granted: false });
     expect(await recordSources()).toEqual([]);
 
-    await set(null);
+    const cleared = await set(null);
+    expect(cleared.structuredContent).toMatchObject({ recordSources: null, granted: true });
     expect(await recordSources()).toBeUndefined();
+  });
+
+  test("names a source that is not installed here instead of narrowing silently", async () => {
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "set_record_sources",
+      serverName: STUB_SERVER_NAME,
+      sources: ["people", "peopel"],
+    });
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({ unknownSources: ["peopel"] });
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toContain("peopel");
+  });
+
+  test("says the connector receives nothing when its catalog entry grants no record arguments", async () => {
+    catalogGrantsRecordArguments.value = false;
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "set_record_sources",
+      serverName: STUB_SERVER_NAME,
+      sources: ["people"],
+    });
+    expect(result.structuredContent).toMatchObject({ recordSources: ["people"], granted: false });
+    const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
+    expect(text).toContain("does not grant it record arguments");
   });
 
   test("refuses sources that are not a list of names or null", async () => {
