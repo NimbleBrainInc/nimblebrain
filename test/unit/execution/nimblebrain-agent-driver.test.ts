@@ -79,16 +79,21 @@ describe("nimblebrain-agent driver", () => {
   });
 
   test("takes the turn's model credential per session, and sends it beside the gateway only", () => {
-    const gateway = "http://model-gateway.test/v1";
+    const gateway = "http://model-gateway.test";
     const minted = { ...run(), modelCredential: "turn-jwt" };
     const meta = (driver: ReturnType<typeof createNimbleBrainAgentDriver>, r: ResolvedRun) =>
       driver.sessionMeta?.(r, { mcpServers: [] })?.[AGENT_SESSION_META_KEY];
 
     const gated = createNimbleBrainAgentDriver({ modelGateway: gateway });
     expect(gated.capabilities).toEqual({ spendGate: false, modelCredential: "session" });
+    // The endpoint is the session model's provider on the gateway.
     expect(meta(gated, minted)).toMatchObject({
       modelCredential: "turn-jwt",
-      modelEndpoint: gateway,
+      modelEndpoint: "http://model-gateway.test/anthropic/v1",
+    });
+    const onGoogle = { ...minted, config: { ...minted.config, model: "google:gemini-3-pro" } };
+    expect(meta(gated, onGoogle)).toMatchObject({
+      modelEndpoint: "http://model-gateway.test/google/v1beta",
     });
     // No gateway: the worker calls its own provider, so the credential stays home.
     expect(meta(createNimbleBrainAgentDriver(), minted)).not.toHaveProperty("modelCredential");

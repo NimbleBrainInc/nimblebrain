@@ -200,9 +200,15 @@ runtime opened, and its models only with the turn's credential.
 
 ### Models and development
 
-**The installation's model gateway is every external agent's model endpoint.**
-It holds the provider keys, applies model policy, meters every call, and checks
-a run's budget where the credential names the run. Its count is the usage
+**The installation's model gateway is every external agent's model endpoint,
+and the native engine's for each provider an operator moves onto it.** It holds
+the provider keys and serves each provider at its own path in that provider's
+own API, so a client changes only its base URL; the provider is named by the
+path because the same model id is sold by several providers. It meters every
+call, and checks a run's budget where the credential names the run. A native
+call carries a credential the runtime mints for that call alone, naming the
+call's run, so the engine holds no key and no credential outlives a request;
+model policy and the spend checks stay in the runtime. Its count is the usage
 record for the calls it meters, and replaces the agent's own count, which the
 runtime records (ADR-0056) only where no gateway meters the call.
 

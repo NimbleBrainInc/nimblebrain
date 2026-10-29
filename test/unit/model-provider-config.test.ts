@@ -39,6 +39,8 @@ const SAMPLE_VALUES: Record<string, unknown> = {
   baseURL: "https://provider.example.com/v1",
   organization: "test-org",
   models: ["test-model"],
+  // Off: on, a provider needs the installation's gateway, which this test does not build.
+  gateway: false,
 };
 
 /** A provider config carrying every declared field, recording each field read. */

@@ -48,6 +48,11 @@ export class ModelNotQualifiedError extends Error {
   }
 }
 
+/** The provider half of a `provider:model` id; throws `ModelNotQualifiedError` for any other. */
+export function providerOfModelId(model: string): string {
+  return requireQualifiedModelId(model).slice(0, model.indexOf(":"));
+}
+
 /** Return `model` unchanged, or throw `ModelNotQualifiedError` naming the qualified form. */
 export function requireQualifiedModelId(model: string, subject?: string): string {
   if (!isQualifiedModelId(model)) throw new ModelNotQualifiedError(model, subject);

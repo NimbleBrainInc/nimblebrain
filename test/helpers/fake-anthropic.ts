@@ -20,9 +20,15 @@ interface MessagesRequest {
 export interface FakeAnthropic {
   /** The provider base URL (`…/v1`), for `baseURL` or `ANTHROPIC_BASE_URL`. */
   baseUrl: string;
+  /** The server's root, standing in for a model gateway's (`execution.modelGateway`). */
+  rootUrl: string;
   requests: MessagesRequest[];
   /** Each request's `Authorization` header (`null` when absent), in the same order. */
   authorizations: (string | null)[];
+  /** Each request's path, in the same order. */
+  paths: string[];
+  /** Each request's `x-api-key` header (`null` when absent), in the same order. */
+  apiKeys: (string | null)[];
   close(): Promise<void>;
 }
 
@@ -34,6 +40,8 @@ export interface FakeAnthropicOptions {
 export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
   const requests: MessagesRequest[] = [];
   const authorizations: (string | null)[] = [];
+  const paths: string[] = [];
+  const apiKeys: (string | null)[] = [];
   const http = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -43,6 +51,8 @@ export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
       const body = (await req.json()) as MessagesRequest;
       requests.push(body);
       authorizations.push(req.headers.get("authorization"));
+      paths.push(new URL(req.url).pathname);
+      apiKeys.push(req.headers.get("x-api-key"));
       return new Response(stream(reply(body, opts)), {
         headers: { "content-type": "text/event-stream" },
       });
@@ -50,8 +60,11 @@ export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
   });
   return {
     baseUrl: `http://127.0.0.1:${http.port}/v1`,
+    rootUrl: `http://127.0.0.1:${http.port}`,
     requests,
     authorizations,
+    paths,
+    apiKeys,
     close: async () => {
       await http.stop(true);
     },

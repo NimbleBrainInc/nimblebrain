@@ -15,12 +15,77 @@ import { requireQualifiedModelId } from "./model-id.ts";
 
 export interface ProvidersConfig {
   providers?: {
-    anthropic?: { apiKey?: string; models?: string[] };
-    openai?: { apiKey?: string; baseURL?: string; organization?: string; models?: string[] };
-    google?: { apiKey?: string; models?: string[] };
-    greenpt?: { apiKey?: string; baseURL?: string; models?: string[] };
-    nebius?: { apiKey?: string; baseURL?: string; models?: string[] };
-    xai?: { apiKey?: string; baseURL?: string; models?: string[] };
+    anthropic?: { apiKey?: string; models?: string[]; gateway?: boolean };
+    openai?: {
+      apiKey?: string;
+      baseURL?: string;
+      organization?: string;
+      models?: string[];
+      gateway?: boolean;
+    };
+    google?: { apiKey?: string; models?: string[]; gateway?: boolean };
+    greenpt?: { apiKey?: string; baseURL?: string; models?: string[]; gateway?: boolean };
+    nebius?: { apiKey?: string; baseURL?: string; models?: string[]; gateway?: boolean };
+    xai?: { apiKey?: string; baseURL?: string; models?: string[]; gateway?: boolean };
+  };
+}
+
+/**
+ * How a provider with `gateway: true` is reached: through the installation's
+ * model gateway (`execution.modelGateway`), which holds the provider's key and
+ * serves each provider at `/<provider>/` in its own API (ADR-0057). The runtime
+ * holds no key for such a provider; `fetch` presents a model credential the
+ * runtime mints for each call instead.
+ */
+export interface ModelGatewayAccess {
+  /** The gateway's root URL. */
+  url: string;
+  /** Every call to the gateway goes through it: it carries the call's credential. */
+  fetch: typeof fetch;
+}
+
+/**
+ * The key a gateway-reached provider's client is built with. The client needs
+ * one; the gateway's fetch removes it from every request, which carries the
+ * call's model credential instead.
+ */
+const GATEWAY_KEY_PLACEHOLDER = "via-model-gateway";
+
+/**
+ * A provider's base URL on the model gateway: its own path, then the version
+ * prefix its client expects (Gemini's API is `v1beta`, every other one `v1`).
+ */
+export function modelGatewayBaseURL(gatewayUrl: string, provider: string): string {
+  const root = gatewayUrl.replace(/\/+$/, "");
+  return `${root}/${provider}/${provider === "google" ? "v1beta" : "v1"}`;
+}
+
+/**
+ * Where and how one provider's client calls: through the gateway (its base URL
+ * there, the placeholder key, the gateway's fetch) when its config says
+ * `gateway: true`, and `undefined` otherwise. A gateway provider takes no key of
+ * its own, so the runtime holds none; one configured anyway refuses the boot.
+ */
+function gatewayClient(
+  id: string,
+  cfg: { apiKey?: string; gateway?: boolean },
+  gateway: ModelGatewayAccess | undefined,
+): { baseURL: string; apiKey: string; fetch: typeof fetch } | undefined {
+  if (!cfg.gateway) return undefined;
+  if (!gateway) {
+    throw new Error(
+      `providers.${id}.gateway needs execution.modelGateway and the installation's run key, which mints each call's credential`,
+    );
+  }
+  if (cfg.apiKey) {
+    throw new Error(
+      `providers.${id} sets both gateway and apiKey: through the gateway, the gateway holds the key; remove providers.${id}.apiKey`,
+    );
+  }
+  return {
+    baseURL: modelGatewayBaseURL(gateway.url, id),
+    apiKey: GATEWAY_KEY_PLACEHOLDER,
+    fetch: gateway.fetch,
   };
 }
 
@@ -34,147 +99,186 @@ const NEBIUS_DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1";
  * Build a provider registry from config. Creates AI SDK provider instances
  * for each configured provider.
  */
-export function buildRegistry(config: ProvidersConfig): Provider {
+export function buildRegistry(config: ProvidersConfig, gateway?: ModelGatewayAccess): Provider {
   const providersCfg = config.providers ?? { anthropic: {} };
 
   const providers: Record<string, ProviderV4> = {};
 
-  if (providersCfg.anthropic) {
-    const { apiKey } = providersCfg.anthropic;
-    // Wrap fetch with the transport-liveness tap so the stream watchdog re-arms
-    // on Anthropic's swallowed `ping` keep-alives — otherwise a healthy-but-slow
-    // stream at large context trips the idle deadline. See fetch-liveness.ts.
-    // The cast bridges an unused member: the SDK types `fetch` as the full
-    // `typeof fetch` (incl. Bun's static `preconnect`) but only ever invokes the
-    // call signature, which the wrapper implements.
-    const anthropic = createAnthropic({
-      apiKey,
-      fetch: wrapFetchWithLiveness(globalThis.fetch) as typeof fetch,
-    });
-    // `toolStreaming: false` keeps Anthropic's fine-grained (eager) tool-input
-    // streaming off. The adapter turns it on for every tool by default, and
-    // with it on the API streams tool arguments without validating them as
-    // JSON, so a malformed argument string reaches the engine as a failed
-    // call. The engine never forwards `tool-input-delta` (src/model/stream.ts),
-    // so eager streaming buys nothing here. Off, the API validates the
-    // arguments before it streams them. A caller can still opt back in per
-    // call; call-level provider options merge over this default.
-    const toolStreamingOff = defaultSettingsMiddleware({
-      settings: { providerOptions: { anthropic: { toolStreaming: false } } },
-    });
-    providers.anthropic = {
-      ...anthropic,
-      languageModel: (modelId: string) =>
-        wrapLanguageModel({
-          model: anthropic.languageModel(modelId),
-          middleware: toolStreamingOff,
-        }),
-    };
-  }
-
-  if (providersCfg.openai) {
-    const { apiKey, baseURL, organization } = providersCfg.openai;
-    // No fail-closed key guard: createOpenAI reads `OPENAI_API_KEY` on its own,
-    // and when `baseURL` points at an OpenAI-compatible proxy
-    // (LiteLLM/Helicone/Azure) that proxy legitimately expects that key — so
-    // the fallback is the desired behavior here, not a hazard. See the nebius
-    // branch below for the rule.
-    providers.openai = createOpenAI({ apiKey, baseURL, organization });
-  }
-
-  if (providersCfg.google) {
-    const { apiKey } = providersCfg.google;
-    providers.google = createGoogleGenerativeAI({ apiKey });
-  }
-
-  if (providersCfg.greenpt) {
-    const { apiKey, baseURL } = providersCfg.greenpt;
-    const greenptApiKey = apiKey ?? process.env.GREENPT_API_KEY;
-    if (!greenptApiKey) {
-      throw new Error(
-        "Provider 'greenpt' is configured but no API key is set. " +
-          "Set providers.greenpt.apiKey or the GREENPT_API_KEY environment variable.",
-      );
-    }
-    // See the `nebius` branch below for why an OpenAI-compatible gateway is
-    // built through `createOpenAICompatible` and why the key guard fails
-    // closed — the reasoning is identical and stated once, there.
-    //
-    // `includeUsage` and `supportsStructuredOutputs` are measured against the
-    // live API on glm-5.2, kimi-k2.7-code, and kimi-k3: streamed responses
-    // carry non-zero usage, and `json_schema` response formats are honoured.
-    // Without `includeUsage` every turn would meter at zero;
-    // `supportsStructuredOutputs` matters only to a call that sends a
-    // schema-bearing `responseFormat`.
-    providers.greenpt = createOpenAICompatible({
-      name: "greenpt",
-      apiKey: greenptApiKey,
-      baseURL: baseURL ?? GREENPT_DEFAULT_BASE_URL,
-      includeUsage: true,
-      supportsStructuredOutputs: true,
-    });
-  }
-
-  if (providersCfg.nebius) {
-    const { apiKey, baseURL } = providersCfg.nebius;
-    // Nebius Token Factory is an OpenAI-compatible gateway for open-weight
-    // models, so it is built through the adapter written for exactly that —
-    // `createOpenAICompatible` — rather than through `createOpenAI` pointed at
-    // a foreign `baseURL`. It binds Chat Completions natively (Nebius serves no
-    // Responses API), so no `.chat()` re-wrap is needed.
-    //
-    // The key is resolved explicitly and FAILS CLOSED when absent. This is the
-    // one place the guard rule is stated, because it is the only branch that
-    // needs a guard: an adapter that reads an env variable of its own can be
-    // handed an undefined key and still work, so it gets none, while
-    // `createOpenAICompatible` reads no environment at all — a keyless nebius
-    // has no path forward. Throwing at boot beats an unauthenticated 401 on the
-    // first chat turn. Don't "unify" the branches on symmetry grounds.
-    const nebiusApiKey = apiKey ?? process.env.NEBIUS_API_KEY;
-    if (!nebiusApiKey) {
-      throw new Error(
-        "Provider 'nebius' is configured but no API key is set. " +
-          "Set providers.nebius.apiKey or the NEBIUS_API_KEY environment variable.",
-      );
-    }
-    // Three of these are load-bearing, and each replaces something
-    // `createOpenAI` did unconditionally. This adapter is generic, so what the
-    // OpenAI adapter assumed must be asked for by name.
-    //
-    // `name` — provider options are read under it, so the engine sends
-    //   `providerOptions.nebius`, not `openai`. See `buildNebiusThinkingOptions`.
-    // `includeUsage` — sets `stream_options.include_usage`. Nebius returns
-    //   `"usage": null` on every chunk without it (measured), so the engine's
-    //   only path (`doStream`) would meter every turn at zero: no cost, no
-    //   ledger tokens, no reasoning tokens.
-    // `supportsStructuredOutputs` — without it a schema-bearing
-    //   `responseFormat` degrades to `{"type":"json_object"}`, dropping the
-    //   schema and strict decoding.
-    providers.nebius = createOpenAICompatible({
-      name: "nebius",
-      apiKey: nebiusApiKey,
-      baseURL: baseURL ?? NEBIUS_DEFAULT_BASE_URL,
-      includeUsage: true,
-      supportsStructuredOutputs: true,
-    });
-  }
-
-  if (providersCfg.xai) {
-    const { apiKey, baseURL } = providersCfg.xai;
-    // No fail-closed key guard: createXai reads XAI_API_KEY on its own, so an
-    // absent config key is the normal working case. See the nebius branch above
-    // for the rule.
-    //
-    // Chat Completions is the API this runtime talks to on xai, so `.chat()` is
-    // named rather than taken from `.languageModel()`'s default — that default
-    // is the adapter's own choice and has moved between adapter majors. The
-    // registry test pins `provider === "xai.chat"`; adopting `.responses()` is a
-    // deliberate change to make there, not one to inherit from a version bump.
-    const xai = createXai({ apiKey, baseURL });
-    providers.xai = { ...xai, languageModel: (modelId: string) => xai.chat(modelId) };
-  }
+  if (providersCfg.anthropic)
+    providers.anthropic = anthropicProvider(providersCfg.anthropic, gateway);
+  if (providersCfg.openai) providers.openai = openaiProvider(providersCfg.openai, gateway);
+  if (providersCfg.google) providers.google = googleProvider(providersCfg.google, gateway);
+  if (providersCfg.greenpt) providers.greenpt = greenptProvider(providersCfg.greenpt, gateway);
+  if (providersCfg.nebius) providers.nebius = nebiusProvider(providersCfg.nebius, gateway);
+  if (providersCfg.xai) providers.xai = xaiProvider(providersCfg.xai, gateway);
 
   return createProviderRegistry(providers);
+}
+
+type ProviderConfig<K extends keyof NonNullable<ProvidersConfig["providers"]>> = NonNullable<
+  NonNullable<ProvidersConfig["providers"]>[K]
+>;
+
+function anthropicProvider(
+  cfg: ProviderConfig<"anthropic">,
+  gateway: ModelGatewayAccess | undefined,
+): ProviderV4 {
+  const via = gatewayClient("anthropic", cfg, gateway);
+  const { apiKey } = cfg;
+  // Wrap fetch with the transport-liveness tap so the stream watchdog re-arms
+  // on Anthropic's swallowed `ping` keep-alives — otherwise a healthy-but-slow
+  // stream at large context trips the idle deadline. See fetch-liveness.ts.
+  // The cast bridges an unused member: the SDK types `fetch` as the full
+  // `typeof fetch` (incl. Bun's static `preconnect`) but only ever invokes the
+  // call signature, which the wrapper implements.
+  const anthropic = createAnthropic({
+    apiKey: via?.apiKey ?? apiKey,
+    ...(via ? { baseURL: via.baseURL } : {}),
+    fetch: wrapFetchWithLiveness(via?.fetch ?? globalThis.fetch) as typeof fetch,
+  });
+  // `toolStreaming: false` keeps Anthropic's fine-grained (eager) tool-input
+  // streaming off. The adapter turns it on for every tool by default, and
+  // with it on the API streams tool arguments without validating them as
+  // JSON, so a malformed argument string reaches the engine as a failed
+  // call. The engine never forwards `tool-input-delta` (src/model/stream.ts),
+  // so eager streaming buys nothing here. Off, the API validates the
+  // arguments before it streams them. A caller can still opt back in per
+  // call; call-level provider options merge over this default.
+  const toolStreamingOff = defaultSettingsMiddleware({
+    settings: { providerOptions: { anthropic: { toolStreaming: false } } },
+  });
+  return {
+    ...anthropic,
+    languageModel: (modelId: string) =>
+      wrapLanguageModel({
+        model: anthropic.languageModel(modelId),
+        middleware: toolStreamingOff,
+      }),
+  };
+}
+
+function openaiProvider(
+  cfg: ProviderConfig<"openai">,
+  gateway: ModelGatewayAccess | undefined,
+): ProviderV4 {
+  const { apiKey, baseURL, organization } = cfg;
+  // No fail-closed key guard: createOpenAI reads `OPENAI_API_KEY` on its own,
+  // and when `baseURL` points at an OpenAI-compatible proxy
+  // (LiteLLM/Helicone/Azure) that proxy legitimately expects that key — so
+  // the fallback is the desired behavior here, not a hazard. See the nebius
+  // branch below for the rule.
+  const via = gatewayClient("openai", cfg, gateway);
+  return createOpenAI(via ? { ...via, organization } : { apiKey, baseURL, organization });
+}
+
+function googleProvider(
+  cfg: ProviderConfig<"google">,
+  gateway: ModelGatewayAccess | undefined,
+): ProviderV4 {
+  const { apiKey } = cfg;
+  const via = gatewayClient("google", cfg, gateway);
+  return createGoogleGenerativeAI(via ?? { apiKey });
+}
+
+function greenptProvider(
+  cfg: ProviderConfig<"greenpt">,
+  gateway: ModelGatewayAccess | undefined,
+): ProviderV4 {
+  const { apiKey, baseURL } = cfg;
+  const via = gatewayClient("greenpt", cfg, gateway);
+  const greenptApiKey = via?.apiKey ?? apiKey ?? process.env.GREENPT_API_KEY;
+  if (!greenptApiKey) {
+    throw new Error(
+      "Provider 'greenpt' is configured but no API key is set. " +
+        "Set providers.greenpt.apiKey or the GREENPT_API_KEY environment variable.",
+    );
+  }
+  // See the `nebius` branch below for why an OpenAI-compatible gateway is
+  // built through `createOpenAICompatible` and why the key guard fails
+  // closed — the reasoning is identical and stated once, there.
+  //
+  // `includeUsage` and `supportsStructuredOutputs` are measured against the
+  // live API on glm-5.2, kimi-k2.7-code, and kimi-k3: streamed responses
+  // carry non-zero usage, and `json_schema` response formats are honoured.
+  // Without `includeUsage` every turn would meter at zero;
+  // `supportsStructuredOutputs` matters only to a call that sends a
+  // schema-bearing `responseFormat`.
+  return createOpenAICompatible({
+    name: "greenpt",
+    apiKey: greenptApiKey,
+    baseURL: via?.baseURL ?? baseURL ?? GREENPT_DEFAULT_BASE_URL,
+    ...(via ? { fetch: via.fetch } : {}),
+    includeUsage: true,
+    supportsStructuredOutputs: true,
+  });
+}
+
+function nebiusProvider(
+  cfg: ProviderConfig<"nebius">,
+  gateway: ModelGatewayAccess | undefined,
+): ProviderV4 {
+  const { apiKey, baseURL } = cfg;
+  const via = gatewayClient("nebius", cfg, gateway);
+  // Nebius Token Factory is an OpenAI-compatible gateway for open-weight
+  // models, so it is built through the adapter written for exactly that —
+  // `createOpenAICompatible` — rather than through `createOpenAI` pointed at
+  // a foreign `baseURL`. It binds Chat Completions natively (Nebius serves no
+  // Responses API), so no `.chat()` re-wrap is needed.
+  //
+  // The key is resolved explicitly and FAILS CLOSED when absent. This is the
+  // one place the guard rule is stated, because it is the only branch that
+  // needs a guard: an adapter that reads an env variable of its own can be
+  // handed an undefined key and still work, so it gets none, while
+  // `createOpenAICompatible` reads no environment at all — a keyless nebius
+  // has no path forward. Throwing at boot beats an unauthenticated 401 on the
+  // first chat turn. Don't "unify" the branches on symmetry grounds.
+  const nebiusApiKey = via?.apiKey ?? apiKey ?? process.env.NEBIUS_API_KEY;
+  if (!nebiusApiKey) {
+    throw new Error(
+      "Provider 'nebius' is configured but no API key is set. " +
+        "Set providers.nebius.apiKey or the NEBIUS_API_KEY environment variable.",
+    );
+  }
+  // Three of these are load-bearing, and each replaces something
+  // `createOpenAI` did unconditionally. This adapter is generic, so what the
+  // OpenAI adapter assumed must be asked for by name.
+  //
+  // `name` — provider options are read under it, so the engine sends
+  //   `providerOptions.nebius`, not `openai`. See `buildNebiusThinkingOptions`.
+  // `includeUsage` — sets `stream_options.include_usage`. Nebius returns
+  //   `"usage": null` on every chunk without it (measured), so the engine's
+  //   only path (`doStream`) would meter every turn at zero: no cost, no
+  //   ledger tokens, no reasoning tokens.
+  // `supportsStructuredOutputs` — without it a schema-bearing
+  //   `responseFormat` degrades to `{"type":"json_object"}`, dropping the
+  //   schema and strict decoding.
+  return createOpenAICompatible({
+    name: "nebius",
+    apiKey: nebiusApiKey,
+    baseURL: via?.baseURL ?? baseURL ?? NEBIUS_DEFAULT_BASE_URL,
+    ...(via ? { fetch: via.fetch } : {}),
+    includeUsage: true,
+    supportsStructuredOutputs: true,
+  });
+}
+
+function xaiProvider(
+  cfg: ProviderConfig<"xai">,
+  gateway: ModelGatewayAccess | undefined,
+): ProviderV4 {
+  const { apiKey, baseURL } = cfg;
+  const via = gatewayClient("xai", cfg, gateway);
+  // No fail-closed key guard: createXai reads XAI_API_KEY on its own, so an
+  // absent config key is the normal working case. See the nebius branch above
+  // for the rule.
+  //
+  // Chat Completions is the API this runtime talks to on xai, so `.chat()` is
+  // named rather than taken from `.languageModel()`'s default — that default
+  // is the adapter's own choice and has moved between adapter majors. The
+  // registry test pins `provider === "xai.chat"`; adopting `.responses()` is a
+  // deliberate change to make there, not one to inherit from a version bump.
+  const xai = createXai(via ?? { apiKey, baseURL });
+  return { ...xai, languageModel: (modelId: string) => xai.chat(modelId) };
 }
 
 /**
@@ -203,8 +307,9 @@ export function providerModelAllowlists(
  */
 export function buildModelResolver(
   config: ProvidersConfig,
+  gateway?: ModelGatewayAccess,
 ): (modelString: string) => LanguageModelV4 {
-  const provider = buildRegistry(config);
+  const provider = buildRegistry(config, gateway);
 
   return (modelString: string): LanguageModelV4 =>
     provider.languageModel(requireQualifiedModelId(modelString)) as LanguageModelV4;

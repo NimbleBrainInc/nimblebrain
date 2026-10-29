@@ -296,6 +296,7 @@ import {
   WorkspaceMembershipRevokedError,
 } from "./errors.ts";
 import { IdentityToolRouter } from "./identity-tool-router.ts";
+import { modelGatewayFetch } from "./model-gateway-fetch.ts";
 import { PlacementRegistry } from "./placement-registry.ts";
 import {
   callMayUseTool,
@@ -867,7 +868,7 @@ export class Runtime {
       config = { ...config, configOverridePath: deriveOverridePath(config.configPath) };
     }
 
-    const resolveModelFn = resolveModel(config);
+    const resolveModelFn = resolveModel(config, runKey);
 
     // Install the durable half of the spend chokepoint. Module-level in
     // `usage/record.ts` rather than threaded to each call site, because the four
@@ -6123,11 +6124,21 @@ async function seedWorkspaceConnectorInstances(
   }
 }
 
-function resolveModel(config: RuntimeConfig): (modelString: string) => LanguageModelV4 {
+function resolveModel(
+  config: RuntimeConfig,
+  runKey: RunKey | null,
+): (modelString: string) => LanguageModelV4 {
   const adapter = config.languageModel;
   if (adapter) return () => adapter;
+  // A provider set `gateway: true` is reached through the installation's model
+  // gateway with a credential minted per call; that needs both the gateway and
+  // the run key, and `buildRegistry` refuses the boot for a provider that asks
+  // without them.
+  const gatewayUrl = config.execution?.modelGateway;
+  const gateway =
+    gatewayUrl && runKey ? { url: gatewayUrl, fetch: modelGatewayFetch(runKey) } : undefined;
   // No providers configured means Anthropic, keyed from the environment.
-  return buildModelResolver({ providers: config.providers ?? { anthropic: {} } });
+  return buildModelResolver({ providers: config.providers ?? { anthropic: {} } }, gateway);
 }
 
 /** Initialize work directory env vars and sync core skills. */
@@ -6321,6 +6332,7 @@ function buildRunContext(
     // run id when it doesn't, so every reader asking for the current
     // conversation of a one-shot run correctly gets nothing.
     ...(spec.conversation ? { conversationId: spec.conversation.conversation.id } : { runId }),
+    credentialSubject: runId,
     // Unattended runs bar the task-authoring surface at tool-dispatch
     // depth. Rides the ALS context and is preserved across the per-call
     // restamp, so the wall is enforced at the tasks source rather than
