@@ -63,13 +63,19 @@ jobs:
         # Short, revalidating TTL — NOT immutable. The /v1/ path evolves
         # additively (new optional fields), so consumers must be able to pick up
         # changes; immutable caching here is what stranded the schema before.
+        env:
+          FILE: ${{ matrix.file }}
+          KEY: ${{ matrix.key }}
         run: |
-          aws s3 cp "${{ matrix.file }}" "s3://$BUCKET/${{ matrix.key }}" \
+          aws s3 cp "$FILE" "s3://$BUCKET/$KEY" \
             --content-type "application/schema+json" \
             --cache-control "public, max-age=300, must-revalidate"
 
       - name: Invalidate CloudFront
+        env:
+          DISTRIBUTION_ID: ${{ vars.SCHEMAS_CF_DISTRIBUTION_ID }}
+          KEY: ${{ matrix.key }}
         run: |
           aws cloudfront create-invalidation \
-            --distribution-id "${{ vars.SCHEMAS_CF_DISTRIBUTION_ID }}" \
-            --paths "/${{ matrix.key }}"
+            --distribution-id "$DISTRIBUTION_ID" \
+            --paths "/$KEY"
