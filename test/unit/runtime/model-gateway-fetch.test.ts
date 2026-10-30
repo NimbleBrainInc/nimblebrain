@@ -131,9 +131,9 @@ describe("the model gateway's fetch, when the gateway cannot be reached", () => 
 
   it("checks the gateway the call goes to, on its scheme's port", async () => {
     const targets: string[] = [];
-    const record: GatewayConnect = async (host, port) => {
+    const record: GatewayConnect = (host, port, signal) => {
       targets.push(`${host}:${port}`);
-      throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+      return dropping(host, port, signal);
     };
     for (const url of ["https://gw.test/x", "http://gw.test:8080/x", "http://[::1]/x"]) {
       await modelGatewayFetch(runKey, hangingFetch(), { ...FAST, connect: record })(url).catch(
@@ -164,6 +164,36 @@ describe("the model gateway's fetch, when the gateway cannot be reached", () => 
       "http://gateway.test/x",
     );
     expect(await response.text()).toBe("ok");
+  });
+
+  it("leaves a call that connected alone when the gateway refuses new connections", async () => {
+    // A gateway draining its listener refuses new connections while it still
+    // answers the ones it holds.
+    const refusing: GatewayConnect = async () => {
+      throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+    };
+    const slow = fakeFetch(
+      () => new Promise<Response>((resolve) => setTimeout(() => resolve(new Response("ok")), 150)),
+    );
+    const response = await modelGatewayFetch(runKey, slow, { ...FAST, connect: refusing })(
+      "http://gateway.test/x",
+    );
+    expect(await response.text()).toBe("ok");
+  });
+
+  it("lets a caller's abort carried by a Request through to the call", async () => {
+    const caller = new AbortController();
+    const calls: { signal?: AbortSignal }[] = [];
+    const reason = new Error("cancelled by the caller");
+    setTimeout(() => caller.abort(reason), 10);
+    const err = await modelGatewayFetch(runKey, hangingFetch(calls), {
+      slowResponseMs: 1_000,
+      connectTimeoutMs: 1_000,
+      env: {},
+      connect: dropping,
+    })(new Request("http://gateway.test/x", { signal: caller.signal })).catch((e: unknown) => e);
+    expect(err).toBe(reason);
+    expect(calls[0]?.signal?.aborted).toBe(true);
   });
 
   it("lets a caller's abort through as itself, not as an unreachable gateway", async () => {

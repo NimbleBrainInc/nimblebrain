@@ -20,9 +20,16 @@
  *   otherwise hold each call until the model stream's first-content watchdog,
  *   which must stay long because a large prompt's first token is legitimately
  *   slow. So when a call has no response after {@link SLOW_RESPONSE_MS}, a TCP
- *   connect to the gateway checks it is reachable: no connection within
- *   {@link CONNECT_TIMEOUT_MS} ends the call, and a connection leaves it to the
- *   watchdog. Only connecting is bounded, never the response.
+ *   connect to the gateway checks it answers: no answer within
+ *   {@link CONNECT_TIMEOUT_MS} ends the call. A connect that opens or fails
+ *   leaves the call to the watchdog: had the call's own connect failed, its
+ *   fetch would have reported it at once, so a failure now means the call
+ *   connected before it and may still be answered (a gateway draining its
+ *   listener).
+ *   Only connecting is bounded, never the response. The check is a separate
+ *   connection, since Bun's fetch exposes none of its own: a gateway that
+ *   silently drops new connections while still serving the call's ends the
+ *   call, which the engine then retries.
  */
 
 import { randomUUID } from "node:crypto";
@@ -42,7 +49,7 @@ const NO_WORKSPACE = "none";
 /** How long a call waits for its response before checking the gateway is reachable. */
 export const SLOW_RESPONSE_MS = 2_000;
 
-/** How long that check waits for a TCP connection to the gateway. */
+/** How long that check waits for the gateway to answer a TCP connect. */
 export const CONNECT_TIMEOUT_MS = 3_000;
 
 /**
@@ -122,17 +129,14 @@ export function modelGatewayFetch(
     headers.set("authorization", `Bearer ${credential}`);
     if (!check) return base(input, { ...init, headers });
     const unreachable = new AbortController();
-    const signal = init?.signal
-      ? AbortSignal.any([init.signal, unreachable.signal])
+    // The caller's signal is the init's, else the Request's: the init's signal
+    // below replaces the Request's, so it must carry the caller's too.
+    const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const signal = callerSignal
+      ? AbortSignal.any([callerSignal, unreachable.signal])
       : unreachable.signal;
     const response = base(input, { ...init, headers, signal });
-    return reachableResponse(
-      response,
-      target(input),
-      init?.signal ?? undefined,
-      unreachable,
-      check,
-    );
+    return reachableResponse(response, target(input), callerSignal, unreachable, check);
   };
   return Object.assign(gatewayFetch, { preconnect: base.preconnect }) as typeof fetch;
 }
@@ -145,8 +149,8 @@ interface ReachabilityCheck {
 
 /**
  * The call's response, unless the gateway proves unreachable first: a connect
- * failure the fetch reports itself, or no TCP connection to the gateway within
- * the check's bound once the response is slow. A caller's abort always wins.
+ * failure the fetch reports itself, or no answer to a TCP connect within the
+ * check's bound once the response is slow. A caller's abort always wins.
  */
 async function reachableResponse(
   response: Promise<Response>,
@@ -159,7 +163,7 @@ async function reachableResponse(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const failed = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      connectWithin(check, gateway, probe.signal).catch((err: unknown) => {
+      answersWithin(check, gateway, probe.signal).catch((err: unknown) => {
         if (!probe.signal.aborted) reject(err);
       });
     }, check.slowResponseMs);
@@ -184,8 +188,11 @@ async function reachableResponse(
   }
 }
 
-/** Connect to the gateway within the check's bound, or reject with why not. */
-async function connectWithin(
+/**
+ * Resolve once a TCP connect to the gateway opens or fails; reject when it does
+ * neither within the check's bound.
+ */
+async function answersWithin(
   check: ReachabilityCheck,
   gateway: { host: string; port: number },
   signal: AbortSignal,
@@ -199,14 +206,12 @@ async function connectWithin(
       reject(new ModelGatewayUnreachableError(`no connection within ${check.connectTimeoutMs}ms`));
     }, check.connectTimeoutMs);
   });
-  const connected = check.connect(gateway.host, gateway.port, attempt.signal);
-  connected.catch(() => {});
+  const answered = check.connect(gateway.host, gateway.port, attempt.signal).then(
+    () => {},
+    () => {},
+  );
   try {
-    await Promise.race([connected, timedOut]);
-  } catch (err) {
-    if (err instanceof ModelGatewayUnreachableError) throw err;
-    const code = connectFailureCode(err);
-    throw new ModelGatewayUnreachableError(`could not connect (${code ?? "connect failed"})`, code);
+    await Promise.race([answered, timedOut]);
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", stop);
