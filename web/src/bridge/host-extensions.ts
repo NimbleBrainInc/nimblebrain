@@ -25,14 +25,16 @@ export type WorkspaceForHostContext = {
 } | null;
 
 /**
- * What the viewer may do with the connector whose settings component is
- * mounted. Supplied only by the connector settings page, so every other mount
- * point's payload carries no `connector` key.
+ * What the viewer may do with the connector a mounted app belongs to.
+ * Supplied by two mounts: the connector settings page, to the connector's
+ * settings component, and an app's own page (a routed sidebar placement, such
+ * as `sidebar.apps`), to that connector's app. Every other mount point's
+ * payload (an inline tool result, an identity app) carries no `connector` key.
  *
- * `canManage` is the same rule the page's host sections gate on: workspace
- * membership role `admin`, with no org-admin bypass. It lets a component
- * disable controls it knows the viewer cannot use. It is not the permission:
- * the server decides every call on its own.
+ * `canManage` is the same rule the settings page's host sections gate on
+ * (`useCanWriteActiveWorkspace`): workspace membership role `admin`, with no
+ * org-admin bypass. It lets an app offer only the controls the viewer can use.
+ * It is not the permission: the server decides every call on its own.
  */
 export type ConnectorForHostContext = { canManage: boolean } | undefined;
 

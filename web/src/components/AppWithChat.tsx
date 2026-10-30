@@ -9,7 +9,8 @@
 // about the panel's own layout.
 //
 // What stays here, because it needs the focused app:
-//   - `SlotRenderer` — renders the placement's iframe
+//   - `SlotRenderer` — renders the placement's iframe, told whether the viewer
+//     can manage the app's connector (an identity app belongs to no connector)
 //   - `handleChat` — the iframe→shell channel for "send this from inside the
 //     app". It is the one place a focused app is known, so it stamps the
 //     app's `AppContext` on outgoing messages.
@@ -30,8 +31,10 @@ import { useAppLocation } from "../context/AppLocationContext";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
+import { useCanWriteActiveWorkspace } from "../hooks/useScopedRole";
 import { getSavedConversationId, setSavedConversationId } from "../lib/active-conversation-storage";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
+import { isIdentityApp } from "../lib/identity-apps";
 import { appTargetFrom } from "../lib/open-app";
 import { cn } from "../lib/utils";
 import type { AppContext, PlacementEntry } from "../types";
@@ -68,6 +71,10 @@ export function AppWithChat({ placement }: AppWithChatProps) {
   const { setFocusedApp } = useFocusedApp();
   const { setAppLocation } = useAppLocation();
   const location = useLocation();
+  // The same rule the connector's settings page hands its settings component.
+  // An identity app is the user's own, not a workspace connector, so it gets none.
+  const canWrite = useCanWriteActiveWorkspace();
+  const canManage = isIdentityApp(placement.serverName) ? undefined : canWrite;
 
   // Collapse fullscreen when navigating to a different route
   const prevPathnameRef = useRef(location.pathname);
@@ -192,6 +199,7 @@ export function AppWithChat({ placement }: AppWithChatProps) {
           onChat={handleChat}
           onLocation={handleLocation}
           target={target}
+          canManage={canManage}
         />
       </div>
     </div>

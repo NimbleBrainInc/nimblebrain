@@ -59,8 +59,10 @@ handshake's host context:
   the host's own sections on the page follow.
 - When it changes while the section is open, the host sends it again in
   `ui/notifications/host-context-changed`.
-- Only the settings section receives the `connector` key. Your other
-  placements do not.
+- Your app's own pages (its routed sidebar placements, such as `sidebar.apps`)
+  receive the same `connector` key by the same rule, so an admin-only action in
+  the main view can be offered to admins alone. A view rendered inline in a
+  chat does not receive it.
 
 <Aside type="caution" title="The flag reflects controls; it is not the permission">
 Use `canManage` to disable or omit controls the viewer cannot use. It does not

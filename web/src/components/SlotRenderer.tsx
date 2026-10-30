@@ -40,8 +40,9 @@ interface SlotRendererProps {
   target?: { id: string; key: string };
   /**
    * Whether the viewer can manage the connector these placements belong to.
-   * Set only by the connector settings page; when set, it reaches the app as
-   * the `connector` host-context extension. Every other mount leaves it unset.
+   * Set by the connector settings page and by a workspace app's own mount
+   * (`AppWithChat`); when set, it reaches the app as the `connector`
+   * host-context extension. Every other mount leaves it unset.
    */
   canManage?: boolean;
   /**
