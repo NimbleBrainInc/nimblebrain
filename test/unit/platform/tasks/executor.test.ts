@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { effectiveRunLimits, resolveTasksConfig } from "../../../../src/config/tasks.ts";
+import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../../../../src/model/gateway-refusal.ts";
 import {
   createDirectExecutor,
   type ExecutorContext,
@@ -451,6 +452,28 @@ describe("createDirectExecutor — stopReason → status", () => {
     expect(run.error).toContain("Token budget reached");
     expect(run.error).toContain("50,000 input tokens");
     expect(run.error).toContain("10,000 left");
+  });
+
+  test("spend_limit by the model gateway's run budget → failure, naming the run's budget, not the task's", async () => {
+    const executor = createDirectExecutor(
+      async (req): Promise<TaskFnResult> => ({
+        output: "partial",
+        runId: req.runId ?? "run_test000000",
+        toolCalls: [],
+        stopReason: "spend_limit",
+        spendAccountId: MODEL_GATEWAY_BUDGET_ACCOUNT,
+        usage: { inputTokens: 53_000, outputTokens: 900, iterations: 2 },
+      }),
+      () => ({}),
+    );
+    const { run } = await executor(
+      makeTask({ tokenBudget: { maxInputTokens: 50_000, period: "daily" } }),
+    );
+    expect(run.status).toBe("failure");
+    expect(run.spendAccountId).toBe(MODEL_GATEWAY_BUDGET_ACCOUNT);
+    expect(run.error).toContain("Model budget reached");
+    expect(run.error).toContain("this run's model budget");
+    expect(run.error).not.toContain("Token budget");
   });
 
   test("spend_limit by a batch's account before any call → skipped; after one → failure", async () => {

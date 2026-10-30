@@ -49,6 +49,16 @@ export interface AcpRunRecorder {
     outcome: AcpOutcome,
     toolCalls: ToolCallRecord[],
   ): EngineResult;
+  /**
+   * The turn ended without a response, stopped rather than failed: a spend
+   * limit (`spendAccountId` naming it) refused its next model call. What the
+   * agent reported of the turn before that is recorded as `finish` records it.
+   */
+  stopped(
+    stop: { stopReason: StopReason; spendAccountId?: string },
+    outcome: AcpOutcome,
+    toolCalls: ToolCallRecord[],
+  ): EngineResult;
   /** The turn was cancelled. */
   cancelled(): void;
   /** The turn failed. */
@@ -143,7 +153,7 @@ export function createAcpRunRecorder(
   // on its own, as the engine records them, or ACP's turn total on the last
   // segment. Summaries are billed as the door bills a fold.
   const recordUsage = (
-    response: acp.PromptResponse,
+    turnTotal: TokenUsage,
     outcome: AcpOutcome,
     content: LanguageModelV4Content[],
     finishReason: FinishReason,
@@ -159,7 +169,7 @@ export function createAcpRunRecorder(
       emitSegment(content, last.usage, finishReason, last.model);
       return { usage: sumUsage(loopCalls), iterations: loopCalls.length };
     }
-    const usage = usageOf(response);
+    const usage = turnTotal;
     if (content.length > 0 || segments === 0 || usage.inputTokens + usage.outputTokens > 0) {
       emitSegment(content, usage, finishReason);
     }
@@ -248,7 +258,12 @@ export function createAcpRunRecorder(
     finish(response, outcome, toolCalls) {
       const stopReason = outcome.stopReason ?? stopReasonOf(response.stopReason);
       const finishReason = finishReasonOf(response.stopReason);
-      const { usage, iterations } = recordUsage(response, outcome, takeText(), finishReason);
+      const { usage, iterations } = recordUsage(
+        usageOf(response),
+        outcome,
+        takeText(),
+        finishReason,
+      );
       done(stopReason, iterations);
       return {
         output,
@@ -259,6 +274,21 @@ export function createAcpRunRecorder(
         stopReason,
         finishReason,
         finishReasonRaw: response.stopReason,
+      };
+    },
+
+    stopped(stop, outcome, toolCalls) {
+      // A stop mid-turn replays as cut short, as a cancelled turn does.
+      const { usage, iterations } = recordUsage(emptyUsage(), outcome, takeText(), "other");
+      done(stop.stopReason, iterations);
+      return {
+        output,
+        toolCalls,
+        iterations,
+        usage,
+        llmMs: performance.now() - started,
+        stopReason: stop.stopReason,
+        ...(stop.spendAccountId !== undefined ? { spendAccountId: stop.spendAccountId } : {}),
       };
     },
 

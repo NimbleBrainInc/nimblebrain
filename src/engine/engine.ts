@@ -25,6 +25,7 @@ import {
   type XAIEffort,
   xaiSupportedEfforts,
 } from "../model/catalog.ts";
+import { isModelBudgetSpent, MODEL_GATEWAY_BUDGET_ACCOUNT } from "../model/gateway-refusal.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
 import { log } from "../observability/log.ts";
@@ -788,6 +789,15 @@ function appendFinalStepReminder(
     ];
   }
   return [...callMessages, { role: "user", content: [{ type: "text", text: finalStep }] }];
+}
+
+/**
+ * Whether a model call that threw failed at the provider, for the LLM error
+ * rate: not a cancellation, and not the model gateway refusing the call for the
+ * run's spent budget, which stops the run rather than failing it.
+ */
+function isProviderFailure(err: unknown, signal: AbortSignal | undefined): boolean {
+  return !signal?.aborted && !isModelBudgetSpent(err);
 }
 
 /**
@@ -1578,8 +1588,14 @@ export class AgentEngine {
         iteration++;
       }
     } catch (err) {
-      this.emitThrownRunEnd({ runId, err, signal: config.signal, iteration, maxIter, runStart });
-      throw err;
+      spendAccountId = this.budgetStopOrRethrow({
+        runId,
+        err,
+        signal: config.signal,
+        iteration,
+        maxIter,
+        runStart,
+      });
     } finally {
       unregisterToolControls?.();
     }
@@ -1599,6 +1615,24 @@ export class AgentEngine {
       cumulativeUsage,
       cumulativeLlmMs,
     });
+  }
+
+  /**
+   * The end of a run whose loop threw. The model gateway refusing a call because
+   * the run's budget is spent stops the run as a spend account would, before the
+   * call: this returns the account that names it, and the run finishes with
+   * stopReason `spend_limit`. Anything else is emitted as the run's end
+   * (`emitThrownRunEnd`) and rethrown.
+   */
+  private budgetStopOrRethrow(params: Parameters<AgentEngine["emitThrownRunEnd"]>[0]): string {
+    if (isModelBudgetSpent(params.err) && !params.signal?.aborted) {
+      log.warn("[engine] the model gateway refused the call: the run's budget is spent", {
+        runId: params.runId,
+      });
+      return MODEL_GATEWAY_BUDGET_ACCOUNT;
+    }
+    this.emitThrownRunEnd(params);
+    throw params.err;
   }
 
   /**
@@ -1672,8 +1706,8 @@ export class AgentEngine {
         : iteration >= maxIter
           ? "max_iterations"
           : deriveStopReason(lastFinishReason);
-    // A cap or spend stop breaks before its iteration's model call, so every
-    // counted iteration is complete.
+    // A cap or spend stop breaks before its iteration's model call completes,
+    // so every counted iteration is complete.
     const reportedIterations =
       runInputCapReached || spendAccountId !== undefined
         ? iteration
@@ -1888,7 +1922,9 @@ export class AgentEngine {
         // before re-throwing — the error still propagates and ends the run.
         // Aborts are excluded: a cancellation isn't a provider failure and
         // must not inflate the error rate.
-        if (!config.signal?.aborted) {
+        // The gateway's refusal for a spent run budget is not one either: the
+        // run stops on it (`budgetStopOrRethrow`).
+        if (isProviderFailure(err, config.signal)) {
           this.events.emit({
             type: "llm.error",
             data: { runId, model: config.model },

@@ -90,6 +90,10 @@ function stopReasonMessage(stopReason: string): string {
       // event cap, or shutdown. Whatever the turn produced before the stop is
       // shown above; the wording holds for every one of those causes.
       return "This response was stopped before it finished.";
+    case "spend_limit":
+      // A spend account (a task's or batch's budget) or the model gateway's
+      // per-run budget refused the next model call.
+      return "This response stopped because its model budget is spent. Send another message to continue with a fresh budget.";
     case "content_filter":
       return "The response was blocked by content filtering. Try rephrasing your request.";
     case "error":

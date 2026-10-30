@@ -18,6 +18,7 @@ import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { ResolvedRun } from "../../types.ts";
 import {
   type AcpDriver,
+  type AcpModelFailure,
   type AcpOutcome,
   knownStopReason,
   type ReportedModelCall,
@@ -31,6 +32,9 @@ export const AGENT_SESSION_META_KEY = "nimblebrain-agent/session";
 export const AGENT_STOP_REASON_META_KEY = "nimblebrain-agent/stopReason";
 export const AGENT_USAGE_META_KEY = "nimblebrain-agent/usage";
 
+/** nimblebrain-agent's error key: the model call that failed the turn, as `{ status, reason? }`. */
+export const AGENT_MODEL_ERROR_KEY = "nimblebrain-agent/modelError";
+
 export function createNimbleBrainAgentDriver(): AcpDriver {
   return {
     capabilities: { spendGate: false, modelCredential: "session" },
@@ -38,6 +42,7 @@ export function createNimbleBrainAgentDriver(): AcpDriver {
     sessionMeta: (run) => agentSessionMeta(run),
     prompt: agentPrompt,
     outcome: agentOutcome,
+    modelFailure: agentModelFailure,
   };
 }
 
@@ -69,6 +74,24 @@ export function agentOutcome(response: { _meta?: Record<string, unknown> | null 
   const usage = meta[AGENT_USAGE_META_KEY] as { calls?: unknown } | undefined;
   const calls = Array.isArray(usage?.calls) ? usage.calls.filter(isReportedCall) : undefined;
   return { ...(stopReason ? { stopReason } : {}), ...(calls ? { calls } : {}) };
+}
+
+/**
+ * The model call that failed nimblebrain-agent's turn, from its `session/prompt`
+ * error's `data`: the call's status and reason, and the turn's usage before it
+ * under the same key as on a response.
+ */
+export function agentModelFailure(err: unknown): AcpModelFailure | undefined {
+  const data = (err as { data?: unknown } | null)?.data;
+  if (!data || typeof data !== "object") return undefined;
+  const meta = data as Record<string, unknown>;
+  const failure = meta[AGENT_MODEL_ERROR_KEY] as { status?: unknown; reason?: unknown } | undefined;
+  if (typeof failure?.status !== "number") return undefined;
+  return {
+    status: failure.status,
+    ...(typeof failure.reason === "string" ? { reason: failure.reason } : {}),
+    outcome: agentOutcome({ _meta: meta }),
+  };
 }
 
 function isReportedCall(value: unknown): value is ReportedModelCall {
