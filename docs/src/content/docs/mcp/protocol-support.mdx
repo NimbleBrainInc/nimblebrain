@@ -47,6 +47,7 @@ On a 2025-era connection, a workspace connector's `initialize` carries exactly t
 {
   "capabilities": {
     "extensions": {
+      "io.modelcontextprotocol/ui": { "mimeTypes": ["text/html;profile=mcp-app"] },
       "io.modelcontextprotocol/skills": {},
       "ai.nimblebrain/facets": {},
       "ai.nimblebrain/lifecycle": {},
@@ -62,13 +63,14 @@ On a 2025-era connection, a workspace connector's `initialize` carries exactly t
 }
 ```
 
-On a `2026-07-28` connection, every request's envelope carries the same Skills, facets, lifecycle, and resource-arguments claims, and no `ai.nimblebrain/host-resources`:
+On a `2026-07-28` connection, every request's envelope carries the same MCP Apps, Skills, facets, lifecycle, and resource-arguments claims, and no `ai.nimblebrain/host-resources`:
 
 ```json
 {
   "_meta": {
     "io.modelcontextprotocol/clientCapabilities": {
       "extensions": {
+        "io.modelcontextprotocol/ui": { "mimeTypes": ["text/html;profile=mcp-app"] },
         "io.modelcontextprotocol/skills": {},
         "ai.nimblebrain/facets": {},
         "ai.nimblebrain/lifecycle": {},
@@ -78,6 +80,8 @@ On a `2026-07-28` connection, every request's envelope carries the same Skills, 
   }
 }
 ```
+
+**`io.modelcontextprotocol/ui`**: [MCP Apps](/concepts/mcp-apps/), claimed on both eras with the one UI resource MIME type the host renders, `text/html;profile=mcp-app`. A server that checks the claim (ext-apps' `getUiCapability`) before offering UI sees it on either era.
 
 **`io.modelcontextprotocol/tasks`**: the host runs long-running tools as tasks through the `2026-07-28` tasks extension, and only through it. When a server advertises the extension, each `tools/call` names it in that request's own client capabilities, and the server decides per call whether to answer outright or with a task. The host polls `tasks/get` and reads the result it inlines. When the run that made a call is cancelled, the host sends `tasks/cancel`. A task that asks for input (`input_required`) is cancelled and reported as an error, since the host has no one to ask. A task-augmented call is never retried after a transport failure, because the task's state lives on the server and a retry would start the work twice. The extension is claimed on those requests only, never on the connection, so it appears in neither block above.
 
