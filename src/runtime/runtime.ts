@@ -5358,26 +5358,6 @@ export class Runtime {
   }
 
   /**
-   * Tenant-level default preferences from the deployed runtime config
-   * (`config.preferences`). Per-user identity preferences override them at
-   * request time.
-   */
-  getTenantDefaultPreferences(): {
-    displayName?: string;
-    timezone?: string;
-    locale?: string;
-    theme?: "system" | "light" | "dark";
-  } {
-    const prefs = this.config.preferences ?? {};
-    return {
-      ...(prefs.displayName ? { displayName: prefs.displayName } : {}),
-      ...(prefs.timezone ? { timezone: prefs.timezone } : {}),
-      ...(prefs.locale ? { locale: prefs.locale } : {}),
-      ...(prefs.theme ? { theme: prefs.theme } : {}),
-    };
-  }
-
-  /**
    * Max agentic iterations per request.
    *
    * The engine resolves the same way, so what this reports — to the agent via

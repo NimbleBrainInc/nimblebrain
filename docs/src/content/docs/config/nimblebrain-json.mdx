@@ -10,7 +10,7 @@ NimbleBrain splits configuration into two files:
 - **`nimblebrain.json`** — instance-level settings (models, HTTP, logging, limits, feature flags). One file per deployment. **This page.**
 - **`workspace.json`** — per-workspace settings (connectors, skill directories, optional model overrides). See [`workspace.json`](/config/workspace-json).
 
-Top-level `skillDirs`, `home`, and `preferences` entries in `nimblebrain.json` are stripped at load — they belong in `workspace.json` now. See [workspace configuration](/config/workspace-json) for where they live. A workspace's `connectors` array belongs there too; in this file the name `connectors` is the [provider and gateway block](#connectors).
+Top-level `skillDirs` and `home` entries in `nimblebrain.json` are stripped at load — they belong in `workspace.json`. See [workspace configuration](/config/workspace-json) for where they live. A workspace's `connectors` array belongs there too; in this file the name `connectors` is the [provider and gateway block](#connectors). Preferences (display name, timezone, locale, theme, model) are not config in either file: each person sets their own with the `nb__set_preferences` tool or [profile settings](/guide/settings), and they are stored on that user's record.
 
 ## Config resolution
 
@@ -123,7 +123,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `workDir` | `string` | `"~/.nimblebrain"` | Working directory for runtime state (conversations, logs, workspaces). |
 
 <Aside type="note">
-  **Workspace-owned fields** — `skillDirs`, `home`, `preferences` — are stripped if placed at the top level. They live in [`workspace.json`](/config/workspace-json). A workspace-shaped `connectors` **array** is rejected outright, because in this file that name is the [provider and gateway block](#connectors) and takes an object.
+  **Workspace-owned fields** — `skillDirs`, `home` — are stripped if placed at the top level. They live in [`workspace.json`](/config/workspace-json). A top-level `preferences` key is ignored: preferences are per person, not per deployment. A workspace-shaped `connectors` **array** is rejected outright, because in this file that name is the [provider and gateway block](#connectors) and takes an object.
 </Aside>
 
 ## Reasoning depth
@@ -701,7 +701,7 @@ NimbleBrain validates `nimblebrain.json` at startup against the [JSON Schema (dr
 
 - **Unknown keys** produce a warning on stderr and are ignored.
 - **Structural errors** (wrong types, missing required fields) throw an error and prevent startup.
-- **Workspace-owned keys** (`skillDirs`, `home`, `preferences`) warn as unknown keys and are stripped before the runtime config is built.
+- **Workspace-owned keys** (`skillDirs`, `home`) and `preferences` warn as unknown keys and are ignored.
 - The **override file** (`nimblebrain.overrides.json`) is validated structurally, but unknown-key warnings are suppressed for it. Every key `set_model_config` writes is in the published schema; the suppression is for version drift, since the file is preserved across deploys and can outlive the schema of whichever image reads it.
 
 ```

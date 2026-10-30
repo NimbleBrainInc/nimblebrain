@@ -271,18 +271,6 @@ export interface RuntimeConfig {
     maxFilesPerMessage?: number;
     maxExtractedTextSize?: number;
   };
-
-  /** User preferences for personalization. */
-  preferences?: {
-    /** Display name. */
-    displayName?: string;
-    /** IANA timezone. */
-    timezone?: string;
-    /** BCP 47 locale. Default: "en-US". */
-    locale?: string;
-    /** Color theme. Default: "system". */
-    theme?: "system" | "light" | "dark";
-  };
 }
 
 /** Identifies which app (and its backing MCP server) originated a chat request. */

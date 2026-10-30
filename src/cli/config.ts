@@ -167,7 +167,6 @@ function applyOverride(
  */
 function stripWorkspaceFields(fileConfig: FileConfig): void {
   delete fileConfig.skillDirs;
-  delete fileConfig.preferences;
   delete fileConfig.home;
 }
 
@@ -197,8 +196,8 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
   stripWorkspaceFields(fileConfig);
 
   // CLI flags override file config — workspace-owned fields (skillDirs,
-  // preferences, home) are intentionally omitted; they were deleted above and
-  // now live in workspace.json. `connectors` below is the instance-level
+  // home) are intentionally omitted; they were deleted above and now live in
+  // workspace.json. `connectors` below is the instance-level
   // provider/gateway block, not a workspace's connector array.
   const config: RuntimeConfig = {
     providers: fileConfig.providers as RuntimeConfig["providers"],
