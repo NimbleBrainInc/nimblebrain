@@ -104,10 +104,12 @@ export interface RequestContext {
    */
   model?: string;
   /**
-   * The agent runtime running this turn, when its agent reports its own usage
-   * (`RuntimeCapabilities.usage`). Stamped on every usage ledger line the turn
-   * writes, so a reader can tell usage NimbleBrain measured from usage an
-   * external agent reported. Undefined for a measured runtime and outside a run.
+   * The agent runtime executing this turn, when its agent reports its own
+   * usage (`RuntimeCapabilities.usage`). Set only around the runtime's
+   * `execute`, so it is on the ledger lines of the usage the agent reports and
+   * not on the calls NimbleBrain makes for the run itself (the fold between
+   * turns, the title), which it measured. Undefined for a measured runtime and
+   * outside a run.
    */
   agentRuntime?: string;
   toolPromotion?: ToolPromotionControls;
