@@ -66,7 +66,7 @@ export function createAgentRuntimes(
       credential: deps.connectionCredential,
     });
     add(
-      createAcpRuntime(id, driverFor(entry, config?.modelGateway), connection, {
+      createAcpRuntime(id, driverFor(entry), connection, {
         ...(config?.modelGateway ? { modelGateway: config.modelGateway } : {}),
       }),
     );
@@ -85,10 +85,10 @@ export function createAgentRuntimes(
 }
 
 /** The driver for the agent a runtime entry names. */
-function driverFor(entry: AgentRuntimeConfig, modelGateway: string | undefined): AcpDriver {
+function driverFor(entry: AgentRuntimeConfig): AcpDriver {
   switch (entry.driver) {
     case "nimblebrain-agent":
-      return createNimbleBrainAgentDriver(modelGateway ? { modelGateway } : {});
+      return createNimbleBrainAgentDriver();
   }
 }
 

@@ -63,13 +63,12 @@ describe("nimblebrain-agent driver", () => {
     expect(agentCommand({ command: "/opt/agent/src/cli.ts" })).toBe("/opt/agent/src/cli.ts");
   });
 
-  test("sends the door's prompt, prior history and limits as nimblebrain-agent's session options", () => {
+  test("sends the door's prior history and limits as nimblebrain-agent's session options", () => {
     const driver = createNimbleBrainAgentDriver();
     expect(driver.toolSurface).toBe("projection");
     const meta = driver.sessionMeta?.(run(), { mcpServers: [], delivered: NOTHING_DELIVERED });
     expect(meta).toEqual({
       [AGENT_SESSION_META_KEY]: {
-        system: "Be brief.",
         history: encodeHistory(run().messages.slice(0, 2)),
         model: "anthropic:claude-sonnet-4-6",
         maxIterations: 7,
@@ -81,41 +80,17 @@ describe("nimblebrain-agent driver", () => {
     expect(driver.prompt?.(run())).toEqual([{ type: "text", text: "now" }]);
   });
 
-  test("takes the turn's model credential per session, and sends it beside the gateway only", () => {
-    const gateway = "http://model-gateway.test";
+  test("takes the turn's model credential per session, and leaves it and the system prompt to ACP's fields", () => {
+    const driver = createNimbleBrainAgentDriver();
+    expect(driver.capabilities).toEqual({ spendGate: false, modelCredential: "session" });
     const minted = { ...run(), modelCredential: "turn-jwt" };
-    const meta = (driver: ReturnType<typeof createNimbleBrainAgentDriver>, r: ResolvedRun) =>
-      driver.sessionMeta?.(r, { mcpServers: [], delivered: NOTHING_DELIVERED })?.[
-        AGENT_SESSION_META_KEY
-      ];
-
-    const gated = createNimbleBrainAgentDriver({ modelGateway: gateway });
-    expect(gated.capabilities).toEqual({ spendGate: false, modelCredential: "session" });
-    // The endpoint is the session model's provider on the gateway.
-    expect(meta(gated, minted)).toMatchObject({
-      modelCredential: "turn-jwt",
-      modelEndpoint: "http://model-gateway.test/anthropic/v1",
-    });
-    // Every provider's base URL, so a summary on another provider's model reaches it.
-    expect(meta(gated, minted)).toMatchObject({
-      modelEndpoints: {
-        anthropic: "http://model-gateway.test/anthropic/v1",
-        openai: "http://model-gateway.test/openai/v1",
-        google: "http://model-gateway.test/google/v1beta",
-        xai: "http://model-gateway.test/xai/v1",
-        nebius: "http://model-gateway.test/nebius/v1",
-        greenpt: "http://model-gateway.test/greenpt/v1",
-      },
-    });
-    const onGoogle = { ...minted, config: { ...minted.config, model: "google:gemini-3-pro" } };
-    expect(meta(gated, onGoogle)).toMatchObject({
-      modelEndpoint: "http://model-gateway.test/google/v1beta",
-    });
-    // No gateway: the worker calls its own provider, so the credential stays home.
-    expect(meta(createNimbleBrainAgentDriver(), minted)).not.toHaveProperty("modelCredential");
-    // No credential: the agent refuses an endpoint without one, so none is sent.
-    expect(meta(gated, run())).not.toHaveProperty("modelEndpoint");
-    expect(meta(gated, run())).not.toHaveProperty("modelEndpoints");
+    const options = driver.sessionMeta?.(minted, {
+      mcpServers: [],
+      delivered: NOTHING_DELIVERED,
+    })?.[AGENT_SESSION_META_KEY];
+    for (const option of ["system", "modelCredential", "modelEndpoint", "modelEndpoints"]) {
+      expect(options).not.toHaveProperty(option);
+    }
   });
 
   test("lets the agent fold mid-turn only when the door allows it, with the door's model", () => {
