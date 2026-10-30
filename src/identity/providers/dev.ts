@@ -89,8 +89,10 @@ export class DevIdentityProvider implements IdentityProvider {
   // ── Private ───────────────────────────────────────────────────
 
   /**
-   * The stored dev profile, or null when it is missing or unreadable. A corrupt
-   * `profile.json` falls back to the defaults rather than failing every request.
+   * The stored dev profile, or null when it is missing or unreadable. Once the
+   * provider has initialized, a corrupt `profile.json` falls back to the
+   * defaults rather than failing every request; `ensureUserProfile` still reads
+   * it unguarded on the first request.
    */
   private async readProfile(): Promise<User | null> {
     try {
