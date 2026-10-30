@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentRuntimeConfig, ExecutionConfig } from "../../../src/config/execution.ts";
-import { type AgentRuntimeDeps, createAgentRuntimes } from "../../../src/execution/registry.ts";
+import {
+  type AgentRuntimeDeps,
+  assertPoolable,
+  createAgentRuntimes,
+} from "../../../src/execution/registry.ts";
 import type { AgentRuntime } from "../../../src/execution/types.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 
@@ -118,5 +122,14 @@ describe("a configured worker, at boot", () => {
     expect(() =>
       createAgentRuntimes(pooled({ modelGateway: "ftp://gateway" }), [], deps()),
     ).toThrow(/execution.modelGateway must be an http\(s\) URL/);
+  });
+});
+
+describe("a worker pool", () => {
+  test("serves only an agent whose tools are the run's projection", () => {
+    expect(() => assertPoolable("pool", { toolSurface: "projection" })).not.toThrow();
+    expect(() => assertPoolable("pool", { toolSurface: "mixed" })).toThrow(
+      /execution.runtimes.pool: its agent has tools of its own/,
+    );
   });
 });

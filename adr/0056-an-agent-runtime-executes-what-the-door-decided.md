@@ -58,9 +58,9 @@ conversation: each execution opens a fresh one from the history the door hands
 over, because no runtime's checkpoint is portable to another.
 
 **An external runtime reaches tools through a per-run projection of the router,
-and only through it.** The projection is an MCP endpoint over the run's walled
-router, opened for the run and closed with it, reachable on loopback behind a
-random path and bearer. It applies the checks the engine applies to a model's
+and only through it.** The projection is an MCP server over the run's walled
+router, opened for the run and closed with it, served on the agent's own ACP
+connection (ADR-0057), so nothing listens for it. It applies the checks the engine applies to a model's
 call and the run's call-level hooks, and it emits the run's tool record from
 what it dispatched. It is not `/mcp/<wsId>`, which serves a person's attended
 surface and would widen an unattended run's reach.
@@ -132,8 +132,9 @@ implement it, and the agent's session options are designed with it.
   one.
 - The agent's private reasoning streams to the person but is not persisted as
   conversation content.
-- Every tool call of an external runtime is an HTTP round trip on loopback; the
-  projection's lifetime is the run's, so nothing listens after it ends.
+- Every tool call of an external runtime is an `mcp/message` on the connection
+  the runtime dialed; the projection's lifetime is the run's, so nothing reaches
+  it after the run ends.
 - ACP names a tool call only by a free-text title, so a permission request
   cannot be matched to a tool reliably. A driver declares whether its agent's
   tools are the projection alone; when they are, every request is allowed,

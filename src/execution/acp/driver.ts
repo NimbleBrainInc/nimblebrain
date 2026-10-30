@@ -25,12 +25,6 @@ export interface AcpConnectionTarget {
    * `close` removes it.
    */
   cwd: string;
-  /**
-   * Whether the agent runs on this host, so a loopback endpoint reaches it. An
-   * agent on another host that takes no `acp` MCP server is refused: it runs
-   * behind the bridge on its own host (ADR-0057).
-   */
-  sameHost: boolean;
   close(): Promise<void>;
 }
 

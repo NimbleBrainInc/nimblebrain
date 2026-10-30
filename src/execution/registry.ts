@@ -65,8 +65,10 @@ export function createAgentRuntimes(
       url: entry.url,
       credential: deps.connectionCredential,
     });
+    const driver = driverFor(entry, config?.modelGateway);
+    assertPoolable(id, driver);
     add(
-      createAcpRuntime(id, driverFor(entry, config?.modelGateway), connection, {
+      createAcpRuntime(id, driver, connection, {
         ...(config?.modelGateway ? { modelGateway: config.modelGateway } : {}),
       }),
     );
@@ -118,6 +120,20 @@ function assertGatewayed(config: ExecutionConfig, deps: AgentRuntimeDeps): void 
   if (!gateway) {
     throw new Error(
       "execution.runtimes needs execution.modelGateway: outside the dev identity provider an external agent calls models only through the installation's gateway",
+    );
+  }
+}
+
+/**
+ * A configured runtime is a pool of shared workers, which may serve only an
+ * agent whose tools are the run's projection alone. An agent with tools of its
+ * own acts on the host it runs on, so it runs in a sandbox per session, never
+ * on a shared worker (ADR-0057).
+ */
+export function assertPoolable(id: string, driver: AcpDriver): void {
+  if (driver.toolSurface !== "projection") {
+    throw new Error(
+      `execution.runtimes.${id}: its agent has tools of its own, so it cannot run on a shared worker pool`,
     );
   }
 }

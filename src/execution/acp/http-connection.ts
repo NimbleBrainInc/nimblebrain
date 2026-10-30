@@ -8,8 +8,6 @@
  *   worker verifies against the runtime's published key set.
  * - Every request ends with the run, so a cancel during session setup, before
  *   the runtime's own cancel listener exists, aborts the request in flight.
- * - The worker is on another host, so its tools travel on this connection
- *   only: it is never given a loopback endpoint.
  */
 
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
@@ -47,7 +45,6 @@ export function createHttpConnection(opts: HttpConnectionOptions): AcpConnection
       return {
         target: createHttpStream(opts.url, { headers, ...(fetch ? { fetch } : {}) }),
         cwd: "/",
-        sameHost: false,
         close: async () => {},
       };
     },

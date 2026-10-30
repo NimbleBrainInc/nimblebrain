@@ -132,8 +132,9 @@ them. The pool serves chat and unattended runs short enough to retry.
 
 **An agent with tools of its own runs in a sandbox per session.** A driver whose
 agent has tools beyond the projection (`toolSurface` other than `projection`)
-gets one isolated sandbox per session, not a shared worker. An agent whose tools
-are the projection alone uses the shared pool.
+gets one isolated sandbox per session, not a shared worker: the runtime refuses
+to build a worker pool for such a driver, at boot. An agent whose tools are the
+projection alone uses the shared pool.
 
 ### Tool-boundary policy
 
@@ -237,8 +238,8 @@ external runtime without a gateway.
 - An installation gains a run key and a public-key endpoint; both rotate by key
   id, the old key verifying until its last credential expires.
 - The tool projection has no listener. It serves `mcp/message` on the ACP
-  connection, so nothing in the runtime listens for an agent, and the loopback
-  listener ADR-0056 describes is retired once a driver declares `acp` servers.
+  connection, so nothing in the runtime listens for an agent, and an agent that
+  takes no `acp` server is refused rather than given another way in.
 - An agent's tool calls depend on a draft ACP proposal. Until an agent advertises
   `mcpCapabilities.acp`, it runs behind the bridge: one more component in each
   worker, and a loopback hop inside the agent's own host.
