@@ -67,3 +67,52 @@ test("cancelling while the worker stalls on initialize aborts the request and en
   await Bun.sleep(50);
   expect(requestAborted).toBe(true);
 });
+
+test("cancelling before the connection opens ends the run without waiting on the worker", async () => {
+  let reached = false;
+  server = Bun.serve({
+    port: 0,
+    fetch() {
+      reached = true;
+      return new Promise<Response>(() => {});
+    },
+  });
+  const controller = new AbortController();
+  const run: ResolvedRun = {
+    runId: "run_early",
+    conversationId: null,
+    system: "",
+    messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    tools: [],
+    config: {
+      model: "test:echo",
+      maxIterations: 1,
+      maxInputTokens: 1000,
+      maxOutputTokens: 100,
+      signal: controller.signal,
+    },
+  };
+  const runtime = createAcpRuntime(
+    "worker",
+    createNimbleBrainAgentDriver(),
+    createHttpConnection({ url: `http://127.0.0.1:${server.port}/acp`, credential: null }),
+  );
+
+  const execution = runtime.execute(run, {
+    tools: new StaticToolRouter([], () => ({ content: [], isError: false })),
+    events: { emit: () => {} },
+    billSummary: () => {},
+  });
+  // The abort lands while the runtime is still opening the tool projection.
+  controller.abort();
+
+  const settled = await Promise.race([
+    execution.then(
+      () => "resolved",
+      () => "rejected",
+    ),
+    Bun.sleep(2000).then(() => "pending"),
+  ]);
+  expect(settled).toBe("rejected");
+  expect(reached).toBe(false);
+});
