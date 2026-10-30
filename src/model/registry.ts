@@ -15,18 +15,17 @@ import { requireQualifiedModelId } from "./model-id.ts";
 
 export interface ProvidersConfig {
   providers?: {
-    anthropic?: { apiKey?: string; models?: string[]; gateway?: boolean };
+    anthropic?: { apiKey?: string; models?: string[] };
     openai?: {
       apiKey?: string;
       baseURL?: string;
       organization?: string;
       models?: string[];
-      gateway?: boolean;
     };
-    google?: { apiKey?: string; models?: string[]; gateway?: boolean };
-    greenpt?: { apiKey?: string; baseURL?: string; models?: string[]; gateway?: boolean };
-    nebius?: { apiKey?: string; baseURL?: string; models?: string[]; gateway?: boolean };
-    xai?: { apiKey?: string; baseURL?: string; models?: string[]; gateway?: boolean };
+    google?: { apiKey?: string; models?: string[] };
+    greenpt?: { apiKey?: string; baseURL?: string; models?: string[] };
+    nebius?: { apiKey?: string; baseURL?: string; models?: string[] };
+    xai?: { apiKey?: string; baseURL?: string; models?: string[] };
   };
 }
 
@@ -72,22 +71,13 @@ export function modelGatewayBaseURL(gatewayUrl: string, provider: string): strin
 /**
  * Where and how one provider's client calls: through the gateway (its base URL
  * there, the placeholder key, the gateway's fetch) when the installation has
- * one, and `undefined` otherwise. `gateway: true` without a gateway refuses the
- * boot; with one the flag changes nothing, since every provider goes through it.
+ * one, and `undefined` otherwise.
  */
 function gatewayClient(
   id: string,
-  cfg: { gateway?: boolean },
   gateway: ModelGatewayAccess | undefined,
 ): { baseURL: string; apiKey: string; fetch: typeof fetch } | undefined {
-  if (!gateway) {
-    if (cfg.gateway) {
-      throw new Error(
-        `providers.${id}.gateway needs execution.modelGateway and the installation's run key, which mints each call's credential`,
-      );
-    }
-    return undefined;
-  }
+  if (!gateway) return undefined;
   return {
     baseURL: modelGatewayBaseURL(gateway.url, id),
     apiKey: GATEWAY_KEY_PLACEHOLDER,
@@ -159,7 +149,7 @@ function anthropicProvider(
   cfg: ProviderConfig<"anthropic">,
   gateway: ModelGatewayAccess | undefined,
 ): ProviderV4 {
-  const via = gatewayClient("anthropic", cfg, gateway);
+  const via = gatewayClient("anthropic", gateway);
   const { apiKey } = cfg;
   // Wrap fetch with the transport-liveness tap so the stream watchdog re-arms
   // on Anthropic's swallowed `ping` keep-alives — otherwise a healthy-but-slow
@@ -203,7 +193,7 @@ function openaiProvider(
   // (LiteLLM/Helicone/Azure) that proxy legitimately expects that key — so
   // the fallback is the desired behavior here, not a hazard. See the nebius
   // branch below for the rule.
-  const via = gatewayClient("openai", cfg, gateway);
+  const via = gatewayClient("openai", gateway);
   return createOpenAI(via ? { ...via, organization } : { apiKey, baseURL, organization });
 }
 
@@ -212,7 +202,7 @@ function googleProvider(
   gateway: ModelGatewayAccess | undefined,
 ): ProviderV4 {
   const { apiKey } = cfg;
-  const via = gatewayClient("google", cfg, gateway);
+  const via = gatewayClient("google", gateway);
   return createGoogleGenerativeAI(via ?? { apiKey });
 }
 
@@ -221,7 +211,7 @@ function greenptProvider(
   gateway: ModelGatewayAccess | undefined,
 ): ProviderV4 {
   const { apiKey, baseURL } = cfg;
-  const via = gatewayClient("greenpt", cfg, gateway);
+  const via = gatewayClient("greenpt", gateway);
   const greenptApiKey = via?.apiKey ?? apiKey ?? process.env.GREENPT_API_KEY;
   if (!greenptApiKey) {
     throw new Error(
@@ -254,7 +244,7 @@ function nebiusProvider(
   gateway: ModelGatewayAccess | undefined,
 ): ProviderV4 {
   const { apiKey, baseURL } = cfg;
-  const via = gatewayClient("nebius", cfg, gateway);
+  const via = gatewayClient("nebius", gateway);
   // Nebius Token Factory is an OpenAI-compatible gateway for open-weight
   // models, so it is built through the adapter written for exactly that —
   // `createOpenAICompatible` — rather than through `createOpenAI` pointed at
@@ -303,7 +293,7 @@ function xaiProvider(
   gateway: ModelGatewayAccess | undefined,
 ): ProviderV4 {
   const { apiKey, baseURL } = cfg;
-  const via = gatewayClient("xai", cfg, gateway);
+  const via = gatewayClient("xai", gateway);
   // No fail-closed key guard: createXai reads XAI_API_KEY on its own, so an
   // absent config key is the normal working case. See the nebius branch above
   // for the rule.
