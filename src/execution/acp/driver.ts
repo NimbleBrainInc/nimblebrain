@@ -48,6 +48,18 @@ export interface AcpSessionCalls {
 export interface AcpSessionPlan {
   /** The MCP servers the session is given: the run's tool projection. */
   mcpServers: acp.McpServer[];
+  /** What the runtime already delivered by ACP's own fields (`./standard-fields.ts`). */
+  delivered: AcpStandardDelivery;
+}
+
+/**
+ * What the generic runtime handed the agent by ACP's standard fields, for a
+ * driver to leave out of its own delivery: the system prompt (`systemPrompt`
+ * on `session/new`) and the run's model access (`providers/*`).
+ */
+export interface AcpStandardDelivery {
+  systemPrompt: boolean;
+  modelAccess: boolean;
 }
 
 const STOP_REASONS = new Set<string>([
@@ -110,8 +122,9 @@ export interface AcpDriver {
   prepareSession?(calls: AcpSessionCalls, sessionId: string, run: ResolvedRun): Promise<void>;
   /**
    * The prompt that opens the turn. Absent, the runtime sends the door's
-   * system prompt and history as a transcript ahead of the latest message,
-   * the one delivery every ACP agent can read.
+   * history as a transcript ahead of the latest message, the one delivery every
+   * ACP agent can read, with the system prompt in it unless it went by ACP's
+   * `systemPrompt`.
    */
   prompt?(run: ResolvedRun): acp.ContentBlock[];
   /** Read what the agent reported about its turn in its own terms (`_meta` on the response). */
