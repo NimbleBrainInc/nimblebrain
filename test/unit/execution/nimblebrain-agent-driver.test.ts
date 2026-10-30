@@ -11,7 +11,7 @@ import {
   encodeHistory,
 } from "../../helpers/acp/nimblebrain-agent-driver.ts";
 
-/** Nothing went by ACP's standard fields: the driver delivers everything itself. */
+/** Nothing went by ACP's standard fields. */
 const NOTHING_DELIVERED = { systemPrompt: false, modelAccess: false };
 
 function run(model = "anthropic:claude-sonnet-4-6"): ResolvedRun {
