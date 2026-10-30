@@ -139,6 +139,41 @@ describe("providers", () => {
     await expect(result).rejects.toThrow(/requires provider "mistral"/);
   });
 
+  test("sets the protocol the gateway speaks at the provider's path, whatever the agent lists first", async () => {
+    const { result, log } = await execute(
+      { providers: [provider("google", ["openai", "gemini"])] },
+      { modelGateway: GATEWAY },
+    );
+    await result;
+    expect(log.providerCalls).toEqual([
+      {
+        method: "set",
+        params: {
+          providerId: "google",
+          apiType: "gemini",
+          baseUrl: `${GATEWAY}/google/v1beta`,
+          headers: { Authorization: "Bearer turn-jwt" },
+        },
+      },
+    ]);
+  });
+
+  test("turns off a served provider the agent cannot speak the gateway's protocol for, and refuses a required one", async () => {
+    const optional = await execute(
+      { providers: [provider("google", ["openai"])] },
+      { modelGateway: GATEWAY },
+    );
+    await optional.result;
+    expect(optional.log.providerCalls).toEqual([
+      { method: "disable", params: { providerId: "google" } },
+    ]);
+    const required = await execute(
+      { providers: [provider("google", ["vertex"], true)] },
+      { modelGateway: GATEWAY },
+    );
+    await expect(required.result).rejects.toThrow(/requires provider "google"/);
+  });
+
   test("is left alone without a gateway or a credential", async () => {
     const noGateway = await execute({ providers: listed });
     await noGateway.result;

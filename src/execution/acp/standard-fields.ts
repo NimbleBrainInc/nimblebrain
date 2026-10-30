@@ -6,11 +6,11 @@
  * - `systemPrompt` on `session/new` (`sessionCapabilities.systemPrompt`): the
  *   door's system prompt, as `override` when the agent takes it, else `append`.
  * - `providers/*` (`agentCapabilities.providers`): every provider the agent
- *   lists that the installation's gateway serves is routed to its path on the
- *   gateway, with the run's model credential as its one header. Any other
- *   provider is turned off, so the agent's model calls reach the gateway or
- *   nothing; a run whose agent requires a provider the gateway cannot serve is
- *   refused. Only with a gateway and a credential: without them the agent
+ *   lists that the installation's gateway serves, in a protocol the agent
+ *   supports for it, is routed to its path on the gateway with that protocol
+ *   and the run's model credential as its one header. Any other provider is
+ *   turned off, so the agent's model calls reach the gateway or nothing; a run
+ *   whose agent requires a provider the gateway cannot serve is refused. Only with a gateway and a credential: without them the agent
  *   calls its providers as it is configured (a developer's machine).
  *
  * The credential travels only to the agent, as a header it presents to the
@@ -23,6 +23,19 @@ import type { ResolvedRun } from "../types.ts";
 import type { AcpStandardDelivery } from "./driver.ts";
 
 type AgentCapabilities = acp.InitializeResponse["agentCapabilities"];
+
+/**
+ * The protocol (ACP `apiType`) the gateway speaks at each provider's path: the
+ * provider's own API, which for xAI, Nebius and GreenPT is OpenAI's.
+ */
+const GATEWAY_PROTOCOL: Record<(typeof MODEL_PROVIDERS)[number], acp.LlmProtocol> = {
+  anthropic: "anthropic",
+  openai: "openai",
+  google: "gemini",
+  xai: "openai",
+  nebius: "openai",
+  greenpt: "openai",
+};
 
 /** The run's system prompt in ACP's field, when the agent takes it and there is one. */
 export function standardSystemPrompt(
@@ -49,12 +62,13 @@ export async function deliverModelAccess(
   modelGateway: string | undefined,
 ): Promise<boolean> {
   if (!capabilities?.providers || !modelGateway || !run.modelCredential) return false;
-  const served = new Set<string>(MODEL_PROVIDERS);
   const { providers } = await agent.request(acp.methods.agent.providers.list, {});
   for (const provider of providers) {
     const { providerId, supported, required } = provider;
-    const apiType = supported[0];
-    if (served.has(providerId) && apiType) {
+    const apiType = Object.hasOwn(GATEWAY_PROTOCOL, providerId)
+      ? GATEWAY_PROTOCOL[providerId as keyof typeof GATEWAY_PROTOCOL]
+      : undefined;
+    if (apiType && supported.includes(apiType)) {
       await agent.request(acp.methods.agent.providers.set, {
         providerId,
         apiType,
@@ -63,7 +77,7 @@ export async function deliverModelAccess(
       });
     } else if (required) {
       throw new Error(
-        `the agent requires provider "${providerId}", which the installation's gateway does not serve`,
+        `the agent requires provider "${providerId}", which the installation's gateway does not serve in a protocol the agent supports for it`,
       );
     } else {
       await agent.request(acp.methods.agent.providers.disable, { providerId });
