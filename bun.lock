@@ -45,7 +45,7 @@
         "@types/bun": "latest",
         "happy-dom": "^20.0.0",
         "mcp-sdk-v1": "npm:@modelcontextprotocol/sdk@1.30.1",
-        "nimblebrain-agent": "github:NimbleBrainInc/nimblebrain-agent#50cb5bd753a62b7421fe4a08a408c8f2358a5f35",
+        "nimblebrain-agent": "github:NimbleBrainInc/nimblebrain-agent#84e0a856be8eafda7ae7cf92f46ba92e0a34cf97",
         "typescript": "^5.9.3",
       },
       "peerDependencies": {
@@ -381,7 +381,7 @@
 
     "negotiator": ["negotiator@1.1.0", "", { "dependencies": { "content-type": "^2.1.0" } }, "sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg=="],
 
-    "nimblebrain-agent": ["nimblebrain-agent@github:NimbleBrainInc/nimblebrain-agent#50cb5bd", { "dependencies": { "@agentclientprotocol/sdk": "2.0.2", "@ai-sdk/anthropic": "4.0.57", "@ai-sdk/google": "4.0.75", "@ai-sdk/openai": "4.0.70", "@ai-sdk/openai-compatible": "3.0.62", "@ai-sdk/provider": "4.0.17", "@ai-sdk/xai": "4.0.59", "@modelcontextprotocol/client": "2.3.0", "@modelcontextprotocol/core": "2.3.0", "@modelcontextprotocol/ext-apps": "2.0.0", "@modelcontextprotocol/server": "2.3.0", "@opentelemetry/api": "1.9.1", "@opentelemetry/exporter-trace-otlp-http": "0.222.0", "@opentelemetry/resources": "2.11.0", "@opentelemetry/sdk-trace-base": "2.11.0", "@opentelemetry/sdk-trace-node": "2.11.0", "@opentelemetry/semantic-conventions": "1.43.0", "@sinclair/typebox": "0.34.52", "ai": "7.0.106", "ajv": "8.20.0", "zod": "4.6.5" }, "bin": { "nimblebrain-agent": "./src/cli.ts" } }, "NimbleBrainInc-nimblebrain-agent-50cb5bd", "sha512-32pHFX4J2Sd6MlmaMaVeBHx2mrDgc4+BNQmEFlwzwdA2QTKOoIHGYksjy5sgAq7uUOd+ItOVQSSJDleGeGPivQ=="],
+    "nimblebrain-agent": ["nimblebrain-agent@github:NimbleBrainInc/nimblebrain-agent#84e0a85", { "dependencies": { "@agentclientprotocol/sdk": "2.0.2", "@ai-sdk/anthropic": "4.0.57", "@ai-sdk/google": "4.0.75", "@ai-sdk/openai": "4.0.70", "@ai-sdk/openai-compatible": "3.0.62", "@ai-sdk/provider": "4.0.17", "@ai-sdk/xai": "4.0.59", "@modelcontextprotocol/client": "2.3.0", "@modelcontextprotocol/core": "2.3.0", "@modelcontextprotocol/ext-apps": "2.0.0", "@modelcontextprotocol/server": "2.3.0", "@opentelemetry/api": "1.9.1", "@opentelemetry/exporter-trace-otlp-http": "0.222.0", "@opentelemetry/resources": "2.11.0", "@opentelemetry/sdk-trace-base": "2.11.0", "@opentelemetry/sdk-trace-node": "2.11.0", "@opentelemetry/semantic-conventions": "1.43.0", "@sinclair/typebox": "0.34.52", "ai": "7.0.106", "ajv": "8.20.0", "zod": "4.6.5" }, "bin": { "nimblebrain-agent": "./src/cli.ts" } }, "NimbleBrainInc-nimblebrain-agent-84e0a85", "sha512-zR3t2TAlYY9T8Xo5iDgkPaBUiswSxLVBC97cRUBcvMjoNubb+5QfqNgUe/ZZF1UZ52vmA/9SPIK5ilHfRQVhWg=="],
 
     "object-assign": ["object-assign@4.1.1", "", {}, "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg=="],
 
