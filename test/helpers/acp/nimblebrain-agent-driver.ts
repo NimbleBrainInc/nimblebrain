@@ -1,12 +1,12 @@
 /**
  * A stdio connection that runs nimblebrain-agent (`nimblebrain-agent acp`) as a child
- * process, for the parity tests (the hosted one and the live eval). Test-only, as
- * Goose's is: no installation runs an agent as its child (ADR-0056). The driver is
+ * process, for the parity tests (the hosted one and the live eval). Test-only: no
+ * installation runs an agent as its child (ADR-0056). The driver is
  * the one an installation uses (`src/execution/acp/drivers/nimblebrain-agent.ts`), with
  * no gateway: this child calls its provider with the key in its own environment.
  *
  * NimbleBrain imports nothing of nimblebrain-agent, and the connection finds the binary
- * by path, so nimblebrain-agent is a peer the way Goose is. The repo pins it as a dev
+ * by path, so nimblebrain-agent is a peer like any other ACP agent. The repo pins it as a dev
  * dependency, which the production image does not install, and the connection runs
  * that pinned binary unless given another.
  *

@@ -1,5 +1,5 @@
 /**
- * Eval: the same runs on the native engine, on Goose, and on nimblebrain-agent.
+ * Eval: the same runs on the native engine and on nimblebrain-agent.
  *
  * Holds each agent reached over ACP to the native runtime's record against a
  * real model: the tool reached through the run's projection, the system
@@ -10,8 +10,6 @@
  *
  * Run:
  *   ANTHROPIC_API_KEY=… bun test --no-env-file test/eval/runtime-parity.eval.test.ts
- *     + NB_GOOSE_API_KEY=… GOOSE_BIN=/path/to/goose            for Goose
- *       (NB_GOOSE_MODEL_GATEWAY=… to send its model calls through the installation's model gateway)
  *     + NB_AGENT_API_KEY=…                                     for nimblebrain-agent
  *       (the pinned dev dependency; NB_AGENT_BIN=/path/to/nimblebrain-agent/src/cli.ts runs another)
  *
@@ -27,7 +25,6 @@ import { createAcpRuntime } from "../../src/execution/acp/acp-runtime.ts";
 import { createNimbleBrainAgentDriver } from "../../src/execution/acp/drivers/nimblebrain-agent.ts";
 import { createNativeRuntime } from "../../src/execution/native-runtime.ts";
 import type { AgentRuntime, ResolvedRun } from "../../src/execution/types.ts";
-import { createGooseDriver, gooseConnection } from "../helpers/acp/goose-driver.ts";
 import { agentConnection } from "../helpers/acp/nimblebrain-agent-driver.ts";
 
 const env = process.env;
@@ -50,20 +47,6 @@ const CANDIDATES: Candidate[] = [
       const anthropic = createAnthropic({ apiKey: env.ANTHROPIC_API_KEY });
       return createNativeRuntime((m) => anthropic(m.slice(m.indexOf(":") + 1)));
     },
-  },
-  {
-    name: "goose",
-    ready: !!env.NB_GOOSE_API_KEY && !!env.GOOSE_BIN,
-    acp: true,
-    make: (keys) =>
-      createAcpRuntime(
-        "goose",
-        createGooseDriver(),
-        gooseConnection(
-          { command: env.GOOSE_BIN, modelGateway: env.NB_GOOSE_MODEL_GATEWAY },
-          keys ? { env: keys } : undefined,
-        ),
-      ),
   },
   {
     name: "nimblebrain-agent",
@@ -212,7 +195,7 @@ for (const candidate of CANDIDATES) {
       async () => {
         const events: EngineEvent[] = [];
         const run = candidate
-          .make({ NB_GOOSE_API_KEY: "sk-ant-invalid", NB_AGENT_API_KEY: "sk-ant-invalid" })
+          .make({ NB_AGENT_API_KEY: "sk-ant-invalid" })
           .execute(resolvedRun("hello"), {
             tools: NO_TOOLS,
             events: { emit: (e) => events.push(e) },
