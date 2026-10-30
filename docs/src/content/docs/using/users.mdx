@@ -77,7 +77,7 @@ Where an edit is written depends on the adapter:
 
 Under `workos`, making someone an admin sets their organization role to the first slug in `auth.adminRoleSlugs` (default `admin`), and making them a member sets it to `member`. Both roles must exist in your WorkOS environment, or the save fails with WorkOS's reason.
 
-Under `dev`, every request is the built-in developer, so editing that user changes the stored record but not who you are signed in as.
+Under `dev`, every request is the built-in developer. Its display name and preferences (timezone, locale, theme, model) come from its stored record, so a change you make in your profile or through `nb__set_preferences` applies from the next request. Its ID, email, and role do not: editing them changes the stored record, but you are still signed in as `usr_default`, an org admin.
 
 ## Org roles
 

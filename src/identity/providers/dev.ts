@@ -29,6 +29,12 @@ export const DEV_IDENTITY: UserIdentity = {
  * The `dev` adapter (`{"auth":{"adapter":"dev"}}` in `instance.json`): every
  * request authenticates as `DEV_IDENTITY`, with no credential checked.
  * Creates the default user profile on first access if missing.
+ *
+ * The id, email, and org role are fixed, so the developer stays the admin
+ * whatever the stored record says. The display name and preferences come from
+ * the stored profile on every request, because `set_preferences` writes them
+ * there and the prompt, the model choice, and the web app read them off the
+ * identity.
  */
 export class DevIdentityProvider implements IdentityProvider {
   readonly capabilities: ProviderCapabilities = {
@@ -54,7 +60,13 @@ export class DevIdentityProvider implements IdentityProvider {
 
   async verifyRequest(_req: Request): Promise<VerifiedIdentity | null> {
     await this.ensureUserProfile();
-    return { ...DEV_IDENTITY, grant: FIRST_PARTY_GRANT };
+    const profile = await this.readProfile();
+    return {
+      ...DEV_IDENTITY,
+      displayName: profile?.displayName || DEV_IDENTITY.displayName,
+      preferences: profile?.preferences ?? DEV_IDENTITY.preferences,
+      grant: FIRST_PARTY_GRANT,
+    };
   }
 
   async listUsers(): Promise<User[]> {
@@ -77,10 +89,26 @@ export class DevIdentityProvider implements IdentityProvider {
   // ── Private ───────────────────────────────────────────────────
 
   /**
-   * Seed the dev user profile on first call. Profile creation doesn't need
-   * to repeat per request — user identity for dev mode is fixed — so the
-   * `initialized` gate stays here. Workspace provisioning is handled by
-   * verifyRequest directly so it self-heals.
+   * The stored dev profile, or null when it is missing or unreadable. Once the
+   * provider has initialized, a corrupt `profile.json` falls back to the
+   * defaults rather than failing every request; `ensureUserProfile` still reads
+   * it unguarded on the first request.
+   */
+  private async readProfile(): Promise<User | null> {
+    try {
+      return await this.userStore.get(DEV_IDENTITY.id);
+    } catch (err) {
+      log.warn("[dev] could not read the dev user profile; using defaults", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Seed the dev user profile on first call. Seeding doesn't need to repeat
+   * per request, so the `initialized` gate stays here; `readProfile` reads the
+   * stored record on every request.
    */
   private async ensureUserProfile(): Promise<void> {
     if (this.initialized) return;
