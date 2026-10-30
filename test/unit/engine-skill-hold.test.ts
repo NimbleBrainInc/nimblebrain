@@ -387,8 +387,8 @@ describe("engine: delivered guidance never puts a user message after a tool mess
     const r = run({
       turns: [
         [
-          { id: "c1", name: "outreach__list_campaigns" },
           { id: "c2", name: "outreach__draft_email" },
+          { id: "c1", name: "outreach__list_campaigns" },
         ],
         [{ id: "c3", name: "outreach__draft_email" }],
       ],
