@@ -82,9 +82,10 @@ export interface RequestContext {
   /**
    * The door's run id for every run, a chat turn included: the subject a model
    * credential minted inside the run names, so a model gateway attributes and
-   * budgets each call per run. Not a correlation id (that is
-   * {@link conversationId} or {@link runId}); only what mints a credential reads
-   * it. Undefined outside a run.
+   * budgets each call per run. The usage ledger records it as a call's `runId`,
+   * so ledger and gateway name the same run. Not a conversation or task
+   * correlation id (those are {@link conversationId} and {@link runId}).
+   * Undefined outside a run.
    */
   credentialSubject?: string;
   /**
