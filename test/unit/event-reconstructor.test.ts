@@ -1240,6 +1240,66 @@ describe("reconstructMessages — cancelled runs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Runs that ended on tool results
+// ---------------------------------------------------------------------------
+
+const ENDED_ON_TOOL_RESULTS =
+  "[Previous turn ended after its tool calls, without a final response.]";
+
+function endedOnToolResults(terminator: ConversationEvent): ConversationEvent[] {
+  return [
+    userMessage("Score every item"),
+    runStart("r1"),
+    llmToolCall("r1", "tc1", "score"),
+    toolStart("r1", "tc1", "score"),
+    toolDone("r1", "tc1", "score", "scored"),
+    terminator,
+    userMessage("Keep going"),
+  ];
+}
+
+describe("reconstructMessages — a run that ended on tool results", () => {
+  it("test_replay_max_iterations_on_tool_results_then_user_closes_with_marker", () => {
+    const messages = reconstructMessages(
+      endedOnToolResults({
+        ts: ts(5),
+        type: "run.done",
+        runId: "r1",
+        stopReason: "max_iterations",
+        totalMs: 1000,
+      }),
+    );
+
+    assertValidMessageStructure(messages);
+    assertNoUserAfterTool(messages);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "user"]);
+    expect(allText([messages[3]!])).toEqual([ENDED_ON_TOOL_RESULTS]);
+  });
+
+  it("test_replay_run_error_on_tool_results_then_user_closes_with_marker", () => {
+    const messages = reconstructMessages(endedOnToolResults(runError("r1")));
+
+    assertNoUserAfterTool(messages);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "user"]);
+    expect(allText([messages[3]!])).toEqual([ENDED_ON_TOOL_RESULTS]);
+  });
+
+  it("test_replay_cancelled_on_tool_results_keeps_only_the_cancelled_marker", () => {
+    const messages = reconstructMessages(endedOnToolResults(runCancelled("r1")));
+
+    assertNoUserAfterTool(messages);
+    expect(allText(messages)).toContain(CANCELLED_MARKER);
+    expect(allText(messages)).not.toContain(ENDED_ON_TOOL_RESULTS);
+  });
+
+  it("test_replay_run_still_ending_on_tool_results_adds_no_marker", () => {
+    // No next user message yet: nothing follows the tool message to repair.
+    const events = endedOnToolResults(runDone("r1")).slice(0, -1);
+    expect(allText(reconstructMessages(events))).not.toContain(ENDED_ON_TOOL_RESULTS);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tool-result bounding on replay
 // ---------------------------------------------------------------------------
 
