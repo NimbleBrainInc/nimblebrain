@@ -188,6 +188,79 @@ describe("an external runtime over the network", () => {
     ).rejects.toThrow();
     expect(events.filter((e) => e.type === "run.error")).toHaveLength(1);
   });
+
+  test("cancelling mid-turn ends the worker's turn: its model call is aborted, no other starts", async () => {
+    // A gateway that takes each model call and answers only when the caller
+    // gives up on it, so the worker's turn is in flight when the run is cancelled.
+    let calls = 0;
+    let callAborted!: () => void;
+    const aborted = new Promise<void>((resolve) => {
+      callAborted = resolve;
+    });
+    let callReached!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      callReached = resolve;
+    });
+    const stalled = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (req) => {
+        calls++;
+        callReached();
+        return new Promise<Response>((resolve) =>
+          req.signal.addEventListener(
+            "abort",
+            () => {
+              callAborted();
+              resolve(new Response(null));
+            },
+            { once: true },
+          ),
+        );
+      },
+    });
+    try {
+      const credential = runKey.mintModelCredential({
+        runId: "run_cancel",
+        workspaceId: "ws_test",
+      });
+      const runtime = createAcpRuntime(
+        "pool",
+        createNimbleBrainAgentDriver(),
+        createHttpConnection({
+          url: workerUrl,
+          credential: () => runKey.mintConnectionCredential(),
+        }),
+        { modelGateway: `http://127.0.0.1:${stalled.port}` },
+      );
+      const controller = new AbortController();
+      const run = resolvedRun("run_cancel", credential);
+      run.config.signal = controller.signal;
+      const events: EngineEvent[] = [];
+
+      const execution = runtime.execute(run, {
+        tools: lookupRouter([]),
+        events: { emit: (e) => events.push(e) },
+        billSummary: () => {},
+      });
+      await reached;
+      controller.abort();
+
+      await expect(execution).rejects.toBeDefined();
+      const settled = await Promise.race([
+        aborted.then(() => true),
+        Bun.sleep(3_000).then(() => false),
+      ]);
+      expect(settled).toBe(true);
+      await Bun.sleep(200);
+      expect(calls).toBe(1);
+      expect(events.flatMap((e) => (e.type === "run.done" ? [e.data.stopReason] : []))).toEqual([
+        "cancelled",
+      ]);
+    } finally {
+      await stalled.stop(true);
+    }
+  });
 });
 
 describe("the door, with the worker configured in execution", () => {

@@ -13,7 +13,7 @@ import type {
   ToolCall,
   ToolSchema,
 } from "../../../src/engine/types.ts";
-import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
+import { CANCEL_GRACE_MS, createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
 import { createNativeRuntime } from "../../../src/execution/native-runtime.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../../../src/execution/types.ts";
 import type { TokenUsage } from "../../../src/usage/types.ts";
@@ -244,6 +244,33 @@ describe("acp runtime: the projection holds the run's bound", () => {
     expect(log.prompts).toEqual([]);
     expect(sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
   });
+
+  test("an agent that ignores the cancel is cut off after the grace, and the run ends cancelled", async () => {
+    const controller = new AbortController();
+    const runtime = createAcpRuntime(
+      "scripted-acp",
+      scriptedDriver(),
+      scriptedConnection({ script: () => [], unresponsive: true }),
+    );
+    const sink = collect();
+    const execution = runtime.execute(resolvedRun(controller.signal), {
+      tools: new StaticToolRouter([LOOKUP], () => ({ content: [], isError: false })),
+      events: {
+        emit(e) {
+          sink.emit(e);
+          if (e.type === "execution.bound") setTimeout(() => controller.abort(), 20);
+        },
+      },
+      billSummary: () => {},
+    });
+
+    const started = Date.now();
+    await expect(execution).rejects.toBeDefined();
+    const waited = Date.now() - started;
+    expect(waited).toBeGreaterThanOrEqual(CANCEL_GRACE_MS);
+    expect(waited).toBeLessThan(CANCEL_GRACE_MS + 2_000);
+    expect(sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
+  }, 10_000);
 
   test("an agent that fails the session is a run error, not a crash", async () => {
     const sink = collect();

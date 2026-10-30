@@ -48,6 +48,8 @@ export interface ScriptedAgentOptions {
   script(prompt: string): ScriptStep[];
   /** Refuse `session/new`, as an agent that cannot run the session would. */
   refuseSession?: boolean;
+  /** Answer no prompt and ignore `session/cancel`, as a hung agent would. */
+  unresponsive?: boolean;
   /**
    * The MCP transports the agent advertises. Default: HTTP only, as most
    * agents today; `acp` takes the client's tools on the ACP connection itself.
@@ -140,6 +142,7 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
       const session = sessions.get(ctx.params.sessionId);
       if (!session) throw acp.RequestError.invalidParams(undefined, "unknown session");
+      if (opts.unresponsive) return new Promise<never>(() => {});
       const turn = new AbortController();
       session.turn = turn;
       const prompt = ctx.params.prompt.map((b) => (b.type === "text" ? b.text : "")).join("\n");

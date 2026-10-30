@@ -6,8 +6,10 @@
  *
  * - Every request carries the runtime's connection credential, which the
  *   worker verifies against the runtime's published key set.
- * - Every request ends with the run, so a cancel during session setup, before
- *   the runtime's own cancel listener exists, aborts the request in flight.
+ * - The transport lives as long as the connection, not the run: the runtime
+ *   ends a run by `session/cancel` or by closing the connection
+ *   (`./acp-runtime.ts`), and both must still reach the worker after the run's
+ *   signal has fired.
  * - The worker is on another host, so its tools travel on this connection
  *   only: it is never given a loopback endpoint.
  */
@@ -28,24 +30,13 @@ export interface HttpConnectionOptions {
 
 export function createHttpConnection(opts: HttpConnectionOptions): AcpConnection {
   return {
-    async open(run) {
+    async open() {
       const headers: Record<string, string> = opts.credential
         ? { authorization: `Bearer ${opts.credential()}` }
         : {};
-      const signal = run.config.signal;
-      const fetch = signal
-        ? Object.assign(
-            (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) =>
-              globalThis.fetch(input, {
-                ...init,
-                signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
-              }),
-            { preconnect: globalThis.fetch.preconnect },
-          )
-        : undefined;
       // The worker keeps nothing on disk for a session, so its cwd names nothing.
       return {
-        target: createHttpStream(opts.url, { headers, ...(fetch ? { fetch } : {}) }),
+        target: createHttpStream(opts.url, { headers }),
         cwd: "/",
         sameHost: false,
         close: async () => {},

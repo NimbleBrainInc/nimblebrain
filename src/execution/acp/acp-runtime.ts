@@ -16,6 +16,11 @@
  *   5. Close the connection, the projection, and whatever the connection
  *      started, whatever happened.
  *
+ * The run's signal ends the run here, never in the transport, so the agent
+ * hears it: an abort before the session exists closes the connection, and one
+ * after sends `session/cancel` and waits for the agent's `cancelled` answer,
+ * closing the connection if none comes within `CANCEL_GRACE_MS`.
+ *
  * The client advertises no filesystem and no terminal, so an agent cannot ask
  * this process to read, write, or run anything. It answers a permission
  * request with an allow only for a NimbleBrain tool the projection serves,
@@ -35,6 +40,14 @@ import { historyPrompt, transcriptPrompt } from "./transcript.ts";
 
 /** The name an agent sees NimbleBrain's tools under. */
 export const PROJECTION_SERVER_NAME = "nimblebrain";
+
+/**
+ * How long a cancelled turn waits for the agent to answer its prompt
+ * `cancelled`, as ACP has it do, before the connection is closed. The close
+ * ends the run whether or not the agent heeded the cancel, and a worker ends
+ * the turns of a connection that closes.
+ */
+export const CANCEL_GRACE_MS = 5_000;
 
 export interface AcpRuntimeOptions {
   /** The installation's model gateway (`execution.modelGateway`), where an agent's calls go. */
@@ -71,12 +84,18 @@ async function executeOverAcp(
   try {
     signal?.throwIfAborted();
     const turn = await openSession(runtimeId, driver, connection, opts, run, io, recorder, cleanup);
-    // An abort during setup fired before the listener below exists.
+    // From here an abort cancels the turn instead of closing the connection.
+    // The swap is synchronous, so no abort falls between the two listeners.
+    turn.releaseSetupAbort();
     signal?.throwIfAborted();
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    cleanup.push(async () => clearTimeout(grace));
     const cancel = () => {
+      const end = () => turn.close(signal?.reason);
       void turn.agent
         .notify(acp.methods.agent.session.cancel, { sessionId: turn.sessionId })
-        .catch(() => {});
+        .catch(end);
+      grace = setTimeout(end, CANCEL_GRACE_MS);
     };
     signal?.addEventListener("abort", cancel, { once: true });
     cleanup.push(async () => signal?.removeEventListener("abort", cancel));
@@ -143,7 +162,12 @@ async function openSession(
   sessionId: string;
   projection: ToolProjection;
   delivered: AcpStandardDelivery;
+  /** Close the connection, rejecting what is in flight with `reason`. */
+  close(reason?: unknown): void;
+  /** Stop closing the connection on an abort: the session exists, so an abort cancels its turn. */
+  releaseSetupAbort(): void;
 }> {
+  const signal = run.config.signal;
   const projection = await openToolProjection({
     runId: run.runId,
     router: io.tools,
@@ -167,6 +191,13 @@ async function openSession(
   const connection =
     opened.target instanceof acp.AgentApp ? app.connect(opened.target) : app.connect(opened.target);
   cleanup.push(async () => connection.close());
+  // Until the session exists there is no turn to cancel, so an abort closes the
+  // connection, which ends every request in flight (a stalled `initialize` too).
+  const closeOnAbort = () => connection.close(signal?.reason);
+  if (signal?.aborted) closeOnAbort();
+  signal?.addEventListener("abort", closeOnAbort, { once: true });
+  const releaseSetupAbort = () => signal?.removeEventListener("abort", closeOnAbort);
+  cleanup.push(async () => releaseSetupAbort());
   const agent = connection.agent;
 
   const init = await agent.request(acp.methods.agent.initialize, {
@@ -204,7 +235,14 @@ async function openSession(
     sessionId,
     run,
   );
-  return { agent, sessionId, projection, delivered: sent };
+  return {
+    agent,
+    sessionId,
+    projection,
+    delivered: sent,
+    close: (reason) => connection.close(reason),
+    releaseSetupAbort,
+  };
 }
 
 /**
