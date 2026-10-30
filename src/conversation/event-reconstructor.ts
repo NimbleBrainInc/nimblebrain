@@ -79,6 +79,16 @@ const CANCELLED_RUN_MARKER = "[This turn was stopped before it finished.]";
 const ABANDONED_RUN_MARKER = "[Previous turn ended without producing any response.]";
 
 /**
+ * Marker for a run whose last messages are tool results: it ended without the
+ * response that would have followed them (stopped at its step limit, its input
+ * or spend cap, or an error). It sits between those results and the next user
+ * message, which some Chat Completions APIs reject directly after a tool
+ * message with a 400.
+ */
+const ENDED_ON_TOOL_RESULTS_MARKER =
+  "[Previous turn ended after its tool calls, without a final response.]";
+
+/**
  * Parse tool-call input from its persisted form.
  * The AI SDK V4 stream emits tool-call input as a JSON string, which gets
  * written to the JSONL event log as-is. When reconstructing messages for
@@ -792,9 +802,20 @@ function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMess
   };
 }
 
+/** The marker {@link ensureRoleAlternation} puts between `prev` and `msg`, if any. */
+function markerBetween(prev: StoredMessage, msg: StoredMessage): string | undefined {
+  if (msg.role !== "user") return undefined;
+  if (prev.role === "tool") return ENDED_ON_TOOL_RESULTS_MARKER;
+  const isOverlay = (m: StoredMessage): boolean =>
+    m.metadata?.synthetic === CONNECTOR_SKILL_SYNTHETIC;
+  if (prev.role === "user" && !(isOverlay(prev) && isOverlay(msg))) return ABANDONED_RUN_MARKER;
+  return undefined;
+}
+
 /**
- * Defense-in-depth invariant pass: ensure the reconstructed message list
- * never has two adjacent `user` messages. Not a provider requirement —
+ * Invariant pass: a `user` message never follows a `user` message (a gap
+ * this pass names) or a `tool` message (a provider requirement). Two adjacent
+ * `user` messages are not a provider requirement —
  * `@ai-sdk/anthropic` coalesces consecutive user/tool messages into one block.
  * It is a fidelity one: two user turns in a row means a run produced no
  * response, and replaying that as though the user spoke twice hides the gap
@@ -804,7 +825,7 @@ function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMess
  * (orphaned tool-calls, length-truncated empty turns). This pass catches
  * anything we haven't enumerated — e.g. a run scope that emitted zero
  * `llm.response` events because the process died before the model
- * returned. Cheap O(n) scan; never fires on healthy data.
+ * returned. Cheap O(n) scan; the user-after-user case never fires on healthy data.
  *
  * Two connector overlays in a row are exempt. An overlay with no tool result
  * to ride becomes a user-role message but not a user TURN — two delivered
@@ -814,19 +835,23 @@ function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMess
  * An overlay followed by a REAL user turn is not exempt: that only happens when
  * a run ended without its closing response, which is precisely what the marker
  * is for, and the live run has no next-turn user message to disagree about.
+ *
+ * A `user` message after a `tool` message gets {@link ENDED_ON_TOOL_RESULTS_MARKER}:
+ * the run ended on its tool results, and some Chat Completions APIs reject that
+ * order with a 400 ("Unexpected role 'user' after role 'tool'"). Overlays are
+ * not exempt here, since the API rejects any user message in that position.
+ * A run that is cancelled is already closed by its own marker.
  */
 function ensureRoleAlternation(messages: StoredMessage[]): StoredMessage[] {
   if (messages.length < 2) return messages;
 
-  const isOverlay = (m: StoredMessage): boolean =>
-    m.metadata?.synthetic === CONNECTOR_SKILL_SYNTHETIC;
-
   const result: StoredMessage[] = [];
   for (const msg of messages) {
     const prev = result[result.length - 1];
-    if (prev?.role === "user" && msg.role === "user" && !(isOverlay(prev) && isOverlay(msg))) {
-      // Place the synthetic turn 1ms after the previous user message so it
-      // sorts between the two user turns instead of collapsing onto the
+    const marker = prev ? markerBetween(prev, msg) : undefined;
+    if (prev && marker) {
+      // Place the synthetic turn 1ms after the previous message so it
+      // sorts between the two instead of collapsing onto the
       // next user's timestamp (the UI sorts strictly by `timestamp`, and a
       // tied-timestamp placeholder rendered after the user it precedes
       // looks like the user replied to themselves). Clamp to the next
@@ -840,7 +865,7 @@ function ensureRoleAlternation(messages: StoredMessage[]): StoredMessage[] {
           : msg.timestamp;
       result.push({
         role: "assistant",
-        content: [{ type: "text" as const, text: ABANDONED_RUN_MARKER }],
+        content: [{ type: "text" as const, text: marker }],
         timestamp: placeholderTs,
         // Carry minimal metadata so the chat UI can render the same
         // truncation banner it uses for length / content-filter cases.

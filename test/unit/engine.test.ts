@@ -3,6 +3,7 @@ import type {
   LanguageModelV4,
   LanguageModelV4CallOptions,
   LanguageModelV4Message,
+  LanguageModelV4Prompt,
 } from "@ai-sdk/provider";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
@@ -2883,6 +2884,85 @@ describe("AgentEngine", () => {
     // System prompt untouched.
     const system = capturedPrompt.find((m) => m.role === "system") as { content: string };
     expect(system.content).not.toContain("final step");
+  });
+
+  it("test_final_step_after_tools_carries_reminder_in_last_tool_result_not_a_user_message", async () => {
+    // Some Chat Completions APIs reject a user message right after a tool
+    // message with a 400. Mid-run the history ends on the iteration's tool
+    // message, so the reminder rides its last tool result instead.
+    const prompts: LanguageModelV4Prompt[] = [];
+    const model = createMockModel((opts) => {
+      prompts.push(opts.prompt);
+      const n = prompts.length;
+      return {
+        content: [
+          { type: "tool-call", toolCallId: `a_${n}`, toolName: "test__noop", input: "{}" },
+          { type: "tool-call", toolCallId: `b_${n}`, toolName: "test__noop", input: "{}" },
+        ],
+        inputTokens: 10,
+        outputTokens: 5,
+      };
+    });
+    const tools = {
+      schemas: [{ name: "test__noop", description: "No-op", inputSchema: {} }],
+      handler: (): ToolResult => ({ content: textContent("ok"), isError: false }),
+    };
+    await makeEngine(model, tools).run(
+      { ...defaultConfig, maxIterations: 2 },
+      "You are helpful.",
+      [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+      tools.schemas,
+    );
+
+    const final = prompts[1] ?? [];
+    for (const prompt of prompts) {
+      expect(prompt.findIndex((m, i) => m.role === "user" && prompt[i - 1]?.role === "tool")).toBe(
+        -1,
+      );
+    }
+    const last = final[final.length - 1];
+    expect(last?.role).toBe("tool");
+    const parts = last?.role === "tool" ? last.content : [];
+    const values = parts.map((p) =>
+      p.type === "tool-result" && p.output.type === "text" ? p.output.value : "",
+    );
+    // Only the last result carries it, after the tool's own text.
+    expect(values[0]).toBe("ok");
+    expect(values[1]?.startsWith("ok\n\n<system-reminder>This is your final step.")).toBe(true);
+  });
+
+  it("test_final_step_reminder_in_tool_result_does_not_leak_into_later_calls", async () => {
+    // The run-wide input cap marks call 2 as the last likely call (spent 4,000
+    // plus twice that call's 4,000 passes 10,000), but call 2 reports only 100
+    // input tokens, so call 3 is neither final nor stopped. Call 3 must see
+    // the tool result the reminder rode on call 2 without the reminder: the
+    // reminder goes on a copy, never on the run's history.
+    const prompts: LanguageModelV4Prompt[] = [];
+    const model = createMockModel((opts) => {
+      prompts.push(opts.prompt);
+      const n = prompts.length;
+      if (n === 3)
+        return { content: [{ type: "text", text: "done" }], inputTokens: 10, outputTokens: 5 };
+      return {
+        content: [{ type: "tool-call", toolCallId: `c_${n}`, toolName: "test__noop", input: "{}" }],
+        inputTokens: n === 1 ? 4_000 : 100,
+        outputTokens: 5,
+      };
+    });
+    const tools = {
+      schemas: [{ name: "test__noop", description: "No-op", inputSchema: {} }],
+      handler: (): ToolResult => ({ content: textContent("ok"), isError: false }),
+    };
+    await makeEngine(model, tools).run(
+      { ...defaultConfig, maxRunInputTokens: 10_000 },
+      "You are helpful.",
+      [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+      tools.schemas,
+    );
+
+    expect(prompts).toHaveLength(3);
+    expect(JSON.stringify(prompts[1])).toContain("final step");
+    expect(JSON.stringify(prompts[2])).not.toContain("final step");
   });
 
   it("catches tool execution errors and wraps them", async () => {

@@ -776,8 +776,11 @@ function resolveCallPrompt(config: EngineConfig, systemPrompt: string): string {
  * it — on the final call of every run. As a tail message the reminder rides the
  * volatile (5-minute) region and leaves the stable prefix byte-identical, so the
  * final call still reads it from cache. Merge into a trailing user turn when
- * present to avoid consecutive user messages; otherwise append a fresh one.
- * No-op when `isFinalStep` is false.
+ * present to avoid consecutive user messages. After a tool message, it rides
+ * the last tool result, as delivered skill guidance does: a user message right
+ * after a tool message is a 400 on some Chat Completions APIs. Otherwise it is
+ * a fresh user message. Messages are copied, never edited: `callMessages`
+ * shares its objects with the run's history. No-op when `isFinalStep` is false.
  *
  * The wording names no audience and no format: the same reminder ends a chat
  * turn and a task run whose answer must match an output schema.
@@ -797,6 +800,19 @@ function appendFinalStepReminder(
       ...callMessages.slice(0, -1),
       { ...last, content: [...last.content, { type: "text", text: finalStep }] },
     ];
+  }
+  if (last?.role === "tool") {
+    const parts = last.content;
+    const tail = parts[parts.length - 1];
+    if (tail?.type === "tool-result") {
+      const carried = withGuidance(tail, { blocks: [finalStep], skills: [] });
+      if (carried !== tail) {
+        return [
+          ...callMessages.slice(0, -1),
+          { ...last, content: [...parts.slice(0, -1), carried] },
+        ];
+      }
+    }
   }
   return [...callMessages, { role: "user", content: [{ type: "text", text: finalStep }] }];
 }
