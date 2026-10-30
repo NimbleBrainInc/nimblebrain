@@ -61,6 +61,11 @@ export interface ScriptedAgentOptions {
   providers?: acp.ProviderInfo[];
   /** Fail the turn after its steps with this error, as a model call that failed would. */
   failTurn?: () => unknown;
+  /**
+   * Answer a cancelled turn with this instead of `cancelled`, as an agent whose
+   * turn ended as the cancel arrived would; a throw fails the turn instead.
+   */
+  cancelledAnswer?: () => acp.PromptResponse;
   log?: ScriptedAgentLog;
 }
 
@@ -154,6 +159,7 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
           sessionId: ctx.params.sessionId,
           update,
         });
+      const cancelled = () => opts.cancelledAnswer?.() ?? { stopReason: "cancelled" as const };
       try {
         for (const step of opts.script(prompt)) {
           if (step.text) {
@@ -182,12 +188,12 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
               status: result.isError ? "failed" : "completed",
             });
           }
-          if (turn.signal.aborted) return { stopReason: "cancelled" as const };
+          if (turn.signal.aborted) return cancelled();
         }
         if (opts.failTurn) throw opts.failTurn();
         return { stopReason: "end_turn" as const };
       } catch (err) {
-        if (turn.signal.aborted) return { stopReason: "cancelled" as const };
+        if (turn.signal.aborted) return cancelled();
         throw err;
       }
     })

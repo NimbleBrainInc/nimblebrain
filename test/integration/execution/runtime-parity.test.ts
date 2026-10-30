@@ -14,7 +14,7 @@ import type {
   ToolSchema,
 } from "../../../src/engine/types.ts";
 import { CANCEL_GRACE_MS, createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
-import type { AcpOutcome } from "../../../src/execution/acp/driver.ts";
+import type { AcpDriver, AcpOutcome } from "../../../src/execution/acp/driver.ts";
 import { createNativeRuntime } from "../../../src/execution/native-runtime.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../../../src/execution/types.ts";
 import type { TokenUsage } from "../../../src/usage/types.ts";
@@ -365,14 +365,23 @@ describe("acp runtime with the driver's per-call usage", () => {
 describe("acp runtime cancelled with the driver's per-call usage", () => {
   const callUsage = (inputTokens: number): TokenUsage => ({ inputTokens, outputTokens: 5 });
 
+  const CALLS: AcpOutcome["calls"] = [
+    { model: "test:echo", purpose: "turn", usage: callUsage(100) },
+    { model: "test:fast", purpose: "summary", usage: callUsage(40) },
+  ];
+
   /** Cancel mid-tool, with the driver reading `calls` from the agent's `cancelled` answer. */
-  async function cancelMidTool(calls: AcpOutcome["calls"]) {
+  async function cancelMidTool(
+    calls: AcpOutcome["calls"],
+    driver: Partial<AcpDriver> = calls ? { outcome: () => ({ calls }) } : {},
+    cancelledAnswer?: ScriptedAgentOptions["cancelledAnswer"],
+  ) {
     const controller = new AbortController();
     const steps = stepsFrom(structuredClone(SCRIPT));
     const runtime = createAcpRuntime(
       "reported-usage",
-      { ...scriptedDriver(), ...(calls ? { outcome: () => ({ calls }) } : {}) },
-      scriptedConnection({ script: () => steps }),
+      { ...scriptedDriver(), ...driver },
+      scriptedConnection({ script: () => steps, cancelledAnswer }),
     );
     const router = new StaticToolRouter([LOOKUP], async () => {
       controller.abort();
@@ -392,10 +401,7 @@ describe("acp runtime cancelled with the driver's per-call usage", () => {
   }
 
   test("prices the calls made before the cancel and replays as an unpriced cancel", async () => {
-    const reported = await cancelMidTool([
-      { model: "test:echo", purpose: "turn", usage: callUsage(100) },
-      { model: "test:fast", purpose: "summary", usage: callUsage(40) },
-    ]);
+    const reported = await cancelMidTool(CALLS);
     const unpriced = await cancelMidTool(undefined);
 
     expect(
@@ -410,6 +416,35 @@ describe("acp runtime cancelled with the driver's per-call usage", () => {
       shape(await replayed(unpriced.sink.events)),
     );
   });
+
+  test.each([
+    [
+      "fails its prompt with the model failure",
+      { modelFailure: () => ({ status: 500, outcome: { calls: CALLS } }) },
+      () => {
+        throw new Error("the model call failed");
+      },
+    ],
+    [
+      "answers end_turn",
+      { outcome: () => ({ calls: CALLS }) },
+      () => ({ stopReason: "end_turn" as const }),
+    ],
+  ] as const)(
+    "an agent that %s as the cancel lands is priced once and ends cancelled",
+    async (_case, driver, answer) => {
+      const { sink, summaries } = await cancelMidTool(CALLS, driver, answer);
+
+      expect(
+        sink
+          .of("llm.done")
+          .filter((e) => !e.data.transcriptOnly)
+          .map((e) => e.data.usage.inputTokens),
+      ).toEqual([100]);
+      expect(summaries).toEqual([["test:fast", 40]]);
+      expect(sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
+    },
+  );
 });
 
 describe("bound skill guidance", () => {
