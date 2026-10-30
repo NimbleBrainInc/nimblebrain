@@ -14,6 +14,7 @@ import type {
   ToolSchema,
 } from "../../../src/engine/types.ts";
 import { CANCEL_GRACE_MS, createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
+import type { AcpOutcome } from "../../../src/execution/acp/driver.ts";
 import { createNativeRuntime } from "../../../src/execution/native-runtime.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../../../src/execution/types.ts";
 import type { TokenUsage } from "../../../src/usage/types.ts";
@@ -358,6 +359,56 @@ describe("acp runtime with the driver's per-call usage", () => {
     expect(result.usage.inputTokens).toBe(130);
     expect(result.iterations).toBe(2);
     expect(shape(await replayed(acpSink.events))).toEqual(shape(await replayed(nativeSink.events)));
+  });
+});
+
+describe("acp runtime cancelled with the driver's per-call usage", () => {
+  const callUsage = (inputTokens: number): TokenUsage => ({ inputTokens, outputTokens: 5 });
+
+  /** Cancel mid-tool, with the driver reading `calls` from the agent's `cancelled` answer. */
+  async function cancelMidTool(calls: AcpOutcome["calls"]) {
+    const controller = new AbortController();
+    const steps = stepsFrom(structuredClone(SCRIPT));
+    const runtime = createAcpRuntime(
+      "reported-usage",
+      { ...scriptedDriver(), ...(calls ? { outcome: () => ({ calls }) } : {}) },
+      scriptedConnection({ script: () => steps }),
+    );
+    const router = new StaticToolRouter([LOOKUP], async () => {
+      controller.abort();
+      await Bun.sleep(20);
+      return { content: [{ type: "text", text: "late" }], isError: false };
+    });
+    const sink = collect();
+    const summaries: [string, number][] = [];
+    await expect(
+      runtime.execute(resolvedRun(controller.signal), {
+        tools: router,
+        events: sink,
+        billSummary: (model, usage) => summaries.push([model, usage.inputTokens]),
+      }),
+    ).rejects.toBeDefined();
+    return { sink, summaries };
+  }
+
+  test("prices the calls made before the cancel and replays as an unpriced cancel", async () => {
+    const reported = await cancelMidTool([
+      { model: "test:echo", purpose: "turn", usage: callUsage(100) },
+      { model: "test:fast", purpose: "summary", usage: callUsage(40) },
+    ]);
+    const unpriced = await cancelMidTool(undefined);
+
+    expect(
+      reported.sink
+        .of("llm.done")
+        .filter((e) => !e.data.transcriptOnly)
+        .map((e) => e.data.usage.inputTokens),
+    ).toEqual([100]);
+    expect(reported.summaries).toEqual([["test:fast", 40]]);
+    expect(reported.sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
+    expect(shape(await replayed(reported.sink.events))).toEqual(
+      shape(await replayed(unpriced.sink.events)),
+    );
   });
 });
 

@@ -174,6 +174,69 @@ describe("run recorder", () => {
     ).toEqual(["cancelled"]);
   });
 
+  test("a cancelled turn prices the calls the agent reported and replays its text cut short", () => {
+    const { events, summaries, recorder } = recorded();
+    recorder.start();
+    recorder.callStarting({ id: "call_1", name: "lookup", input: {} });
+    recorder.update({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Partial" },
+    });
+    recorder.cancelled(
+      { stopReason: "cancelled", usage: { inputTokens: 999, outputTokens: 9, totalTokens: 1008 } },
+      {
+        calls: [
+          { model: "m", purpose: "turn", usage: usage(100) },
+          { model: "fast", purpose: "summary", usage: usage(40) },
+          { model: "m", purpose: "turn", usage: usage(30) },
+        ],
+      },
+    );
+
+    const calls = events.flatMap((e) => (e.type === "llm.done" ? [e.data] : []));
+    const priced = calls.filter((c) => !c.transcriptOnly);
+    // Each reported call on its own, with no content; ACP's total is not read.
+    expect(priced.map((c) => [c.usage.inputTokens, c.content.length, c.finishReason])).toEqual([
+      [100, 0, "stop"],
+      [30, 0, "stop"],
+    ]);
+    expect(summaries).toEqual([{ model: "fast", inputTokens: 40 }]);
+    // The closing text is a transcript segment, cut short, as with no usage reported.
+    expect(calls.at(-1)).toMatchObject({
+      content: [{ type: "text", text: "Partial" }],
+      finishReason: "other",
+      transcriptOnly: true,
+    });
+    const done = events.find((e) => e.type === "run.done");
+    expect(done?.type === "run.done" && [done.data.stopReason, done.data.iterations]).toEqual([
+      "cancelled",
+      2,
+    ]);
+  });
+
+  test("a cancelled turn with only ACP's turn total is priced as one call", () => {
+    const { events, recorder } = recorded();
+    recorder.cancelled(
+      { stopReason: "cancelled", usage: { inputTokens: 50, outputTokens: 5, totalTokens: 55 } },
+      {},
+    );
+    const priced = events.flatMap((e) =>
+      e.type === "llm.done" && !e.data.transcriptOnly ? [e.data.usage.inputTokens] : [],
+    );
+    expect(priced).toEqual([50]);
+  });
+
+  test("a cancelled turn with nothing reported prices nothing", () => {
+    const { events, recorder } = recorded();
+    recorder.update({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Partial" },
+    });
+    recorder.cancelled({ stopReason: "cancelled" }, {});
+    const calls = events.flatMap((e) => (e.type === "llm.done" ? [e.data] : []));
+    expect(calls.map((c) => c.transcriptOnly)).toEqual([true]);
+  });
+
   test("an agent's own tool_call updates are not recorded as tool calls", () => {
     const { events, recorder } = recorded();
     recorder.update({ sessionUpdate: "tool_call", toolCallId: "agent_1", title: "shell" });

@@ -134,13 +134,14 @@ async function executeOverAcp(
       );
     }
     if (response.stopReason === "cancelled" || signal?.aborted) {
-      recorder.cancelled();
+      recorder.cancelled(response, outcomeOf(driver, response));
       throw signal?.reason ?? new DOMException("The agent cancelled the turn", "AbortError");
     }
     return recorder.finish(response, outcomeOf(driver, response), turn.projection.calls());
   } catch (err) {
     if (!recorder.ended()) {
-      if (signal?.aborted) recorder.cancelled();
+      // A turn that failed as it was cancelled still reports the calls it made.
+      if (signal?.aborted) recorder.cancelled(undefined, driver.modelFailure?.(err)?.outcome);
       else recorder.failed(err);
     }
     throw signal?.aborted ? (signal.reason ?? err) : err;
