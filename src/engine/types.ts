@@ -13,7 +13,9 @@ export type { ContentBlock, TextContent };
 
 /**
  * Metadata marker stamped on the synthetic message the reconstructor builds
- * from a `connector.skill.injected` event. The engine reads it on replay
+ * from a `connector.skill.injected` event that has no tool result to ride
+ * (otherwise the carrying tool result lists it in `connectorSkills`). The
+ * engine reads it on replay
  * (`history.some(m => m.metadata?.synthetic === CONNECTOR_SKILL_SYNTHETIC)`) to
  * detect an already-surfaced connector overlay and never re-inject it. Lives
  * here — the dependency-safe shared home — because both the engine (producer of
@@ -513,8 +515,8 @@ export interface EngineConfig {
    * first matching tool call — never into the cached system prefix. The engine
    * matches each candidate's `toolAffinity` globs against the called tool name;
    * on the first match (per conversation, deduped via history inspection) it
-   * emits `connector.skill.injected` and appends the body to the live history
-   * after that iteration's tool results; the reconstructor rebuilds it in the
+   * emits `connector.skill.injected` and appends the body to a tool result of
+   * that iteration (`guidanceByToolCall`); the reconstructor rebuilds it in the
    * same position. Empty / absent = the feature is off for this run.
    */
   connectorSkillCandidates?: ConnectorSkillCandidate[];
