@@ -78,10 +78,9 @@ export class MetricsEventSink implements EventSink {
     // calls it reported arrive as their own `llm.done`.
     if (data.transcriptOnly) return;
     const { model, usage } = data;
-    // `data` carries the engine's `runId`; `recordLlmCall` reads attribution
-    // off the event and the ambient request scope rather than being told, so a
-    // new call path cannot forget to say who it was for.
-    recordLlmCall({ source: "main", model, usage, llmMs: data.llmMs, event: data });
+    // `recordLlmCall` reads attribution off the ambient request scope rather
+    // than being told, so a new call path cannot forget to say who it was for.
+    recordLlmCall({ source: "main", model, usage, llmMs: data.llmMs });
     // Both latency histograms carry `origin` because latency means different
     // things depending on who is waiting: `chat` is a person watching a spinner,
     // `task` is a task nobody is watching. Blended, a p99 says neither —

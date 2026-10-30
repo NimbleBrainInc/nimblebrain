@@ -107,6 +107,30 @@ test("a chat turn counts as a conversation, and both land in one report", async 
   expect(byOrigin.task).toBeGreaterThan(0);
 });
 
+test("a conversation's title call is recorded under the turn that forked it", async () => {
+  const rt = await start();
+  await rt.chat({
+    identity: TEST_IDENTITY,
+    workspaceId: TEST_WORKSPACE_ID,
+    message: "hello",
+  });
+
+  // Title generation is forked after the turn returns, so its line lands later.
+  let title: UsageLedgerEntry | undefined;
+  for (let i = 0; i < 50 && !title; i++) {
+    title = readLines().find((l) => l.source === "title");
+    if (!title) await Bun.sleep(20);
+  }
+  expect(title).toBeDefined();
+  const turn = readLines().filter((l) => l.source === "main");
+  expect(turn.length).toBeGreaterThan(0);
+  const turnRunId = turn[0]?.runId;
+  expect(turnRunId).toBeDefined();
+  // The model gateway charges the title call to the turn's run (it runs under
+  // the run's credential subject), so the ledger names the same run.
+  expect(title?.runId).toBe(turnRunId);
+});
+
 test("ownerFilter reads only the owner's own lines", async () => {
   const rt = await start();
   await rt.chat({

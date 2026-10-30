@@ -85,15 +85,14 @@ export function originOf(): LlmCallOrigin {
 /**
  * Record one priced LLM call.
  *
- * `event` is the emitting engine event's `data` payload, when there is one —
- * it supplies `runId`, the per-turn grain. The forked fast-slot calls (title,
- * compaction) emit no event, so they omit it and carry no run.
- *
- * Note that omitting the event says nothing about `origin`, which comes from
- * whatever scope the call runs in — not from its `source`. A turn's own forked
- * calls are wrapped in the turn's context by `chat()`, so a compaction summary
- * and an auto-title bill as `chat`, the conversation whose work they are doing.
- * A call outside any turn's scope bills `system`.
+ * Like `origin`, the run a call belongs to comes from the scope it runs in, not
+ * from the caller: `runId` is the context's `credentialSubject`, the run id the
+ * model gateway charges the call to. One source for both, so the ledger's
+ * per-run cost and the gateway's per-run charge name the same run. A run's
+ * forked calls (title, compaction) run in its context, so they carry its run
+ * and its origin: a conversation's title bills as `chat`, the conversation
+ * whose work it is doing. A call outside any run carries no run and bills
+ * `system`.
  *
  * `test/integration/compaction-wiring.test.ts` and
  * `mid-turn-compaction-wiring.test.ts` drive real folds and assert this off
@@ -113,7 +112,6 @@ export function recordLlmCall(args: {
   model: string;
   usage: TokenUsage;
   llmMs?: number;
-  event?: Record<string, unknown>;
 }): void {
   const origin = originOf();
   recordLlmUsage(args.source, args.model, args.usage, origin);
@@ -145,12 +143,12 @@ export function recordLlmCall(args: {
     userId,
     workspaceId,
     // Each id under its own name, so no reader has to consult `origin` to learn
-    // what it is holding. `runId` is the engine's, and it is the only one of the
+    // what it is holding. `runId` is the run's, and it is the only one of the
     // three that is per-TURN, so it is what makes "what did this turn cost"
     // answerable at all.
     ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {}),
     ...(ctx.runId ? { taskRunId: ctx.runId } : {}),
-    ...(typeof args.event?.runId === "string" ? { runId: args.event.runId } : {}),
+    ...(ctx.credentialSubject ? { runId: ctx.credentialSubject } : {}),
     ...(ctx.agentRuntime ? { runtime: ctx.agentRuntime } : {}),
     ...(rates ? { rates } : {}),
   };

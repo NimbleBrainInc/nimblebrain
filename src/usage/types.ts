@@ -104,10 +104,11 @@ export interface UsageLedgerEntry {
    */
   conversationId?: string;
   /**
-   * The engine run this call belongs to — one `run.start`→`run.done` span,
-   * which is one assistant turn. Present for chat and task alike; absent on
-   * the forked fast-slot calls (title, compaction), which emit no
-   * event and are not a turn of their own.
+   * The run this call belongs to — one `run.start`→`run.done` span, which is
+   * one assistant turn — and the run the model gateway charges it to
+   * (`RequestContext.credentialSubject`). Present for chat and task alike,
+   * including the calls a run forks (title, compaction); absent for a call
+   * outside any run.
    */
   runId?: string;
   /**

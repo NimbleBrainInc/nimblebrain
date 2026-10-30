@@ -16,7 +16,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatResponse } from "../../src/api/schemas/responses.ts";
@@ -26,6 +26,8 @@ import { reconstructMessages } from "../../src/conversation/event-reconstructor.
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { usageMonthDir, usageMonthOf } from "../../src/usage/paths.ts";
+import type { UsageLedgerEntry } from "../../src/usage/types.ts";
 import { postChatTurn } from "../helpers/chat-turn.ts";
 import { readJson } from "../helpers/http.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
@@ -179,6 +181,22 @@ describe("history compaction — wired path", () => {
     expect(metricsBody).toMatch(
       /nb_llm_tokens_total\{(?=[^}]*source="title")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
     );
+
+    // (a.3b) The fold is recorded under a run of this conversation, the one the
+    // model gateway charges it to, rather than with no run at all.
+    const ledgerDir = usageMonthDir(workDir, usageMonthOf(new Date()));
+    const ledger = readdirSync(ledgerDir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .flatMap((f) => readFileSync(join(ledgerDir, f), "utf-8").split("\n").filter(Boolean))
+      .map((l) => JSON.parse(l) as UsageLedgerEntry)
+      .filter((l) => l.conversationId === convId);
+    const turnRuns = new Set(ledger.filter((l) => l.source === "main").map((l) => l.runId));
+    const foldLines = ledger.filter((l) => l.source === "compaction");
+    expect(foldLines.length).toBeGreaterThan(0);
+    for (const l of foldLines) {
+      expect(l.runId).toBeDefined();
+      expect(turnRuns.has(l.runId)).toBe(true);
+    }
 
     // (a.4) Running inside the turn's scope decides more than attribution:
     // `getModelSlot("fast")` reads `workspaceModelOverride` off that context,
