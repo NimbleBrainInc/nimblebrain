@@ -345,12 +345,6 @@ describe("providers through the model gateway", () => {
     }
   });
 
-  it("refuses a gateway provider without the installation's gateway", () => {
-    expect(() => buildRegistry({ providers: { anthropic: { gateway: true } } })).toThrow(
-      /providers.anthropic.gateway needs execution.modelGateway and the installation's run key/,
-    );
-  });
-
   it("refuses a key, a base URL or a model allowlist beside the gateway, naming where each belongs", () => {
     const via = { url: GATEWAY, fetch: fakeFetch(async () => new Response()) };
     expect(() => buildRegistry({ providers: { xai: { apiKey: "xai-key" } } }, via)).toThrow(
@@ -364,7 +358,7 @@ describe("providers through the model gateway", () => {
     );
   });
 
-  it("takes the deprecated gateway flag beside the gateway, and builds providers it does not name", async () => {
+  it("builds providers the config does not name", async () => {
     let url = "";
     const via = {
       url: GATEWAY,
@@ -373,7 +367,7 @@ describe("providers through the model gateway", () => {
         return new Response("{}", { status: 500 });
       }),
     };
-    const resolve = buildModelResolver({ providers: { anthropic: { gateway: true } } }, via);
+    const resolve = buildModelResolver({ providers: { anthropic: {} } }, via);
     try {
       await resolve("xai:grok-4").doStream({
         prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],

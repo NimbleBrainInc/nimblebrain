@@ -22,10 +22,6 @@
         "anthropic": {
           "type": "object",
           "properties": {
-            "gateway": {
-              "type": "boolean",
-              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
-            },
             "apiKey": {
               "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
               "description": "Provider API key. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
@@ -41,10 +37,6 @@
         "openai": {
           "type": "object",
           "properties": {
-            "gateway": {
-              "type": "boolean",
-              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
-            },
             "apiKey": {
               "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
               "description": "Provider API key. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
@@ -62,10 +54,6 @@
         "google": {
           "type": "object",
           "properties": {
-            "gateway": {
-              "type": "boolean",
-              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
-            },
             "apiKey": {
               "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
               "description": "Provider API key. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
@@ -82,10 +70,6 @@
           "type": "object",
           "description": "GreenPT — European AI provider with an OpenAI-compatible API and infrastructure powered by 100% renewable energy. Reference models as greenpt:<model-id>.",
           "properties": {
-            "gateway": {
-              "type": "boolean",
-              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
-            },
             "apiKey": {
               "type": "string",
               "description": "GreenPT API key. Falls back to GREENPT_API_KEY env var."
@@ -106,10 +90,6 @@
           "type": "object",
           "description": "Nebius Token Factory — OpenAI-compatible gateway for open-weight models. Reference models as nebius:<model-id>.",
           "properties": {
-            "gateway": {
-              "type": "boolean",
-              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
-            },
             "apiKey": {
               "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
               "description": "Nebius API key. Falls back to NEBIUS_API_KEY env var. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
@@ -130,10 +110,6 @@
           "type": "object",
           "description": "xAI (Grok). Reference models as xai:<model-id>, e.g. xai:grok-4.5.",
           "properties": {
-            "gateway": {
-              "type": "boolean",
-              "description": "Deprecated: with execution.modelGateway set, every provider is reached through the gateway whether or not this is set. Without a gateway, setting it refuses the boot."
-            },
             "apiKey": {
               "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
               "description": "xAI API key. Falls back to XAI_API_KEY env var. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
