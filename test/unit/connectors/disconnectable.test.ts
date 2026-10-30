@@ -45,19 +45,17 @@ describe("isDisconnectable", () => {
     oneway: stub<ManagedConnectorProvider>({ id: "oneway" }),
   });
 
-  test("an OAuth connection is, with no transport auth or with `none`", () => {
+  test("an OAuth connection is: one with no transport auth", () => {
     expect(lc.isDisconnectable(ref())).toBe(true);
     expect(lc.isDisconnectable(ref({ transport: { type: "streamable-http" } }))).toBe(true);
-    expect(
-      lc.isDisconnectable(ref({ transport: { type: "streamable-http", auth: { type: "none" } } })),
-    ).toBe(true);
   });
 
-  test("a static credential is not: platform-minted, bearer or header", () => {
+  test("a static credential, or none at all, is not: platform-minted, bearer, header or none", () => {
     const auths: TransportAuth[] = [
       { type: "provider", provider: "minted", config: {} },
       { type: "bearer", token: "t" },
       { type: "header", name: "x-key", value: "v" },
+      { type: "none" },
     ];
     for (const auth of auths) {
       expect(lc.isDisconnectable(ref({ transport: { type: "streamable-http", auth } }))).toBe(
