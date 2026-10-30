@@ -10,7 +10,8 @@
  *   supports for it, is routed to its path on the gateway with that protocol
  *   and the run's model credential as its one header. Any other provider is
  *   turned off, so the agent's model calls reach the gateway or nothing; a run
- *   whose agent requires a provider the gateway cannot serve is refused. Only with a gateway and a credential: without them the agent
+ *   whose agent requires a provider the gateway cannot serve is refused.
+ *   Only with a gateway and a credential: without them the agent
  *   calls its providers as it is configured (a developer's machine).
  *
  * The credential travels only to the agent, as a header it presents to the
