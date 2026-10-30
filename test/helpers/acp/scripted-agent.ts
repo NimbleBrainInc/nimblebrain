@@ -37,6 +37,10 @@ export interface ScriptedAgentLog {
   sessionMeta: (Record<string, unknown> | undefined)[];
   /** Each session's MCP servers, as declared. */
   mcpServers: acp.McpServer[][];
+  /** Each session's `systemPrompt`, when it was sent one. */
+  systemPrompts: (acp.SystemPrompt | undefined)[];
+  /** Every `providers/set` and `providers/disable`, in order. */
+  providerCalls: { method: "set" | "disable"; params: Record<string, unknown> }[];
 }
 
 export interface ScriptedAgentOptions {
@@ -49,6 +53,10 @@ export interface ScriptedAgentOptions {
    * agents today; `acp` takes the client's tools on the ACP connection itself.
    */
   mcp?: { http?: boolean; acp?: boolean };
+  /** Advertise ACP's `systemPrompt`; `override` adds that mode to `append`. */
+  systemPrompt?: { override?: boolean };
+  /** Advertise ACP's `providers/*`, listing these. */
+  providers?: acp.ProviderInfo[];
   log?: ScriptedAgentLog;
 }
 
@@ -68,7 +76,14 @@ export function stepsFrom(responses: EchoModelResponse[]): ScriptStep[] {
 }
 
 export function emptyLog(): ScriptedAgentLog {
-  return { prompts: [], toolResults: [], sessionMeta: [], mcpServers: [] };
+  return {
+    prompts: [],
+    toolResults: [],
+    sessionMeta: [],
+    mcpServers: [],
+    systemPrompts: [],
+    providerCalls: [],
+  };
 }
 
 export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
@@ -81,13 +96,31 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
         loadSession: false,
         promptCapabilities: { image: true, embeddedContext: true },
         mcpCapabilities: opts.mcp ?? { http: true },
+        ...(opts.systemPrompt
+          ? {
+              sessionCapabilities: {
+                systemPrompt: opts.systemPrompt.override ? { mode: { override: {} } } : {},
+              },
+            }
+          : {}),
+        ...(opts.providers ? { providers: {} } : {}),
       },
       agentInfo: { name: "scripted", version: "1" },
     }))
+    .onRequest(acp.methods.agent.providers.list, () => ({ providers: opts.providers ?? [] }))
+    .onRequest(acp.methods.agent.providers.set, (ctx) => {
+      opts.log?.providerCalls.push({ method: "set", params: { ...ctx.params } });
+      return {};
+    })
+    .onRequest(acp.methods.agent.providers.disable, (ctx) => {
+      opts.log?.providerCalls.push({ method: "disable", params: { ...ctx.params } });
+      return {};
+    })
     .onRequest(acp.methods.agent.session.new, async (ctx) => {
       if (opts.refuseSession) throw acp.RequestError.invalidParams(undefined, "no session");
       opts.log?.sessionMeta.push(ctx.params._meta ?? undefined);
       opts.log?.mcpServers.push(ctx.params.mcpServers);
+      opts.log?.systemPrompts.push(ctx.params.systemPrompt ?? undefined);
       const router = await connectMcpToolRouter(
         ctx.params.mcpServers.flatMap((s): ReachableMcpServer[] => {
           if (!("type" in s)) return [];

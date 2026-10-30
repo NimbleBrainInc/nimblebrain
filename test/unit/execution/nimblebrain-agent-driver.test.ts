@@ -11,6 +11,9 @@ import {
   encodeHistory,
 } from "../../helpers/acp/nimblebrain-agent-driver.ts";
 
+/** Nothing went by ACP's standard fields: the driver delivers everything itself. */
+const NOTHING_DELIVERED = { systemPrompt: false, modelAccess: false };
+
 function run(model = "anthropic:claude-sonnet-4-6"): ResolvedRun {
   return {
     runId: "run_r",
@@ -63,7 +66,7 @@ describe("nimblebrain-agent driver", () => {
   test("sends the door's prompt, prior history and limits as nimblebrain-agent's session options", () => {
     const driver = createNimbleBrainAgentDriver();
     expect(driver.toolSurface).toBe("projection");
-    const meta = driver.sessionMeta?.(run(), { mcpServers: [] });
+    const meta = driver.sessionMeta?.(run(), { mcpServers: [], delivered: NOTHING_DELIVERED });
     expect(meta).toEqual({
       [AGENT_SESSION_META_KEY]: {
         system: "Be brief.",
@@ -82,7 +85,9 @@ describe("nimblebrain-agent driver", () => {
     const gateway = "http://model-gateway.test";
     const minted = { ...run(), modelCredential: "turn-jwt" };
     const meta = (driver: ReturnType<typeof createNimbleBrainAgentDriver>, r: ResolvedRun) =>
-      driver.sessionMeta?.(r, { mcpServers: [] })?.[AGENT_SESSION_META_KEY];
+      driver.sessionMeta?.(r, { mcpServers: [], delivered: NOTHING_DELIVERED })?.[
+        AGENT_SESSION_META_KEY
+      ];
 
     const gated = createNimbleBrainAgentDriver({ modelGateway: gateway });
     expect(gated.capabilities).toEqual({ spendGate: false, modelCredential: "session" });
@@ -116,7 +121,9 @@ describe("nimblebrain-agent driver", () => {
   test("lets the agent fold mid-turn only when the door allows it, with the door's model", () => {
     const driver = createNimbleBrainAgentDriver();
     const allowed = { ...run(), compaction: { model: "anthropic:claude-haiku-4-5" } };
-    const meta = driver.sessionMeta?.(allowed, { mcpServers: [] })?.[AGENT_SESSION_META_KEY];
+    const meta = driver.sessionMeta?.(allowed, { mcpServers: [], delivered: NOTHING_DELIVERED })?.[
+      AGENT_SESSION_META_KEY
+    ];
     expect(meta).toMatchObject({ compaction: { model: "anthropic:claude-haiku-4-5" } });
   });
 

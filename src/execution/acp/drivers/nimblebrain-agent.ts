@@ -22,6 +22,7 @@ import type { ResolvedRun } from "../../types.ts";
 import {
   type AcpDriver,
   type AcpOutcome,
+  type AcpStandardDelivery,
   knownStopReason,
   type ReportedModelCall,
 } from "../driver.ts";
@@ -43,7 +44,7 @@ export function createNimbleBrainAgentDriver(opts: NimbleBrainAgentDriverOptions
   return {
     capabilities: { spendGate: false, modelCredential: "session" },
     toolSurface: "projection",
-    sessionMeta: (run) => agentSessionMeta(run, opts.modelGateway),
+    sessionMeta: (run, plan) => agentSessionMeta(run, opts.modelGateway, plan.delivered),
     prompt: agentPrompt,
     outcome: agentOutcome,
   };
@@ -60,9 +61,13 @@ export function createNimbleBrainAgentDriver(opts: NimbleBrainAgentDriverOptions
  * `modelEndpoint` is the session model's, for a worker older than
  * `modelEndpoints`.
  */
-export function agentSessionMeta(run: ResolvedRun, modelGateway?: string): Record<string, unknown> {
+export function agentSessionMeta(
+  run: ResolvedRun,
+  modelGateway?: string,
+  delivered: AcpStandardDelivery = { systemPrompt: false, modelAccess: false },
+): Record<string, unknown> {
   const modelAccess =
-    modelGateway && run.modelCredential
+    modelGateway && run.modelCredential && !delivered.modelAccess
       ? {
           modelCredential: run.modelCredential,
           modelEndpoint: modelGatewayBaseURL(modelGateway, providerOfModelId(run.config.model)),
@@ -76,7 +81,7 @@ export function agentSessionMeta(run: ResolvedRun, modelGateway?: string): Recor
       : {};
   return {
     [AGENT_SESSION_META_KEY]: {
-      system: run.system,
+      ...(delivered.systemPrompt ? {} : { system: run.system }),
       history: encodeHistory(priorMessages(run)),
       model: run.config.model,
       maxIterations: run.config.maxIterations,

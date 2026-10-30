@@ -27,24 +27,31 @@ import type { EngineResult } from "../../engine/types.ts";
 import { log } from "../../observability/log.ts";
 import { openToolProjection, type ToolProjection } from "../tool-projection.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../types.ts";
-import type { AcpConnection, AcpDriver, AcpOutcome } from "./driver.ts";
+import type { AcpConnection, AcpDriver, AcpOutcome, AcpStandardDelivery } from "./driver.ts";
 import { type AcpMcpServers, createAcpMcpServers } from "./mcp-over-acp.ts";
 import { type AcpRunRecorder, createAcpRunRecorder } from "./run-recorder.ts";
-import { transcriptPrompt } from "./transcript.ts";
+import { delivered, deliverModelAccess, standardSystemPrompt } from "./standard-fields.ts";
+import { historyPrompt, transcriptPrompt } from "./transcript.ts";
 
 /** The name an agent sees NimbleBrain's tools under. */
 export const PROJECTION_SERVER_NAME = "nimblebrain";
+
+export interface AcpRuntimeOptions {
+  /** The installation's model gateway (`execution.modelGateway`), where an agent's calls go. */
+  modelGateway?: string;
+}
 
 export function createAcpRuntime(
   id: string,
   driver: AcpDriver,
   connection: AcpConnection,
+  opts: AcpRuntimeOptions = {},
 ): AgentRuntime {
   return {
     id,
     // An agent with its own loop counts its own model calls, whatever its driver.
     capabilities: { spendGate: false, ...driver.capabilities, usage: "reported" },
-    execute: (run, io) => executeOverAcp(id, driver, connection, run, io),
+    execute: (run, io) => executeOverAcp(id, driver, connection, opts, run, io),
   };
 }
 
@@ -52,6 +59,7 @@ async function executeOverAcp(
   runtimeId: string,
   driver: AcpDriver,
   connection: AcpConnection,
+  opts: AcpRuntimeOptions,
   run: ResolvedRun,
   io: RunIO,
 ): Promise<EngineResult> {
@@ -62,7 +70,7 @@ async function executeOverAcp(
   const cleanup: (() => Promise<void>)[] = [];
   try {
     signal?.throwIfAborted();
-    const turn = await openSession(runtimeId, driver, connection, run, io, recorder, cleanup);
+    const turn = await openSession(runtimeId, driver, connection, opts, run, io, recorder, cleanup);
     // An abort during setup fired before the listener below exists.
     signal?.throwIfAborted();
     const cancel = () => {
@@ -75,7 +83,7 @@ async function executeOverAcp(
 
     const response = await turn.agent.request(acp.methods.agent.session.prompt, {
       sessionId: turn.sessionId,
-      prompt: driver.prompt?.(run) ?? transcriptPrompt(run),
+      prompt: turnPrompt(driver, run, turn.delivered),
     });
     if (response.stopReason === "cancelled" || signal?.aborted) {
       recorder.cancelled();
@@ -97,6 +105,20 @@ async function executeOverAcp(
   }
 }
 
+/**
+ * The prompt that opens the turn: the driver's, else the transcript, without the
+ * system prompt when it went by ACP's own field.
+ */
+function turnPrompt(
+  driver: AcpDriver,
+  run: ResolvedRun,
+  delivered: AcpStandardDelivery,
+): acp.ContentBlock[] {
+  return (
+    driver.prompt?.(run) ?? (delivered.systemPrompt ? historyPrompt(run) : transcriptPrompt(run))
+  );
+}
+
 /** What the driver read from its agent's response, or nothing for a driver that reads none. */
 function outcomeOf(driver: AcpDriver, response: acp.PromptResponse): AcpOutcome {
   return driver.outcome?.(response) ?? {};
@@ -111,11 +133,17 @@ async function openSession(
   runtimeId: string,
   driver: AcpDriver,
   agentConnection: AcpConnection,
+  opts: AcpRuntimeOptions,
   run: ResolvedRun,
   io: RunIO,
   recorder: AcpRunRecorder,
   cleanup: (() => Promise<void>)[],
-): Promise<{ agent: acp.ClientContext; sessionId: string; projection: ToolProjection }> {
+): Promise<{
+  agent: acp.ClientContext;
+  sessionId: string;
+  projection: ToolProjection;
+  delivered: AcpStandardDelivery;
+}> {
   const projection = await openToolProjection({
     runId: run.runId,
     router: io.tools,
@@ -155,10 +183,15 @@ async function openSession(
       acpServers,
     ),
   ];
-  const sessionMeta = driver.sessionMeta?.(run, { mcpServers });
+  const capabilities = init.agentCapabilities;
+  const systemPrompt = standardSystemPrompt(capabilities, run);
+  const modelAccess = await deliverModelAccess(agent, capabilities, run, opts.modelGateway);
+  const sent = delivered(systemPrompt, modelAccess);
+  const sessionMeta = driver.sessionMeta?.(run, { mcpServers, delivered: sent });
   const newSession: acp.NewSessionRequest = {
     cwd: opened.cwd,
     mcpServers,
+    ...(systemPrompt ? { systemPrompt } : {}),
     ...(sessionMeta ? { _meta: sessionMeta } : {}),
   };
   const { sessionId } = await agent.request(acp.methods.agent.session.new, newSession);
@@ -171,7 +204,7 @@ async function openSession(
     sessionId,
     run,
   );
-  return { agent, sessionId, projection };
+  return { agent, sessionId, projection, delivered: sent };
 }
 
 /**

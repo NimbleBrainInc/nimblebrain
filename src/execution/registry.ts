@@ -65,7 +65,11 @@ export function createAgentRuntimes(
       url: entry.url,
       credential: deps.connectionCredential,
     });
-    add(createAcpRuntime(id, driverFor(entry, config?.modelGateway), connection));
+    add(
+      createAcpRuntime(id, driverFor(entry, config?.modelGateway), connection, {
+        ...(config?.modelGateway ? { modelGateway: config.modelGateway } : {}),
+      }),
+    );
   }
   for (const runtime of injected) add(runtime);
 
