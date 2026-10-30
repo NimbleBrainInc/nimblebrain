@@ -134,11 +134,12 @@ describe("an external runtime over the network", () => {
     const credential = runKey.mintModelCredential({ runId: "run_remote", workspaceId: "ws_test" });
     const runtime = createAcpRuntime(
       "pool",
-      createNimbleBrainAgentDriver({ modelGateway: gateway.rootUrl }),
+      createNimbleBrainAgentDriver(),
       createHttpConnection({
         url: workerUrl,
         credential: () => runKey.mintConnectionCredential(),
       }),
+      { modelGateway: gateway.rootUrl },
     );
     const calls: ToolCall[] = [];
     const events: EngineEvent[] = [];

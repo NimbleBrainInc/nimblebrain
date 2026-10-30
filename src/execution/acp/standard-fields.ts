@@ -19,7 +19,7 @@
  */
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
-import { MODEL_PROVIDERS, modelGatewayBaseURL } from "../../model/registry.ts";
+import { type MODEL_PROVIDERS, modelGatewayBaseURL } from "../../model/registry.ts";
 import type { ResolvedRun } from "../types.ts";
 import type { AcpStandardDelivery } from "./driver.ts";
 

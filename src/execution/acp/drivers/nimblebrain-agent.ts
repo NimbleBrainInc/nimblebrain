@@ -5,24 +5,20 @@
  *
  * NimbleBrain imports nothing of nimblebrain-agent. The driver speaks its
  * documented session options (`nimblebrain-agent/session` on `session/new`:
- * system prompt, history, model, limits, compaction, and the turn's model
- * credential and gateway) and reads its documented response keys.
+ * history, model, limits, compaction) and reads its documented response keys.
+ * The system prompt and the turn's model access go by ACP's own fields, which
+ * the generic runtime sends (`../standard-fields.ts`) and the agent takes.
  *
- * - It takes the turn's model credential per session, which the door mints
- *   when the run starts. The credential goes to the agent beside the
- *   installation's model gateway, and only beside it: with no gateway the
- *   worker calls its own provider with its own key.
+ * - It takes the turn's model credential per session (`providers/set`), which
+ *   the door mints when the run starts.
  * - The agent's tools are the run's projection alone.
  */
 
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
-import { providerOfModelId } from "../../../model/model-id.ts";
-import { MODEL_PROVIDERS, modelGatewayBaseURL } from "../../../model/registry.ts";
 import type { ResolvedRun } from "../../types.ts";
 import {
   type AcpDriver,
   type AcpOutcome,
-  type AcpStandardDelivery,
   knownStopReason,
   type ReportedModelCall,
 } from "../driver.ts";
@@ -35,53 +31,20 @@ export const AGENT_SESSION_META_KEY = "nimblebrain-agent/session";
 export const AGENT_STOP_REASON_META_KEY = "nimblebrain-agent/stopReason";
 export const AGENT_USAGE_META_KEY = "nimblebrain-agent/usage";
 
-export interface NimbleBrainAgentDriverOptions {
-  /** The installation's model gateway (`execution.modelGateway`), where the turn's calls go. */
-  modelGateway?: string;
-}
-
-export function createNimbleBrainAgentDriver(opts: NimbleBrainAgentDriverOptions = {}): AcpDriver {
+export function createNimbleBrainAgentDriver(): AcpDriver {
   return {
     capabilities: { spendGate: false, modelCredential: "session" },
     toolSurface: "projection",
-    sessionMeta: (run, plan) => agentSessionMeta(run, opts.modelGateway, plan.delivered),
+    sessionMeta: (run) => agentSessionMeta(run),
     prompt: agentPrompt,
     outcome: agentOutcome,
   };
 }
 
-/**
- * The session options for one run, in nimblebrain-agent's documented shape.
- * The model credential goes only beside the gateway, as the agent's
- * `modelEndpoint`: the agent refuses an endpoint without a credential, and a
- * credential without one would be presented to the worker's own provider
- * instead of its key. `modelEndpoints` names every provider's base URL on the
- * gateway (`<gateway>/<provider>/v1`), so each of the session's calls (a
- * summary on another provider's model included) reaches its own provider;
- * `modelEndpoint` is the session model's, for a worker older than
- * `modelEndpoints`.
- */
-export function agentSessionMeta(
-  run: ResolvedRun,
-  modelGateway?: string,
-  delivered: AcpStandardDelivery = { systemPrompt: false, modelAccess: false },
-): Record<string, unknown> {
-  const modelAccess =
-    modelGateway && run.modelCredential && !delivered.modelAccess
-      ? {
-          modelCredential: run.modelCredential,
-          modelEndpoint: modelGatewayBaseURL(modelGateway, providerOfModelId(run.config.model)),
-          modelEndpoints: Object.fromEntries(
-            MODEL_PROVIDERS.map((provider) => [
-              provider,
-              modelGatewayBaseURL(modelGateway, provider),
-            ]),
-          ),
-        }
-      : {};
+/** The session options for one run, in nimblebrain-agent's documented shape. */
+export function agentSessionMeta(run: ResolvedRun): Record<string, unknown> {
   return {
     [AGENT_SESSION_META_KEY]: {
-      ...(delivered.systemPrompt ? {} : { system: run.system }),
       history: encodeHistory(priorMessages(run)),
       model: run.config.model,
       maxIterations: run.config.maxIterations,
@@ -89,7 +52,6 @@ export function agentSessionMeta(
       maxOutputTokens: run.config.maxOutputTokens,
       ...(run.config.thinking ? { thinking: run.config.thinking } : {}),
       compaction: run.compaction ?? false,
-      ...modelAccess,
     },
   };
 }

@@ -3,7 +3,6 @@ import type * as acp from "@agentclientprotocol/sdk/unstable";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
 import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
 import type { AcpDriver, AcpSessionPlan } from "../../../src/execution/acp/driver.ts";
-import { agentSessionMeta } from "../../../src/execution/acp/drivers/nimblebrain-agent.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
 import {
   emptyLog,
@@ -184,18 +183,5 @@ describe("providers", () => {
     await noCredential.result;
     expect([...noGateway.log.providerCalls, ...noCredential.log.providerCalls]).toEqual([]);
     expect(noGateway.plans[0]?.delivered.modelAccess).toBe(false);
-  });
-});
-
-describe("the nimblebrain-agent driver beside the standard fields", () => {
-  test("leaves the system prompt and model access out of its options when they went by ACP", () => {
-    const run = resolvedRun();
-    const both = agentSessionMeta(run, GATEWAY, { systemPrompt: true, modelAccess: true });
-    const neither = agentSessionMeta(run, GATEWAY);
-    const options = (meta: Record<string, unknown>) =>
-      meta["nimblebrain-agent/session"] as Record<string, unknown>;
-    expect(options(both)).not.toHaveProperty("system");
-    expect(options(both)).not.toHaveProperty("modelCredential");
-    expect(options(neither)).toMatchObject({ system: "Be brief.", modelCredential: "turn-jwt" });
   });
 });
