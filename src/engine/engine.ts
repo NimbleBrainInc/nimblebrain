@@ -28,7 +28,6 @@ import {
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { callModel, type StreamResult } from "../model/stream.ts";
 import { log } from "../observability/log.ts";
-import { formatConnectorSkillBlock } from "../prompt/containment.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { addUsage, emptyUsage, tokenUsageFromV4 } from "../usage/types.ts";
 import { mapWithConcurrency } from "../util/concurrency.ts";
@@ -43,7 +42,12 @@ import {
 import { isContextOverflowError } from "./context-overflow.ts";
 import { withRetry } from "./retry.ts";
 import type { RunErrorPayload } from "./schemas/events.ts";
-import { createSkillDelivery, type SkillDelivery } from "./skill-delivery.ts";
+import {
+  createSkillDelivery,
+  guidanceByToolCall,
+  type SkillDelivery,
+  withGuidance,
+} from "./skill-delivery.ts";
 import { createRunSupervisor, type RunSupervisor } from "./supervisor.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "./token-estimate.ts";
 import {
@@ -677,16 +681,22 @@ function seedInjectedConnectorSkills(
 ): void {
   if (connectorSkillCandidates.length === 0) return;
   for (const m of history) {
-    const meta = (m as { metadata?: { synthetic?: string; skill?: string | null } }).metadata;
-    // Both delivery channels count: a surface-once overlay message and a
-    // `nb__use_skill` activation result each put the full body in history, so
-    // either marker means "already delivered — don't inject again".
+    const meta = (
+      m as {
+        metadata?: { synthetic?: string; skill?: string | null; connectorSkills?: string[] };
+      }
+    ).metadata;
+    // Both delivery channels count: a surface-once overlay (carried by a tool
+    // result, or its own message) and a `nb__use_skill` activation result each
+    // put the full body in history, so any marker means "already delivered —
+    // don't inject again".
     const delivered =
       meta?.synthetic === CONNECTOR_SKILL_SYNTHETIC ||
       meta?.synthetic === SKILL_ACTIVATED_SYNTHETIC;
     if (delivered && typeof meta?.skill === "string") {
       injectedConnectorSkills.add(meta.skill);
     }
+    for (const skill of meta?.connectorSkills ?? []) injectedConnectorSkills.add(skill);
   }
 }
 
@@ -1068,7 +1078,7 @@ export class AgentEngine {
     // runs. The first call to a bound tool is held (`holdForGuidance`) until
     // the body has been read, unless a promotion already delivered it; a call
     // that runs anyway (a read its server's default binding does not hold, a
-    // hook rename) gets the guidance after it. Bodies drain after the
+    // hook rename) gets the guidance after it. Bodies drain into the
     // iteration's tool results, before the model's next action, in the
     // position the reconstructor replays them into.
     //
@@ -1195,7 +1205,7 @@ export class AgentEngine {
         // server's skill guidance once, now, so the model has the workflow before it
         // starts using the tools (not only when the first one is called at tool.start).
         // Delivery rides the history tail (cache-safe — never the frozen prefix) and
-        // lands after this iteration's tool results, so the guidance is in context for
+        // lands in this iteration's tool results, so the guidance is in context for
         // the model's next action in THIS run.
         skills.claimFor(toolName);
 
@@ -1535,45 +1545,27 @@ export class AgentEngine {
         const { toolResultParts, toolCallRecords } = buildToolResults(toolResults);
         allToolCalls.push(...toolCallRecords);
 
-        // 6. Feed results back as tool message
-        history.push({ role: "tool", content: toolResultParts });
+        // 6. Deliver any guidance surfaced while those tools ran, inside this
+        // iteration's tool results: the call it held, else the last result.
+        // The model reads it before its next action, which is what "surface on
+        // first use" means. It rides a tool result rather than a message after
+        // the tool message because a user message right after a tool message
+        // is a 400 on some Chat Completions APIs. Replay places the recorded
+        // `connector.skill.injected` through the same `guidanceByToolCall`, so
+        // a resumed conversation carries the identical text. An overlay whose
+        // body is fetched on demand is recorded once its body is in hand; a
+        // body that cannot be fetched is not delivered, and the skill stays
+        // eligible.
+        const guidance = guidanceByToolCall(
+          toolResultParts.map((p) => p.toolCallId),
+          await skills.settle(),
+        );
 
-        // 7. Deliver any overlay surfaced while those tools ran, in the same
-        // position the reconstructor will replay it into — after this
-        // iteration's tool results. The model reads the guidance before its
-        // next action, which is what "surface on first use" means. Recording
-        // the event here and leaving the body to a later rehydration would
-        // deliver it after the calls it governs had already happened, and a
-        // single-run conversation would never see it at all.
-        //
-        // The role is `user`, not `assistant`, and that is load-bearing: this
-        // message ENDS the history for the next model call of this same run,
-        // and a trailing assistant message is an Anthropic prefill — the model
-        // continues the guidance block instead of starting its own turn, and
-        // that continuation is its real, user-visible output. `user` is the
-        // role the codebase already injects synthetic non-user guidance under
-        // (see `appendFinalStepReminder`), and it is trailing-safe.
-        // An overlay whose body is fetched on demand (a server-published
-        // skill) is recorded once its body is in hand. It is recorded before
-        // the next `llm.response`, the same iteration the injector fired in,
-        // so replay places it where the live run does. A body that cannot be
-        // fetched is not delivered, and the skill stays eligible.
-        for (const overlay of await skills.settle()) {
-          history.push({
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: formatConnectorSkillBlock(
-                  overlay.skillName,
-                  overlay.scope,
-                  overlay.skillBody,
-                  overlay.heldToolCallId !== undefined,
-                ),
-              },
-            ],
-          });
-        }
+        // 7. Feed results back as tool message
+        history.push({
+          role: "tool",
+          content: toolResultParts.map((part) => withGuidance(part, guidance.get(part.toolCallId))),
+        });
 
         iteration++;
       }

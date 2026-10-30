@@ -242,12 +242,17 @@ interface StoredMessageMetadata {
   skill?: string | null;
   /**
    * Marks a message the reconstructor synthesized rather than one the model
-   * or user produced. `"connector_skill_injected"` is the surface-once
-   * connector-overlay message (paired with `skill`, the overlay name) — the
-   * engine inspects this on replay to dedup re-injection. See
-   * `event-reconstructor.ts`.
+   * or user produced, paired with `skill`. `"connector_skill_injected"` is a
+   * connector overlay that had no tool result to ride (see `connectorSkills`);
+   * `"skill_activated"` is an `nb__use_skill` result. The runtime and engine
+   * read both to dedup re-delivery. See `event-reconstructor.ts`.
    */
   synthetic?: string;
+  /**
+   * Connector overlays whose bodies this tool result carries after its own
+   * output, by skill name. Read beside `synthetic` to dedup re-delivery.
+   */
+  connectorSkills?: string[];
   toolCalls?: Array<{
     id: string;
     name: string;
@@ -511,12 +516,11 @@ export interface HistoryCompactedEvent {
 /**
  * A curated connector-skill overlay surfaced into the conversation for the
  * first time, triggered by a matching connector tool call during a run.
- * The reconstructor turns this event into a synthetic message whose
- * body is the overlay wrapped in `<connector-skill>` containment, carrying
- * `metadata.synthetic = "connector_skill_injected"` + `metadata.skill` so the
- * guidance rides the append-only history AND so the
- * engine can detect it on replay to never re-inject. Emitted at most once per
- * (conversation, skill).
+ * The reconstructor appends the overlay, wrapped in `<connector-skill>`
+ * containment, to a tool result of the iteration it was delivered in, and
+ * lists it in that message's `metadata.connectorSkills`, so the guidance rides
+ * the append-only history AND the runtime can detect it on replay to never
+ * re-inject. Emitted at most once per (conversation, skill).
  */
 export interface ConnectorSkillInjectedEvent {
   ts: string;

@@ -90,6 +90,27 @@ function run(opts: {
   return { result, prompts, executed, events };
 }
 
+/**
+ * The message order a strict Chat Completions API enforces: it rejects a
+ * `user` message directly after a `tool` message with a 400 ("Unexpected role
+ * 'user' after role 'tool'"). Every prompt the engine sends must pass it.
+ */
+function userAfterTool(prompt: LanguageModelV4Prompt): number {
+  return prompt.findIndex((m, i) => m.role === "user" && prompt[i - 1]?.role === "tool");
+}
+
+/** The text of the tool result for `toolCallId` in a prompt. */
+function toolResultText(prompt: LanguageModelV4Prompt, toolCallId: string): string | undefined {
+  for (const m of prompt) {
+    if (m.role !== "tool") continue;
+    for (const part of m.content) {
+      if (part.type === "tool-result" && part.toolCallId === toolCallId && "value" in part.output)
+        return String(part.output.value);
+    }
+  }
+  return undefined;
+}
+
 /** Every text in a prompt, in order. */
 function texts(prompt: LanguageModelV4Prompt): string[] {
   const out: string[] = [];
@@ -119,11 +140,12 @@ describe("engine: a bound skill reaches the model before its tool's first call r
     const result = await r.result;
 
     expect(r.executed).toEqual(["c2"]);
-    const second = texts(r.prompts[1] ?? []);
-    const heldAt = second.findIndex((t) => t.startsWith("Not run: outreach__draft_email"));
-    const guidanceAt = second.findIndex((t) => t.includes("DRAFTING RULES"));
-    expect(heldAt).toBeGreaterThan(-1);
-    expect(guidanceAt).toBeGreaterThan(heldAt);
+    // The guidance follows the held result inside it, as the result says.
+    const held1 = texts(r.prompts[1] ?? []).find((t) =>
+      t.startsWith("Not run: outreach__draft_email"),
+    );
+    expect(held1).toBeDefined();
+    expect(held1!.indexOf("DRAFTING RULES")).toBeGreaterThan(held1!.indexOf("Not run:"));
 
     const [held, ran] = result.toolCalls;
     expect(held).toMatchObject({
@@ -357,5 +379,57 @@ describe("engine: a bound skill reaches the model before its tool's first call r
     expect(notDelivered.map((e) => e.data)).toEqual([
       expect.objectContaining({ skillName: "connector:notes:n", reason: "capped" }),
     ]);
+  });
+});
+
+describe("engine: delivered guidance never puts a user message after a tool message", () => {
+  it("carries a held call's guidance inside that call's tool result", async () => {
+    const r = run({
+      turns: [
+        [
+          { id: "c1", name: "outreach__list_campaigns" },
+          { id: "c2", name: "outreach__draft_email" },
+        ],
+        [{ id: "c3", name: "outreach__draft_email" }],
+      ],
+      candidates: [DRAFTING],
+    });
+    await r.result;
+    for (const prompt of r.prompts) expect(userAfterTool(prompt)).toBe(-1);
+    // The held call is not the iteration's last result here; the guidance
+    // still sits in the result of the call it held.
+    const second = r.prompts[1] ?? [];
+    expect(toolResultText(second, "c2")).toContain("DRAFTING RULES");
+    expect(toolResultText(second, "c1")).not.toContain("DRAFTING RULES");
+  });
+
+  it("carries guidance delivered after a call that ran in the iteration's last result", async () => {
+    const r = run({
+      turns: [
+        [
+          { id: "c1", name: "outreach__list_campaigns" },
+          { id: "c2", name: "outreach__list_campaigns" },
+        ],
+      ],
+      candidates: [
+        { ...DRAFTING, toolAffinity: ["outreach__*"], implicitBinding: true },
+        {
+          ...DRAFTING,
+          name: "connector:outreach:tone",
+          body: "TONE RULES: plain words.",
+          toolAffinity: ["outreach__*"],
+          implicitBinding: true,
+        },
+      ],
+    });
+    await r.result;
+    expect(r.executed).toEqual(["c1", "c2"]);
+    const second = r.prompts[1] ?? [];
+    expect(userAfterTool(second)).toBe(-1);
+    const last = toolResultText(second, "c2") ?? "";
+    expect(last.startsWith("ok")).toBe(true);
+    expect(last).toContain("DRAFTING RULES");
+    expect(last).toContain("TONE RULES");
+    expect(toolResultText(second, "c1")).toBe("ok");
   });
 });

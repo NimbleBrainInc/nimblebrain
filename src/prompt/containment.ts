@@ -81,8 +81,8 @@ export function sanitizeLineField(value: string): string {
 /**
  * Wrap a connector-skill overlay body for surfacing into the conversation
  * history. Unlike Layer-3 skills, a connector overlay delivered automatically
- * never enters the cached system prefix — it becomes the body of a synthetic
- * message the reconstructor emits on the first matching connector tool call,
+ * never enters the cached system prefix — it is appended to a tool result of
+ * the iteration that first matched it (live and on replay),
  * so the guidance rides the append-only history rather than re-varying the
  * prompt prefix every turn. An overlay a task declares by name is the
  * exception: it joins Layer 3, where it is identical across the task's runs.

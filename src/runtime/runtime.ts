@@ -5564,7 +5564,8 @@ export class Runtime {
 
   /**
    * Names of skills already DELIVERED into this conversation — connector
-   * overlays surfaced by the engine (synthetic-message marker) and catalog
+   * overlays surfaced by the engine (`connectorSkills` on the tool result that
+   * carries them, or the synthetic-message marker) and catalog
    * skills loaded via `nb__use_skill` (marker stamped on the activating tool
    * result). MUST be called on the UN-rehydrated history (`compactedHistory ??
    * history`): `rehydrateUserResources` strips message `metadata`, so the
@@ -5589,6 +5590,7 @@ export class Runtime {
       if (delivered && typeof meta?.skill === "string") {
         names.add(meta.skill);
       }
+      for (const skill of meta?.connectorSkills ?? []) names.add(skill);
     }
     return [...names];
   }
