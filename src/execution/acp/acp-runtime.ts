@@ -29,10 +29,20 @@
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
 import type { EngineResult } from "../../engine/types.ts";
+import {
+  isGatewayBudgetRefusal,
+  MODEL_GATEWAY_BUDGET_ACCOUNT,
+} from "../../model/gateway-refusal.ts";
 import { log } from "../../observability/log.ts";
 import { openToolProjection, type ToolProjection } from "../tool-projection.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../types.ts";
-import type { AcpConnection, AcpDriver, AcpOutcome, AcpStandardDelivery } from "./driver.ts";
+import type {
+  AcpConnection,
+  AcpDriver,
+  AcpModelFailure,
+  AcpOutcome,
+  AcpStandardDelivery,
+} from "./driver.ts";
 import { type AcpMcpServers, createAcpMcpServers } from "./mcp-over-acp.ts";
 import { type AcpRunRecorder, createAcpRunRecorder } from "./run-recorder.ts";
 import { delivered, deliverModelAccess, standardSystemPrompt } from "./standard-fields.ts";
@@ -100,10 +110,29 @@ async function executeOverAcp(
     signal?.addEventListener("abort", cancel, { once: true });
     cleanup.push(async () => signal?.removeEventListener("abort", cancel));
 
-    const response = await turn.agent.request(acp.methods.agent.session.prompt, {
-      sessionId: turn.sessionId,
-      prompt: turnPrompt(driver, run, turn.delivered),
-    });
+    const response = await turn.agent
+      .request(acp.methods.agent.session.prompt, {
+        sessionId: turn.sessionId,
+        prompt: turnPrompt(driver, run, turn.delivered),
+      })
+      .catch((err: unknown) => {
+        const spent = signal?.aborted ? undefined : budgetRefusal(driver, turn.delivered, err);
+        if (!spent) throw err;
+        log.warn(
+          "[execution] the model gateway refused the agent's call: the run's budget is spent",
+          {
+            runId: run.runId,
+          },
+        );
+        return spent;
+      });
+    if ("outcome" in response) {
+      return recorder.stopped(
+        { stopReason: "spend_limit", spendAccountId: MODEL_GATEWAY_BUDGET_ACCOUNT },
+        response.outcome,
+        turn.projection.calls(),
+      );
+    }
     if (response.stopReason === "cancelled" || signal?.aborted) {
       recorder.cancelled();
       throw signal?.reason ?? new DOMException("The agent cancelled the turn", "AbortError");
@@ -136,6 +165,22 @@ function turnPrompt(
   return (
     driver.prompt?.(run) ?? (delivered.systemPrompt ? historyPrompt(run) : transcriptPrompt(run))
   );
+}
+
+/**
+ * The agent's report of a model call the gateway refused because the run's
+ * budget is spent, read from its `session/prompt` error by its driver. Only
+ * when the run's model access went to the installation's gateway: an agent
+ * on its own provider key may hear the same words for a limit that clears.
+ */
+function budgetRefusal(
+  driver: AcpDriver,
+  delivered: AcpStandardDelivery,
+  err: unknown,
+): AcpModelFailure | undefined {
+  if (!delivered.modelAccess) return undefined;
+  const failure = driver.modelFailure?.(err);
+  return failure && isGatewayBudgetRefusal(failure.status, failure.reason) ? failure : undefined;
 }
 
 /** What the driver read from its agent's response, or nothing for a driver that reads none. */

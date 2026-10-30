@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { isModelBudgetSpent } from "../../../src/model/gateway-refusal.ts";
 import { modelGatewayFetch } from "../../../src/runtime/model-gateway-fetch.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import {
@@ -71,5 +72,50 @@ describe("the model gateway's fetch", () => {
     expect(String(first.sub)).toStartWith("call_");
     expect(first.sub).not.toBe(second.sub);
     expect(first.workspace).toBe("none");
+  });
+});
+
+describe("the model gateway's fetch on a 429", () => {
+  /** One call through the gateway fetch, answered with `response`. */
+  const call = (response: Response) =>
+    modelGatewayFetch(
+      runKey,
+      fakeFetch(async () => response),
+    )("http://gateway.test/anthropic/v1/messages", { method: "POST" });
+
+  it("throws the gateway's refusal for a spent run budget as ModelBudgetSpentError", async () => {
+    const refusal = new Response("rate limit exceeded", {
+      status: 429,
+      headers: {
+        "content-type": "text/plain",
+        "retry-after": "3600",
+        "x-ratelimit-remaining": "0",
+      },
+    });
+    const err = await call(refusal).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(isModelBudgetSpent(err)).toBe(true);
+    expect((err as { retryable?: boolean }).retryable).toBe(false);
+  });
+
+  it("passes a provider's own 429 through, for the provider client to retry", async () => {
+    const body = JSON.stringify({
+      type: "error",
+      error: { type: "rate_limit_error", message: "rate limit exceeded" },
+    });
+    const response = await call(
+      new Response(body, { status: 429, headers: { "content-type": "application/json" } }),
+    );
+    expect(response.status).toBe(429);
+    expect(await response.text()).toBe(body);
+  });
+
+  it("passes any other plain-text 429 through", async () => {
+    const response = await call(
+      new Response("slow down", { status: 429, headers: { "content-type": "text/plain" } }),
+    );
+    expect(await response.text()).toBe("slow down");
   });
 });

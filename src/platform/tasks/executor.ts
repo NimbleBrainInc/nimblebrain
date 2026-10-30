@@ -12,6 +12,7 @@
 
 import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/tasks.ts";
 import type { ThinkingEffort } from "../../engine/types.ts";
+import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../../model/gateway-refusal.ts";
 import { wrapContained } from "../../prompt/containment.ts";
 import type { AdmissionLease } from "../../runtime/admission.ts";
 import { checkAgainstSchema, parseJsonDeliverable } from "./json-schema.ts";
@@ -656,9 +657,22 @@ function runInputCapError(
 /**
  * The error for a run stopped at `spend_limit`: what was left of its token
  * budget's window could not pay for its next model call, even with that call's
- * output clamped. `account` is the budget's account that stopped it, if one did.
+ * output clamped, or the model gateway's budget for the run refused it.
+ * `account` is the budget's account that stopped it, if one did.
  */
-function budgetStopError(account: RunSpendAccount | undefined, task: Task): string {
+function budgetStopError(
+  accountId: string | undefined,
+  account: RunSpendAccount | undefined,
+  task: Task,
+): string {
+  // The installation's model gateway refused the run's next call: the budget
+  // spent is the run's own, held by the gateway, not the task's.
+  if (accountId === MODEL_GATEWAY_BUDGET_ACCOUNT) {
+    return (
+      "Model budget reached: this run's model budget is spent, so the model gateway refused " +
+      "its next step and the run stopped there."
+    );
+  }
   if (account?.id.startsWith(BATCH_ACCOUNT_PREFIX)) {
     return (
       `Batch budget reached: too little of the batch's budget was left for the next step ` +
@@ -732,6 +746,7 @@ function mapResultToRun(
   }
   if (stopReason === "spend_limit") {
     error = budgetStopError(
+      data.spendAccountId,
       spendAccounts.find((a) => a.id === data.spendAccountId),
       task,
     );

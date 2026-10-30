@@ -59,6 +59,8 @@ export interface ScriptedAgentOptions {
   systemPrompt?: { override?: boolean };
   /** Advertise ACP's `providers/*`, listing these. */
   providers?: acp.ProviderInfo[];
+  /** Fail the turn after its steps with this error, as a model call that failed would. */
+  failTurn?: () => unknown;
   log?: ScriptedAgentLog;
 }
 
@@ -182,6 +184,7 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
           }
           if (turn.signal.aborted) return { stopReason: "cancelled" as const };
         }
+        if (opts.failTurn) throw opts.failTurn();
         return { stopReason: "end_turn" as const };
       } catch (err) {
         if (turn.signal.aborted) return { stopReason: "cancelled" as const };

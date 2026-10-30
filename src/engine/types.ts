@@ -688,7 +688,10 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
  *   - `spend_limit`      — the run's spend accounts (`EngineConfig.spend`)
  *                          cannot pay for the next model call's input and a
  *                          minimal output; the account is
- *                          `EngineResult.spendAccountId`
+ *                          `EngineResult.spendAccountId`. The model gateway's
+ *                          refusal for a spent run budget stops the run the
+ *                          same way, naming `MODEL_GATEWAY_BUDGET_ACCOUNT`
+ *                          (`src/model/gateway-refusal.ts`)
  *   - `length`           — last LLM call hit `maxOutputTokens` mid-turn
  *   - `content_filter`   — last LLM call was blocked by provider moderation
  *   - `error`            — last LLM call's finish reason was `error`

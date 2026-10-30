@@ -1,9 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import type * as acp from "@agentclientprotocol/sdk/unstable";
+import { RequestError } from "@agentclientprotocol/sdk/unstable";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
+import type { EngineEvent } from "../../../src/engine/types.ts";
 import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
 import type { AcpDriver, AcpSessionPlan } from "../../../src/execution/acp/driver.ts";
+import {
+  AGENT_MODEL_ERROR_KEY,
+  AGENT_USAGE_META_KEY,
+  createNimbleBrainAgentDriver,
+} from "../../../src/execution/acp/drivers/nimblebrain-agent.ts";
 import type { ResolvedRun } from "../../../src/execution/types.ts";
+import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../../../src/model/gateway-refusal.ts";
 import {
   emptyLog,
   type ScriptedAgentOptions,
@@ -183,5 +191,75 @@ describe("providers", () => {
     await noCredential.result;
     expect([...noGateway.log.providerCalls, ...noCredential.log.providerCalls]).toEqual([]);
     expect(noGateway.plans[0]?.delivered.modelAccess).toBe(false);
+  });
+});
+
+describe("a model call the gateway refused for a spent run budget", () => {
+  /** nimblebrain-agent's error for a turn whose second model call was refused. */
+  const refused =
+    (status = 429, reason = "rate limit exceeded") =>
+    () =>
+      new RequestError(
+        -32603,
+        `Internal error: model call failed with status ${status}: ${reason}`,
+        {
+          [AGENT_MODEL_ERROR_KEY]: { status, reason },
+          [AGENT_USAGE_META_KEY]: {
+            calls: [
+              {
+                model: "anthropic:claude-sonnet-4-6",
+                purpose: "turn",
+                usage: { inputTokens: 900, outputTokens: 40 },
+              },
+            ],
+            total: { inputTokens: 900, outputTokens: 40 },
+          },
+        },
+      );
+
+  async function refusedTurn(failTurn: () => unknown, modelGateway: string | undefined) {
+    const events: EngineEvent[] = [];
+    const runtime = createAcpRuntime(
+      "std",
+      createNimbleBrainAgentDriver(),
+      scriptedConnection({
+        script: () => [{ text: "Looking it up." }],
+        providers: [provider("anthropic", ["anthropic"])],
+        failTurn,
+      }),
+      modelGateway ? { modelGateway } : {},
+    );
+    const result = runtime.execute(resolvedRun(), {
+      tools: new StaticToolRouter([], () => ({ content: [], isError: false })),
+      events: { emit: (e) => events.push(e) },
+      billSummary: () => {},
+    });
+    return { result, events };
+  }
+
+  test("ends the run with spend_limit, recording the calls made before it", async () => {
+    const { result, events } = await refusedTurn(refused(), GATEWAY);
+    const r = await result;
+    expect(r.stopReason).toBe("spend_limit");
+    expect(r.spendAccountId).toBe(MODEL_GATEWAY_BUDGET_ACCOUNT);
+    expect(r.usage).toMatchObject({ inputTokens: 900, outputTokens: 40 });
+    expect(r.output).toBe("Looking it up.");
+    expect(events.map((e) => e.type)).not.toContain("run.error");
+    expect(events.find((e) => e.type === "run.done")?.data.stopReason).toBe("spend_limit");
+    const priced = events.flatMap((e) =>
+      e.type === "llm.done" && !e.data.transcriptOnly ? [e.data.usage] : [],
+    );
+    expect(priced).toEqual([{ inputTokens: 900, outputTokens: 40 }]);
+  });
+
+  test("is a run error when the agent's model access did not go to the gateway", async () => {
+    const { result, events } = await refusedTurn(refused(), undefined);
+    await expect(result).rejects.toThrow("model call failed with status 429");
+    expect(events.map((e) => e.type)).toContain("run.error");
+  });
+
+  test("leaves a provider's own 429 through the gateway a run error", async () => {
+    const { result } = await refusedTurn(refused(429, '{"type":"rate_limit_error"}'), GATEWAY);
+    await expect(result).rejects.toThrow("model call failed with status 429");
   });
 });

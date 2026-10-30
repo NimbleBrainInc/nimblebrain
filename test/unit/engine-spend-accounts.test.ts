@@ -10,6 +10,10 @@ import type {
   ToolResult,
   ToolSchema,
 } from "../../src/engine/types.ts";
+import {
+  MODEL_GATEWAY_BUDGET_ACCOUNT,
+  ModelBudgetSpentError,
+} from "../../src/model/gateway-refusal.ts";
 import { resolveMaxOutputTokens } from "../../src/runtime/resolve-max-output-tokens.ts";
 import { createSpendBalances, type SpendAccount } from "../../src/runtime/spend.ts";
 import { costBreakdown, resolveRates } from "../../src/usage/cost.ts";
@@ -43,13 +47,15 @@ function steadyRun(
     writes?: number;
     answerOn?: number;
     throwOn?: number;
+    /** What the call numbered `throwOn` throws; a provider failure when absent. */
+    thrown?: () => Error;
   } = {},
 ) {
   const sent: LanguageModelV4CallOptions[] = [];
   const model = createMockModel((options) => {
     sent.push(options);
     const call = sent.length;
-    if (call === opts.throwOn) throw new Error("provider failed");
+    if (call === opts.throwOn) throw opts.thrown?.() ?? new Error("provider failed");
     const usage = {
       inputTokens: opts.inputTokens ?? 1_000,
       outputTokens: Math.min(opts.writes ?? 10, options.maxOutputTokens ?? Infinity),
@@ -231,5 +237,42 @@ describe("AgentEngine spend accounts", () => {
     expect(result.spendAccountId).toBeUndefined();
     expect(r.sent).toHaveLength(5);
     expect(r.maxOutputs().every((m) => m === baseConfig.maxOutputTokens)).toBe(true);
+  });
+});
+
+describe("AgentEngine on the model gateway's budget refusal", () => {
+  it("stops the run at once with spend_limit naming the gateway's account, not retried, not an error", async () => {
+    const r = steadyRun(undefined, { throwOn: 3, thrown: () => new ModelBudgetSpentError() });
+    const result = await r.run();
+
+    expect(result.stopReason).toBe("spend_limit");
+    expect(result.spendAccountId).toBe(MODEL_GATEWAY_BUDGET_ACCOUNT);
+    // The refused call was sent once: no retry.
+    expect(r.sent).toHaveLength(3);
+    expect(result.iterations).toBe(2);
+    expect(result.usage.inputTokens).toBe(2_000);
+    const types = r.events.map((e) => e.type);
+    expect(types).not.toContain("run.error");
+    expect(types).not.toContain("llm.error");
+    expect(r.events.find((e) => e.type === "run.done")?.data.stopReason).toBe("spend_limit");
+  });
+
+  it("still retries a provider's own 429", async () => {
+    let throws = 1;
+    const rateLimited = () =>
+      Object.assign(new Error("rate_limit_error"), { statusCode: 429, isRetryable: true });
+    const r = steadyRun(undefined, {
+      answerOn: 3,
+      throwOn: 2,
+      thrown: () => {
+        throws--;
+        return rateLimited();
+      },
+    });
+    // The mock counts the retried attempt as a call: 1, 2 (429), 2 again as 3.
+    const result = await r.run();
+    expect(throws).toBe(0);
+    expect(result.stopReason).toBe("complete");
+    expect(r.events.map((e) => e.type)).not.toContain("run.error");
   });
 });
