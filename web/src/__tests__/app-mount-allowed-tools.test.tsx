@@ -1,24 +1,53 @@
 // ---------------------------------------------------------------------------
-// An app's own page is told whether the viewer can manage its connector.
+// An app's own page is told which of its connector's tools the viewer may call.
 //
-// `AppWithChat` mounts a workspace app's routed placement. It hands the app the
-// same `hostContext.connector.canManage` the connector's settings page hands its
-// settings component, by the same rule: workspace membership role `admin`, with
-// no org-admin bypass. A role change reaches the mounted iframe through
-// `host-context-changed`. An identity app (Conversations, Files, Tasks) is the
-// user's own, not a workspace connector, so its mount carries no `connector` key.
+// `AppWithChat` mounts a workspace app's routed placement and hands the app
+// `hostContext.connector.allowedTools`: the list the server put on the app's
+// installed-connector entry, decided per caller by the same gate that refuses a
+// call (covered in test/integration/connector-admin-tools.test.ts). The page
+// passes it through and never derives it: no role reaches the app, and
+// `canManage` stays on the settings page alone. A role change re-reads the list
+// and reaches the mounted iframe through `host-context-changed`. An identity app
+// (Conversations, Files, Tasks) belongs to no connector, so its mount carries no
+// `connector` key.
 //
 // The settings-page mount is pinned in connector-settings-section.test.tsx.
 // ---------------------------------------------------------------------------
 
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
+import type * as ApiClient from "../api/client";
+import type { InstalledConnector } from "../api/client";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+/** What the server answers each `list_installed`, by server name; a test sets it. */
+let serverAllowed: Record<string, string[]> = {};
+
+function entry(serverName: string, allowedTools: string[]): InstalledConnector {
+  return {
+    serverName,
+    connectorName: serverName,
+    displayName: serverName,
+    disconnectable: false,
+    version: "1.0.0",
+    state: "running",
+    status: "ready",
+    scope: "workspace",
+    interactive: true,
+    toolCount: allowedTools.length,
+    allowedTools,
+  };
+}
+
+const getInstalledConnectors = mock<typeof ApiClient.getInstalledConnectors>(async () => ({
+  installed: Object.entries(serverAllowed).map(([name, tools]) => entry(name, [...tools])),
+}));
 
 mock.module("../api/client", () => ({
   ...realClient,
   getResources: mock(async () => ({ html: "<p>app</p>" })),
+  getInstalledConnectors,
 }));
 
 mock.module("../api/conversation-stream", () => ({
@@ -33,9 +62,10 @@ const { ChatProvider } = await import("../context/ChatContext");
 const { ChatPanelProvider } = await import("../context/ChatPanelContext");
 const { ThemeProvider } = await import("../context/ThemeContext");
 const { WorkspaceProvider, useWorkspaceContext } = await import("../context/WorkspaceContext");
-const { SessionProvider } = await import("../context/SessionContext");
+const { WorkspaceAppIconsProvider } = await import("../context/WorkspaceAppIconsProvider");
 const { AppWithChat } = await import("../components/AppWithChat");
 
+import type { ReactNode } from "react";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
 
@@ -45,7 +75,7 @@ function workspace(userRole?: "admin" | "member"): WorkspaceInfo {
   return {
     id: WS_ID,
     name: "Alpha",
-    connectorCount: 1,
+    connectorCount: 2,
     memberCount: 2,
     ...(userRole ? { userRole } : {}),
   };
@@ -67,8 +97,26 @@ function CaptureSetter() {
   return null;
 }
 
+/** The shell's wiring (`App.tsx`): the provider follows the active workspace and the viewer's role in it. */
+function ConnectorsFromActiveWorkspace({ children }: { children: ReactNode }) {
+  const { activeWorkspace } = useWorkspaceContext();
+  return (
+    <WorkspaceAppIconsProvider
+      workspaceId={activeWorkspace?.id}
+      viewerRole={activeWorkspace?.userRole}
+    >
+      {children}
+    </WorkspaceAppIconsProvider>
+  );
+}
+
 let container: HTMLDivElement | null = null;
 let root: ReturnType<typeof ReactDOMClient.createRoot> | null = null;
+
+beforeEach(() => {
+  getInstalledConnectors.mockClear();
+  serverAllowed = {};
+});
 
 afterEach(() => {
   if (root) act(() => root?.unmount());
@@ -86,11 +134,7 @@ async function settle(): Promise<void> {
   }
 }
 
-async function mountApp(
-  ws: WorkspaceInfo,
-  placement: PlacementEntry,
-  { orgRole = "member" } = {},
-): Promise<HTMLDivElement> {
+async function mountApp(ws: WorkspaceInfo, placement: PlacementEntry): Promise<HTMLDivElement> {
   const el = document.createElement("div");
   document.body.appendChild(el);
   container = el;
@@ -100,21 +144,16 @@ async function mountApp(
       <NoticeProvider>
         <MemoryRouter initialEntries={[`/w/00079598e311c160/app/${placement.route}`]}>
           <ThemeProvider>
-            <SessionProvider
-              session={{
-                authenticated: true,
-                user: { id: "u1", email: "u@example.test", displayName: "U", orgRole },
-              }}
-            >
-              <WorkspaceProvider initialWorkspaces={[ws]} initialActiveId={WS_ID}>
-                <CaptureSetter />
+            <WorkspaceProvider initialWorkspaces={[ws]} initialActiveId={WS_ID}>
+              <CaptureSetter />
+              <ConnectorsFromActiveWorkspace>
                 <ChatProvider currentUserId="u1" initialConfig={{ configuredProviders: [] }}>
                   <ChatPanelProvider>
                     <AppWithChat placement={placement} />
                   </ChatPanelProvider>
                 </ChatProvider>
-              </WorkspaceProvider>
-            </SessionProvider>
+              </ConnectorsFromActiveWorkspace>
+            </WorkspaceProvider>
           </ThemeProvider>
         </MemoryRouter>
       </NoticeProvider>,
@@ -183,36 +222,61 @@ function lastHostContextChange(app: AppSide): Record<string, unknown> | undefine
 
 // ── Tests ───────────────────────────────────────────────────────────
 
-describe("AppWithChat — the manage flag for the app's connector", () => {
-  test("is true for a workspace admin", async () => {
+describe("AppWithChat — the tools of the app's connector the viewer may call", () => {
+  test("an admin's app is sent the list the server decided, admin tools included", async () => {
+    serverAllowed = { crm: ["configure", "search"] };
     const el = await mountApp(workspace("admin"), appPlacement("crm"));
-    expect((await handshake(appSide(el))).connector).toEqual({ canManage: true });
+    expect((await handshake(appSide(el))).connector).toEqual({
+      allowedTools: ["configure", "search"],
+    });
   });
 
-  test("is false for a workspace member", async () => {
+  test("a member's app is sent the member's list: no admin tools, the rest kept", async () => {
+    serverAllowed = { crm: ["search"] };
     const el = await mountApp(workspace("member"), appPlacement("crm"));
-    expect((await handshake(appSide(el))).connector).toEqual({ canManage: false });
+    expect((await handshake(appSide(el))).connector).toEqual({ allowedTools: ["search"] });
   });
 
-  test("is false for an org admin who is not a workspace admin", async () => {
-    const el = await mountApp(workspace("member"), appPlacement("crm"), { orgRole: "admin" });
-    expect((await handshake(appSide(el))).connector).toEqual({ canManage: false });
+  test("an app is sent its own connector's list, not another connector's", async () => {
+    serverAllowed = { crm: ["configure", "search"], notes: ["read_note"] };
+    const el = await mountApp(workspace("admin"), appPlacement("notes"));
+    expect((await handshake(appSide(el))).connector).toEqual({ allowedTools: ["read_note"] });
   });
 
-  test("a role change reaches the mounted iframe", async () => {
+  test("a connector the server allows nothing on is sent an empty list", async () => {
+    // A malformed `admin_tools` gates every tool: for a member the server lists none.
+    serverAllowed = { crm: [] };
+    const el = await mountApp(workspace("member"), appPlacement("crm"));
+    expect((await handshake(appSide(el))).connector).toEqual({ allowedTools: [] });
+  });
+
+  test("never carries canManage: the app is told tools, not a role", async () => {
+    serverAllowed = { crm: ["configure", "search"] };
+    const el = await mountApp(workspace("admin"), appPlacement("crm"));
+    expect((await handshake(appSide(el))).connector).not.toHaveProperty("canManage");
+  });
+
+  test("a role change re-reads the list and pushes it to the mounted iframe", async () => {
+    serverAllowed = { crm: ["search"] };
     const el = await mountApp(workspace("member"), appPlacement("crm"));
     const app = appSide(el);
-    expect((await handshake(app)).connector).toEqual({ canManage: false });
+    expect((await handshake(app)).connector).toEqual({ allowedTools: ["search"] });
+    const reads = getInstalledConnectors.mock.calls.length;
 
+    serverAllowed = { crm: ["configure", "search"] };
     await act(async () => {
       setWorkspace?.(workspace("admin"));
     });
     await settle();
 
-    expect(lastHostContextChange(app)?.connector).toEqual({ canManage: true });
+    expect(getInstalledConnectors.mock.calls.length).toBeGreaterThan(reads);
+    expect(lastHostContextChange(app)?.connector).toEqual({
+      allowedTools: ["configure", "search"],
+    });
   });
 
   test("an identity app's mount carries no connector key, at handshake or live", async () => {
+    serverAllowed = { crm: ["configure", "search"] };
     const el = await mountApp(workspace("admin"), appPlacement("files"));
     const app = appSide(el);
     const ctx = await handshake(app);

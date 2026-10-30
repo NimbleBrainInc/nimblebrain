@@ -214,6 +214,7 @@ function installedConnector(serverName: string, displayName = serverName): Insta
     scope: "workspace",
     interactive: false,
     toolCount: 1,
+    allowedTools: [],
     status: "ready",
   };
 }

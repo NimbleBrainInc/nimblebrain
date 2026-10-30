@@ -92,6 +92,7 @@ function installed(
     scope: "workspace",
     interactive: false,
     toolCount: 1,
+    allowedTools: [],
     status: "ready",
     catalog: {
       id: "com.acme/db-query",

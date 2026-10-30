@@ -53,9 +53,9 @@ A member of that workspace whose role is `admin`. Nothing else:
 - A run acts as the identity it was started under, and is checked as that
   identity.
 
-This is the same rule as the [`canManage` flag](/host/settings-sections/#the-manage-flag)
-your settings section and your app's own pages receive, and as the host's own
-controls on the connector's settings page.
+It is also the rule behind the [`allowedTools`](/host/settings-sections/#which-tools-the-viewer-may-call)
+list your settings section and your app's own pages receive, and behind the
+host's own controls on the connector's settings page.
 
 ## Rules
 
@@ -103,11 +103,11 @@ as proof that a human reviewed it.
 ## Pairing it with a settings section
 
 A tool that changes connector-wide behavior is usually driven from your
-[settings section](/host/settings-sections/). The section shows every
-member the page, and uses `hostContext.connector.canManage` to disable the
-controls for anyone who is not an admin. That flag only shapes the UI.
-`admin_tools` is what enforces it, for the section's own calls and for every
-other path to the tool.
+[settings section](/host/settings-sections/) or your app's main view. Each shows
+every member the page and reads `hostContext.connector.allowedTools`, the tools
+this viewer may call as decided by `admin_tools`, to disable a control whose
+tool is not listed. The list only shapes the UI. `admin_tools` is what enforces
+it, for the app's own calls and for every other path to the tool.
 
 ## Related
 

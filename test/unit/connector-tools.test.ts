@@ -20,6 +20,7 @@ import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import type { UserStore } from "../../src/identity/user.ts";
 import type { LifecycleNotifyDeps } from "../../src/lifecycle/notify.ts";
+import { ADMIT_ALL } from "../../src/permissions/admin-tools.ts";
 import type { PermissionStore } from "../../src/permissions/permission-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
@@ -203,6 +204,9 @@ function buildHarness(): Harness {
         get: async (_id: string) => null,
       }),
     getConnectorInstancesForWorkspace: (_wsId: string) => lifecycle.getInstances(),
+    // No connector here declares `admin_tools`; the gate itself is covered in
+    // test/integration/connector-admin-tools.test.ts.
+    connectorAdmission: async () => ADMIT_ALL,
     getAllowInsecureRemotes: () => false,
     // Whether the catalog grants record arguments: the fixture catalog declares
     // none, and a test may flip it to read `set_record_sources`'s reply.

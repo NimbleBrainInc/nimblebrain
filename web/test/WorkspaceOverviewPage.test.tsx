@@ -381,6 +381,7 @@ describe("WorkspaceOverviewPage — briefing", () => {
       scope: "workspace",
       interactive: false,
       toolCount: 0,
+      allowedTools: [],
       status: "needs_auth",
     };
     const slug = toSlug(WS.id);

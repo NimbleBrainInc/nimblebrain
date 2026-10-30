@@ -606,6 +606,101 @@ describe("the audit.admin_tool_call line", () => {
   });
 });
 
+/** The installed entry's `allowedTools` for the dev identity in `wsId`, read through REST. */
+async function allowedToolsIn(wsId: string): Promise<string[]> {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${wsId}/tools/call`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      server: "nb",
+      tool: "manage_connectors",
+      arguments: { action: "get_installed", serverName: SERVER },
+    }),
+  });
+  const body = await readJson<ToolCallResponse>(res);
+  expect(body.isError).toBe(false);
+  const { installed } = body.structuredContent as { installed: { allowedTools: string[] } | null };
+  if (!installed) throw new Error(`${SERVER} is not installed in ${wsId}`);
+  return [...installed.allowedTools].sort();
+}
+
+describe("the installed entry's allowedTools (what a connector's apps are told)", () => {
+  beforeAll(async () => {
+    // The installed list walks the lifecycle's instances; the suite's sources
+    // were registered directly, so record each install the way boot does.
+    for (const wsId of [ADMIN_WS, MEMBER_WS]) {
+      await runtime
+        .getLifecycle()
+        .seedInstance(
+          SERVER,
+          "https://crm.acme.test/mcp",
+          { url: "https://crm.acme.test/mcp", serverName: SERVER },
+          { manifestName: SERVER, version: "1.0.0", ui: null },
+          wsId,
+        );
+    }
+  });
+
+  it("lists a declared tool for an admin, never the host-only lifecycle handler", async () => {
+    const tools = await allowedToolsIn(ADMIN_WS);
+    expect(tools).toContain("configure");
+    expect(tools).toContain("search");
+    expect(tools).not.toContain("workspace_ready");
+  });
+
+  it("omits declared tools for a member who is an org admin, and keeps the rest", async () => {
+    // The dev identity is an org admin and a plain member of this workspace:
+    // the gate reads workspace membership only.
+    expect(DEV_IDENTITY.orgRole).toBe("admin");
+    expect(await allowedToolsIn(MEMBER_WS)).toEqual(["search"]);
+  });
+
+  it("matches the /mcp tools/list each viewer gets, the listing dispatch refuses by", async () => {
+    for (const wsId of [ADMIN_WS, MEMBER_WS]) {
+      const client = await mcpClient(wsId);
+      try {
+        const listed = (await client.listTools()).tools
+          .map((t) => t.name)
+          .filter((n) => n.startsWith(`${SERVER}__`))
+          .map((n) => n.slice(SERVER.length + 2))
+          .sort();
+        expect(await allowedToolsIn(wsId)).toEqual(listed);
+      } finally {
+        await client.close();
+      }
+    }
+  });
+
+  it("follows a role change", async () => {
+    const wsStore = runtime.getWorkspaceStore();
+    await wsStore.updateMemberRole(MEMBER_WS, DEV_IDENTITY.id, "admin");
+    try {
+      expect(await allowedToolsIn(MEMBER_WS)).toContain("configure");
+    } finally {
+      await wsStore.updateMemberRole(MEMBER_WS, DEV_IDENTITY.id, "member");
+    }
+    expect(await allowedToolsIn(MEMBER_WS)).not.toContain("configure");
+  });
+
+  it("is empty for a member when the declaration is malformed", async () => {
+    writeFileSync(
+      join(catalogDir, "acme.yaml"),
+      CATALOG_YAML.replace(
+        "admin_tools: [configure, workspace_ready, set_webhook_url, ghost]",
+        "admin_tools: configure",
+      ),
+    );
+    runtime.getConnectorCatalog().resetCache();
+    try {
+      expect(await allowedToolsIn(MEMBER_WS)).toEqual([]);
+      expect(await allowedToolsIn(ADMIN_WS)).toContain("search");
+    } finally {
+      writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
+      runtime.getConnectorCatalog().resetCache();
+    }
+  });
+});
+
 describe("a malformed admin_tools declaration", () => {
   // A catalog typo must not open the connector's tools to members: the entry
   // stays in the catalog and every tool on it becomes admin-only.

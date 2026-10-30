@@ -47,9 +47,11 @@ import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { notifyReady } from "../lifecycle/notify.ts";
 import { log } from "../observability/log.ts";
+import { type ConnectorAdmission, filterAdmittedTools } from "../permissions/admin-tools.ts";
 import type { PermissionOwner, ToolPolicy } from "../permissions/permission-store.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
+import { splitInnerToolName } from "../util/tool-name.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
@@ -747,6 +749,16 @@ type InstalledEntry = {
   interactive: boolean;
   toolCount: number;
   /**
+   * The bare names of this connector's tools the caller may call, decided by
+   * the gate every dispatch door refuses with (`Runtime.connectorAdmission`:
+   * the catalog's `admin_tools` against the caller's workspace role, and the
+   * host-only lifecycle handlers no one calls). A UI offers a control only
+   * when the tool behind it is listed. It describes tools, never a role, so a
+   * change to who may call what changes this list and nothing that reads it.
+   * Empty when the connector is not running.
+   */
+  allowedTools: string[];
+  /**
    * Brand icon URL, from the catalog entry this connector matched. Falls
    * through to the deterministic letter avatar when unset (the connector
    * isn't in any enabled registry, or the fetch failed).
@@ -808,6 +820,8 @@ interface InstalledEntryDeps {
   catalogByUrl: Map<string, ConnectorCatalogEntry>;
   catalogById: Map<string, ConnectorCatalogEntry>;
   resolveUserLabel: (userId: string) => Promise<string | undefined>;
+  /** The caller's admission to this workspace's connector tools, read once. */
+  admission: ConnectorAdmission;
   /** When set, `buildInstalledEntry` skips every instance except this one
    *  before any per-instance IO. */
   onlyServerName?: string;
@@ -840,27 +854,32 @@ async function readConnectorTools(source: ToolSource): Promise<Tool[]> {
 }
 
 /**
- * Tool count + reported version from the live source — best-effort (a stopped
+ * Tools + reported version from the live source — best-effort (a stopped
  * source returns [] and has no version). `getReportedVersion` is McpSource-
  * specific (not on the ToolSource interface), reached by the same `instanceof`
  * narrowing the system-prompt composer uses for instructions.
  */
-async function probeToolCountAndVersion(
+async function probeToolsAndVersion(
   registry: ReturnType<Runtime["getRegistryForWorkspace"]>,
   serverName: string,
-): Promise<{ toolCount: number; handshakeVersion: string | undefined }> {
-  let toolCount = 0;
+): Promise<{ tools: Tool[]; handshakeVersion: string | undefined }> {
+  let tools: Tool[] = [];
   let handshakeVersion: string | undefined;
   try {
     const src = registry.getSource(serverName);
     if (src) {
-      toolCount = (await readConnectorTools(src)).length;
+      tools = await readConnectorTools(src);
       if (src instanceof McpSource) handshakeVersion = src.getReportedVersion();
     }
   } catch {
     // ignore
   }
-  return { toolCount, handshakeVersion };
+  return { tools, handshakeVersion };
+}
+
+/** The bare names of `tools` that `admission` lets the caller call. */
+function allowedToolNames(tools: readonly Tool[], admission: ConnectorAdmission): string[] {
+  return filterAdmittedTools(tools, admission).map((t) => splitInnerToolName(t.name).bareToolName);
 }
 
 /**
@@ -1067,7 +1086,7 @@ async function buildInstalledEntry(
   if (deps.onlyServerName && instance.serverName !== deps.onlyServerName) return null;
 
   const { url, cat } = resolveInstanceCatalog(instance, deps.catalogByUrl, deps.catalogById);
-  const { toolCount, handshakeVersion } = await probeToolCountAndVersion(
+  const { tools, handshakeVersion } = await probeToolsAndVersion(
     deps.registry,
     instance.serverName,
   );
@@ -1094,7 +1113,8 @@ async function buildInstalledEntry(
     status: "ready",
     scope: "workspace",
     interactive,
-    toolCount,
+    toolCount: tools.length,
+    allowedTools: allowedToolNames(tools, deps.admission),
     ...(iconUrl ? { iconUrl } : {}),
   };
 
@@ -1125,9 +1145,9 @@ async function buildInstalledEntry(
 async function handleListInstalled(
   ctx: ManageConnectorsContext,
   wsId: string | null,
-  // Ignored: every view is workspace-scoped, so the caller does not
-  // select one. Kept for signature parity with `handleGetInstalled`.
-  _callerId: string | null,
+  // The principal `allowedTools` is decided for. Every view is
+  // workspace-scoped, so the caller does not select one.
+  callerId: string | null,
   scope: string,
   /**
    * When set, only build the entry for this specific serverName.
@@ -1190,6 +1210,7 @@ async function handleListInstalled(
       catalogByUrl,
       catalogById,
       resolveUserLabel,
+      admission: await ctx.runtime.connectorAdmission(wsId, callerId ? { id: callerId } : null),
       ...(onlyServerName ? { onlyServerName } : {}),
     };
     for (const instance of lifecycle.getInstances()) {

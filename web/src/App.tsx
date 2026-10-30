@@ -231,7 +231,10 @@ function BootstrappedShell({
 
   return (
     <SidebarProvider>
-      <WorkspaceAppIconsProvider workspaceId={activeWorkspace?.id}>
+      <WorkspaceAppIconsProvider
+        workspaceId={activeWorkspace?.id}
+        viewerRole={activeWorkspace?.userRole}
+      >
         <NotificationsProvider workspaceId={activeWorkspace?.id}>
           <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
             <ChatPanelProvider>
