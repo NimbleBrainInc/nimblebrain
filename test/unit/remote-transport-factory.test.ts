@@ -607,6 +607,16 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
     ]);
   });
 
+  test("auth none attaches no OAuth either", async () => {
+    const t = await createRemoteTransport(
+      ENDPOINT,
+      { ...config, auth: { type: "none" } },
+      memoryProvider(),
+    );
+    // biome-ignore lint/complexity/useLiteralKeys: `_authProvider` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
+    expect(sdkTransport(t)["_authProvider"]).toBeUndefined();
+  });
+
   /** An SSE transport as it stands once the server has announced its POST endpoint. */
   async function connectedSse(
     transportConfig: Parameters<typeof createRemoteTransport>[1],

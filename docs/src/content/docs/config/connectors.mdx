@@ -94,7 +94,7 @@ The `transport` object controls how NimbleBrain connects to the server.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `type` | `"streamable-http"` \| `"sse"` | `"streamable-http"` | Transport protocol. Streamable HTTP is the default MCP transport. Use `"sse"` for servers that only support Server-Sent Events. |
-| `auth` | `object` | — | Authentication method. See [auth types](#auth-types). |
+| `auth` | `object` | — | Authentication method. See [auth types](#auth-types). Omit it for a server that signs in with OAuth: the connector waits for **Connect**. |
 | `headers` | `object` | `{}` | Custom HTTP headers sent with every request. Keys and values are strings. Headers are sent to the connector's origin only, never to an OAuth authorization server on another origin. |
 | `reconnection` | `object` | — | Reconnection behavior. See [reconnection](#reconnection). |
 | `sessionId` | `string` | — | MCP session ID for resuming an existing session. |
@@ -136,7 +136,7 @@ The `transport` object controls how NimbleBrain connects to the server.
     }
     ```
 
-    No authentication headers are sent. Use this for servers on a private network or behind a VPN.
+    No authentication headers are sent, and the connector starts without a **Connect** step. Use this for servers on a private network or behind a VPN. A server that signs in with OAuth omits `auth` instead.
   </TabItem>
 </Tabs>
 

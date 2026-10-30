@@ -55,10 +55,13 @@ describe("connectorHasStaticAuth", () => {
     ).toBe(true);
   });
 
-  test("auth:none and no-auth url connectors are NOT static (they take the OAuth path)", () => {
+  test("auth:none url connectors are static (they need no credential)", () => {
     expect(
       connectorHasStaticAuth({ url: "u", serverName: "s", transport: { auth: { type: "none" } } }),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  test("url connectors with no auth are NOT static (they take the OAuth path)", () => {
     expect(connectorHasStaticAuth({ url: "u", serverName: "s" })).toBe(false);
   });
 });
@@ -95,6 +98,28 @@ describe("seedInstance — provider-auth fleet source", () => {
       ?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("running");
     expect(conn?.state).not.toBe("not_authenticated");
+  });
+
+  // A server that takes no credential has nothing to connect: `auth: none` must
+  // seed `running` with no stored tokens, not wait for an OAuth Connect.
+  test("an auth:none url connector seeds running with no stored tokens", async () => {
+    const lifecycle = new ConnectorLifecycleManager(new NoopSink());
+    await lifecycle.seedInstance(
+      "internal",
+      "https://internal.svc.test/mcp",
+      {
+        url: "https://internal.svc.test/mcp",
+        serverName: "internal",
+        transport: { type: "streamable-http", auth: { type: "none" } },
+      },
+      undefined,
+      "ws_0076759dbbe19fcc",
+    );
+
+    const conn = lifecycle
+      .getInstance("internal", "ws_0076759dbbe19fcc")
+      ?.connections.get(WORKSPACE_PRINCIPAL_ID);
+    expect(conn?.state).toBe("running");
   });
 
   // Regression guard for the asymmetry that bit the first cut of this fix: a

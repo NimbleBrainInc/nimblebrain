@@ -169,6 +169,7 @@
 
 ### Breaking
 
+- **A remote connector with `auth: {"type": "none"}` connects without OAuth.** It starts at boot and never offers Connect, as the docs describe. A connector that signs in with OAuth must omit `auth` rather than set `none` ([#1848](https://github.com/NimbleBrainInc/nimblebrain/issues/1848), [docs](https://docs.nimblebrain.ai/config/connectors/#auth-types)).
 - **`execution` runtimes now name an agent worker.** The experimental block's `driver: "nimblebrain"` (the in-process reference agent) is retired; a runtime entry is now `{ "driver": "nimblebrain-agent", "url" }`, a worker the runtime dials, beside one `execution.modelGateway`, and an entry in the old shape fails validation at boot. Outside the `dev` identity provider external runtimes need the run key and a `modelGateway` ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#execution), [ADR-0057](adr/0057-an-external-agent-runs-out-of-process-on-credentials-only-the-runtime-mints.md)).
 - **A `ws_<id>-` prefixed glob in `allowedTools` or `toolAffinity` no longer matches.** Patterns are matched against the bare names as written; rewrite any such glob to `<source>__*`.
 - **The host no longer reads `app://instructions` from connectors.** Guidance for one app is a workspace skill bound to its tools (`tool-affinity: <connector>__*`), which loads before the agent's first call to them; move any overlay text into one. Removes a read, and on `2026-07-28` a `400`, per connector on every prompt assembly ([docs](https://docs.nimblebrain.ai/extensions/custom-instructions/)).

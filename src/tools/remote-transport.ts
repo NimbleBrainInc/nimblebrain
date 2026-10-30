@@ -184,12 +184,15 @@ export async function resolveTransportCredential(
   return fetch ? { headers, fetch } : { headers };
 }
 
-/** OAuth provider applies only when no static auth is configured — static auth is the explicit contract. */
+/**
+ * OAuth provider applies only when no `auth` is configured — any declared auth,
+ * `none` included, is the explicit contract.
+ */
 function selectAuthProvider(
   config: RemoteTransportConfig | undefined,
   authProvider?: OAuthClientProvider,
 ): OAuthClientProvider | undefined {
-  return config?.auth && config.auth.type !== "none" ? undefined : authProvider;
+  return config?.auth ? undefined : authProvider;
 }
 
 /** Transport fetch: the minting fetch, else an OAuth-refresh fetch for an OAuth connector, else none. */

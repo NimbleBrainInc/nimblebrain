@@ -4,17 +4,19 @@ import { brokeredRef } from "./brokered.ts";
 import type { ConnectorRef } from "./types.ts";
 
 /**
- * Transport auth kinds that carry their own credential — the connector presents or
- * mints a token on demand. Allowlist (not `!== "none"`) so a future interactive
+ * Transport auth kinds that need no OAuth: `bearer` / `header` / `provider` carry
+ * their own credential (presented or minted on demand), and `none` declares that
+ * the server takes no credential at all. An allowlist, so a future interactive
  * auth type defaults to the OAuth path instead of silently boot-starting.
  */
-const STATIC_AUTH_TYPES: readonly string[] = ["bearer", "header", "provider"];
+const STATIC_AUTH_TYPES: readonly string[] = ["bearer", "header", "provider", "none"];
 
 /**
- * A url connector has STATIC transport auth (`bearer` / `header` / `provider`)
- * when it carries its own credential: it presents or mints a token on demand and
- * needs no persisted OAuth tokens and no interactive "Connect". `none` (or no
- * auth) means the connector authenticates through the workspace OAuth provider.
+ * A url connector has STATIC transport auth (`bearer` / `header` / `provider` /
+ * `none`) when it needs no persisted OAuth tokens and no interactive "Connect":
+ * it carries its own credential, or declares (`none`) that the server takes
+ * none. A connector with no `auth` authenticates through the workspace OAuth
+ * provider.
  *
  * Gate boot-start and connection-state decisions on this so a static-auth source
  * is not mistaken for an un-authenticated OAuth connector. Without it, a provider-
