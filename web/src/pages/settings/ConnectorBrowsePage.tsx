@@ -403,7 +403,7 @@ function DirectoryResults({
   return (
     <>
       {available.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 @md/settings:grid-cols-2 gap-3">
           {available.map((entry) => renderCard(entry, configurePathFor(entry)))}
         </div>
       ) : (
@@ -416,7 +416,7 @@ function DirectoryResults({
       {installedEntries.length > 0 && (
         <section className="space-y-3 pt-2">
           <h2 className="text-sm font-medium text-muted-foreground">Installed</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 @md/settings:grid-cols-2 gap-3">
             {installedEntries.map(({ entry, serverName }) =>
               renderCard(entry, installedPathFor(serverName)),
             )}
