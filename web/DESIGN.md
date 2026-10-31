@@ -89,6 +89,11 @@ equal to the Synapse kit's defaults. Host chrome and pages inset by
 `--page-gutter`, never a hand-picked `px-*`; it narrows when the main column
 (`@container main`) is at or under the breakpoint, the same column an app's
 iframe fills, so the shell's inset and an app's line up at every width.
+A settings page takes it from `SettingsShell`'s content column and sets no
+inset of its own; any other routed page puts it on its outermost content
+container, or on each full-bleed section of a page whose sections run edge to
+edge (`pages/ContextInspectorPage.tsx`). Padding inside a component (a card, a
+row's control, a menu) is not the gutter.
 
 The host never pads an app's slot. An app gets both values (`--nb-gutter-wide`
 and `--nb-gutter-narrow` in its style block) and decides where to inset, because some panes run edge to
