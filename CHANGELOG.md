@@ -286,6 +286,8 @@
 
 ### Fixed
 
+- **A cancelled turn on an agent runtime records the usage it spent.** The model calls the agent finished before the cancel are priced in the usage ledger; they recorded nothing ([#1877](https://github.com/NimbleBrainInc/nimblebrain/pull/1877)).
+- **Title and compaction calls are recorded under their run in the usage ledger**, matching what the model gateway charges the run, so per-run cost includes them ([#1867](https://github.com/NimbleBrainInc/nimblebrain/pull/1867)).
 - **Connectors whose OAuth server sends the RFC 9207 `iss` parameter, Notion's among them, connect.** The callback now hands `iss` to the token exchange, which refused the code without it ([#1888](https://github.com/NimbleBrainInc/nimblebrain/pull/1888)).
 - **Cancelling a run on an external agent worker stops the worker's turn.** `session/cancel` and the connection close now reach the worker over HTTP, and a worker that does not answer the cancel within 5 seconds is disconnected ([#1870](https://github.com/NimbleBrainInc/nimblebrain/pull/1870)).
 - **GreenPT runs no longer fail with `Unexpected role 'user' after role 'tool'`.** Bound skill guidance and the final-step reminder ride the last tool result, and replay closes a run that ended on tool results, so no user message follows a tool message ([#1872](https://github.com/NimbleBrainInc/nimblebrain/pull/1872), [#1878](https://github.com/NimbleBrainInc/nimblebrain/pull/1878)).
