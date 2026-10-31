@@ -47,6 +47,8 @@
   --tooltip-foreground: #fafafa;
   --sidebar-width: 240px;
   --sidebar-width-collapsed: 64px;
+  --page-gutter: 1.5rem;
+  --page-gutter-narrow: 1rem;
   --border-radius-xs: 0.25rem;
   --border-radius-sm: 0.5rem;
   --border-radius-md: 0.75rem;
@@ -133,4 +135,10 @@
   --nb-shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
   --nb-shadow-md: 0 4px 6px -1px rgba(0,0,0,0.4);
   --nb-shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.4);
+}
+
+@container main (max-width: 640px) {
+  * {
+    --page-gutter: var(--page-gutter-narrow);
+  }
 }

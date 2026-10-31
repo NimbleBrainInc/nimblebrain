@@ -116,9 +116,11 @@ export const ShellLayout = memo(function ShellLayout({
           when it's open in sidebar mode. The marginRight + transition
           here is what every route relies on. Mobile / fullscreen
           modes don't need this push: mobile chat is full-width;
-          fullscreen chat covers the content overlay-style. */}
+          fullscreen chat covers the content overlay-style. It is the
+          `main` container the page gutter follows (`theme/palette.ts`
+          `spacing`), since an app's iframe fills this same column. */}
       <main
-        className="relative flex-1 h-dvh overflow-hidden bg-background text-foreground flex flex-col"
+        className="@container/main relative flex-1 h-dvh overflow-hidden bg-background text-foreground flex flex-col"
         style={{
           marginRight: mainMarginRight,
           transition: `margin-right ${CHAT_TRANSITION_STANDARD}`,

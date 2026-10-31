@@ -36,6 +36,26 @@ export const fonts = {
   mono: "'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace",
 } as const;
 
+/**
+ * The page gutter: the inset between the main column's edge and the page's
+ * content. The host owns the value, as it owns colour, font and radius. Host
+ * chrome and pages inset by it; an app gets the value and decides where to
+ * inset, because the host never pads an app's slot (an app may need an
+ * edge-to-edge pane).
+ *
+ * The gutter narrows when the main column, which an app's iframe fills, is at
+ * or under `narrowBreakpointPx` wide. All three equal the defaults of
+ * `@nimblebrain/synapse/ui`, so an app on a host that sends nothing still lines
+ * up with this shell; `palette.test.ts` holds them equal. Apps receive both
+ * values (`--nb-gutter-wide`, `--nb-gutter-narrow`, in `projections.ts`); the
+ * breakpoint is the kit's own and cannot be sent.
+ */
+export const spacing = {
+  gutter: "1.5rem",
+  gutterNarrow: "1rem",
+  narrowBreakpointPx: 640,
+} as const;
+
 /** Layout constants (mode-independent; `:root` only). */
 export const layout = {
   "--sidebar-width": "240px",

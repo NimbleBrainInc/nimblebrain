@@ -126,7 +126,7 @@ window.parent.postMessage({
 `applyColorScheme` does the same for `color-scheme`, which the browser draws scrollbars, form controls and the canvas behind a transparent body with. The injected block sets it for the load-time mode only: the iframe is sandboxed, so the host cannot change it afterwards. Synapse 0.32 and later sets it for you.
 
 <Aside type="note">
-**Which field carries which token.** Only keys in the ext-apps spec's own variable enum go in `styles.variables`; a strict spec client rejects the whole host context over one key outside it. Every other token that changes between light and dark goes in `ai.nimblebrain/styles`. The rest of the NimbleBrain tokens — the `3xs`, `2xs` and `base` steps of the type scale, and `--nb-font-heading` — look the same in both modes and arrive only in the injected `<style>` block. Either way, apply what each message carries and every token follows the toggle.
+**Which field carries which token.** Only keys in the ext-apps spec's own variable enum go in `styles.variables`; a strict spec client rejects the whole host context over one key outside it. Every other token that changes between light and dark goes in `ai.nimblebrain/styles`. The rest of the NimbleBrain tokens — the `3xs`, `2xs` and `base` steps of the type scale, `--nb-font-heading` and the two gutter values — look the same in both modes and arrive only in the injected `<style>` block. Either way, apply what each message carries and every token follows the toggle.
 </Aside>
 
 ## Token reference
@@ -199,7 +199,7 @@ These tables list the tokens, not their values. The values are whatever the host
 
 ### NimbleBrain extensions (`--nb-*`)
 
-They never go in `styles.variables`, and no other host sends them. The two colours change with the mode, so they arrive in `ai.nimblebrain/styles` and refresh on a toggle; `--nb-font-heading` does not, and arrives in the injected `<style>` block.
+They never go in `styles.variables`, and no other host sends them. The two colours change with the mode, so they arrive in `ai.nimblebrain/styles` and refresh on a toggle; `--nb-font-heading` and the gutter values do not, and arrive in the injected `<style>` block.
 
 Each carries a value the ext-apps spec has no key for. `@nimblebrain/synapse` reads each, with a fallback for a host that does not send it:
 
@@ -208,6 +208,8 @@ Each carries a value the ext-apps spec has no key for. `@nimblebrain/synapse` re
 | `--nb-color-processing` | In-progress / processing state |
 | `--nb-color-processing-light` | Processing background |
 | `--nb-font-heading` | Heading font; where a host does not send it, use `--font-sans` |
+| `--nb-gutter-wide` | Page inset when your frame is wider than 640px. The host never pads your frame, so you choose where to inset |
+| `--nb-gutter-narrow` | Page inset when your frame is 640px wide or less. `AppFrame` (Synapse 0.38 and later) picks between the two by its own width |
 
 <Aside type="note">
 The host injects font *names*, not font *files*. A `srcdoc` iframe is its own document and inherits no `@font-face` from the shell, so unless your app loads the face itself the value resolves to the fallback stack. Design against the fallback and treat the brand face as an enhancement — or load it in your own app.
