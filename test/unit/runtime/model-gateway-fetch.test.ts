@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { isRetryable } from "../../../src/engine/retry.ts";
+import { ModelGatewayNoResponseError } from "../../../src/model/gateway-no-response.ts";
 import { isModelBudgetSpent } from "../../../src/model/gateway-refusal.ts";
+import { buildModelResolver } from "../../../src/model/registry.ts";
+import { callModel, ModelStreamStallError } from "../../../src/model/stream.ts";
 import { modelGatewayFetch } from "../../../src/runtime/model-gateway-fetch.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import {
@@ -117,5 +121,99 @@ describe("the model gateway's fetch on a 429", () => {
       new Response("slow down", { status: 429, headers: { "content-type": "text/plain" } }),
     );
     expect(await response.text()).toBe("slow down");
+  });
+});
+
+describe("a model call the gateway never answers", () => {
+  const GATEWAY = "http://gateway.test";
+
+  /** Call an Anthropic model through the gateway, whose transport is `base`. */
+  const call = (base: typeof fetch, opts: { signal?: AbortSignal } = {}) => {
+    const resolve = buildModelResolver(
+      {},
+      { url: GATEWAY, fetch: modelGatewayFetch(runKey, base) },
+    );
+    return callModel(
+      resolve("anthropic:claude-sonnet-4-6"),
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        abortSignal: opts.signal,
+      },
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      { firstContentMs: 50 },
+    ).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+  };
+
+  /** A transport that never answers: it waits until the call is aborted. */
+  const silent = fakeFetch(
+    (_input, init) =>
+      new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      }),
+  );
+
+  it("names the gateway when the stream watchdog fires before any response, and stays retryable", async () => {
+    const err = await call(silent);
+    expect(err).toBeInstanceOf(ModelGatewayNoResponseError);
+    expect((err as Error).message).toBe(
+      "The model gateway didn't respond: Model stream stalled: no response for 50ms",
+    );
+    expect((err as Error).cause).toBeInstanceOf(ModelStreamStallError);
+    expect(isRetryable(err)).toBe(true);
+  });
+
+  it("names the gateway when the connection is refused, and stays retryable", async () => {
+    const refused = Object.assign(
+      new TypeError("ECONNREFUSED: Unable to connect. Is the computer able to access the url?"),
+      { code: "ECONNREFUSED" },
+    );
+    const err = await call(fakeFetch(async () => Promise.reject(refused)));
+    expect(err).toBeInstanceOf(ModelGatewayNoResponseError);
+    expect((err as Error).message).toStartWith("The model gateway didn't respond: ");
+    expect((err as Error).message).toContain("ECONNREFUSED");
+    expect(isRetryable(err)).toBe(true);
+  });
+
+  it("keeps a failure the client does not retry unretried, such as a name not found", async () => {
+    const notFound = Object.assign(new TypeError("getaddrinfo ENOTFOUND gateway.test"), {
+      code: "ENOTFOUND",
+    });
+    const err = await call(fakeFetch(async () => Promise.reject(notFound)));
+    expect(err).toBeInstanceOf(ModelGatewayNoResponseError);
+    expect((err as Error).cause).toBe(notFound);
+    expect(isRetryable(err)).toBe(false);
+  });
+
+  it("reports a stall after the gateway answered as the model's stall", async () => {
+    // Headers came back, then nothing: the gateway responded, the model did not.
+    const answeredThenSilent = fakeFetch(
+      async (_input, init) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), {
+                once: true,
+              });
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    );
+    const err = await call(answeredThenSilent);
+    expect(err).toBeInstanceOf(ModelStreamStallError);
+  });
+
+  it("leaves a cancelled run's abort as an abort", async () => {
+    const run = new AbortController();
+    setTimeout(() => run.abort(), 10);
+    const err = await call(silent, { signal: run.signal });
+    expect(err).not.toBeInstanceOf(ModelGatewayNoResponseError);
+    expect((err as Error).name).toBe("AbortError");
   });
 });

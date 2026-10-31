@@ -17,9 +17,13 @@
  * - The gateway's refusal of a call for a spent run budget is thrown as
  *   `ModelBudgetSpentError` (`src/model/gateway-refusal.ts`), before the
  *   provider client reads it as the provider's own rate limit and retries it.
+ * - A call the gateway gives no response (the connection fails, or the call is
+ *   aborted before an answer) is marked, so the model call fails naming the
+ *   gateway (`src/model/gateway-no-response.ts`); the fetch rethrows the error as is.
  */
 
 import { randomUUID } from "node:crypto";
+import { markGatewayNoResponse } from "../model/gateway-no-response.ts";
 import {
   isGatewayBudgetRefusal,
   ModelBudgetSpentError,
@@ -53,7 +57,7 @@ export function modelGatewayFetch(
       maxRunDurationMs: CALL_CREDENTIAL_MS,
     });
     headers.set("authorization", `Bearer ${credential}`);
-    const response = await base(input, { ...init, headers });
+    const response = await send(base, input, { ...init, headers });
     if (
       mayBeGatewayBudgetRefusal(response.status, response.headers.get("content-type")) &&
       isGatewayBudgetRefusal(response.status, await response.clone().text())
@@ -64,4 +68,18 @@ export function modelGatewayFetch(
     return response;
   };
   return Object.assign(gatewayFetch, { preconnect: base.preconnect }) as typeof fetch;
+}
+
+/** Send a call to the gateway, marking it when the gateway gives no response. */
+async function send(
+  base: typeof fetch,
+  input: Parameters<typeof fetch>[0],
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await base(input, init);
+  } catch (err) {
+    markGatewayNoResponse(init.signal ?? (input instanceof Request ? input.signal : undefined));
+    throw err;
+  }
 }
