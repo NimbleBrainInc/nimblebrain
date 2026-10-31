@@ -60,6 +60,7 @@ import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
 import {
   CONNECTOR_SKILL_SYNTHETIC,
   type ConnectorSkillCandidate,
+  CUT_OFF_FINISH_RAW,
   type EngineConfig,
   type EngineResult,
   type EventSink,
@@ -827,6 +828,16 @@ function isProviderFailure(err: unknown, signal: AbortSignal | undefined): boole
 }
 
 /**
+ * Whether a model call threw because the run's signal cut it off: the throw
+ * is the abort itself, not a refusal or a provider error that happened to
+ * land as the run was cancelled.
+ */
+function isCancellation(err: unknown, signal: AbortSignal | undefined): boolean {
+  if (!signal?.aborted || isModelBudgetSpent(err)) return false;
+  return err === signal.reason || (err as { name?: unknown } | null)?.name === "AbortError";
+}
+
+/**
  * Whether the run-wide input cap (`EngineConfig.maxRunInputTokens`) would
  * likely refuse the call after this one: this call and one more of the same
  * size would pass it. The call about to be sent is then the run's last
@@ -1321,6 +1332,9 @@ export class AgentEngine {
     // Input tokens the most recent model call reported. One half of the next
     // call's projected size for the run cap (see `EngineConfig.maxRunInputTokens`).
     let lastCallInputTokens = 0;
+    // The most recent model call's reported usage, read to price a call a
+    // cancel cuts off (`recordCutOffCall`).
+    let lastCallUsage: TokenUsage | undefined;
     let runInputCapReached = false;
     // The spend account that would have been overrun by the next call, if any.
     let spendAccountId: string | undefined;
@@ -1352,7 +1366,7 @@ export class AgentEngine {
         // Offer the history this loop has grown back to the caller, which may
         // return a smaller one to run with from here on (the runtime folds an
         // over-budget history into a summary — see `runtime/mid-turn-compaction`).
-        await this.applyHistoryRewrite(history, iteration, config);
+        const historyRewritten = await this.applyHistoryRewrite(history, iteration, config);
 
         // Drop any tool the supervisor currently has tripped and build the
         // per-iteration model toolset + schema lookup.
@@ -1419,6 +1433,9 @@ export class AgentEngine {
         // `llm.done` alongside the provider's reported usage — the pair is
         // what makes estimator drift measurable instead of inferred.
         let estimatedInputTokens = 0;
+        // The attempt the run's cancel cut off, if one was: what it had
+        // streamed, and whether it was sent re-windowed after an overflow.
+        let cutOff: { streamed: string; rewindowed: boolean } | undefined;
         const callOnce = (msgs: LanguageModelV4Message[]) => {
           // Provider-scoped prompt-cache policy: places the rolling step-anchor
           // + tail breakpoints (Anthropic) so the growing prefix is read back,
@@ -1441,9 +1458,14 @@ export class AgentEngine {
           // messages), so this covers everything billed as input except the
           // provider's own per-request overhead.
           estimatedInputTokens = estimatePromptTokens(cachedPrompt, cachedTools);
+          const rewindowed = msgs !== callMessages;
           return withRetry(
-            () =>
-              callModel(
+            () => {
+              // An attempt that would start after the cancel sends nothing, so
+              // it is never recorded as cut off.
+              throwIfAborted(config.signal);
+              let streamed = "";
+              return callModel(
                 this.model,
                 {
                   prompt: cachedPrompt,
@@ -1461,12 +1483,22 @@ export class AgentEngine {
                     ? { providerOptions: callProviderOptions }
                     : {}),
                 },
-                (text) => this.events.emit({ type: "text.delta", data: { runId, text } }),
-                (text) => this.events.emit({ type: "reasoning.delta", data: { runId, text } }),
+                (text) => {
+                  streamed += text;
+                  this.events.emit({ type: "text.delta", data: { runId, text } });
+                },
+                (text) => {
+                  streamed += text;
+                  this.events.emit({ type: "reasoning.delta", data: { runId, text } });
+                },
                 (id, name) =>
                   this.events.emit({ type: "tool.preparing", data: { runId, id, name } }),
                 (id) => this.events.emit({ type: "tool.preparing.done", data: { runId, id } }),
-              ),
+              ).catch((err: unknown) => {
+                if (isCancellation(err, config.signal)) cutOff = { streamed, rewindowed };
+                throw err;
+              });
+            },
             // Defaults preserved; only the new fourth arg matters here.
             // The retry backoff sleep aborts on `config.signal` so a
             // cancel during backoff bites within the abort tick instead
@@ -1484,7 +1516,20 @@ export class AgentEngine {
           runTransform,
           config,
           runId,
-        );
+        ).catch((err: unknown) => {
+          if (cutOff) {
+            this.recordCutOffCall({
+              runId,
+              config,
+              inputTokens: Math.max(lastCallInputTokens, estimatedInputTokens),
+              cachedPrefix: historyRewritten || cutOff.rewindowed ? undefined : lastCallUsage,
+              streamed: cutOff.streamed,
+              maxOutputTokens: callMaxOutputTokens,
+              llmMs: Math.round(performance.now() - llmStart),
+            });
+          }
+          throw err;
+        });
         const llmMs = Math.round(performance.now() - llmStart);
 
         // Accumulate text output (add newline between turns if needed).
@@ -1494,6 +1539,7 @@ export class AgentEngine {
         addUsage(cumulativeUsage, turnUsage);
         config.spend?.debit(turnUsage);
         lastCallInputTokens = turnUsage.inputTokens;
+        lastCallUsage = turnUsage;
         cumulativeLlmMs += llmMs;
 
         // Track the model's per-call finish reason for downstream
@@ -1791,13 +1837,72 @@ export class AgentEngine {
     history: LanguageModelV4Message[],
     iteration: number,
     config: EngineConfig,
-  ): Promise<void> {
-    if (iteration === 0 || !config.hooks?.rewriteHistory) return;
+  ): Promise<boolean> {
+    if (iteration === 0 || !config.hooks?.rewriteHistory) return false;
     const rewritten = await config.hooks.rewriteHistory([...history], {
       iteration,
       ...(config.signal ? { signal: config.signal } : {}),
     });
-    if (rewritten) history.splice(0, history.length, ...rewritten);
+    if (!rewritten) return false;
+    history.splice(0, history.length, ...rewritten);
+    return true;
+  }
+
+  /**
+   * Record a model call the run's cancel cut off. The provider reports usage
+   * only at the end of a stream, so the call never gets it, yet the provider
+   * bills the input it read and the output it wrote. The call is recorded from
+   * what the engine knows: the input projected for it (what the spend gate
+   * reserved), and the output estimated from the text and reasoning it
+   * streamed, at most the call's output ceiling. Tool-call input streams
+   * unseen, so the output is a lower bound.
+   *
+   * The input is priced as a cache read up to what the previous call in this
+   * run read and wrote to the cache (`cachedPrefix`), since the prefix is
+   * append-only; absent (the run's first call, or a prefix rewritten this
+   * iteration), all of it is priced uncached, an upper bound.
+   *
+   * The call is debited from the spend accounts and emitted as a usage-only
+   * `llm.done`: no content, finish `stop` (which replays as nothing), and
+   * `finishReasonRaw` `CUT_OFF_FINISH_RAW`, so readers can tell an estimate
+   * from a reported call.
+   */
+  private recordCutOffCall(params: {
+    runId: string;
+    config: EngineConfig;
+    inputTokens: number;
+    cachedPrefix: TokenUsage | undefined;
+    streamed: string;
+    maxOutputTokens: number;
+    llmMs: number;
+  }): void {
+    const { runId, config, inputTokens, cachedPrefix, streamed, maxOutputTokens, llmMs } = params;
+    const outputTokens = Math.min(
+      maxOutputTokens,
+      streamed
+        ? estimateMessageTokens({ role: "assistant", content: [{ type: "text", text: streamed }] })
+        : 0,
+    );
+    const cacheReadTokens = Math.min(
+      inputTokens,
+      (cachedPrefix?.cacheReadTokens ?? 0) + (cachedPrefix?.cacheWriteTokens ?? 0),
+    );
+    const usage: TokenUsage = { ...emptyUsage(), inputTokens, outputTokens, cacheReadTokens };
+    config.spend?.debit(usage);
+    this.events.emit({
+      type: "llm.done",
+      data: {
+        runId,
+        model: config.model,
+        content: [],
+        usage,
+        llmMs,
+        // Zero keeps the estimator-drift metric to calls with reported usage.
+        estimatedInputTokens: 0,
+        finishReason: "stop",
+        finishReasonRaw: CUT_OFF_FINISH_RAW,
+      },
+    });
   }
 
   /**

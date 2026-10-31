@@ -22,7 +22,7 @@ import type {
   ToolDonePayload,
   ToolPromotionChangedPayload,
 } from "../engine/schemas/events.ts";
-import type { EngineEvent, EventSink } from "../engine/types.ts";
+import { CUT_OFF_FINISH_RAW, type EngineEvent, type EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import { isSealFailureReason } from "../tools/credential-store.ts";
 import { originOf, recordLlmCall } from "../usage/record.ts";
@@ -88,8 +88,11 @@ export class MetricsEventSink implements EventSink {
     // user turn.
     const origin = originOf();
     // Per-call latency for the p99 alert; the engine measures it around the
-    // provider call.
-    llmRequestDurationSeconds.observe({ source: "main", model, origin }, data.llmMs / 1000);
+    // provider call. A call a cancel cut off did not run its course, and an
+    // external agent's call is recorded with no latency (0), so neither is one.
+    if (data.finishReasonRaw !== CUT_OFF_FINISH_RAW && data.llmMs > 0) {
+      llmRequestDurationSeconds.observe({ source: "main", model, origin }, data.llmMs / 1000);
+    }
     // Time-to-first-token (connect + prefill), the prefill-vs-decode
     // discriminator. Absent when the call emitted no output part — skip rather
     // than record a misleading 0.

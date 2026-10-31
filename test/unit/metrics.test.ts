@@ -16,6 +16,7 @@ import {
   toolCallsTotal,
   toolPromotionsTotal,
 } from "../../src/api/metrics.ts";
+import { CUT_OFF_FINISH_RAW } from "../../src/engine/types.ts";
 import { log } from "../../src/observability/log.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import type { ConnectorHealth } from "../../src/tools/health-monitor.ts";
@@ -398,6 +399,29 @@ describe("LLM latency + error metrics", () => {
     );
     expect((await readHistogram("count", labels)) - beforeCount).toBe(1);
     expect((await readHistogram("sum", labels)) - beforeSum).toBeCloseTo(2.4, 5);
+  });
+
+  it("test_llm_done_cut_off_or_unmeasured_does_not_observe_latency", async () => {
+    const sink = new MetricsEventSink();
+    const labels = { source: "main", model: "tm-no-latency" };
+    const before = await readHistogram("count", labels);
+    // A call a cancel cut off did not run its course, and an external agent's
+    // call carries no latency (0): neither is a round-trip sample.
+    sink.emit(
+      engineEvent(
+        "llm.done",
+        llmDonePayload({
+          runId: "r1",
+          model: "tm-no-latency",
+          llmMs: 4000,
+          finishReasonRaw: CUT_OFF_FINISH_RAW,
+        }),
+      ),
+    );
+    sink.emit(
+      engineEvent("llm.done", llmDonePayload({ runId: "r1", model: "tm-no-latency", llmMs: 0 })),
+    );
+    expect((await readHistogram("count", labels)) - before).toBe(0);
   });
 
   // Same shape as readHistogram, against the TTFT histogram.

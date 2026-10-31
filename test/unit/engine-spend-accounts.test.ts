@@ -1,14 +1,19 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import type {
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4StreamPart,
+} from "@ai-sdk/provider";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
-import type {
-  EngineConfig,
-  EngineEvent,
-  SpendGate,
-  ToolResult,
-  ToolSchema,
+import {
+  CUT_OFF_FINISH_RAW,
+  type EngineConfig,
+  type EngineEvent,
+  type SpendGate,
+  type ToolResult,
+  type ToolSchema,
 } from "../../src/engine/types.ts";
 import {
   MODEL_GATEWAY_BUDGET_ACCOUNT,
@@ -274,5 +279,231 @@ describe("AgentEngine on the model gateway's budget refusal", () => {
     expect(throws).toBe(0);
     expect(result.stopReason).toBe("complete");
     expect(r.events.map((e) => e.type)).not.toContain("run.error");
+  });
+});
+
+/** What one scripted model call does. */
+type CutOffStep =
+  | { kind: "tool"; inputTokens: number; cacheRead?: number; cacheWrite?: number }
+  /** Stream `text`, then hang until the call's signal aborts. */
+  | { kind: "stream"; text: string }
+  /** Throw `err()`, after running `before` (which may abort the run). */
+  | { kind: "throw"; err: () => Error; before?: () => void };
+
+/**
+ * A run on a model that plays `steps`, one per call, with `signal` as the run's
+ * signal and `hold` as its spend gate. Returns the events and how many calls
+ * reached the model.
+ */
+function cutOffRun(
+  steps: CutOffStep[],
+  opts: { signal: AbortSignal; hold: SpendGate; config?: Partial<EngineConfig> },
+) {
+  let calls = 0;
+  const model: LanguageModelV4 = {
+    specificationVersion: "v4",
+    provider: "mock",
+    modelId: "mock-model",
+    supportedUrls: {},
+    doGenerate: () => Promise.reject(new Error("unused")),
+    async doStream(options) {
+      const step = steps[calls++];
+      if (!step) throw new Error("no step scripted");
+      if (step.kind === "throw") {
+        step.before?.();
+        throw step.err();
+      }
+      const signal = options.abortSignal;
+      const stream = new ReadableStream<LanguageModelV4StreamPart>({
+        start(controller) {
+          controller.enqueue({ type: "stream-start", warnings: [] });
+          if (step.kind === "stream") {
+            controller.enqueue({ type: "text-start", id: "t" });
+            controller.enqueue({ type: "text-delta", id: "t", delta: step.text });
+            const fail = () =>
+              controller.error(
+                signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"),
+              );
+            if (signal?.aborted) fail();
+            else signal?.addEventListener("abort", fail, { once: true });
+            return;
+          }
+          controller.enqueue({
+            type: "tool-call",
+            toolCallId: `call_${calls}`,
+            toolName: "test__score",
+            input: "{}",
+          });
+          controller.enqueue({
+            type: "finish",
+            usage: {
+              inputTokens: {
+                total: step.inputTokens,
+                noCache: undefined,
+                cacheRead: step.cacheRead,
+                cacheWrite: step.cacheWrite,
+              },
+              outputTokens: { total: 10, text: undefined, reasoning: undefined },
+            },
+            finishReason: { unified: "tool-calls", raw: undefined },
+          });
+          controller.close();
+        },
+      });
+      return { stream };
+    },
+  };
+  const events: EngineEvent[] = [];
+  const engine = new AgentEngine(
+    model,
+    new StaticToolRouter(
+      tools,
+      (): ToolResult => ({ content: textContent("scored"), isError: false }),
+    ),
+    { emit: (e) => events.push(e) },
+  );
+  const config: EngineConfig = {
+    ...baseConfig,
+    ...opts.config,
+    spend: opts.hold,
+    signal: opts.signal,
+  };
+  return {
+    events,
+    calls: () => calls,
+    run: () =>
+      engine.run(
+        config,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Score items" }] }],
+        tools,
+      ),
+    cutOff: () =>
+      events.flatMap((e) =>
+        e.type === "llm.done" && e.data.finishReasonRaw === CUT_OFF_FINISH_RAW ? [e.data] : [],
+      ),
+  };
+}
+
+describe("AgentEngine on a model call a cancel cuts off", () => {
+  it("debits and records the cut-off call once, from its projected input and streamed output", async () => {
+    const balances = createSpendBalances();
+    const hold = holdOn(
+      [{ id: "acct-in", unit: "input_tokens", remaining: 100_000 }],
+      "test-model",
+      balances,
+    );
+    const controller = new AbortController();
+    const r = cutOffRun(
+      [
+        { kind: "tool", inputTokens: 1_000, cacheRead: 600, cacheWrite: 300 },
+        { kind: "stream", text: "x".repeat(400) },
+      ],
+      { signal: controller.signal, hold },
+    );
+    // Stop is pressed once the second call has streamed its text.
+    r.events.push = new Proxy(r.events.push, {
+      apply(target, self, args: EngineEvent[]) {
+        if (args[0]?.type === "text.delta") queueMicrotask(() => controller.abort());
+        return Reflect.apply(target, self, args);
+      },
+    });
+    await expect(r.run()).rejects.toMatchObject({ name: "AbortError" });
+
+    const [cut, ...more] = r.cutOff();
+    expect(more).toHaveLength(0);
+    expect(cut!.content).toEqual([]);
+    expect(cut!.finishReason).toBe("stop");
+    // The call's input is at least the previous call's (the prefix only grows),
+    // and the part the previous call read or wrote to the cache is a cache read.
+    expect(cut!.usage.inputTokens).toBeGreaterThanOrEqual(1_000);
+    expect(cut!.usage.cacheReadTokens).toBe(900);
+    expect(cut!.usage.outputTokens).toBeGreaterThan(0);
+    // The cut-off call lands before the run ends cancelled.
+    const types = r.events.map((e) => e.type);
+    expect(types.lastIndexOf("llm.done")).toBeLessThan(types.indexOf("run.done"));
+    expect(r.events.find((e) => e.type === "run.done")?.data.stopReason).toBe("cancelled");
+    // Both calls are debited: the reported one and the cut-off one.
+    expect(balances.balance("acct-in")).toBe(100_000 - 1_000 - cut!.usage.inputTokens);
+    hold.release();
+  });
+
+  it("prices a run's first call cut off as uncached input, at most its output ceiling", async () => {
+    const hold = holdOn([{ id: "acct-out", unit: "output_tokens", remaining: 100_000 }]);
+    const controller = new AbortController();
+    const r = cutOffRun([{ kind: "stream", text: "x".repeat(4_000) }], {
+      signal: controller.signal,
+      hold,
+      config: { maxOutputTokens: 300 },
+    });
+    r.events.push = new Proxy(r.events.push, {
+      apply(target, self, args: EngineEvent[]) {
+        if (args[0]?.type === "text.delta") queueMicrotask(() => controller.abort());
+        return Reflect.apply(target, self, args);
+      },
+    });
+    await expect(r.run()).rejects.toMatchObject({ name: "AbortError" });
+
+    const [cut] = r.cutOff();
+    expect(cut!.usage.cacheReadTokens).toBe(0);
+    expect(cut!.usage.inputTokens).toBeGreaterThan(0);
+    expect(cut!.usage.outputTokens).toBe(300);
+    hold.release();
+  });
+
+  it("records nothing when the cancel lands during a retry's backoff", async () => {
+    const hold = holdOn([{ id: "acct-in", unit: "input_tokens", remaining: 100_000 }]);
+    const controller = new AbortController();
+    const overloaded = () =>
+      Object.assign(new Error("overloaded"), { statusCode: 529, isRetryable: true });
+    const r = cutOffRun(
+      [{ kind: "throw", err: overloaded, before: () => setTimeout(() => controller.abort(), 5) }],
+      { signal: controller.signal, hold },
+    );
+    await expect(r.run()).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(r.calls()).toBe(1);
+    expect(r.cutOff()).toHaveLength(0);
+    hold.release();
+  });
+
+  it("records nothing for a call the cancel stops before it is sent", async () => {
+    const hold = holdOn([{ id: "acct-in", unit: "input_tokens", remaining: 100_000 }]);
+    const controller = new AbortController();
+    const r = cutOffRun([{ kind: "tool", inputTokens: 1_000 }], {
+      signal: controller.signal,
+      hold,
+      // A history rewrite that sees the cancel and returns rather than throws.
+      config: {
+        hooks: {
+          rewriteHistory: () => {
+            controller.abort();
+            return undefined;
+          },
+        },
+      },
+    });
+    await expect(r.run()).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(r.calls()).toBe(1);
+    expect(r.cutOff()).toHaveLength(0);
+    hold.release();
+  });
+
+  it("records nothing for a gateway refusal that lands as the run is cancelled", async () => {
+    const hold = holdOn([{ id: "acct-in", unit: "input_tokens", remaining: 100_000 }]);
+    const controller = new AbortController();
+    const r = cutOffRun(
+      [
+        { kind: "tool", inputTokens: 1_000 },
+        { kind: "throw", err: () => new ModelBudgetSpentError(), before: () => controller.abort() },
+      ],
+      { signal: controller.signal, hold },
+    );
+    await expect(r.run()).rejects.toBeInstanceOf(ModelBudgetSpentError);
+
+    expect(r.calls()).toBe(2);
+    expect(r.cutOff()).toHaveLength(0);
+    hold.release();
   });
 });
