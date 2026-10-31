@@ -223,8 +223,9 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
 /**
  * The Synapse UI kit's defaults, exported from `@nimblebrain/synapse/ui` (0.38.0
  * and later) as `GUTTER_DEFAULT`, `GUTTER_NARROW_DEFAULT` and
- * `GUTTER_NARROW_BREAKPOINT`. Stated here because the web package does not
- * depend on the kit. Change one side, change both.
+ * `GUTTER_NARROW_BREAKPOINT`. Stated here because `web/` reaches the kit only
+ * through the root `node_modules`, and `/ui` imports React, which resolves from
+ * there and the root does not install. Change one side, change both.
  */
 const KIT = { gutter: "1.5rem", gutterNarrow: "1rem", narrowBreakpointPx: 640 } as const;
 

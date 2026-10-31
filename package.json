@@ -92,7 +92,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
-    "@nimblebrain/synapse": "0.35.0",
+    "@nimblebrain/synapse": "0.38.0",
     "@types/bun": "latest",
     "happy-dom": "^20.0.0",
     "mcp-sdk-v1": "npm:@modelcontextprotocol/sdk@1.30.1",
