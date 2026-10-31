@@ -107,6 +107,10 @@ Every settings page renders in `SettingsShell`, which sets the one content width
 its own, so moving between tabs never moves the content. A page's header title is
 its tab's label in the settings nav.
 
+A settings page's layout steps query the `settings` container, the shell's
+content column (`@xl/settings:grid-cols-3`), never `main`: the side nav takes
+part of `main`, so the main column overstates the page's width.
+
 ## Tooltips
 
 Every icon-only control gets a `Tooltip` (`components/ui/tooltip.tsx`); a

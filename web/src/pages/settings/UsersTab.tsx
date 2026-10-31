@@ -356,7 +356,7 @@ export function UsersTab() {
         },
         form: (
           <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 @xl/settings:grid-cols-3">
               <div className="space-y-1.5">
                 <Label htmlFor="create-email">Email</Label>
                 <Input

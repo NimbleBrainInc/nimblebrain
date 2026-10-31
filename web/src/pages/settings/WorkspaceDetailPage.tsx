@@ -410,7 +410,7 @@ function AddMemberForm({
   return (
     <Card>
       <CardContent className="py-4 space-y-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 @xl/settings:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="add-member-user">User</Label>
             {availableUsers.length === 0 ? (

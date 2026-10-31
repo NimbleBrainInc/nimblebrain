@@ -143,8 +143,10 @@ export function SettingsShell({ title, items, footer }: SettingsShellProps) {
       </nav>
 
       {/* Inset on every side by the page gutter, which narrows with the main
-          column (`@container main`), not the viewport. */}
-      <div className="flex-1 overflow-y-auto p-(--page-gutter)">
+          column (`@container main`), not the viewport. It is the `settings`
+          container: a settings page's layout steps (`@xl/settings:`) measure
+          this column, since the side nav takes part of `main`. */}
+      <div className="@container/settings flex-1 overflow-y-auto p-(--page-gutter)">
         {/* One width for every settings page, set here rather than per page so
             tabs never change width as you move between them. Left-aligned, so
             the content starts beside the nav on every tab instead of drifting
