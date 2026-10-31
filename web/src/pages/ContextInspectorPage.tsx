@@ -144,7 +144,7 @@ export function ContextInspectorPage() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden" data-testid="context-inspector-page">
-      <header className="shrink-0 px-6 pt-5 pb-4 border-b border-border">
+      <header className="shrink-0 px-(--page-gutter) pt-5 pb-4 border-b border-border">
         <div className="text-2xs text-muted-foreground mb-1.5 flex items-center justify-between gap-3">
           <span className="min-w-0 truncate">
             <button type="button" onClick={goBack} className="hover:text-foreground">
@@ -173,17 +173,22 @@ export function ContextInspectorPage() {
       </header>
 
       {loading && !digest && (
-        <div className="p-8 text-sm text-muted-foreground">Loading context…</div>
+        <div className="px-(--page-gutter) py-8 text-sm text-muted-foreground">
+          Loading context…
+        </div>
       )}
 
       {!loading && budgetError && !digest && (
-        <div className="p-8 text-sm text-destructive" data-testid="context-inspector-error">
+        <div
+          className="px-(--page-gutter) py-8 text-sm text-destructive"
+          data-testid="context-inspector-error"
+        >
           {budgetError}
         </div>
       )}
 
       {digest && digest.runId === null && (
-        <div className="p-8 text-sm text-muted-foreground">
+        <div className="px-(--page-gutter) py-8 text-sm text-muted-foreground">
           No context recorded yet. Send a message in this conversation to populate it.
         </div>
       )}
@@ -234,7 +239,7 @@ function BudgetBar({
   const max = Math.max(windowTokens, 1);
   return (
     <div
-      className="sticky top-0 z-10 bg-background px-6 py-4 border-b border-border"
+      className="sticky top-0 z-10 bg-background px-(--page-gutter) py-4 border-b border-border"
       data-testid="context-budget"
     >
       {/* Equal-width cards: the token size drives the inner bar, never the card
@@ -384,17 +389,19 @@ function LayerAccordion({
   const max = Math.max(...layers.map((l) => l.tokens), 1);
   return (
     <div>
-      <div className="px-6 pt-3 pb-2 text-3xs font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="px-(--page-gutter) pt-3 pb-2 text-3xs font-semibold uppercase tracking-wider text-muted-foreground">
         Composition
         <span className="font-normal normal-case tracking-normal text-2xs">
           {" "}
           · what would load now
         </span>
       </div>
-      {loading && <div className="px-6 py-3 text-xs text-muted-foreground">Composing…</div>}
-      {error && <div className="px-6 py-3 text-xs text-destructive">{error}</div>}
+      {loading && (
+        <div className="px-(--page-gutter) py-3 text-xs text-muted-foreground">Composing…</div>
+      )}
+      {error && <div className="px-(--page-gutter) py-3 text-xs text-destructive">{error}</div>}
       {!loading && !error && layers.length === 0 && (
-        <div className="px-6 py-3 text-xs text-muted-foreground">
+        <div className="px-(--page-gutter) py-3 text-xs text-muted-foreground">
           {bucket === "skills"
             ? "No matched skills entered this turn's prompt. The budget above still counts everything that loaded."
             : "Nothing composes for this conversation right now."}
@@ -410,7 +417,7 @@ function LayerAccordion({
         />
       ))}
       {warnings.length > 0 && layers.length > 0 && (
-        <div className="px-6 py-4 text-3xs text-muted-foreground space-y-1 border-t border-border">
+        <div className="px-(--page-gutter) py-4 text-3xs text-muted-foreground space-y-1 border-t border-border">
           {warnings.map((w) => (
             <p key={w} className="m-0">
               {w}
@@ -441,7 +448,7 @@ function AccordionRow({
         onClick={onToggle}
         aria-expanded={open}
         aria-controls={bodyId}
-        className={`w-full text-left px-6 py-3 space-y-1.5 transition-colors ${
+        className={`w-full text-left px-(--page-gutter) py-3 space-y-1.5 transition-colors ${
           open ? "bg-primary/5" : "hover:bg-muted/60"
         }`}
       >
@@ -477,7 +484,10 @@ function AccordionRow({
         </div>
       </button>
       {open && (
-        <div id={bodyId} className="px-6 pt-3 pb-5 pl-11">
+        <div
+          id={bodyId}
+          className="pt-3 pr-(--page-gutter) pb-5 pl-[calc(var(--page-gutter)+1.25rem)]"
+        >
           <LayerBody layer={layer} />
         </div>
       )}

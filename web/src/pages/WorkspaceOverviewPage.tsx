@@ -93,7 +93,10 @@ export function WorkspaceOverviewPage() {
 
   if (!workspace) {
     return (
-      <div className="p-8 text-sm text-muted-foreground" data-testid="workspace-overview-not-found">
+      <div
+        className="px-(--page-gutter) py-8 text-sm text-muted-foreground"
+        data-testid="workspace-overview-not-found"
+      >
         Workspace not found.
       </div>
     );
@@ -124,7 +127,7 @@ export function WorkspaceOverviewPage() {
 
   return (
     <div className="@container h-full overflow-y-auto" data-testid="workspace-overview-page">
-      <div className="pt-8 pb-10 pl-4 pr-3">
+      <div className="px-(--page-gutter) pt-8 pb-10">
         <header className="mb-6 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="truncate text-3xl font-heading font-medium text-foreground">
