@@ -20,6 +20,7 @@ import { log } from "../../../src/observability/log.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import {
   _clearAll,
+  type AuthorizationResponse,
   DEFAULT_FLOW_TTL_MS,
   OAuthFlowRefusedError,
   register as registerFlow,
@@ -339,7 +340,26 @@ describe("GET /v1/mcp-auth/callback", () => {
     expect(setCookie!).toContain("Max-Age=0");
 
     // Flow resolved with the code we sent
-    await expect(flowPromise).resolves.toBe("auth-code-1");
+    await expect(flowPromise).resolves.toEqual({ code: "auth-code-1" });
+  });
+
+  test("an RFC 9207 `iss` on the callback reaches the flow with the code", async () => {
+    const state = "valid-state-iss";
+    const flowPromise = registerFlow(state, WS_OWNER, "notion");
+    flowPromise.catch(() => {});
+
+    const cookie = `nb_oauth_state=${sha256Hex(state)}`;
+    const iss = encodeURIComponent("https://mcp.example.com");
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?code=auth-code-1&state=${state}&iss=${iss}`,
+      { headers: { cookie } },
+    );
+
+    expect(res.status).toBe(200);
+    await expect(flowPromise).resolves.toEqual({
+      code: "auth-code-1",
+      iss: "https://mcp.example.com",
+    });
   });
 
   test("success page CSP allowlists the inline <style> by sha256, and survives the platform default-CSP middleware", async () => {
@@ -390,7 +410,7 @@ describe("GET /v1/mcp-auth/callback", () => {
     expect(styleMatch).not.toBeNull();
     const servedStyleHash = createHash("sha256").update(styleMatch![1]).digest("base64");
     expect(csp!).toContain(`'sha256-${servedStyleHash}'`);
-    await expect(flowPromise).resolves.toBe("auth-code-csp");
+    await expect(flowPromise).resolves.toEqual({ code: "auth-code-csp" });
   });
 
   test("missing cookie → 400 session mismatch, flow NOT resolved", async () => {
@@ -412,7 +432,7 @@ describe("GET /v1/mcp-auth/callback", () => {
     // there.
     const { resolveWithCode } = await import("../../../src/tools/oauth-flow-registry.ts");
     expect(resolveWithCode(state, "fallback")).toBe(true);
-    await expect(flowPromise).resolves.toBe("fallback");
+    await expect(flowPromise).resolves.toEqual({ code: "fallback" });
   });
 
   test("mismatched cookie hash → 400 session mismatch, flow NOT resolved", async () => {
@@ -433,7 +453,7 @@ describe("GET /v1/mcp-auth/callback", () => {
 
     const { resolveWithCode } = await import("../../../src/tools/oauth-flow-registry.ts");
     expect(resolveWithCode(state, "fallback")).toBe(true);
-    await expect(flowPromise).resolves.toBe("fallback");
+    await expect(flowPromise).resolves.toEqual({ code: "fallback" });
   });
 
   test("matching cookie but flow not in registry → 404 unknown flow", async () => {
@@ -487,7 +507,7 @@ describe("GET /v1/mcp-auth/callback — invalid_scope falls back to the connecto
   const cookie = `nb_oauth_state=${sha256Hex(state)}`;
   const refused = `http://localhost/v1/mcp-auth/callback?error=invalid_scope&state=${state}`;
   let used: number;
-  let flow: Promise<string>;
+  let flow: Promise<AuthorizationResponse>;
 
   beforeEach(() => {
     app = makeApp(makeStubLifecycle());
@@ -510,7 +530,7 @@ describe("GET /v1/mcp-auth/callback — invalid_scope falls back to the connecto
     expect(used).toBe(1);
 
     expect(resolveWithCode(state, "auth-code-1")).toBe(true);
-    await expect(flow).resolves.toBe("auth-code-1");
+    await expect(flow).resolves.toEqual({ code: "auth-code-1" });
   });
 
   test("takes no fallback without the session's state cookie", async () => {
@@ -576,7 +596,7 @@ describe("GET /v1/mcp-auth/callback — a refusal ends the flow (#1433)", () => 
     expect(noCookie.status).toBe(400);
     expect(wrongCookie.status).toBe(400);
     expect(resolveWithCode(state, "auth-code-1")).toBe(true);
-    await expect(flow).resolves.toBe("auth-code-1");
+    await expect(flow).resolves.toEqual({ code: "auth-code-1" });
   });
 
   test("a refusal that names no flow still answers 400", async () => {
@@ -651,7 +671,7 @@ describe("GET /v1/mcp-auth/callback — outcome logging (#1244)", () => {
       owner: "workspace",
       flow: state.slice(0, 8),
     });
-    await expect(flowPromise).resolves.toBe("the-code");
+    await expect(flowPromise).resolves.toEqual({ code: "the-code" });
   });
 
   test("a callback for an unknown/expired flow logs outcome=unknown_flow at warn", async () => {
@@ -894,7 +914,7 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
     );
 
     expect(res.status).toBe(200);
-    await expect(flowPromise).resolves.toBe("auth-code-1");
+    await expect(flowPromise).resolves.toEqual({ code: "auth-code-1" });
   });
 
   test("callback rejects state that lacks the v1 envelope prefix", async () => {
@@ -1098,7 +1118,7 @@ describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
     expect(html).toContain("/profile/connectors");
     // Never a workspace-scoped page for a personal connector.
     expect(html).not.toContain("/w/");
-    await expect(flowPromise).resolves.toBe("code-1");
+    await expect(flowPromise).resolves.toEqual({ code: "code-1" });
   });
 });
 

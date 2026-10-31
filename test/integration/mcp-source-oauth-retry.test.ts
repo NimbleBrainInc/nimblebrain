@@ -50,9 +50,13 @@ interface MockOAuthMcpServer {
  * `refuses`: an `oidc` server that still refuses this scope to this client,
  * answering `invalid_scope` on the redirect, while its userinfo endpoint
  * answers any token. `resourceScopes`: what the resource's own metadata names.
+ *
+ * `iss`: the authorization server follows RFC 9207 — its metadata advertises
+ * `authorization_response_iss_parameter_supported` and its redirect carries
+ * `iss`, the way Notion's hosted MCP server does.
  */
 function startMockOAuthMcpServer(
-  opts: { oidc?: boolean; refuses?: string; resourceScopes?: string[] } = {},
+  opts: { oidc?: boolean; refuses?: string; resourceScopes?: string[]; iss?: boolean } = {},
 ): MockOAuthMcpServer {
   const ISSUED = new Map<string, { code: string; scope: string }>(); // client_id → code
   const VALID_TOKENS = new Map<string, { scope: string; sub: string; email: string }>();
@@ -121,6 +125,7 @@ function startMockOAuthMcpServer(
           grant_types_supported: ["authorization_code", "refresh_token"],
           code_challenge_methods_supported: ["S256"],
           token_endpoint_auth_methods_supported: ["none"],
+          ...(opts.iss ? { authorization_response_iss_parameter_supported: true } : {}),
         });
       }
 
@@ -159,6 +164,7 @@ function startMockOAuthMcpServer(
         const target = new URL(redirectUri);
         target.searchParams.set("code", code);
         target.searchParams.set("state", state);
+        if (opts.iss) target.searchParams.set("iss", base);
         return new Response(null, {
           status: 302,
           headers: { location: target.toString() },
@@ -346,6 +352,112 @@ describe("McpSource — OAuth retry path", () => {
     const tools = await source.tools();
     expect(tools.map((t) => t.name)).toEqual(["pending-test__noop"]);
 
+    await source.stop();
+  }, 15_000);
+
+  it("a server that sends `iss` (RFC 9207) completes the browser flow", async () => {
+    server.stop();
+    server = startMockOAuthMcpServer({ iss: true });
+    let authorizationUrl: string | undefined;
+    const pending = Promise.withResolvers<void>();
+    const provider = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+      serverName: "iss-test",
+      callbackUrl: CALLBACK,
+      allowInsecureRemotes: true,
+      onInteractiveAuthRequired: (url) => {
+        authorizationUrl = url;
+        pending.resolve();
+      },
+    });
+    provider.setInteractiveAuthAllowed(true);
+
+    const source = new McpSource(
+      "iss-test",
+      { type: "remote", url: new URL(server.url), allowInsecure: true, authProvider: provider },
+      new NoopEventSink(),
+    );
+
+    const started = source.start();
+    await pending.promise;
+    if (!authorizationUrl) throw new Error("no authorization URL");
+    const redirect = await fetch(authorizationUrl, { redirect: "manual" });
+    const callback = new URL(redirect.headers.get("location") ?? "");
+    const iss = callback.searchParams.get("iss") ?? undefined;
+    expect(iss).toBe(`http://localhost:${server.port}`);
+    expect(
+      resolveWithCode(
+        callback.searchParams.get("state") ?? "",
+        callback.searchParams.get("code") ?? "",
+        iss,
+      ),
+    ).toBe(true);
+    await started;
+
+    const tools = await source.tools();
+    expect(tools.map((t) => t.name)).toEqual(["iss-test__noop"]);
+    await source.stop();
+  }, 15_000);
+
+  it("a code delivered with another server's `iss` is refused (RFC 9207 mix-up defense)", async () => {
+    server.stop();
+    server = startMockOAuthMcpServer({ iss: true });
+    let authorizationUrl: string | undefined;
+    const pending = Promise.withResolvers<void>();
+    const provider = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+      serverName: "iss-mixup",
+      callbackUrl: CALLBACK,
+      allowInsecureRemotes: true,
+      onInteractiveAuthRequired: (url) => {
+        authorizationUrl = url;
+        pending.resolve();
+      },
+    });
+    provider.setInteractiveAuthAllowed(true);
+
+    const source = new McpSource(
+      "iss-mixup",
+      { type: "remote", url: new URL(server.url), allowInsecure: true, authProvider: provider },
+      new NoopEventSink(),
+    );
+
+    const started = source.start();
+    started.catch(() => {});
+    await pending.promise;
+    if (!authorizationUrl) throw new Error("no authorization URL");
+    const redirect = await fetch(authorizationUrl, { redirect: "manual" });
+    const callback = new URL(redirect.headers.get("location") ?? "");
+    expect(
+      resolveWithCode(
+        callback.searchParams.get("state") ?? "",
+        callback.searchParams.get("code") ?? "",
+        "https://attacker.example.com",
+      ),
+    ).toBe(true);
+    await expect(started).rejects.toThrow(/issuer/i);
+    await source.stop();
+  }, 15_000);
+
+  it("a server that sends `iss` (RFC 9207) completes the headless flow", async () => {
+    server.stop();
+    server = startMockOAuthMcpServer({ iss: true });
+    const provider = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+      serverName: "iss-headless",
+      callbackUrl: CALLBACK,
+      allowInsecureRemotes: true,
+      headlessAuthProbe: true,
+    });
+    const source = new McpSource(
+      "iss-headless",
+      { type: "remote", url: new URL(server.url), allowInsecure: true, authProvider: provider },
+      new NoopEventSink(),
+    );
+
+    await source.start();
+    const tools = await source.tools();
+    expect(tools.map((t) => t.name)).toEqual(["iss-headless__noop"]);
     await source.stop();
   }, 15_000);
 

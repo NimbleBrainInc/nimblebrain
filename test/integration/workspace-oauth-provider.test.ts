@@ -52,7 +52,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (headless)", () =>
       const pending = p.awaitPendingFlow();
 
       await p.redirectToAuthorization(authUrl);
-      await expect(pending).resolves.toBe("anonymous");
+      await expect(pending).resolves.toEqual({ code: "anonymous" });
     } finally {
       mockAuthServer.stop(true);
     }
@@ -92,7 +92,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (headless)", () =>
       const pending = p.awaitPendingFlow();
 
       await p.redirectToAuthorization(authUrl);
-      await expect(pending).resolves.toBe("anonymous");
+      await expect(pending).resolves.toEqual({ code: "anonymous" });
     } finally {
       mockAuthServer.stop(true);
     }
@@ -129,7 +129,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (headless)", () =>
       const pending = p.awaitPendingFlow();
 
       await p.redirectToAuthorization(authUrl);
-      await expect(pending).resolves.toBe("anonymous");
+      await expect(pending).resolves.toEqual({ code: "anonymous" });
     } finally {
       mockAuthServer.stop(true);
     }
@@ -193,7 +193,7 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
       // resolves the awaitPendingFlow promise.
       const pending = p.awaitPendingFlow();
       expect(resolveWithCode(state, "the-code-123")).toBe(true);
-      expect(await pending).toBe("the-code-123");
+      expect(await pending).toEqual({ code: "the-code-123" });
     } finally {
       mockAuthServer.stop(true);
       loginPage.stop(true);

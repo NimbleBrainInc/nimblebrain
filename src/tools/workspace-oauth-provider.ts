@@ -22,6 +22,7 @@ import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
 import { McpOAuthRecords } from "./mcp-oauth-records.ts";
 import {
+  type AuthorizationResponse,
   abandonFlow as abandonInteractiveFlow,
   DEFAULT_FLOW_TTL_MS,
   type FlowOwner,
@@ -681,8 +682,8 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * it atomic — no lock primitives needed.
    */
   private pendingFlow: {
-    promise: Promise<string>;
-    deferred?: Deferred<string>;
+    promise: Promise<AuthorizationResponse>;
+    deferred?: Deferred<AuthorizationResponse>;
     /** First saveCodeVerifier wins; subsequent concurrent calls no-op. */
     verifier?: string;
     /** First redirectToAuthorization wins; subsequent calls throw without re-capturing. */
@@ -844,7 +845,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // `redirectToAuthorization`. The interactive branch replaces the
     // promise with the flow-registry's promise so the HTTP callback route
     // is the resolver.
-    const d = deferred<string>();
+    const d = deferred<AuthorizationResponse>();
     this.pendingFlow = { promise: d.promise, deferred: d };
     this.currentState = s;
     this.identityScopesRefused = false;
@@ -1315,7 +1316,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * Run `finish` — the transport's `finishAuth(code)`, which exchanges the
+   * Run `finish` — the transport's `finishAuth(code, iss)`, which exchanges the
    * authorization code and lands the tokens through `saveTokens` — marked as a
    * code exchange, so `saveTokens` treats the tokens as a new sign-in.
    */
@@ -1677,7 +1678,10 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * through to the interactive branch. Throws (rejecting `d`) for authz-server
    * errors and SSRF blocks; swallows network failures and returns `false`.
    */
-  private async probeHeadlessRedirect(url: URL, d: Deferred<string> | undefined): Promise<boolean> {
+  private async probeHeadlessRedirect(
+    url: URL,
+    d: Deferred<AuthorizationResponse> | undefined,
+  ): Promise<boolean> {
     if (!this.headlessAuthProbe) return false;
     const MAX_HOPS = 10;
     let current = url;
@@ -1711,7 +1715,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    */
   private async followHeadlessHop(
     current: URL,
-    d: Deferred<string> | undefined,
+    d: Deferred<AuthorizationResponse> | undefined,
     hop: number,
   ): Promise<{ resolved?: boolean; next?: URL }> {
     this.validateProbeHop(current);
@@ -1761,17 +1765,18 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    */
   private consumeHeadlessCallback(
     next: URL,
-    d: Deferred<string> | undefined,
+    d: Deferred<AuthorizationResponse> | undefined,
     hop: number,
   ): boolean {
     const code = next.searchParams.get("code");
+    const iss = next.searchParams.get("iss");
     const errParam = next.searchParams.get("error");
     if (code) {
       log.debug(
         "mcp",
         `[oauth] headless flow: ${this.serverName} got code=${code.slice(0, 8)}… after ${hop + 1} hop(s)`,
       );
-      d?.resolve(code);
+      d?.resolve(iss === null ? { code } : { code, iss });
       return true;
     }
     if (errParam) {
@@ -1925,13 +1930,14 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   // ── Extensions used by McpSource.start() ──────────────────────────
 
   /**
-   * Await the in-flight authorization to yield an authorization code.
-   * Called by `McpSource.start()` after catching `UnauthorizedError` so it
-   * can then call `transport.finishAuth(code)` and retry `connect()`.
+   * Await the in-flight authorization to yield its response: the code and,
+   * from an RFC 9207 server, its `iss`. Called by `McpSource.start()` after
+   * catching `UnauthorizedError` so it can then call
+   * `transport.finishAuth(code, iss)` and retry `connect()`.
    *
    * Fails fast if the flow was rejected (e.g., interactive OAuth).
    */
-  async awaitPendingFlow(): Promise<string> {
+  async awaitPendingFlow(): Promise<AuthorizationResponse> {
     if (!this.pendingFlow) {
       throw new Error(
         "[workspace-oauth-provider] awaitPendingFlow called with no active flow — " +

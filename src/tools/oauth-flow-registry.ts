@@ -27,8 +27,20 @@
  */
 export type FlowOwner = { kind: "workspace"; wsId: string } | { kind: "user"; userId: string };
 
+/**
+ * What the authorization server sent back on the redirect. `iss` is RFC 9207's
+ * issuer identifier: the MCP SDK checks it against the issuer it discovered
+ * before redeeming the code, and refuses a server that advertises
+ * `authorization_response_iss_parameter_supported` when it is missing — so it
+ * travels with the code all the way to `finishAuth`.
+ */
+export interface AuthorizationResponse {
+  code: string;
+  iss?: string;
+}
+
 interface PendingFlow {
-  resolve: (code: string) => void;
+  resolve: (response: AuthorizationResponse) => void;
   reject: (err: Error) => void;
   owner: FlowOwner;
   serverName: string;
@@ -129,8 +141,8 @@ export function register(
   serverName: string,
   ttlMs: number = DEFAULT_FLOW_TTL_MS,
   scopeFallback?: ScopeFallback,
-): Promise<string> {
-  const promise = new Promise<string>((resolve, reject) => {
+): Promise<AuthorizationResponse> {
+  const promise = new Promise<AuthorizationResponse>((resolve, reject) => {
     const timeout = setTimeout(() => {
       // Only reject if we haven't already been resolved/rejected by the
       // callback. `flows.delete` before `reject` prevents the reject
@@ -192,13 +204,13 @@ export function takeScopeFallback(state: string): string | null {
   return fallback.url;
 }
 
-/** Resolve a pending flow by state. Returns true if found. */
-export function resolveWithCode(state: string, code: string): boolean {
+/** Resolve a pending flow by state with the callback's `code` and `iss`. Returns true if found. */
+export function resolveWithCode(state: string, code: string, iss?: string): boolean {
   const flow = flows.get(state);
   if (!flow) return false;
   flows.delete(state);
   clearTimeout(flow.timeout);
-  flow.resolve(code);
+  flow.resolve(iss === undefined ? { code } : { code, iss });
   return true;
 }
 

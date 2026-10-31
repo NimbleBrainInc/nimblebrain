@@ -200,7 +200,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       if (params.outcome !== "provider_error") return refuse(params);
       return answerProviderRefusal(c, params);
     }
-    const { code, wireState } = params;
+    const { code, wireState, iss } = params;
 
     const state = sessionFlow(c, wireState);
     if (isCallbackFailure(state)) return refuse(state);
@@ -210,7 +210,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
     // connector's settings page vs the user's profile. Synchronous +
     // single-process, so the peek can't race the resolve below.
     const flowOwner = peekFlowOwner(state);
-    if (!resolveWithCode(state, code)) {
+    if (!resolveWithCode(state, code, iss)) {
       logCallbackOutcome("unknown_flow", { flow: flowId(state) });
       return c.html(
         "<html><body><h3>Unknown or expired OAuth flow.</h3>" +
@@ -455,12 +455,15 @@ function refuse(failure: CallbackFailure, extra: Record<string, unknown> = {}): 
   return failure.response;
 }
 
-/** Read `code` / `state` from the callback query, surfacing the provider `error` param or missing params as a refusal. */
+/** Read `code` / `state` / `iss` from the callback query, surfacing the provider `error` param or missing params as a refusal. */
 function readCallbackParams(
   c: Context<AppEnv>,
-): { code: string; wireState: string } | CallbackFailure {
+): { code: string; wireState: string; iss?: string } | CallbackFailure {
   const code = c.req.query("code");
   const wireState = c.req.query("state");
+  // RFC 9207's issuer identifier. Passed through untouched: the SDK compares it
+  // to the discovered issuer before redeeming the code.
+  const iss = c.req.query("iss");
   const error = c.req.query("error");
 
   if (error) {
@@ -479,7 +482,7 @@ function readCallbackParams(
   if (!code || !wireState) {
     return { outcome: "missing_params", response: c.text("missing code or state", 400) };
   }
-  return { code, wireState };
+  return iss === undefined ? { code, wireState } : { code, wireState, iss };
 }
 
 /**

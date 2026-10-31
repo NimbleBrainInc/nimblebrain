@@ -20,7 +20,13 @@ describe("oauth-flow-registry", () => {
   it("resolves a registered flow with the provided code", async () => {
     const p = register("state-abc", WS, "srv");
     expect(resolveWithCode("state-abc", "the-code")).toBe(true);
-    await expect(p).resolves.toBe("the-code");
+    await expect(p).resolves.toEqual({ code: "the-code" });
+  });
+
+  it("carries the callback's RFC 9207 `iss` with the code", async () => {
+    const p = register("state-iss", WS, "srv");
+    expect(resolveWithCode("state-iss", "the-code", "https://mcp.example.com")).toBe(true);
+    await expect(p).resolves.toEqual({ code: "the-code", iss: "https://mcp.example.com" });
   });
 
   it("returns false for unknown state on resolve", () => {
@@ -35,7 +41,7 @@ describe("oauth-flow-registry", () => {
     expect(peekFlowOwner("state-peek")).toEqual({ kind: "workspace", wsId: "ws_000f7ed6658f9d30" });
     // Still resolvable — peek didn't consume the flow.
     expect(resolveWithCode("state-peek", "code")).toBe(true);
-    await expect(p).resolves.toBe("code");
+    await expect(p).resolves.toEqual({ code: "code" });
     // Gone after resolve.
     expect(peekFlowOwner("state-peek")).toBeNull();
   });
@@ -44,7 +50,7 @@ describe("oauth-flow-registry", () => {
     const p = register("state-user", { kind: "user", userId: "usr_alice" }, "granola");
     expect(peekFlowOwner("state-user")).toEqual({ kind: "user", userId: "usr_alice" });
     expect(resolveWithCode("state-user", "code")).toBe(true);
-    await expect(p).resolves.toBe("code");
+    await expect(p).resolves.toEqual({ code: "code" });
   });
 
   it("peekFlowOwner returns null for an unknown state", () => {
@@ -100,7 +106,7 @@ describe("oauth-flow-registry", () => {
     // fire on an already-settled flow.
     const p = register("state-resolved", WS, "srv", 30);
     resolveWithCode("state-resolved", "ok");
-    await expect(p).resolves.toBe("ok");
+    await expect(p).resolves.toEqual({ code: "ok" });
     await new Promise((r) => setTimeout(r, 60));
     // If the timer had fired, `p` would have been re-rejected — but a
     // Promise is immutable once settled, so a late reject would only show
@@ -121,7 +127,7 @@ describe("oauth-flow-registry", () => {
     expect(used).toBe(1);
     // The flow itself carries on with the same state.
     expect(resolveWithCode("state-fallback", "the-code")).toBe(true);
-    await expect(p).resolves.toBe("the-code");
+    await expect(p).resolves.toEqual({ code: "the-code" });
   });
 
   it("a flow with no scope fallback, or no flow, has none to take", () => {
