@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { getSpecThemeTokens } from "../../bridge/theme.ts";
-import { colors, pick } from "../palette.ts";
+import { colors, pick, spacing } from "../palette.ts";
 import { paletteToExtAppsTokens, paletteToRootCss } from "../projections.ts";
 
 /**
@@ -104,7 +104,13 @@ describe("getSpecThemeTokens — protocol boundary", () => {
  * spec has no key for, so the host sends exactly this set and no `--nb-*` twin
  * of a spec key.
  */
-const NB_EXTENSIONS = ["--nb-color-processing", "--nb-color-processing-light", "--nb-font-heading"];
+const NB_EXTENSIONS = [
+  "--nb-color-processing",
+  "--nb-color-processing-light",
+  "--nb-font-heading",
+  "--nb-gutter-narrow",
+  "--nb-gutter-wide",
+];
 
 /** The spec keys that carry the status colours, the info ground and on-fill text. */
 const SPEC_STATUS_KEYS: Record<string, keyof typeof colors> = {
@@ -211,5 +217,28 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
 
   test("no --radius base is emitted", () => {
     expect(rootBlock).not.toContain("--radius:");
+  });
+});
+
+/**
+ * The Synapse UI kit's defaults, exported from `@nimblebrain/synapse/ui` (0.38.0
+ * and later) as `GUTTER_DEFAULT`, `GUTTER_NARROW_DEFAULT` and
+ * `GUTTER_NARROW_BREAKPOINT`. Stated here because the web package does not
+ * depend on the kit. Change one side, change both.
+ */
+const KIT = { gutter: "1.5rem", gutterNarrow: "1rem", narrowBreakpointPx: 640 } as const;
+
+describe("the page gutter is the kit's", () => {
+  test("the host's gutter, narrow gutter and breakpoint equal the kit's defaults", () => {
+    expect({ ...spacing }).toEqual(KIT);
+  });
+
+  test("the shell's gutter narrows in the main column at the kit's breakpoint", () => {
+    const css = paletteToRootCss();
+    expect(css).toContain(`--page-gutter: ${KIT.gutter};`);
+    expect(css).toContain(`--page-gutter-narrow: ${KIT.gutterNarrow};`);
+    expect(css).toContain(
+      `@container main (max-width: ${KIT.narrowBreakpointPx}px) {\n  * {\n    --page-gutter: var(--page-gutter-narrow);`,
+    );
   });
 });

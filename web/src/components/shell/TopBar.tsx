@@ -19,6 +19,9 @@
 // tabs, and a held fill reads as stuck. `aria-pressed` / `aria-current` carry
 // the state for assistive tech.
 //
+// The left inset is the page gutter (`--page-gutter`), so the title lines up
+// with an app's content and narrows with it.
+//
 // Height is the chat panel header's (`h-14`, border included), so the two
 // bottom borders run on the same pixel row and meet at the resize handle.
 // Change one, change both.
@@ -109,7 +112,7 @@ export function TopBar() {
     <TooltipProvider>
       <header
         data-testid="top-bar"
-        className="@container/top-bar flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background pr-3 pl-4"
+        className="@container/top-bar flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background pr-3 pl-(--page-gutter)"
       >
         {sidebarState === "hidden" && <SidebarToggle />}
         {parent && (

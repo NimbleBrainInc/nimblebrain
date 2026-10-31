@@ -25,6 +25,7 @@ import {
   pick,
   radiusScale,
   shadows,
+  spacing,
   typeScale,
 } from "./palette.ts";
 
@@ -90,6 +91,11 @@ export function paletteToExtAppsTokens(
     "--nb-color-processing": c("processing"),
     "--nb-color-processing-light": c("processing-light"),
     "--nb-font-heading": palette.fonts.heading,
+    // The page gutter, wide and narrow; the kit's `AppFrame` picks one by its
+    // frame's width. Never `--nb-gutter`: the kit reads that one at every
+    // width, so sending it would stop an app's gutter from narrowing.
+    "--nb-gutter-wide": spacing.gutter,
+    "--nb-gutter-narrow": spacing.gutterNarrow,
   };
 }
 
@@ -100,13 +106,17 @@ export function paletteToExtAppsTokens(
  * `--font-text-*`, `--nb-shadow-*`, …). `:root` also carries the
  * mode-independent layout constants, radius scale, type scale, and fonts;
  * `.dark` redefines colors and shadows (both mode-dependent), the rest cascade
- * from `:root`.
+ * from `:root`. A trailing `@container main` rule narrows the page gutter.
  */
 export function paletteToRootCss(palette: Palette = canonicalPalette): string {
   const names = Object.keys(palette.colors) as (keyof typeof colors)[];
 
   const lightDecls = names.map((n) => `  --${n}: ${pick(palette.colors[n], "light")};`);
   for (const [k, v] of Object.entries(layout)) lightDecls.push(`  ${k}: ${v};`);
+  // Page gutter — `--page-gutter` is the inset to use; it takes the narrow
+  // value inside a main column at or under the breakpoint (the rule below).
+  lightDecls.push(`  --page-gutter: ${spacing.gutter};`);
+  lightDecls.push(`  --page-gutter-narrow: ${spacing.gutterNarrow};`);
   // Radius scale — the ONE radius source, shared with the iframe apps. Emitted
   // as `--border-radius-*` (the ext-apps / synapse-ui names) and aliased to
   // Tailwind's `--radius-*` in index.css, so the shell and the apps round
@@ -129,5 +139,12 @@ export function paletteToRootCss(palette: Palette = canonicalPalette): string {
   const darkDecls = names.map((n) => `  --${n}: ${pick(palette.colors[n], "dark")};`);
   for (const [k, v] of Object.entries(shadows.dark)) darkDecls.push(shadowDecl(k, v));
 
-  return `:root {\n${lightDecls.join("\n")}\n}\n\n.dark {\n${darkDecls.join("\n")}\n}\n`;
+  // The gutter follows the main column's width, not the viewport's: the column
+  // shrinks as the chat docks, and an app's iframe fills that same column, so
+  // the shell and the app narrow together. `<main>` is the `main` container
+  // (`ShellLayout`). A container query cannot read a `var()`, so the breakpoint
+  // is written in here from `spacing`.
+  const gutterRule = `@container main (max-width: ${spacing.narrowBreakpointPx}px) {\n  * {\n    --page-gutter: var(--page-gutter-narrow);\n  }\n}\n`;
+
+  return `:root {\n${lightDecls.join("\n")}\n}\n\n.dark {\n${darkDecls.join("\n")}\n}\n\n${gutterRule}`;
 }

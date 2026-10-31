@@ -81,6 +81,20 @@ two-pane master/detail collapses into nested unreadable scroll regions the momen
 the chat is docked. Reference: `pages/ContextInspectorPage.tsx`, one scrolling
 column with each layer's body expanding in place.
 
+## The page gutter
+
+The gutter is the host's token, like colour, font and radius: `spacing` in
+`src/theme/palette.ts` holds the wide and narrow values and the breakpoint, all
+equal to the Synapse kit's defaults. Host chrome and pages inset by
+`--page-gutter`, never a hand-picked `px-*`; it narrows when the main column
+(`@container main`) is at or under the breakpoint, the same column an app's
+iframe fills, so the shell's inset and an app's line up at every width.
+
+The host never pads an app's slot. An app gets both values (`--nb-gutter-wide`
+and `--nb-gutter-narrow` in its style block) and decides where to inset, because some panes run edge to
+edge. Never send an app `--nb-gutter`: the kit reads it at every width, so it
+would stop the app's gutter narrowing.
+
 ## Settings pages
 
 Every settings page renders in `SettingsShell`, which sets the one content width

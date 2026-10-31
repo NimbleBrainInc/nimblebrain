@@ -3,12 +3,13 @@ import {
   buildThemeStyleBlock,
   DARK_TOKENS,
   getModeExtensionTokens,
+  getSpecThemeTokens,
   getThemeTokens,
   LIGHT_TOKENS,
   setThemePalette,
 } from "../../../web/src/bridge/theme.ts";
 import { mergePalette } from "../../../web/src/theme/brand.ts";
-import { colors, radiusScale } from "../../../web/src/theme/palette.ts";
+import { colors, radiusScale, spacing } from "../../../web/src/theme/palette.ts";
 import { ACME_BRAND } from "../../helpers/acme-brand.ts";
 
 /**
@@ -102,4 +103,33 @@ describe("a brand's palette reaches the iframe", () => {
     setThemePalette();
     expect(getThemeTokens("light")["--color-text-accent"]).toBe(colors.primary[0]);
   });
+});
+
+/**
+ * An app gets the host's wide and narrow gutter and nothing that fixes its
+ * gutter. The kit reads `--nb-gutter` at every width, so a host that sent it
+ * would stop an app's gutter narrowing. The values are the same in both modes,
+ * so they travel in the style block.
+ */
+describe("the page gutter reaches an app as its wide and narrow values", () => {
+  for (const mode of ["light", "dark"] as const) {
+    test(`${mode}: the style block carries both gutter values from the palette`, () => {
+      const block = buildThemeStyleBlock(mode);
+      expect(block).toContain(`  --nb-gutter-wide: ${spacing.gutter};`);
+      expect(block).toContain(`  --nb-gutter-narrow: ${spacing.gutterNarrow};`);
+    });
+
+    test(`${mode}: --nb-gutter is sent on no channel`, () => {
+      expect(buildThemeStyleBlock(mode)).not.toMatch(/--nb-gutter\s*:/);
+      expect(getSpecThemeTokens(mode)["--nb-gutter"]).toBeUndefined();
+      expect(getModeExtensionTokens(mode)["--nb-gutter"]).toBeUndefined();
+    });
+
+    test(`${mode}: the gutter values stay off the protocol fields`, () => {
+      for (const key of ["--nb-gutter-wide", "--nb-gutter-narrow"]) {
+        expect(getSpecThemeTokens(mode)[key]).toBeUndefined();
+        expect(getModeExtensionTokens(mode)[key]).toBeUndefined();
+      }
+    });
+  }
 });
