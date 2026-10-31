@@ -182,7 +182,7 @@ export type { ResourceData } from "./types.ts";
  * one concrete class would lie about which transport shapes are valid.
  */
 type AuthFinishableTransport = Transport & {
-  finishAuth?: (authorizationCode: string) => Promise<void>;
+  finishAuth?: (authorizationCode: string, iss?: string) => Promise<void>;
 };
 
 /** Discriminated union for how McpSource connects to its MCP server. */
@@ -853,7 +853,7 @@ export class McpSource implements ToolSource {
     const authProvider = this.mode.authProvider;
     const transport = this.transport;
     try {
-      const code = await authProvider.awaitPendingFlow();
+      const { code, iss } = await authProvider.awaitPendingFlow();
       const authable = transport as AuthFinishableTransport;
       const finishAuth = authable.finishAuth?.bind(authable);
       if (typeof finishAuth !== "function") {
@@ -861,7 +861,9 @@ export class McpSource implements ToolSource {
           `[mcp-source] transport does not support finishAuth (got ${transport.constructor.name})`,
         );
       }
-      await authProvider.exchangeAuthorizationCode(() => finishAuth(code));
+      // `iss` goes with the code: the SDK refuses an RFC 9207 server's code
+      // without it, as the mix-up defense the spec requires.
+      await authProvider.exchangeAuthorizationCode(() => finishAuth(code, iss));
       log.debug("mcp", `[oauth] ${this.name}: finishAuth ok, recreating transport for retry`);
 
       // Drop the first-attempt transport+client. Both are single-use after a
