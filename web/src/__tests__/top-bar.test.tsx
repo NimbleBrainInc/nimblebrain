@@ -14,6 +14,8 @@
 //      it opens is pinned in inbox-preview.test.tsx.
 //   7. On an app whose connector has a settings section, a gear left of the
 //      bell links to that connector's settings page; nowhere else.
+//   8. An app that places several views leads the trail with a crumb naming the
+//      app, linked to its first view; a single-view app gets none.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -40,10 +42,13 @@ const { NotificationsContext } = await import("../context/NotificationsContext")
 const { ShellProvider } = await import("../context/ShellContext");
 const { SidebarProvider } = await import("../context/SidebarContext");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
+const { WorkspaceAppIconsContext } = await import("../context/WorkspaceAppIconsContext");
 const { TopBar } = await import("../components/shell/TopBar");
 
+import type { InstalledConnector } from "../api/client";
 import type { AppLocationContextValue } from "../context/AppLocationContext";
 import type { NotificationsValue } from "../context/NotificationsContext";
+import type { WorkspaceConnectors } from "../context/WorkspaceAppIconsContext";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
 
@@ -61,6 +66,25 @@ const PEOPLE_SETTINGS: PlacementEntry = {
   slot: "settings",
   resourceUri: "ui://people/settings",
   priority: 100,
+};
+
+// One app, two views: grouped under one sidebar entry by the host.
+const OUTREACH_REPLIES: PlacementEntry = {
+  serverName: "outreach",
+  slot: "sidebar.apps",
+  resourceUri: "ui://outreach/replies",
+  priority: 50,
+  label: "Replies",
+  route: "outreach",
+};
+
+const OUTREACH_CAMPAIGNS: PlacementEntry = {
+  serverName: "outreach",
+  slot: "sidebar.apps",
+  resourceUri: "ui://outreach/campaigns",
+  priority: 51,
+  label: "Campaigns",
+  route: "outreach/campaigns",
 };
 
 // Captures the context's setter so a test can publish a trail the way
@@ -89,9 +113,15 @@ function inbox(unread: number): NotificationsValue {
 async function mountBar(
   path: string,
   unread = 0,
-  shell: { settings?: PlacementEntry[]; shellWorkspaceId?: string } = {},
+  shell: {
+    settings?: PlacementEntry[];
+    sidebar?: PlacementEntry[];
+    shellWorkspaceId?: string;
+    connectors?: WorkspaceConnectors;
+  } = {},
 ): Promise<void> {
   const settings = shell.settings ?? [];
+  const sidebar = shell.sidebar ?? [PEOPLE];
   container = document.createElement("div");
   document.body.appendChild(container);
   root = ReactDOMClient.createRoot(container);
@@ -106,15 +136,19 @@ async function mountBar(
                   <ShellProvider
                     value={{
                       forSlot: (slot) =>
-                        slot === "sidebar" ? [PEOPLE] : slot === "settings" ? settings : [],
+                        slot === "sidebar" ? sidebar : slot === "settings" ? settings : [],
                       mainRoutes: () => [],
                       shellWorkspaceId: shell.shellWorkspaceId ?? "ws_00079598e311c160",
                     }}
                   >
-                    <AppLocationProvider>
-                      <LocationProbe />
-                      <TopBar />
-                    </AppLocationProvider>
+                    <WorkspaceAppIconsContext.Provider
+                      value={{ iconFor: () => undefined, connectors: shell.connectors }}
+                    >
+                      <AppLocationProvider>
+                        <LocationProbe />
+                        <TopBar />
+                      </AppLocationProvider>
+                    </WorkspaceAppIconsContext.Provider>
                   </ShellProvider>
                 </SidebarProvider>
               </ChatPanelProvider>
@@ -315,5 +349,106 @@ describe("TopBar", () => {
   test("no gear while the shell still holds another workspace's placements", async () => {
     await mountBar("/w/000f7ed6658f9d30/app/people", 0, { settings: [PEOPLE_SETTINGS] });
     expect(byTestId("top-bar-app-settings")).toBeUndefined();
+  });
+
+  describe("an app with several views", () => {
+    const OUTREACH = {
+      sidebar: [PEOPLE, OUTREACH_REPLIES, OUTREACH_CAMPAIGNS],
+      shellWorkspaceId: ACME.id,
+      connectors: {
+        workspaceId: ACME.id,
+        installed: [{ serverName: "outreach", displayName: "Outreach" } as InstalledConnector],
+      },
+    };
+    const crumbLinks = () =>
+      Array.from(container.getElementsByTagName("a")).filter(
+        (el) => el.getAttribute("data-testid") === "top-bar-crumb",
+      );
+
+    test("a single-view app gets no app crumb", async () => {
+      await mountBar("/w/000f7ed6658f9d30/app/people", 0, OUTREACH);
+      await act(async () =>
+        location.setAppLocation({ trail: [{ id: "list", label: "Contacts" }], navigate: () => {} }),
+      );
+      expect(byTestId("top-bar-breadcrumb")).toBeUndefined();
+      expect(byTestId("top-bar-back")).toBeUndefined();
+      expect(byTestId("top-bar-title")?.textContent).toBe("Contacts");
+    });
+
+    test("a view's root is named after the app, which links to its first view", async () => {
+      await mountBar("/w/000f7ed6658f9d30/app/outreach/campaigns", 0, OUTREACH);
+      const navigate = mock((_id: string) => {});
+      await act(async () =>
+        location.setAppLocation({ trail: [{ id: "campaigns", label: "Campaigns" }], navigate }),
+      );
+
+      expect(byTestId("top-bar-title")?.textContent).toBe("Campaigns");
+      const crumbs = crumbLinks();
+      expect(crumbs.map((c) => c.textContent)).toEqual(["Outreach"]);
+      expect(crumbs[0].getAttribute("href")).toBe("/w/000f7ed6658f9d30/app/outreach");
+      const back = byTestId("top-bar-back");
+      expect(back?.getAttribute("aria-label")).toBe("Back to Outreach");
+      expect(back?.getAttribute("href")).toBe("/w/000f7ed6658f9d30/app/outreach");
+      expect(navigate.mock.calls).toEqual([]);
+    });
+
+    test("a deep trail follows the app crumb, and back still asks the app one step up", async () => {
+      await mountBar("/w/000f7ed6658f9d30/app/outreach/campaigns", 0, OUTREACH);
+      const navigate = mock((_id: string) => {});
+      await act(async () =>
+        location.setAppLocation({
+          trail: [
+            { id: "campaigns", label: "Campaigns" },
+            { id: "campaigns/q3", label: "Q3 Pilot" },
+          ],
+          navigate,
+        }),
+      );
+
+      expect(byTestId("top-bar-title")?.textContent).toBe("Q3 Pilot");
+      expect(crumbLinks().map((c) => c.textContent)).toEqual(["Outreach"]);
+      expect(crumbButtons().map((c) => c.textContent)).toEqual(["Campaigns"]);
+      const back = byTestId("top-bar-back");
+      expect(back?.getAttribute("aria-label")).toBe("Back to Campaigns");
+      await act(async () => back?.click());
+      expect(navigate.mock.calls).toEqual([["campaigns"]]);
+    });
+
+    test("the app crumb stays outside the fold of a long trail", async () => {
+      await mountBar("/w/000f7ed6658f9d30/app/outreach/campaigns", 0, OUTREACH);
+      const trail = ["a", "b", "c", "d", "e"].map((id) => ({ id, label: id.toUpperCase() }));
+      await act(async () => location.setAppLocation({ trail, navigate: () => {} }));
+
+      expect(crumbLinks().map((c) => c.textContent)).toEqual(["Outreach"]);
+      expect(crumbButtons().map((c) => c.textContent)).toEqual(["A", "D"]);
+    });
+
+    test("on the first view's root the crumb names the app, with no back to the same page", async () => {
+      await mountBar("/w/000f7ed6658f9d30/app/outreach", 0, OUTREACH);
+      await act(async () =>
+        location.setAppLocation({
+          trail: [{ id: "replies", label: "Replies" }],
+          navigate: () => {},
+        }),
+      );
+      expect(crumbLinks().map((c) => c.textContent)).toEqual(["Outreach"]);
+      expect(byTestId("top-bar-back")).toBeUndefined();
+    });
+
+    test("before the installed list lands, the crumb takes the first view's label", async () => {
+      await mountBar("/w/000f7ed6658f9d30/app/outreach/campaigns", 0, {
+        ...OUTREACH,
+        connectors: undefined,
+      });
+      expect(crumbLinks().map((c) => c.textContent)).toEqual(["Replies"]);
+    });
+
+    test("no app crumb while the shell still holds another workspace's placements", async () => {
+      await mountBar("/w/000f7ed6658f9d30/app/outreach/campaigns", 0, {
+        ...OUTREACH,
+        shellWorkspaceId: undefined,
+      });
+      expect(byTestId("top-bar-breadcrumb")).toBeUndefined();
+    });
   });
 });
