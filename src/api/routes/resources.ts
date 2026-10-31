@@ -1,5 +1,7 @@
+import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { compress } from "hono/compress";
+import { etag } from "hono/etag";
 import { handleReadResource, handleResourceProxy, handleResourceUpload } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
@@ -9,6 +11,20 @@ import type { AppContext, AppEnv } from "../types.ts";
 
 /** Where an app's `ui://` resources are served, below the workspace prefix. */
 const APP_RESOURCES_ROUTE = `${WORKSPACE_ROUTE_PREFIX}/apps/:name/resources/*`;
+
+/**
+ * The browser keeps an app's UI and asks before each use whether it changed.
+ *
+ * `private, no-cache` lets only the browser's own cache store it, and makes it
+ * revalidate every time, so a new release shows on the next load. `etag` answers
+ * an unchanged resource with `304` and no body. This sits outside `etag`, whose
+ * `304` carries no headers but the ETag. The ETag is weak because compression
+ * changes the bytes on the wire.
+ */
+const revalidateEachUse: MiddlewareHandler = async (c, next) => {
+  await next();
+  if (c.res.ok || c.res.status === 304) c.header("Cache-Control", "private, no-cache");
+};
 
 export function resourceRoutes(ctx: AppContext) {
   // maxTotalSize is snapshot at route construction; mirrors chat routes
@@ -62,13 +78,22 @@ export function resourceRoutes(ctx: AppContext) {
       // link the transfer is the whole wait. Scoped to this route, which answers
       // one JSON body; the streamed `/mcp` and SSE responses must not pass
       // through an encoder.
-      .get(APP_RESOURCES_ROUTE, compress(), auth, logErrors, requireWorkspace(ctx), (c) => {
-        const name = decodeURIComponent(c.req.param("name"));
-        // Extract the full resource path after /resources/
-        const url = new URL(c.req.url);
-        const prefix = `/v1/workspaces/${c.req.param("wsId")}/apps/${c.req.param("name")}/resources/`;
-        const resourcePath = decodeURIComponent(url.pathname.slice(prefix.length));
-        return handleResourceProxy(name, resourcePath, ctx.runtime, c.var.workspaceId);
-      })
+      .get(
+        APP_RESOURCES_ROUTE,
+        compress(),
+        revalidateEachUse,
+        etag({ weak: true }),
+        auth,
+        logErrors,
+        requireWorkspace(ctx),
+        (c) => {
+          const name = decodeURIComponent(c.req.param("name"));
+          // Extract the full resource path after /resources/
+          const url = new URL(c.req.url);
+          const prefix = `/v1/workspaces/${c.req.param("wsId")}/apps/${c.req.param("name")}/resources/`;
+          const resourcePath = decodeURIComponent(url.pathname.slice(prefix.length));
+          return handleResourceProxy(name, resourcePath, ctx.runtime, c.var.workspaceId);
+        },
+      )
   );
 }
