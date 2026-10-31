@@ -57,6 +57,13 @@ export const SKILL_ACTIVATED_SYNTHETIC = "skill_activated";
  */
 export const SKILL_GUIDANCE_PENDING = "skill_guidance_pending";
 
+/**
+ * The `finishReasonRaw` of a model call the run's cancel cut off. The provider
+ * never reported its usage, so the engine records it from estimates (see
+ * `recordCutOffCall` in `engine.ts`); this tells that record from a reported call.
+ */
+export const CUT_OFF_FINISH_RAW = "cut_off_by_cancel";
+
 export const SKILL_ACTIVATED_META_KEY = "ai.nimblebrain/skill-activated";
 
 /**
