@@ -11,7 +11,7 @@ import type { ThemeMode } from "../bridge/theme";
 /**
  * Send `ui/notifications/host-context-changed` to an app view's mounted
  * iframes whenever what the host context carries changes: the theme, the
- * workspace, the connector's manage flag, the upload limits.
+ * workspace, the connector's manage flag and allowed tools, the upload limits.
  *
  * An app iframe stays mounted across all of these, and the `ui/initialize`
  * handshake is read once, so this notification is the only way a change
@@ -32,15 +32,15 @@ export function useHostContextSync(
 ): void {
   const getBridgesRef = useRef(getBridges);
   getBridgesRef.current = getBridges;
+  // The connector's fields by value: a caller rebuilds the object (and its
+  // `allowedTools` array) on every render, so identity would push on each one.
   const canManage = connector?.canManage;
+  const allowedKey = connector?.allowedTools ? JSON.stringify(connector.allowedTools) : undefined;
 
   useEffect(() => {
-    const ctx = buildHostContext(
-      mode,
-      workspace,
-      canManage === undefined ? undefined : { canManage },
-      uploads,
-    );
+    const allowedTools =
+      allowedKey === undefined ? undefined : (JSON.parse(allowedKey) as string[]);
+    const ctx = buildHostContext(mode, workspace, { canManage, allowedTools }, uploads);
     for (const bridge of getBridgesRef.current()) bridge.setHostContext(ctx);
-  }, [mode, workspace, canManage, uploads]);
+  }, [mode, workspace, canManage, allowedKey, uploads]);
 }

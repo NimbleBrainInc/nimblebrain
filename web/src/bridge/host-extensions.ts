@@ -25,16 +25,28 @@ export type WorkspaceForHostContext = {
 } | null;
 
 /**
- * What the viewer may do with the connector whose settings component is
- * mounted. Supplied only by the connector settings page, so every other mount
- * point's payload carries no `connector` key.
+ * What the viewer may do with the connector a mounted app belongs to, sent as
+ * the `connector` host-context key. Supplied by two mounts: the connector
+ * settings page, to the connector's settings component, and an app's own page
+ * (a routed sidebar placement, such as `sidebar.apps`), to that connector's
+ * app. Every other mount point's payload (an inline tool result, an identity
+ * app, which belongs to no connector) carries no `connector` key.
  *
- * `canManage` is the same rule the page's host sections gate on: workspace
- * membership role `admin`, with no org-admin bypass. It lets a component
- * disable controls it knows the viewer cannot use. It is not the permission:
- * the server decides every call on its own.
+ * - `allowedTools`: the bare names of this connector's tools the viewer may
+ *   call, from the server's installed-connector entry, decided by the same gate
+ *   that refuses a call (`admin_tools` against the viewer's workspace role, and
+ *   the host-only lifecycle handlers). An app gates a control on whether the
+ *   tool behind it is listed. It names tools, never a role, so a change to who
+ *   may call what changes the list and no app. Sent on both mounts once the
+ *   entry has loaded.
+ * - `canManage`: the older, coarser signal, the viewer's workspace role
+ *   (`admin`, no org-admin bypass). Settings page only. Prefer `allowedTools`.
+ *
+ * Neither is the permission: the server decides every call on its own.
  */
-export type ConnectorForHostContext = { canManage: boolean } | undefined;
+export type ConnectorForHostContext =
+  | { canManage?: boolean; allowedTools?: readonly string[] }
+  | undefined;
 
 /**
  * The limits a picker upload is held to: the instance's `files` config, which
@@ -61,7 +73,12 @@ export function buildHostExtensions(
         },
       }
     : {};
-  if (connector) ext.connector = { canManage: connector.canManage };
+  if (connector && (connector.canManage !== undefined || connector.allowedTools)) {
+    ext.connector = {
+      ...(connector.canManage !== undefined ? { canManage: connector.canManage } : {}),
+      ...(connector.allowedTools ? { allowedTools: [...connector.allowedTools] } : {}),
+    };
+  }
   if (uploads) {
     ext.uploads = { maxFileSize: uploads.maxFileSize, maxTotalSize: uploads.maxTotalSize };
   }

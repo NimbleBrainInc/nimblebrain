@@ -108,6 +108,7 @@ function connector(
     scope: "workspace",
     interactive: false,
     toolCount: 1,
+    allowedTools: [],
     status,
     ...(name ? { catalog: { name } as InstalledConnector["catalog"] } : {}),
   };

@@ -23,15 +23,19 @@ const STATE_CHANGE_SETTLE_MS = 500;
  * never re-implements that resolution or fans out duplicate fetches.
  *
  * Scoped to the active workspace (the connectors list is read through its
- * workspace path); refetched on workspace switch, on the connector-lifecycle
+ * workspace path); refetched on workspace switch, on a change to the viewer's
+ * role in it (each entry's `allowedTools` is decided for that role), on the connector-lifecycle
  * SSE signals (install / uninstall) that change the app set, and once after
  * a burst of connection state changes settles, since those change `status`.
  */
 export function WorkspaceAppIconsProvider({
   workspaceId,
+  viewerRole,
   children,
 }: {
   workspaceId?: string;
+  /** The viewer's membership role in that workspace; a change refetches. */
+  viewerRole?: string;
   children: ReactNode;
 }) {
   const [icons, setIcons] = useState<Map<string, string>>(() => new Map());
@@ -62,10 +66,12 @@ export function WorkspaceAppIconsProvider({
   // Refetch when the focused workspace changes. The connectors list is
   // workspace-scoped, so a stale map would paint the previous
   // workspace's icons onto this one's apps.
+  // A role change refetches too: the server decides `allowedTools` per caller.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `viewerRole` is the trigger, not an input — the server reads the role itself
   useEffect(() => {
     if (!workspaceId) return;
     void refresh(workspaceId);
-  }, [workspaceId, refresh]);
+  }, [workspaceId, viewerRole, refresh]);
 
   // A single install drives the connection through starting → pending_auth →
   // running; refetching on each transition turned one Install click into a

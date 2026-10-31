@@ -656,6 +656,13 @@ export interface InstalledConnector {
   interactive: boolean;
   toolCount: number;
   /**
+   * The bare names of this connector's tools the caller may call, decided by
+   * the server with the same gate that refuses a call. Empty when the
+   * connector is not running. Handed to the connector's apps as
+   * `hostContext.connector.allowedTools`.
+   */
+  allowedTools: string[];
+  /**
    * Brand icon URL from the connector's catalog match. Falls through to the
    * deterministic letter avatar when unset (the connector isn't in any
    * enabled registry, or the fetch failed).

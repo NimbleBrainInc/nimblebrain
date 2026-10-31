@@ -1,6 +1,6 @@
 ---
 title: Settings sections
-description: Render your connector's own settings on its settings page with a settings placement, and use the canManage host-context flag to show controls only to people who can use them.
+description: Render your connector's own settings on its settings page with a settings placement, and use the allowedTools host-context list to show controls only to people who can use them.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -42,32 +42,43 @@ The host sizes the section to its content, so style it as a section of a page,
 not as a full viewport. **Every workspace member who can open the page sees it**,
 not only admins.
 
-## The manage flag
+## Which tools the viewer may call
 
-The host tells the section whether the viewer can manage this connector, in the
-handshake's host context:
+The host tells the section which of your connector's tools the viewer may call,
+in the handshake's host context:
 
 ```json
 "hostContext": {
-  "connector": { "canManage": false }
+  "connector": {
+    "allowedTools": ["get_default_signature", "search_tickets"],
+    "canManage": false
+  }
 }
 ```
 
-- `canManage` is `true` for a **workspace admin**, a member of this workspace
-  whose role is `admin`, and `false` for everyone else. That includes an
-  organization admin who is not an admin of this workspace. It is the same rule
-  the host's own sections on the page follow.
-- When it changes while the section is open, the host sends it again in
-  `ui/notifications/host-context-changed`.
-- Only the settings section receives the `connector` key. Your other
-  placements do not.
+- `allowedTools` lists the bare names of your tools this viewer may call. The
+  host computes it with the same check that refuses a call: your
+  [`admin_tools`](/host/admin-tools/) against the viewer's role in this
+  workspace. Gate each control on whether the tool behind it is in the list.
+- It names tools, not a role. If the host's role model changes, the list
+  changes and your code does not.
+- Your app's own pages (its routed sidebar placements, such as `sidebar.apps`)
+  receive the same `allowedTools`, so an admin-only action in the main view is
+  offered only to the people who can use it. A view rendered inline in a chat
+  does not receive the `connector` key.
+- When it changes while the section or page is open (the viewer's role changed),
+  the host sends it again in `ui/notifications/host-context-changed`. It may
+  also arrive first in such a notification rather than at the handshake.
+- `canManage` is an older, coarser signal, sent to the settings section only:
+  `true` for a workspace admin and `false` for everyone else, an organization
+  admin who is not an admin of this workspace included. Prefer `allowedTools`.
 
-<Aside type="caution" title="The flag reflects controls; it is not the permission">
-Use `canManage` to disable or omit controls the viewer cannot use. It does not
-stop anyone. The iframe can call any tool on its own server regardless of the
-flag, and so can the agent. A tool that only a workspace admin may call must be
-declared in [`admin_tools`](/host/admin-tools/), so the host refuses it to
-everyone else on every path.
+<Aside type="caution" title="The list shapes controls; it is not the permission">
+Use `allowedTools` to disable or omit controls the viewer cannot use. It does
+not stop anyone. The iframe can send any tool call to its own server regardless
+of the list, and so can the agent. A tool that only a workspace admin may call
+must be declared in [`admin_tools`](/host/admin-tools/), so the host refuses it
+to everyone else on every path.
 </Aside>
 
 ## Example
@@ -88,19 +99,19 @@ declares the section and gates the write tool:
 }
 ```
 
-The section reads the flag at the handshake and on every host-context change,
-and disables the editor when it is `false`:
+The section reads the list at the handshake and on every host-context change,
+and disables the editor unless the write tool is in it:
 
 ```js
 // ui://settings. `ctx` is the hostContext from the ui/initialize result,
 // or the params of a ui/notifications/host-context-changed notification.
 // `callTool` stands for your SDK's tool call (the bridge's `tools/call`).
 function applyHostContext(ctx) {
-  if (!ctx.connector) return; // a change that did not touch the flag
-  const canManage = ctx.connector.canManage === true;
-  document.querySelector("#signature").disabled = !canManage;
-  document.querySelector("#save").hidden = !canManage;
-  document.querySelector("#read-only-note").hidden = canManage;
+  if (!ctx.connector?.allowedTools) return; // a change that did not touch the list
+  const canSave = ctx.connector.allowedTools.includes("set_default_signature");
+  document.querySelector("#signature").disabled = !canSave;
+  document.querySelector("#save").hidden = !canSave;
+  document.querySelector("#read-only-note").hidden = canSave;
 }
 
 document.querySelector("#save").addEventListener("click", async () => {
@@ -112,8 +123,9 @@ document.querySelector("#save").addEventListener("click", async () => {
 });
 ```
 
-Two layers, each doing one job: `canManage` keeps a member from being shown a
-control that would fail, and `admin_tools` is what makes it fail.
+One rule, asked twice: `admin_tools` decides who may call the tool, and
+`allowedTools` is the host asking that same rule which tools this viewer may
+call, so the section never shows a control that would fail.
 
 ## Related
 

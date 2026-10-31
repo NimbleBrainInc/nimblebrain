@@ -14,6 +14,8 @@
 //      a member and for an org admin who is not a workspace admin (the write
 //      rule has no org-admin bypass). It reaches the handshake, and a role change
 //      reaches a mounted iframe through `host-context-changed`.
+//      Beside it, `connector.allowedTools`: the installed entry's list of the
+//      connector's tools the viewer may call, passed through unchanged.
 //   4. Other mounts carry no `connector` key.
 //
 // Same plumbing as SlotRenderer.test.tsx: whole-module mock over the api/client
@@ -30,6 +32,8 @@ import type { PlacementEntry } from "../types";
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const SERVER = "crm";
+/** The tools the server says the viewer may call; the page passes them through. */
+const ALLOWED = ["search"];
 
 function installed(): InstalledConnector {
   return {
@@ -42,7 +46,8 @@ function installed(): InstalledConnector {
     status: "ready",
     scope: "workspace",
     interactive: true,
-    toolCount: 0,
+    toolCount: 2,
+    allowedTools: [...ALLOWED],
     catalog: {
       id: "com.example/crm",
       name: "Acme CRM",
@@ -58,10 +63,13 @@ const getResources = mock(async (_app: string, path: string) => ({
   html: `<p data-path="${path}">settings</p>`,
 }));
 
+// `allowedTools` is decided for the viewer's role, so the page re-reads the entry on a role change.
+const getInstalledConnector = mock(async (_serverName: string) => ({ installed: installed() }));
+
 mock.module("../api/client", () => ({
   ...realClient,
   getResources,
-  getInstalledConnector: async () => ({ installed: installed() }),
+  getInstalledConnector,
   listConnectorToolsWithPermissions: async () => ({
     scope: "workspace",
     serverName: SERVER,
@@ -333,13 +341,13 @@ describe("ConnectorDetailPage — the manage flag", () => {
   test("is true for a workspace admin", async () => {
     const { container } = await mountPage(workspace("admin"), [placement({})]);
     const ctx = await handshake(appSide(container));
-    expect(ctx.connector).toEqual({ canManage: true });
+    expect(ctx.connector).toEqual({ canManage: true, allowedTools: ALLOWED });
   });
 
   test("is false for a workspace member", async () => {
     const { container } = await mountPage(workspace("member"), [placement({})]);
     const ctx = await handshake(appSide(container));
-    expect(ctx.connector).toEqual({ canManage: false });
+    expect(ctx.connector).toEqual({ canManage: false, allowedTools: ALLOWED });
   });
 
   test("is false for an org admin who is not a workspace admin", async () => {
@@ -348,7 +356,7 @@ describe("ConnectorDetailPage — the manage flag", () => {
     for (const role of ["member", undefined] as const) {
       const { container } = await mountPage(workspace(role), [placement({})], { orgRole: "admin" });
       const ctx = await handshake(appSide(container));
-      expect(ctx.connector).toEqual({ canManage: false });
+      expect(ctx.connector).toEqual({ canManage: false, allowedTools: ALLOWED });
       mounted?.unmount();
       mounted = null;
     }
@@ -357,7 +365,8 @@ describe("ConnectorDetailPage — the manage flag", () => {
   test("a role change reaches the mounted iframe without remounting it", async () => {
     const { container } = await mountPage(workspace("member"), [placement({})]);
     const app = appSide(container);
-    expect((await handshake(app)).connector).toEqual({ canManage: false });
+    expect((await handshake(app)).connector).toEqual({ canManage: false, allowedTools: ALLOWED });
+    const reads = getInstalledConnector.mock.calls.length;
 
     await act(async () => {
       setWorkspace?.(workspace("admin"));
@@ -365,7 +374,8 @@ describe("ConnectorDetailPage — the manage flag", () => {
     await settle();
 
     const pushed = lastHostContextChange(app);
-    expect(pushed?.connector).toEqual({ canManage: true });
+    expect(pushed?.connector).toEqual({ canManage: true, allowedTools: ALLOWED });
+    expect(getInstalledConnector.mock.calls.length).toBeGreaterThan(reads);
     // The workspace extension rides the same live push.
     expect(pushed?.workspace).toMatchObject({ id: "ws_0071a5bbf40116e6" });
     expect(getResources).toHaveBeenCalledTimes(1);
@@ -472,6 +482,11 @@ describe("host context for other placements", () => {
       workspace: { id: "ws_0071a5bbf40116e6", name: "Team" },
       connector: { canManage: false },
     });
+    expect(buildHostExtensions(ws, { allowedTools: ["search"] }).connector).toEqual({
+      allowedTools: ["search"],
+    });
+    // A connector with neither field is no connector key, not an empty one.
+    expect(buildHostExtensions(ws, {})).not.toHaveProperty("connector");
     expect(buildHostContext("light", ws)).not.toHaveProperty("connector");
     expect(buildHostContext("dark", ws, { canManage: true }).connector).toEqual({
       canManage: true,

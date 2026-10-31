@@ -188,6 +188,7 @@ function uncataloguedConnector(over: Partial<InstalledConnector> = {}): Installe
     scope: "workspace",
     interactive: false,
     toolCount: 5,
+    allowedTools: [],
     ...over,
   };
 }
@@ -204,6 +205,7 @@ function dcrConnector(over: Partial<InstalledConnector> = {}): InstalledConnecto
     scope: "workspace",
     interactive: false,
     toolCount: 3,
+    allowedTools: [],
     url: "https://api.granola.test/mcp",
     catalogId: "ai.granola/mcp",
     catalog: {
@@ -251,6 +253,7 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
     scope: "workspace",
     interactive: false,
     toolCount: 8,
+    allowedTools: [],
     url: "https://app.asana.com/api/mcp",
     catalogId: "io.asana/mcp",
     catalog: {
