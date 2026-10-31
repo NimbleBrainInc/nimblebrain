@@ -1522,9 +1522,10 @@ export class AgentEngine {
               runId,
               config,
               inputTokens: Math.max(lastCallInputTokens, estimatedInputTokens),
+              estimatedInputTokens,
               cachedPrefix: historyRewritten || cutOff.rewindowed ? undefined : lastCallUsage,
               streamed: cutOff.streamed,
-              maxOutputTokens: callMaxOutputTokens,
+              maxOutputTokens: callMaxOutputTokens + thinkingBeyondMaxOutput(callProviderOptions),
               llmMs: Math.round(performance.now() - llmStart),
             });
           }
@@ -1854,8 +1855,9 @@ export class AgentEngine {
    * bills the input it read and the output it wrote. The call is recorded from
    * what the engine knows: the input projected for it (what the spend gate
    * reserved), and the output estimated from the text and reasoning it
-   * streamed, at most the call's output ceiling. Tool-call input streams
-   * unseen, so the output is a lower bound.
+   * streamed, at most the call's output ceiling (its `maxOutputTokens` plus any
+   * thinking budget the adapter adds on top). Tool-call input streams unseen,
+   * so the output is a lower bound.
    *
    * The input is priced as a cache read up to what the previous call in this
    * run read and wrote to the cache (`cachedPrefix`), since the prefix is
@@ -1865,18 +1867,29 @@ export class AgentEngine {
    * The call is debited from the spend accounts and emitted as a usage-only
    * `llm.done`: no content, finish `stop` (which replays as nothing), and
    * `finishReasonRaw` `CUT_OFF_FINISH_RAW`, so readers can tell an estimate
-   * from a reported call.
+   * from a reported call. It carries the call's pre-flight estimate like any
+   * other, so the estimator-drift ratio's two sides both count it.
    */
   private recordCutOffCall(params: {
     runId: string;
     config: EngineConfig;
     inputTokens: number;
+    estimatedInputTokens: number;
     cachedPrefix: TokenUsage | undefined;
     streamed: string;
     maxOutputTokens: number;
     llmMs: number;
   }): void {
-    const { runId, config, inputTokens, cachedPrefix, streamed, maxOutputTokens, llmMs } = params;
+    const {
+      runId,
+      config,
+      inputTokens,
+      estimatedInputTokens,
+      cachedPrefix,
+      streamed,
+      maxOutputTokens,
+      llmMs,
+    } = params;
     const outputTokens = Math.min(
       maxOutputTokens,
       streamed
@@ -1897,8 +1910,7 @@ export class AgentEngine {
         content: [],
         usage,
         llmMs,
-        // Zero keeps the estimator-drift metric to calls with reported usage.
-        estimatedInputTokens: 0,
+        estimatedInputTokens,
         finishReason: "stop",
         finishReasonRaw: CUT_OFF_FINISH_RAW,
       },

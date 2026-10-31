@@ -300,6 +300,7 @@ function cutOffRun(
   opts: { signal: AbortSignal; hold: SpendGate; config?: Partial<EngineConfig> },
 ) {
   let calls = 0;
+  const sent: LanguageModelV4CallOptions[] = [];
   const model: LanguageModelV4 = {
     specificationVersion: "v4",
     provider: "mock",
@@ -307,6 +308,7 @@ function cutOffRun(
     supportedUrls: {},
     doGenerate: () => Promise.reject(new Error("unused")),
     async doStream(options) {
+      sent.push(options);
       const step = steps[calls++];
       if (!step) throw new Error("no step scripted");
       if (step.kind === "throw") {
@@ -370,6 +372,7 @@ function cutOffRun(
   };
   return {
     events,
+    sent,
     calls: () => calls,
     run: () =>
       engine.run(
@@ -383,6 +386,16 @@ function cutOffRun(
         e.type === "llm.done" && e.data.finishReasonRaw === CUT_OFF_FINISH_RAW ? [e.data] : [],
       ),
   };
+}
+
+/** Press stop once the run has streamed text. */
+function abortOnText(events: EngineEvent[], controller: AbortController): void {
+  events.push = new Proxy(events.push, {
+    apply(target, self, args: EngineEvent[]) {
+      if (args[0]?.type === "text.delta") queueMicrotask(() => controller.abort());
+      return Reflect.apply(target, self, args);
+    },
+  });
 }
 
 describe("AgentEngine on a model call a cancel cuts off", () => {
@@ -419,6 +432,10 @@ describe("AgentEngine on a model call a cancel cuts off", () => {
     expect(cut!.usage.inputTokens).toBeGreaterThanOrEqual(1_000);
     expect(cut!.usage.cacheReadTokens).toBe(900);
     expect(cut!.usage.outputTokens).toBeGreaterThan(0);
+    // It carries its pre-flight estimate, so the estimator-drift ratio counts
+    // it on both sides.
+    expect(cut!.estimatedInputTokens).toBeGreaterThan(0);
+    expect(cut!.estimatedInputTokens).toBeLessThanOrEqual(cut!.usage.inputTokens);
     // The cut-off call lands before the run ends cancelled.
     const types = r.events.map((e) => e.type);
     expect(types.lastIndexOf("llm.done")).toBeLessThan(types.indexOf("run.done"));
@@ -448,6 +465,85 @@ describe("AgentEngine on a model call a cancel cuts off", () => {
     expect(cut!.usage.cacheReadTokens).toBe(0);
     expect(cut!.usage.inputTokens).toBeGreaterThan(0);
     expect(cut!.usage.outputTokens).toBe(300);
+    hold.release();
+  });
+
+  it("caps the output at the call's whole ceiling, an Anthropic thinking budget included", async () => {
+    const model = "anthropic:claude-sonnet-4-5";
+    const hold = holdOn([{ id: "acct-out", unit: "output_tokens", remaining: 100_000 }], model);
+    const controller = new AbortController();
+    const r = cutOffRun([{ kind: "stream", text: "x".repeat(80_000) }], {
+      signal: controller.signal,
+      hold,
+      config: {
+        model,
+        maxOutputTokens: 8_000,
+        thinking: { mode: "enabled", budgetTokens: 2_000, effort: "high", source: "operator" },
+      },
+    });
+    abortOnText(r.events, controller);
+    await expect(r.run()).rejects.toMatchObject({ name: "AbortError" });
+
+    const sent = r.sent[0]!;
+    const budget = (sent.providerOptions?.anthropic as { thinking?: { budgetTokens?: number } })
+      ?.thinking?.budgetTokens;
+    expect(budget).toBeGreaterThan(0);
+    const [cut] = r.cutOff();
+    expect(cut!.usage.outputTokens).toBe(sent.maxOutputTokens! + budget!);
+    hold.release();
+  });
+
+  it("prices the input uncached when a history rewrite changed the prefix this iteration", async () => {
+    const hold = holdOn([{ id: "acct-in", unit: "input_tokens", remaining: 100_000 }]);
+    const controller = new AbortController();
+    const r = cutOffRun(
+      [
+        { kind: "tool", inputTokens: 1_000, cacheRead: 600, cacheWrite: 300 },
+        { kind: "stream", text: "x".repeat(400) },
+      ],
+      {
+        signal: controller.signal,
+        hold,
+        config: { hooks: { rewriteHistory: async (history) => history.slice() } },
+      },
+    );
+    abortOnText(r.events, controller);
+    await expect(r.run()).rejects.toMatchObject({ name: "AbortError" });
+
+    const [cut] = r.cutOff();
+    expect(cut!.usage.inputTokens).toBeGreaterThanOrEqual(1_000);
+    expect(cut!.usage.cacheReadTokens).toBe(0);
+    hold.release();
+  });
+
+  it("prices the input uncached when the call was re-windowed after a context overflow", async () => {
+    const hold = holdOn([{ id: "acct-in", unit: "input_tokens", remaining: 100_000 }]);
+    const controller = new AbortController();
+    const overflow = () =>
+      Object.assign(new Error("prompt is too long: 300000 tokens > 200000 maximum"), {
+        statusCode: 400,
+      });
+    const r = cutOffRun(
+      [
+        { kind: "tool", inputTokens: 1_000, cacheRead: 600, cacheWrite: 300 },
+        { kind: "throw", err: overflow },
+        { kind: "stream", text: "x".repeat(400) },
+      ],
+      {
+        signal: controller.signal,
+        hold,
+        config: { hooks: { transformContext: (messages) => messages } },
+      },
+    );
+    abortOnText(r.events, controller);
+    await expect(r.run()).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(r.calls()).toBe(3);
+    expect(r.events.map((e) => e.type)).toContain("context.overflow_recovery");
+    const [cut, ...more] = r.cutOff();
+    expect(more).toHaveLength(0);
+    expect(cut!.usage.inputTokens).toBeGreaterThanOrEqual(1_000);
+    expect(cut!.usage.cacheReadTokens).toBe(0);
     hold.release();
   });
 
