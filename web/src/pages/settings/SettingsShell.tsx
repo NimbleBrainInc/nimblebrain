@@ -12,6 +12,12 @@ import { cn } from "../../lib/utils";
 // subtree (`/w/:slug/settings`, `/org`), so the shell is single-scope and
 // never groups across scopes.
 //
+// The nav sits beside the content when the main column (`@container main`) is
+// at least `@3xl` (48rem) wide, and stacks above it as one scrolling row of
+// tabs when narrower. It follows the column, not the viewport: the column
+// shrinks as the chat docks, and a side nav in a narrow column squeezes the
+// content (`web/DESIGN.md`, main-area views).
+//
 // Each item declares the minimum role to *see* it (defense in depth — the
 // backend tools enforce the real write boundary). A `footer` item pins to
 // the bottom and is role-exempt (e.g. About).
@@ -56,16 +62,16 @@ export function SettingsShell({ title, items, footer }: SettingsShellProps) {
   const visible = items.filter((s) => roleAtLeast(role, s.minRole ?? "ws_member"));
 
   return (
-    <div className="flex flex-col md:flex-row h-full overflow-hidden">
+    <div className="flex flex-col @3xl/main:flex-row h-full overflow-hidden">
       <nav
-        className="shrink-0 md:w-56 md:border-r border-b md:border-b-0 border-border flex md:flex-col overflow-x-auto md:overflow-x-visible md:overflow-y-auto"
+        className="shrink-0 @3xl/main:w-56 @3xl/main:border-r border-b @3xl/main:border-b-0 border-border flex @3xl/main:flex-col overflow-x-auto @3xl/main:overflow-x-visible @3xl/main:overflow-y-auto"
         aria-label={`${title} sections`}
       >
         {/* The page's name is in the top bar; the column starts with its sections. */}
-        <div aria-hidden="true" className="hidden md:block h-4" />
+        <div aria-hidden="true" className="hidden @3xl/main:block h-4" />
 
-        {/* Mobile: single horizontal scroll row (no nesting) */}
-        <div className="flex md:hidden gap-0.5 px-2 py-1">
+        {/* Narrow column: single horizontal scroll row (no nesting) */}
+        <div className="flex @3xl/main:hidden gap-0.5 px-2 py-1">
           {visible.map((section) => (
             <NavLink
               key={section.id}
@@ -87,8 +93,8 @@ export function SettingsShell({ title, items, footer }: SettingsShellProps) {
           )}
         </div>
 
-        {/* Desktop: vertical nav with optional nested sub-items */}
-        <div className="hidden md:flex md:flex-col px-2 pb-3">
+        {/* Wide column: vertical nav with optional nested sub-items */}
+        <div className="hidden @3xl/main:flex @3xl/main:flex-col px-2 pb-3">
           <div className="mt-1 flex flex-col gap-0.5">
             {visible.map((section) => (
               <Fragment key={section.id}>
