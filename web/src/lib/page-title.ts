@@ -25,6 +25,7 @@ import {
   type SettingsTab,
   WORKSPACE_SETTINGS_TABS,
 } from "./settings-tabs";
+import { appRouteOf } from "./workspace-apps";
 
 /** A crumb before the page's name: a host page the reader can go back to. */
 export interface PageCrumb {
@@ -82,15 +83,16 @@ export function settingsLocation(pathname: string): SettingsLocation | null {
 export function pageTitle(pathname: string, placements: readonly PlacementEntry[]): string {
   const settings = settingsLocation(pathname);
   if (settings) return settings.title;
-  const [first, , view, sub] = pathname.split("/").filter(Boolean);
+  const [first, , view] = pathname.split("/").filter(Boolean);
   if (first === undefined) return "Home";
   if (first !== "w") return "";
   if (view === undefined) return "Overview";
   if (view === "notifications") return "Inbox";
   if (view === "context") return "Context";
+  const route = appRouteOf(pathname);
   const placement =
     view === "app"
-      ? placements.find((p) => p.route === sub)
+      ? placements.find((p) => p.route === route)
       : placements.find(
           (p) => isIdentityApp(p.serverName) && identityAppSegment(p.serverName) === view,
         );

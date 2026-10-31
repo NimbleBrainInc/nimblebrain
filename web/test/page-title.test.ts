@@ -91,6 +91,15 @@ describe("pageTitle", () => {
     expect(pageTitle("/w/000f7ed6658f9d30/conversations", PLACEMENTS)).toBe("Conversations");
   });
 
+  test("an app view whose route holds a slash takes that view's label, not the first segment's", () => {
+    const crm = [
+      placement({ serverName: "crm", label: "Contacts", route: "crm" }),
+      placement({ serverName: "crm", label: "Companies", route: "crm/companies" }),
+    ];
+    expect(pageTitle("/w/000f7ed6658f9d30/app/crm/companies", crm)).toBe("Companies");
+    expect(pageTitle("/w/000f7ed6658f9d30/app/crm", crm)).toBe("Contacts");
+  });
+
   test("an unknown route names nothing", () => {
     expect(pageTitle("/w/000f7ed6658f9d30/app/gone", PLACEMENTS)).toBe("");
     expect(pageTitle("/elsewhere", PLACEMENTS)).toBe("");

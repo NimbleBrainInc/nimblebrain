@@ -61,10 +61,21 @@ export function appsByConnector(placements: PlacementEntry[]): WorkspaceApp[] {
 }
 
 /**
+ * The placement route an app route (`/w/<slug>/app/<route>`) names, or null off
+ * an app route. It is everything after `app/`, since a view's route may hold
+ * slashes (`crm/companies`). The one parser of an app route: compare its result
+ * to a placement's `route`.
+ */
+export function appRouteOf(pathname: string): string | null {
+  const [first, , view, ...rest] = pathname.split("/").filter(Boolean);
+  const route = rest.join("/");
+  return first === "w" && view === "app" && route ? route : null;
+}
+
+/**
  * The app an app route (`/w/<slug>/app/<route>`) opens, grouped as the sidebar
  * groups it (`appsByConnector`), or null off an app route or for a route no
- * app's view holds. The route is everything after `app/`, since a view's route
- * may hold slashes (`crm/companies`).
+ * app's view holds.
  *
  * Pass the result of `forSlot("sidebar")`.
  */
@@ -72,9 +83,8 @@ export function appForPath(
   pathname: string,
   sidebarPlacements: PlacementEntry[],
 ): WorkspaceApp | null {
-  const [first, , view, ...rest] = pathname.split("/").filter(Boolean);
-  const route = rest.join("/");
-  if (first !== "w" || view !== "app" || !route) return null;
+  const route = appRouteOf(pathname);
+  if (!route) return null;
   const apps = appsByConnector(workspaceApps(sidebarPlacements));
   return apps.find((app) => app.views.some((v) => v.route === route)) ?? null;
 }

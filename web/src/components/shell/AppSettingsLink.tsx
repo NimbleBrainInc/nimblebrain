@@ -16,7 +16,7 @@ import { Settings } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useShellContext } from "../../context/ShellContext";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
-import { connectorSettingsPath } from "../../lib/workspace-apps";
+import { appRouteOf, connectorSettingsPath } from "../../lib/workspace-apps";
 import { Tooltip } from "../ui/tooltip";
 
 export function AppSettingsLink() {
@@ -24,8 +24,9 @@ export function AppSettingsLink() {
   const shell = useShellContext();
   const { activeWorkspace } = useWorkspaceContext();
 
-  const [first, slug, view, route] = pathname.split("/").filter(Boolean);
-  if (first !== "w" || view !== "app" || !route) return null;
+  const route = appRouteOf(pathname);
+  if (!route) return null;
+  const slug = pathname.split("/").filter(Boolean)[1];
   if (!shell || shell.shellWorkspaceId !== activeWorkspace?.id) return null;
 
   const app = shell.forSlot("sidebar").find((p) => p.route === route);

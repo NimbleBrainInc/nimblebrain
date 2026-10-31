@@ -325,6 +325,28 @@ describe("TopBar", () => {
     );
   });
 
+  test("on a view whose route holds a slash, the gear finds that view's connector", async () => {
+    const crm: PlacementEntry[] = [
+      { ...PEOPLE, route: "people/list" },
+      {
+        serverName: "crm",
+        slot: "sidebar.apps",
+        resourceUri: "ui://crm/companies",
+        priority: 100,
+        label: "Companies",
+        route: "people/companies",
+      },
+    ];
+    await mountBar("/w/000f7ed6658f9d30/app/people/companies", 0, {
+      sidebar: crm,
+      settings: [{ ...PEOPLE_SETTINGS, serverName: "crm" }],
+      shellWorkspaceId: ACME.id,
+    });
+    const gear = byTestId("top-bar-app-settings");
+    expect(gear?.getAttribute("aria-label")).toBe("Companies settings");
+    expect(gear?.getAttribute("href")).toBe("/w/000f7ed6658f9d30/settings/connectors/crm");
+  });
+
   test("no gear for an app without a settings section, or off an app route", async () => {
     await mountBar("/w/000f7ed6658f9d30/app/people", 0, { shellWorkspaceId: ACME.id });
     expect(byTestId("top-bar-app-settings")).toBeUndefined();
