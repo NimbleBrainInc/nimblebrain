@@ -12,6 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   appForPath,
+  appRouteOf,
   appsByConnector,
   connectorSettingsPath,
   iconMapFromInstalled,
@@ -193,5 +194,20 @@ describe("appForPath", () => {
     expect(appForPath("/w/acme/settings/general", placements)).toBeNull();
     expect(appForPath("/w/acme/app/core", placements)).toBeNull();
     expect(appForPath("/w/acme/app/unknown", placements)).toBeNull();
+  });
+});
+
+describe("appRouteOf", () => {
+  test("is everything after app/, slashes included", () => {
+    expect(appRouteOf("/w/acme/app/crm")).toBe("crm");
+    expect(appRouteOf("/w/acme/app/crm/companies")).toBe("crm/companies");
+    expect(appRouteOf("/w/acme/app/crm/companies/")).toBe("crm/companies");
+  });
+
+  test("null off an app route", () => {
+    expect(appRouteOf("/w/acme/")).toBeNull();
+    expect(appRouteOf("/w/acme/app")).toBeNull();
+    expect(appRouteOf("/w/acme/settings/general")).toBeNull();
+    expect(appRouteOf("/profile/general")).toBeNull();
   });
 });
