@@ -101,8 +101,7 @@ function scriptedRuntime(script: EchoModelResponse[], opts: Partial<ScriptedAgen
 function runtimes(script: () => EchoModelResponse[]): [string, () => AgentRuntime][] {
   return [
     ["native", () => createNativeRuntime(() => createEchoModel({ responses: script() }))],
-    ["acp over loopback", () => scriptedRuntime(script())],
-    ["acp over its connection", () => scriptedRuntime(script(), { mcp: { acp: true } })],
+    ["acp", () => scriptedRuntime(script())],
   ];
 }
 
@@ -189,10 +188,7 @@ describe("acp runtime: the projection holds the run's bound", () => {
     expect(sink.of("tool.done")).toEqual([]);
   });
 
-  test.each([
-    ["loopback", { http: true }],
-    ["its connection", { acp: true }],
-  ])("cancelling mid-tool over %s ends the run as cancelled", async (_transport, mcp) => {
+  test("cancelling mid-tool ends the run as cancelled", async () => {
     const controller = new AbortController();
     let toolStarted = false;
     const router = new StaticToolRouter([LOOKUP], async (_call) => {
@@ -201,7 +197,7 @@ describe("acp runtime: the projection holds the run's bound", () => {
       return { content: [{ type: "text", text: "late" }], isError: false };
     });
     const sink = collect();
-    const runtime = scriptedRuntime(structuredClone(SCRIPT), { mcp });
+    const runtime = scriptedRuntime(structuredClone(SCRIPT));
 
     const run = runtime.execute(resolvedRun(controller.signal), {
       tools: router,
@@ -478,45 +474,39 @@ describe("bound skill guidance", () => {
     return { calls, sink, result };
   }
 
-  test.each([
-    ["loopback", { http: true }],
-    ["its connection", { acp: true }],
-  ])(
-    "holds the first call on every runtime, over %s, and leaves the engine's record",
-    async (_transport, mcp) => {
-      const log = emptyLog();
-      const native = await runOn(
-        createNativeRuntime(() => createEchoModel({ responses: structuredClone(HELD_SCRIPT) })),
-      );
-      const acp = await runOn(scriptedRuntime(structuredClone(HELD_SCRIPT), { log, mcp }));
+  test("holds the first call on every runtime, and leaves the engine's record", async () => {
+    const log = emptyLog();
+    const native = await runOn(
+      createNativeRuntime(() => createEchoModel({ responses: structuredClone(HELD_SCRIPT) })),
+    );
+    const acp = await runOn(scriptedRuntime(structuredClone(HELD_SCRIPT), { log }));
 
-      for (const { calls, sink, result } of [native, acp]) {
-        expect(result.output.trim()).toBe("The answer is 42.");
-        // The tool ran once: the held call did not reach it.
-        expect(calls).toHaveLength(1);
-        expect(sink.of("tool.done").map((e) => [e.data.ok, e.data.held ?? false])).toEqual([
-          [false, true],
-          [true, false],
-        ]);
-        const [injected] = sink.of("connector.skill.injected");
-        expect(injected?.data).toMatchObject({
-          skillName: "lookup-guide",
-          skillBody: "Always quote the answer.",
-          toolName: "lookup",
-        });
-        expect(injected?.data.heldToolCallId).toBe(sink.of("tool.done")[0]?.data.id);
-      }
+    for (const { calls, sink, result } of [native, acp]) {
+      expect(result.output.trim()).toBe("The answer is 42.");
+      // The tool ran once: the held call did not reach it.
+      expect(calls).toHaveLength(1);
+      expect(sink.of("tool.done").map((e) => [e.data.ok, e.data.held ?? false])).toEqual([
+        [false, true],
+        [true, false],
+      ]);
+      const [injected] = sink.of("connector.skill.injected");
+      expect(injected?.data).toMatchObject({
+        skillName: "lookup-guide",
+        skillBody: "Always quote the answer.",
+        toolName: "lookup",
+      });
+      expect(injected?.data.heldToolCallId).toBe(sink.of("tool.done")[0]?.data.id);
+    }
 
-      // The agent read the guidance in the held call's result.
-      expect(log.toolResults[0]).toContain("<connector-skill>");
-      expect(log.toolResults[0]).toContain("Always quote the answer.");
+    // The agent read the guidance in the held call's result.
+    expect(log.toolResults[0]).toContain("<connector-skill>");
+    expect(log.toolResults[0]).toContain("Always quote the answer.");
 
-      // And a later turn replays the guidance where the native turn put it.
-      expect(shape(await replayed(acp.sink.events))).toEqual(
-        shape(await replayed(native.sink.events)),
-      );
-    },
-  );
+    // And a later turn replays the guidance where the native turn put it.
+    expect(shape(await replayed(acp.sink.events))).toEqual(
+      shape(await replayed(native.sink.events)),
+    );
+  });
 
   test("a skill the conversation already delivered holds nothing", async () => {
     const run = boundRun();
@@ -543,19 +533,12 @@ describe("how the agent reaches the projection", () => {
     return log;
   }
 
-  test("an agent that takes acp servers gets the projection on its own connection", async () => {
+  test("an agent gets the projection on its own connection, and nothing listens", async () => {
     const log = await declared({ acp: true, http: true });
     const [server] = log.mcpServers[0] ?? [];
     expect(server).toMatchObject({ type: "acp", name: "nimblebrain" });
     expect(server && "url" in server).toBe(false);
     expect(log.toolResults).toEqual(["42"]);
-  });
-
-  test("an agent that takes only HTTP gets the projection on loopback", async () => {
-    const log = await declared({ http: true });
-    const [server] = log.mcpServers[0] ?? [];
-    expect(server).toMatchObject({ type: "http", name: "nimblebrain" });
-    expect(server && "url" in server && new URL(server.url).hostname).toBe("127.0.0.1");
   });
 
   test("a server id is random per run, never reused", async () => {
@@ -569,34 +552,22 @@ describe("how the agent reaches the projection", () => {
     expect(ids[1]).not.toBe(ids[0]);
   });
 
-  test("an agent on another host that takes only HTTP is refused, never handed loopback", async () => {
-    const log = emptyLog();
-    const sink = collect();
-    const elsewhere = scriptedConnection({
-      script: () => stepsFrom(structuredClone(SCRIPT)),
-      mcp: { http: true },
-      log,
-    });
-    const runtime = createAcpRuntime("remote", scriptedDriver(), {
-      async open(run) {
-        return { ...(await elsewhere.open(run)), sameHost: false };
-      },
-    });
-    await expect(runtime.execute(resolvedRun(), io(router(), sink))).rejects.toThrow(
-      /takes no acp MCP server and is not on this host/,
-    );
-    expect(log.mcpServers).toEqual([]);
-    expect(sink.of("run.error")).toHaveLength(1);
-  });
-
-  test("an agent that takes neither is a run error", async () => {
-    const sink = collect();
-    await expect(
-      scriptedRuntime(structuredClone(SCRIPT), { mcp: {} }).execute(
-        resolvedRun(),
-        io(router(), sink),
-      ),
-    ).rejects.toThrow(/takes neither acp nor HTTP MCP servers/);
-    expect(sink.of("run.error")).toHaveLength(1);
-  });
+  test.each([
+    ["only HTTP", { http: true }],
+    ["no MCP server", {}],
+  ])(
+    "an agent that takes %s is refused before its session: it runs behind the bridge",
+    async (_what, mcp) => {
+      const log = emptyLog();
+      const sink = collect();
+      await expect(
+        scriptedRuntime(structuredClone(SCRIPT), { mcp, log }).execute(
+          resolvedRun(),
+          io(router(), sink),
+        ),
+      ).rejects.toThrow(/takes no acp MCP server: it runs behind the bridge/);
+      expect(log.mcpServers).toEqual([]);
+      expect(sink.of("run.error")).toHaveLength(1);
+    },
+  );
 });

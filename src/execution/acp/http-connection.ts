@@ -10,8 +10,6 @@
  *   ends a run by `session/cancel` or by closing the connection
  *   (`./acp-runtime.ts`), and both must still reach the worker after the run's
  *   signal has fired.
- * - The worker is on another host, so its tools travel on this connection
- *   only: it is never given a loopback endpoint.
  */
 
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
@@ -38,7 +36,6 @@ export function createHttpConnection(opts: HttpConnectionOptions): AcpConnection
       return {
         target: createHttpStream(opts.url, { headers }),
         cwd: "/",
-        sameHost: false,
         close: async () => {},
       };
     },

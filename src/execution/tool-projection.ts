@@ -22,18 +22,14 @@
  * `tool.done`, and each body in `connector.skill.injected`, from which a later
  * turn on any runtime replays it in the native engine's position.
  *
- * It is served one of two ways, and dies with the run either way. Over the
- * agent's own ACP connection ({@link ToolProjection.channel}), when the agent
- * takes MCP servers on ACP's `acp` transport: nothing listens, and only the
- * connection the runtime dialed reaches the tools (ADR-0057). Or on loopback
- * ({@link ToolProjection.listen}), on a random port, at a random path, behind a
- * random bearer token, for an agent that takes only HTTP MCP servers.
+ * It is served over the agent's own ACP connection ({@link ToolProjection.channel}),
+ * as an MCP server on ACP's `acp` transport, and dies with the run. Nothing
+ * listens: only the connection the runtime dialed reaches the tools (ADR-0057).
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
-import { createMcpHandler, InMemoryTransport, Server } from "@modelcontextprotocol/server";
+import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import {
   boundToolResultForModel,
   extractResourceLinks,
@@ -103,11 +99,6 @@ export interface ToolProjection {
    * for the run, whatever transport brings its messages.
    */
   channel(): McpChannel;
-  /**
-   * Serve the projection on loopback, for an agent that takes only HTTP MCP
-   * servers. Started on the first call; the same endpoint after that.
-   */
-  listen(): { url: string; headers: { name: string; value: string }[] };
   /** Every call the projection dispatched, in the order they started. */
   calls(): ToolCallRecord[];
   close(): Promise<void>;
@@ -159,18 +150,13 @@ export async function openToolProjection(opts: ToolProjectionOptions): Promise<T
     return runInRunContext(() => dispatch(opts, toolsByName, records, skills, name, input, signal));
   };
 
-  let http: {
-    url: string;
-    headers: { name: string; value: string }[];
-    stop(): Promise<void>;
-  } | null = null;
   let mcp: (McpChannel & { close(): Promise<void> }) | null = null;
 
   let closed = false;
   const close = async () => {
     if (closed) return;
     closed = true;
-    await Promise.all([http?.stop(), mcp?.close()]);
+    await mcp?.close();
   };
   opts.signal?.addEventListener("abort", () => void close(), { once: true });
 
@@ -180,39 +166,8 @@ export async function openToolProjection(opts: ToolProjectionOptions): Promise<T
       mcp ??= openChannel(() => createServer(tools, callTool));
       return mcp;
     },
-    listen() {
-      if (closed) throw new Error("tool projection is closed");
-      http ??= listenOnLoopback(() => createServer(tools, callTool));
-      return { url: http.url, headers: http.headers };
-    },
     calls: () => [...records],
     close,
-  };
-}
-
-/** The projection behind a random path and bearer on loopback. */
-function listenOnLoopback(server: () => Server) {
-  const token = randomBytes(32).toString("base64url");
-  const path = `/mcp/${randomBytes(16).toString("hex")}`;
-  const handler = createMcpHandler(server, {
-    legacy: "reject",
-    onerror: (err) => log.warn(`[execution] tool projection request failed: ${err.message}`),
-  });
-  const listener = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch(request) {
-      if (new URL(request.url).pathname !== path) return new Response(null, { status: 404 });
-      if (!bearerMatches(request.headers.get("authorization"), token)) {
-        return new Response(null, { status: 401 });
-      }
-      return handler.fetch(request);
-    },
-  });
-  return {
-    url: `http://127.0.0.1:${listener.port}${path}`,
-    headers: [{ name: "Authorization", value: `Bearer ${token}` }],
-    stop: () => listener.stop(true),
   };
 }
 
@@ -525,11 +480,4 @@ function toCallToolResult(result: ToolResult): CallToolResult {
     isError: result.isError,
     ...(result.structuredContent ? { structuredContent: result.structuredContent } : {}),
   };
-}
-
-function bearerMatches(header: string | null, token: string): boolean {
-  if (!header?.startsWith("Bearer ")) return false;
-  const given = Buffer.from(header.slice("Bearer ".length));
-  const expected = Buffer.from(token);
-  return given.length === expected.length && timingSafeEqual(given, expected);
 }

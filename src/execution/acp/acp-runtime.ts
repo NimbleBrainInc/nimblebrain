@@ -6,10 +6,8 @@
  * no agent-side session is the record of anything. The steps:
  *
  *   1. Open the run's tool projection, the only way the agent reaches tools.
- *   2. Open the connection, and negotiate how the agent is given the
- *      projection: on this connection, as an `acp` MCP server, when the agent
- *      takes one (`./mcp-over-acp.ts`), so nothing listens; on loopback when
- *      it takes only HTTP MCP servers and runs on this host.
+ *   2. Open the connection, and give the agent the projection on it, as an
+ *      `acp` MCP server (`./mcp-over-acp.ts`), so nothing listens.
  *   3. `session/new` naming the projection, then the driver's own preparation.
  *   4. `session/prompt`, recording every update in the engine's vocabulary
  *      (`./run-recorder.ts`), until the agent answers.
@@ -252,13 +250,7 @@ async function openSession(
     clientInfo: { name: "nimblebrain", version: "1" },
   });
   const mcpServers = [
-    projectionServer(
-      runtimeId,
-      init.agentCapabilities?.mcpCapabilities,
-      opened.sameHost,
-      projection,
-      acpServers,
-    ),
+    projectionServer(runtimeId, init.agentCapabilities?.mcpCapabilities, projection, acpServers),
   ];
   const capabilities = init.agentCapabilities;
   const systemPrompt = standardSystemPrompt(capabilities, run);
@@ -292,28 +284,20 @@ async function openSession(
 }
 
 /**
- * How the agent reaches the projection: on its own connection when it takes
- * `acp` MCP servers, so nothing listens; on loopback when it takes only HTTP
- * and runs on this host. An agent elsewhere cannot reach this host's loopback,
- * so one without `acp` is refused: it runs behind the bridge (ADR-0057).
+ * The projection as an `acp` MCP server on the agent's own connection, so
+ * nothing listens. An agent that takes no `acp` server is refused: it runs
+ * behind the bridge, which serves the server to it on its own host (ADR-0057).
  */
 function projectionServer(
   runtimeId: string,
   mcp: acp.McpCapabilities | null | undefined,
-  sameHost: boolean,
   projection: ToolProjection,
   acpServers: AcpMcpServers,
 ): acp.McpServer {
   if (mcp?.acp) return acpServers.declare(PROJECTION_SERVER_NAME, projection.channel());
-  if (mcp?.http && sameHost) {
-    return { type: "http", name: PROJECTION_SERVER_NAME, ...projection.listen() };
-  }
-  if (mcp?.http) {
-    throw new Error(
-      `ACP agent ${runtimeId} takes no acp MCP server and is not on this host: it must run behind the bridge`,
-    );
-  }
-  throw new Error(`ACP agent ${runtimeId} takes neither acp nor HTTP MCP servers`);
+  throw new Error(
+    `ACP agent ${runtimeId} takes no acp MCP server: it runs behind the bridge (ADR-0057)`,
+  );
 }
 
 function clientApp(

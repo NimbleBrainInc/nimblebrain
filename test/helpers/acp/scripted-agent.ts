@@ -16,7 +16,6 @@ import type { EchoModelResponse } from "../echo-model.ts";
 import { acpMcpClientTransport } from "./acp-mcp-client-transport.ts";
 import {
   connectMcpToolRouter,
-  httpMcpServer,
   type McpToolRouter,
   type ReachableMcpServer,
 } from "./mcp-tool-router.ts";
@@ -51,8 +50,8 @@ export interface ScriptedAgentOptions {
   /** Answer no prompt and ignore `session/cancel`, as a hung agent would. */
   unresponsive?: boolean;
   /**
-   * The MCP transports the agent advertises. Default: HTTP only, as most
-   * agents today; `acp` takes the client's tools on the ACP connection itself.
+   * The MCP transports the agent advertises. Default: `acp`, the client's
+   * tools on the ACP connection itself, the one the runtime serves.
    */
   mcp?: { http?: boolean; acp?: boolean };
   /** Advertise ACP's `systemPrompt`; `override` adds that mode to `append`. */
@@ -104,7 +103,7 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
       agentCapabilities: {
         loadSession: false,
         promptCapabilities: { image: true, embeddedContext: true },
-        mcpCapabilities: opts.mcp ?? { http: true },
+        mcpCapabilities: opts.mcp ?? { acp: true },
         ...(opts.systemPrompt
           ? {
               sessionCapabilities: {
@@ -133,7 +132,6 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
       const router = await connectMcpToolRouter(
         ctx.params.mcpServers.flatMap((s): ReachableMcpServer[] => {
           if (!("type" in s)) return [];
-          if (s.type === "http") return [httpMcpServer(s)];
           if (s.type === "acp") {
             return [
               { name: s.name, transport: () => acpMcpClientTransport(ctx.client, s.serverId) },
@@ -223,7 +221,6 @@ export function scriptedConnection(opts: ScriptedAgentOptions): AcpConnection {
       return {
         target: createScriptedAgent(opts),
         cwd: tmpdir(),
-        sameHost: true,
         close: async () => {},
       };
     },

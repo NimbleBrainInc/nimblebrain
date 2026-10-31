@@ -4,13 +4,10 @@
  * reaches whatever the client exposed, the way any ACP agent would.
  */
 
-import {
-  Client,
-  StreamableHTTPClientTransport,
-  type Transport,
-} from "@modelcontextprotocol/client";
+import { Client, type JSONRPCMessage, type Transport } from "@modelcontextprotocol/client";
 import type { ContentBlock } from "@modelcontextprotocol/server";
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../../../src/engine/types.ts";
+import type { McpChannel } from "../../../src/execution/tool-projection.ts";
 
 /** An MCP server the agent was given, and how to reach it. */
 export interface ReachableMcpServer {
@@ -18,17 +15,53 @@ export interface ReachableMcpServer {
   transport(): Transport;
 }
 
-/** An ACP `McpServer` of the HTTP shape, reached over Streamable HTTP. */
-export function httpMcpServer(server: {
-  name: string;
-  url: string;
-  headers: { name: string; value: string }[];
-}): ReachableMcpServer {
-  const headers = Object.fromEntries(server.headers.map((h) => [h.name, h.value]));
+/**
+ * A projection's channel, reached directly: each MCP request goes to the
+ * channel and its answer comes back as the response, with no ACP connection
+ * between. Cancelling a request (`notifications/cancelled`) aborts it.
+ */
+export function channelMcpServer(name: string, channel: McpChannel): ReachableMcpServer {
   return {
-    name: server.name,
-    transport: () =>
-      new StreamableHTTPClientTransport(new URL(server.url), { requestInit: { headers } }),
+    name,
+    transport() {
+      const inFlight = new Map<string, AbortController>();
+      const transport: Transport = {
+        async start() {},
+        async close() {
+          for (const controller of inFlight.values()) controller.abort();
+          inFlight.clear();
+          transport.onclose?.();
+        },
+        async send(message: JSONRPCMessage) {
+          if (!("method" in message)) return; // a response to the server: this server asks nothing
+          const params = ("params" in message ? message.params : undefined) as
+            | Record<string, unknown>
+            | undefined;
+          if (!("id" in message)) {
+            if (message.method === "notifications/cancelled") {
+              inFlight.get(String((params as { requestId?: unknown })?.requestId))?.abort();
+              return;
+            }
+            channel.notify(message.method, params);
+            return;
+          }
+          const { id } = message;
+          const controller = new AbortController();
+          inFlight.set(String(id), controller);
+          void channel
+            .request(String(id), message.method, params, controller.signal)
+            .then((answer) =>
+              transport.onmessage?.(
+                "error" in answer
+                  ? { jsonrpc: "2.0", id, error: answer.error }
+                  : { jsonrpc: "2.0", id, result: answer.result as Record<string, unknown> },
+              ),
+            )
+            .finally(() => inFlight.delete(String(id)));
+        },
+      };
+      return transport;
+    },
   };
 }
 

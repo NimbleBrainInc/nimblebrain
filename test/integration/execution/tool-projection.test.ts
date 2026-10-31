@@ -7,7 +7,7 @@ import {
   type ToolSchema,
 } from "../../../src/engine/types.ts";
 import { openToolProjection } from "../../../src/execution/tool-projection.ts";
-import { connectMcpToolRouter, httpMcpServer } from "../../helpers/acp/mcp-tool-router.ts";
+import { channelMcpServer, connectMcpToolRouter } from "../../helpers/acp/mcp-tool-router.ts";
 
 const router = new StaticToolRouter(
   [
@@ -27,58 +27,11 @@ const router = new StaticToolRouter(
   () => ({ content: [{ type: "text", text: "ok" }], isError: false }),
 );
 
-/** A tools/list on the 2026-07-28 envelope, with the given auth header. */
-function listTools(url: string, authorization?: string): Promise<Response> {
-  return fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      "mcp-protocol-version": "2026-07-28",
-      ...(authorization ? { authorization } : {}),
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/list",
-      params: {
-        _meta: {
-          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-          "io.modelcontextprotocol/clientInfo": { name: "t", version: "1" },
-          "io.modelcontextprotocol/clientCapabilities": {},
-        },
-      },
-    }),
-  });
-}
-
 describe("tool projection", () => {
-  test("answers only its own path with its own bearer, and closes for good", async () => {
-    const events: EngineEvent[] = [];
-    const projection = await openToolProjection({
-      runId: "r",
-      router,
-      events: { emit: (e) => events.push(e) },
-    });
-    const { url, headers } = projection.listen();
-    const bearer = headers[0]?.value;
-    const origin = new URL(url).origin;
-
-    expect((await listTools(url)).status).toBe(401);
-    expect((await listTools(url, "Bearer wrong")).status).toBe(401);
-    expect((await listTools(`${origin}/mcp/elsewhere`, bearer)).status).toBe(404);
-    expect(new URL(url).hostname).toBe("127.0.0.1");
-    expect(projection.listen().url).toBe(url);
-
-    await projection.close();
-    await expect(listTools(url, bearer)).rejects.toThrow();
-    expect(() => projection.listen()).toThrow(/closed/);
-  });
-
   test("lists only what the agent may call: model-visible, and no engine-state tools", async () => {
     const projection = await openToolProjection({ runId: "r", router, events: { emit() {} } });
     const client = await connectMcpToolRouter([
-      httpMcpServer({ name: "nimblebrain", ...projection.listen() }),
+      channelMcpServer("nimblebrain", projection.channel()),
     ]);
     try {
       expect((await client.availableTools()).map((t) => t.name)).toEqual(["echo"]);
@@ -112,7 +65,7 @@ describe("tool projection", () => {
       events: { emit: (e) => events.push(e) },
     });
     const client = await connectMcpToolRouter([
-      httpMcpServer({ name: "nimblebrain", ...projection.listen() }),
+      channelMcpServer("nimblebrain", projection.channel()),
     ]);
     try {
       const first = await client.execute({ id: "a", name: "nb__use_skill", input: {} });
@@ -171,7 +124,7 @@ describe("tool projection", () => {
       skills: { candidates: [guide], delivered: [] },
     });
     const client = await connectMcpToolRouter([
-      httpMcpServer({ name: "nimblebrain", ...projection.listen() }),
+      channelMcpServer("nimblebrain", projection.channel()),
     ]);
     try {
       // The first write claims the guidance and waits on its body.
@@ -229,7 +182,7 @@ describe("tool projection", () => {
       },
     });
     const client = await connectMcpToolRouter([
-      httpMcpServer({ name: "nimblebrain", ...projection.listen() }),
+      channelMcpServer("nimblebrain", projection.channel()),
     ]);
     try {
       const result = await client.execute({ id: "s", name: "shot", input: {} });
