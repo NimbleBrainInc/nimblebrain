@@ -136,7 +136,9 @@ export function SettingsShell({ title, items, footer }: SettingsShellProps) {
         </div>
       </nav>
 
-      <div className="flex-1 overflow-y-auto py-4 md:py-6 px-(--page-gutter)">
+      {/* Inset on every side by the page gutter, which narrows with the main
+          column (`@container main`), not the viewport. */}
+      <div className="flex-1 overflow-y-auto p-(--page-gutter)">
         {/* One width for every settings page, set here rather than per page so
             tabs never change width as you move between them. Left-aligned, so
             the content starts beside the nav on every tab instead of drifting
