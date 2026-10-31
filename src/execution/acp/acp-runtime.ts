@@ -34,6 +34,7 @@ import {
 import { log } from "../../observability/log.ts";
 import { openToolProjection, type ToolProjection } from "../tool-projection.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../types.ts";
+import { AgentConnectionLostError } from "./connection-lost.ts";
 import type {
   AcpConnection,
   AcpDriver,
@@ -89,9 +90,21 @@ async function executeOverAcp(
   recorder.start();
 
   const cleanup: (() => Promise<void>)[] = [];
+  // Whether the worker lost the connection, once one is open.
+  const link: ConnectionLink = { lost: () => false };
   try {
     signal?.throwIfAborted();
-    const turn = await openSession(runtimeId, driver, connection, opts, run, io, recorder, cleanup);
+    const turn = await openSession(
+      runtimeId,
+      driver,
+      connection,
+      opts,
+      run,
+      io,
+      recorder,
+      cleanup,
+      link,
+    );
     // From here an abort cancels the turn instead of closing the connection.
     // The swap is synchronous, so no abort falls between the two listeners.
     turn.releaseSetupAbort();
@@ -137,12 +150,7 @@ async function executeOverAcp(
     }
     return recorder.finish(response, outcomeOf(driver, response), turn.projection.calls());
   } catch (err) {
-    if (!recorder.ended()) {
-      // A turn that failed as it was cancelled still reports the calls it made.
-      if (signal?.aborted) recorder.cancelled(undefined, driver.modelFailure?.(err)?.outcome);
-      else recorder.failed(err);
-    }
-    throw signal?.aborted ? (signal.reason ?? err) : err;
+    throw runFailure(run, driver, recorder, link, err);
   } finally {
     for (const step of cleanup.reverse()) {
       await step().catch((err) =>
@@ -150,6 +158,45 @@ async function executeOverAcp(
       );
     }
   }
+}
+
+/** The run's connection, as far as the run's end needs to know it. */
+interface ConnectionLink {
+  lost(): boolean;
+}
+
+/**
+ * Record a run that threw, and return what it fails with. A run its own signal
+ * ended (a cancel, its deadline) is cancelled, and is never a lost connection.
+ */
+function runFailure(
+  run: ResolvedRun,
+  driver: AcpDriver,
+  recorder: AcpRunRecorder,
+  link: ConnectionLink,
+  caught: unknown,
+): unknown {
+  const signal = run.config.signal;
+  const err = !signal?.aborted && link.lost() ? connectionLost(run, caught) : caught;
+  if (!recorder.ended()) {
+    // A turn that failed as it was cancelled still reports the calls it made.
+    if (signal?.aborted) recorder.cancelled(undefined, driver.modelFailure?.(err)?.outcome);
+    else recorder.failed(err);
+  }
+  return signal?.aborted ? (signal.reason ?? err) : err;
+}
+
+/**
+ * The failure of a run whose worker lost its connection mid-turn: the turn
+ * cannot finish, so the run ends naming the cut, and is never retried here
+ * (the tools it called ran). The transport's own failure is the cause.
+ */
+function connectionLost(run: ResolvedRun, cause: unknown): AgentConnectionLostError {
+  log.warn("[execution] the agent's worker lost the connection mid-turn", {
+    runId: run.runId,
+    cause: cause instanceof Error ? cause.message : String(cause),
+  });
+  return new AgentConnectionLostError(cause);
 }
 
 /**
@@ -201,6 +248,7 @@ async function openSession(
   io: RunIO,
   recorder: AcpRunRecorder,
   cleanup: (() => Promise<void>)[],
+  link: ConnectionLink,
 ): Promise<{
   agent: acp.ClientContext;
   sessionId: string;
@@ -230,6 +278,7 @@ async function openSession(
 
   const opened = await agentConnection.open(run);
   cleanup.push(() => opened.close());
+  link.lost = () => opened.lost?.() ?? false;
   const acpServers = createAcpMcpServers();
   const app = acpServers.serve(clientApp(recorder, driver.toolSurface, projected));
   const connection =
