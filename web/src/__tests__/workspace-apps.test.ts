@@ -11,6 +11,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  appForPath,
   appsByConnector,
   connectorSettingsPath,
   iconMapFromInstalled,
@@ -166,5 +167,31 @@ describe("orderApps", () => {
 
   test("no pins, order unchanged", () => {
     expect(names(orderApps(apps, []))).toEqual(["crm", "tasks", "outbound", "people"]);
+  });
+});
+
+describe("appForPath", () => {
+  const placements = [
+    p({ serverName: "people", slot: "sidebar.apps" }),
+    p({ serverName: "crm", slot: "sidebar.apps", priority: 20, route: "crm/companies" }),
+    p({ serverName: "crm", slot: "sidebar.apps", priority: 10, route: "crm" }),
+    p({ serverName: "core-nav", slot: "sidebar", route: "core" }),
+  ];
+
+  test("names the app a view's route belongs to, its views in priority order", () => {
+    const app = appForPath("/w/acme/app/crm/companies", placements);
+    expect(app?.serverName).toBe("crm");
+    expect(app?.views.map((v) => v.route)).toEqual(["crm", "crm/companies"]);
+  });
+
+  test("a single-view app is an app with one view", () => {
+    expect(appForPath("/w/acme/app/people", placements)?.views).toHaveLength(1);
+  });
+
+  test("null off an app route, or for a route no app's view holds", () => {
+    expect(appForPath("/w/acme/", placements)).toBeNull();
+    expect(appForPath("/w/acme/settings/general", placements)).toBeNull();
+    expect(appForPath("/w/acme/app/core", placements)).toBeNull();
+    expect(appForPath("/w/acme/app/unknown", placements)).toBeNull();
   });
 });
