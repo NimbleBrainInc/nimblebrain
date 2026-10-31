@@ -11,6 +11,7 @@ import {
   wrapLanguageModel,
 } from "ai";
 import { wrapFetchWithLiveness } from "./fetch-liveness.ts";
+import { googleStreamErrorMiddleware } from "./google-stream-error.ts";
 import { requireQualifiedModelId } from "./model-id.ts";
 
 export interface ProvidersConfig {
@@ -203,7 +204,17 @@ function googleProvider(
 ): ProviderV4 {
   const { apiKey } = cfg;
   const via = gatewayClient("google", gateway);
-  return createGoogleGenerativeAI(via ?? { apiKey });
+  const google = createGoogleGenerativeAI(via ?? { apiKey });
+  // An error Gemini sends inside the stream fails the call, direct or through
+  // the gateway, which passes the stream through as sent (google-stream-error.ts).
+  return {
+    ...google,
+    languageModel: (modelId: string) =>
+      wrapLanguageModel({
+        model: google.languageModel(modelId),
+        middleware: googleStreamErrorMiddleware,
+      }),
+  };
 }
 
 function greenptProvider(
