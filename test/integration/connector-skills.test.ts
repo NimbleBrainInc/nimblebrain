@@ -448,16 +448,24 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
     expect(injected?.skillName).toBe("connector:ai-nimblebrain-test-mcp:test");
     expect(injected?.skillBody).toContain("How to use the test server");
 
-    // And it rides the conversation history as a `<connector-skill>` block —
-    // the surface-once channel, never the cached system prefix.
-    const historyText = reconstructMessages(events)
+    // And it rides the conversation history as a `<connector-skill>` block
+    // inside the iteration's tool result — the surface-once channel, never the
+    // cached system prefix, and never a user message after a tool message (a
+    // 400 on some Chat Completions APIs).
+    const history = reconstructMessages(events);
+    const historyText = history
       .map((m) =>
         typeof m.content === "string"
           ? m.content
-          : (m.content as ReadonlyArray<{ text?: string }>).map((p) => p.text ?? "").join("\n"),
+          : (m.content as ReadonlyArray<{ text?: string; output?: { value?: unknown } }>)
+              .map((p) => p.text ?? String(p.output?.value ?? ""))
+              .join("\n"),
       )
       .join("\n");
     expect(historyText).toContain("<connector-skill");
+    expect(history.some((m, i) => m.role === "user" && history[i - 1]?.role === "tool")).toBe(
+      false,
+    );
   });
 });
 

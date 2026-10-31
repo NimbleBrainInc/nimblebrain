@@ -13,7 +13,8 @@ import type {
   ToolCall,
   ToolSchema,
 } from "../../../src/engine/types.ts";
-import { createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
+import { CANCEL_GRACE_MS, createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
+import type { AcpDriver, AcpOutcome } from "../../../src/execution/acp/driver.ts";
 import { createNativeRuntime } from "../../../src/execution/native-runtime.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../../../src/execution/types.ts";
 import type { TokenUsage } from "../../../src/usage/types.ts";
@@ -241,6 +242,33 @@ describe("acp runtime: the projection holds the run's bound", () => {
     expect(sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
   });
 
+  test("an agent that ignores the cancel is cut off after the grace, and the run ends cancelled", async () => {
+    const controller = new AbortController();
+    const runtime = createAcpRuntime(
+      "scripted-acp",
+      scriptedDriver(),
+      scriptedConnection({ script: () => [], unresponsive: true }),
+    );
+    const sink = collect();
+    const execution = runtime.execute(resolvedRun(controller.signal), {
+      tools: new StaticToolRouter([LOOKUP], () => ({ content: [], isError: false })),
+      events: {
+        emit(e) {
+          sink.emit(e);
+          if (e.type === "execution.bound") setTimeout(() => controller.abort(), 20);
+        },
+      },
+      billSummary: () => {},
+    });
+
+    const started = Date.now();
+    await expect(execution).rejects.toBeDefined();
+    const waited = Date.now() - started;
+    expect(waited).toBeGreaterThanOrEqual(CANCEL_GRACE_MS);
+    expect(waited).toBeLessThan(CANCEL_GRACE_MS + 2_000);
+    expect(sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
+  }, 10_000);
+
   test("an agent that fails the session is a run error, not a crash", async () => {
     const sink = collect();
     const runtime = createAcpRuntime(
@@ -328,6 +356,91 @@ describe("acp runtime with the driver's per-call usage", () => {
     expect(result.iterations).toBe(2);
     expect(shape(await replayed(acpSink.events))).toEqual(shape(await replayed(nativeSink.events)));
   });
+});
+
+describe("acp runtime cancelled with the driver's per-call usage", () => {
+  const callUsage = (inputTokens: number): TokenUsage => ({ inputTokens, outputTokens: 5 });
+
+  const CALLS: AcpOutcome["calls"] = [
+    { model: "test:echo", purpose: "turn", usage: callUsage(100) },
+    { model: "test:fast", purpose: "summary", usage: callUsage(40) },
+  ];
+
+  /** Cancel mid-tool, with the driver reading `calls` from the agent's `cancelled` answer. */
+  async function cancelMidTool(
+    calls: AcpOutcome["calls"],
+    driver: Partial<AcpDriver> = calls ? { outcome: () => ({ calls }) } : {},
+    cancelledAnswer?: ScriptedAgentOptions["cancelledAnswer"],
+  ) {
+    const controller = new AbortController();
+    const steps = stepsFrom(structuredClone(SCRIPT));
+    const runtime = createAcpRuntime(
+      "reported-usage",
+      { ...scriptedDriver(), ...driver },
+      scriptedConnection({ script: () => steps, cancelledAnswer }),
+    );
+    const router = new StaticToolRouter([LOOKUP], async () => {
+      controller.abort();
+      await Bun.sleep(20);
+      return { content: [{ type: "text", text: "late" }], isError: false };
+    });
+    const sink = collect();
+    const summaries: [string, number][] = [];
+    await expect(
+      runtime.execute(resolvedRun(controller.signal), {
+        tools: router,
+        events: sink,
+        billSummary: (model, usage) => summaries.push([model, usage.inputTokens]),
+      }),
+    ).rejects.toBeDefined();
+    return { sink, summaries };
+  }
+
+  test("prices the calls made before the cancel and replays as an unpriced cancel", async () => {
+    const reported = await cancelMidTool(CALLS);
+    const unpriced = await cancelMidTool(undefined);
+
+    expect(
+      reported.sink
+        .of("llm.done")
+        .filter((e) => !e.data.transcriptOnly)
+        .map((e) => e.data.usage.inputTokens),
+    ).toEqual([100]);
+    expect(reported.summaries).toEqual([["test:fast", 40]]);
+    expect(reported.sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
+    expect(shape(await replayed(reported.sink.events))).toEqual(
+      shape(await replayed(unpriced.sink.events)),
+    );
+  });
+
+  test.each([
+    [
+      "fails its prompt with the model failure",
+      { modelFailure: () => ({ status: 500, outcome: { calls: CALLS } }) },
+      () => {
+        throw new Error("the model call failed");
+      },
+    ],
+    [
+      "answers end_turn",
+      { outcome: () => ({ calls: CALLS }) },
+      () => ({ stopReason: "end_turn" as const }),
+    ],
+  ] as const)(
+    "an agent that %s as the cancel lands is priced once and ends cancelled",
+    async (_case, driver, answer) => {
+      const { sink, summaries } = await cancelMidTool(CALLS, driver, answer);
+
+      expect(
+        sink
+          .of("llm.done")
+          .filter((e) => !e.data.transcriptOnly)
+          .map((e) => e.data.usage.inputTokens),
+      ).toEqual([100]);
+      expect(summaries).toEqual([["test:fast", 40]]);
+      expect(sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
+    },
+  );
 });
 
 describe("bound skill guidance", () => {

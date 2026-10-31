@@ -1,4 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { isRetryable } from "../../../src/engine/retry.ts";
+import { ModelGatewayNoResponseError } from "../../../src/model/gateway-no-response.ts";
+import { isModelBudgetSpent } from "../../../src/model/gateway-refusal.ts";
+import { buildModelResolver } from "../../../src/model/registry.ts";
+import { callModel, ModelStreamStallError } from "../../../src/model/stream.ts";
 import { modelGatewayFetch } from "../../../src/runtime/model-gateway-fetch.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import {
@@ -71,5 +76,144 @@ describe("the model gateway's fetch", () => {
     expect(String(first.sub)).toStartWith("call_");
     expect(first.sub).not.toBe(second.sub);
     expect(first.workspace).toBe("none");
+  });
+});
+
+describe("the model gateway's fetch on a 429", () => {
+  /** One call through the gateway fetch, answered with `response`. */
+  const call = (response: Response) =>
+    modelGatewayFetch(
+      runKey,
+      fakeFetch(async () => response),
+    )("http://gateway.test/anthropic/v1/messages", { method: "POST" });
+
+  it("throws the gateway's refusal for a spent run budget as ModelBudgetSpentError", async () => {
+    const refusal = new Response("rate limit exceeded", {
+      status: 429,
+      headers: {
+        "content-type": "text/plain",
+        "retry-after": "3600",
+        "x-ratelimit-remaining": "0",
+      },
+    });
+    const err = await call(refusal).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(isModelBudgetSpent(err)).toBe(true);
+    expect((err as { retryable?: boolean }).retryable).toBe(false);
+  });
+
+  it("passes a provider's own 429 through, for the provider client to retry", async () => {
+    const body = JSON.stringify({
+      type: "error",
+      error: { type: "rate_limit_error", message: "rate limit exceeded" },
+    });
+    const response = await call(
+      new Response(body, { status: 429, headers: { "content-type": "application/json" } }),
+    );
+    expect(response.status).toBe(429);
+    expect(await response.text()).toBe(body);
+  });
+
+  it("passes any other plain-text 429 through", async () => {
+    const response = await call(
+      new Response("slow down", { status: 429, headers: { "content-type": "text/plain" } }),
+    );
+    expect(await response.text()).toBe("slow down");
+  });
+});
+
+describe("a model call the gateway never answers", () => {
+  const GATEWAY = "http://gateway.test";
+
+  /** Call an Anthropic model through the gateway, whose transport is `base`. */
+  const call = (base: typeof fetch, opts: { signal?: AbortSignal } = {}) => {
+    const resolve = buildModelResolver(
+      {},
+      { url: GATEWAY, fetch: modelGatewayFetch(runKey, base) },
+    );
+    return callModel(
+      resolve("anthropic:claude-sonnet-4-6"),
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        abortSignal: opts.signal,
+      },
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      { firstContentMs: 50 },
+    ).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+  };
+
+  /** A transport that never answers: it waits until the call is aborted. */
+  const silent = fakeFetch(
+    (_input, init) =>
+      new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      }),
+  );
+
+  it("names the gateway when the stream watchdog fires before any response, and stays retryable", async () => {
+    const err = await call(silent);
+    expect(err).toBeInstanceOf(ModelGatewayNoResponseError);
+    expect((err as Error).message).toBe(
+      "The model gateway didn't respond: Model stream stalled: no response for 50ms",
+    );
+    expect((err as Error).cause).toBeInstanceOf(ModelStreamStallError);
+    expect(isRetryable(err)).toBe(true);
+  });
+
+  it("names the gateway when the connection is refused, and stays retryable", async () => {
+    const refused = Object.assign(
+      new TypeError("ECONNREFUSED: Unable to connect. Is the computer able to access the url?"),
+      { code: "ECONNREFUSED" },
+    );
+    const err = await call(fakeFetch(async () => Promise.reject(refused)));
+    expect(err).toBeInstanceOf(ModelGatewayNoResponseError);
+    expect((err as Error).message).toStartWith("The model gateway didn't respond: ");
+    expect((err as Error).message).toContain("ECONNREFUSED");
+    expect(isRetryable(err)).toBe(true);
+  });
+
+  it("keeps a failure the client does not retry unretried, such as a name not found", async () => {
+    const notFound = Object.assign(new TypeError("getaddrinfo ENOTFOUND gateway.test"), {
+      code: "ENOTFOUND",
+    });
+    const err = await call(fakeFetch(async () => Promise.reject(notFound)));
+    expect(err).toBeInstanceOf(ModelGatewayNoResponseError);
+    expect((err as Error).cause).toBe(notFound);
+    expect(isRetryable(err)).toBe(false);
+  });
+
+  it("reports a stall after the gateway answered as the model's stall", async () => {
+    // Headers came back, then nothing: the gateway responded, the model did not.
+    const answeredThenSilent = fakeFetch(
+      async (_input, init) =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), {
+                once: true,
+              });
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    );
+    const err = await call(answeredThenSilent);
+    expect(err).toBeInstanceOf(ModelStreamStallError);
+  });
+
+  it("leaves a cancelled run's abort as an abort", async () => {
+    const run = new AbortController();
+    setTimeout(() => run.abort(), 10);
+    const err = await call(silent, { signal: run.signal });
+    expect(err).not.toBeInstanceOf(ModelGatewayNoResponseError);
+    expect((err as Error).name).toBe("AbortError");
   });
 });

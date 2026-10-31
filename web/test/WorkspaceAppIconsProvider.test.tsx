@@ -118,6 +118,7 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
       scope: "workspace",
       interactive: false,
       toolCount: 0,
+      allowedTools: [],
       status: "needs_auth",
     };
     mockGetInstalled.mockImplementationOnce(() =>

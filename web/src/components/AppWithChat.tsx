@@ -9,7 +9,9 @@
 // about the panel's own layout.
 //
 // What stays here, because it needs the focused app:
-//   - `SlotRenderer` — renders the placement's iframe
+//   - `SlotRenderer` — renders the placement's iframe, with the tools of the
+//     app's connector the viewer may call (`allowedTools`, from the installed
+//     entry; none for an identity app, which belongs to no connector)
 //   - `handleChat` — the iframe→shell channel for "send this from inside the
 //     app". It is the one place a focused app is known, so it stamps the
 //     app's `AppContext` on outgoing messages.
@@ -30,6 +32,8 @@ import { useAppLocation } from "../context/AppLocationContext";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
+import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
+import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { getSavedConversationId, setSavedConversationId } from "../lib/active-conversation-storage";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
 import { appTargetFrom } from "../lib/open-app";
@@ -68,6 +72,15 @@ export function AppWithChat({ placement }: AppWithChatProps) {
   const { setFocusedApp } = useFocusedApp();
   const { setAppLocation } = useAppLocation();
   const location = useLocation();
+  const { connectors } = useWorkspaceAppIcons();
+  const { activeWorkspace } = useWorkspaceContext();
+  // The app's connector, read for the workspace on screen only: after a switch
+  // the list names the previous workspace until the refetch lands. An identity
+  // app is no connector, so it finds none and is sent no `connector` key.
+  const allowedTools =
+    connectors && connectors.workspaceId === activeWorkspace?.id
+      ? connectors.installed.find((c) => c.serverName === placement.serverName)?.allowedTools
+      : undefined;
 
   // Collapse fullscreen when navigating to a different route
   const prevPathnameRef = useRef(location.pathname);
@@ -192,6 +205,7 @@ export function AppWithChat({ placement }: AppWithChatProps) {
           onChat={handleChat}
           onLocation={handleLocation}
           target={target}
+          allowedTools={allowedTools}
         />
       </div>
     </div>

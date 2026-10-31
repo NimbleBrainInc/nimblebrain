@@ -179,12 +179,34 @@ describe("runtime selection", () => {
     });
     config.execution = { ...config.execution, default: "scripted-acp" };
 
-    const externalLines = ledgerLines(external.conversationId);
+    const externalLines = ledgerLines(external.conversationId).filter((l) => l.source === "main");
     expect(externalLines.length).toBeGreaterThan(0);
     expect(externalLines.every((l) => l.runtime === "scripted-acp")).toBe(true);
     const nativeLines = ledgerLines(native.conversationId);
     expect(nativeLines.length).toBeGreaterThan(0);
     expect(nativeLines.every((l) => l.runtime === undefined)).toBe(true);
+  });
+
+  test("a call NimbleBrain makes inside an external runtime's run is not recorded as the agent's", async () => {
+    config.execution = { ...config.execution, default: "scripted-acp" };
+    const external = await runtime.chat({
+      message: "title me",
+      workspaceId: TEST_WORKSPACE_ID,
+      identity: USER,
+    });
+
+    // The title call is forked after the turn returns.
+    let title: UsageLedgerEntry | undefined;
+    for (let i = 0; i < 50 && !title; i++) {
+      title = ledgerLines(external.conversationId).find((l) => l.source === "title");
+      if (!title) await Bun.sleep(20);
+    }
+    const main = ledgerLines(external.conversationId).find((l) => l.source === "main");
+    expect(main?.runtime).toBe("scripted-acp");
+    // The run's call, measured by NimbleBrain on its own model client.
+    expect(title).toBeDefined();
+    expect(title?.runId).toBe(main?.runId);
+    expect(title?.runtime).toBeUndefined();
   });
 
   test("a run that names spend accounts is refused on a runtime with no spend gate", async () => {

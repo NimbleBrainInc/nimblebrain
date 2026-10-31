@@ -1240,6 +1240,66 @@ describe("reconstructMessages — cancelled runs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Runs that ended on tool results
+// ---------------------------------------------------------------------------
+
+const ENDED_ON_TOOL_RESULTS =
+  "[Previous turn ended after its tool calls, without a final response.]";
+
+function endedOnToolResults(terminator: ConversationEvent): ConversationEvent[] {
+  return [
+    userMessage("Score every item"),
+    runStart("r1"),
+    llmToolCall("r1", "tc1", "score"),
+    toolStart("r1", "tc1", "score"),
+    toolDone("r1", "tc1", "score", "scored"),
+    terminator,
+    userMessage("Keep going"),
+  ];
+}
+
+describe("reconstructMessages — a run that ended on tool results", () => {
+  it("test_replay_max_iterations_on_tool_results_then_user_closes_with_marker", () => {
+    const messages = reconstructMessages(
+      endedOnToolResults({
+        ts: ts(5),
+        type: "run.done",
+        runId: "r1",
+        stopReason: "max_iterations",
+        totalMs: 1000,
+      }),
+    );
+
+    assertValidMessageStructure(messages);
+    assertNoUserAfterTool(messages);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "user"]);
+    expect(allText([messages[3]!])).toEqual([ENDED_ON_TOOL_RESULTS]);
+  });
+
+  it("test_replay_run_error_on_tool_results_then_user_closes_with_marker", () => {
+    const messages = reconstructMessages(endedOnToolResults(runError("r1")));
+
+    assertNoUserAfterTool(messages);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "user"]);
+    expect(allText([messages[3]!])).toEqual([ENDED_ON_TOOL_RESULTS]);
+  });
+
+  it("test_replay_cancelled_on_tool_results_keeps_only_the_cancelled_marker", () => {
+    const messages = reconstructMessages(endedOnToolResults(runCancelled("r1")));
+
+    assertNoUserAfterTool(messages);
+    expect(allText(messages)).toContain(CANCELLED_MARKER);
+    expect(allText(messages)).not.toContain(ENDED_ON_TOOL_RESULTS);
+  });
+
+  it("test_replay_run_still_ending_on_tool_results_adds_no_marker", () => {
+    // No next user message yet: nothing follows the tool message to repair.
+    const events = endedOnToolResults(runDone("r1")).slice(0, -1);
+    expect(allText(reconstructMessages(events))).not.toContain(ENDED_ON_TOOL_RESULTS);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tool-result bounding on replay
 // ---------------------------------------------------------------------------
 
@@ -1313,7 +1373,7 @@ describe("reconstructMessages — tool-result bounding on replay", () => {
 function connectorSkillInjected(
   skillName: string,
   skillBody: string,
-  opts?: { toolName?: string; scope?: string },
+  opts?: { toolName?: string; scope?: string; heldToolCallId?: string },
 ): ConversationEvent {
   return {
     ts: ts(3),
@@ -1322,12 +1382,24 @@ function connectorSkillInjected(
     skillName,
     skillBody,
     scope: opts?.scope ?? "connector",
+    ...(opts?.heldToolCallId !== undefined ? { heldToolCallId: opts.heldToolCallId } : {}),
   };
 }
 
 /** Find the synthetic connector-skill message, if any, in a reconstructed list. */
 function findConnectorSkillMessage(messages: StoredMessage[]): StoredMessage | undefined {
   return messages.find((m) => m.metadata?.synthetic === "connector_skill_injected");
+}
+
+/** The tool message that carries `skill`, if any. */
+function findCarrier(messages: StoredMessage[], skill: string): StoredMessage | undefined {
+  return messages.find((m) => m.role === "tool" && m.metadata?.connectorSkills?.includes(skill));
+}
+
+/** The model text of a tool message's single tool result. */
+function resultText(m: StoredMessage): string {
+  const part = partsOf(m)[0];
+  return part?.type === "tool-result" && "value" in part.output ? String(part.output.value) : "";
 }
 
 /** Assert no two adjacent messages share the `user` role (Anthropic 400 guard). */
@@ -1337,8 +1409,19 @@ function assertNoAdjacentUserMessages(messages: StoredMessage[]): void {
   }
 }
 
+/**
+ * Assert no `user` message directly follows a `tool` message: some Chat
+ * Completions APIs reject that order with a 400 ("Unexpected role 'user'
+ * after role 'tool'").
+ */
+function assertNoUserAfterTool(messages: StoredMessage[]): void {
+  for (let i = 1; i < messages.length; i++) {
+    expect(messages[i - 1]!.role === "tool" && messages[i]!.role === "user").toBe(false);
+  }
+}
+
 describe("reconstructMessages — connector.skill.injected (P4)", () => {
-  it("reconstructs a synthetic user message carrying the overlay in <connector-skill>", () => {
+  it("carries the overlay in <connector-skill> inside the triggering tool result", () => {
     const events: ConversationEvent[] = [
       userMessage("send an email"),
       runStart("run-1"),
@@ -1351,27 +1434,24 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
     ];
 
     const messages = reconstructMessages(events);
-    const synthetic = findConnectorSkillMessage(messages);
+    const carrier = findCarrier(messages, "gmail");
 
-    expect(synthetic).toBeDefined();
-    // `user`, not `assistant`: mid-run this is the last message the next model
-    // call sees, and a trailing assistant message is a prefill the model
-    // continues rather than answers.
-    expect(synthetic!.role).toBe("user");
-    expect(synthetic!.metadata?.skill).toBe("gmail");
-    const first = partsOf(synthetic!)[0];
-    const text = first?.type === "text" ? first.text : "";
+    expect(carrier).toBeDefined();
+    expect(findConnectorSkillMessage(messages)).toBeUndefined();
+    const text = resultText(carrier!);
+    // The tool's own output first, then the guidance.
+    expect(text.startsWith("sent\n\n")).toBe(true);
     expect(text).toContain("<connector-skill>");
     expect(text).toContain("</connector-skill>");
     expect(text).toContain("Confirm the recipient before sending.");
-    // Surfaced into history, not as a user turn — role alternation stays valid.
+    assertNoUserAfterTool(messages);
     assertNoAdjacentUserMessages(messages);
   });
 
-  it("places the overlay after the triggering iteration, not at the end of the run", () => {
-    // The live run appends the overlay right after the tool results of the
-    // iteration that fired it, so replay has to land it there too — otherwise
-    // the rebuilt history is not the history the run executed against. A
+  it("places the overlay in the triggering iteration, not at the end of the run", () => {
+    // The live run carries the overlay in the tool results of the iteration
+    // that fired it, so replay has to land it there too — otherwise the
+    // rebuilt history is not the history the run executed against. A
     // two-iteration run is what distinguishes the two placements.
     const events: ConversationEvent[] = [
       userMessage("send an email"),
@@ -1388,17 +1468,73 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
     ];
 
     const messages = reconstructMessages(events);
-    const overlayIdx = messages.findIndex(
-      (m) => m.metadata?.synthetic === "connector_skill_injected",
-    );
-    const lastToolIdx = messages.map((m) => m.role).lastIndexOf("tool");
+    const carrier = findCarrier(messages, "gmail")!;
+    const lastTool = messages.filter((m) => m.role === "tool").at(-1)!;
 
-    expect(overlayIdx).toBeGreaterThanOrEqual(0);
-    // Before the SECOND tool call's result — i.e. before the calls it governs,
-    // which is the whole point. End-of-run placement would put it after.
-    expect(overlayIdx).toBeLessThan(lastToolIdx);
-    expect(overlayIdx).toBeLessThan(messages.length - 1);
-    assertNoAdjacentUserMessages(messages);
+    // In the FIRST call's result — before the calls it governs, which is the
+    // whole point. End-of-run placement would put it in the second.
+    expect(partsOf(carrier)[0]).toMatchObject({ toolCallId: "tc-1" });
+    expect(resultText(lastTool)).toBe("sent");
+    assertNoUserAfterTool(messages);
+  });
+
+  it("puts a held call's overlay in that call's result, and the rest in the last one", () => {
+    const events: ConversationEvent[] = [
+      userMessage("send an email"),
+      runStart("run-1"),
+      llmParallelToolCalls("run-1", [
+        { toolCallId: "tc-1", toolName: "gmail__send" },
+        { toolCallId: "tc-2", toolName: "gmail__list" },
+      ]),
+      toolStart("run-1", "tc-1", "gmail__send"),
+      toolDone("run-1", "tc-1", "gmail__send", "Not run", false),
+      toolStart("run-1", "tc-2", "gmail__list"),
+      toolDone("run-1", "tc-2", "gmail__list", "inbox"),
+      connectorSkillInjected("gmail-send", "Confirm the recipient.", { heldToolCallId: "tc-1" }),
+      connectorSkillInjected("gmail-read", "Summarize threads.", { toolName: "gmail__list" }),
+      connectorSkillInjected("gmail-tone", "Plain words.", { toolName: "gmail__list" }),
+      llmText("run-1", "Done."),
+      runDone("run-1"),
+    ];
+
+    const messages = reconstructMessages(events);
+    const held = findCarrier(messages, "gmail-send")!;
+    const last = findCarrier(messages, "gmail-read")!;
+    expect(partsOf(held)[0]).toMatchObject({ toolCallId: "tc-1" });
+    expect(resultText(held)).toContain("governs the call held above");
+    expect(last.metadata?.connectorSkills).toEqual(["gmail-read", "gmail-tone"]);
+    const text = resultText(last);
+    expect(text.indexOf("Summarize threads.")).toBeLessThan(text.indexOf("Plain words."));
+    assertNoUserAfterTool(messages);
+  });
+
+  it("keeps an activation marker beside the overlays the same result carries", () => {
+    const events: ConversationEvent[] = [
+      userMessage("load it"),
+      runStart("run-1"),
+      llmToolCall("run-1", "tc-1", "nb__use_skill", { name: "runbook" }),
+      toolStart("run-1", "tc-1", "nb__use_skill"),
+      toolDone("run-1", "tc-1", "nb__use_skill", "<activated-skill>...</activated-skill>"),
+      {
+        ts: ts(4),
+        type: "skill.activated",
+        runId: "run-1",
+        toolCallId: "tc-1",
+        skillName: "runbook",
+        scope: "workspace",
+        tokens: 10,
+      },
+      connectorSkillInjected("gmail", "Guidance."),
+      llmText("run-1", "Loaded."),
+      runDone("run-1"),
+    ];
+
+    const carrier = findCarrier(reconstructMessages(events), "gmail")!;
+    expect(carrier.metadata).toMatchObject({
+      synthetic: "skill_activated",
+      skill: "runbook",
+      connectorSkills: ["gmail"],
+    });
   });
 
   it("still delivers an overlay that cannot be placed against an iteration", () => {
@@ -1429,18 +1565,13 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
       runDone("run-1"),
     ];
 
-    const synthetic = findConnectorSkillMessage(reconstructMessages(events))!;
-    const first = partsOf(synthetic)[0];
-    const text = first?.type === "text" ? first.text : "";
+    const text = resultText(findCarrier(reconstructMessages(events), "gmail")!);
     expect(text).toContain("&lt;/connector-skill>");
     // Only the wrapper's own closing tag remains real.
     expect(text.split("</connector-skill>").length - 1).toBe(1);
   });
 
-  it("keeps alternation valid when a new user turn follows the injection", () => {
-    // Turn 1 injects; turn 2 is a fresh user message. The overlay is user-role
-    // but is NOT exempt from the alternation pass here (only overlay→overlay
-    // is), so the repair marker still separates them.
+  it("keeps the overlay ahead of a new user turn that follows the injection", () => {
     const events: ConversationEvent[] = [
       userMessage("send an email"),
       runStart("run-1"),
@@ -1448,19 +1579,18 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
       toolStart("run-1", "tc-1", "gmail__send"),
       toolDone("run-1", "tc-1", "gmail__send", "sent"),
       connectorSkillInjected("gmail", "Guidance."),
+      llmText("run-1", "Sent."),
       runDone("run-1"),
       userMessage("now send another"),
     ];
 
     const messages = reconstructMessages(events);
     assertNoAdjacentUserMessages(messages);
-    // The synthetic message precedes the second user turn.
-    const syntheticIdx = messages.findIndex(
-      (m) => m.metadata?.synthetic === "connector_skill_injected",
-    );
+    assertNoUserAfterTool(messages);
+    const carrierIdx = messages.findIndex((m) => m.metadata?.connectorSkills?.includes("gmail"));
     const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
-    expect(syntheticIdx).toBeGreaterThanOrEqual(0);
-    expect(syntheticIdx).toBeLessThan(lastUserIdx);
+    expect(carrierIdx).toBeGreaterThanOrEqual(0);
+    expect(carrierIdx).toBeLessThan(lastUserIdx);
   });
 });
 

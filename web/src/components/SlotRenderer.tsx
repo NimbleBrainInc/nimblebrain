@@ -39,11 +39,21 @@ interface SlotRendererProps {
    */
   target?: { id: string; key: string };
   /**
-   * Whether the viewer can manage the connector these placements belong to.
-   * Set only by the connector settings page; when set, it reaches the app as
-   * the `connector` host-context extension. Every other mount leaves it unset.
+   * Whether the viewer can manage the connector these placements belong to:
+   * the older, coarser signal (a role, not the tools it unlocks). Set only by
+   * the connector settings page; when set, it reaches the app as
+   * `connector.canManage`. Every other mount leaves it unset. Prefer
+   * `allowedTools`.
    */
   canManage?: boolean;
+  /**
+   * The bare names of the connector's tools the viewer may call, from its
+   * installed-connector entry. Set by the connector settings page and by a
+   * workspace app's own page (`AppWithChat`); when set, it reaches the app as
+   * `connector.allowedTools`. Left unset on every other mount, and until the
+   * entry has loaded.
+   */
+  allowedTools?: readonly string[];
   /**
    * Size each iframe to its content instead of filling the container. For a
    * placement in a flow layout (a page section), where `height: 100%` has no
@@ -174,6 +184,7 @@ export function SlotRenderer({
   onLocation,
   target,
   canManage,
+  allowedTools,
   fitContent = false,
 }: SlotRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -191,7 +202,8 @@ export function SlotRenderer({
   workspaceRef.current = activeWorkspace;
   // Same reason as `workspaceRef`: the handshake reads the value current when
   // the iframe finishes loading, not the one from the render that mounted it.
-  const connector: ConnectorForHostContext = canManage === undefined ? undefined : { canManage };
+  const connector: ConnectorForHostContext =
+    canManage === undefined && allowedTools === undefined ? undefined : { canManage, allowedTools };
   const connectorRef = useRef(connector);
   connectorRef.current = connector;
   // Instance config, fixed at startup; a ref only so the callbacks built once

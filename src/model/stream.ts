@@ -11,6 +11,7 @@ import { isProviderStreamError } from "@ai-sdk/provider-utils";
 import { withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
 import { registerLiveness, unregisterLiveness } from "./fetch-liveness.ts";
+import { gatewayGaveNoResponse, ModelGatewayNoResponseError } from "./gateway-no-response.ts";
 
 /**
  * The watchdog bounds a single model stream in two regimes, because time-to-
@@ -268,16 +269,19 @@ async function callModelInner(
     const deferred = deferredStreamError(state, watchdog.sawOutput);
     if (deferred) throw deferred;
   } catch (err) {
-    // Our watchdog fired (the stream stalled) and the run itself was NOT
-    // cancelled → surface a stall. Retryable only before output began; a
-    // genuine run-level abort (external signal) is not a stall — propagate it.
-    if (watchdog.stalled && !options.abortSignal?.aborted) {
-      const sawOutput = watchdog.sawOutput;
-      throw new ModelStreamStallError(sawOutput ? idleMs : firstContentMs, {
-        retryable: !sawOutput,
-      });
-    }
-    throw err;
+    // A genuine run-level abort (external signal) is not a stall: propagate it.
+    if (options.abortSignal?.aborted) throw err;
+    // Our watchdog fired (the stream stalled) → surface a stall. Retryable only
+    // before output began.
+    const failure = watchdog.stalled
+      ? new ModelStreamStallError(watchdog.sawOutput ? idleMs : firstContentMs, {
+          retryable: !watchdog.sawOutput,
+        })
+      : err;
+    // The installation's model gateway never answered the call: name it.
+    throw gatewayGaveNoResponse(watchdog.signal)
+      ? new ModelGatewayNoResponseError(failure)
+      : failure;
   } finally {
     unregisterLiveness(watchdog.signal);
     watchdog.dispose();

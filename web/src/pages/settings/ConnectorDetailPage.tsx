@@ -7,6 +7,7 @@ import { OAuthClientSection } from "../../components/connectors/OAuthClientSecti
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
 import { UninstallConnectorDialog } from "../../components/connectors/UninstallConnectorDialog";
 import { WorkspaceSecretsSection } from "../../components/connectors/WorkspaceSecretsSection";
+import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 
 /**
@@ -51,6 +52,9 @@ export function ConnectorDetailPage() {
   // Edit gates ride on workspace-admin *membership*, matching the server's
   // `canWriteWorkspaceScoped`.
   const canManage = useCanWriteActiveWorkspace();
+  // `installed.allowedTools` is decided for the viewer's role, so a role change
+  // re-reads the entry.
+  const viewerRole = useWorkspaceContext().activeWorkspace?.userRole;
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -68,9 +72,10 @@ export function ConnectorDetailPage() {
     }
   }, [serverName]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `viewerRole` is the trigger, not an input — the server reads the role itself
   useEffect(() => {
     refresh();
-  }, [refresh]);
+  }, [refresh, viewerRole]);
 
   if (loading) {
     return <div className="text-sm text-muted-foreground">Loading…</div>;
@@ -130,7 +135,11 @@ export function ConnectorDetailPage() {
       <div className="divide-y divide-border/60 [&>*]:py-6 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">
         <OAuthClientSection installed={installed} canManage={canManage} onChanged={refresh} />
         <WorkspaceSecretsSection installed={installed} canManage={canManage} />
-        <ConnectorSettingsSection serverName={installed.serverName} canManage={canManage} />
+        <ConnectorSettingsSection
+          serverName={installed.serverName}
+          canManage={canManage}
+          allowedTools={installed.allowedTools}
+        />
         <ToolPermissionsTable
           serverName={installed.serverName}
           scope="workspace"

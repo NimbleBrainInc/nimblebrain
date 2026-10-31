@@ -168,8 +168,9 @@ export type SkillDeletedPayload = Static<typeof SkillDeletedPayload>;
 /**
  * `connector.skill.injected` — a curated connector overlay surfaced into
  * the conversation history for the first time, triggered by a matching
- * connector tool call. The reconstructor turns this into a synthetic
- * message; the body is wrapped in `<connector-skill>` containment at that point.
+ * connector tool call. The reconstructor appends it to a tool result of the
+ * iteration that delivered it; the body is wrapped in `<connector-skill>`
+ * containment at that point.
  */
 export const ConnectorSkillInjectedPayload = Type.Object({
   /** Engine-attached run id for debug/correlation. */
@@ -725,8 +726,8 @@ export interface EngineEventPayloads {
   /**
    * A curated connector-skill overlay was surfaced into the conversation for
    * the first time, triggered by a matching connector tool call. The
-   * reconstructor turns this into a synthetic message carrying the skill
-   * body, placed after the tool results of the iteration that triggered it, so
+   * reconstructor appends the skill body to a tool result of the iteration
+   * that delivered it, so
    * the guidance rides the cached, append-only history and is in context for
    * the model's next action instead of re-entering the system prefix. Emitted
    * at most once per (conversation, skill). Payload: { runId, toolName,

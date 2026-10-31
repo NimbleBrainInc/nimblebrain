@@ -9,10 +9,10 @@ import { SlotRenderer } from "../SlotRenderer";
  * - **One per connector.** The first `settings` placement by priority whose
  *   server is this connector renders; any other is ignored. `forSlot` returns
  *   placements sorted by priority.
- * - **Rendered for every member who can reach the page.** `canManage` is not a
- *   visibility gate here. It reaches the component as the `connector` host-context
- *   extension, so the component can disable controls the viewer cannot use; the
- *   server still decides every call.
+ * - **Rendered for every member who can reach the page.** Neither `allowedTools`
+ *   nor `canManage` is a visibility gate here. Both reach the component as the
+ *   `connector` host-context extension, so the component can disable controls
+ *   the viewer cannot use; the server still decides every call.
  * - **Nothing when the connector declares no `settings` placement**, or while
  *   the shell still holds another workspace's placements mid-switch.
  *
@@ -22,9 +22,12 @@ import { SlotRenderer } from "../SlotRenderer";
 export function ConnectorSettingsSection({
   serverName,
   canManage,
+  allowedTools,
 }: {
   serverName: string;
   canManage: boolean;
+  /** The connector's tools the viewer may call, from its installed entry. */
+  allowedTools: readonly string[];
 }) {
   const shell = useShellContext();
   const { activeWorkspace } = useWorkspaceContext();
@@ -43,7 +46,12 @@ export function ConnectorSettingsSection({
       <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
         Settings
       </h2>
-      <SlotRenderer placements={[placement]} canManage={canManage} fitContent />
+      <SlotRenderer
+        placements={[placement]}
+        canManage={canManage}
+        allowedTools={allowedTools}
+        fitContent
+      />
     </section>
   );
 }

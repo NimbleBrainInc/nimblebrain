@@ -8,6 +8,7 @@
 
 import type { LanguageModelV4Content, LanguageModelV4ReasoningPart } from "@ai-sdk/provider";
 import { boundToolResultForModel } from "../engine/content-helpers.ts";
+import { guidanceByToolCall, withGuidance } from "../engine/skill-delivery.ts";
 import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
 import { normalizeForReplay } from "../model/inbound-fit.ts";
 import { formatConnectorSkillBlock } from "../prompt/containment.ts";
@@ -76,6 +77,16 @@ const CANCELLED_RUN_MARKER = "[This turn was stopped before it finished.]";
  * the per-run logic didn't catch.
  */
 const ABANDONED_RUN_MARKER = "[Previous turn ended without producing any response.]";
+
+/**
+ * Marker for a run whose last messages are tool results: it ended without the
+ * response that would have followed them (stopped at its step limit, its input
+ * or spend cap, or an error). It sits between those results and the next user
+ * message, which some Chat Completions APIs reject directly after a tool
+ * message with a 400.
+ */
+const ENDED_ON_TOOL_RESULTS_MARKER =
+  "[Previous turn ended after its tool calls, without a final response.]";
 
 /**
  * Parse tool-call input from its persisted form.
@@ -455,42 +466,29 @@ function appendRunMessages(
   // thinking enabled. The chat UI consumes its own projection from
   // src/platform/conversations/jsonl-reader.ts; this function is the
   // LLM-replay projection.
-  // Overlays are emitted where the live run put them: directly after the tool
-  // results of the iteration that triggered them, so the model reads the
-  // guidance before its next action rather than after the whole run. The
-  // `<connector-skill>` containment is the per-prompt injection defense;
-  // `metadata.synthetic`/`skill` let the engine detect an already-surfaced
-  // overlay and never re-inject it.
-  //
-  // The message is `user`-role because mid-run it is the last thing the next
-  // model call sees, and a trailing assistant message is a prefill the model
-  // continues instead of answering. See `buildConnectorSkillMessage`.
-  //
-  // Provider note: this places a user message directly after the iteration's
-  // tool message, and two overlays from one iteration land adjacent.
-  // Anthropic — the default, tested provider, and the only one overlays ship
-  // enabled-for — coalesces consecutive user and tool messages into a single
-  // block preserving part order, so both shapes collapse to one canonical user
-  // turn. A provider whose SDK conversion does NOT merge (`@ai-sdk/google`
-  // emits one entry per user message) would see the pair verbatim; verify
-  // provider-side coalescing before enabling overlays on a non-Anthropic
-  // default.
+  // Overlays are placed where the live run put them: inside the tool results
+  // of the iteration that delivered them (the call a body held, else the
+  // iteration's last result), through the engine's own `guidanceByToolCall`,
+  // so the model reads the guidance before its next action and a resumed
+  // conversation carries the text the live run sent. A tool result, not a
+  // message after it: a user message directly after a tool message is a 400 on
+  // some Chat Completions APIs. The `<connector-skill>` containment is the
+  // per-prompt injection defense; `metadata.connectorSkills` lets the runtime
+  // detect an already-surfaced overlay and never re-inject it.
   let responsesEmitted = 0;
   for (const llmResp of run.llmResponses) {
-    for (const msg of messagesForLlmResponse(
+    const emitted = messagesForLlmResponse(
       llmResp,
       run.toolDones,
       run.toolInputs,
       run.llmResponses.length,
       run.skillActivations,
-    )) {
-      messages.push(msg);
-    }
+    );
     responsesEmitted++;
-    for (const cs of run.connectorSkills) {
-      if (cs.afterResponses === responsesEmitted)
-        messages.push(buildConnectorSkillMessage(cs.event));
-    }
+    const delivered = run.connectorSkills
+      .filter((cs) => cs.afterResponses === responsesEmitted)
+      .map((cs) => cs.event);
+    messages.push(...withConnectorSkills(emitted, delivered));
   }
 
   // An overlay recorded before this run produced any `llm.response` has no
@@ -592,8 +590,8 @@ function buildToolResultMessage(
   const done = toolDones.get(tc.toolCallId)!;
   // A `nb__use_skill` activation delivered a skill body in THIS tool result.
   // Stamp the dedup marker the engine and runtime scan for — the activation
-  // counterpart of the `<connector-skill>` synthetic message's marker. It
-  // rides the tool message, so compaction folds it with the body it marks.
+  // counterpart of a connector overlay's `connectorSkills`. It rides the tool
+  // message, so compaction folds it with the body it marks.
   const activation = skillActivations?.get(tc.toolCallId);
   return {
     role: "tool",
@@ -744,18 +742,49 @@ function messagesForLlmResponse(
 }
 
 /**
- * Synthesize the message carrying a connector-skill overlay: the overlay
- * body wrapped in `<connector-skill>` containment, tagged with
- * `metadata.synthetic`/`skill` so the engine detects an already-surfaced
- * overlay and never re-injects it.
+ * One iteration's messages with the overlays it delivered placed in its tool
+ * results, as the live run placed them. An iteration with no tool result to
+ * carry them (its calls never returned) gets each as a message of its own
+ * after it.
+ */
+function withConnectorSkills(
+  emitted: StoredMessage[],
+  delivered: ConnectorSkillInjectedEvent[],
+): StoredMessage[] {
+  if (delivered.length === 0) return emitted;
+  const toolCallIds = emitted.flatMap((m) =>
+    m.role === "tool"
+      ? m.content.flatMap((p) => (p.type === "tool-result" ? [p.toolCallId] : []))
+      : [],
+  );
+  const guidance = guidanceByToolCall(toolCallIds, delivered);
+  if (guidance.size === 0) return [...emitted, ...delivered.map(buildConnectorSkillMessage)];
+  return emitted.map((m) => {
+    if (m.role !== "tool") return m;
+    const skills = m.content.flatMap((p) =>
+      p.type === "tool-result" ? (guidance.get(p.toolCallId)?.skills ?? []) : [],
+    );
+    if (skills.length === 0) return m;
+    return {
+      ...m,
+      content: m.content.map((p) =>
+        p.type === "tool-result" ? withGuidance(p, guidance.get(p.toolCallId)) : p,
+      ),
+      metadata: { ...m.metadata, connectorSkills: skills },
+    };
+  });
+}
+
+/**
+ * Synthesize the message carrying a connector-skill overlay that has no tool
+ * result to ride: the overlay body wrapped in `<connector-skill>` containment,
+ * tagged with `metadata.synthetic`/`skill` so the runtime detects an
+ * already-surfaced overlay and never re-injects it.
  */
 function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMessage {
   return {
-    // `user`, matching the live delivery in the engine. The role is not
-    // cosmetic: mid-run this message is the LAST one the next model call sees,
-    // and a trailing assistant message is an Anthropic prefill the model
-    // continues rather than answers. Live and replay must agree, so the role
-    // moves on both sides together.
+    // `user`, not `assistant`: a trailing assistant message is an Anthropic
+    // prefill the model continues rather than answers.
     role: "user",
     content: [
       {
@@ -773,9 +802,20 @@ function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMess
   };
 }
 
+/** The marker {@link ensureRoleAlternation} puts between `prev` and `msg`, if any. */
+function markerBetween(prev: StoredMessage, msg: StoredMessage): string | undefined {
+  if (msg.role !== "user") return undefined;
+  if (prev.role === "tool") return ENDED_ON_TOOL_RESULTS_MARKER;
+  const isOverlay = (m: StoredMessage): boolean =>
+    m.metadata?.synthetic === CONNECTOR_SKILL_SYNTHETIC;
+  if (prev.role === "user" && !(isOverlay(prev) && isOverlay(msg))) return ABANDONED_RUN_MARKER;
+  return undefined;
+}
+
 /**
- * Defense-in-depth invariant pass: ensure the reconstructed message list
- * never has two adjacent `user` messages. Not a provider requirement —
+ * Invariant pass: a `user` message never follows a `user` message (a gap
+ * this pass names) or a `tool` message (a provider requirement). Two adjacent
+ * `user` messages are not a provider requirement —
  * `@ai-sdk/anthropic` coalesces consecutive user/tool messages into one block.
  * It is a fidelity one: two user turns in a row means a run produced no
  * response, and replaying that as though the user spoke twice hides the gap
@@ -785,31 +825,33 @@ function buildConnectorSkillMessage(cs: ConnectorSkillInjectedEvent): StoredMess
  * (orphaned tool-calls, length-truncated empty turns). This pass catches
  * anything we haven't enumerated — e.g. a run scope that emitted zero
  * `llm.response` events because the process died before the model
- * returned. Cheap O(n) scan; never fires on healthy data.
+ * returned. Cheap O(n) scan; the user-after-user case never fires on healthy data.
  *
- * Two surfaced connector overlays in a row are exempt. They are user-role
- * messages but not user TURNS — when one iteration matches two candidates both
- * bodies land together, and no response is missing between them, so the marker
- * would assert a failure that did not happen. The live run appends exactly that
- * pair, and this pass does not run there, so inserting anything between them
- * here would also break the live/replay agreement the placement depends on.
+ * Two connector overlays in a row are exempt. An overlay with no tool result
+ * to ride becomes a user-role message but not a user TURN — two delivered
+ * together land together, and no response is missing between them, so the
+ * marker would assert a failure that did not happen.
  *
  * An overlay followed by a REAL user turn is not exempt: that only happens when
  * a run ended without its closing response, which is precisely what the marker
  * is for, and the live run has no next-turn user message to disagree about.
+ *
+ * A `user` message after a `tool` message gets {@link ENDED_ON_TOOL_RESULTS_MARKER}:
+ * the run ended on its tool results, and some Chat Completions APIs reject that
+ * order with a 400 ("Unexpected role 'user' after role 'tool'"). Overlays are
+ * not exempt here, since the API rejects any user message in that position.
+ * A run that is cancelled is already closed by its own marker.
  */
 function ensureRoleAlternation(messages: StoredMessage[]): StoredMessage[] {
   if (messages.length < 2) return messages;
 
-  const isOverlay = (m: StoredMessage): boolean =>
-    m.metadata?.synthetic === CONNECTOR_SKILL_SYNTHETIC;
-
   const result: StoredMessage[] = [];
   for (const msg of messages) {
     const prev = result[result.length - 1];
-    if (prev?.role === "user" && msg.role === "user" && !(isOverlay(prev) && isOverlay(msg))) {
-      // Place the synthetic turn 1ms after the previous user message so it
-      // sorts between the two user turns instead of collapsing onto the
+    const marker = prev ? markerBetween(prev, msg) : undefined;
+    if (prev && marker) {
+      // Place the synthetic turn 1ms after the previous message so it
+      // sorts between the two instead of collapsing onto the
       // next user's timestamp (the UI sorts strictly by `timestamp`, and a
       // tied-timestamp placeholder rendered after the user it precedes
       // looks like the user replied to themselves). Clamp to the next
@@ -823,7 +865,7 @@ function ensureRoleAlternation(messages: StoredMessage[]): StoredMessage[] {
           : msg.timestamp;
       result.push({
         role: "assistant",
-        content: [{ type: "text" as const, text: ABANDONED_RUN_MARKER }],
+        content: [{ type: "text" as const, text: marker }],
         timestamp: placeholderTs,
         // Carry minimal metadata so the chat UI can render the same
         // truncation banner it uses for length / content-filter cases.

@@ -83,7 +83,15 @@ function promptText(p: LanguageModelV4CallOptions["prompt"]): string {
     .map((m) =>
       typeof m.content === "string"
         ? m.content
-        : m.content.map((c) => ("text" in c ? c.text : "")).join(" "),
+        : m.content
+            .map((c) =>
+              "text" in c
+                ? c.text
+                : c.type === "tool-result" && "value" in c.output
+                  ? String(c.output.value)
+                  : "",
+            )
+            .join(" "),
     )
     .join("\n");
 }
@@ -108,7 +116,7 @@ beforeAll(async () => {
       modelCalls += 1;
       // First pass calls the server's tool — that is what fires the surface-once
       // hook. A held call is re-issued once, as a model does on reading the
-      // guidance that followed it. Everything after answers, so the run ends.
+      // guidance that follows it in its result. Everything after answers, so the run ends.
       const last = options.prompt.findLast((m) => m.role === "tool");
       const heldLast =
         last?.role === "tool" &&

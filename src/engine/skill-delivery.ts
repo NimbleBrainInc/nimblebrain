@@ -10,10 +10,13 @@
  * unless a promotion already delivered it; a call that runs anyway (a read its
  * server's default binding does not hold, a hook rename) gets the guidance
  * after it ({@link SkillDelivery.claimFor}). Each delivered body is recorded as
- * `connector.skill.injected`, from which replay places it after the tool
- * results of the iteration it was delivered in.
+ * `connector.skill.injected`. The engine and replay both place it inside the
+ * tool result of the iteration it was delivered in ({@link guidanceByToolCall}),
+ * never as a message of its own after the tool results.
  */
 
+import type { LanguageModelV4ToolResultPart } from "@ai-sdk/provider";
+import { formatConnectorSkillBlock } from "../prompt/containment.ts";
 import { toolMatches } from "../skills/select.ts";
 import { MAX_SKILL_BODY_CHARS } from "../skills/truncate.ts";
 import { textContent } from "./content-helpers.ts";
@@ -291,6 +294,68 @@ export function createSkillDelivery(opts: SkillDeliveryOptions): SkillDelivery {
       }
     },
   };
+}
+
+/** A delivered body, as the engine returns it and replay reads it back. */
+type DeliveredGuidance = Pick<
+  ConnectorSkillInjectedPayload,
+  "skillName" | "scope" | "skillBody" | "heldToolCallId"
+>;
+
+/** The guidance one tool result carries: the formatted blocks, and the skills they deliver. */
+export interface CarriedGuidance {
+  blocks: string[];
+  skills: string[];
+}
+
+/**
+ * Where an iteration's delivered guidance sits: what each of its tool results
+ * carries, keyed by tool call id, in delivery order. A body goes in the result
+ * of the call it held, and otherwise in the iteration's last result.
+ *
+ * Guidance rides a tool result, not a message after the tool results, because
+ * a user message directly after a tool message is not valid on every
+ * provider's API (some Chat Completions APIs reject it with a 400). The engine
+ * builds the live prompt and replay rebuilds it through this one function, so
+ * both place the same text in the same result. Empty when the iteration has no
+ * tool result to carry it.
+ */
+export function guidanceByToolCall(
+  toolCallIds: readonly string[],
+  deliveries: readonly DeliveredGuidance[],
+): Map<string, CarriedGuidance> {
+  const byCall = new Map<string, CarriedGuidance>();
+  const last = toolCallIds[toolCallIds.length - 1];
+  if (last === undefined) return byCall;
+  for (const d of deliveries) {
+    const target =
+      d.heldToolCallId !== undefined && toolCallIds.includes(d.heldToolCallId)
+        ? d.heldToolCallId
+        : last;
+    const carried = byCall.get(target) ?? { blocks: [], skills: [] };
+    carried.blocks.push(
+      formatConnectorSkillBlock(d.skillName, d.scope, d.skillBody, d.heldToolCallId !== undefined),
+    );
+    carried.skills.push(d.skillName);
+    byCall.set(target, carried);
+  }
+  return byCall;
+}
+
+/**
+ * A tool result carrying its guidance after its own text. The engine and
+ * replay both write tool results as text, so another output shape is returned
+ * as is.
+ */
+export function withGuidance(
+  part: LanguageModelV4ToolResultPart,
+  guidance: CarriedGuidance | undefined,
+): LanguageModelV4ToolResultPart {
+  const blocks = guidance?.blocks ?? [];
+  if (blocks.length === 0) return part;
+  const { output } = part;
+  if (output.type !== "text" && output.type !== "error-text") return part;
+  return { ...part, output: { ...output, value: [output.value, ...blocks].join("\n\n") } };
 }
 
 /**

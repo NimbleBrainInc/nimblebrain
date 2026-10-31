@@ -20,7 +20,10 @@
  *  - Usage is priced per model call when the driver reads the agent's calls
  *    (`AcpOutcome.calls`): each loop call is its own `llm.done`, as the engine
  *    records them, and each summary is billed as the door bills a fold. An agent
- *    that reports only ACP's turn total is priced as one call.
+ *    that reports only ACP's turn total is priced as one call. A cancelled turn
+ *    is priced the same way from what the agent reported of the calls that
+ *    finished before the cancel; an agent that never answers the cancel
+ *    reports nothing, so nothing is priced.
  */
 
 import type * as acp from "@agentclientprotocol/sdk/unstable";
@@ -49,8 +52,22 @@ export interface AcpRunRecorder {
     outcome: AcpOutcome,
     toolCalls: ToolCallRecord[],
   ): EngineResult;
-  /** The turn was cancelled. */
-  cancelled(): void;
+  /**
+   * The turn ended without a response, stopped rather than failed: a spend
+   * limit (`spendAccountId` naming it) refused its next model call. What the
+   * agent reported of the turn before that is recorded as `finish` records it.
+   */
+  stopped(
+    stop: { stopReason: StopReason; spendAccountId?: string },
+    outcome: AcpOutcome,
+    toolCalls: ToolCallRecord[],
+  ): EngineResult;
+  /**
+   * The turn was cancelled. The model calls the agent reported finishing
+   * before the cancel (`outcome`, else ACP's turn total on `response`) are
+   * priced, since they were made and billed.
+   */
+  cancelled(response?: acp.PromptResponse, outcome?: AcpOutcome): void;
   /** The turn failed. */
   failed(err: unknown): void;
   /** Whether the run's end (`run.done` or `run.error`) has been recorded. */
@@ -143,7 +160,7 @@ export function createAcpRunRecorder(
   // on its own, as the engine records them, or ACP's turn total on the last
   // segment. Summaries are billed as the door bills a fold.
   const recordUsage = (
-    response: acp.PromptResponse,
+    turnTotal: TokenUsage,
     outcome: AcpOutcome,
     content: LanguageModelV4Content[],
     finishReason: FinishReason,
@@ -159,11 +176,28 @@ export function createAcpRunRecorder(
       emitSegment(content, last.usage, finishReason, last.model);
       return { usage: sumUsage(loopCalls), iterations: loopCalls.length };
     }
-    const usage = usageOf(response);
+    const usage = turnTotal;
     if (content.length > 0 || segments === 0 || usage.inputTokens + usage.outputTokens > 0) {
       emitSegment(content, usage, finishReason);
     }
     return { usage, iterations: segments };
+  };
+
+  // A cancelled turn's usage: each reported model call priced on its own with
+  // no content, which replays as nothing, so the turn replays the same whether
+  // or not its agent reported usage. ACP's turn total stands in for an agent
+  // that reports no calls. Returns how many loop calls were reported.
+  const recordCancelledUsage = (turnTotal: TokenUsage, outcome: AcpOutcome): number => {
+    const reported = outcome.calls ?? [];
+    for (const call of reported) {
+      if (call.purpose === "summary") io.billSummary(call.model, call.usage, 0);
+    }
+    const loopCalls = reported.filter((c) => c.purpose === "turn");
+    for (const call of loopCalls) emitUsage(call.model, call.usage);
+    if (loopCalls.length === 0 && turnTotal.inputTokens + turnTotal.outputTokens > 0) {
+      emitUsage(model, turnTotal);
+    }
+    return loopCalls.length;
   };
 
   const done = (stopReason: StopReason, iterations = segments) => {
@@ -248,7 +282,12 @@ export function createAcpRunRecorder(
     finish(response, outcome, toolCalls) {
       const stopReason = outcome.stopReason ?? stopReasonOf(response.stopReason);
       const finishReason = finishReasonOf(response.stopReason);
-      const { usage, iterations } = recordUsage(response, outcome, takeText(), finishReason);
+      const { usage, iterations } = recordUsage(
+        usageOf(response),
+        outcome,
+        takeText(),
+        finishReason,
+      );
       done(stopReason, iterations);
       return {
         output,
@@ -262,10 +301,26 @@ export function createAcpRunRecorder(
       };
     },
 
-    cancelled() {
+    stopped(stop, outcome, toolCalls) {
+      // A stop mid-turn replays as cut short, as a cancelled turn does.
+      const { usage, iterations } = recordUsage(emptyUsage(), outcome, takeText(), "other");
+      done(stop.stopReason, iterations);
+      return {
+        output,
+        toolCalls,
+        iterations,
+        usage,
+        llmMs: performance.now() - started,
+        stopReason: stop.stopReason,
+        ...(stop.spendAccountId !== undefined ? { spendAccountId: stop.spendAccountId } : {}),
+      };
+    },
+
+    cancelled(response, outcome = {}) {
+      const loopCalls = recordCancelledUsage(response ? usageOf(response) : emptyUsage(), outcome);
       const content = takeText();
       if (content.length > 0) emitTranscript(content, "other");
-      done("cancelled");
+      done("cancelled", loopCalls > 0 ? loopCalls : segments);
     },
 
     ended: () => ended,

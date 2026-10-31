@@ -47,6 +47,8 @@ export interface ScriptedAgentOptions {
   script(prompt: string): ScriptStep[];
   /** Refuse `session/new`, as an agent that cannot run the session would. */
   refuseSession?: boolean;
+  /** Answer no prompt and ignore `session/cancel`, as a hung agent would. */
+  unresponsive?: boolean;
   /**
    * The MCP transports the agent advertises. Default: `acp`, the client's
    * tools on the ACP connection itself, the one the runtime serves.
@@ -56,6 +58,13 @@ export interface ScriptedAgentOptions {
   systemPrompt?: { override?: boolean };
   /** Advertise ACP's `providers/*`, listing these. */
   providers?: acp.ProviderInfo[];
+  /** Fail the turn after its steps with this error, as a model call that failed would. */
+  failTurn?: () => unknown;
+  /**
+   * Answer a cancelled turn with this instead of `cancelled`, as an agent whose
+   * turn ended as the cancel arrived would; a throw fails the turn instead.
+   */
+  cancelledAnswer?: () => acp.PromptResponse;
   log?: ScriptedAgentLog;
 }
 
@@ -138,6 +147,7 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
     .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
       const session = sessions.get(ctx.params.sessionId);
       if (!session) throw acp.RequestError.invalidParams(undefined, "unknown session");
+      if (opts.unresponsive) return new Promise<never>(() => {});
       const turn = new AbortController();
       session.turn = turn;
       const prompt = ctx.params.prompt.map((b) => (b.type === "text" ? b.text : "")).join("\n");
@@ -147,6 +157,7 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
           sessionId: ctx.params.sessionId,
           update,
         });
+      const cancelled = () => opts.cancelledAnswer?.() ?? { stopReason: "cancelled" as const };
       try {
         for (const step of opts.script(prompt)) {
           if (step.text) {
@@ -175,11 +186,12 @@ export function createScriptedAgent(opts: ScriptedAgentOptions): acp.AgentApp {
               status: result.isError ? "failed" : "completed",
             });
           }
-          if (turn.signal.aborted) return { stopReason: "cancelled" as const };
+          if (turn.signal.aborted) return cancelled();
         }
+        if (opts.failTurn) throw opts.failTurn();
         return { stopReason: "end_turn" as const };
       } catch (err) {
-        if (turn.signal.aborted) return { stopReason: "cancelled" as const };
+        if (turn.signal.aborted) return cancelled();
         throw err;
       }
     })

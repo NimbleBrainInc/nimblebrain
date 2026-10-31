@@ -93,6 +93,16 @@ export interface AcpOutcome {
   calls?: ReportedModelCall[];
 }
 
+/**
+ * A turn that failed on a model call, as the agent reported it: the call's HTTP
+ * status, the provider's reason, and what the turn did before it.
+ */
+export interface AcpModelFailure {
+  status: number;
+  reason?: string;
+  outcome: AcpOutcome;
+}
+
 export interface AcpDriver {
   /**
    * What the agent holds a run to on its own, and which model credential it
@@ -123,4 +133,9 @@ export interface AcpDriver {
   prompt?(run: ResolvedRun): acp.ContentBlock[];
   /** Read what the agent reported about its turn in its own terms (`_meta` on the response). */
   outcome?(response: acp.PromptResponse): AcpOutcome;
+  /**
+   * Read the model call that failed the turn from the agent's `session/prompt`
+   * error, in its own terms, or `undefined` when the error reports none.
+   */
+  modelFailure?(err: unknown): AcpModelFailure | undefined;
 }

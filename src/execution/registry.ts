@@ -65,7 +65,7 @@ export function createAgentRuntimes(
       url: entry.url,
       credential: deps.connectionCredential,
     });
-    const driver = driverFor(entry, config?.modelGateway);
+    const driver = driverFor(entry);
     assertPoolable(id, driver);
     add(
       createAcpRuntime(id, driver, connection, {
@@ -87,10 +87,10 @@ export function createAgentRuntimes(
 }
 
 /** The driver for the agent a runtime entry names. */
-function driverFor(entry: AgentRuntimeConfig, modelGateway: string | undefined): AcpDriver {
+function driverFor(entry: AgentRuntimeConfig): AcpDriver {
   switch (entry.driver) {
     case "nimblebrain-agent":
-      return createNimbleBrainAgentDriver(modelGateway ? { modelGateway } : {});
+      return createNimbleBrainAgentDriver();
   }
 }
 

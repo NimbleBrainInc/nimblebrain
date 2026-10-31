@@ -1,6 +1,6 @@
 /**
- * The attribution seam: `origin` is derived from the ambient request context
- * and the emitting event, never from the caller.
+ * The attribution seam: `origin` and the run are derived from the ambient
+ * request context, never from the caller.
  *
  * Every test uses a model name unique to it and reads that series directly, so
  * nothing here resets the process-global registry that the rest of the suite
@@ -81,7 +81,7 @@ describe("each id in the ledger lands under its own name", () => {
   // union could not express at all.
   function fieldsFor(
     ctx: Partial<Parameters<typeof runWithRequestContext>[0]>,
-    event?: Record<string, unknown>,
+    source: "main" | "title" | "compaction" = "main",
   ): Record<string, unknown> | undefined {
     const dir = mkdtempSync(join(tmpdir(), "nb-session-"));
     const month = usageMonthOf(new Date().toISOString());
@@ -89,12 +89,7 @@ describe("each id in the ledger lands under its own name", () => {
     setUsageLedger(ledger);
     try {
       runWithRequestContext({ ...OWNER, ...ctx }, () => {
-        recordLlmCall({
-          source: "main",
-          model: "test-model-session",
-          usage: USAGE,
-          ...(event ? { event } : {}),
-        });
+        recordLlmCall({ source, model: "test-model-session", usage: USAGE });
       });
     } finally {
       clearUsageLedger(ledger);
@@ -119,23 +114,29 @@ describe("each id in the ledger lands under its own name", () => {
     expect(rec?.conversationId).toBeUndefined();
   });
 
-  test("the engine's run id lands in runId — the per-turn grain", () => {
-    // Read off the emitting event, where it already was.
-    const rec = fieldsFor({ conversationId: "conv-42" }, { runId: "engine-run-7" });
-    expect(rec?.runId).toBe("engine-run-7");
+  test("the run's id lands in runId — the per-turn grain", () => {
+    // The run the gateway charges the call to: the context's credential subject.
+    const rec = fieldsFor({ conversationId: "conv-42", credentialSubject: "run-7" });
+    expect(rec?.runId).toBe("run-7");
     expect(rec?.conversationId).toBe("conv-42");
   });
 
   test("a chat and its turn are recorded together, not as one id", () => {
-    const rec = fieldsFor({ conversationId: "conv-42" }, { runId: "engine-run-7" });
-    expect([rec?.conversationId, rec?.runId]).toEqual(["conv-42", "engine-run-7"]);
+    const rec = fieldsFor({ conversationId: "conv-42", credentialSubject: "run-7" });
+    expect([rec?.conversationId, rec?.runId]).toEqual(["conv-42", "run-7"]);
   });
 
-  test("a forked fast-slot call has no turn of its own", () => {
-    // Title and compaction emit no event, so there is no engine run to
-    // attribute them to — they belong to the scope they ran in.
-    const rec = fieldsFor({ conversationId: "conv-42" });
-    expect(rec?.runId).toBeUndefined();
+  test("a call a run forks is recorded under that run", () => {
+    // Title and compaction emit no engine event, but run in the run's context,
+    // where the gateway charges them to the run. The ledger names the same run.
+    for (const source of ["title", "compaction"] as const) {
+      const rec = fieldsFor({ conversationId: "conv-42", credentialSubject: "run-7" }, source);
+      expect(rec?.runId).toBe("run-7");
+    }
+  });
+
+  test("a call outside any run carries no run", () => {
+    expect(fieldsFor({ conversationId: "conv-42" })?.runId).toBeUndefined();
   });
 
   test("sessionId is not written", () => {
@@ -169,7 +170,6 @@ describe("recordLlmCall", () => {
         source: "main",
         model: "test-model-a",
         usage: USAGE,
-        event: { runId: "engine-run-7" },
       });
     });
 
@@ -180,7 +180,7 @@ describe("recordLlmCall", () => {
 
   test("an interactive turn records chat", async () => {
     runWithRequestContext({ identity: null, conversationId: "conv-9" }, () => {
-      recordLlmCall({ source: "main", model: "test-model-b", usage: USAGE, event: {} });
+      recordLlmCall({ source: "main", model: "test-model-b", usage: USAGE });
     });
 
     const sample = await callSample({ model: "test-model-b" });

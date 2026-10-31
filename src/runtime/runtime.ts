@@ -1805,7 +1805,7 @@ export class Runtime {
 
     const { workWorkspace, activeWorkspace } = await this.resolveRunWorkspaces(spec);
     const briefingWsId = spec.briefingWorkspaceId;
-    const reqCtx = buildRunContext(spec, runId, workWorkspace, attended, agentRuntime);
+    const reqCtx = buildRunContext(spec, runId, workWorkspace, attended);
 
     // ── The opening message ─────────────────────────────────────────────────
     // A run with a conversation appends it to the log and reads the whole
@@ -1984,7 +1984,7 @@ export class Runtime {
     // the llm.call and tool.dispatch spans nest under it.
     let result: EngineResult;
     try {
-      result = await runWithRequestContext(reqCtx, () =>
+      result = await runWithRequestContext(agentExecutionContext(reqCtx, agentRuntime), () =>
         withSpan(
           "agent.turn",
           {
@@ -5564,7 +5564,8 @@ export class Runtime {
 
   /**
    * Names of skills already DELIVERED into this conversation — connector
-   * overlays surfaced by the engine (synthetic-message marker) and catalog
+   * overlays surfaced by the engine (`connectorSkills` on the tool result that
+   * carries them, or the synthetic-message marker) and catalog
    * skills loaded via `nb__use_skill` (marker stamped on the activating tool
    * result). MUST be called on the UN-rehydrated history (`compactedHistory ??
    * history`): `rehydrateUserResources` strips message `metadata`, so the
@@ -5589,6 +5590,7 @@ export class Runtime {
       if (delivered && typeof meta?.skill === "string") {
         names.add(meta.skill);
       }
+      for (const skill of meta?.connectorSkills ?? []) names.add(skill);
     }
     return [...names];
   }
@@ -6346,7 +6348,6 @@ function buildRunContext(
   runId: string,
   workWorkspace: Workspace | null,
   attended: boolean,
-  agentRuntime: AgentRuntime,
 ): RequestContext {
   return {
     identity: spec.principal.identity,
@@ -6363,8 +6364,23 @@ function buildRunContext(
     // restamp, so the wall is enforced at the tasks source rather than
     // per-router-construction. See `createTasksSource`.
     ...(attended ? {} : { unattended: true }),
-    ...(agentRuntime.capabilities.usage === "reported" ? { agentRuntime: agentRuntime.id } : {}),
   };
+}
+
+/**
+ * The context the runtime itself executes in: the run's, plus the runtime's id
+ * when its agent reports its own usage (`RuntimeCapabilities.usage`).
+ *
+ * Only usage the agent reports is recorded in here: its loop calls and its
+ * folds' summaries. The calls NimbleBrain makes on the run's behalf (the fold
+ * between turns, the conversation's title) run in the run's context
+ * ({@link buildRunContext}) and are measured, so their ledger lines name no
+ * agent runtime.
+ */
+function agentExecutionContext(reqCtx: RequestContext, agentRuntime: AgentRuntime): RequestContext {
+  return agentRuntime.capabilities.usage === "reported"
+    ? { ...reqCtx, agentRuntime: agentRuntime.id }
+    : reqCtx;
 }
 
 /**

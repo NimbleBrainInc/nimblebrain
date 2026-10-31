@@ -39,6 +39,11 @@ export interface FakeAnthropicOptions {
   toolInput: string;
   /** What `GET /providers` names, as a model gateway answers. Default: `["anthropic"]`. */
   providers?: string[];
+  /**
+   * Answer every Messages request after this many as a model gateway refuses a
+   * call past a run's budget: 429, `text/plain`, `rate limit exceeded`.
+   */
+  refuseAfter?: number;
 }
 
 export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
@@ -62,6 +67,12 @@ export function startFakeAnthropic(opts: FakeAnthropicOptions): FakeAnthropic {
       authorizations.push(req.headers.get("authorization"));
       paths.push(new URL(req.url).pathname);
       apiKeys.push(req.headers.get("x-api-key"));
+      if (opts.refuseAfter !== undefined && requests.length > opts.refuseAfter) {
+        return new Response("rate limit exceeded", {
+          status: 429,
+          headers: { "content-type": "text/plain", "retry-after": "3600" },
+        });
+      }
       return new Response(stream(reply(body, opts)), {
         headers: { "content-type": "text/event-stream" },
       });
