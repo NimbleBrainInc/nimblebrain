@@ -79,6 +79,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`src/hooks/AGENTS.md`](./src/hooks/AGENTS.md) | The inbound webhook door: never parse a body, uniform 404, delivery ids, rotation, provisioning |
 | [`src/lifecycle/AGENTS.md`](./src/lifecycle/AGENTS.md) | Connector `on_ready` / `on_removing` notifications |
 | [`src/connectors/runtime/AGENTS.md`](./src/connectors/runtime/AGENTS.md) | Connector teardown and workspace delete; connection credential re-validation |
+| [`src/model/AGENTS.md`](./src/model/AGENTS.md) | Model provider workarounds: Gemini errors sent inside the stream |
 | [`src/observability/AGENTS.md`](./src/observability/AGENTS.md) | `NB_DEBUG` / `nb_debug` namespaces, structured logs, OTel spans, what may be stamped |
 | [`web/AGENTS.md`](./web/AGENTS.md) | Web shell: gating workspace writes, forms that save as they change and notices, shell rules, chat panel workspace scope, main-area views |
 | [`test/conformance/AGENTS.md`](./test/conformance/AGENTS.md) | The MCP conformance suite against `/mcp/<wsId>`: what it measures, the per-version baselines, the pin, where it runs in CI |
