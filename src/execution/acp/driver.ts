@@ -25,6 +25,12 @@ export interface AcpConnectionTarget {
    * `close` removes it.
    */
   cwd: string;
+  /**
+   * Whether the agent's side lost the connection after it was established (a
+   * worker that went away mid-run), for a connection that can tell. A run that
+   * fails on a lost connection ends as `AgentConnectionLostError`.
+   */
+  lost?(): boolean;
   close(): Promise<void>;
 }
 

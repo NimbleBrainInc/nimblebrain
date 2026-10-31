@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
@@ -13,7 +13,7 @@ import { publicOrigin } from "../../../src/oauth/public-origin.ts";
 import { RunDeadlineExceededError } from "../../../src/runtime/errors.ts";
 import { createRunKey, parseRunKeyRing, type RunKey } from "../../../src/runtime/run-key.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { PINNED_AGENT_BIN } from "../../helpers/acp/nimblebrain-agent-driver.ts";
+import { type ServedWorker, startWorker } from "../../helpers/acp/worker.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { type FakeAnthropic, startFakeAnthropic } from "../../helpers/fake-anthropic.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
@@ -47,47 +47,13 @@ let workerUrl: string;
 let runKey: RunKey;
 const ring = runKeyRingValue(runKeyJwk("run-1"));
 
-/** A port nothing listens on, for the worker to take. */
-function freePort(): number {
-  const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
-  const { port } = probe;
-  probe.stop(true);
-  return port;
-}
-
-/** Start the worker and wait for the address it serves at. */
-async function startWorker(
-  jwksUrl: string,
-): Promise<{ proc: ReturnType<typeof Bun.spawn>; url: string }> {
-  const proc = Bun.spawn(
-    [process.execPath, "--no-env-file", realpathSync(PINNED_AGENT_BIN), "serve"],
-    {
-      env: {
-        PATH: "/usr/bin:/bin",
-        NB_AGENT_HOST: "127.0.0.1",
-        NB_AGENT_PORT: String(freePort()),
-        NB_AGENT_AUTH_JWKS_URL: jwksUrl,
-        NB_AGENT_AUTH_ISSUER: publicOrigin(),
-        NB_AGENT_MODEL: MODEL,
-      },
-      stdout: "ignore",
-      stderr: "pipe",
-    },
-  );
-  const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
-  let seen = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) throw new Error(`worker exited before serving: ${seen}`);
-    seen += new TextDecoder().decode(value);
-    // The log line is coloured: break it at each escape so the URL ends where the colour starts.
-    const plain = seen.split(String.fromCharCode(27)).join(" ");
-    const match = plain.match(/serving ACP at (http:\/\/\S+)/);
-    if (match?.[1]) {
-      reader.releaseLock();
-      return { proc, url: match[1] };
-    }
-  }
+/** Start the worker, checking connections against `jwksUrl`. */
+function startCheckedWorker(jwksUrl: string): Promise<ServedWorker> {
+  return startWorker({
+    NB_AGENT_AUTH_JWKS_URL: jwksUrl,
+    NB_AGENT_AUTH_ISSUER: publicOrigin(),
+    NB_AGENT_MODEL: MODEL,
+  });
 }
 
 beforeAll(async () => {
@@ -98,7 +64,9 @@ beforeAll(async () => {
     port: 0,
     fetch: () => Response.json(runKey.keySet()),
   });
-  const started = await startWorker(`http://127.0.0.1:${keySet.port}/.well-known/run-keys.json`);
+  const started = await startCheckedWorker(
+    `http://127.0.0.1:${keySet.port}/.well-known/run-keys.json`,
+  );
   worker = started.proc;
   workerUrl = started.url;
 });

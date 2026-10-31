@@ -14,6 +14,7 @@ import type {
   ToolSchema,
 } from "../../../src/engine/types.ts";
 import { CANCEL_GRACE_MS, createAcpRuntime } from "../../../src/execution/acp/acp-runtime.ts";
+import { AgentConnectionLostError } from "../../../src/execution/acp/connection-lost.ts";
 import type { AcpDriver, AcpOutcome } from "../../../src/execution/acp/driver.ts";
 import { createNativeRuntime } from "../../../src/execution/native-runtime.ts";
 import type { AgentRuntime, ResolvedRun, RunIO } from "../../../src/execution/types.ts";
@@ -441,6 +442,50 @@ describe("acp runtime cancelled with the driver's per-call usage", () => {
       expect(sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
     },
   );
+});
+
+describe("acp runtime cancelled on a connection the worker lost", () => {
+  test("ends cancelled with the abort's reason, never as a lost connection", async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("the person cancelled", "AbortError");
+    const failures: unknown[] = [];
+    const steps = stepsFrom(structuredClone(SCRIPT));
+    const scripted = scriptedConnection({
+      script: () => steps,
+      cancelledAnswer: () => {
+        throw new Error("the transport failed");
+      },
+    });
+    const runtime = createAcpRuntime(
+      "lost-and-cancelled",
+      {
+        ...scriptedDriver(),
+        modelFailure(err) {
+          failures.push(err);
+          return undefined;
+        },
+      },
+      { open: async (run) => ({ ...(await scripted.open(run)), lost: () => true }) },
+    );
+    const router = new StaticToolRouter([LOOKUP], async () => {
+      controller.abort(reason);
+      await Bun.sleep(20);
+      return { content: [{ type: "text", text: "late" }], isError: false };
+    });
+    const sink = collect();
+
+    const caught = await runtime.execute(resolvedRun(controller.signal), io(router, sink)).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+
+    expect(caught).toBe(reason);
+    // The driver reads the turn's own failure, not the lost-connection error.
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).not.toBeInstanceOf(AgentConnectionLostError);
+    expect(sink.of("run.done").map((e) => e.data.stopReason)).toEqual(["cancelled"]);
+    expect(sink.of("run.error")).toEqual([]);
+  });
 });
 
 describe("bound skill guidance", () => {

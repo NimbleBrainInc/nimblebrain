@@ -8,6 +8,7 @@ import { resolveTasksConfig } from "../../../../src/config/tasks.ts";
 import { textContent } from "../../../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../../../src/engine/engine.ts";
 import type { ToolResult, ToolSchema } from "../../../../src/engine/types.ts";
+import { AgentConnectionLostError } from "../../../../src/execution/acp/connection-lost.ts";
 import { createDirectExecutor, type TaskFn } from "../../../../src/platform/tasks/executor.ts";
 import { taskRunIndexPath } from "../../../../src/platform/tasks/paths.ts";
 import {
@@ -1004,6 +1005,25 @@ describe("Scheduler — backoff", () => {
     expect(run?.error).toContain("crm__search");
     expect(run?.transient).toBe(false);
     expect(defOf(scheduler, auto.id)!.consecutiveErrors).toBe(4);
+  });
+
+  it("records a run whose agent lost its connection as a transient failure", async () => {
+    const auto = makeTask({ nextRunAt: new Date(Date.now() - 1000).toISOString() });
+    const defs = new Map<string, Task>();
+    defs.set(auto.id, auto);
+    seedDefs(tmpDir, defs);
+
+    const scheduler = new Scheduler(
+      createThrowingExecutor(new AgentConnectionLostError(new Error("404"))),
+      { workDir: tmpDir },
+    );
+    scheduler.start();
+    const run = await scheduler.runNow(WS, OWNER, auto.id);
+    scheduler.stop();
+
+    expect(run?.status).toBe("failure");
+    expect(run?.error).toContain("restarted mid-turn");
+    expect(run?.transient).toBe(true);
   });
 
   it("records a run refused for unavailable declared skills as a failure", async () => {

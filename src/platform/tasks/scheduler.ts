@@ -551,6 +551,12 @@ function classifyRunFailure(err: unknown): {
   if (code === "declared_tools_unavailable" || code === "declared_skills_unavailable") {
     return { status: "failure", error: errorMsg, transient: false };
   }
+  // The agent's worker went away mid-turn (`AgentConnectionLostError`): the
+  // same as a native run cut by a runtime restart. Transient: the next run
+  // reaches a worker that is up.
+  if (code === "agent_connection_lost") {
+    return { status: "failure", error: errorMsg, transient: true };
+  }
   if (errorMsg.includes("timed out")) {
     return {
       status: "timeout",
