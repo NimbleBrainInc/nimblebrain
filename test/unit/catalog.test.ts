@@ -62,6 +62,21 @@ describe("Model Catalog", () => {
     expect(model!.capabilities.toolCall).toBe(true);
   });
 
+  it("resolves Gemini 4 Argon at its post-promotion rates", () => {
+    // Google's introductory $2 / $10 ends 2026-11-30; the catalog carries the
+    // rates that hold after it (see MANUAL_COST_OVERRIDES in sync-models.ts).
+    const model = getModelByString("google:gemini-4-argon");
+    expect(model?.provider).toBe("google");
+    expect(model?.limits.context).toBe(1_048_576);
+    expect(model?.limits.output).toBeLessThan(model?.limits.context ?? 0);
+    expect(model?.cost).toEqual({ input: 4, output: 20, cacheRead: 0.2 });
+    expect(model?.capabilities.toolCall).toBe(true);
+    expect(model?.capabilities.reasoning).toBe(true);
+    expect(getAvailableModels({ google: {} }).google.some((m) => m.id === "gemini-4-argon")).toBe(
+      true,
+    );
+  });
+
   it("getModel returns undefined for unknown model", () => {
     expect(getModel("anthropic", "nonexistent")).toBeUndefined();
     expect(getModel("unknown-provider", "anything")).toBeUndefined();
@@ -449,6 +464,7 @@ describe("Google thinking support", () => {
     // other. These rows are transcribed from Google's tables; changing one
     // should require changing this list and citing the source.
     const expected: Record<string, string[]> = {
+      "gemini-4-argon": ["low", "medium", "high"],
       "gemini-3.8-flash": ["low", "medium", "high"],
       "gemini-3.7-flash": ["low", "medium", "high"],
       "gemini-3.6-flash": ["minimal", "low", "medium", "high"],

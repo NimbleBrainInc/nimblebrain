@@ -373,6 +373,8 @@ export type GoogleThinkingSupport =
  * the guesswork this table replaced.
  */
 const GOOGLE_THINKING: Record<string, GoogleThinkingSupport> = {
+  // Thinking cannot be turned off: no `minimal`, default `medium`.
+  "gemini-4-argon": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
   "gemini-3.8-flash": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
   "gemini-3.7-flash": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
   "gemini-3.6-flash": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
