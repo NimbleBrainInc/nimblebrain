@@ -1176,13 +1176,10 @@ export class Runtime {
           // a platform restart doesn't silently drop the capability for
           // already-installed connectors.
           getConnectorMcpDeps: connectorMcpDepsFactory,
-          // One catalog read for the whole boot loop (the instance memoizes it).
           // A minted fleet connector starts with its catalog entry's credential
-          // settings, or not at all.
-          readCatalog: (() => {
-            const catalog = rt.getConnectorCatalog();
-            return () => catalog.catalogEntries();
-          })(),
+          // settings, or not at all. A fresh catalog per read: the source keeps
+          // this reader for its restarts, which must see the operator's edits.
+          readCatalog: () => rt.getConnectorCatalog().catalogEntries(),
           // A brokered connector's boot readiness is its provider's answer, not a
           // token file — the same predicate `seedUrlConnectionState` consumes.
           managedConnectors: rt.getManagedConnectorRegistry(),
