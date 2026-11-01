@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { GUTTER_NARROW_BREAKPOINT } from "@nimblebrain/synapse/host";
 import { getSpecThemeTokens } from "../../bridge/theme.ts";
 import { colors, pick, spacing } from "../palette.ts";
 import { paletteToExtAppsTokens, paletteToRootCss } from "../projections.ts";
@@ -220,26 +221,28 @@ describe("paletteToRootCss — shell :root/.dark match current values", () => {
   });
 });
 
-/**
- * The Synapse UI kit's defaults, exported from `@nimblebrain/synapse/ui` (0.38.0
- * and later) as `GUTTER_DEFAULT`, `GUTTER_NARROW_DEFAULT` and
- * `GUTTER_NARROW_BREAKPOINT`. Stated here because `web/` reaches the kit only
- * through the root `node_modules`, and `/ui` imports React, which resolves from
- * there and the root does not install. Change one side, change both.
- */
-const KIT = { gutter: "1.5rem", gutterNarrow: "1rem", narrowBreakpointPx: 640 } as const;
-
-describe("the page gutter is the kit's", () => {
-  test("the host's gutter, narrow gutter and breakpoint equal the kit's defaults", () => {
-    expect({ ...spacing }).toEqual(KIT);
+describe("the page gutter narrows at the kit's breakpoint", () => {
+  // The kit decides when an app's frame is narrow and the host cannot send that
+  // threshold, so the shell narrows at the same width to keep the two in step.
+  test("the host's breakpoint is the kit's", () => {
+    expect(spacing.narrowBreakpointPx).toBe(GUTTER_NARROW_BREAKPOINT);
   });
 
-  test("the shell's gutter narrows in the main column at the kit's breakpoint", () => {
-    const css = paletteToRootCss();
-    expect(css).toContain(`--page-gutter: ${KIT.gutter};`);
-    expect(css).toContain(`--page-gutter-narrow: ${KIT.gutterNarrow};`);
-    expect(css).toContain(
-      `@container main (max-width: ${KIT.narrowBreakpointPx}px) {\n  * {\n    --page-gutter: var(--page-gutter-narrow);`,
+  test("the shell's gutter narrows in the main column at that breakpoint", () => {
+    expect(paletteToRootCss()).toContain(
+      `@container main (max-width: ${GUTTER_NARROW_BREAKPOINT}px) {\n  * {\n    --page-gutter: var(--page-gutter-narrow);`,
     );
+  });
+});
+
+describe("the gutter widths keep apps on older kits aligned", () => {
+  // The widths are the host's to choose: it sends them as `--nb-gutter-wide` and
+  // `--nb-gutter-narrow`. Apps built on synapse 0.37 or earlier read neither and
+  // have 1.5rem and 1rem baked in, so the host keeps those values and its pages
+  // line up with those apps too. Compared against literals on purpose: this is
+  // the host's policy, not a copy of the current kit's defaults.
+  test("the gutter is 1.5rem wide and 1rem narrow", () => {
+    expect(spacing.gutter).toBe("1.5rem");
+    expect(spacing.gutterNarrow).toBe("1rem");
   });
 });

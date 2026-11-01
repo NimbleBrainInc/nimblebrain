@@ -44,11 +44,12 @@ export const fonts = {
  * edge-to-edge pane).
  *
  * The gutter narrows when the main column, which an app's iframe fills, is at
- * or under `narrowBreakpointPx` wide. All three equal the defaults of
- * `@nimblebrain/synapse/ui`, so an app on a host that sends nothing still lines
- * up with this shell; `palette.test.ts` holds them equal. Apps receive both
- * values (`--nb-gutter-wide`, `--nb-gutter-narrow`, in `projections.ts`); the
- * breakpoint is the kit's own and cannot be sent.
+ * or under `narrowBreakpointPx` wide. Apps receive both widths
+ * (`--nb-gutter-wide`, `--nb-gutter-narrow`, in `projections.ts`). The
+ * breakpoint is the Synapse kit's own and cannot be sent, so the host narrows
+ * at the kit's `GUTTER_NARROW_BREAKPOINT`. The widths stay at 1.5rem and 1rem
+ * because apps built on synapse 0.37 or earlier read no host value and have
+ * those baked in. `palette.test.ts` holds both.
  */
 export const spacing = {
   gutter: "1.5rem",
