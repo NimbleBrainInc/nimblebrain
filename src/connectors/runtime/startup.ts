@@ -527,6 +527,8 @@ export async function startConnectorSource(
       type: "remote",
       url: new URL(ref.url),
       transportConfig,
+      resolveTransportConfig: async () =>
+        (await resolveRefTransport(ref, opts?.readCatalog)).transportConfig,
       allowInsecure: opts?.allowInsecureRemotes === true,
       authProvider,
       ...(authProvider ? await inBandAuthErrorsOption(ref) : {}),

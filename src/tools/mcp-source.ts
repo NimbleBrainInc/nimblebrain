@@ -192,6 +192,14 @@ export type McpTransportMode =
       url: URL;
       transportConfig?: RemoteTransportConfig;
       /**
+       * Derives `transportConfig` again at every transport build (each start and
+       * restart). A source built from an installed ref passes it so a restart
+       * runs with the config a fresh start would: a minted fleet connector's
+       * credential settings come from its catalog entry, and one the catalog
+       * withdrew throws here, so the restart fails before anything is minted.
+       */
+      resolveTransportConfig?: () => Promise<RemoteTransportConfig | undefined>;
+      /**
        * Dev-mode `allowInsecureRemotes` flag, threaded to the SSRF redirect
        * guard in `createRemoteTransport` so http://localhost endpoints work in
        * local development. Defaults to false (production posture).
@@ -787,6 +795,9 @@ export class McpSource implements ToolSource {
    */
   private async initTransport(): Promise<void> {
     if (this.mode.type === "remote") {
+      if (this.mode.resolveTransportConfig) {
+        this.mode = { ...this.mode, transportConfig: await this.mode.resolveTransportConfig() };
+      }
       this.transport = await createRemoteTransport(
         this.mode.url,
         this.mode.transportConfig,

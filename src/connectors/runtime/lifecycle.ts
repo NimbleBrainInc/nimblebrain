@@ -1082,6 +1082,8 @@ export class ConnectorLifecycleManager {
         // builds the same transport a restart would.
         transportConfig: (await resolveRefTransport(ref, this.readCatalog ?? undefined))
           .transportConfig,
+        resolveTransportConfig: async () =>
+          (await resolveRefTransport(ref, this.readCatalog ?? undefined)).transportConfig,
         // Honor the per-call flag, same source the OAuth provider above and the
         // startup-time validateConnectorUrl use — not the manager default — so the
         // transport's SSRF guard agrees with what this install was authorized for.
@@ -2096,6 +2098,8 @@ export class ConnectorLifecycleManager {
           url: new URL(ref.url),
           transportConfig: (await resolveRefTransport(ref, this.readCatalog ?? undefined))
             .transportConfig,
+          resolveTransportConfig: async () =>
+            (await resolveRefTransport(ref, this.readCatalog ?? undefined)).transportConfig,
           allowInsecure: opts.allowInsecureRemotes === true,
           authProvider: provider,
           ...(await inBandAuthErrorsOption(ref)),
