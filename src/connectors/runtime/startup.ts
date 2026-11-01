@@ -16,6 +16,8 @@ import type { ToolRegistry } from "../../tools/registry.ts";
 import { WorkspaceOAuthProvider } from "../../tools/workspace-oauth-provider.ts";
 import type { WorkspaceContext } from "../../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../../workspace/workspace-store.ts";
+import { type CatalogEntriesReader, resolveMintedTransport } from "../catalog/binding.ts";
+import type { ConnectorCatalogEntry } from "../catalog/types.ts";
 import { connectorHasStaticAuth } from "./connector-auth.ts";
 import { inBandAuthErrorsOption } from "./in-band-auth-errors.ts";
 import { resolveStaticOAuthClient } from "./oauth-static-client.ts";
@@ -65,6 +67,12 @@ export function composeConnectorMcpContext(
 /** Options accepted by `startConnectorSource`. */
 interface StartConnectorOpts {
   allowInsecureRemotes?: boolean;
+  /**
+   * The operator catalog. Required to start a minted fleet connector, whose
+   * credential settings come from its catalog entry at every start
+   * (`resolveRefTransport`); not read for any other connector.
+   */
+  readCatalog?: CatalogEntriesReader;
   /**
    * Keep a URL source REGISTERED (unstarted, `down`) when `start()` fails,
    * instead of leaving the registry without it. Off by default: a deliberate
@@ -367,23 +375,74 @@ async function finalizeUrlSourceStart(
 }
 
 /**
+ * A minted fleet connector the catalog no longer offers. It stays installed and
+ * does not start: the catalog entry it binds to is the only source of the
+ * credential settings it mints with (`resolveMintedTransport`).
+ */
+export class FleetConnectorUnavailableError extends Error {
+  constructor(
+    readonly serverName: string,
+    readonly reason: string,
+  ) {
+    super(`[connectors] "${serverName}" is ${reason}; it stays installed and does not start`);
+    this.name = "FleetConnectorUnavailableError";
+  }
+}
+
+/**
  * The transport config and SSRF posture a persisted ref resolves to.
  *
  * The two decisions travel together deliberately: the URL gate and the
  * transport must judge the same config, so a single ref gets one trust verdict,
  * and the pair has one testable surface.
  *
- *   - **transport** — the ref's persisted transport config, as written.
+ *   - **transport** — the ref's persisted transport config, except a minted
+ *     fleet connector's `auth`, which comes from the catalog entry it binds to
+ *     (`resolveMintedTransport`). Every path that builds a connection from an
+ *     installed ref reads it here, so none can mint from the stored copy.
  *   - **fleetInternal** — the in-cluster plain-HTTP exception, granted only to
  *     the `minted` fleet rail. Provider auth alone does not earn it: a brokered
  *     connector names a provider too, but its URL comes from a vendor response.
+ *
+ * `readCatalog` is required for a minted ref and never read for any other. A
+ * minted ref with no reader throws, so a caller cannot skip the catalog by
+ * omission; one whose catalog cannot be read, or no longer offers it, throws
+ * `FleetConnectorUnavailableError`.
  */
-export function resolveRefTransport(ref: ConnectorRef): {
+export async function resolveRefTransport(
+  ref: ConnectorRef,
+  readCatalog?: CatalogEntriesReader,
+): Promise<{
   transportConfig: RemoteTransportConfig | undefined;
   fleetInternal: boolean;
-} {
-  const transportConfig = ref.transport;
-  return { transportConfig, fleetInternal: isMintedFleetSource(transportConfig) };
+}> {
+  if (!isMintedFleetSource(ref.transport)) {
+    return { transportConfig: ref.transport, fleetInternal: false };
+  }
+  if (!readCatalog) {
+    throw new Error(
+      `[connectors] "${ref.serverName}" is a minted fleet connector and was started without ` +
+        "the connector catalog; its credential settings come only from the catalog entry it binds to",
+    );
+  }
+  let entries: readonly ConnectorCatalogEntry[] | null;
+  try {
+    entries = await readCatalog();
+  } catch (err) {
+    log.warn("[connectors] catalog unreadable; minted fleet connectors cannot start", {
+      server: ref.serverName,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    entries = null;
+  }
+  const resolved = resolveMintedTransport(ref, entries);
+  if (resolved.kind === "unavailable") {
+    throw new FleetConnectorUnavailableError(ref.serverName, resolved.reason);
+  }
+  return {
+    transportConfig: resolved.transport,
+    fleetInternal: isMintedFleetSource(resolved.transport),
+  };
 }
 
 /**
@@ -421,7 +480,7 @@ export async function startConnectorSource(
   // the vendor's API response, so it carries no operator provenance.
   // One derivation feeds both the URL gate and the transport below — see
   // `resolveRefTransport` for why they must not be read separately.
-  const { transportConfig, fleetInternal } = resolveRefTransport(ref);
+  const { transportConfig, fleetInternal } = await resolveRefTransport(ref, opts?.readCatalog);
   validateConnectorUrl(new URL(ref.url), {
     allowInsecure: opts?.allowInsecureRemotes,
     fleetInternal,

@@ -10,6 +10,7 @@
 import type { EventSink } from "../../engine/types.ts";
 import type { ToolRegistry } from "../../tools/registry.ts";
 import { WorkspaceContext } from "../../workspace/context.ts";
+import type { CatalogEntriesReader } from "../catalog/binding.ts";
 import { defaultWorkDir, resolveConnectorDataDirForRef, serverNameFromRef } from "./paths.ts";
 import { type ConnectorMcpDeps, startConnectorSource } from "./startup.ts";
 import type { ConnectorRef, LocalConnectorMeta } from "./types.ts";
@@ -46,6 +47,8 @@ export async function installConnectorInWorkspace(
      * `ai.nimblebrain/resources/*` handlers.
      */
     connectorMcp?: ConnectorMcpDeps;
+    /** The operator catalog; required to start a minted fleet connector. */
+    readCatalog?: CatalogEntriesReader;
   },
 ): Promise<ProcessInventoryEntry> {
   // Default workDir to `~/.nimblebrain`, in step with every other
@@ -79,6 +82,7 @@ export async function installConnectorInWorkspace(
     allowInsecureRemotes: opts?.allowInsecureRemotes,
     workspaceContext: wsContext,
     connectorMcp: opts?.connectorMcp,
+    ...(opts?.readCatalog ? { readCatalog: opts.readCatalog } : {}),
   });
 
   return {

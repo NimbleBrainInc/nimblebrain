@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { serverNameFromRef } from "../../connectors/runtime/paths.ts";
+import { resolveRefTransport } from "../../connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../connectors/runtime/types.ts";
 import { HookRouteRefusedError } from "../../hooks/declaration.ts";
 import { forwardDelivery } from "../../hooks/forward.ts";
@@ -322,9 +323,14 @@ async function forwardAdmitted(
   const { wsId, registration, ref } = admitted;
   const startedAt = performance.now();
   try {
+    // A minted fleet connector forwards with its catalog entry's credential
+    // settings, the same transport its MCP connection runs with.
+    const { transportConfig } = await resolveRefTransport(ref, () =>
+      ctx.runtime.getConnectorCatalog().catalogEntries(),
+    );
     const upstream = await forwardDelivery({
       baseUrl: ref.url,
-      transport: ref.transport,
+      transport: transportConfig,
       route: registration.route,
       workspaceId: wsId,
       inboundHeaders: req.headers,

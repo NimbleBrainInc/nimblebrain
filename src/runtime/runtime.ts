@@ -976,6 +976,10 @@ export class Runtime {
       resourceArguments: resourceArgumentsResolver,
     });
     lifecycle.setConnectorMcpDepsFactory(connectorMcpDepsFactory);
+    // A minted fleet connector's credential settings come from its catalog entry
+    // at every start, never from the copy its install stored. A fresh catalog per
+    // read, so an operator's catalog edit reaches the next start.
+    lifecycle.setCatalogReader(() => rt.getConnectorCatalog().catalogEntries());
 
     // Wire the connection-running notification path so URL connectors
     // whose interactive OAuth completes (after the user clicks Connect
@@ -1172,6 +1176,13 @@ export class Runtime {
           // a platform restart doesn't silently drop the capability for
           // already-installed connectors.
           getConnectorMcpDeps: connectorMcpDepsFactory,
+          // One catalog read for the whole boot loop (the instance memoizes it).
+          // A minted fleet connector starts with its catalog entry's credential
+          // settings, or not at all.
+          readCatalog: (() => {
+            const catalog = rt.getConnectorCatalog();
+            return () => catalog.catalogEntries();
+          })(),
           // A brokered connector's boot readiness is its provider's answer, not a
           // token file — the same predicate `seedUrlConnectionState` consumes.
           managedConnectors: rt.getManagedConnectorRegistry(),

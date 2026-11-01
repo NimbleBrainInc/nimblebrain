@@ -2554,6 +2554,7 @@ async function eagerStartRemoteSource(
       allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
       workspaceContext: new WorkspaceContext({ wsId, workDir: ctx.runtime.getWorkDir() }),
       connectorMcp: ctx.runtime.getConnectorMcpDeps(wsId),
+      readCatalog: () => ctx.runtime.getConnectorCatalog().catalogEntries(),
     });
     return undefined;
   } catch (err) {
