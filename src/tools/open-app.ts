@@ -96,21 +96,59 @@ export function openableAppNames(placements: readonly PlacementEntry[]): string[
   return [...new Set(placements.filter(isOpenable).map(displayName))];
 }
 
+interface TemplateExpression {
+  /** The characters this expression's compiled class cannot consume. */
+  stops: string;
+  /** The literal the compiled pattern puts before the expression's value. */
+  prefix: string;
+  start: number;
+  end: number;
+}
+
+/** One expression as the SDK's `UriTemplate` compiles it to a regex. */
+function templateExpression(body: string, start: number, end: number): TemplateExpression {
+  const operator = "+#./;?&".includes(body[0] ?? "") ? (body[0] ?? "") : "";
+  const exploded = body.includes("*");
+  const first = body.slice(operator.length).split(",")[0]?.replace("*", "").trim() ?? "";
+  switch (operator) {
+    case "+":
+    case "#":
+      return { stops: "", prefix: "", start, end };
+    case "?":
+    case "&":
+      return { stops: "&", prefix: `${operator}${first}=`, start, end };
+    case ";":
+      return { stops: "/", prefix: "", start, end };
+    case ".":
+      return { stops: "/,", prefix: ".", start, end };
+    case "/":
+      return { stops: exploded ? "/" : "/,", prefix: "/", start, end };
+    default:
+      return { stops: exploded ? "/" : "/,", prefix: "", start, end };
+  }
+}
+
 /**
- * Whether a template's match can cost more than linear time. The SDK compiles `{+x}` and `{#x}`
- * to `(.+)` and every other expression to a class such as `([^/,]+)`, which consumes any literal
- * except `/` and `,`. So a template with two unbounded expressions, or two expressions not
- * separated by a literal containing `/` or `,`, gives a regex that backtracks polynomially on a
- * URI it does not match. Templates come from connectors, so matching one must stay cheap.
+ * Whether a template's match can cost more than quadratic time. An expression's value ends at a
+ * single place when the text after it (the literal, then the next expression's prefix) holds a
+ * character the value cannot consume; the SDK compiles `{x}` to `([^/,]+)`, `{;x}` to `([^/]+)`,
+ * `{?x}` to `\?x=([^&]+)` and `{+x}` / `{#x}` to `(.+)`. Each boundary where the value could end
+ * in more than one place multiplies the work on a URI that does not match by its length, so a
+ * template with more than one such boundary matches nothing. One is allowed, so `{id}{?cursor}`
+ * and `{+path}` still match. The last expression ends where the URI does. Templates come from
+ * connectors, so matching one must stay cheap.
  */
 function isUnboundedTemplate(template: string): boolean {
-  let unbounded = 0;
-  let previousEnd = -1;
-  for (const expr of template.matchAll(/\{([^}]*)\}/g)) {
-    if (previousEnd !== -1 && !/[/,]/.test(template.slice(previousEnd, expr.index))) return true;
-    previousEnd = expr.index + expr[0].length;
-    const operator = expr[1]?.[0];
-    if ((operator === "+" || operator === "#") && ++unbounded > 1) return true;
+  const expressions = [...template.matchAll(/\{([^}]*)\}/g)].map((m) =>
+    templateExpression(m[1] ?? "", m.index, m.index + m[0].length),
+  );
+  let ambiguous = 0;
+  for (let i = 0; i + 1 < expressions.length; i++) {
+    const current = expressions[i];
+    const next = expressions[i + 1];
+    if (!current || !next) continue;
+    const between = template.slice(current.end, next.start) + next.prefix;
+    if (![...between].some((c) => current.stops.includes(c)) && ++ambiguous > 1) return true;
   }
   return false;
 }

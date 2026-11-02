@@ -246,21 +246,42 @@ describe("resolveOpen", () => {
   test("a template that could backtrack without bound matches nothing; others still match", async () => {
     const only = (uriTemplate: string) =>
       scope({ templatesOf: async (name) => (name === "people" ? [{ uriTemplate }] : []) });
-    // Two unbounded expressions.
-    expect(await resolveOpen(only("acme://{+path}/x/{#frag}"), "acme://a/x/b")).toEqual({
-      error: "Nothing in this workspace opens acme://a/x/b.",
+    // Two unbounded expressions before a third: two boundaries that can split many ways.
+    expect(await resolveOpen(only("acme://{+a}/{+b}/{c}"), "acme://a/b/c")).toEqual({
+      error: "Nothing in this workspace opens acme://a/b/c.",
     });
-    // Two expressions with no literal between them.
-    expect(await resolveOpen(only("acme://{kind}{id}"), "acme://ab")).toEqual({
-      error: "Nothing in this workspace opens acme://ab.",
+    // Three expressions with no literal between them.
+    expect(await resolveOpen(only("acme://{kind}{id}{rev}"), "acme://abc")).toEqual({
+      error: "Nothing in this workspace opens acme://abc.",
     });
-    // Two expressions separated only by a literal the expressions' class can consume.
+    // Expressions separated only by a literal the expressions' class can consume.
     expect(await resolveOpen(only("a{w}b{x}b{y}b{z}c"), "abbbbbbc")).toEqual({
       error: "Nothing in this workspace opens abbbbbbc.",
+    });
+    // `{;x}` consumes `,`, and `{?x}` consumes `/` and `,`, so neither separates.
+    expect(await resolveOpen(only("acme://{;a},{;b},{c}"), "acme://a,b,c")).toEqual({
+      error: "Nothing in this workspace opens acme://a,b,c.",
+    });
+    expect(await resolveOpen(only("acme://x{?a}/{b}{?c}"), "acme://x?a=1/b?c=2")).toEqual({
+      error: "Nothing in this workspace opens acme://x?a=1/b?c=2.",
     });
     // One unbounded expression, and expressions separated by `/`, match as before.
     expect(await resolveOpen(only("acme://files/{+path}"), "acme://files/a/b")).toEqual({
       destination: { app: "people", name: "People", target: "acme://files/a/b" },
+    });
+    expect(await resolveOpen(only("acme://{+path}/x/{#frag}"), "acme://a/x/b")).toEqual({
+      destination: { app: "people", name: "People", target: "acme://a/x/b" },
+    });
+    // A query expression directly after a path expression: one boundary that can split.
+    expect(
+      await resolveOpen(only("acme://items/{id}{?cursor}"), "acme://items/i1?cursor=x"),
+    ).toEqual({
+      destination: { app: "people", name: "People", target: "acme://items/i1?cursor=x" },
+    });
+    expect(
+      await resolveOpen(only("acme://items/{id}{/rev}{?cursor}"), "acme://items/i1/r2?cursor=x"),
+    ).toEqual({
+      destination: { app: "people", name: "People", target: "acme://items/i1/r2?cursor=x" },
     });
     expect(await resolveOpen(only("acme://{kind}/{id}"), "acme://notes/n1")).toEqual({
       destination: { app: "people", name: "People", target: "acme://notes/n1" },
@@ -277,8 +298,9 @@ describe("resolveOpen", () => {
     });
   });
 
-  test("a pathological template is refused before it runs, so a hostile URI costs nothing", async () => {
-    // Unguarded, the last two templates take seconds against these URIs.
+  test("a hostile URI costs little: pathological templates are refused, and the rest are at most quadratic", async () => {
+    // Unguarded, the second and third templates take seconds against these URIs. The last two
+    // are allowed, with one boundary that can split.
     const hostile = scope({
       templatesOf: async (name) =>
         name === "people"
@@ -286,6 +308,8 @@ describe("resolveOpen", () => {
               { uriTemplate: "a{+p}b{+q}b{+r}c" },
               { uriTemplate: "{a}{b}{c}{d}" },
               { uriTemplate: "a{w}b{x}b{y}b{z}c" },
+              { uriTemplate: "a{w}{?q}c" },
+              { uriTemplate: "a{+p}b{q}c" },
             ]
           : [],
     });
