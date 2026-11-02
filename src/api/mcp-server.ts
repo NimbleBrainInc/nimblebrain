@@ -1444,11 +1444,13 @@ async function assertAppMayCall(
  *
  * App-only keeps a tool from the agent, not from the person's own credential.
  * A provider that is not an authorization server (`oidc`, `dev`) issues no
- * credential to an external client: an `oidc` token must name this instance's
- * own client in `aud`, and `dev` authenticates no one. So every credential it
- * accepts is the shell's session, and a caller presenting one could drive the
- * view itself; no proof the shell minted would tell the two apart, because the
- * shell's credential is what would fetch it. Where external clients do get
+ * credential to an external client. An `oidc` token must name this instance's
+ * own client in `aud`, so every credential it accepts is the shell's session,
+ * and a caller presenting one could drive the view itself; no proof the shell
+ * minted would tell the two apart, because the shell's credential is what
+ * would fetch it. `dev` checks no credential at all: every request is the
+ * developer with a first-party grant, so any caller that reaches it can name a
+ * source and pass this check. Where external clients do get
  * credentials, the client each was issued to decides its grant (ADR-0038).
  */
 function isAppCall(appSource: string | undefined, requestCtx: McpRequestContext): boolean {
