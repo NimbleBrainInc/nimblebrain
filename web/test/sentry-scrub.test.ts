@@ -9,13 +9,15 @@
 // Mirrors the server OTel rule: stamp only tenant_id/workspace_id/opaque user id.
 // ---------------------------------------------------------------------------
 
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Breadcrumb, ErrorEvent } from "@sentry/react";
+import * as Sentry from "@sentry/react";
 import {
   beforeBreadcrumb,
   beforeSend,
   consumeLogoutOnce,
   consumeMcpTimeoutEvent,
+  initSentry,
   isReportableLogout,
   MCP_TIMEOUT_EVENT_INTERVAL_MS,
   resetLogoutGuard,
@@ -139,5 +141,40 @@ describe("beforeBreadcrumb: navigation", () => {
     const out = beforeBreadcrumb(crumb);
     expect(out?.data?.from).toBe("/w/abc/app/crm");
     expect(out?.data?.to).toBe("/w/abc/");
+  });
+});
+
+type InitOptions = NonNullable<Parameters<typeof Sentry.init>[0]>;
+type TransactionEvent = Parameters<NonNullable<InitOptions["beforeSendTransaction"]>>[0];
+
+describe("beforeSendTransaction", () => {
+  afterEach(() => {
+    window.__NB_CONFIG__ = undefined;
+  });
+
+  test("drops the query and a standalone fragment from the transaction and request URL", () => {
+    // initSentry keeps the SDK it is given; the rest of this one is the real,
+    // uninitialized SDK, so helpers called by later suites stay no-ops.
+    let options: InitOptions | undefined;
+    window.__NB_CONFIG__ = { sentry: { dsn: "https://key@sentry.example/1" } };
+    initSentry({
+      ...Sentry,
+      init: (o) => {
+        options = o;
+        return undefined;
+      },
+    });
+
+    const event: TransactionEvent = {
+      type: "transaction",
+      transaction: "/w/abc/?chat=conv_1",
+      request: { url: "https://app.example/w/abc/#conv_1" },
+    };
+    const out = options?.beforeSendTransaction?.(event, {});
+    expect(out).toEqual({
+      type: "transaction",
+      transaction: "/w/abc/",
+      request: { url: "https://app.example/w/abc/" },
+    });
   });
 });

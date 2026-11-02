@@ -40,6 +40,8 @@ Telemetry events fall into four categories:
 | `web.chat_sent` | Whether this is a resumed conversation, whether an app context is set |
 | `web.app_opened` | Whether the app has a primary view |
 
+Before a web event is sent, every URL in its properties (including PostHog's own `$current_url`, referrer, and `$initial_*` values) loses its query string and fragment, which can name the conversation or record on screen. The path stays.
+
 ## What is never collected
 
 - Conversation content, messages, or prompts
