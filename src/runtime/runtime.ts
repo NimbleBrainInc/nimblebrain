@@ -6396,12 +6396,13 @@ function agentExecutionContext(reqCtx: RequestContext, agentRuntime: AgentRuntim
  * handle, and a task result share, copied only when set.
  */
 function stopDetail(
-  r: Pick<RunHandle, "finishReason" | "finishReasonRaw" | "spendAccountId">,
-): Pick<RunHandle, "finishReason" | "finishReasonRaw" | "spendAccountId"> {
+  r: Pick<RunHandle, "finishReason" | "finishReasonRaw" | "spendAccountId" | "inputCapWrapUp">,
+): Pick<RunHandle, "finishReason" | "finishReasonRaw" | "spendAccountId" | "inputCapWrapUp"> {
   return {
     ...(r.finishReason !== undefined ? { finishReason: r.finishReason } : {}),
     ...(r.finishReasonRaw !== undefined ? { finishReasonRaw: r.finishReasonRaw } : {}),
     ...(r.spendAccountId !== undefined ? { spendAccountId: r.spendAccountId } : {}),
+    ...(r.inputCapWrapUp ? { inputCapWrapUp: true } : {}),
   };
 }
 

@@ -145,6 +145,8 @@ export interface TaskFnResult {
   finishReasonRaw?: string;
   /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
+  /** See runtime `TaskResult.inputCapWrapUp`. */
+  inputCapWrapUp?: boolean;
   /** The run's cost in USD, each call priced on its own card (runtime `TaskResult.costUsd`). */
   costUsd?: number;
   /** Every skill the run was given, or that missed it (runtime `TaskResult`). */
@@ -627,6 +629,39 @@ function unrecognizedStopError(
   return `Model turn ended without a recognized stop (${raw}).`;
 }
 
+/** Which input cap applied to a run, and what would lift it, for its error. */
+function inputCapTerms(applied: number | undefined, own: number | undefined) {
+  const limit = applied != null ? ` of ${applied.toLocaleString("en-US")}` : "";
+  const ownApplied = own != null && (applied == null || own <= applied);
+  const which = ownApplied
+    ? "its own Max Input Tokens"
+    : "this runtime's per-run ceiling (tasks.maxRunInputTokens)";
+  const remedy = ownApplied
+    ? "Raise Max Input Tokens or narrow the task."
+    : "Ask the operator to raise the ceiling, or narrow the task.";
+  return { limit, which, remedy };
+}
+
+/**
+ * A run the engine told to stop because its input cap was near, and which did.
+ * That can't be told apart from a run that had really finished, but a person
+ * can, so it reads Needs review. Its answer is kept and it is not a failure.
+ */
+function inputCapWrapUpVerdict(
+  data: Pick<TaskFnResult, "inputCapWrapUp">,
+  applied: number | undefined,
+  task: Pick<Task, "maxInputTokens">,
+): { status: "degraded"; error: string } | null {
+  if (!data.inputCapWrapUp) return null;
+  const { limit, which, remedy } = inputCapTerms(applied, task.maxInputTokens);
+  return {
+    status: "degraded",
+    error:
+      `Told to finish early: another model call could have passed the input-token cap${limit}, ` +
+      `which is ${which}. Its answer may leave work undone. ${remedy}`,
+  };
+}
+
 /**
  * The error for a run the engine stopped at its input-token cap. `applied` is
  * the cap the run executed under; it names the task's own cap when that
@@ -639,14 +674,7 @@ function runInputCapError(
   applied: number | undefined,
   own: number | undefined,
 ): string {
-  const limit = applied != null ? ` of ${applied.toLocaleString("en-US")}` : "";
-  const ownApplied = own != null && (applied == null || own <= applied);
-  const which = ownApplied
-    ? "its own Max Input Tokens"
-    : "this runtime's per-run ceiling (tasks.maxRunInputTokens)";
-  const remedy = ownApplied
-    ? "Raise Max Input Tokens or narrow the task."
-    : "Ask the operator to raise the ceiling, or narrow the task.";
+  const { limit, which, remedy } = inputCapTerms(applied, own);
   return (
     `Stopped at the input-token cap${limit}, which is ${which}: the run had spent ` +
     `${spent.toLocaleString("en-US")} input tokens, and its next step was projected to pass ` +
@@ -731,11 +759,15 @@ function mapResultToRun(
   // which is the model's account of the run and says "done" in exactly the
   // runs these exist to catch.
   //
+  // A run told to wrap up near its input cap also reads `degraded`, when no tool
+  // call says worse.
+  //
   // Only overrides an otherwise-`success` run; a run already classified
   // failure/timeout keeps its (stronger) status.
   let error: string | undefined;
   if (status === "success") {
-    const verdict = toolCallVerdict(accounted);
+    const verdict =
+      toolCallVerdict(accounted) ?? inputCapWrapUpVerdict(data, limits.maxInputTokens, task);
     if (verdict) {
       status = verdict.status;
       error = verdict.error;

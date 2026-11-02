@@ -750,6 +750,12 @@ export interface EngineResult {
   finishReasonRaw?: string;
   /** The account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
+  /**
+   * The run ended `complete` on a call that carried the final-step reminder
+   * because the input cap was near. The model stopped when told to, so
+   * `complete` does not mean the work was finished. Absent otherwise.
+   */
+  inputCapWrapUp?: boolean;
 }
 
 export interface ToolCallRecord {
