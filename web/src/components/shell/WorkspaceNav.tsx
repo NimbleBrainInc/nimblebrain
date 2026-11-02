@@ -35,6 +35,7 @@ import { useWorkspaceContext, type WorkspaceInfo } from "../../context/Workspace
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import { resolveIcon } from "../../lib/icons";
 import { identityAppRoute, isIdentityApp } from "../../lib/identity-apps";
+import type { AppRouteState } from "../../lib/open-app";
 import { usePinnedApps } from "../../lib/pinned-apps";
 import { cn } from "../../lib/utils";
 import {
@@ -345,11 +346,17 @@ function AppEntry({
   const [first] = app.views;
   if (!first) return null;
   const to = (view: WorkspaceApp["views"][number]) => `/w/${slug}/app/${view.route}`;
+  // Choosing a view opens it at its home, including the view already on screen: the route
+  // does not change then, so only the target (its own address) tells the app to go home.
+  const home = (view: WorkspaceApp["views"][number]): AppRouteState => ({
+    appTarget: view.resourceUri,
+  });
   const viewLabel = (view: WorkspaceApp["views"][number]) => view.label ?? view.route ?? "App";
   if (app.views.length === 1) {
     return (
       <AppLink
         to={to(first)}
+        state={home(first)}
         label={viewLabel(first)}
         iconUrl={iconUrl}
         serverName={app.serverName}
@@ -364,6 +371,7 @@ function AppEntry({
     <>
       <AppLink
         to={to(first)}
+        state={home(first)}
         label={name ?? viewLabel(first)}
         iconUrl={iconUrl}
         serverName={app.serverName}
@@ -378,6 +386,7 @@ function AppEntry({
             <NavLink
               key={view.resourceUri}
               to={to(view)}
+              state={home(view)}
               end
               data-testid="sidebar-workspace-app-view"
               className={({ isActive }) => cn(rowClass(isActive, false), "pl-[2.125rem]")}
@@ -401,6 +410,7 @@ function AppEntry({
 // The rail has no room for it; pinned apps still lead there.
 function AppLink({
   to,
+  state,
   label,
   serverName,
   iconUrl,
@@ -410,6 +420,8 @@ function AppLink({
   onTogglePin,
 }: {
   to: string;
+  /** The router state the link carries: the view's own address, so choosing it opens it at its home. */
+  state: AppRouteState;
   label: string;
   serverName: string;
   iconUrl?: string;
@@ -424,6 +436,7 @@ function AppLink({
   const link = (
     <Link
       to={to}
+      state={state}
       aria-label={collapsed ? label : undefined}
       data-testid="sidebar-workspace-app"
       data-app-route={serverName}

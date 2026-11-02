@@ -766,7 +766,7 @@ A view that sends nothing still gets a title: the bar shows the name of the side
 
 ### `ai.nimblebrain/navigate`
 
-Sent by the host when the user picks an entry in the top bar (a breadcrumb, or back), or when an [`ai.nimblebrain/open`](#ainimblebrainopen) or the agent's `nb__open_app` names a view inside your app, naming the view to go to by its `id`:
+Sent by the host when the user picks an entry in the top bar (a breadcrumb, or back), when the user chooses your view in the sidebar, or when an [`ai.nimblebrain/open`](#ainimblebrainopen) or the agent's `nb__open_app` names a view inside your app, naming the view to go to by its `id`:
 
 ```json
 {
@@ -777,6 +777,8 @@ Sent by the host when the user picks an entry in the top bar (a breadcrumb, or b
 ```
 
 Navigate there, then send the new trail. The `id` is either one of your trail's own or another address your app reports, such as a record the agent read from your tools, so resolve any address you would report, not only the entries on screen.
+
+Choosing a view in the sidebar sends that view's own `ui://` URI, the `resourceUri` of its placement, even when the view is already on screen: the route does not change then, so this is the only signal that the user asked for the view's home. Treat your own `ui://` URI as "go to your home", and root your trail at it.
 
 The host sends it only to an app that has sent a trail, so it needs no declaration of its own. That is also when: an app opened at a view gets it at its first `ai.nimblebrain/location`, because the handshake completes before an app has subscribed to anything, and a notification no handler is waiting for is lost. Subscribe to `navigate` no later than you send your first location (`useTrail` does both in one render).
 
