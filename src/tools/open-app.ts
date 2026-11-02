@@ -139,9 +139,14 @@ function templateExpression(body: string, start: number, end: number): TemplateE
  * connectors, so matching one must stay cheap.
  */
 function isUnboundedTemplate(template: string): boolean {
-  const expressions = [...template.matchAll(/\{([^}]*)\}/g)].map((m) =>
-    templateExpression(m[1] ?? "", m.index, m.index + m[0].length),
-  );
+  // One pass over the braces: a regex scan retries from every `{` that never closes.
+  const expressions: TemplateExpression[] = [];
+  for (let open = template.indexOf("{"); open !== -1; ) {
+    const close = template.indexOf("}", open);
+    if (close === -1) return true; // Unclosed: the SDK rejects it too.
+    expressions.push(templateExpression(template.slice(open + 1, close), open, close + 1));
+    open = template.indexOf("{", close);
+  }
   let ambiguous = 0;
   for (let i = 0; i + 1 < expressions.length; i++) {
     const current = expressions[i];

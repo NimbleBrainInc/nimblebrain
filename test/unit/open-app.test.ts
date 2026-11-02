@@ -265,6 +265,12 @@ describe("resolveOpen", () => {
     expect(await resolveOpen(only("acme://x{?a}/{b}{?c}"), "acme://x?a=1/b?c=2")).toEqual({
       error: "Nothing in this workspace opens acme://x?a=1/b?c=2.",
     });
+    // An unclosed expression is refused in one pass, however many braces open.
+    const started = performance.now();
+    expect(await resolveOpen(only("{".repeat(40_000)), "x")).toEqual({
+      error: "Nothing in this workspace opens x.",
+    });
+    expect(performance.now() - started).toBeLessThan(50);
     // One unbounded expression, and expressions separated by `/`, match as before.
     expect(await resolveOpen(only("acme://files/{+path}"), "acme://files/a/b")).toEqual({
       destination: { app: "people", name: "People", target: "acme://files/a/b" },
