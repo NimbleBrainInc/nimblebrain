@@ -186,7 +186,7 @@ function hasUnsafePathChars(route: string): boolean {
  * The route is resolved against the connector's own base URL, and `new URL()`
  * is generous in ways that matter here: `//evil.test/x` is a protocol-relative
  * URL that resolves to a DIFFERENT ORIGIN, and the forward carries a freshly
- * minted `aud=mcp-fleet` token — so a route that escapes the connector's origin
+ * minted token for the connector's own audience — so a route that escapes the connector's origin
  * is server-side request forgery with a platform credential attached. One
  * character of validation closes the whole class, and `resolveForwardUrl`
  * re-asserts the resolved origin afterwards so nothing rests on this check
