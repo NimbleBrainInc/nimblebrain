@@ -247,7 +247,7 @@ export async function startWorkspaceConnectors(
   // can emit `tool.task_status` and a source its `connector.health`.
   // Pass `new NoopEventSink()` only if intentionally discarding events.
   eventSink: EventSink,
-  opts?: {
+  opts: {
     allowInsecureRemotes?: boolean;
     workDir?: string;
     /**
@@ -265,7 +265,7 @@ export async function startWorkspaceConnectors(
      * One the catalog no longer offers fails to start and is kept as an
      * unstarted entry carrying the reason.
      */
-    readCatalog?: CatalogEntriesReader;
+    readCatalog: CatalogEntriesReader;
     /**
      * Fired when a boot-started URL connector's connection later loses its
      * authorization mid-session (a tool call hit `UnauthorizedError`). Unlike
@@ -387,7 +387,7 @@ export async function startWorkspaceConnectors(
         // installed with host-resources support don't silently lose the
         // capability across platform restarts.
         connectorMcp: opts?.getConnectorMcpDeps?.(entry.wsId),
-        ...(opts?.readCatalog ? { readCatalog: opts.readCatalog } : {}),
+        readCatalog: opts.readCatalog,
         // Boot is the one caller that wants a failed URL start to stay in the
         // registry. Nobody is watching this start, the dependency being
         // unreachable for the few seconds the loop runs says nothing about

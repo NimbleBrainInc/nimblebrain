@@ -85,6 +85,15 @@ function normalizeRemoteUrl(raw: string | undefined): string | null {
 /** Reads the operator catalog's entries. Throws when the catalog cannot be read. */
 export type CatalogEntriesReader = () => Promise<readonly ConnectorCatalogEntry[]>;
 
+/**
+ * The reader for a caller that starts no minted fleet connector (a test of
+ * another connector kind). Passing it is a decision rather than an omission,
+ * as `NoopEventSink` is for events: it rejects, so a minted connector handed it
+ * reads as an unreadable catalog and does not start.
+ */
+export const NO_CATALOG: CatalogEntriesReader = () =>
+  Promise.reject(new Error("no connector catalog wired: a minted fleet connector cannot start"));
+
 /** Why a minted fleet connector has no credential to start with. */
 export const MINTED_UNAVAILABLE_REASON = "not offered in this deployment's connector catalog";
 

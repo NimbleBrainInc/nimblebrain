@@ -255,10 +255,24 @@ export class ConnectorLifecycleManager {
    * (`setCatalogReader`). Every path here that builds a connection from an
    * installed ref passes it to `resolveRefTransport`, which a minted fleet
    * connector needs: its credential settings come from its catalog entry at
-   * every start. Null in minimal runtimes that wire no catalog, where a minted
-   * connector fails to start rather than mint from its stored copy.
+   * every start. Read only through {@link catalogReader}.
    */
   private readCatalog: CatalogEntriesReader | null = null;
+
+  /**
+   * The wired catalog reader, or one that rejects when none is wired. This is
+   * the one runtime guard left on the catalog: the reader arrives after
+   * construction (`setCatalogReader`, the lifecycle's settable-dependency
+   * pattern), so the type cannot require it here. An unwired reader rejects,
+   * which `resolveRefTransport` reads as an unreadable catalog, so a minted
+   * connector fails to start rather than mint from its stored copy.
+   */
+  private catalogReader(): CatalogEntriesReader {
+    return (
+      this.readCatalog ??
+      (() => Promise.reject(new Error("catalog reader not wired (setCatalogReader)")))
+    );
+  }
 
   /**
    * Notified when a workspace connection reaches `running`.
@@ -1080,10 +1094,9 @@ export class ConnectorLifecycleManager {
         url: new URL(ref.url),
         // Resolved like the boot path, so Reconnect / `/v1/mcp-auth/initiate`
         // builds the same transport a restart would.
-        transportConfig: (await resolveRefTransport(ref, this.readCatalog ?? undefined))
-          .transportConfig,
+        transportConfig: (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
         resolveTransportConfig: async () =>
-          (await resolveRefTransport(ref, this.readCatalog ?? undefined)).transportConfig,
+          (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
         // Honor the per-call flag, same source the OAuth provider above and the
         // startup-time validateConnectorUrl use — not the manager default — so the
         // transport's SSRF guard agrees with what this install was authorized for.
@@ -1789,7 +1802,7 @@ export class ConnectorLifecycleManager {
 
     await startConnectorSource(ref, wsRegistry, this.eventSink, {
       allowInsecureRemotes: this.allowInsecureRemotes,
-      ...(this.readCatalog ? { readCatalog: this.readCatalog } : {}),
+      readCatalog: this.catalogReader(),
       // A recovery that fails must not be destructive. With this set, the catch
       // sees the retained entry still holding the name and leaves it alone, so a
       // failed attempt is a no-op rather than a downgrade — the source stays
@@ -1890,7 +1903,7 @@ export class ConnectorLifecycleManager {
     await startConnectorSource(ref, registry, this.eventSink, {
       allowInsecureRemotes: this.allowInsecureRemotes,
       identityOwner: { userId, workDir },
-      ...(this.readCatalog ? { readCatalog: this.readCatalog } : {}),
+      readCatalog: this.catalogReader(),
     });
     return registry.getSource(serverName);
   }
@@ -2096,10 +2109,9 @@ export class ConnectorLifecycleManager {
         {
           type: "remote",
           url: new URL(ref.url),
-          transportConfig: (await resolveRefTransport(ref, this.readCatalog ?? undefined))
-            .transportConfig,
+          transportConfig: (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
           resolveTransportConfig: async () =>
-            (await resolveRefTransport(ref, this.readCatalog ?? undefined)).transportConfig,
+            (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
           allowInsecure: opts.allowInsecureRemotes === true,
           authProvider: provider,
           ...(await inBandAuthErrorsOption(ref)),

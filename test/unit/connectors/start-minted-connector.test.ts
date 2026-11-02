@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import { NO_CATALOG } from "../../../src/connectors/catalog/binding.ts";
 import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 import { slugifyServerName } from "../../../src/connectors/runtime/paths.ts";
 import {
@@ -36,11 +37,11 @@ const minted: ConnectorRef = {
 };
 
 describe("startConnectorSource with a minted fleet connector", () => {
-  it("throws when started without the catalog", async () => {
+  it("does not start when handed NO_CATALOG", async () => {
     const registry = new ToolRegistry();
-    await expect(startConnectorSource(minted, registry, new NoopEventSink(), {})).rejects.toThrow(
-      /without the connector catalog/,
-    );
+    await expect(
+      startConnectorSource(minted, registry, new NoopEventSink(), { readCatalog: NO_CATALOG }),
+    ).rejects.toBeInstanceOf(FleetConnectorUnavailableError);
     expect(registry.hasSource(minted.serverName)).toBe(false);
   });
 
