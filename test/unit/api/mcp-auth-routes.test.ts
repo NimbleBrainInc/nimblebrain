@@ -1124,7 +1124,7 @@ describe("GET /v1/mcp-auth/callback — owner-aware redirect", () => {
 
 describe("fleet authorizer: startup validation", () => {
   const FLEET_ENV_VARS = [
-    "NB_FLEET_AUTHORIZER_ISSUER",
+    "NB_FLEET_AUTHORIZER_TOKEN_URL",
     "NB_MCP_AUTHORIZER_TENANT_KEY",
     "NB_TENANT_ID",
   ] as const;
@@ -1132,7 +1132,7 @@ describe("fleet authorizer: startup validation", () => {
 
   beforeEach(() => {
     savedEnv = Object.fromEntries(FLEET_ENV_VARS.map((k) => [k, process.env[k]]));
-    process.env.NB_FLEET_AUTHORIZER_ISSUER = "http://fleet-authorizer.internal";
+    process.env.NB_FLEET_AUTHORIZER_TOKEN_URL = "http://fleet-authorizer.internal/token";
     process.env.NB_TENANT_ID = "tenant-a";
   });
 
@@ -1144,7 +1144,7 @@ describe("fleet authorizer: startup validation", () => {
     }
   });
 
-  test("refuses to build the routes when the fleet issuer is set without a tenant key", () => {
+  test("refuses to build the routes when the fleet token endpoint is set without a tenant key", () => {
     delete process.env.NB_MCP_AUTHORIZER_TENANT_KEY;
     expect(() => makeApp(makeStubLifecycle())).toThrow(/NB_MCP_AUTHORIZER_TENANT_KEY/);
   });

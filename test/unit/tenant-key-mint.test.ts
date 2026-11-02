@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { createHmac, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
+  assertFleetIdentityProvisioned,
   buildMintRequest,
   createMintingFetch,
   MintError,
@@ -135,6 +137,49 @@ describe("buildMintRequest — authorizer parity", () => {
   });
 });
 
+// Cross-implementation drift guard. The authorizer's tests verify this same wire.
+// If either side drifts on HKDF info, MAC framing or payload shape, exactly one
+// breaks. The master is a fixture, never a real key.
+describe("buildMintRequest — cross-impl vector", () => {
+  it("reproduces the committed wire byte-for-byte", () => {
+    const vector = JSON.parse(
+      readFileSync(
+        new URL("./fixtures/authorizer-mint-cross-impl-v1.json", import.meta.url),
+        "utf8",
+      ),
+    ) as {
+      masterKeyB64: string;
+      tid: string;
+      workspace: string;
+      audience: string;
+      scope: string;
+      iat: number;
+      exp: number;
+      wire: string;
+    };
+    const tenantKey = Buffer.from(
+      hkdfSync(
+        "sha256",
+        Buffer.from(vector.masterKeyB64, "base64"),
+        Buffer.from(vector.tid),
+        Buffer.from("mcp-authorizer/v1"),
+        32,
+      ),
+    );
+    expect(
+      buildMintRequest({
+        tid: vector.tid,
+        workspace: vector.workspace,
+        audience: vector.audience,
+        scope: vector.scope,
+        tenantKey,
+        now: vector.iat,
+        ttlSeconds: vector.exp - vector.iat,
+      }),
+    ).toBe(vector.wire);
+  });
+});
+
 describe("buildMintRequest — local validation", () => {
   const base = {
     tid: TID,
@@ -195,6 +240,69 @@ describe("readTenantIdentityFromEnv", () => {
     } as NodeJS.ProcessEnv);
     expect(id.tid).toBe("hq");
     expect(id.tenantKey.equals(TENANT_KEY)).toBe(true);
+  });
+
+  it("refuses a tenant id outside the DNS-label grammar", () => {
+    expect(() =>
+      readTenantIdentityFromEnv({
+        NB_TENANT_ID: "Not_A_Label",
+        NB_MCP_AUTHORIZER_TENANT_KEY: TENANT_KEY.toString("base64"),
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/DNS-label/);
+  });
+
+  it("refuses a truncated key and a placeholder key", () => {
+    for (const key of [Buffer.alloc(16, 7), Buffer.alloc(32, 0), Buffer.alloc(32, 0xff)]) {
+      expect(() =>
+        readTenantIdentityFromEnv({
+          NB_TENANT_ID: "hq",
+          NB_MCP_AUTHORIZER_TENANT_KEY: key.toString("base64"),
+        } as NodeJS.ProcessEnv),
+      ).toThrow(/NB_MCP_AUTHORIZER_TENANT_KEY/);
+    }
+  });
+});
+
+describe("assertFleetIdentityProvisioned", () => {
+  const url = { NB_FLEET_AUTHORIZER_TOKEN_URL: "http://authorizer.example/token" };
+
+  it("does nothing without a token endpoint, even with no identity", () => {
+    expect(() => assertFleetIdentityProvisioned({} as NodeJS.ProcessEnv)).not.toThrow();
+  });
+
+  it("does nothing when only the issuer is set: the token endpoint is the signal", () => {
+    expect(() =>
+      assertFleetIdentityProvisioned({
+        NB_FLEET_AUTHORIZER_ISSUER: "http://authorizer.example",
+      } as NodeJS.ProcessEnv),
+    ).not.toThrow();
+  });
+
+  it("refuses a token endpoint with no tenant id or key", () => {
+    expect(() =>
+      assertFleetIdentityProvisioned({
+        ...url,
+        NB_MCP_AUTHORIZER_TENANT_KEY: TENANT_KEY.toString("base64"),
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/NB_TENANT_ID/);
+    expect(() =>
+      assertFleetIdentityProvisioned({ ...url, NB_TENANT_ID: "hq" } as NodeJS.ProcessEnv),
+    ).toThrow(/NB_MCP_AUTHORIZER_TENANT_KEY/);
+  });
+
+  it("passes with a provisioned identity, whether or not the issuer is also set", () => {
+    const env = {
+      ...url,
+      NB_TENANT_ID: "hq",
+      NB_MCP_AUTHORIZER_TENANT_KEY: TENANT_KEY.toString("base64"),
+    };
+    expect(() => assertFleetIdentityProvisioned(env as NodeJS.ProcessEnv)).not.toThrow();
+    expect(() =>
+      assertFleetIdentityProvisioned({
+        ...env,
+        NB_FLEET_AUTHORIZER_ISSUER: "http://authorizer.example",
+      } as NodeJS.ProcessEnv),
+    ).not.toThrow();
   });
 });
 

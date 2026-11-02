@@ -12,7 +12,6 @@ import {
 import type { EventSink } from "../../engine/types.ts";
 import type { ConnectorOwner } from "../../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../../identity/connector-store.ts";
-import { fleetIssuerOption } from "../../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { log } from "../../observability/log.ts";
 import type { PlacementRegistry } from "../../runtime/placement-registry.ts";
@@ -1236,10 +1235,6 @@ export class ConnectorLifecycleManager {
       callbackUrl: opts.callbackUrl,
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
       headlessAuthProbe: ref.headlessAuthProbe === true,
-      // Fleet tenant binding. Safe to pass for every server: the provider only
-      // attaches an assertion when the token endpoint's origin matches this
-      // issuer (the fleet authorizer), never to a vendor.
-      ...fleetIssuerOption(),
       onInteractiveAuthRequired,
       // Mid-session auth loss on this connection (a tool call hit
       // UnauthorizedError because the refresh token was rejected). Flip to

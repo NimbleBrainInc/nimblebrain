@@ -6,7 +6,6 @@ import type {
   ResourceArgumentsResolver,
 } from "../../host-resources/index.ts";
 import { resolveUserDisplayName } from "../../identity/user.ts";
-import { fleetIssuerOption } from "../../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { isMintedFleetSource } from "../../oauth/minted-credential-provider.ts";
 import { log } from "../../observability/log.ts";
@@ -225,7 +224,6 @@ async function buildUserOAuthProvider(
     callbackUrl: mcpAuthCallbackUrl(),
     allowInsecureRemotes: opts?.allowInsecureRemotes === true,
     headlessAuthProbe: ref.headlessAuthProbe === true,
-    ...fleetIssuerOption(),
     onInteractiveAuthRequired,
     ...(opts?.onAuthLost ? { onAuthLost: opts.onAuthLost } : {}),
     ...(opts?.abortSignal ? { abortSignal: opts.abortSignal } : {}),
@@ -321,10 +319,6 @@ export async function buildUrlOAuthProvider(
     callbackUrl,
     allowInsecureRemotes: opts?.allowInsecureRemotes === true,
     headlessAuthProbe: ref.headlessAuthProbe === true,
-    // Fleet tenant binding. Safe for every server: the provider only
-    // attaches an assertion when the token endpoint's origin matches this
-    // issuer (the fleet authorizer), never to a vendor.
-    ...fleetIssuerOption(),
     onInteractiveAuthRequired,
     ...(opts?.onAuthLost ? { onAuthLost: opts.onAuthLost } : {}),
     ...(staticClient ? { staticClient } : {}),
