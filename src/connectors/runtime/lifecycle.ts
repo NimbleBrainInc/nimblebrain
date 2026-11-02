@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { oauthClientIdentity } from "../../brand/index.ts";
 import { resolveConnectorSkillsConfig } from "../../config/connector-skills.ts";
 import type { AccountLookup } from "../../connectors/catalog/account-lookup.ts";
+import type { CatalogEntriesReader } from "../../connectors/catalog/binding.ts";
 import type { ManagedConnectorProvider } from "../../connectors/providers/managed-provider.ts";
 import {
   type ManagedConnectorRegistry,
@@ -250,6 +251,16 @@ export class ConnectorLifecycleManager {
   private getConnectorMcpDeps: ((wsId: string) => ConnectorMcpDeps) | null = null;
 
   /**
+   * Reads the operator catalog. Set by Runtime after construction
+   * (`setCatalogReader`). Every path here that builds a connection from an
+   * installed ref passes it to `resolveRefTransport`, which a minted fleet
+   * connector needs: its credential settings come from its catalog entry at
+   * every start. Null in minimal runtimes that wire no catalog, where a minted
+   * connector fails to start rather than mint from its stored copy.
+   */
+  private readCatalog: CatalogEntriesReader | null = null;
+
+  /**
    * Notified when a workspace connection reaches `running`.
    *
    * Wired by the runtime at construction ({@link setConnectionRunningObserver})
@@ -372,6 +383,11 @@ export class ConnectorLifecycleManager {
    */
   setConnectorMcpDepsFactory(factory: (wsId: string) => ConnectorMcpDeps): void {
     this.getConnectorMcpDeps = factory;
+  }
+
+  /** Wire the operator catalog reader. See {@link readCatalog}. */
+  setCatalogReader(reader: CatalogEntriesReader): void {
+    this.readCatalog = reader;
   }
 
   /**
@@ -1064,7 +1080,10 @@ export class ConnectorLifecycleManager {
         url: new URL(ref.url),
         // Resolved like the boot path, so Reconnect / `/v1/mcp-auth/initiate`
         // builds the same transport a restart would.
-        transportConfig: resolveRefTransport(ref).transportConfig,
+        transportConfig: (await resolveRefTransport(ref, this.readCatalog ?? undefined))
+          .transportConfig,
+        resolveTransportConfig: async () =>
+          (await resolveRefTransport(ref, this.readCatalog ?? undefined)).transportConfig,
         // Honor the per-call flag, same source the OAuth provider above and the
         // startup-time validateConnectorUrl use — not the manager default — so the
         // transport's SSRF guard agrees with what this install was authorized for.
@@ -1770,6 +1789,7 @@ export class ConnectorLifecycleManager {
 
     await startConnectorSource(ref, wsRegistry, this.eventSink, {
       allowInsecureRemotes: this.allowInsecureRemotes,
+      ...(this.readCatalog ? { readCatalog: this.readCatalog } : {}),
       // A recovery that fails must not be destructive. With this set, the catch
       // sees the retained entry still holding the name and leaves it alone, so a
       // failed attempt is a no-op rather than a downgrade — the source stays
@@ -1870,6 +1890,7 @@ export class ConnectorLifecycleManager {
     await startConnectorSource(ref, registry, this.eventSink, {
       allowInsecureRemotes: this.allowInsecureRemotes,
       identityOwner: { userId, workDir },
+      ...(this.readCatalog ? { readCatalog: this.readCatalog } : {}),
     });
     return registry.getSource(serverName);
   }
@@ -2075,7 +2096,10 @@ export class ConnectorLifecycleManager {
         {
           type: "remote",
           url: new URL(ref.url),
-          transportConfig: ref.transport,
+          transportConfig: (await resolveRefTransport(ref, this.readCatalog ?? undefined))
+            .transportConfig,
+          resolveTransportConfig: async () =>
+            (await resolveRefTransport(ref, this.readCatalog ?? undefined)).transportConfig,
           allowInsecure: opts.allowInsecureRemotes === true,
           authProvider: provider,
           ...(await inBandAuthErrorsOption(ref)),

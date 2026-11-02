@@ -7,6 +7,7 @@
  */
 
 import { join } from "node:path";
+import type { CatalogEntriesReader } from "../connectors/catalog/binding.ts";
 import {
   type ManagedConnectorRegistry,
   managedConnectorRegistryOf,
@@ -259,6 +260,13 @@ export async function startWorkspaceConnectors(
      */
     getConnectorMcpDeps?: (wsId: string) => ConnectorMcpDeps | undefined;
     /**
+     * The operator catalog, which a minted fleet connector needs to start: its
+     * credential settings come from its catalog entry (`resolveRefTransport`).
+     * One the catalog no longer offers fails to start and is kept as an
+     * unstarted entry carrying the reason.
+     */
+    readCatalog?: CatalogEntriesReader;
+    /**
      * Fired when a boot-started URL connector's connection later loses its
      * authorization mid-session (a tool call hit `UnauthorizedError`). Unlike
      * `onInteractiveAuthRequired` — which buffers via `setPendingAuth` because
@@ -379,6 +387,7 @@ export async function startWorkspaceConnectors(
         // installed with host-resources support don't silently lose the
         // capability across platform restarts.
         connectorMcp: opts?.getConnectorMcpDeps?.(entry.wsId),
+        ...(opts?.readCatalog ? { readCatalog: opts.readCatalog } : {}),
         // Boot is the one caller that wants a failed URL start to stay in the
         // registry. Nobody is watching this start, the dependency being
         // unreachable for the few seconds the loop runs says nothing about

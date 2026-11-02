@@ -181,6 +181,9 @@ beforeEach(async () => {
   // lifecycle's own flag, not the install path's, and the fake upstream is http.
   lifecycle = new ConnectorLifecycleManager(new NoopEventSink(), true);
   lifecycle.setConnectorMcpDepsFactory(connectorMcpDeps);
+  // What `Runtime.start` wires: a minted connector's credential settings come
+  // from the catalog at every start, so recovery reads the same catalog.
+  lifecycle.setCatalogReader(() => new ConnectorCatalog(catalogDir).catalogEntries());
   workspaceRegistry = new ToolRegistry();
   // What `Runtime.start` binds — `tryRecoverSource` and the eager start both
   // reach the workspace's registry through it.
