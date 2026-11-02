@@ -100,10 +100,11 @@ placement's own `ui://` URI as `navigate`, so the screen and the URL agree.
 ### Template matching is bounded
 
 Templates come from connectors, so the shell (in the browser) and the resolver (on the server)
-compile each template once per connection. A template matches nothing unless it has at most one
-unbounded expression (`{+x}`, `{#x}`), and every two variable expressions are separated by
-literal text containing `/` or `,`, characters a simple expression cannot consume. No
-connector's template can then make matching backtrack beyond linear work per expression.
+compile each template once per connection. A boundary between two expressions is ambiguous when
+the text after the first (the literal, then the second's prefix) holds no character the first's
+compiled class excludes: `{x}` excludes `/` and `,`, `{;x}` only `/`, `{?x}` only `&`, and
+`{+x}` nothing. A template with more than one ambiguous boundary matches nothing, so matching a
+URI of at most 512 characters costs at most quadratic work, and `{id}{?cursor}` still matches.
 
 ### App frames cannot see the shell's URL
 
