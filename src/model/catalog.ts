@@ -200,7 +200,7 @@ export function isModelAllowed(
  * Get the list of available models for configured providers, respecting
  * allowlists. Deprecated models are excluded — this feeds the settings
  * model picker, and a model the upstream provider has shut down (e.g.
- * `openai:gpt-5.3-chat-latest`, retired 2026-08-10) must not be
+ * `openai:gpt-4-turbo`) must not be
  * re-selectable. `listModels` stays honest as "all models for a provider";
  * the "available to pick" filter lives here. Note this does not retroactively
  * fix a slot already pointing at a deprecated model — that override must be
@@ -432,9 +432,9 @@ export type OpenAIWireEffort = OpenAIEffort | "minimal";
  * it — it forwards the string and the API rejects it. `gpt-5-pro` is the one
  * that bites with no configuration at all: it rejects `medium`, which is
  * `DEFAULT_THINKING_EFFORT`, so a slot pointed at it 400s on every call.
- * `gpt-5.2-chat-latest` is the one that breaks the shape the rest suggest —
- * bounded from above as well as below, and not a `-pro` model — so don't read
- * the restrictions as a `-pro` rule and skip measuring the rest.
+ * Restriction is a measured property of each model, not of its name: `o3-pro`
+ * is a `-pro` model and takes the full ladder. So don't read the restrictions
+ * as a `-pro` rule and skip measuring the rest.
  */
 const FULL_LADDER: ReadonlySet<OpenAIWireEffort> = new Set(OPENAI_EFFORTS);
 /** The three models that also take the sub-`low` `minimal` tier. */
@@ -446,12 +446,8 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIWireEffort>> = {
   "gpt-5.2-pro": new Set(["medium", "high"]),
   "gpt-5.4-pro": new Set(["medium", "high"]),
   "gpt-5.5-pro": new Set(["medium", "high"]),
-  // Deprecated, and hidden from the picker — but a pinned `providers.openai.models`
-  // entry still resolves it, and it still rejects `low` and `high` on the wire.
-  // Drop this row once models.dev stops carrying the model (OpenAI shutdown 2026-08-10).
-  "gpt-5.2-chat-latest": new Set(["medium"]),
 
-  // Measured and unrestricted — 23 of the 28 reachable models.
+  // Measured and unrestricted.
   "gpt-5": FULL_PLUS_MINIMAL,
   "gpt-5-mini": FULL_PLUS_MINIMAL,
   "gpt-5-nano": FULL_PLUS_MINIMAL,
@@ -469,6 +465,8 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIWireEffort>> = {
   "gpt-6-astra": FULL_LADDER,
   "gpt-6-luna": FULL_LADDER,
   "gpt-6-sol": FULL_LADDER,
+  "gpt-6.1-sol": FULL_LADDER,
+  "gpt-6.1-terra": FULL_LADDER,
   o1: FULL_LADDER,
   "o1-pro": FULL_LADDER,
   o3: FULL_LADDER,

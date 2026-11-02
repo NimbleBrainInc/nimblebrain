@@ -290,15 +290,16 @@ describe("getAvailableModels", () => {
   });
 
   it("excludes deprecated models from the picker", () => {
-    // gpt-5.3-chat-latest was retired by OpenAI 2026-08-10. It stays in the
-    // catalog (so existing references still resolve for cost/display) but
-    // must never be offered as a selectable model.
-    const deprecated = getModelByString("openai:gpt-5.3-chat-latest");
+    // gpt-4-turbo is a chat-capable model upstream flags deprecated. It stays
+    // in the catalog (so existing references still resolve for cost/display)
+    // but must never be offered as a selectable model.
+    const deprecated = getModelByString("openai:gpt-4-turbo");
     expect(deprecated?.deprecated).toBe(true);
+    expect(deprecated?.capabilities.toolCall).toBe(true);
 
     const result = getAvailableModels({ openai: {} });
     expect(result.openai.length).toBeGreaterThan(0);
-    expect(result.openai.some((m) => m.id === "gpt-5.3-chat-latest")).toBe(false);
+    expect(result.openai.some((m) => m.id === "gpt-4-turbo")).toBe(false);
     // The live successor is still offered.
     expect(result.openai.some((m) => m.id === "gpt-5.6-sol")).toBe(true);
   });
@@ -524,9 +525,9 @@ describe("OpenAI effort support", () => {
     expect(ids.filter((id) => getModel("openai", id) === undefined)).toEqual([]);
     // Measured against /v1/responses, not taken from docs.
     expect([...openaiSupportedEfforts("openai:gpt-5-pro")]).toEqual(["high"]);
-    // Bounded from ABOVE as well as below — restriction is not a `-pro`
-    // property and not always a floor.
-    expect([...openaiSupportedEfforts("openai:gpt-5.2-chat-latest")]).toEqual(["medium"]);
+    // Restriction is not a `-pro` property: o3-pro was measured and takes the
+    // full ladder.
+    expect([...openaiSupportedEfforts("openai:o3-pro")].sort()).toEqual(["high", "low", "medium"]);
     expect([...openaiSupportedEfforts("openai:gpt-5.2-pro")].sort()).toEqual(["high", "medium"]);
     // `minimal` rides in the same table rather than a parallel set, so it
     // inherits the typo and coverage guards. It is not in OPENAI_EFFORTS, so
