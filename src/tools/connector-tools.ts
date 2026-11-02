@@ -46,6 +46,7 @@ import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { notifyReady } from "../lifecycle/notify.ts";
+import { MINTED_PROVIDER } from "../oauth/minted-credential-provider.ts";
 import { log } from "../observability/log.ts";
 import { type ConnectorAdmission, filterAdmittedTools } from "../permissions/admin-tools.ts";
 import type { PermissionOwner, ToolPolicy } from "../permissions/permission-store.ts";
@@ -2369,6 +2370,28 @@ function instanceClientOwnsSetupMessage(name: string): string {
  * transport, or static client credentials). Constructed on the fresh-install
  * branch only; the dedup branches re-use the existing persisted ref.
  */
+/**
+ * The `auth` block an install stores for a `provider`-auth catalog entry.
+ *
+ * A minted fleet connector stores only its provider: the credential settings it
+ * mints with (audience, scope) come from its catalog entry at every connection
+ * build (`resolveMintedTransport`), so a stored copy would never be read, and
+ * would read as the connector's settings long after the catalog changed. Every
+ * other provider stores its config as the entry gives it, because its
+ * transport credential reads it from the ref (a gateway's account key, a
+ * workspace credential's key).
+ */
+export function installedProviderAuth(providerAuth: {
+  provider: string;
+  config: Record<string, unknown>;
+}): { type: "provider"; provider: string; config: Record<string, unknown> } {
+  return {
+    type: "provider",
+    provider: providerAuth.provider,
+    config: providerAuth.provider === MINTED_PROVIDER ? {} : providerAuth.config,
+  };
+}
+
 function buildRemoteConnectorRef(
   action: RemoteOAuthInstall,
   serverName: string,
@@ -2383,9 +2406,9 @@ function buildRemoteConnectorRef(
     // streamable-http (createRemoteTransport's fallback), which is wrong for
     // vendors whose remote `type` is `sse` — PayPal / Cloudflare / Webflow / Wix
     // in the bundled catalog today. A `provider`-auth entry also carries its
-    // credential class here: provider + config are copied VERBATIM from the
-    // (operator-authored) catalog entry — never tenant input — which is what
-    // makes a self-installable platform connector safe. That provenance is
+    // credential class here, from the (operator-authored) catalog entry — never
+    // tenant input — which is what makes a self-installable platform connector
+    // safe (`installedProviderAuth` says which part of it is stored). That provenance is
     // specific to THIS branch: a brokered session also yields provider auth,
     // but from a broker's session response, so `provider` auth alone is not a
     // catalog-provenance signal (see `isMintedFleetSource`).
@@ -2394,11 +2417,7 @@ function buildRemoteConnectorRef(
       (action.auth === "provider" && action.providerAuth
         ? {
             type: action.transportType,
-            auth: {
-              type: "provider",
-              provider: action.providerAuth.provider,
-              config: action.providerAuth.config,
-            },
+            auth: installedProviderAuth(action.providerAuth),
             // The workspace's own secrets, as references. They ride alongside the
             // provider credential rather than replacing it: `auth` is how the
             // connection proves who is calling, these are what that caller may
