@@ -255,6 +255,49 @@ describe("AgentEngine final-step reminder before the run input cap", () => {
     expect(result.output).toContain("partial answer");
   });
 
+  it("does not report a wrap-up when overflow recovery rebuilt the prompt without the reminder", async () => {
+    // Same near-cap first call as above, but it overflows. The retry's prompt
+    // comes from transformContext, so the call that answers carries no reminder.
+    const reminded: boolean[] = [];
+    const model = createMockModel((callOpts) => {
+      const prompt = callOpts.prompt;
+      reminded.push(JSON.stringify(prompt[prompt.length - 1]).includes("final step"));
+      if (reminded.length === 1) {
+        throw Object.assign(new Error("prompt is too long: 1257504 tokens > 1000000 maximum"), {
+          status: 400,
+        });
+      }
+      return {
+        content: [{ type: "text", text: "all items scored" }],
+        inputTokens: 10,
+        outputTokens: 5,
+      };
+    });
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(
+        tools,
+        (): ToolResult => ({ content: textContent("scored"), isError: false }),
+      ),
+      { emit() {} },
+    );
+    const result = await engine.run(
+      {
+        ...baseConfig,
+        maxRunInputTokens: 6_000,
+        hooks: { transformContext: (msgs) => msgs },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "x".repeat(16_000) }] }],
+      tools,
+    );
+
+    expect(reminded).toEqual([true, false]);
+    expect(result.stopReason).toBe("complete");
+    expect(result.output).toContain("all items scored");
+    expect(result.inputCapWrapUp).toBeUndefined();
+  });
+
   it("adds no reminder when no cap is set", async () => {
     const r = growingRun();
     await r.run();

@@ -1459,6 +1459,9 @@ export class AgentEngine {
           // provider's own per-request overhead.
           estimatedInputTokens = estimatePromptTokens(cachedPrompt, cachedTools);
           const rewindowed = msgs !== callMessages;
+          // Overflow recovery rebuilds the prompt without the final-step
+          // reminder, so an answer from that attempt was not told to wrap up.
+          if (rewindowed) callNearInputCap = false;
           return withRetry(
             () => {
               // An attempt that would start after the cancel sends nothing, so
