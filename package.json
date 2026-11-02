@@ -110,7 +110,7 @@
     "@ai-sdk/openai-compatible": "^3.0.62",
     "@ai-sdk/provider-utils": "^5.0.44",
     "@ai-sdk/xai": "^4.0.0",
-    "@composio/core": "0.22.0",
+    "@composio/core": "0.25.0",
     "@e965/xlsx": "0.20.3",
     "@modelcontextprotocol/client": "^2.3.0",
     "@modelcontextprotocol/core": "^2.3.0",
