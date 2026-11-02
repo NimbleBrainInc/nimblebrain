@@ -2366,11 +2366,6 @@ function instanceClientOwnsSetupMessage(name: string): string {
 }
 
 /**
- * Build the ConnectorRef from the resolved wiring (a brokered session URL +
- * transport, or static client credentials). Constructed on the fresh-install
- * branch only; the dedup branches re-use the existing persisted ref.
- */
-/**
  * The `auth` block an install stores for a `provider`-auth catalog entry.
  *
  * A minted fleet connector stores only its provider: the credential settings it
@@ -2392,6 +2387,11 @@ export function installedProviderAuth(providerAuth: {
   };
 }
 
+/**
+ * Build the ConnectorRef from the resolved wiring (a brokered session URL +
+ * transport, or static client credentials). Constructed on the fresh-install
+ * branch only; the dedup branches re-use the existing persisted ref.
+ */
 function buildRemoteConnectorRef(
   action: RemoteOAuthInstall,
   serverName: string,
