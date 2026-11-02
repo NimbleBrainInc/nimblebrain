@@ -31,6 +31,9 @@ const WORKSPACE_EVENTS = new Set<EngineEventType>([
   // made it. The connector cannot record the person, so this is where "who
   // changed that setting" is answered.
   "audit.admin_tool_call",
+  // Every click on a tool a connector reserves for a person in its view
+  // (app-only), and whose click it was: the act the connector cannot attribute.
+  "audit.app_tool_call",
   // Tool-list mutations are workspace-level signal: billing wants per-workspace
   // tool-usage rollups, policy hooks want to know what surface area tenants
   // are exercising. Volume is bounded by the LRU cap (typically 0-3 events

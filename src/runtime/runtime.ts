@@ -95,7 +95,11 @@ import type {
   ToolRouter,
   ToolSchema,
 } from "../engine/types.ts";
-import { CONNECTOR_SKILL_SYNTHETIC, SKILL_ACTIVATED_SYNTHETIC } from "../engine/types.ts";
+import {
+  CONNECTOR_SKILL_SYNTHETIC,
+  isModelVisible,
+  SKILL_ACTIVATED_SYNTHETIC,
+} from "../engine/types.ts";
 import { type AgentRuntimes, createAgentRuntimes } from "../execution/registry.ts";
 import type { AgentRuntime } from "../execution/types.ts";
 import { FileLocator } from "../files/locator.ts";
@@ -4639,10 +4643,12 @@ export class Runtime {
    * non-admin calls. Every dispatch door runs this beside `assertToolAllowed`
    * for a workspace connector tool, once per call.
    *
-   * It is also where a call to a declared admin tool is audited, admitted or
-   * refused: every door already passes through here, so the line cannot be
-   * forgotten by a door or a connector. A host-only refusal is not an admin
-   * tool call and writes no line.
+   * It is also where a call to a tool the connector reserves is audited,
+   * admitted or refused: every door already passes through here, so the line
+   * cannot be forgotten by a door or a connector. A declared admin tool writes
+   * `audit.admin_tool_call`, whoever calls; an app-only tool (`ui.visibility`
+   * without `"model"`) called by its own view writes `audit.app_tool_call`. A
+   * host-only refusal is neither and writes no line.
    */
   async connectorAdminDenial(
     wsId: string,
@@ -4670,24 +4676,48 @@ export class Runtime {
     }
     const admission = await this.admissionWith(wsId, principal, declared);
     const admitted = admission.admits(serverName, toolName);
-    if (isDeclaredAdminTool(declared.get(serverName)?.adminTools, toolName)) {
-      await this.auditAdminToolCall(wsId, principal, serverName, toolName, call, admitted);
+    const adminTool = isDeclaredAdminTool(declared.get(serverName)?.adminTools, toolName);
+    if (adminTool || call.caller === "app") {
+      const listed = await this.listedToolFor(wsId, serverName, toolName);
+      const audit = (type: "audit.admin_tool_call" | "audit.app_tool_call") =>
+        this.auditReservedToolCall(
+          type,
+          wsId,
+          principal,
+          serverName,
+          toolName,
+          call,
+          admitted,
+          listed,
+        );
+      if (adminTool) audit("audit.admin_tool_call");
+      // A tool the model may call is not reserved for a person, so a view's
+      // call to one writes no line, as an agent's does not. One the listing
+      // does not name has a visibility nobody can read, and writes none either.
+      if (call.caller === "app" && listed && !isModelVisible(listed)) audit("audit.app_tool_call");
     }
     return admitted ? null : adminToolDenial(serverName, toolName);
   }
 
-  /** Write `audit.admin_tool_call` for a call to a declared admin tool, whoever called. */
-  private async auditAdminToolCall(
+  /**
+   * Write one audit line for a call to a tool the connector reserves: to a
+   * workspace admin (`audit.admin_tool_call`) or to a person in its view
+   * (`audit.app_tool_call`). The connector is never told who called, so the
+   * line is the record that names them.
+   */
+  private auditReservedToolCall(
+    type: "audit.admin_tool_call" | "audit.app_tool_call",
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
     serverName: string,
     toolName: string,
     call: AdminToolCall,
     admitted: boolean,
-  ): Promise<void> {
+    listed: ToolSchema | undefined,
+  ): void {
     const ctx = getRequestContext();
     this.defaultEvents.emit({
-      type: "audit.admin_tool_call",
+      type,
       data: {
         workspaceId: wsId,
         userId: principal?.id ?? null,
@@ -4695,10 +4725,7 @@ export class Runtime {
         tool: toolName,
         caller: call.caller,
         outcome: admitted ? "admitted" : "refused",
-        arguments: auditArguments(
-          call.input,
-          await this.inputSchemaFor(wsId, serverName, toolName),
-        ),
+        arguments: auditArguments(call.input, listed?.inputSchema),
         ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
         ...(ctx?.runId ? { runId: ctx.runId } : {}),
       } satisfies AdminToolCallPayload,
@@ -4706,19 +4733,19 @@ export class Runtime {
   }
 
   /**
-   * The input schema a workspace connector advertises for one tool, if it can
-   * say. A source lists its tools under their `<source>__<tool>` names.
+   * The tool a workspace connector advertises under one name, if it can say.
+   * A source lists its tools under their `<source>__<tool>` names.
    */
-  private async inputSchemaFor(
+  private async listedToolFor(
     wsId: string,
     serverName: string,
     toolName: string,
-  ): Promise<Record<string, unknown> | undefined> {
+  ): Promise<ToolSchema | undefined> {
     const source = this._workspaceRegistries.get(wsId)?.getSource(serverName);
     const listed = `${serverName}__${toolName}`;
     try {
       const tools = (await source?.tools()) ?? [];
-      return tools.find((t) => t.name === listed)?.inputSchema;
+      return tools.find((t) => t.name === listed);
     } catch {
       return undefined;
     }

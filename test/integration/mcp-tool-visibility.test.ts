@@ -22,8 +22,10 @@ import { mcpResourceUrl } from "../../src/api/mcp-resource.ts";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
+import type { AdminToolCallPayload } from "../../src/engine/schemas/events.ts";
+import type { EventSink } from "../../src/engine/types.ts";
 import type { VerifiedIdentity } from "../../src/identity/provider.ts";
-import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
+import { DEV_IDENTITY, DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { IdentityStores } from "../../src/runtime/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
@@ -107,6 +109,14 @@ class GrantingDevProvider extends DevIdentityProvider {
 
 const testDir = join(tmpdir(), `nimblebrain-mcp-tool-visibility-${Date.now()}`);
 
+/** Every `audit.app_tool_call` line the runtime wrote, oldest first. */
+const appAudited: AdminToolCallPayload[] = [];
+const auditSink: EventSink = {
+  emit: (event) => {
+    if (event.type === "audit.app_tool_call") appAudited.push(event.data as AdminToolCallPayload);
+  },
+};
+
 let runtime: Runtime;
 let handle: ServerHandle;
 let baseUrl: string;
@@ -122,6 +132,7 @@ beforeAll(async () => {
       new GrantingDevProvider(workDir, userStore),
     languageModel: createEchoModel(),
     logging: { disabled: true },
+    events: [auditSink],
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
@@ -401,6 +412,67 @@ describe("MCP Apps tool visibility — an app's tools/call", () => {
     try {
       const result = await client.callTool({ name: "vis__summarize", arguments: {} });
       expect(result.isError).toBeFalsy();
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("the audit.app_tool_call line", () => {
+  const fromView = { [RESOURCE_SOURCE_META_KEY]: "vis" };
+
+  /** The lines written while `act` ran. */
+  async function linesFrom(act: () => Promise<unknown>): Promise<AdminToolCallPayload[]> {
+    const start = appAudited.length;
+    await act();
+    return appAudited.slice(start);
+  }
+
+  it("records the person, the tool and the arguments of a view's call to an app-only tool", async () => {
+    const client = await createMcpClient();
+    try {
+      const lines = await linesFrom(() =>
+        client.callTool({ name: "vis__refresh", arguments: { range: "7d" }, _meta: fromView }),
+      );
+      expect(lines).toEqual([
+        {
+          workspaceId: TEST_WORKSPACE_ID,
+          userId: DEV_IDENTITY.id,
+          connector: "vis",
+          tool: "refresh",
+          caller: "app",
+          outcome: "admitted",
+          arguments: { range: "7d" },
+        },
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("writes nothing for a view's call to a tool the model may also call", async () => {
+    const client = await createMcpClient();
+    try {
+      expect(
+        await linesFrom(() =>
+          client.callTool({ name: "vis__ping", arguments: {}, _meta: fromView }),
+        ),
+      ).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("writes nothing for an agent's call", async () => {
+    const client = await createMcpClient(true);
+    try {
+      const lines = await linesFrom(async () => {
+        await client.callTool({ name: "vis__ping", arguments: {}, _meta: fromView });
+        await client
+          .callTool({ name: "vis__refresh", arguments: {}, _meta: fromView })
+          .catch(() => undefined);
+      });
+      expect(lines).toEqual([]);
     } finally {
       await client.close();
     }

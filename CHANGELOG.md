@@ -33,6 +33,7 @@
 
 ### Added
 
+- **A person's click on a connector's app-only tool is on the record.** Each call a connector's view makes to one of its app-only tools writes `audit.app_tool_call` to the workspace log: who clicked, which tool, its arguments (secrets redacted), admitted or refused ([docs](https://docs.nimblebrain.ai/config/logging/#event-types)).
 - **Apps learn which of a connector's tools the viewer may call.** The host context's `connector` key carries `allowedTools` on the connector's settings page and on the app's own page, so an app can leave out an action the viewer would be refused ([docs](https://docs.nimblebrain.ai/host/settings-sections/#which-tools-the-viewer-may-call), [#1879](https://github.com/NimbleBrainInc/nimblebrain/pull/1879)).
 - **Apps get the host's page gutter.** Every app frame's injected style block carries `--nb-gutter-wide` (1.5rem) and `--nb-gutter-narrow` (1rem), which `AppFrame` in `@nimblebrain/synapse` 0.38.0 picks between by its own width ([docs](https://docs.nimblebrain.ai/apps/theming/#nimblebrain-extensions---nb-), [#1887](https://github.com/NimbleBrainInc/nimblebrain/pull/1887)).
 - **A tool can take another connector's records by URI.** A tool marks which arguments hold resource URIs (`ai.nimblebrain/resource-arguments` in its `_meta`); before the call, the host reads each from the connector in the same workspace that serves it and sends the contents in the call's `_meta`, on both protocol eras. [Docs](https://docs.nimblebrain.ai/extensions/resource-arguments/).
@@ -286,6 +287,7 @@
 
 ### Fixed
 
+- **`audit.admin_tool_call` names an outside `/mcp` client as `mcp`.** A client that is not the operator's own and names an app source in `_meta` was recorded as `caller: "app"`; only a view in NimbleBrain is now.
 - **A cancelled turn on an agent runtime records the usage it spent.** The model calls the agent finished before the cancel are priced in the usage ledger; they recorded nothing ([#1877](https://github.com/NimbleBrainInc/nimblebrain/pull/1877)).
 - **Title and compaction calls are recorded under their run in the usage ledger**, matching what the model gateway charges the run, so per-run cost includes them ([#1867](https://github.com/NimbleBrainInc/nimblebrain/pull/1867)).
 - **Connectors whose OAuth server sends the RFC 9207 `iss` parameter, Notion's among them, connect.** The callback now hands `iss` to the token exchange, which refused the code without it ([#1888](https://github.com/NimbleBrainInc/nimblebrain/pull/1888)).

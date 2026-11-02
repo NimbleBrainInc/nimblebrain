@@ -24,19 +24,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { mcpResourceUrl } from "../../src/api/mcp-resource.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import type { AdminToolCallPayload } from "../../src/engine/schemas/events.ts";
 import type { EventSink } from "../../src/engine/types.ts";
 import { ensureHooks } from "../../src/hooks/reconcile.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import type { VerifiedIdentity } from "../../src/identity/provider.ts";
+import { DEV_IDENTITY, DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { notifyReady } from "../../src/lifecycle/notify.ts";
 import { dispatchUnattended } from "../../src/orchestrator/unattended-dispatch.ts";
 import { REDACTED_ARGUMENT } from "../../src/permissions/admin-tools.ts";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
 import { type FixtureCall, marked, startLifecycleSource } from "../helpers/lifecycle-server.ts";
 import { newMcpClient } from "../helpers/mcp-client.ts";
@@ -48,6 +49,20 @@ const MEMBER_WS = "ws_00562f536b60bccc";
 const SERVER = "ai-acme-crm";
 const CONFIGURE = `${SERVER}__configure`;
 const SEARCH = `${SERVER}__search`;
+
+/** The bearer an external MCP client presents: a resource token for `ADMIN_WS`'s `/mcp`. */
+const MCP_CLIENT_TOKEN = "external-mcp-client";
+
+/** The dev user, holding a resource grant for {@link MCP_CLIENT_TOKEN} and first-party otherwise. */
+class GrantingDevProvider extends DevIdentityProvider {
+  override async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
+    const verified = await super.verifyRequest(req);
+    if (!verified || req.headers.get("authorization") !== `Bearer ${MCP_CLIENT_TOKEN}`) {
+      return verified;
+    }
+    return { ...verified, grant: { kind: "resource", audience: [mcpResourceUrl(ADMIN_WS)] } };
+  }
+}
 
 const testDir = join(tmpdir(), `nb-admin-tools-${Date.now()}`);
 const catalogDir = join(testDir, "catalog");
@@ -144,7 +159,7 @@ beforeAll(async () => {
   process.env[CATALOG_DIR_ENV] = catalogDir;
 
   runtime = await Runtime.start({
-    identityProvider: devProvider,
+    identityProvider: ({ workDir, userStore }) => new GrantingDevProvider(workDir, userStore),
     languageModel: recordingModel(),
     logging: { disabled: true },
     events: [auditSink],
@@ -186,9 +201,17 @@ function resetCalls(): void {
   for (const log of calls.values()) log.length = 0;
 }
 
-async function mcpClient(wsId: string): Promise<Client> {
+/** An MCP client on the web shell's first-party session, or as an external client when `external`. */
+async function mcpClient(wsId: string, external = false): Promise<Client> {
   const client = newMcpClient({ name: "admin-tools-test", version: "1.0.0" });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${wsId}`)));
+  await client.connect(
+    new StreamableHTTPClientTransport(
+      new URL(`${baseUrl}/mcp/${wsId}`),
+      external
+        ? { requestInit: { headers: { Authorization: `Bearer ${MCP_CLIENT_TOKEN}` } } }
+        : undefined,
+    ),
+  );
   return client;
 }
 
@@ -589,6 +612,22 @@ describe("the audit.admin_tool_call line", () => {
     } finally {
       await admin.close();
       await member.close();
+    }
+  });
+
+  it("records an external client that names a source as mcp, not app", async () => {
+    const external = await mcpClient(ADMIN_WS, true);
+    try {
+      const lines = await linesFrom(() =>
+        external.callTool({
+          name: CONFIGURE,
+          arguments: ARGS,
+          _meta: { "ai.nimblebrain/source": SERVER },
+        }),
+      );
+      expect(lines.map((l) => [l.caller, l.outcome])).toEqual([["mcp", "admitted"]]);
+    } finally {
+      await external.close();
     }
   });
 

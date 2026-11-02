@@ -317,6 +317,7 @@ function createHandlers(
         name,
         (args ?? {}) as Record<string, unknown>,
         appSource,
+        isAppCall(appSource, requestCtx),
         runtime,
         wsId,
         identityId,
@@ -1247,7 +1248,7 @@ async function executeWorkspaceToolCall(
       sourceName,
       localName,
       args,
-      appSource,
+      isAppCall(appSource, requestCtx),
     );
     if (denied) return toCallToolResult(denied);
   }
@@ -1313,7 +1314,8 @@ async function connectorGateDenial(
   sourceName: string,
   localName: string,
   args: Record<string, unknown> | undefined,
-  appSource: string | undefined,
+  /** Whether the call is the view's (`isAppCall`): a source named by any other caller is an agent's. */
+  appCall: boolean,
 ): Promise<ToolResult | null> {
   const denied = await assertToolAllowed(
     runtime.getPermissionStore(),
@@ -1324,7 +1326,7 @@ async function connectorGateDenial(
   if (denied) return denied;
   const call = {
     input: (args ?? {}) as Record<string, unknown>,
-    caller: appSource ? "app" : "mcp",
+    caller: appCall ? "app" : "mcp",
   } as const;
   return runtime.connectorAdminDenial(wsId, requestCtx.identity, sourceName, localName, call);
 }
@@ -1395,6 +1397,8 @@ async function assertAppMayCall(
   name: string,
   args: Record<string, unknown>,
   appSource: string,
+  /** Whether the call is the view's (`isAppCall`), as the audit line records it. */
+  appCall: boolean,
   runtime: Runtime,
   wsId: string,
   identityId: string,
@@ -1414,7 +1418,7 @@ async function assertAppMayCall(
       { id: identityId },
       appSource,
       name.slice(appSource.length + 2),
-      { input: args, caller: "app" },
+      { input: args, caller: appCall ? "app" : "mcp" },
     );
     if (denied) return toCallToolResult(denied);
   }

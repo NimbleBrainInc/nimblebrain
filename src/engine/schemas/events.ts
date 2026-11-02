@@ -266,7 +266,7 @@ export const AdminToolCallPayload = Type.Object({
   workspaceId: Type.String({ description: "The workspace the call was made in." }),
   userId: Type.Union([Type.String(), Type.Null()], {
     description:
-      "The person the call ran as: the chat user, the run's owner, or the dispatch's principal.",
+      "The person the call ran as: the chat user, the view's user, the run's owner, or the dispatch's principal.",
   }),
   connector: Type.String({ description: "The connector's source name." }),
   tool: Type.String({ description: "The bare tool name." }),
@@ -854,6 +854,14 @@ export interface EngineEventPayloads {
    * record that names them. Payload: `AdminToolCallPayload`.
    */
   "audit.admin_tool_call": AdminToolCallPayload;
+  /**
+   * A connector's own view called one of its app-only tools (`ui.visibility`
+   * without `"model"`), the tools a connector reserves for a person's click.
+   * Emitted once per call, admitted or refused, from the same gate as
+   * `audit.admin_tool_call`; a call to a tool that is both writes both lines,
+   * one per rule. `caller` is always `app`. Payload: `AdminToolCallPayload`.
+   */
+  "audit.app_tool_call": AdminToolCallPayload;
   /**
    * The credential store finished its boot reconcile. Payload:
    * { sealed, strictPlaintextRefusal } — whether a sealing key is configured,
