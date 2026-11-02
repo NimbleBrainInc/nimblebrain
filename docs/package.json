@@ -31,6 +31,6 @@
     "starlight-sidebar-topics": "^0.9.0"
   },
   "devDependencies": {
-    "starlight-links-validator": "^0.26.0"
+    "starlight-links-validator": "^0.27.0"
   }
 }
