@@ -36,7 +36,7 @@ import {
  * server could correlate a delivery to the minted URL it arrived on. It cannot:
  * the fleet edge strips the whole reserved `x-nb-*` namespace by rule, because
  * it has no way to tell a runtime-stamped member from a caller-forged one —
- * this forward reaches it under an ordinary `aud=mcp-fleet` token like any other
+ * this forward reaches it under an ordinary token for the connector's own audience like any other
  * call, carrying nothing that distinguishes it. So a stamped header would be
  * dropped one hop later, reach nothing, and be logged by nothing: a pipeline
  * that reads as broken, whose obvious repair is a hole in exactly the rule that

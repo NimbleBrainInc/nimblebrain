@@ -127,7 +127,7 @@ layout.
 **The forward adds no header, and the `kid` does not travel.** The fleet edge
 strips the reserved `x-nb-*` namespace by RULE (it cannot tell a runtime-stamped
 member from a caller-forged one — this forward arrives under an ordinary
-`aud=mcp-fleet` token like any other call), so a stamped `X-NB-Hook-Kid` would
+token for the connector's own audience like any other call), so a stamped `X-NB-Hook-Kid` would
 be dropped one hop later, reach nothing, and read as a broken pipeline whose
 obvious repair is a hole in that rule. Kid correlation lives in the runtime's
 delivery log line, which is the only place it appears — do not "restore" the
