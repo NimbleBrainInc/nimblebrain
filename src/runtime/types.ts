@@ -6,7 +6,7 @@ import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
 import type { TasksConfig } from "../config/tasks.ts";
 import type { ConnectorsConfig } from "../connectors/providers/config.ts";
-import type { EventSink, ThinkingEffort } from "../engine/types.ts";
+import type { EventSink, ThinkingEffort, WrapUpLimit } from "../engine/types.ts";
 import type { AgentRuntime } from "../execution/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
 import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
@@ -581,8 +581,8 @@ export interface TaskResult {
   finishReasonRaw?: string;
   /** The account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
-  /** See `EngineResult.inputCapWrapUp`. */
-  inputCapWrapUp?: boolean;
+  /** See `EngineResult.wrapUpLimit`. */
+  wrapUpLimit?: WrapUpLimit;
   usage: TurnUsage;
   /** The run's cost in USD; see `ChatResult.costUsd`. */
   costUsd: number;

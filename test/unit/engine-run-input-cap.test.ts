@@ -164,7 +164,7 @@ describe("AgentEngine run input cap", () => {
     expect(result.stopReason).toBe("complete");
     expect(r.modelCalls()).toBe(5);
     expect(result.usage.inputTokens).toBe(15_000);
-    expect(result.inputCapWrapUp).toBeUndefined();
+    expect(result.wrapUpLimit).toBeUndefined();
   });
 
   it("runs to completion when the cap equals what the run spends", async () => {
@@ -198,7 +198,7 @@ describe("AgentEngine final-step reminder before the run input cap", () => {
     expect(r.modelCalls()).toBe(3);
     expect(result.output).toContain("partial: some items scored");
     expect(result.usage.inputTokens).toBeLessThanOrEqual(6_500);
-    expect(result.inputCapWrapUp).toBe(true);
+    expect(result.wrapUpLimit).toBe("max_input_tokens");
   });
 
   it("still stops with max_input_tokens when the model ignores the reminder", async () => {
@@ -255,9 +255,9 @@ describe("AgentEngine final-step reminder before the run input cap", () => {
     expect(result.output).toContain("partial answer");
   });
 
-  it("does not report a wrap-up when overflow recovery rebuilt the prompt without the reminder", async () => {
+  it("keeps the reminder and the wrap-up on a call retried after a context overflow", async () => {
     // Same near-cap first call as above, but it overflows. The retry's prompt
-    // comes from transformContext, so the call that answers carries no reminder.
+    // comes from transformContext, and is still the run's final step.
     const reminded: boolean[] = [];
     const model = createMockModel((callOpts) => {
       const prompt = callOpts.prompt;
@@ -292,10 +292,10 @@ describe("AgentEngine final-step reminder before the run input cap", () => {
       tools,
     );
 
-    expect(reminded).toEqual([true, false]);
+    expect(reminded).toEqual([true, true]);
     expect(result.stopReason).toBe("complete");
     expect(result.output).toContain("all items scored");
-    expect(result.inputCapWrapUp).toBeUndefined();
+    expect(result.wrapUpLimit).toBe("max_input_tokens");
   });
 
   it("adds no reminder when no cap is set", async () => {
@@ -310,6 +310,32 @@ describe("AgentEngine final-step reminder before the run input cap", () => {
     await r.run();
 
     expect(r.reminded.every((x) => !x)).toBe(true);
+  });
+
+  it("reports the iteration limit when the model heeds the reminder on the last iteration", async () => {
+    const r = growingRun(1_000_000, { maxIterations: 3, answerOnReminder: true });
+    const result = await r.run();
+
+    expect(result.stopReason).toBe("complete");
+    expect(r.reminded).toEqual([false, false, true]);
+    expect(result.wrapUpLimit).toBe("max_iterations");
+  });
+
+  it("reports no wrap-up for a run configured to one iteration", async () => {
+    const r = growingRun(undefined, { maxIterations: 1, answerOnReminder: true });
+    const result = await r.run();
+
+    expect(result.stopReason).toBe("complete");
+    expect(r.reminded).toEqual([true]);
+    expect(result.wrapUpLimit).toBeUndefined();
+  });
+
+  it("reports no wrap-up when the model ignores the last-iteration reminder", async () => {
+    const r = growingRun(undefined, { maxIterations: 3 });
+    const result = await r.run();
+
+    expect(result.stopReason).toBe("max_iterations");
+    expect(result.wrapUpLimit).toBeUndefined();
   });
 
   it("still adds the reminder on the last allowed iteration when the cap is far away", async () => {

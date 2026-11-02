@@ -11,7 +11,7 @@
  */
 
 import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/tasks.ts";
-import type { ThinkingEffort } from "../../engine/types.ts";
+import type { ThinkingEffort, WrapUpLimit } from "../../engine/types.ts";
 import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../../model/gateway-refusal.ts";
 import { wrapContained } from "../../prompt/containment.ts";
 import type { AdmissionLease } from "../../runtime/admission.ts";
@@ -145,8 +145,8 @@ export interface TaskFnResult {
   finishReasonRaw?: string;
   /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
-  /** See runtime `TaskResult.inputCapWrapUp`. */
-  inputCapWrapUp?: boolean;
+  /** See runtime `TaskResult.wrapUpLimit`. */
+  wrapUpLimit?: WrapUpLimit;
   /** The run's cost in USD, each call priced on its own card (runtime `TaskResult.costUsd`). */
   costUsd?: number;
   /** Every skill the run was given, or that missed it (runtime `TaskResult`). */
@@ -643,23 +643,41 @@ function inputCapTerms(applied: number | undefined, own: number | undefined) {
 }
 
 /**
- * A run the engine told to stop because its input cap was near, and which did.
- * That can't be told apart from a run that had really finished, but a person
- * can, so it reads Needs review. Its answer is kept and it is not a failure.
+ * A run the engine told to stop because a limit was near, and which did. That
+ * can't be told apart from a run that had really finished, but a person can, so
+ * it reads Needs review. Its answer is kept and it is not a failure.
  */
-function inputCapWrapUpVerdict(
-  data: Pick<TaskFnResult, "inputCapWrapUp">,
-  applied: number | undefined,
-  task: Pick<Task, "maxInputTokens">,
+function wrapUpVerdict(
+  data: Pick<TaskFnResult, "wrapUpLimit">,
+  limits: EffectiveRunLimits,
+  task: Pick<Task, "maxInputTokens" | "maxIterations">,
 ): { status: "degraded"; error: string } | null {
-  if (!data.inputCapWrapUp) return null;
-  const { limit, which, remedy } = inputCapTerms(applied, task.maxInputTokens);
+  if (!data.wrapUpLimit) return null;
   return {
     status: "degraded",
-    error:
-      `Told to finish early: another model call could have passed the input-token cap${limit}, ` +
-      `which is ${which}. Its answer may leave work undone. ${remedy}`,
+    error: `Told to finish early: ${
+      data.wrapUpLimit === "max_iterations"
+        ? lastIterationReason(limits.maxIterations, task.maxIterations)
+        : nearInputCapReason(limits.maxInputTokens, task.maxInputTokens)
+    }`,
   };
+}
+
+function lastIterationReason(applied: number, own: number | undefined): string {
+  const ownApplied = own != null && own <= applied;
+  const which = ownApplied ? "its own Max Iterations" : "this runtime's limit";
+  const remedy = ownApplied
+    ? "Raise Max Iterations or narrow the task."
+    : "Set a higher Max Iterations if the runtime's ceiling allows, or narrow the task.";
+  return `this was the last of the ${applied} iterations allowed by ${which}. Its answer may leave work undone. ${remedy}`;
+}
+
+function nearInputCapReason(applied: number | undefined, own: number | undefined): string {
+  const { limit, which, remedy } = inputCapTerms(applied, own);
+  return (
+    `another model call could have passed the input-token cap${limit}, which is ${which}. ` +
+    `Its answer may leave work undone. ${remedy}`
+  );
 }
 
 /**
@@ -759,15 +777,14 @@ function mapResultToRun(
   // which is the model's account of the run and says "done" in exactly the
   // runs these exist to catch.
   //
-  // A run told to wrap up near its input cap also reads `degraded`, when no tool
-  // call says worse.
+  // A run told to wrap up by a limit also reads `degraded`, when no tool call
+  // says worse.
   //
   // Only overrides an otherwise-`success` run; a run already classified
   // failure/timeout keeps its (stronger) status.
   let error: string | undefined;
   if (status === "success") {
-    const verdict =
-      toolCallVerdict(accounted) ?? inputCapWrapUpVerdict(data, limits.maxInputTokens, task);
+    const verdict = toolCallVerdict(accounted) ?? wrapUpVerdict(data, limits, task);
     if (verdict) {
       status = verdict.status;
       error = verdict.error;
