@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { useThemeMode } from "../../context/ThemeContext";
-import { themedIconUrl } from "../../lib/icon-theme";
+import { themedIconVariants } from "../../lib/icon-theme";
 
 /**
  * Connector identity icon. Used everywhere a connector is shown:
@@ -10,9 +9,12 @@ import { themedIconUrl } from "../../lib/icon-theme";
  * deterministic letter avatar so cards never have a hole on the left
  * edge.
  *
- * Brand icons on our static CDN ship light/dark variants; we swap to
- * the one matching the active theme via `themedIconUrl`. Any other URL
- * (legacy PNG, third-party) renders unchanged.
+ * Brand icons on our static CDN ship light/dark variants. Both render,
+ * and the `dark:` variant picks one, as `Logo` does: which one shows
+ * depends on the surface the icon sits on, not on the page's theme,
+ * because a brand's dark light-mode sidebar renders under the dark
+ * palette while the page is light. Any other URL (legacy PNG,
+ * third-party) renders as a single image.
  *
  * The fallback's background tint is hashed from the connector's
  * display name. Same connector → same color across reloads. The
@@ -23,7 +25,8 @@ import { themedIconUrl } from "../../lib/icon-theme";
  * className override to upsize for the page header (h-12 w-12) or
  * downsize for a denser list. Sizes scale the rounded radius and
  * the letter weight in the className override; the component itself
- * just provides the geometry.
+ * just provides the geometry. The icon is always one element, so a
+ * parent's spacing utilities (`-space-x-*` in a stack) see one child.
  */
 export function ConnectorIcon({
   name,
@@ -34,20 +37,41 @@ export function ConnectorIcon({
   iconUrl?: string;
   /** Tailwind classes for size + rounded radius + letter typography.
    *  The `h-* w-*` and `text-*` classes both flow through to the
-   *  appropriate primitive (img or fallback div). */
+   *  element rendered (image, variant pair, or fallback div). */
   className?: string;
 }) {
-  const mode = useThemeMode();
-  const src = themedIconUrl(iconUrl, mode);
-  // Track the broken URL, not a boolean: when the theme flips we render a
-  // different variant (…/dark.svg), so a prior light-variant failure must not
-  // suppress the retry. Only fall back to the avatar once the *current* src
-  // has actually failed.
-  const [brokenSrc, setBrokenSrc] = useState<string | null>(null);
-  const showImage = !!src && brokenSrc !== src;
-  if (showImage) {
+  // The URLs that failed to load. Keyed by URL, so a new iconUrl starts clean,
+  // and a failed variant leaves the other to serve both themes.
+  const [broken, setBroken] = useState<ReadonlySet<string>>(() => new Set());
+  const markBroken = (url: string) =>
+    setBroken((prev) => (prev.has(url) ? prev : new Set(prev).add(url)));
+
+  const variants = themedIconVariants(iconUrl);
+  const candidates = variants ? [variants.light, variants.dark] : iconUrl ? [iconUrl] : [];
+  const live = candidates.filter((url) => !broken.has(url));
+
+  if (variants && live.length === 2) {
     return (
-      <img src={src} alt="" className={`shrink-0 ${className}`} onError={() => setBrokenSrc(src)} />
+      <span className={`inline-flex shrink-0 overflow-hidden ${className}`}>
+        <img
+          src={variants.light}
+          alt=""
+          className="size-full dark:hidden"
+          onError={() => markBroken(variants.light)}
+        />
+        <img
+          src={variants.dark}
+          alt=""
+          className="hidden size-full dark:block"
+          onError={() => markBroken(variants.dark)}
+        />
+      </span>
+    );
+  }
+  const src = live[0];
+  if (src) {
+    return (
+      <img src={src} alt="" className={`shrink-0 ${className}`} onError={() => markBroken(src)} />
     );
   }
   const letter = (name.trim().charAt(0) || "?").toUpperCase();

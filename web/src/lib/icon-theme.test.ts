@@ -1,45 +1,40 @@
 import { describe, expect, test } from "bun:test";
-import { themedIconUrl } from "./icon-theme";
+import { themedIconVariants } from "./icon-theme";
 
 const BASE = "https://static.nimblebrain.ai/logos/github";
+const PAIR = { light: `${BASE}/light.svg`, dark: `${BASE}/dark.svg` };
 
-describe("themedIconUrl", () => {
-  test("swaps to the dark variant in dark mode", () => {
-    expect(themedIconUrl(`${BASE}/light.svg`, "dark")).toBe(`${BASE}/dark.svg`);
+describe("themedIconVariants", () => {
+  test("returns both variants for a light-variant URL", () => {
+    expect(themedIconVariants(`${BASE}/light.svg`)).toEqual(PAIR);
   });
 
-  test("swaps to the light variant in light mode", () => {
-    expect(themedIconUrl(`${BASE}/dark.svg`, "light")).toBe(`${BASE}/light.svg`);
-  });
-
-  test("is a no-op when the variant already matches the mode", () => {
-    expect(themedIconUrl(`${BASE}/light.svg`, "light")).toBe(`${BASE}/light.svg`);
-    expect(themedIconUrl(`${BASE}/dark.svg`, "dark")).toBe(`${BASE}/dark.svg`);
+  test("returns both variants for a dark-variant URL", () => {
+    expect(themedIconVariants(`${BASE}/dark.svg`)).toEqual(PAIR);
   });
 
   test("handles a hyphenated slug", () => {
-    const u = "https://static.nimblebrain.ai/logos/google-drive/light.svg";
-    expect(themedIconUrl(u, "dark")).toBe(
-      "https://static.nimblebrain.ai/logos/google-drive/dark.svg",
-    );
+    expect(
+      themedIconVariants("https://static.nimblebrain.ai/logos/google-drive/light.svg"),
+    ).toEqual({
+      light: "https://static.nimblebrain.ai/logos/google-drive/light.svg",
+      dark: "https://static.nimblebrain.ai/logos/google-drive/dark.svg",
+    });
   });
 
-  test("leaves legacy flat PNGs unchanged", () => {
-    const u = "https://static.nimblebrain.ai/icons/slack.png";
-    expect(themedIconUrl(u, "dark")).toBe(u);
+  test("has no variants for a legacy flat PNG", () => {
+    expect(themedIconVariants("https://static.nimblebrain.ai/icons/slack.png")).toBeUndefined();
   });
 
-  test("leaves registry / third-party URLs unchanged", () => {
-    const u = "https://cdn.example.com/icon.svg";
-    expect(themedIconUrl(u, "dark")).toBe(u);
+  test("has no variants for a registry / third-party URL", () => {
+    expect(themedIconVariants("https://cdn.example.com/icon.svg")).toBeUndefined();
   });
 
   test("does not match non-variant filenames under a slug", () => {
-    const u = `${BASE}/icon-128.png`;
-    expect(themedIconUrl(u, "dark")).toBe(u);
+    expect(themedIconVariants(`${BASE}/icon-128.png`)).toBeUndefined();
   });
 
   test("passes through undefined", () => {
-    expect(themedIconUrl(undefined, "dark")).toBeUndefined();
+    expect(themedIconVariants(undefined)).toBeUndefined();
   });
 });

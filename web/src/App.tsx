@@ -159,22 +159,20 @@ function AuthenticatedApp({
   };
 
   return (
-    <ThemeProvider savePreference={saveThemePreference}>
-      <NoticeProvider>
-        <SessionProvider session={session}>
-          <WorkspaceProvider initialWorkspaces={initialWorkspaces}>
-            <WorkspaceUnreadProvider workspaces={bootstrap.workspaces}>
-              <BootstrappedShell
-                token={token}
-                initialConfig={initialConfig}
-                currentUserId={bootstrap.user.id}
-                onLogout={onLogout}
-              />
-            </WorkspaceUnreadProvider>
-          </WorkspaceProvider>
-        </SessionProvider>
-      </NoticeProvider>
-    </ThemeProvider>
+    <NoticeProvider>
+      <SessionProvider session={session}>
+        <WorkspaceProvider initialWorkspaces={initialWorkspaces}>
+          <WorkspaceUnreadProvider workspaces={bootstrap.workspaces}>
+            <BootstrappedShell
+              token={token}
+              initialConfig={initialConfig}
+              currentUserId={bootstrap.user.id}
+              onLogout={onLogout}
+            />
+          </WorkspaceUnreadProvider>
+        </WorkspaceProvider>
+      </SessionProvider>
+    </NoticeProvider>
   );
 }
 
@@ -748,15 +746,24 @@ export function App() {
     };
   }, [initFromBootstrap]);
 
-  if (checking) return <AppFrameSkeleton />;
+  const signedIn = authenticated && bootstrap !== null;
+  let screen: React.ReactNode;
+  if (checking) screen = <AppFrameSkeleton />;
+  else if (!signedIn) screen = <Login onLogin={initFromBootstrap} />;
+  else
+    screen = (
+      <BrowserRouter>
+        <AuthenticatedApp token="__cookie__" onLogout={handleLogout} bootstrap={bootstrap} />
+      </BrowserRouter>
+    );
 
-  if (!authenticated || !bootstrap) {
-    return <Login onLogin={initFromBootstrap} />;
-  }
-
+  // One theme owner for every screen, above the auth gate, so the skeleton and
+  // the sign-in page paint in the person's theme and the shortcut works on
+  // them. It stays mounted across sign-in and sign-out; saving to the server
+  // needs a session, so it is on only while one exists.
   return (
-    <BrowserRouter>
-      <AuthenticatedApp token="__cookie__" onLogout={handleLogout} bootstrap={bootstrap} />
-    </BrowserRouter>
+    <ThemeProvider savePreference={signedIn ? saveThemePreference : undefined}>
+      {screen}
+    </ThemeProvider>
   );
 }
