@@ -34,7 +34,7 @@ dependencies = [
     #
     # The floor is 2.0.0 because every surface the SDK uses is present
     # and unchanged from 2.0.0 on: `mcp.server.extension` is identical
-    # across 2.0.0-2.2.x, and so is `ServerSession.send_request`, which
+    # across 2.0.0-2.3.0, and so is `ServerSession.send_request`, which
     # the host-resources dispatch (`cast(ServerRequest, ...)` in
     # `host.py`) relies on to dump and forward the request rather than
     # validate it against the `ServerRequest` union. mcp's public surface
@@ -47,7 +47,7 @@ dependencies = [
     # `mcp/server/extension.py`, run the suite) before it is admitted.
     # Widen it to `<3` once PR-time coverage exists; cut an SDK major if
     # the dispatch shape itself has to change.
-    "mcp>=2.0.0,<2.3.0",
+    "mcp>=2.0.0,<2.4.0",
     # SKILL.md frontmatter parsing for the skills extension.
     "pyyaml>=6.0",
 ]
