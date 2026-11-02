@@ -1440,9 +1440,16 @@ async function assertAppMayCall(
  * whatever `_meta` it sends. A first-party credential is the operator's own
  * client: the web shell, whose bridge makes every view's call, or an operator
  * app. The source key cannot tell those apart, so under a first-party
- * credential it is trusted as the caller states it. That is the limit of this
- * check: a provider that marks every credential first-party (`oidc`, `dev`)
- * leaves an external client able to name a source and be taken for a view.
+ * credential it is trusted as the caller states it.
+ *
+ * App-only keeps a tool from the agent, not from the person's own credential.
+ * A provider that is not an authorization server (`oidc`, `dev`) issues no
+ * credential to an external client: an `oidc` token must name this instance's
+ * own client in `aud`, and `dev` authenticates no one. So every credential it
+ * accepts is the shell's session, and a caller presenting one could drive the
+ * view itself; no proof the shell minted would tell the two apart, because the
+ * shell's credential is what would fetch it. Where external clients do get
+ * credentials, the client each was issued to decides its grant (ADR-0038).
  */
 function isAppCall(appSource: string | undefined, requestCtx: McpRequestContext): boolean {
   return appSource !== undefined && requestCtx.grant === "first_party";

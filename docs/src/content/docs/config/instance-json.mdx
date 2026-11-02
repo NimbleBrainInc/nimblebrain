@@ -89,6 +89,8 @@ The `auth.adapter` field selects the identity provider: `dev`, `oidc`, or `worko
 
 The provider must send `email_verified: true` in each token. A token with `email_verified: false` or no `email_verified` claim is refused and logged, because the email decides domain admission and which pre-created user a first sign-in claims. Some providers omit the claim by default; configure yours to include it before switching to this adapter.
 
+Every token this adapter accepts names `clientId` in its audience, so it is first-party: the web login's own session, admitted on every route, with workspace membership as the gate. The adapter is not an authorization server and issues nothing to external MCP clients. If your provider issues tokens with this client's id as their audience to other applications, those applications get the same standing as the web login, app-only tools included.
+
 Each sign-in is matched to a local user by the token's issuer and subject, and by email only to claim a user created ahead of time that no subject is bound to yet. A different subject with an email already bound to someone is refused. See [Signing in with OIDC](/using/users/#signing-in-with-oidc).
 
 ## WorkOS adapter (`auth.adapter: "workos"`)
