@@ -204,7 +204,7 @@ The provider name must match one registered on the platform. Registering one is 
   The platform's own `minted` connectors may reach in-cluster `http://` endpoints. A gateway does not inherit that exception — its URL takes the full SSRF check, so the endpoint must be a public `https` host.
 </Aside>
 
-A `minted` connector is the exception to the verbatim copy: it mints with the `providerAuth` its catalog entry declares **now**, re-read every time the connector starts. Editing an entry's `providerAuth` therefore reaches existing installs at their next start. Removing the entry, moving its URL, or a catalog the runtime cannot read leaves those installs in place but unable to start; the copy stored at install is never used as a fallback.
+A `minted` connector is the exception to the verbatim copy: it mints with the `providerAuth` its catalog entry declares **now**, re-read every time the connector starts. Editing an entry's `providerAuth` therefore reaches existing installs at their next start. Removing the entry, moving its URL, or a catalog the runtime cannot read leaves those installs in place but unable to start. An install stores no copy of a `minted` entry's `config`; one an older install stored is never used as a fallback.
 
 Every workspace installing such an entry shares the one key, so the gateway sees a single caller. You get no per-workspace attribution and no independent revocation. Where a vendor offers a brokered path as well, prefer it.
 
