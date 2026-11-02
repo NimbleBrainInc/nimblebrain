@@ -92,4 +92,14 @@ jobs:
             docker logs caddy-cors; exit 1
           fi
 
+          echo "--- the shell document must not leak its URL or be framed ---"
+          shell=$(curl -sI http://localhost:8080/w/acme/app/crm)
+          echo "$shell"
+          echo "$shell" | grep -iq '^referrer-policy: strict-origin-when-cross-origin' || {
+            echo "FAIL: shell document lacks Referrer-Policy"; exit 1; }
+          echo "$shell" | grep -iq '^x-frame-options: DENY' || {
+            echo "FAIL: shell document lacks X-Frame-Options"; exit 1; }
+          echo "$shell" | grep -iq "^content-security-policy: frame-ancestors 'none'" || {
+            echo "FAIL: shell document lacks frame-ancestors"; exit 1; }
+
           docker rm -f caddy-cors
