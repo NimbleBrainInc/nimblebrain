@@ -428,7 +428,7 @@ describe("createDirectExecutor — stopReason → status", () => {
       async (): Promise<TaskFnResult> => ({
         ...(await taskFnWithStop("complete")({} as TaskFnRequest)),
         output: "partial answer",
-        inputCapWrapUp: true,
+        wrapUpLimit: "max_input_tokens",
       }),
       () => ({}),
     );
@@ -442,11 +442,44 @@ describe("createDirectExecutor — stopReason → status", () => {
     expect(labelOf(run)).toBe("Needs review");
   });
 
+  test("complete on a last-iteration wrap-up → degraded, naming the limit, with its answer kept", async () => {
+    const executor = createDirectExecutor(
+      async (): Promise<TaskFnResult> => ({
+        ...(await taskFnWithStop("complete")({} as TaskFnRequest)),
+        output: "partial answer",
+        wrapUpLimit: "max_iterations",
+      }),
+      () => ({}),
+    );
+    const { run, result } = await executor(makeTask({ maxIterations: 5 }));
+    expect(run.status).toBe("degraded");
+    expect(run.stopReason).toBe("complete");
+    expect(run.error).toContain("Told to finish early");
+    expect(run.error).toContain("last of the 5 iterations");
+    expect(run.error).toContain("its own Max Iterations");
+    expect(result?.output).toBe("partial answer");
+    expect(labelOf(run)).toBe("Needs review");
+  });
+
+  test("a last-iteration wrap-up with no iteration limit of its own names the runtime's", async () => {
+    const executor = createDirectExecutor(
+      async (): Promise<TaskFnResult> => ({
+        ...(await taskFnWithStop("complete")({} as TaskFnRequest)),
+        wrapUpLimit: "max_iterations",
+      }),
+      () => ({}),
+    );
+    const { run } = await executor(makeTask({}));
+    expect(run.status).toBe("degraded");
+    expect(run.error).toContain("this runtime's limit");
+    expect(run.error).not.toContain("Raise Max Iterations");
+  });
+
   test("a run stopped at the cap stays a failure", async () => {
     const executor = createDirectExecutor(
       async (): Promise<TaskFnResult> => ({
         ...(await taskFnWithStop("max_input_tokens")({} as TaskFnRequest)),
-        inputCapWrapUp: true,
+        wrapUpLimit: "max_input_tokens",
       }),
       () => ({}),
     );

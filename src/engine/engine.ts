@@ -78,6 +78,7 @@ import {
   type ToolResult,
   type ToolRouter,
   type ToolSchema,
+  type WrapUpLimit,
 } from "./types.ts";
 
 /** Default when the env knob is unset or unusable. */
@@ -856,6 +857,24 @@ function nearRunInputCap(
   return call.spentInput + 2 * projected > config.maxRunInputTokens;
 }
 
+/** The limit that makes the call about to be sent the run's final step, if any. */
+function finalStepLimitFor(
+  config: EngineConfig,
+  lastIteration: boolean,
+  call: { spentInput: number; lastCallInputTokens: number; estimate: () => number },
+): WrapUpLimit | undefined {
+  if (lastIteration) return "max_iterations";
+  return nearRunInputCap(config, call) ? "max_input_tokens" : undefined;
+}
+
+/**
+ * The limit a run reports for answering on a final step. The one step of a
+ * one-iteration run is not cut short: that run was configured to end there.
+ */
+function reportedWrapUp(limit: WrapUpLimit | undefined, maxIter: number): WrapUpLimit | undefined {
+  return limit === "max_iterations" && maxIter === 1 ? undefined : limit;
+}
+
 /**
  * The fewest output tokens a call is sent with when the run's spend accounts
  * clamp it. A call allowed less could not write a useful step (a tool call
@@ -1336,7 +1355,7 @@ export class AgentEngine {
     // cancel cuts off (`recordCutOffCall`).
     let lastCallUsage: TokenUsage | undefined;
     let runInputCapReached = false;
-    let callNearInputCap = false;
+    let finalStepLimit: WrapUpLimit | undefined;
     // The spend account that would have been overrun by the next call, if any.
     let spendAccountId: string | undefined;
 
@@ -1386,7 +1405,9 @@ export class AgentEngine {
         let callMessages = sanitizeMessages(windowed);
         const callPrompt = resolveCallPrompt(config, systemPrompt);
 
-        callNearInputCap = nearRunInputCap(config, {
+        // Decided once per step: every attempt at this call carries the same
+        // answer, so a retried prompt cannot lose the reminder.
+        finalStepLimit = finalStepLimitFor(config, iteration === maxIter - 1, {
           spentInput: cumulativeUsage.inputTokens,
           lastCallInputTokens,
           estimate: () =>
@@ -1395,8 +1416,10 @@ export class AgentEngine {
               modelTools,
             ),
         });
-        const finalStep = iteration === maxIter - 1 || callNearInputCap;
+        const finalStep = finalStepLimit !== undefined;
         callMessages = appendFinalStepReminder(callMessages, finalStep);
+        const messagesForRetry = (attempt: number) =>
+          appendFinalStepReminder(sanitizeMessages(runTransform(attempt)), finalStep);
 
         // The run-wide input cap and the spend accounts, checked against the
         // prompt about to be sent, before it is sent.
@@ -1459,9 +1482,6 @@ export class AgentEngine {
           // provider's own per-request overhead.
           estimatedInputTokens = estimatePromptTokens(cachedPrompt, cachedTools);
           const rewindowed = msgs !== callMessages;
-          // Overflow recovery rebuilds the prompt without the final-step
-          // reminder, so an answer from that attempt was not told to wrap up.
-          if (rewindowed) callNearInputCap = false;
           return withRetry(
             () => {
               // An attempt that would start after the cancel sends nothing, so
@@ -1516,7 +1536,7 @@ export class AgentEngine {
         const response = await this.callModelWithOverflowRecovery(
           callOnce,
           callMessages,
-          runTransform,
+          messagesForRetry,
           config,
           runId,
         ).catch((err: unknown) => {
@@ -1664,7 +1684,7 @@ export class AgentEngine {
       iteration,
       maxIter,
       runInputCapReached,
-      callNearInputCap,
+      finalStepLimit,
       spendAccountId,
       lastFinishReason,
       lastFinishReasonRaw,
@@ -1735,7 +1755,7 @@ export class AgentEngine {
     iteration: number;
     maxIter: number;
     runInputCapReached: boolean;
-    callNearInputCap: boolean;
+    finalStepLimit: WrapUpLimit | undefined;
     spendAccountId: string | undefined;
     lastFinishReason: FinishReason | undefined;
     lastFinishReasonRaw: string | undefined;
@@ -1750,7 +1770,7 @@ export class AgentEngine {
       iteration,
       maxIter,
       runInputCapReached,
-      callNearInputCap,
+      finalStepLimit,
       spendAccountId,
       lastFinishReason,
       lastFinishReasonRaw,
@@ -1767,6 +1787,8 @@ export class AgentEngine {
         : iteration >= maxIter
           ? "max_iterations"
           : deriveStopReason(lastFinishReason);
+    const wrapUpLimit =
+      stopReason === "complete" ? reportedWrapUp(finalStepLimit, maxIter) : undefined;
     // A cap or spend stop breaks before its iteration's model call completes,
     // so every counted iteration is complete.
     const reportedIterations =
@@ -1793,7 +1815,7 @@ export class AgentEngine {
       ...(lastFinishReason !== undefined ? { finishReason: lastFinishReason } : {}),
       ...(lastFinishReasonRaw !== undefined ? { finishReasonRaw: lastFinishReasonRaw } : {}),
       ...(spendAccountId !== undefined ? { spendAccountId } : {}),
-      ...(stopReason === "complete" && callNearInputCap ? { inputCapWrapUp: true } : {}),
+      ...(wrapUpLimit !== undefined ? { wrapUpLimit } : {}),
     };
   }
 
@@ -2004,7 +2026,7 @@ export class AgentEngine {
   private async callModelWithOverflowRecovery(
     callOnce: (msgs: LanguageModelV4Message[]) => Promise<StreamResult>,
     initialMessages: LanguageModelV4Message[],
-    runTransform: (attempt: number) => LanguageModelV4Message[],
+    messagesForRetry: (attempt: number) => LanguageModelV4Message[],
     config: EngineConfig,
     runId: string,
   ): Promise<StreamResult> {
@@ -2045,7 +2067,7 @@ export class AgentEngine {
               errorMessage,
             },
           });
-          callMessages = sanitizeMessages(runTransform(overflowAttempt));
+          callMessages = messagesForRetry(overflowAttempt);
           continue;
         }
         // Terminal LLM failure: the call threw, in-call retry is exhausted,

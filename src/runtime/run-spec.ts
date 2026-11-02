@@ -22,6 +22,7 @@ import type {
   EventSink,
   ThinkingEffort,
   ToolSchema,
+  WrapUpLimit,
 } from "../engine/types.ts";
 import type { FileReference } from "../files/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
@@ -250,8 +251,8 @@ export interface RunHandle {
   finishReasonRaw?: string;
   /** The account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
-  /** See `EngineResult.inputCapWrapUp`. */
-  inputCapWrapUp?: boolean;
+  /** See `EngineResult.wrapUpLimit`. */
+  wrapUpLimit?: WrapUpLimit;
   usage: TurnUsage;
   /** The run's cost in USD; see `ChatResult.costUsd`. */
   costUsd: number;

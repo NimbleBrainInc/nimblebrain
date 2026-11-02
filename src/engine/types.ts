@@ -729,6 +729,9 @@ export type StopReason =
   | "cancelled";
 
 /** Result returned from a single engine run. */
+/** The limits that send the final-step reminder before they stop a run. */
+export type WrapUpLimit = Extract<StopReason, "max_iterations" | "max_input_tokens">;
+
 export interface EngineResult {
   output: string;
   toolCalls: ToolCallRecord[];
@@ -751,11 +754,12 @@ export interface EngineResult {
   /** The account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
   /**
-   * The run ended `complete` on a call that carried the final-step reminder
-   * because the input cap was near. The model stopped when told to, so
-   * `complete` does not mean the work was finished. Absent otherwise.
+   * The limit that made the call the run ended on its final step, when the model
+   * heeded the reminder and ended the run `complete`. It stopped when told to, so
+   * `complete` does not mean the work was finished. Absent otherwise, and for a
+   * one-iteration run, which was configured to end on its only step.
    */
-  inputCapWrapUp?: boolean;
+  wrapUpLimit?: WrapUpLimit;
 }
 
 export interface ToolCallRecord {

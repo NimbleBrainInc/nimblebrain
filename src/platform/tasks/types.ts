@@ -496,8 +496,8 @@ export interface TaskRun {
   completedAt?: string;
   /**
    * `degraded`: the run finished, but part of its work may not have happened:
-   * a tool call failed and no later call made it good, or it was told to wrap up
-   * because its input cap was near (`error` says which). It is not a failure: it
+   * a tool call failed and no later call made it good, or a limit told it to wrap
+   * up (`error` says which). It is not a failure: it
    * neither extends an error streak nor backs the schedule off.
    */
   /**
