@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { NO_CATALOG } from "../../src/connectors/catalog/binding.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { defaultWorkDir } from "../../src/connectors/runtime/paths.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
@@ -131,6 +132,7 @@ async function connectAndSeed(
     transport: { type: "streamable-http", auth: { type: "bearer", token: "t" } },
   };
   const { meta } = await startConnectorSource(ref, registry, new NoopEventSink(), {
+    readCatalog: NO_CATALOG,
     allowInsecureRemotes: true,
     workspaceContext: new WorkspaceContext({ wsId: WS, workDir: defaultWorkDir() }),
   });

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { getConnectorRefValidator } from "../../src/config/index.ts";
+import { NO_CATALOG } from "../../src/connectors/catalog/binding.ts";
 import { defaultWorkDir } from "../../src/connectors/runtime/paths.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
@@ -134,6 +135,7 @@ describe("Remote integration: config → validate → load → tools", () => {
     const registry = new ToolRegistry();
     const ref: ConnectorRef = entry as ConnectorRef;
     const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
+      readCatalog: NO_CATALOG,
       allowInsecureRemotes: true,
       workspaceContext: new WorkspaceContext({
         wsId: "ws_0076759dbbe19fcc",
@@ -173,6 +175,7 @@ describe("Remote integration: config → validate → load → tools", () => {
     const registry = new ToolRegistry();
     const ref: ConnectorRef = entry as ConnectorRef;
     const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
+      readCatalog: NO_CATALOG,
       allowInsecureRemotes: true,
       workspaceContext: new WorkspaceContext({
         wsId: "ws_0076759dbbe19fcc",
@@ -200,6 +203,7 @@ describe("Remote integration: config → validate → load → tools", () => {
 
     const results = await Promise.allSettled([
       startConnectorSource(ref, registry, new NoopEventSink(), {
+        readCatalog: NO_CATALOG,
         allowInsecureRemotes: true,
         workspaceContext: new WorkspaceContext({
           wsId: "ws_0076759dbbe19fcc",
@@ -222,6 +226,7 @@ describe("Remote integration: config → validate → load → tools", () => {
 
     const results = await Promise.allSettled([
       startConnectorSource(ref, registry, new NoopEventSink(), {
+        readCatalog: NO_CATALOG,
         allowInsecureRemotes: true,
         workspaceContext: new WorkspaceContext({
           wsId: "ws_0076759dbbe19fcc",
@@ -278,6 +283,7 @@ describe("Remote integration: registering remote connectors in workspace registr
     const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
     const ref: ConnectorRef = { url: mockServer.url, serverName: "runtime-remote" };
     await startConnectorSource(ref, registry, new NoopEventSink(), {
+      readCatalog: NO_CATALOG,
       allowInsecureRemotes: true,
       workspaceContext: new WorkspaceContext({
         wsId: "ws_0076759dbbe19fcc",
@@ -312,6 +318,7 @@ describe("Remote integration: registering remote connectors in workspace registr
     const badRef: ConnectorRef = { url: "http://127.0.0.1:1/mcp", serverName: "bad-remote" };
     const badResult = await Promise.allSettled([
       startConnectorSource(badRef, registry, new NoopEventSink(), {
+        readCatalog: NO_CATALOG,
         allowInsecureRemotes: true,
         workspaceContext: new WorkspaceContext({
           wsId: "ws_0076759dbbe19fcc",
@@ -325,6 +332,7 @@ describe("Remote integration: registering remote connectors in workspace registr
     // Register a good remote (should succeed)
     const goodRef: ConnectorRef = { url: mockServer.url, serverName: "good-remote" };
     await startConnectorSource(goodRef, registry, new NoopEventSink(), {
+      readCatalog: NO_CATALOG,
       allowInsecureRemotes: true,
       workspaceContext: new WorkspaceContext({
         wsId: "ws_0076759dbbe19fcc",

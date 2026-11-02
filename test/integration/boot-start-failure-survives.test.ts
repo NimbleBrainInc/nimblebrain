@@ -18,6 +18,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { NO_CATALOG } from "../../src/connectors/catalog/binding.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { log } from "../../src/observability/log.ts";
@@ -76,6 +77,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     await store.update(ws.id, { connectors: [unreachableConnector("unreachable")] });
 
     const { entries } = await startWorkspaceConnectors(store, [], null, new NoopEventSink(), {
+      readCatalog: NO_CATALOG,
       workDir,
       allowInsecureRemotes: true,
     });
@@ -197,6 +199,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     log.info = (msg: string) => lines.push(msg);
     try {
       await startWorkspaceConnectors(store, [], null, new NoopEventSink(), {
+        readCatalog: NO_CATALOG,
         workDir,
         allowInsecureRemotes: true,
       });
@@ -223,6 +226,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     await store.update(ws.id, { connectors: [unreachableConnector("unreachable")] });
 
     const { registries } = await startWorkspaceConnectors(store, [], null, new NoopEventSink(), {
+      readCatalog: NO_CATALOG,
       workDir,
       allowInsecureRemotes: true,
     });
@@ -247,6 +251,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     await store.update(ws.id, { connectors: [unreachableConnector("still-down")] });
 
     const { registries } = await startWorkspaceConnectors(store, [], null, new NoopEventSink(), {
+      readCatalog: NO_CATALOG,
       workDir,
       allowInsecureRemotes: true,
     });
@@ -262,6 +267,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
         registry as ToolRegistry,
         new NoopEventSink(),
         {
+          readCatalog: NO_CATALOG,
           allowInsecureRemotes: true,
           workspaceContext: new WorkspaceContext({ wsId: ws.id, workDir }),
           keepRegisteredOnStartFailure: true,

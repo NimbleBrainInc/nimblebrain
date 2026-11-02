@@ -68,11 +68,12 @@ export function composeConnectorMcpContext(
 interface StartConnectorOpts {
   allowInsecureRemotes?: boolean;
   /**
-   * The operator catalog. Required to start a minted fleet connector, whose
-   * credential settings come from its catalog entry at every start
-   * (`resolveRefTransport`); not read for any other connector.
+   * The operator catalog. A minted fleet connector's credential settings come
+   * from its catalog entry at every start (`resolveRefTransport`); no other
+   * connector reads it. Required, so no start path can skip the catalog by
+   * omission: a caller that starts no minted connector passes `NO_CATALOG`.
    */
-  readCatalog?: CatalogEntriesReader;
+  readCatalog: CatalogEntriesReader;
   /**
    * Keep a URL source REGISTERED (unstarted, `down`) when `start()` fails,
    * instead of leaving the registry without it. Off by default: a deliberate
@@ -164,6 +165,12 @@ interface StartConnectorOpts {
   connectorMcp?: ConnectorMcpDeps;
 }
 
+/**
+ * The start options the OAuth-provider step reads. It builds an auth provider
+ * and never resolves a transport, so it takes no catalog reader.
+ */
+type OAuthProviderOpts = Omit<StartConnectorOpts, "readCatalog">;
+
 /** A resolvable promise handle: calling `resolve()` settles `promise`. Used to
  *  race an interactive-auth early return against a longer-running `start()`. */
 function createDeferred(): { resolve: () => void; promise: Promise<void> } {
@@ -201,7 +208,7 @@ async function buildUserOAuthProvider(
   ref: ConnectorRef,
   serverName: string,
   identityOwner: { userId: string; workDir: string },
-  opts: StartConnectorOpts | undefined,
+  opts: OAuthProviderOpts | undefined,
   onInteractiveAuthRequired: (authorizationUrl: string) => void,
 ): Promise<WorkspaceOAuthProvider> {
   const { workDir } = identityOwner;
@@ -243,7 +250,7 @@ export async function buildUrlOAuthProvider(
   ref: ConnectorRef,
   serverName: string,
   wsContext: WorkspaceContext | undefined,
-  opts: StartConnectorOpts | undefined,
+  opts: OAuthProviderOpts | undefined,
   onInteractiveAuthRequired: (authorizationUrl: string) => void,
 ): Promise<WorkspaceOAuthProvider | undefined> {
   // Attach an OAuthClientProvider only when no static auth is configured.
@@ -404,26 +411,19 @@ export class FleetConnectorUnavailableError extends Error {
  *     the `minted` fleet rail. Provider auth alone does not earn it: a brokered
  *     connector names a provider too, but its URL comes from a vendor response.
  *
- * `readCatalog` is required for a minted ref and never read for any other. A
- * minted ref with no reader throws, so a caller cannot skip the catalog by
- * omission; one whose catalog cannot be read, or no longer offers it, throws
- * `FleetConnectorUnavailableError`.
+ * `readCatalog` is required by type and read only for a minted ref. A minted
+ * ref whose catalog cannot be read (including `NO_CATALOG`), or no longer
+ * offers it, throws `FleetConnectorUnavailableError`.
  */
 export async function resolveRefTransport(
   ref: ConnectorRef,
-  readCatalog?: CatalogEntriesReader,
+  readCatalog: CatalogEntriesReader,
 ): Promise<{
   transportConfig: RemoteTransportConfig | undefined;
   fleetInternal: boolean;
 }> {
   if (!isMintedFleetSource(ref.transport)) {
     return { transportConfig: ref.transport, fleetInternal: false };
-  }
-  if (!readCatalog) {
-    throw new Error(
-      `[connectors] "${ref.serverName}" is a minted fleet connector and was started without ` +
-        "the connector catalog; its credential settings come only from the catalog entry it binds to",
-    );
   }
   let entries: readonly ConnectorCatalogEntry[] | null;
   try {
@@ -462,7 +462,7 @@ export async function startConnectorSource(
   // (rare) must pass `new NoopEventSink()` explicitly, so dropping events is a
   // decision rather than an omission.
   eventSink: EventSink,
-  opts?: StartConnectorOpts,
+  opts: StartConnectorOpts,
 ): Promise<StartConnectorResult> {
   const wsContext = opts?.workspaceContext;
   const serverName = ref.serverName;
@@ -480,7 +480,7 @@ export async function startConnectorSource(
   // the vendor's API response, so it carries no operator provenance.
   // One derivation feeds both the URL gate and the transport below — see
   // `resolveRefTransport` for why they must not be read separately.
-  const { transportConfig, fleetInternal } = await resolveRefTransport(ref, opts?.readCatalog);
+  const { transportConfig, fleetInternal } = await resolveRefTransport(ref, opts.readCatalog);
   validateConnectorUrl(new URL(ref.url), {
     allowInsecure: opts?.allowInsecureRemotes,
     fleetInternal,
@@ -528,7 +528,7 @@ export async function startConnectorSource(
       url: new URL(ref.url),
       transportConfig,
       resolveTransportConfig: async () =>
-        (await resolveRefTransport(ref, opts?.readCatalog)).transportConfig,
+        (await resolveRefTransport(ref, opts.readCatalog)).transportConfig,
       allowInsecure: opts?.allowInsecureRemotes === true,
       authProvider,
       ...(authProvider ? await inBandAuthErrorsOption(ref) : {}),

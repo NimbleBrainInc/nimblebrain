@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { NO_CATALOG } from "../../src/connectors/catalog/binding.ts";
 import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import {
@@ -67,10 +68,10 @@ describe("transport: a minted ref's credential settings come from the catalog", 
     expect(fleetInternal).toBe(true);
   });
 
-  it("refuses to start a minted ref without the catalog, so no caller can skip it", async () => {
-    await expect(resolveRefTransport(mintedRef("shared-audience"))).rejects.toThrow(
-      /without the connector catalog/,
-    );
+  it("refuses to start a minted ref handed NO_CATALOG", async () => {
+    await expect(
+      resolveRefTransport(mintedRef("shared-audience"), NO_CATALOG),
+    ).rejects.toBeInstanceOf(FleetConnectorUnavailableError);
   });
 
   it("does not start a minted ref the catalog no longer offers", async () => {
@@ -109,8 +110,10 @@ describe("transport: the persisted config, as written, for every non-minted ref"
       auth: { type: "provider", provider: "composio", config: {} },
     });
     const bearer = ref({ type: "streamable-http", auth: { type: "bearer", token: "t" } });
-    expect((await resolveRefTransport(provider)).transportConfig).toBe(provider.transport);
-    expect((await resolveRefTransport(bearer)).transportConfig).toBe(bearer.transport);
+    expect((await resolveRefTransport(provider, NO_CATALOG)).transportConfig).toBe(
+      provider.transport,
+    );
+    expect((await resolveRefTransport(bearer, NO_CATALOG)).transportConfig).toBe(bearer.transport);
   });
 });
 
@@ -134,6 +137,7 @@ describe("fleetInternal: only the minted rail earns the in-cluster exception", (
         type: "streamable-http",
         auth: { type: "provider", provider: "composio", config: {} },
       }),
+      NO_CATALOG,
     );
     expect(fleetInternal).toBe(false);
     expect(() =>
@@ -148,9 +152,10 @@ describe("fleetInternal: only the minted rail earns the in-cluster exception", (
       { type: "none" },
     ] as const) {
       expect(
-        (await resolveRefTransport(ref({ type: "streamable-http", auth }))).fleetInternal,
+        (await resolveRefTransport(ref({ type: "streamable-http", auth }), NO_CATALOG))
+          .fleetInternal,
       ).toBe(false);
     }
-    expect((await resolveRefTransport(ref(undefined))).fleetInternal).toBe(false);
+    expect((await resolveRefTransport(ref(undefined), NO_CATALOG)).fleetInternal).toBe(false);
   });
 });

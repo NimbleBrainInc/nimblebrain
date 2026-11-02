@@ -37,7 +37,7 @@ export async function installConnectorInWorkspace(
   // Required — threaded into the new McpSource so task-augmented tools'
   // progress events reach SSE. See mcp-source.ts for the full rationale.
   eventSink: EventSink,
-  opts?: {
+  opts: {
     allowInsecureRemotes?: boolean;
     workDir?: string;
     /**
@@ -47,8 +47,8 @@ export async function installConnectorInWorkspace(
      * `ai.nimblebrain/resources/*` handlers.
      */
     connectorMcp?: ConnectorMcpDeps;
-    /** The operator catalog; required to start a minted fleet connector. */
-    readCatalog?: CatalogEntriesReader;
+    /** The operator catalog a minted fleet connector starts from; `NO_CATALOG` when none can be. */
+    readCatalog: CatalogEntriesReader;
   },
 ): Promise<ProcessInventoryEntry> {
   // Default workDir to `~/.nimblebrain`, in step with every other
@@ -82,7 +82,7 @@ export async function installConnectorInWorkspace(
     allowInsecureRemotes: opts?.allowInsecureRemotes,
     workspaceContext: wsContext,
     connectorMcp: opts?.connectorMcp,
-    ...(opts?.readCatalog ? { readCatalog: opts.readCatalog } : {}),
+    readCatalog: opts.readCatalog,
   });
 
   return {

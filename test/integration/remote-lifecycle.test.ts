@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { NO_CATALOG } from "../../src/connectors/catalog/binding.ts";
 import { defaultWorkDir } from "../../src/connectors/runtime/paths.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
@@ -129,6 +130,7 @@ describe("startConnectorSource — remote url entries", () => {
     };
 
     const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
+      readCatalog: NO_CATALOG,
       allowInsecureRemotes: true,
       workspaceContext: new WorkspaceContext({
         wsId: "ws_0076759dbbe19fcc",
@@ -158,6 +160,7 @@ describe("startConnectorSource — remote url entries", () => {
     // startConnectorSource throws — but callers use allSettled
     const results = await Promise.allSettled([
       startConnectorSource(ref, registry, new NoopEventSink(), {
+        readCatalog: NO_CATALOG,
         allowInsecureRemotes: true,
         workspaceContext: new WorkspaceContext({
           wsId: "ws_0076759dbbe19fcc",
@@ -185,6 +188,7 @@ describe("startConnectorSource — remote url entries", () => {
 
     await expect(
       startConnectorSource(ref, registry, new NoopEventSink(), {
+        readCatalog: NO_CATALOG,
         allowInsecureRemotes: true,
         // workspaceContext intentionally omitted
       }),
@@ -205,6 +209,7 @@ describe("startConnectorSource — remote url entries", () => {
     };
 
     const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
+      readCatalog: NO_CATALOG,
       allowInsecureRemotes: true,
       // wsId intentionally omitted — allowed here
     });
