@@ -96,10 +96,59 @@ export function openableAppNames(placements: readonly PlacementEntry[]): string[
   return [...new Set(placements.filter(isOpenable).map(displayName))];
 }
 
-/** Whether `uri` is one of `template`'s expansions. A template that does not parse matches nothing. */
+/**
+ * Whether a template's match can cost more than linear time. The SDK compiles `{+x}` and `{#x}`
+ * to `(.+)` and every other expression to a class such as `([^/,]+)`, which consumes any literal
+ * except `/` and `,`. So a template with two unbounded expressions, or two expressions not
+ * separated by a literal containing `/` or `,`, gives a regex that backtracks polynomially on a
+ * URI it does not match. Templates come from connectors, so matching one must stay cheap.
+ */
+function isUnboundedTemplate(template: string): boolean {
+  let unbounded = 0;
+  let previousEnd = -1;
+  for (const expr of template.matchAll(/\{([^}]*)\}/g)) {
+    if (previousEnd !== -1 && !/[/,]/.test(template.slice(previousEnd, expr.index))) return true;
+    previousEnd = expr.index + expr[0].length;
+    const operator = expr[1]?.[0];
+    if ((operator === "+" || operator === "#") && ++unbounded > 1) return true;
+  }
+  return false;
+}
+
+/** Most templates a process keeps parsed; past it the oldest is dropped. */
+const TEMPLATE_CACHE_LIMIT = 512;
+
+/** Each template string seen, parsed once; `null` for one that is refused or does not parse. */
+const templateCache = new Map<string, UriTemplate | null>();
+
+function compiled(template: string): UriTemplate | null {
+  const cached = templateCache.get(template);
+  if (cached !== undefined) return cached;
+  let parsed: UriTemplate | null = null;
+  if (!isUnboundedTemplate(template)) {
+    try {
+      parsed = new UriTemplate(template);
+    } catch {
+      parsed = null;
+    }
+  }
+  if (templateCache.size >= TEMPLATE_CACHE_LIMIT) {
+    const oldest = templateCache.keys().next().value;
+    if (oldest !== undefined) templateCache.delete(oldest);
+  }
+  templateCache.set(template, parsed);
+  return parsed;
+}
+
+/**
+ * Whether `uri` is one of `template`'s expansions. A template that does not parse, or whose
+ * match could backtrack without bound (`isUnboundedTemplate`), matches nothing.
+ */
 function expandsFrom(template: string, uri: string): boolean {
+  const parsed = compiled(template);
+  if (parsed === null) return false;
   try {
-    return new UriTemplate(template).match(uri) !== null;
+    return parsed.match(uri) !== null;
   } catch {
     return false;
   }

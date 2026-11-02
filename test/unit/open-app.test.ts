@@ -9,6 +9,9 @@
 //   3. A URI resolves by ownership: a conversation to the chat panel, an app's
 //      ui:// root to its home, anything else to the one app whose template it
 //      expands from; no claimant or two is refused.
+//   4. A template whose match could backtrack without bound (two unbounded
+//      expressions, or two not separated by a literal containing `/` or `,`)
+//      matches nothing.
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
@@ -238,6 +241,62 @@ describe("resolveOpen", () => {
     expect(await resolveOpen(named, "people://notes/n1")).toEqual({
       destination: { app: "people", name: "Contacts", target: "people://notes/n1" },
     });
+  });
+
+  test("a template that could backtrack without bound matches nothing; others still match", async () => {
+    const only = (uriTemplate: string) =>
+      scope({ templatesOf: async (name) => (name === "people" ? [{ uriTemplate }] : []) });
+    // Two unbounded expressions.
+    expect(await resolveOpen(only("acme://{+path}/x/{#frag}"), "acme://a/x/b")).toEqual({
+      error: "Nothing in this workspace opens acme://a/x/b.",
+    });
+    // Two expressions with no literal between them.
+    expect(await resolveOpen(only("acme://{kind}{id}"), "acme://ab")).toEqual({
+      error: "Nothing in this workspace opens acme://ab.",
+    });
+    // Two expressions separated only by a literal the expressions' class can consume.
+    expect(await resolveOpen(only("a{w}b{x}b{y}b{z}c"), "abbbbbbc")).toEqual({
+      error: "Nothing in this workspace opens abbbbbbc.",
+    });
+    // One unbounded expression, and expressions separated by `/`, match as before.
+    expect(await resolveOpen(only("acme://files/{+path}"), "acme://files/a/b")).toEqual({
+      destination: { app: "people", name: "People", target: "acme://files/a/b" },
+    });
+    expect(await resolveOpen(only("acme://{kind}/{id}"), "acme://notes/n1")).toEqual({
+      destination: { app: "people", name: "People", target: "acme://notes/n1" },
+    });
+    expect(
+      await resolveOpen(only("acme://orgs/{org}/contacts/{id}"), "acme://orgs/o1/contacts/c1"),
+    ).toEqual({
+      destination: { app: "people", name: "People", target: "acme://orgs/o1/contacts/c1" },
+    });
+    expect(
+      await resolveOpen(only("acme://contacts{?cursor,limit}"), "acme://contacts?cursor=x&limit=5"),
+    ).toEqual({
+      destination: { app: "people", name: "People", target: "acme://contacts?cursor=x&limit=5" },
+    });
+  });
+
+  test("a pathological template is refused before it runs, so a hostile URI costs nothing", async () => {
+    // Unguarded, the last two templates take seconds against these URIs.
+    const hostile = scope({
+      templatesOf: async (name) =>
+        name === "people"
+          ? [
+              { uriTemplate: "a{+p}b{+q}b{+r}c" },
+              { uriTemplate: "{a}{b}{c}{d}" },
+              { uriTemplate: "a{w}b{x}b{y}b{z}c" },
+            ]
+          : [],
+    });
+    const started = performance.now();
+    for (const uri of [`a${"b".repeat(511)}`, `${"x".repeat(511)}/`]) {
+      expect(uri).toHaveLength(512);
+      expect(await resolveOpen(hostile, uri)).toEqual({
+        error: `Nothing in this workspace opens ${uri}.`,
+      });
+    }
+    expect(performance.now() - started).toBeLessThan(50);
   });
 
   test("an app outside the nav is never a claimant", async () => {
