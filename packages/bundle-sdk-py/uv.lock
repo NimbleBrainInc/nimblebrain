@@ -725,7 +725,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastmcp", specifier = ">=4.0.0,<5" },
-    { name = "mcp", specifier = ">=2.3.0,<2.4.0" },
+    { name = "mcp", specifier = ">=2.0.0,<2.4.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
 
