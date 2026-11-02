@@ -14,7 +14,8 @@ import { readJson } from "../helpers/http.ts";
  * unattended dispatch. Plus the two things the gate must NOT touch: the
  * kernel's own lifecycle and hook-registration calls, and a server's own claim
  * about which of its tools are admin-only. And the `audit.admin_tool_call` line
- * each door's call to a declared tool writes.
+ * each door's call to a declared tool writes, beside the `audit.app_tool_call`
+ * line a second connector's view writes for its app-only tools.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -49,6 +50,8 @@ const MEMBER_WS = "ws_00562f536b60bccc";
 const SERVER = "ai-acme-crm";
 const CONFIGURE = `${SERVER}__configure`;
 const SEARCH = `${SERVER}__search`;
+/** A second connector whose view reserves `approve` (app-only and admin) and `send` (app-only). */
+const MAILER = "ai-acme-mailer";
 
 /** The bearer an external MCP client presents: a resource token for `ADMIN_WS`'s `/mcp`. */
 const MCP_CLIENT_TOKEN = "external-mcp-client";
@@ -92,6 +95,42 @@ const CATALOG_YAML = `servers:
             route: /ingest/acme
             register_tool: set_webhook_url
 `;
+
+/** The mailer's catalog entry: `approve` is a declared admin tool, `send` is not. */
+const MAILER_YAML = `servers:
+  - name: ai.acme/mailer
+    title: Acme Mailer
+    description: Test connector with app-only tools
+    version: "1.0.0"
+    remotes:
+      - type: streamable-http
+        url: https://mailer.acme.test/mcp
+    _meta:
+      ai.nimblebrain/connector:
+        auth: dcr
+      ai.nimblebrain/host:
+        host_version: "1.5"
+        admin_tools: [approve]
+`;
+
+/** Per-workspace record of what the mailer's server actually ran. */
+const mailerCalls = new Map<string, FixtureCall[]>();
+
+async function startMailer(wsId: string) {
+  const appOnly = { ui: { visibility: ["app"] } };
+  const { source, calls: log } = await startLifecycleSource(MAILER, {
+    tools: [
+      {
+        name: "approve",
+        meta: appOnly,
+        properties: { campaignId: { type: "string" }, token: { type: "string", writeOnly: true } },
+      },
+      { name: "send", meta: appOnly, properties: { campaignId: { type: "string" } } },
+    ],
+  });
+  mailerCalls.set(wsId, log);
+  return source;
+}
 
 /** Per-workspace record of what the connector's server actually ran. */
 const calls = new Map<string, FixtureCall[]>();
@@ -141,9 +180,14 @@ function recordingModel(): LanguageModelV4 {
 
 /** Every `audit.admin_tool_call` line the runtime wrote, oldest first. */
 const audited: AdminToolCallPayload[] = [];
+/** Every reserved-tool audit line, admin and app, with its type, oldest first. */
+const reserved: { type: string; line: AdminToolCallPayload }[] = [];
 const auditSink: EventSink = {
   emit: (event) => {
     if (event.type === "audit.admin_tool_call") audited.push(event.data as AdminToolCallPayload);
+    if (event.type === "audit.admin_tool_call" || event.type === "audit.app_tool_call") {
+      reserved.push({ type: event.type, line: event.data as AdminToolCallPayload });
+    }
   },
 };
 
@@ -155,6 +199,7 @@ let savedCatalogDir: string | undefined;
 beforeAll(async () => {
   mkdirSync(catalogDir, { recursive: true });
   writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
+  writeFileSync(join(catalogDir, "mailer.yaml"), MAILER_YAML);
   savedCatalogDir = process.env[CATALOG_DIR_ENV];
   process.env[CATALOG_DIR_ENV] = catalogDir;
 
@@ -173,7 +218,9 @@ beforeAll(async () => {
   await wsStore.addMember(MEMBER_WS, DEV_IDENTITY.id, "member");
 
   for (const wsId of [ADMIN_WS, MEMBER_WS]) {
-    (await runtime.ensureWorkspaceRegistry(wsId)).addSource(await startSource(wsId));
+    const registry = await runtime.ensureWorkspaceRegistry(wsId);
+    registry.addSource(await startSource(wsId));
+    registry.addSource(await startMailer(wsId));
     // Installed, because the hook reconcile reads the connector's MCP endpoint from its ref.
     await wsStore.update(wsId, {
       connectors: [{ url: "https://crm.acme.test/mcp", serverName: SERVER }],
@@ -642,6 +689,74 @@ describe("the audit.admin_tool_call line", () => {
         notifyReady(runtime.getLifecycleNotifyDeps(), MEMBER_WS, SERVER, "install"),
       ),
     ).toEqual([]);
+  });
+});
+
+describe("the audit.app_tool_call line", () => {
+  const fromView = { "ai.nimblebrain/source": MAILER };
+  const ARGS = { campaignId: "cmp_42", token: "tok-secret" };
+
+  /** The reserved-tool lines written while `act` ran, as `[type, caller, outcome]`. */
+  async function linesFrom(act: () => Promise<unknown>): Promise<string[][]> {
+    const start = reserved.length;
+    await act();
+    return reserved.slice(start).map(({ type, line }) => [type, line.caller, line.outcome]);
+  }
+
+  it("writes one admin line and one app line for a view's call to an app-only admin tool", async () => {
+    const admin = await mcpClient(ADMIN_WS);
+    try {
+      const start = reserved.length;
+      await admin.callTool({ name: `${MAILER}__approve`, arguments: ARGS, _meta: fromView });
+      const lines = reserved.slice(start);
+      expect(lines.map((l) => l.type).sort()).toEqual([
+        "audit.admin_tool_call",
+        "audit.app_tool_call",
+      ]);
+      for (const { line } of lines) {
+        expect(line).toEqual({
+          workspaceId: ADMIN_WS,
+          userId: DEV_IDENTITY.id,
+          connector: MAILER,
+          tool: "approve",
+          caller: "app",
+          outcome: "admitted",
+          arguments: { campaignId: "cmp_42", token: REDACTED_ARGUMENT },
+        });
+      }
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it("records a refused view call on both lines, and the server never runs it", async () => {
+    const member = await mcpClient(MEMBER_WS);
+    try {
+      mailerCalls.get(MEMBER_WS)?.splice(0);
+      const lines = await linesFrom(() =>
+        member.callTool({ name: `${MAILER}__approve`, arguments: ARGS, _meta: fromView }),
+      );
+      expect(lines.sort()).toEqual([
+        ["audit.admin_tool_call", "app", "refused"],
+        ["audit.app_tool_call", "app", "refused"],
+      ]);
+      expect(mailerCalls.get(MEMBER_WS)?.map((c) => c.tool)).toEqual([]);
+    } finally {
+      await member.close();
+    }
+  });
+
+  it("writes only the app line for a view's call to an app-only tool nobody declared admin", async () => {
+    const member = await mcpClient(MEMBER_WS);
+    try {
+      expect(
+        await linesFrom(() =>
+          member.callTool({ name: `${MAILER}__send`, arguments: ARGS, _meta: fromView }),
+        ),
+      ).toEqual([["audit.app_tool_call", "app", "admitted"]]);
+    } finally {
+      await member.close();
+    }
   });
 });
 

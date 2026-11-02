@@ -62,6 +62,15 @@ const WORKSPACE_EVENTS: EngineEvent[] = [
     purpose: "p",
     workspaceId: "ws_0076759dbbe19fcc",
   }),
+  engineEvent("audit.app_tool_call", {
+    workspaceId: "ws_0076759dbbe19fcc",
+    userId: "user_01",
+    connector: "mailer",
+    tool: "approve_send",
+    caller: "app",
+    outcome: "admitted",
+    arguments: { campaignId: "cmp_42" },
+  }),
 ];
 
 describe("WorkspaceLogSink", () => {
