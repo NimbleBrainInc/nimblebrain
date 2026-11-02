@@ -1336,6 +1336,7 @@ export class AgentEngine {
     // cancel cuts off (`recordCutOffCall`).
     let lastCallUsage: TokenUsage | undefined;
     let runInputCapReached = false;
+    let callNearInputCap = false;
     // The spend account that would have been overrun by the next call, if any.
     let spendAccountId: string | undefined;
 
@@ -1385,17 +1386,16 @@ export class AgentEngine {
         let callMessages = sanitizeMessages(windowed);
         const callPrompt = resolveCallPrompt(config, systemPrompt);
 
-        const finalStep =
-          iteration === maxIter - 1 ||
-          nearRunInputCap(config, {
-            spentInput: cumulativeUsage.inputTokens,
-            lastCallInputTokens,
-            estimate: () =>
-              estimatePromptTokens(
-                [{ role: "system", content: callPrompt }, ...callMessages],
-                modelTools,
-              ),
-          });
+        callNearInputCap = nearRunInputCap(config, {
+          spentInput: cumulativeUsage.inputTokens,
+          lastCallInputTokens,
+          estimate: () =>
+            estimatePromptTokens(
+              [{ role: "system", content: callPrompt }, ...callMessages],
+              modelTools,
+            ),
+        });
+        const finalStep = iteration === maxIter - 1 || callNearInputCap;
         callMessages = appendFinalStepReminder(callMessages, finalStep);
 
         // The run-wide input cap and the spend accounts, checked against the
@@ -1661,6 +1661,7 @@ export class AgentEngine {
       iteration,
       maxIter,
       runInputCapReached,
+      callNearInputCap,
       spendAccountId,
       lastFinishReason,
       lastFinishReasonRaw,
@@ -1731,6 +1732,7 @@ export class AgentEngine {
     iteration: number;
     maxIter: number;
     runInputCapReached: boolean;
+    callNearInputCap: boolean;
     spendAccountId: string | undefined;
     lastFinishReason: FinishReason | undefined;
     lastFinishReasonRaw: string | undefined;
@@ -1745,6 +1747,7 @@ export class AgentEngine {
       iteration,
       maxIter,
       runInputCapReached,
+      callNearInputCap,
       spendAccountId,
       lastFinishReason,
       lastFinishReasonRaw,
@@ -1787,6 +1790,7 @@ export class AgentEngine {
       ...(lastFinishReason !== undefined ? { finishReason: lastFinishReason } : {}),
       ...(lastFinishReasonRaw !== undefined ? { finishReasonRaw: lastFinishReasonRaw } : {}),
       ...(spendAccountId !== undefined ? { spendAccountId } : {}),
+      ...(stopReason === "complete" && callNearInputCap ? { inputCapWrapUp: true } : {}),
     };
   }
 

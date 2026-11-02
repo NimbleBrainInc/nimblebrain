@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { effectiveRunLimits, resolveTasksConfig } from "../../../../src/config/tasks.ts";
 import { MODEL_GATEWAY_BUDGET_ACCOUNT } from "../../../../src/model/gateway-refusal.ts";
+import { labelOf } from "../../../../src/platform/tasks/assessment.ts";
 import {
   createDirectExecutor,
   type ExecutorContext,
@@ -420,6 +421,37 @@ describe("createDirectExecutor — stopReason → status", () => {
     expect(run.error).not.toContain("200,000");
     expect(run.error).toContain("tasks.maxRunInputTokens");
     expect(run.error).not.toContain("Raise Max Input Tokens");
+  });
+
+  test("complete on a cap wrap-up → degraded, naming the cap, with its answer kept", async () => {
+    const executor = createDirectExecutor(
+      async (): Promise<TaskFnResult> => ({
+        ...(await taskFnWithStop("complete")({} as TaskFnRequest)),
+        output: "partial answer",
+        inputCapWrapUp: true,
+      }),
+      () => ({}),
+    );
+    const { run, result } = await executor(makeTask({ maxInputTokens: 30_000 }));
+    expect(run.status).toBe("degraded");
+    expect(run.stopReason).toBe("complete");
+    expect(run.error).toContain("Told to finish early");
+    expect(run.error).toContain("30,000");
+    expect(run.error).toContain("its own Max Input Tokens");
+    expect(result?.output).toBe("partial answer");
+    expect(labelOf(run)).toBe("Needs review");
+  });
+
+  test("a run stopped at the cap stays a failure", async () => {
+    const executor = createDirectExecutor(
+      async (): Promise<TaskFnResult> => ({
+        ...(await taskFnWithStop("max_input_tokens")({} as TaskFnRequest)),
+        inputCapWrapUp: true,
+      }),
+      () => ({}),
+    );
+    const { run } = await executor(makeTask({ maxInputTokens: 30_000 }));
+    expect(run.status).toBe("failure");
   });
 
   test("spend_limit → failure, naming the token budget it would have passed", async () => {

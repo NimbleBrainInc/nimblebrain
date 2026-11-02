@@ -495,9 +495,10 @@ export interface TaskRun {
   startedAt: string;
   completedAt?: string;
   /**
-   * `degraded`: the run finished, but a tool call failed and no later call made
-   * it good, so part of its work did not happen (`error` names the tools). It is
-   * not a failure: it neither extends an error streak nor backs the schedule off.
+   * `degraded`: the run finished, but part of its work may not have happened:
+   * a tool call failed and no later call made it good, or it was told to wrap up
+   * because its input cap was near (`error` says which). It is not a failure: it
+   * neither extends an error streak nor backs the schedule off.
    */
   /**
    * `queued` and `running` appear only on an open run's ticket (see

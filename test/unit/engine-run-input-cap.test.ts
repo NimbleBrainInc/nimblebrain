@@ -164,6 +164,7 @@ describe("AgentEngine run input cap", () => {
     expect(result.stopReason).toBe("complete");
     expect(r.modelCalls()).toBe(5);
     expect(result.usage.inputTokens).toBe(15_000);
+    expect(result.inputCapWrapUp).toBeUndefined();
   });
 
   it("runs to completion when the cap equals what the run spends", async () => {
@@ -197,6 +198,7 @@ describe("AgentEngine final-step reminder before the run input cap", () => {
     expect(r.modelCalls()).toBe(3);
     expect(result.output).toContain("partial: some items scored");
     expect(result.usage.inputTokens).toBeLessThanOrEqual(6_500);
+    expect(result.inputCapWrapUp).toBe(true);
   });
 
   it("still stops with max_input_tokens when the model ignores the reminder", async () => {
