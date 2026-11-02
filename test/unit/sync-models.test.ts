@@ -46,6 +46,18 @@ describe("buildProviderModels", () => {
     expect(models["claude-sonnet-4-6"].limits.context).toBe(1_000_000);
   });
 
+  it("replaces an introductory price with the one that holds after it", () => {
+    const models = buildProviderModels(
+      "google",
+      provider({
+        "gemini-4-argon": raw({ cost: { input: 2, output: 10, cache_read: 0.1 } }),
+        "gemini-3.8-flash": raw({ cost: { input: 0.5, output: 3, cache_read: 0.05 } }),
+      }),
+    );
+    expect(models["gemini-4-argon"].cost).toEqual({ input: 4, output: 20, cacheRead: 0.2 });
+    expect(models["gemini-3.8-flash"].cost).toEqual({ input: 0.5, output: 3, cacheRead: 0.05 });
+  });
+
   it("skips a model with no context window", () => {
     // Every budget is `context - ...`, so a zero window has no arithmetic that
     // yields a usable answer and the output cap cannot supply one. Upstream

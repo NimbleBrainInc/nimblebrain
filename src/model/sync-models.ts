@@ -71,6 +71,23 @@ const MANUAL_LIMIT_OVERRIDES: Record<string, { context?: number; output?: number
   "anthropic:claude-sonnet-4-5-20250929": { context: 200000 },
 };
 
+// Upstream carries one rate card per model, so an introductory price that ends
+// on a published date is either right before that date or right after it. A
+// usage line stores the rates current when its call is made, and a spend
+// account reserves at catalog rates, so the catalog carries the price that
+// holds once the promotion ends: it over-records during the promotion rather
+// than under-recording, and under-reserving, after it. Each entry replaces the
+// rates named. Delete one once upstream carries the same rates.
+// Format: "<provider>:<modelId>".
+const MANUAL_COST_OVERRIDES: Record<
+  string,
+  { input?: number; output?: number; cacheRead?: number }
+> = {
+  // $2 / $10 / $0.10 through 2026-11-30, then $4 / $20 / $0.20 (cache hits are
+  // 95% off input). https://ai.google.dev/gemini-api/docs/pricing
+  "google:gemini-4-argon": { input: 4, output: 20, cacheRead: 0.2 },
+};
+
 export interface RawModel {
   id: string;
   name: string;
@@ -291,6 +308,8 @@ export function buildProviderModels(
     }
     const limitOverride = MANUAL_LIMIT_OVERRIDES[`${providerId}:${modelId}`];
     if (limitOverride) model.limits = { ...model.limits, ...limitOverride };
+    const costOverride = MANUAL_COST_OVERRIDES[`${providerId}:${modelId}`];
+    if (costOverride) model.cost = { ...model.cost, ...costOverride };
     models[modelId] = model;
   }
 

@@ -222,6 +222,8 @@ A workspace can override individual slots via `workspace.json → models`. When 
 
 A model the catalog does not list is still accepted when it names its provider (`"openai:my-fine-tune"`, or a model served under its own name through an OpenAI-compatible proxy). It is passed to that provider unchanged, so a typo in the model half is not rejected at config load; it fails at the provider on the first call that uses the slot.
 
+A catalog model's rates price its usage lines, which keep the rates of the moment each call is made, and size what each call reserves against a spend account. Where a provider runs an introductory price that ends on a published date, the catalog carries the price that holds after it. `google:gemini-4-argon` is listed at $4 input, $20 output, and $0.20 cache read per million tokens, Google's price from 2026-12-01; through 2026-11-30 Google charges half that, so usage recorded and budget consumed on it during that period read at twice what Google bills.
+
 ### Changing a slot affects new conversations only
 
 A conversation is bound to a model when it is created, and that binding does not
