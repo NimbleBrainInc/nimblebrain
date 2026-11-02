@@ -129,11 +129,19 @@ const LISTEN_RETRY_MAX_MS = 60_000;
 /** Ceiling on a `resources/templates/list` read made while a prompt is assembled. */
 const RESOURCE_TEMPLATES_TIMEOUT_MS = 5_000;
 
+/**
+ * The `_meta` key on a resource template naming the view that shows its records: the
+ * `resourceUri` of one of the server's own placements (ADR-0059).
+ */
+export const TEMPLATE_VIEW_META = "ai.nimblebrain/view";
+
 /** One entry of a server's `resources/templates/list`, as the host keeps it. */
 export interface ResourceTemplateInfo {
   uriTemplate: string;
   name: string;
   title?: string;
+  /** The `ui://` URI of the view that shows this template's records, when the server names one. */
+  view?: string;
 }
 
 /**
@@ -1800,11 +1808,15 @@ export class McpSource implements ToolSource {
       const res = await client.listResourceTemplates(undefined, {
         timeout: RESOURCE_TEMPLATES_TIMEOUT_MS,
       });
-      list = res.resourceTemplates.map((t) => ({
-        uriTemplate: t.uriTemplate,
-        name: t.name,
-        ...(typeof t.title === "string" ? { title: t.title } : {}),
-      }));
+      list = res.resourceTemplates.map((t) => {
+        const view = t._meta?.[TEMPLATE_VIEW_META];
+        return {
+          uriTemplate: t.uriTemplate,
+          name: t.name,
+          ...(typeof t.title === "string" ? { title: t.title } : {}),
+          ...(typeof view === "string" && view.length > 0 ? { view } : {}),
+        };
+      });
     } catch (err) {
       log.debug(
         "mcp",
