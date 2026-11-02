@@ -10,8 +10,8 @@ import {
   signEnvelope,
   verifyEnvelopeAsTenant,
 } from "../../oauth/envelope.ts";
-import { readFleetAuthorizer } from "../../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
+import { assertFleetIdentityProvisioned } from "../../oauth/tenant-key-mint.ts";
 import { log } from "../../observability/log.ts";
 import {
   type FlowOwner,
@@ -64,10 +64,10 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // hitting a generic 500. Idempotent: returns the cached value on
   // subsequent calls in the route handlers below.
   getBouncerMode();
-  // Same for the fleet authorizer: with its issuer set, a missing or malformed
-  // tenant key refuses startup, since the authorizer refuses every unasserted
-  // token request.
-  readFleetAuthorizer();
+  // Same for the fleet: with an authorizer token endpoint set, a missing or
+  // malformed tenant id or key refuses startup, since no fleet token can be minted
+  // without them.
+  assertFleetIdentityProvisioned();
 
   const app = new Hono<AppEnv>();
 

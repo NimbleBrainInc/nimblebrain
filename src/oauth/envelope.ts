@@ -167,7 +167,7 @@ export function isUniformByte(buf: Buffer, byte: number): boolean {
  * the signature.
  *
  * This is the single crypto construction shared by every payload schema that
- * rides this envelope: the LOGIN assertion (`signEnvelope`, payload carries
+ * rides this envelope: the OAuth callback state (`signEnvelope`, payload carries
  * `inner`) and the tenant-key MINT request (`buildMintRequest` in
  * `tenant-key-mint.ts`, payload carries `workspace`/`audience`/`scope`). The
  * inbound hooks door was a third: it now addresses a stream by an opaque stored
@@ -204,7 +204,7 @@ export function signMacEnvelope(payload: object, tenantKey: Buffer): string {
  * the `v1.<b64url(payload)>` prefix, and compare it in constant time. Returns
  * the raw payload bytes. It reads **no field** and consults **no clock** —
  * payload schema and temporal policy belong to the caller, because they differ
- * per schema: a login assertion expires in minutes, while a hook token is held
+ * per schema: OAuth callback state expires in minutes, while a hook token is held
  * by a third party for months and is retired by a registration lookup instead.
  *
  * Extracted so a second local verifier never has to restate the compare. Before
