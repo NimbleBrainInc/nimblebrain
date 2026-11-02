@@ -197,6 +197,49 @@ describe("resolveOpen", () => {
     });
   });
 
+  test("a record opens in the view its template names, among its own server's views", async () => {
+    const views = [
+      placement({ serverName: "people", label: "Contacts", route: "people" }),
+      placement({
+        serverName: "people",
+        label: "Organizations",
+        route: "people/organizations",
+        resourceUri: "ui://people/organizations",
+      }),
+      placement({
+        serverName: "tasks",
+        label: "Tasks",
+        route: "tasks-app",
+        resourceUri: "ui://tasks/main",
+      }),
+    ];
+    const named = scope({
+      placements: views,
+      templatesOf: async (name) =>
+        name === "people"
+          ? [
+              { uriTemplate: "people://organizations/{id}", view: "ui://people/organizations" },
+              // A view of another server's app is never honoured: the record opens in its own app.
+              { uriTemplate: "people://contacts/{id}", view: "ui://tasks/main" },
+              { uriTemplate: "people://notes/{id}", view: "ui://people/missing" },
+            ]
+          : [],
+    });
+    expect(await resolveOpen(named, "people://organizations/o1")).toEqual({
+      destination: {
+        app: "people/organizations",
+        name: "Organizations",
+        target: "people://organizations/o1",
+      },
+    });
+    expect(await resolveOpen(named, "people://contacts/c1")).toEqual({
+      destination: { app: "people", name: "Contacts", target: "people://contacts/c1" },
+    });
+    expect(await resolveOpen(named, "people://notes/n1")).toEqual({
+      destination: { app: "people", name: "Contacts", target: "people://notes/n1" },
+    });
+  });
+
   test("an app outside the nav is never a claimant", async () => {
     const onlyWidget = scope({
       templatesOf: async (name) => (name === "widget" ? [{ uriTemplate: "w://{id}" }] : []),

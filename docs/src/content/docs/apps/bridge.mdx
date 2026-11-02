@@ -595,9 +595,19 @@ The host resolves the URI in this order:
 |-----|-------|
 | `conversation://<id>` | The chat panel, at that conversation. |
 | An app's own `ui://` resource | That app, at its home. |
-| Anything else | The one app in the workspace whose server advertises a resource template (`resources/templates/list`) the URI expands from. The host opens it and sends it the URI as [`ai.nimblebrain/navigate`](#ainimblebrainnavigate). |
+| Anything else | The one app in the workspace whose server advertises a resource template (`resources/templates/list`) the URI expands from. The host opens it at the view that template names, or at its first view, and sends it the URI as [`ai.nimblebrain/navigate`](#ainimblebrainnavigate). |
 
 So for your own records to be openable, by other apps and by the agent, advertise their URI shape as a resource template.
+
+An app with several sidebar views can say which view shows a kind of record: put that view's `ui://` URI (its placement's `resourceUri`) in the template's `_meta` under `ai.nimblebrain/view`. A record then opens there, so the breadcrumb and the sidebar agree, instead of at the app's first view. Only one of your own views counts; any other value is ignored.
+
+```json
+{
+  "uriTemplate": "outreach://campaigns/{id}",
+  "name": "campaign",
+  "_meta": { "ai.nimblebrain/view": "ui://outreach/campaigns" }
+}
+```
 
 `{}` means the host put the destination on screen and handed it the URI. Whether an app then shows that view is the app's to decide. When nothing in the workspace shows the URI, or two apps claim it, the host answers an error naming it, with code `-32602`. The agent's `nb__open_app` resolves through the same rules.
 

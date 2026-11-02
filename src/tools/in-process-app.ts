@@ -157,6 +157,19 @@ export interface ResourceTemplate {
   name: string;
   description?: string;
   mimeType?: string;
+  /** Advertised as the template's `_meta`, e.g. the view that shows its records (`ai.nimblebrain/view`). */
+  _meta?: Record<string, unknown>;
+}
+
+/** A template as `resources/templates/list` advertises it: only the fields it declares. */
+function advertisedTemplate(t: ResourceTemplate) {
+  return {
+    uriTemplate: t.uriTemplate,
+    name: t.name,
+    ...(t.description ? { description: t.description } : {}),
+    ...(t.mimeType ? { mimeType: t.mimeType } : {}),
+    ...(t._meta ? { _meta: t._meta } : {}),
+  };
 }
 
 /**
@@ -372,12 +385,7 @@ export function defineInProcessApp(
           // matching how a server that doesn't advertise templates behaves.
           if (hasTemplates) {
             server.setRequestHandler("resources/templates/list", async () => ({
-              resourceTemplates: templates.map((t) => ({
-                uriTemplate: t.uriTemplate,
-                name: t.name,
-                ...(t.description ? { description: t.description } : {}),
-                ...(t.mimeType ? { mimeType: t.mimeType } : {}),
-              })),
+              resourceTemplates: templates.map(advertisedTemplate),
             }));
           }
         }

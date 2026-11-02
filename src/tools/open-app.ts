@@ -12,8 +12,9 @@
 //   1. `conversation://<id>`: a kernel surface, the chat panel.
 //   2. An app's own `ui://` resource: that app, at its home.
 //   3. Anything else: the one openable app whose server advertises a resource
-//      template the URI expands from. Two claimants is a workspace defect, and
-//      refused rather than guessed.
+//      template the URI expands from, at the view that template names
+//      (`_meta["ai.nimblebrain/view"]`, ADR-0059), else at the app's first view.
+//      Two claimants is a workspace defect, and refused rather than guessed.
 //
 // For the agent's call only the web client that sent the turn acts, and only
 // on its own live turn: a conversation reloaded from history, reattached after
@@ -46,8 +47,11 @@ type Resolution = { destination: OpenDestination } | { error: string };
 /** What resolution reads, so it can be exercised without a runtime. */
 export interface OpenScope {
   placements: readonly PlacementEntry[];
-  /** The resource templates a server advertises; empty when it advertises none. */
-  templatesOf(serverName: string): Promise<readonly { uriTemplate: string }[]>;
+  /**
+   * The resource templates a server advertises, each with the `ui://` URI of the view that
+   * shows its records when the server names one; empty when it advertises none.
+   */
+  templatesOf(serverName: string): Promise<readonly { uriTemplate: string; view?: string }[]>;
   /** Whether a conversation is one of the caller's in this workspace. */
   hasConversation(id: string): boolean;
 }
@@ -110,19 +114,26 @@ export async function resolveOpen(scope: OpenScope, uri: string): Promise<Resolu
       : { error: `No conversation ${uri} in this workspace.` };
   }
 
-  // One placement per server: the first, which is the server's highest-priority entry.
-  const apps = new Map<string, PlacementEntry>();
+  // Each server's openable views, highest priority first. The first is where a record opens
+  // when its template names no view.
+  const apps = new Map<string, PlacementEntry[]>();
   for (const p of scope.placements.filter(isOpenable)) {
-    if (!apps.has(p.serverName)) apps.set(p.serverName, p);
+    apps.set(p.serverName, [...(apps.get(p.serverName) ?? []), p]);
   }
 
   const home = scope.placements.find((p) => isOpenable(p) && p.resourceUri === uri);
   if (home) return { destination: appDestination(home) };
 
+  // A template names a view only among its own server's views, so a server can choose where
+  // its records open in its own app and never send one into another app.
   const claims = await Promise.all(
-    [...apps.values()].map(async (p) => {
-      const templates = await scope.templatesOf(p.serverName);
-      return templates.some((t) => expandsFrom(t.uriTemplate, uri)) ? p : null;
+    [...apps.values()].map(async (views) => {
+      const [first] = views;
+      if (!first) return null;
+      const templates = await scope.templatesOf(first.serverName);
+      const match = templates.find((t) => expandsFrom(t.uriTemplate, uri));
+      if (!match) return null;
+      return views.find((p) => match.view !== undefined && p.resourceUri === match.view) ?? first;
     }),
   );
   const owners = claims.filter((p): p is PlacementEntry => p !== null);

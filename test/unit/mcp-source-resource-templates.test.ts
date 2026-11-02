@@ -33,6 +33,27 @@ describe("McpSource.resourceTemplates", () => {
     }
   });
 
+  it("keeps the view a template names for its records, and only a non-empty string", async () => {
+    const source = await startSource([
+      {
+        uriTemplate: "crm://contacts/{id}",
+        name: "contact",
+        _meta: { "ai.nimblebrain/view": "ui://acme-crm/contacts" },
+      },
+      { uriTemplate: "crm://deals/{id}", name: "deal", _meta: { "ai.nimblebrain/view": 42 } },
+      { uriTemplate: "crm://notes/{id}", name: "note", _meta: { "ai.nimblebrain/view": "" } },
+    ]);
+    try {
+      expect(await source.resourceTemplates()).toEqual([
+        { uriTemplate: "crm://contacts/{id}", name: "contact", view: "ui://acme-crm/contacts" },
+        { uriTemplate: "crm://deals/{id}", name: "deal" },
+        { uriTemplate: "crm://notes/{id}", name: "note" },
+      ]);
+    } finally {
+      await source.stop();
+    }
+  });
+
   it("is empty when the server does not answer resources/templates/list", async () => {
     const source = await startSource();
     try {
