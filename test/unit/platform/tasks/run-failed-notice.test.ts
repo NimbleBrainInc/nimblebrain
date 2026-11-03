@@ -209,10 +209,12 @@ describe("an edit that resets the streak re-arms the notice", () => {
     makeTask({
       enabled: false,
       consecutiveErrors: MAX_CONSECUTIVE_ERRORS,
+      transientErrors: 4,
       failureNoticeRunId: "run_earlier00001",
     });
     updateTask(TASK_ID, { enabled: true }, ctx);
     expect(loadTask(workDir, WS, OWNER, TASK_ID)?.failureNoticeRunId).toBeUndefined();
+    expect(loadTask(workDir, WS, OWNER, TASK_ID)?.transientErrors).toBeUndefined();
     const notified = start(["failed"]);
     const [run] = await runTimes(1);
     expect(notified.map((n) => n.run.id)).toEqual([run?.id ?? ""]);

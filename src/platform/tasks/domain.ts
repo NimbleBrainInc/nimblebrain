@@ -404,6 +404,7 @@ function applyOnceRearm(task: Task, patch: DomainUpdatePatch, wasRetiredOnce: bo
   if (patch.enabled === false) return;
   task.enabled = true;
   task.consecutiveErrors = 0;
+  task.transientErrors = undefined;
   task.failureNoticeRunId = undefined;
   task.disabledAt = undefined;
   task.disabledReason = undefined;
@@ -449,6 +450,7 @@ export function updateTask(
   // Clear disable state when re-enabling
   if (patch.enabled === true) {
     task.consecutiveErrors = 0;
+    task.transientErrors = undefined;
     task.failureNoticeRunId = undefined;
     task.disabledAt = undefined;
     task.disabledReason = undefined;

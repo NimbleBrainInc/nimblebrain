@@ -19,7 +19,7 @@ import { checkAgainstSchema, parseJsonDeliverable } from "./json-schema.ts";
 import {
   BATCH_ACCOUNT_PREFIX,
   budgetSpendAccounts,
-  isTransientError,
+  RUN_DURATION_EXCEEDED,
   type RunInput,
   type RunSpendAccount,
   type TaskRunTrigger,
@@ -985,7 +985,9 @@ function classifyAbortedRun(
   } else {
     run.status = "timeout";
     run.error = `Task ${opts.taskId} timed out after ${Math.round(opts.timeoutMs / 1000)}s`;
-    run.transient = isTransientError(run.error);
+    // Not read from the text, which quotes the task's id: a run that used its
+    // whole time allowance meets the same limit next time.
+    run.transient = false;
   }
   // "aborted" is not part of TaskRun's stopReason union; the status field
   // carries the operational outcome. Record the engine's stop as "other" (no
@@ -1084,7 +1086,10 @@ export function createDirectExecutor(
       // "I cancelled", not "the clock ran out at the same moment". Drift here
       // would silently restamp a cancel as a timeout in the run record.
       if (timedOut && !externalAbort.wasExternal()) {
-        throw new Error(`Task ${task.id} timed out after ${Math.round(timeoutMs / 1000)}s`);
+        throw Object.assign(
+          new Error(`Task ${task.id} timed out after ${Math.round(timeoutMs / 1000)}s`),
+          { code: RUN_DURATION_EXCEEDED },
+        );
       }
       throw err;
     } finally {
