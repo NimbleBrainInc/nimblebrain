@@ -54,6 +54,7 @@ import {
 } from "./extensions";
 import { buildHostCapabilities, TASKS_EXTENSION_ID } from "./host-capabilities";
 import { buildHostStyles, type UploadLimits } from "./host-extensions";
+import { appWindowOf, onAppMessage, postToAppWindow } from "./iframe";
 import type {
   LoggingMessageNotification,
   UiOpenConnectorSettingsMessage,
@@ -192,7 +193,7 @@ export function createBridge(
     // work (iframe.ts TODO in createAppIframe) that gives iframes a real
     // origin. The iframe→parent direction (where the real leak lives) is
     // hardened via `hostContext.origin` in the handshake response below.
-    iframe.contentWindow?.postMessage(data, "*");
+    postToAppWindow(iframe, data);
   }
 
   // A frame that makes a held one redundant takes its place rather than
@@ -216,7 +217,7 @@ export function createBridge(
   function handleMessage(event: MessageEvent): void {
     if (destroyed) return;
     // Security: only accept messages from this iframe's window
-    if (event.source !== iframe.contentWindow) return;
+    if (event.source !== appWindowOf(iframe)) return;
 
     const msg = event.data;
     if (!msg || typeof msg !== "object") return;
@@ -442,7 +443,7 @@ export function createBridge(
     }
   }
 
-  window.addEventListener("message", handleMessage);
+  const stopListening = onAppMessage(iframe, handleMessage);
 
   return {
     sendToolResult(result: ExtAppsToolResultNotification["params"]): void {
@@ -488,7 +489,7 @@ export function createBridge(
       offScreenBridges.delete(stateKey);
       screenObserver?.disconnect();
       closeChannel();
-      window.removeEventListener("message", handleMessage);
+      stopListening();
     },
   };
 }

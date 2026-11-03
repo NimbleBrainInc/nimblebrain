@@ -6,12 +6,14 @@ on:
     paths:
       - "web/Caddyfile"
       - "web/Dockerfile"
+      - "web/public/app-frame.html"
       - ".github/workflows/caddyfile-ci.yml"
   push:
     branches: [main]
     paths:
       - "web/Caddyfile"
       - "web/Dockerfile"
+      - "web/public/app-frame.html"
       - ".github/workflows/caddyfile-ci.yml"
 
 concurrency:
@@ -101,5 +103,27 @@ jobs:
             echo "FAIL: shell document lacks X-Frame-Options"; exit 1; }
           echo "$shell" | grep -iq "^content-security-policy: frame-ancestors 'none'" || {
             echo "FAIL: shell document lacks frame-ancestors"; exit 1; }
+
+          # App frames nest each app in this page so the app's base URL never
+          # names the shell's URL. It must be the page itself (never the SPA
+          # fallback, which would boot the shell inside a frame), and framable
+          # by this origin only.
+          echo "--- the app frame page ---"
+          cp web/public/app-frame.html srv/app-frame.html
+          frame=$(curl -sI http://localhost:8080/app-frame.html)
+          echo "$frame"
+          echo "$frame" | grep -iq "^content-security-policy: frame-ancestors 'self'" || {
+            echo "FAIL: app frame page is not framable by this origin only"; exit 1; }
+          echo "$frame" | grep -iq '^x-frame-options: SAMEORIGIN' || {
+            echo "FAIL: app frame page lacks X-Frame-Options"; exit 1; }
+          curl -fsS http://localhost:8080/app-frame.html | grep -q 'data-app-frame' || {
+            echo "FAIL: app frame path does not serve the frame page"; exit 1; }
+          rm srv/app-frame.html
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/app-frame.html)
+          if [ "$code" != "404" ]; then
+            echo "FAIL: a missing app frame page returned $code, not 404 — the SPA"
+            echo "      fallback would boot the shell inside an app frame."
+            exit 1
+          fi
 
           docker rm -f caddy-cors

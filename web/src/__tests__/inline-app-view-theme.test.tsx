@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { loadAppFrame } from "../../test/app-frame";
 import { realClient, realMcpBridgeClient } from "../../test/setup";
 import { HOST_STYLES_EXTENSION } from "../bridge/extensions";
 import { getModeExtensionTokens, getSpecThemeTokens, type ThemeMode } from "../bridge/theme";
@@ -88,14 +89,8 @@ async function mountInline(from: ThemeMode): Promise<{
       inbox.push(data as Message);
     },
   } as Window;
-  Object.defineProperty(iframe, "contentWindow", { configurable: true, get: () => stubWindow });
-
-  function send(data: unknown): void {
-    const WindowMessageEvent = window.MessageEvent;
-    const event = new WindowMessageEvent("message", { data });
-    Object.defineProperty(event, "source", { configurable: true, get: () => stubWindow });
-    window.dispatchEvent(event);
-  }
+  if (!iframe) throw new Error("no iframe mounted");
+  const send = loadAppFrame(iframe, stubWindow).post;
 
   send({
     jsonrpc: "2.0",

@@ -210,9 +210,80 @@ export function injectCSP(html: string, policy: string): string {
 }
 
 /**
- * Create a sandboxed iframe for an MCP App.
+ * The same-origin page every app frame nests its app in (`web/public/app-frame.html`). Its URL
+ * carries no query, so the app's base URL and its document's referrer name this fixed page, never
+ * the person's place in the shell (`?chat=`, an app's target). It is served by its own handler,
+ * with no fallback to the shell, and only this origin may frame it.
+ */
+export const APP_FRAME_PATH = "/app-frame.html";
+
+/** The marker the frame page carries, so a missing page (a 404, a fallback) never hosts an app. */
+const APP_FRAME_MARKER = "data-app-frame";
+
+/** An app frame's nested app, and who hears what the app posts. */
+interface NestedApp {
+  app: HTMLIFrameElement | null;
+  handlers: Set<(event: MessageEvent) => void>;
+}
+
+const nestedApps = new WeakMap<HTMLIFrameElement, NestedApp>();
+
+/**
+ * The window the app in `iframe` runs in: the nested frame of an app frame, or, for a frame
+ * `createAppIframe` did not make, the frame's own window. Post to it, and trust only messages
+ * whose `source` it is.
+ */
+export function appWindowOf(iframe: HTMLIFrameElement): Window | null {
+  const nested = nestedApps.get(iframe);
+  return nested ? (nested.app?.contentWindow ?? null) : iframe.contentWindow;
+}
+
+/**
+ * Post `message` to the app in `iframe`. An MCP Apps client accepts a message only from its
+ * parent, so for an app frame the frame page's own `postToApp` sends it; a post made from the
+ * shell would name the shell as its sender and be dropped. For any other frame it is posted
+ * to the frame's window. The app's origin is opaque, so the target origin can only be `*`.
+ */
+export function postToAppWindow(iframe: HTMLIFrameElement, message: unknown): void {
+  if (!nestedApps.has(iframe)) {
+    iframe.contentWindow?.postMessage(message, "*");
+    return;
+  }
+  const page = iframe.contentWindow;
+  if (page && "postToApp" in page && typeof page.postToApp === "function") page.postToApp(message);
+}
+
+/**
+ * Hear what the app in `iframe` posts. An app posts to its parent, which for an app frame is the
+ * frame page, so its messages arrive there; for any other frame they arrive on this window.
+ * Returns the stop function.
+ */
+export function onAppMessage(
+  iframe: HTMLIFrameElement,
+  handler: (event: MessageEvent) => void,
+): () => void {
+  const nested = nestedApps.get(iframe);
+  if (!nested) {
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }
+  nested.handlers.add(handler);
+  return () => nested.handlers.delete(handler);
+}
+
+/**
+ * Create the frame an MCP App renders in.
  *
- * Sandbox attributes:
+ * The element returned is an app frame: a same-origin frame at `APP_FRAME_PATH`, which the caller
+ * sizes and places. Once that page loads, the app's own frame is built inside it, a `srcdoc`
+ * frame whose base URL and referrer are the frame page's. Placed directly in the shell, a
+ * `srcdoc` frame takes the shell's URL as its base URL, so any app could read where the person
+ * is. The frame page is not sandboxed, because sandbox flags pass to a nested frame and the app
+ * needs scripts; its one script is the `postToApp` the shell sends through, and the app cannot
+ * reach it from its opaque origin. Post with `postToAppWindow`, hear the app with `onAppMessage`,
+ * and trust only messages whose `source` is `appWindowOf`.
+ *
+ * The app's frame is sandboxed:
  * - allow-scripts: JavaScript execution (the app is an interactive UI)
  * - allow-popups: External link opening
  * - allow-popups-to-escape-sandbox: Opened popups are not sandboxed
@@ -228,7 +299,7 @@ export function injectCSP(html: string, policy: string): string {
  *   the host session cookie on same-origin `/v1` + `/mcp` fetches, and remove
  *   its own sandbox: a full sandbox escape. Withheld, the app runs in an
  *   opaque origin. The bridge keys trust on `event.source ===
- *   iframe.contentWindow` (not origin), so postMessage still works; a real
+ *   appWindowOf(iframe)` (not origin), so postMessage still works; a real
  *   per-app origin, if ever needed, comes from the sandbox-proxy pattern in
  *   the TODO below — never from same-origin.
  * - allow-forms, allow-top-navigation.
@@ -242,21 +313,13 @@ export function createAppIframe(
   appName: string,
   options?: CreateIframeOptions,
 ): HTMLIFrameElement {
-  const iframe = document.createElement("iframe");
-
-  iframe.sandbox.add(
-    "allow-scripts",
-    "allow-popups",
-    "allow-popups-to-escape-sandbox",
-    "allow-downloads",
-  );
-
   // Permissions Policy: clipboard-write always on (gesture-gated by browser).
   // Server-declared device permissions (camera/microphone/geolocation) are
   // off unless the host explicitly opts in via
   // `options.honorServerPermissions` — a remote MCP server doesn't get to
-  // grant itself device access.
-  iframe.allow = buildAllowAttr(options?.permissions, options?.honorServerPermissions ?? false);
+  // grant itself device access. A permission reaches a nested frame only
+  // when every frame above it allows it, so both frames carry the same list.
+  const allow = buildAllowAttr(options?.permissions, options?.honorServerPermissions ?? false);
 
   // Inject theme CSS variables into the HTML
   const themeMode = options?.themeMode ?? getHostThemeMode();
@@ -267,8 +330,9 @@ export function createAppIframe(
   const csp = buildCSP(options);
   const securedHtml = injectCSP(themedHtml, csp);
 
-  // Use srcdoc (not src URL) per spec
-  iframe.srcdoc = securedHtml;
+  const iframe = document.createElement("iframe");
+  iframe.allow = allow;
+  iframe.src = APP_FRAME_PATH;
 
   // Track app name for event routing
   iframe.dataset.app = appName;
@@ -283,11 +347,40 @@ export function createAppIframe(
     iframe.style.border = "none";
   }
 
+  const nested: NestedApp = { app: null, handlers: new Set() };
+  nestedApps.set(iframe, nested);
+
+  // Each load of the frame page (moving the element in the DOM reloads it)
+  // builds the app afresh, as a reload of a `srcdoc` frame would.
+  iframe.addEventListener("load", () => {
+    const page = iframe.contentDocument;
+    const pageWindow = iframe.contentWindow;
+    if (!page?.body?.hasAttribute(APP_FRAME_MARKER) || !pageWindow) return;
+    pageWindow.addEventListener("message", (event) => {
+      for (const handler of nested.handlers) handler(event);
+    });
+
+    // Built from the frame page's own document, so the app's base URL is that page's.
+    const app = page.createElement("iframe");
+    app.sandbox.add(
+      "allow-scripts",
+      "allow-popups",
+      "allow-popups-to-escape-sandbox",
+      "allow-downloads",
+    );
+    app.allow = allow;
+    app.title = appName;
+    app.style.cssText = "display:block;width:100%;height:100%;border:0";
+    // Use srcdoc (not src URL) per spec
+    app.srcdoc = securedHtml;
+    nested.app = app;
+    page.body.replaceChildren(app);
+  });
+
   // TODO sandbox-proxy: `_meta.ui.domain` requests a dedicated sandbox
   // origin so the app runs in a real origin rather than the `null` origin
-  // of srcdoc. Requires the double-iframe pattern — outer at host origin,
-  // inner at a dedicated sandbox host. Deferred to the sandbox-proxy work
-  // documented in an internal design note.
+  // of srcdoc. That puts the frame page at a dedicated sandbox host.
+  // Deferred to the sandbox-proxy work documented in an internal design note.
 
   return iframe;
 }
