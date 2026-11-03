@@ -86,6 +86,13 @@
 		# an ETag revalidation instead of leaving it to heuristic cache freshness,
 		# which could otherwise serve a stale app after a deploy.
 		header Cache-Control "no-cache"
+		# The shell's URL can name what the person is looking at (`?chat=`, an app's
+		# record), so another origin learns only this origin from a link or request.
+		# Nothing frames the shell, not even a page on this origin (stored file bytes
+		# are served here), so no page can put the shell's controls under a click it chose.
+		header Referrer-Policy "strict-origin-when-cross-origin"
+		header X-Frame-Options "DENY"
+		header Content-Security-Policy "frame-ancestors 'none'"
 		try_files {path} /index.html
 		file_server
 	}

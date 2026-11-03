@@ -142,6 +142,15 @@ Internet → Reverse Proxy (TLS) → Web (27246) → Platform (27247, internal)
 Do not add `ports: - "27247:27247"` to the platform service in `docker-compose.yml`. This would expose the API directly, bypassing the web container's reverse proxy.
 </Aside>
 
+### Web UI headers
+
+The web container serves the UI's pages with:
+
+- `Referrer-Policy: strict-origin-when-cross-origin`, so a link or request to another origin carries only your origin, not the page's path or query (which can name the open conversation).
+- `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`, so no page, on any origin including your own, can embed the UI in a frame. A portal that iframes the web UI will show a blank frame; link to it instead.
+
+These apply to the UI's pages only. `/v1/*`, `/mcp*`, and static assets keep their own headers.
+
 ### Firewall rules
 
 If your host is directly on the internet, restrict inbound traffic:

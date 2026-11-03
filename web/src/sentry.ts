@@ -1,5 +1,6 @@
 import type * as Sentry from "@sentry/react";
 import { getConfig } from "./config";
+import { withoutQuery } from "./lib/url-scrub";
 
 /**
  * Sentry client-error tracking for the web app.
@@ -77,10 +78,8 @@ export function initSentry(sentry: typeof import("@sentry/react")): void {
     // Strip query strings from transaction names so workspace/conversation ids
     // don't become span names. Inlined for the SDK's contextual typing.
     beforeSendTransaction: (event) => {
-      if (event.transaction) {
-        const q = event.transaction.indexOf("?");
-        if (q >= 0) event.transaction = event.transaction.slice(0, q);
-      }
+      if (event.transaction) event.transaction = withoutQuery(event.transaction);
+      if (event.request?.url) event.request.url = withoutQuery(event.request.url);
       return event;
     },
   });
@@ -95,7 +94,10 @@ export function beforeSend(event: Sentry.ErrorEvent): Sentry.ErrorEvent {
   if (event.request) {
     event.request.cookies = undefined;
     event.request.headers = undefined;
+    // The page URL's query names what the person is looking at (`?chat=`, an app's record).
+    if (event.request.url) event.request.url = withoutQuery(event.request.url);
   }
+  if (event.transaction) event.transaction = withoutQuery(event.transaction);
   // Keep only the opaque id; never email / username / ip.
   if (event.user) {
     event.user = event.user.id ? { id: event.user.id } : {};
@@ -107,13 +109,16 @@ export function beforeSend(event: Sentry.ErrorEvent): Sentry.ErrorEvent {
 export function beforeBreadcrumb(crumb: Sentry.Breadcrumb): Sentry.Breadcrumb | null {
   // App logs can carry prompts / PII — never breadcrumb them.
   if (crumb.category === "console") return null;
-  // Strip query strings from fetch/xhr/nav URLs. (Opaque ids in the URL *path*
-  // — e.g. /w/<wsId> — are within the trust boundary: they're tagged anyway and
-  // aren't the content the rule forbids, so we don't rewrite path segments.)
-  const url = crumb.data?.url;
-  if (typeof url === "string") {
-    const q = url.indexOf("?");
-    if (q >= 0 && crumb.data) crumb.data.url = url.slice(0, q);
+  // Strip query strings and fragments from fetch/xhr URLs (`url`) and navigation
+  // breadcrumbs (`from`, `to`). (Opaque ids in the URL *path* — e.g. /w/<wsId> —
+  // are within the trust boundary: they're tagged anyway and aren't the content
+  // the rule forbids, so we don't rewrite path segments.)
+  const data = crumb.data;
+  if (data) {
+    for (const key of ["url", "from", "to"] as const) {
+      const value = data[key];
+      if (typeof value === "string") data[key] = withoutQuery(value);
+    }
   }
   return crumb;
 }
