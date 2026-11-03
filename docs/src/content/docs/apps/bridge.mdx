@@ -599,6 +599,11 @@ The host resolves the URI in this order:
 
 So for your own records to be openable, by other apps and by the agent, advertise their URI shape as a resource template.
 
+Matching stays cheap whatever a server advertises, so some templates and URIs never match:
+
+- **A URI longer than 2,048 characters.**
+- **A template with more than one place where a value's end is ambiguous.** A value's end is fixed when the text after it holds a character the value cannot contain: `/` or `,` after `{x}`, `/` after `{;x}`, `&` after `{?x}`, and nothing after `{+x}` or `{#x}`. So `{kind}/{id}`, `{id}{?cursor}` and `files/{+path}` match, and `{kind}{id}{rev}` does not.
+
 An app with several sidebar views can say which view shows a kind of record: put that view's `ui://` URI (its placement's `resourceUri`) in the template's `_meta` under `ai.nimblebrain/view`. A record then opens there, so the breadcrumb and the sidebar agree, instead of at the app's first view. Only one of your own views counts; any other value is ignored.
 
 ```json
