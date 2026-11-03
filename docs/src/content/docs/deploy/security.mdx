@@ -151,6 +151,8 @@ The web container serves the UI's pages with:
 
 These apply to the UI's pages only. `/v1/*`, `/mcp*`, and static assets keep their own headers.
 
+Stored files (`/v1/files/<id>`) are always served with `Content-Security-Policy: sandbox` and the platform's default policy, even when `NB_CSP` is cleared. An uploaded HTML or SVG file opened in the browser then runs no script on your domain. Images and PDFs display as before.
+
 ### Firewall rules
 
 If your host is directly on the internet, restrict inbound traffic:

@@ -17,6 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { FILE_BYTES_CSP } from "../../src/api/handlers.ts";
 import type { UploadResourceResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
@@ -88,6 +89,43 @@ describe("GET /v1/files resolves the workspace from the file id", () => {
     // A bogus (well-formed) id resolves to no partition → 404.
     const missing = await fetch(`${baseUrl}/v1/files/fl_${"0".repeat(24)}`);
     expect(missing.status).toBe(404);
+  });
+
+  it("serves stored bytes sandboxed, even with the platform CSP turned off", async () => {
+    // An HTML file opened directly must not run script on the shell's origin, so the serve path
+    // sets its own policy rather than leaving it to `NB_CSP`, which an operator can clear.
+    const previous = process.env.NB_CSP;
+    process.env.NB_CSP = "";
+    const noCsp = startServer({ runtime, port: 0 });
+    if (previous === undefined) delete process.env.NB_CSP;
+    else process.env.NB_CSP = previous;
+    try {
+      const born = await runtime.chat({
+        identity: DEV_IDENTITY,
+        message: "hi",
+        workspaceId: WORKSPACE_A,
+      });
+      const form = new FormData();
+      const page = "<script>parent.document.title = 'ran'</script>";
+      form.append("file", new Blob([page], { type: "text/html" }), "page.html");
+      form.append("conversationId", born.conversationId);
+      const upload = await fetch(
+        `http://localhost:${noCsp.port}/v1/workspaces/${WORKSPACE_A}/resources`,
+        {
+          method: "POST",
+          body: form,
+        },
+      );
+      const fileId: string = (await readJson<UploadResourceResponse>(upload)).files[0].id;
+
+      const res = await fetch(`http://localhost:${noCsp.port}/v1/files/${fileId}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-security-policy")).toBe(FILE_BYTES_CSP);
+      expect(FILE_BYTES_CSP.split(";")[0]).toBe("sandbox");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    } finally {
+      noCsp.stop(true);
+    }
   });
 
   it("self-heals a stale memo entry: a wrong cached workspace recovers via disk", async () => {

@@ -18,6 +18,7 @@ A file lives at `workspaces/<wsId>/files/<ownerId>/<fileId>_<name>` (per-owner r
 
   No workspace in scope ⇒ file storage denies (e.g. a background job with none bound).
 - **The browser serve endpoint is bare too** — `GET /v1/files/:id`, identity-scoped: no workspace, no query, so a link to a file works whichever workspace is open. The workspace is resolved from the globally-unique id via the process-wide `FileLocator` (`src/files/locator.ts`, `runtime.getFileLocator()`), which searches ONLY the caller's own owner partitions. The owner partition is both the gate and the search scope — no client-supplied coordinate, and a request reaches only the caller's own bytes.
+- **Stored bytes are served sandboxed.** The serve endpoint sends its own `Content-Security-Policy` (`FILE_BYTES_CSP` in `src/api/handlers.ts`: `sandbox` plus the platform default), never leaving it to the middleware, because an operator can clear `NB_CSP` and a stored HTML or SVG file opened directly would then run script on the shell's origin.
 - **The locator's `fileId → wsId` memo is never the source of truth.** `getWorkspaceFileStore` keeps it current (remember on write, forget on delete), and a stale hit self-heals via a disk re-walk.
 - **Reading a file SHARED by another owner** (future `visibility: shared`) is a separate, visibility-checked path — never a widening of this locator to other owners.
 
