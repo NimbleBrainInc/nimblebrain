@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>App</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+    </style>
+  </head>
+  <!-- The page an app frame nests its app in (web/src/bridge/iframe.ts). The shell builds the app's frame here. -->
+  <body data-app-frame>
+    <script>
+      // The shell posts to the app through this, so the app sees its parent (this page) as the
+      // sender, which is the only sender an MCP Apps client accepts. Nothing here listens.
+      window.postToApp = (message) =>
+        document.querySelector("iframe")?.contentWindow?.postMessage(message, "*");
+    </script>
+  </body>
+</html>

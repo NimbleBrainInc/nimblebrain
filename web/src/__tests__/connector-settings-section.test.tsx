@@ -24,6 +24,7 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loadAppFrame } from "../../test/app-frame";
 import { realClient } from "../../test/setup";
 import type { InstalledConnector } from "../api/client";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
@@ -225,15 +226,7 @@ function appSide(container: HTMLElement): AppSide {
       inbox.push(data);
     },
   } as Window;
-  Object.defineProperty(iframe, "contentWindow", { configurable: true, get: () => stubWindow });
-  return {
-    inbox,
-    send(data: unknown) {
-      const event = new window.MessageEvent("message", { data });
-      Object.defineProperty(event, "source", { configurable: true, get: () => stubWindow });
-      window.dispatchEvent(event);
-    },
-  };
+  return { inbox, send: loadAppFrame(iframe, stubWindow).post };
 }
 
 async function handshake(app: AppSide): Promise<Record<string, unknown>> {

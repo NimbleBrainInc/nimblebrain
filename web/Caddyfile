@@ -74,6 +74,19 @@
 		header @fonts Access-Control-Allow-Origin "*"
 		file_server
 	}
+	# The page an app frame nests its app in (web/src/bridge/iframe.ts), so the app's
+	# base URL and referrer name this fixed path, never the shell's URL. Its own
+	# handler with no SPA fallback: a missing page is a 404, never the signed-in
+	# shell booting inside a frame. Only this origin may frame it. No CSP but
+	# frame-ancestors: the app's srcdoc frame inherits this page's policy.
+	handle /app-frame.html {
+		root * /srv
+		header Cache-Control "no-cache"
+		header Referrer-Policy "no-referrer"
+		header X-Frame-Options "SAMEORIGIN"
+		header Content-Security-Policy "frame-ancestors 'self'"
+		file_server
+	}
 	# Everything else: the SPA entry and any non-hashed file. Compression is scoped
 	# to the static handlers only — deliberately not applied to the reverse-proxied
 	# /v1 and /mcp routes, whose SSE/streamable-HTTP responses must not be buffered

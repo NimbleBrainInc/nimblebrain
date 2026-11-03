@@ -274,6 +274,8 @@ Your app runs inside a sandboxed iframe:
 | Opening popups (new tabs) | `alert()` / `confirm()` / `prompt()` |
 | Inline styles and scripts | Nested iframes |
 
+Your app's parent window is a small page the host nests the app in, not the web client itself. Post to `window.parent`, as MCP Apps clients do, and expect host messages from it; `window.top` is not the host. The app's base URL and `document.referrer` name that page, so they never reveal what the person has open.
+
 Network requests from the iframe are blocked by default (`connect-src 'none'`). If your app needs external API access, declare domains in your manifest:
 
 ```json
