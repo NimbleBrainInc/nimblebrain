@@ -14,10 +14,11 @@ URI. ADR-0052 introduced the target (`OpenDestination.target`). The bridge hands
 `ai.nimblebrain/location` trail.
 
 An app route's URL names only the placement: `/w/<slug>/app/<route>`. The target travels as
-router state (`appTarget`) and lives in the app and in the top bar's trail. None of those
-survives a page load, so a person cannot keep their place:
+router state (`appTarget`) and lives in the app and in the top bar's trail. Router state is
+browser history state, so a reload replays the target an open delivered; nothing records where
+the person went inside the app after that, so a person cannot keep their place:
 
-- **Reload** a record and the app comes back at its home.
+- **Reload** after moving inside the app and it comes back at the opened target, or at its home.
 - **Share** the URL and the recipient lands on the app's home.
 - **Back** skips everything the person did inside the app.
 
