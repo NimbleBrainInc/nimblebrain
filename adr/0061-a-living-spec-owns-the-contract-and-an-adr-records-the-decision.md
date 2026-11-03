@@ -15,8 +15,8 @@ contract and the `AGENTS.md` guides for host-internal rules.
 
 ## Decision
 
-The contract lives in the area's living spec and a threat model lives in its own
-page beside that spec. An ADR is written only for a choice that is expensive to
+The contract lives in the area's living spec, threats and defences included. An
+ADR is written only for a choice that is expensive to
 reverse or likely to be proposed again; once Accepted it is trimmed to a short
 record and frozen except for its status line.
 
@@ -35,4 +35,6 @@ ADRs keep their amendment chains until a change to each area writes its spec.
   a second home would drift from them.
 - Keep threat tables in ADRs: defences change while a decision stands, and a frozen
   table goes stale.
+- Give threat models their own documents: a second place to keep current, when the
+  spec's security section already holds them.
 - Retrofit existing ADRs: it rewrites the record and tells no reader anything new.

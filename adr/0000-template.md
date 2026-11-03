@@ -48,16 +48,11 @@ Write rules, pipelines, schemas, and threat tables do not survive the trim; they
 are the contract. A decision that changes no code, such as a refusal to build
 something, still states its rule in the spec and links to it.
 
-## Threat models
+## Threats
 
-A threat model is a living document beside the spec it covers, not a table in an
-ADR, because defences change while a decision stands. Each one is a public page at
-`docs/src/content/docs/security/<area>.mdx`, with `<area>` named for the area its
-spec covers, and has an entry in the docs sidebar. The spec and the threat model
-link to each other, and the threat model is updated in the same PR as the defences
-it describes. It explains what is attacked and what stops it;
-`docs/src/content/docs/deploy/security.mdx` remains what an operator configures.
-An unfixed vulnerability is reported through `SECURITY.md`, not written here.
+Threats and their defences go in a security section of the area's spec, updated in
+the same PR as the defences, and not in a table in an ADR, because defences change
+while a decision stands.
 
 ## ADRs accepted before this convention
 
