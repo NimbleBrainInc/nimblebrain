@@ -116,7 +116,9 @@ fixed path with no query** (the double-frame pattern the sandbox-proxy work alre
 app's base URL and referrer then name that fixed path, not the person's place. That frame page
 has its own handler with no fallback to the shell, so a missing page never boots the signed-in
 shell inside a frame. Only that path may be framed, and only by this origin. The bridge keys
-its trust on the inner frame's window, and the outer page neither relays nor accepts messages.
+its trust on the inner frame's window. The outer page accepts no messages; it holds one
+function the shell calls to post to the app, because an MCP Apps client accepts host messages
+only from its parent.
 
 ### The rules for apps (the bridge contract)
 
