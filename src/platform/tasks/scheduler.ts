@@ -15,6 +15,7 @@
 import { randomBytes } from "node:crypto";
 import { Cron } from "croner";
 import { taskRunsTotal } from "../../api/metrics.ts";
+import { isRetryable } from "../../engine/retry.ts";
 import { log } from "../../observability/log.ts";
 import {
   type AdmissionLease,
@@ -62,8 +63,19 @@ const MAX_TIMER_MS = 60_000;
 /** Backoff delays indexed by (consecutiveErrors - 1). Capped at last entry. */
 const BACKOFF_DELAYS = [30_000, 60_000, 300_000, 900_000, 3_600_000] as const;
 
-/** Auto-disable after this many consecutive failures. */
+/** Auto-disable after this many non-transient failures in a streak. */
 export const MAX_CONSECUTIVE_ERRORS = 10;
+
+/**
+ * Auto-disable after this many failures in a streak, transient ones included.
+ * A provider outage must not turn a task off, but the transient verdict is not
+ * proof of an outage: a prompt larger than the account's per-minute token limit
+ * and an exhausted quota both answer 429 on every run, and each run may pay for
+ * model calls before it fails. At the one-hour backoff ceiling this is about
+ * four days of failing without one completed run, longer than an outage and
+ * short of paying indefinitely.
+ */
+export const MAX_CONSECUTIVE_TRANSIENT_ERRORS = 100;
 
 /**
  * The record of a scheduled run the runtime stopped under (see
@@ -74,6 +86,9 @@ export const INTERRUPTED_RUN_ERROR =
   "The runtime stopped while this run was in flight, so it did not finish. It was not " +
   "started again, because it may already have done part of its work; the task runs " +
   "next at its next scheduled time.";
+
+/** The `code` on the error for a run that used its whole `maxRunDurationMs`. */
+export const RUN_DURATION_EXCEEDED = "run_duration_exceeded";
 
 /** Why a Run now or event run is refused once `stop()` has run: no slot frees and nothing drains the queue. */
 const STOPPED_REASON = "the scheduler is stopped";
@@ -104,7 +119,9 @@ const TRANSIENT_PATTERNS: RegExp[] = [
   /timeout/i,
   /network/i,
   /ECONNREFUSED/i,
-  /5\d\d/,
+  /stream stalled/i,
+  /gateway didn't respond/i,
+  /\b5\d\d\b/,
 ];
 
 // ---------------------------------------------------------------------------
@@ -309,7 +326,10 @@ export interface RunFailedNotice {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true if the error message matches any transient pattern.
+ * Returns true if the error message matches any transient pattern. The text is
+ * all a persisted or relayed error has; a thrown provider error also carries a
+ * structured verdict, which `classifyRunFailure` reads first because a 500
+ * arrives as "Internal server error", with no status in its text.
  */
 export function isTransientError(message: string): boolean {
   return TRANSIENT_PATTERNS.some((p) => p.test(message));
@@ -557,18 +577,16 @@ function classifyRunFailure(err: unknown): {
   if (code === "agent_connection_lost") {
     return { status: "failure", error: errorMsg, transient: true };
   }
-  if (errorMsg.includes("timed out")) {
-    return {
-      status: "timeout",
-      error: errorMsg,
-      transient: isTransientError(errorMsg),
-    };
+  // The run used its whole time allowance. Not transient: the next run of a
+  // task too big for its limit meets the same limit, having paid for all of it.
+  if (code === RUN_DURATION_EXCEEDED) {
+    return { status: "timeout", error: errorMsg, transient: false };
   }
-  return {
-    status: "failure",
-    error: errorMsg,
-    transient: isTransientError(errorMsg),
-  };
+  const transient = isRetryable(err) || isTransientError(errorMsg);
+  if (errorMsg.includes("timed out")) {
+    return { status: "timeout", error: errorMsg, transient };
+  }
+  return { status: "failure", error: errorMsg, transient };
 }
 
 // ---------------------------------------------------------------------------
@@ -589,22 +607,35 @@ function resolveLastRunStatus(status: TaskRun["status"]): NonNullable<Task["last
  * Skipped and cancelled runs don't affect consecutiveErrors. A degraded run
  * clears the streak like a success: it ran to completion, and backoff exists
  * for runs that could not run, not for work a tool refused.
+ *
+ * Every failure counts toward `consecutiveErrors`, so backoff holds during an
+ * outage. A transient one says nothing about the task, so it counts only toward
+ * the larger cap: the task disables at {@link MAX_CONSECUTIVE_ERRORS} other
+ * failures, with any transient ones between them neither adding to that count
+ * nor clearing it.
  */
 function applyConsecutiveErrors(auto: Task, run: TaskRun, now: number): void {
   if (run.status === "success" || run.status === "degraded") {
     auto.consecutiveErrors = 0;
+    delete auto.transientErrors;
     delete auto.failureNoticeRunId;
     return;
   }
   if (run.status !== "failure" && run.status !== "timeout") return;
 
   auto.consecutiveErrors = (auto.consecutiveErrors ?? 0) + 1;
+  if (run.transient) auto.transientErrors = (auto.transientErrors ?? 0) + 1;
 
-  // Auto-disable after too many consecutive failures
-  if (auto.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+  const lastError = (run.error ?? "unknown").slice(0, 200);
+  const countedErrors = auto.consecutiveErrors - (auto.transientErrors ?? 0);
+  if (countedErrors >= MAX_CONSECUTIVE_ERRORS) {
     auto.enabled = false;
     auto.disabledAt = new Date(now).toISOString();
-    auto.disabledReason = `Auto-disabled after ${auto.consecutiveErrors} consecutive failures. Last error: ${(run.error ?? "unknown").slice(0, 200)}`;
+    auto.disabledReason = `Auto-disabled after ${countedErrors} consecutive failures. Last error: ${lastError}`;
+  } else if (auto.consecutiveErrors >= MAX_CONSECUTIVE_TRANSIENT_ERRORS) {
+    auto.enabled = false;
+    auto.disabledAt = new Date(now).toISOString();
+    auto.disabledReason = `Auto-disabled after ${auto.consecutiveErrors} consecutive failures that looked temporary but never cleared. Last error: ${lastError}`;
   }
 }
 

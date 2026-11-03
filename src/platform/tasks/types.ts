@@ -192,6 +192,12 @@ export interface Task {
   consecutiveErrors: number;
 
   /**
+   * How many of `consecutiveErrors` were transient. They back the task off but
+   * count only toward the larger auto-disable cap, so an outage leaves it on.
+   */
+  transientErrors?: number;
+
+  /**
    * The failed run whose notice stands for the current failing stretch. Set
    * by the first run of the stretch that left no deliverable, cleared when the
    * streak resets, so a task failing every few minutes raises one notice, not
@@ -518,7 +524,7 @@ export interface TaskRun {
   toolCalls: number;
   iterations: number;
   error?: string;
-  /** Whether this failure was classified as transient (eligible for backoff retry). */
+  /** Whether this failure looks temporary: it backs off without counting toward the ordinary auto-disable. */
   transient?: boolean;
   /**
    * What started this run — the scheduler's timer, an operator's Run now, or a
@@ -691,6 +697,7 @@ export type CreateTaskInput = Omit<
   | "updatedAt"
   | "runCount"
   | "consecutiveErrors"
+  | "transientErrors"
   | "failureNoticeRunId"
   | "lastRunAt"
   | "lastRunStatus"

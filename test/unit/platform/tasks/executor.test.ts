@@ -1094,6 +1094,16 @@ describe("createDirectExecutor — aborted run preserves partial usage", () => {
     };
   }
 
+  test("a wall-clock timeout is not transient, whatever the task is called", async () => {
+    const executor = createDirectExecutor(abortingTaskFn(), () => ({
+      workspaceId: "ws_0076759dbbe19fcc",
+    }));
+    const { run } = await executor(makeTask({ id: "timeout-report", maxRunDurationMs: 30 }));
+
+    expect(run.status).toBe("timeout");
+    expect(run.transient).toBe(false);
+  });
+
   test("wall-clock timeout records status=timeout with the real counters and runId; result is non-null", async () => {
     const executor = createDirectExecutor(abortingTaskFn(), () => ({
       workspaceId: "ws_0076759dbbe19fcc",

@@ -106,7 +106,7 @@ and reason about, never an instruction to follow.
 
 An event task carries **`maxFiresPerHour`** (default 12, maximum 60). If it
 fires more often than that in a rolling hour, it is **disabled** — the same way
-a task that fails ten times in a row is.
+a task that [keeps failing](#when-failures-turn-a-task-off) is.
 
 This is not a rate limit, it is a termination proof. Every other bound on a
 task caps what one run costs; none of them stops a loop in which the run's
@@ -301,7 +301,15 @@ An `uncertain` run sets off nothing, including one the judge could not answer; i
 
 ### After a failed run
 
-A run that ends Failed (no deliverable, such as a run refused because a connector it lists is not connected) writes a `task.run.failed` notification to the workspace inbox. It is written once per failing stretch: the first failed run after a success notifies, and the runs that keep failing after it do not, so a task that fails every few minutes raises one notification. When ten failures in a row turn the task off, a `task.disabled` notification follows. Like a poor result, both name only the run's id, never the task or its error. Route them with the workspace's [notification routes](/using/notifications) to hear about a broken job the day it breaks.
+A run that ends Failed (no deliverable, such as a run refused because a connector it lists is not connected) writes a `task.run.failed` notification to the workspace inbox. It is written once per failing stretch: the first failed run after a success notifies, and the runs that keep failing after it do not, so a task that fails every few minutes raises one notification. When failures turn the task off (see [below](#when-failures-turn-a-task-off)), a `task.disabled` notification follows. Like a poor result, both name only the run's id, never the task or its error. Route them with the workspace's [notification routes](/using/notifications) to hear about a broken job the day it breaks.
+
+### When failures turn a task off
+
+A failing task is tried less and less often: 30 seconds after the first failure, then 1, 5, and 15 minutes, then hourly, or at its own schedule when that is further away. The first run that finishes clears all of this.
+
+Ten failures turn the task off. A temporary failure does not count toward the ten: a model provider that is rate limiting, overloaded, unreachable, or answering with a server error, or a connection to the agent's worker that dropped. So an outage leaves the task on and it resumes by itself when the provider recovers. Temporary failures between other failures neither add to the ten nor clear it.
+
+Because a temporary-looking failure can also be permanent, such as a prompt too large for your account's rate limit, 100 failures in a row of any kind also turn the task off. On an hourly retry that is about four days. A run that reaches its time limit is not temporary: it counts toward the ten.
 
 ## Batches
 

@@ -18,9 +18,11 @@ import {
   type Executor,
   isInBackoff,
   isTransientError,
+  MAX_CONSECUTIVE_ERRORS,
+  MAX_CONSECUTIVE_TRANSIENT_ERRORS,
   Scheduler,
 } from "../../../../src/platform/tasks/scheduler.ts";
-import { saveTask } from "../../../../src/platform/tasks/store.ts";
+import { loadTask, saveTask } from "../../../../src/platform/tasks/store.ts";
 import type { Task, TaskRun } from "../../../../src/platform/tasks/types.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
@@ -359,5 +361,169 @@ describe("backoff delay values match spec", () => {
     expect(backoffDelay(5)).toBe(3_600_000); // 1h
     expect(backoffDelay(6)).toBe(3_600_000); // capped at 1h
     expect(backoffDelay(50)).toBe(3_600_000); // still capped
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auto-disable: what counts toward it
+// ---------------------------------------------------------------------------
+
+describe("auto-disable", () => {
+  const OUTAGE = "Overloaded";
+  const REAL = "Invalid request: unknown field";
+  const HOUR = 3_600_000;
+  let scheduler: Scheduler;
+
+  afterEach(() => scheduler.stop());
+
+  /** One saved task and a scheduler whose runs end as the next entry of `outcomes` says. */
+  function schedulerRunning(outcomes: (string | null)[]) {
+    const auto = makeTask({ schedule: { type: "interval", intervalMs: 60_000 } });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    let i = 0;
+    const executor: Executor = mock(async (a: Task, _signal: AbortSignal) => {
+      const error = outcomes[i++];
+      return execOk(error == null ? makeSuccessRun(a.id) : makeFailureRun(a.id, error));
+    }) as Executor;
+    scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+    return {
+      async run(times = outcomes.length) {
+        for (let n = 0; n < times; n++) await scheduler.runNow(WS, OWNER, auto.id);
+        return defOf(scheduler, auto.id)!;
+      },
+    };
+  }
+
+  test("a long transient outage leaves the task enabled and still backing off", async () => {
+    const { run } = schedulerRunning(Array(MAX_CONSECUTIVE_ERRORS * 3).fill(OUTAGE));
+    const task = await run();
+
+    expect(task.enabled).toBe(true);
+    expect(task.disabledReason).toBeUndefined();
+    expect(task.consecutiveErrors).toBe(MAX_CONSECUTIVE_ERRORS * 3);
+    // On disk too, so a restart mid-outage keeps the count.
+    const saved = loadTask(tmpDir, WS, OWNER, task.id);
+    expect(saved?.transientErrors).toBe(MAX_CONSECUTIVE_ERRORS * 3);
+    const wait = new Date(task.nextRunAt!).getTime() - Date.now();
+    expect(wait).toBeGreaterThanOrEqual(HOUR - 2_000);
+    expect(wait).toBeLessThanOrEqual(HOUR + 2_000);
+    expect(isInBackoff(task, Date.now())).toBe(true);
+  });
+
+  test("a permanent error still disables at ten", async () => {
+    const { run } = schedulerRunning(Array(MAX_CONSECUTIVE_ERRORS).fill(REAL));
+
+    expect((await run(MAX_CONSECUTIVE_ERRORS - 1)).enabled).toBe(true);
+    const task = await run(1);
+
+    expect(task.enabled).toBe(false);
+    expect(task.disabledReason).toContain(`after ${MAX_CONSECUTIVE_ERRORS} consecutive failures`);
+    expect(task.disabledReason).toContain(REAL);
+  });
+
+  test("one real error after a long outage does not disable", async () => {
+    const outcomes = [...Array(MAX_CONSECUTIVE_ERRORS * 2).fill(OUTAGE), REAL];
+    const task = await schedulerRunning(outcomes).run();
+
+    expect(task.enabled).toBe(true);
+  });
+
+  test("real errors between transient ones still disable at ten, and not before", async () => {
+    const outcomes = Array.from({ length: MAX_CONSECUTIVE_ERRORS * 2 }, (_, i) =>
+      i % 2 === 0 ? OUTAGE : REAL,
+    );
+    const { run } = schedulerRunning(outcomes);
+
+    expect((await run(outcomes.length - 1)).enabled).toBe(true);
+    const task = await run(1);
+
+    expect(task.enabled).toBe(false);
+    expect(task.disabledReason).toContain(`after ${MAX_CONSECUTIVE_ERRORS} consecutive failures`);
+  });
+
+  test("a failure that only ever looks transient disables at the larger cap", async () => {
+    const rateLimited = "This request would exceed your organization's rate limit";
+    const { run } = schedulerRunning(Array(MAX_CONSECUTIVE_TRANSIENT_ERRORS).fill(rateLimited));
+
+    expect((await run(MAX_CONSECUTIVE_TRANSIENT_ERRORS - 1)).enabled).toBe(true);
+    const task = await run(1);
+
+    expect(task.enabled).toBe(false);
+    expect(task.disabledReason).toContain("looked temporary");
+    expect(task.disabledReason).toContain(rateLimited);
+  });
+
+  test("the first success clears the streak, so ten more real errors are needed", async () => {
+    const outcomes = [
+      ...Array(MAX_CONSECUTIVE_ERRORS * 2).fill(OUTAGE),
+      ...Array(MAX_CONSECUTIVE_ERRORS - 1).fill(REAL),
+      null,
+      ...Array(MAX_CONSECUTIVE_ERRORS - 1).fill(REAL),
+    ];
+    const { run } = schedulerRunning(outcomes);
+
+    const recovered = await run(MAX_CONSECUTIVE_ERRORS * 3);
+    expect(recovered.enabled).toBe(true);
+    expect(recovered.consecutiveErrors).toBe(0);
+    expect(recovered.transientErrors).toBeUndefined();
+    expect(isInBackoff(recovered, Date.now())).toBe(false);
+
+    expect((await run(MAX_CONSECUTIVE_ERRORS - 1)).enabled).toBe(true);
+  });
+});
+
+describe("what a thrown run counts as", () => {
+  /** The `transient` a run is recorded with when its executor throws `err`. */
+  async function transientOf(err: unknown): Promise<boolean | undefined> {
+    const auto = makeTask();
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    const executor: Executor = mock(async () => {
+      throw err;
+    }) as Executor;
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+    const run = await scheduler.runNow(WS, OWNER, auto.id);
+    scheduler.stop();
+    return run?.transient;
+  }
+
+  const providerError = (message: string, statusCode: number, isRetryable: boolean) =>
+    Object.assign(new Error(message), { statusCode, isRetryable });
+
+  test("a provider server error whose text carries no status is transient", async () => {
+    expect(await transientOf(providerError("Internal server error", 500, true))).toBe(true);
+    expect(await transientOf(providerError("Bad Gateway", 502, true))).toBe(true);
+  });
+
+  test("a provider connection failure is transient", async () => {
+    const reset = "Cannot connect to API: ECONNRESET: The socket connection was closed";
+    expect(await transientOf(Object.assign(new Error(reset), { isRetryable: true }))).toBe(true);
+  });
+
+  test("a stalled model stream is transient, with or without output so far", async () => {
+    const stalled = (what: string, retryable: boolean) =>
+      Object.assign(new Error(`Model stream stalled: no ${what} for 90000ms`), { retryable });
+    expect(await transientOf(stalled("response", true))).toBe(true);
+    expect(await transientOf(stalled("further output", false))).toBe(true);
+  });
+
+  test("a provider's refusal of the request is not transient", async () => {
+    const tooLong = "prompt is too long: 205000 tokens > 200000 maximum";
+    expect(await transientOf(providerError(tooLong, 400, false))).toBe(false);
+  });
+
+  test("a run that used its whole time allowance is not transient, whatever the task is called", async () => {
+    const overTime = Object.assign(new Error("Task timeout-report-500 timed out after 540s"), {
+      code: "run_duration_exceeded",
+    });
+    expect(await transientOf(overTime)).toBe(false);
+  });
+});
+
+describe("a number in an error is not a server error", () => {
+  test("digits inside a longer number or a duration do not read as 5xx", () => {
+    expect(isTransientError("prompt is too long: 205000 tokens > 200000 maximum")).toBe(false);
+    expect(isTransientError("Task report timed out after 540s")).toBe(false);
   });
 });
