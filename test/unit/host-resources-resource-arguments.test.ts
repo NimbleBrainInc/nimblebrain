@@ -181,6 +181,21 @@ describe("createResourceArgumentsResolver", () => {
     });
   });
 
+  it("never reads from a template whose match could backtrack, and a hostile URI costs little", async () => {
+    // Unguarded, this template takes seconds against the URI below.
+    const hostile = servingSource("hostile", ["{a}{b}{c}{d}"], { x: "secret" });
+    const crm = servingSource("crm", ["crm://signals/{id}"], { "crm://signals/1": "{}" });
+    const uri = `${"x".repeat(2047)}/`;
+    const started = performance.now();
+    const entries = await resolverOver({ [WS_A]: [hostile, crm] }).resolve(
+      declared(uri, "crm://signals/1"),
+    );
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(entries[uri]).toMatchObject({ error: { code: "not_found" } });
+    expect(entries["crm://signals/1"]).toMatchObject({ contents: [{ text: "{}" }] });
+    expect(hostile.reads).toEqual([]);
+  });
+
   it("passes a read that fails or returns nothing as unresolved", async () => {
     const failing: ResourceServingSource = {
       name: "crm",

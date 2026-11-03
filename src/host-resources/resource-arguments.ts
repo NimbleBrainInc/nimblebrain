@@ -1,6 +1,6 @@
 import type { ReadResourceResult } from "@modelcontextprotocol/server";
-import { UriTemplate } from "@modelcontextprotocol/server";
 import { log } from "../observability/log.ts";
+import { expandsFrom } from "../util/uri-template.ts";
 import { HOST_RESOURCES_MAX_READ_SIZE } from "./capability.ts";
 import type { HostResourcesRateLimit } from "./rate-limit.ts";
 
@@ -512,15 +512,6 @@ function schemeOf(uri: string): string | null {
   if (colon <= 0) return null;
   const scheme = uri.slice(0, colon).toLowerCase();
   return SCHEME_RE.test(scheme) ? scheme : null;
-}
-
-/** Whether `uri` is one of `template`'s expansions. A template that does not parse matches nothing. */
-function expandsFrom(template: string, uri: string): boolean {
-  try {
-    return new UriTemplate(template).match(uri) !== null;
-  } catch {
-    return false;
-  }
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
