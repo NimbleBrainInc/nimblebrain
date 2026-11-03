@@ -43,6 +43,7 @@ import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { SseEventManager } from "./events.ts";
 import { mcpResourceUrl } from "./mcp-resource.ts";
 import { artifactResolutionsTotal } from "./metrics.ts";
+import { DEFAULT_CSP } from "./middleware/security-headers.ts";
 import type {
   AuthOkResponse,
   BootstrapResponse,
@@ -1435,6 +1436,15 @@ export function sanitizeFilename(name: string): string {
   return name.replace(/["\r\n\x00-\x1f]/g, "_");
 }
 
+/**
+ * The policy stored bytes are served under, whatever the operator sets as `NB_CSP`. A stored file
+ * is a person's or an agent's upload, served on the shell's origin, so an HTML or SVG file opened
+ * directly must never run script there. `sandbox` gives the document an opaque origin with
+ * scripts, forms and popups off; the rest is the platform's default policy. An image in an
+ * `<img>` and a PDF in the browser's viewer render under it unchanged.
+ */
+export const FILE_BYTES_CSP = `sandbox; ${DEFAULT_CSP}`;
+
 /** Handle GET /v1/files/:fileId — serve a stored file by its globally-unique id.
  * Files are workspace-owned, but the id alone addresses them: the file locator
  * resolves the id to its workspace within the caller's OWN owner partitions
@@ -1468,6 +1478,7 @@ export async function handleFileServe(
         headers: {
           "Content-Type": file.mimeType,
           "Content-Disposition": `inline; filename="${safeName}"`,
+          "Content-Security-Policy": FILE_BYTES_CSP,
         },
       });
     } catch {
