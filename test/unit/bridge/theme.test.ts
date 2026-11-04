@@ -52,6 +52,12 @@ describe("theme token map", () => {
 });
 
 describe("buildThemeStyleBlock", () => {
+  test("gives touch devices 16px fields that outrank an SDK's inline size", () => {
+    expect(buildThemeStyleBlock("light")).toMatch(
+      /@media \(pointer: coarse\) \{\s*input, textarea, select \{\s*font-size: 16px !important;/,
+    );
+  });
+
   test("wraps the declarations in a <style> tag with a :root block", () => {
     const block = buildThemeStyleBlock("light");
     expect(block).toContain("<style");

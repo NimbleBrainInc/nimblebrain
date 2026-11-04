@@ -197,6 +197,10 @@ export function buildThemeStyleBlock(mode: ThemeMode): string {
   // `@nimblebrain/synapse` keeps it current, setting it inline from
   // `hostContext.theme` at the handshake and on every `host-context-changed`. An
   // app on another client keeps the mount's mode for these parts.
+  //
+  // The media query is the shell's rule from `index.css`: iOS Safari zooms the page
+  // when a focused field's font is under 16px, frames included. `!important` because
+  // SDK components size their fields inline, and only that outranks an inline value.
   return `<style>
 :root {
   color-scheme: ${mode};
@@ -210,6 +214,11 @@ body {
   font-family: var(--font-sans);
   background: var(--color-background-primary);
   color: var(--color-text-primary);
+}
+@media (pointer: coarse) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
 }
 </style>`;
 }
