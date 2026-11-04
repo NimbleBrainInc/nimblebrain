@@ -196,21 +196,12 @@ function BootstrappedShell({
 }) {
   const { activeWorkspace } = useWorkspaceContext();
   const {
-    loading,
     error,
     shellWorkspaceId,
     forSlot,
     mainRoutes,
     refresh: refreshShell,
   } = useShell(token, activeWorkspace?.id);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-background text-muted-foreground text-sm">
-        Loading workspace...
-      </div>
-    );
-  }
 
   if (error) {
     return (

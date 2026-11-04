@@ -9,16 +9,13 @@ import type { PlacementEntry, ShellResponse } from "../types";
  */
 export function useShell(_token: string, workspaceId?: string) {
   const [shell, setShell] = useState<ShellResponse | null>(null);
-  const [loading, setLoading] = useState(workspaceId !== undefined);
   const [error, setError] = useState<string | null>(null);
-  // Which workspace the current `shell` placements reflect.
-  //
-  // Why a separate signal and not just `loading`: on a workspace switch we
-  // deliberately keep the old shell visible and leave `loading === false` (no
-  // sidebar flash). During that window `shell` still holds the *previous*
-  // workspace's placements, so a per-workspace consumer (the overview page's
-  // app grid) needs to know the shell hasn't caught up yet — `loading` can't
-  // tell it. Comparing `shellWorkspaceId` to the target id closes that gap.
+  // Which workspace the current `shell` placements reflect. Placements load
+  // behind the mounted app: it stays up while they do, because state held
+  // under it (chat, preferences re-read since sign-in) would otherwise be lost.
+  // Until a load lands, `shell` is empty or still the *previous* workspace's,
+  // so a per-workspace consumer (the overview page's app grid) compares
+  // `shellWorkspaceId` to the id it wants before trusting the placements.
   const [shellWorkspaceId, setShellWorkspaceId] = useState<string | undefined>(undefined);
   // Latest workspaceId, readable from the stable `refresh` callback without
   // making it churn (and re-subscribe its SSE consumer) on every switch.
@@ -44,17 +41,10 @@ export function useShell(_token: string, workspaceId?: string) {
     }
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `shell` is read only to choose the first-load screen over a silent swap; depending on it would refetch each time a fetch lands
   useEffect(() => {
-    if (!workspaceId) {
-      setLoading(false);
-      return;
-    }
+    if (!workspaceId) return;
 
     let cancelled = false;
-    // Only show loading screen when there's no shell data at all (initial mount).
-    // During workspace switch, keep the old shell visible and swap atomically.
-    if (!shell) setLoading(true);
     setError(null);
 
     getShell(workspaceId)
@@ -62,13 +52,11 @@ export function useShell(_token: string, workspaceId?: string) {
         if (!cancelled) {
           setShell(data);
           setShellWorkspaceId(workspaceId);
-          setLoading(false);
         }
       })
       .catch((err) => {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load shell");
-          setLoading(false);
         }
       });
 
@@ -99,5 +87,5 @@ export function useShell(_token: string, workspaceId?: string) {
     );
   }, [shell]);
 
-  return { shell, loading, error, shellWorkspaceId, forSlot, mainRoutes, refresh };
+  return { shell, error, shellWorkspaceId, forSlot, mainRoutes, refresh };
 }
