@@ -134,6 +134,19 @@
   }
 }
 
+/* iOS Safari zooms the page when a focused field's font is under 16px, and does
+   not zoom back out, leaving the layout wider than the screen. Touch devices get
+   16px on every field. Outside a cascade layer so it outranks Tailwind's text-*
+   utilities; viewport maximum-scale would also stop the zoom, but it takes away
+   pinch-to-zoom on Android. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
 /* Sidebar scrollbar — narrower, uses sidebar tokens */
 .sidebar-scroll {
   scrollbar-color: var(--sidebar-border) transparent;
