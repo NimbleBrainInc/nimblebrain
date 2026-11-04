@@ -60,10 +60,28 @@ describe("useShell", () => {
   it("fetches nothing when no workspace is named", () => {
     const { result } = renderHook(() => useShell("tok", undefined));
 
-    expect(result.current.loading).toBe(false);
     expect(result.current.shell).toBeNull();
     expect(result.current.shellWorkspaceId).toBeUndefined();
     expect(mockGetShell).not.toHaveBeenCalled();
+  });
+
+  it("lags shellWorkspaceId behind the first workspace focused after mounting with none", async () => {
+    const fetched = makeShell([{ slot: "main", route: "/app", priority: 1 }]);
+    const { result, rerender } = renderHook(
+      ({ wsId }: { wsId?: string }) => useShell("tok", wsId),
+      {
+        initialProps: { wsId: undefined as string | undefined },
+      },
+    );
+    mockGetShell.mockResolvedValueOnce(fetched);
+
+    rerender({ wsId: "ws-1" });
+
+    expect(result.current.shell).toBeNull();
+    expect(result.current.shellWorkspaceId).toBeUndefined();
+
+    await waitFor(() => expect(result.current.shell).toBe(fetched));
+    expect(result.current.shellWorkspaceId).toBe("ws-1");
   });
 
   it("fetches the named workspace's shell on mount", async () => {
@@ -72,12 +90,10 @@ describe("useShell", () => {
 
     const { result } = renderHook(() => useShell("tok", "ws-1"));
 
-    expect(result.current.loading).toBe(true);
     expect(result.current.shellWorkspaceId).toBeUndefined();
 
-    await waitFor(() => expect(result.current.loading).toBe(false));
+    await waitFor(() => expect(result.current.shell).toBe(fetched));
 
-    expect(result.current.shell).toBe(fetched);
     expect(result.current.shellWorkspaceId).toBe("ws-1");
     expect(mockGetShell.mock.calls).toEqual([["ws-1"]]);
   });
@@ -88,14 +104,13 @@ describe("useShell", () => {
     const { result, rerender } = await mountOn(first);
     mockGetShell.mockResolvedValueOnce(newShell);
 
-    // Switch workspace — old shell stays visible (no loading flash)
+    // Switch workspace — old shell stays visible
     rerender({ wsId: "ws-2" });
 
-    expect(result.current.loading).toBe(false);
     expect(result.current.shell).toBe(first); // still showing old data
     // ...and shellWorkspaceId still points at the OLD workspace: this is the
     // window the overview page reads to render a skeleton instead of the old
-    // workspace's apps (loading stays false, so it can't rely on that).
+    // workspace's apps.
     expect(result.current.shellWorkspaceId).toBe("ws-1");
 
     await waitFor(() => {
@@ -105,7 +120,6 @@ describe("useShell", () => {
     // Once the fetch lands, the shell reflects the new workspace — the one
     // the fetch named, not whichever the client's active workspace was.
     expect(result.current.shellWorkspaceId).toBe("ws-2");
-    expect(result.current.loading).toBe(false);
     expect(result.current.error).toBeNull();
     expect(mockGetShell.mock.calls).toEqual([["ws-1"], ["ws-2"]]);
   });
@@ -141,7 +155,6 @@ describe("useShell", () => {
     rerender({ wsId: undefined });
 
     expect(result.current.shell).toBe(first);
-    expect(result.current.loading).toBe(false);
     expect(mockGetShell).toHaveBeenCalledTimes(1);
   });
 
@@ -159,9 +172,8 @@ describe("useShell", () => {
     );
     mockGetShell.mockResolvedValueOnce(freshShell);
 
-    // Switch to ws-2 — starts fetch (no loading flash, keeps old shell)
+    // Switch to ws-2 — starts fetch, keeps old shell
     rerender({ wsId: "ws-2" });
-    expect(result.current.loading).toBe(false);
 
     // Switch to ws-3 before ws-2 fetch completes — cancels ws-2 fetch
     rerender({ wsId: "ws-3" });
