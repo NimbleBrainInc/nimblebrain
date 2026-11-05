@@ -8,7 +8,7 @@
 // react-dom/client + happy-dom.
 // ---------------------------------------------------------------------------
 
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 import type * as ApiClient from "../api/client";
 import type { CatalogListing, PersonalConnector } from "../api/client";
@@ -71,9 +71,15 @@ mock.module("../api/client", () => ({
 // implement navigation, so stub it — the routing tests only care which initiate
 // helper ran before the redirect.
 const locationAssign = mock((_url: string) => {});
+const realLocation = window.location;
 Object.defineProperty(window, "location", {
   configurable: true,
-  value: { ...window.location, assign: locationAssign },
+  value: { ...realLocation, assign: locationAssign },
+});
+// `window` is shared by every suite in the process, and the stub has no `origin`
+// or `href`, which a later suite's router needs.
+afterAll(() => {
+  Object.defineProperty(window, "location", { configurable: true, value: realLocation });
 });
 
 const React = await import("react");
