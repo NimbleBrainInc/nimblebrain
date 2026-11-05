@@ -31,7 +31,7 @@
 // contracts under test.
 // ---------------------------------------------------------------------------
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { defineHappyDomErrorClasses } from "../../test/happy-dom";
 import { realClient } from "../../test/setup";
 import type * as ApiClient from "../api/client";
@@ -81,9 +81,15 @@ mock.module("../api/client", () => ({
 // navigation, so stub it — lets a test assert that an "already connected" reconnect
 // (null URL) does NOT navigate.
 const locationAssign = mock((_url: string) => {});
+const realLocation = window.location;
 Object.defineProperty(window, "location", {
   configurable: true,
-  value: { ...window.location, assign: locationAssign },
+  value: { ...realLocation, assign: locationAssign },
+});
+// `window` is shared by every suite in the process, and the stub has no `origin`
+// or `href`, which a later suite's router needs.
+afterAll(() => {
+  Object.defineProperty(window, "location", { configurable: true, value: realLocation });
 });
 
 const ReactDOMClient = await import("react-dom/client");
