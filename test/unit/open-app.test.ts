@@ -192,6 +192,34 @@ describe("resolveOpen", () => {
     });
   });
 
+  test("a URI nothing remembers claiming asks the servers again before it is refused", async () => {
+    const reads: boolean[] = [];
+    const stale = scope({
+      templatesOf: async (name, opts) => {
+        if (name !== "people") return [];
+        reads.push(Boolean(opts?.fresh));
+        return opts?.fresh ? [{ uriTemplate: "people://orgs/{id}" }] : [];
+      },
+    });
+    expect(await resolveOpen(stale, "people://orgs/9")).toEqual({
+      destination: { app: "people", name: "People", target: "people://orgs/9" },
+    });
+    expect(reads).toEqual([false, true]);
+  });
+
+  test("a URI a remembered template claims does not ask the servers again", async () => {
+    const reads: boolean[] = [];
+    const known = scope({
+      templatesOf: async (name, opts) => {
+        if (name !== "people") return [];
+        reads.push(Boolean(opts?.fresh));
+        return [{ uriTemplate: "people://contacts/{id}" }];
+      },
+    });
+    await resolveOpen(known, "people://contacts/123");
+    expect(reads).toEqual([false]);
+  });
+
   test("two apps claiming one URI is refused, naming both", async () => {
     const both = scope({ templatesOf: async () => [{ uriTemplate: "people://contacts/{id}" }] });
     const resolved = await resolveOpen(both, "people://contacts/123");
