@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { defineInProcessApp, type ResourceTemplate } from "../../src/tools/in-process-app.ts";
 
@@ -58,6 +58,38 @@ describe("McpSource.resourceTemplates", () => {
     const source = await startSource();
     try {
       expect(await source.resourceTemplates()).toEqual([]);
+    } finally {
+      await source.stop();
+    }
+  });
+
+  it("asks the server again when told to, and remembers the new answer", async () => {
+    const source = await startSource([{ uriTemplate: "crm://contacts/{id}", name: "contact" }]);
+    try {
+      await source.resourceTemplates();
+      // A redeployed server behind a stateless transport keeps its connection.
+      spyOn(source.getClient(), "listResourceTemplates").mockResolvedValue({
+        resourceTemplates: [{ uriTemplate: "crm://orgs/{id}", name: "org" }],
+      });
+      expect((await source.resourceTemplates())[0]?.uriTemplate).toBe("crm://contacts/{id}");
+      expect((await source.resourceTemplates({ fresh: true }))[0]?.uriTemplate).toBe(
+        "crm://orgs/{id}",
+      );
+      expect((await source.resourceTemplates())[0]?.uriTemplate).toBe("crm://orgs/{id}");
+    } finally {
+      await source.stop();
+    }
+  });
+
+  it("keeps what it remembers when asking again fails", async () => {
+    const source = await startSource([{ uriTemplate: "crm://contacts/{id}", name: "contact" }]);
+    try {
+      const first = await source.resourceTemplates();
+      spyOn(source.getClient(), "listResourceTemplates").mockRejectedValue(
+        new Error("unreachable"),
+      );
+      expect(await source.resourceTemplates({ fresh: true })).toEqual(first);
+      expect(await source.resourceTemplates()).toEqual(first);
     } finally {
       await source.stop();
     }

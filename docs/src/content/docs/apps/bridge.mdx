@@ -599,6 +599,8 @@ The host resolves the URI in this order:
 
 So for your own records to be openable, by other apps and by the agent, advertise their URI shape as a resource template.
 
+The host remembers each server's templates while its connection lasts. A URI none of them claims makes it read every app's templates once more before refusing, so a template your server gains in a redeploy is found without a reconnect. A URI a remembered template claims opens without that read, and a server whose read fails keeps the templates already remembered.
+
 Matching stays cheap whatever a server advertises, so some templates and URIs never match:
 
 - **A URI longer than 2,048 characters.**

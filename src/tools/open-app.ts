@@ -49,9 +49,13 @@ export interface OpenScope {
   placements: readonly PlacementEntry[];
   /**
    * The resource templates a server advertises, each with the `ui://` URI of the view that
-   * shows its records when the server names one; empty when it advertises none.
+   * shows its records when the server names one; empty when it advertises none. `fresh` asks
+   * the server again rather than answering from what its connection remembers.
    */
-  templatesOf(serverName: string): Promise<readonly { uriTemplate: string; view?: string }[]>;
+  templatesOf(
+    serverName: string,
+    opts?: { fresh?: boolean },
+  ): Promise<readonly { uriTemplate: string; view?: string }[]>;
   /** Whether a conversation is one of the caller's in this workspace. */
   hasConversation(id: string): boolean;
 }
@@ -117,17 +121,24 @@ export async function resolveOpen(scope: OpenScope, uri: string): Promise<Resolu
 
   // A template names a view only among its own server's views, so a server can choose where
   // its records open in its own app and never send one into another app.
-  const claims = await Promise.all(
-    [...apps.values()].map(async (views) => {
-      const [first] = views;
-      if (!first) return null;
-      const templates = await scope.templatesOf(first.serverName);
-      const match = templates.find((t) => expandsFrom(t.uriTemplate, uri));
-      if (!match) return null;
-      return views.find((p) => match.view !== undefined && p.resourceUri === match.view) ?? first;
-    }),
-  );
-  const owners = claims.filter((p): p is PlacementEntry => p !== null);
+  const claimants = async (fresh: boolean): Promise<PlacementEntry[]> => {
+    const claims = await Promise.all(
+      [...apps.values()].map(async (views) => {
+        const [first] = views;
+        if (!first) return null;
+        const templates = await scope.templatesOf(first.serverName, { fresh });
+        const match = templates.find((t) => expandsFrom(t.uriTemplate, uri));
+        if (!match) return null;
+        return views.find((p) => match.view !== undefined && p.resourceUri === match.view) ?? first;
+      }),
+    );
+    return claims.filter((p): p is PlacementEntry => p !== null);
+  };
+
+  // A connection remembers its server's templates, and a redeployed server can keep its
+  // connection, so a URI nothing claims asks the servers again before it is refused.
+  let owners = await claimants(false);
+  if (owners.length === 0) owners = await claimants(true);
   if (owners.length === 1 && owners[0]) return { destination: appDestination(owners[0], uri) };
   if (owners.length > 1) {
     return { error: `More than one app claims ${uri}: ${owners.map(displayName).join(", ")}.` };
@@ -140,12 +151,12 @@ function scopeFor(runtime: Runtime, wsId: string): OpenScope {
   const registry = runtime.getRegistryForWorkspace(wsId);
   return {
     placements: runtime.getPlacementRegistry().forWorkspace(wsId),
-    async templatesOf(serverName) {
+    async templatesOf(serverName, opts) {
       // A kernel identity app sits in no workspace registry.
       const source = isIdentitySource(serverName)
         ? runtime.getIdentitySource(serverName)
         : registry.getSource(serverName);
-      return source instanceof McpSource ? source.resourceTemplates() : [];
+      return source instanceof McpSource ? source.resourceTemplates(opts) : [];
     },
     hasConversation(id) {
       const ownerId = runtime.getCurrentIdentity()?.id;

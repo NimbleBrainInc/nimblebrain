@@ -1798,12 +1798,17 @@ export class McpSource implements ToolSource {
    * has never answered. The prompt reads this on every assembly, so a failure is
    * memoized as empty rather than retried each turn, and the request carries a
    * short timeout so a slow server cannot stall a turn.
+   *
+   * `fresh` asks the server again. A server redeployed behind a stateless HTTP
+   * transport keeps its connection, so the memo can outlive the templates it
+   * holds; a caller about to refuse a URI asks before it does. A fresh read that
+   * fails keeps the memo.
    */
-  async resourceTemplates(): Promise<ResourceTemplateInfo[]> {
-    if (this.resourceTemplatesMemo) return this.resourceTemplatesMemo;
+  async resourceTemplates(opts: { fresh?: boolean } = {}): Promise<ResourceTemplateInfo[]> {
+    if (!opts.fresh && this.resourceTemplatesMemo) return this.resourceTemplatesMemo;
     const client = this.client;
     if (!client?.getServerCapabilities()?.resources) return [];
-    let list: ResourceTemplateInfo[] = [];
+    let list: ResourceTemplateInfo[] | null = null;
     try {
       const res = await client.listResourceTemplates(undefined, {
         timeout: RESOURCE_TEMPLATES_TIMEOUT_MS,
@@ -1823,8 +1828,9 @@ export class McpSource implements ToolSource {
         `resource-templates source=${this.name} error=${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    if (this.client === client) this.resourceTemplatesMemo = list;
-    return list;
+    const answer = list ?? this.resourceTemplatesMemo ?? [];
+    if (this.client === client) this.resourceTemplatesMemo = answer;
+    return answer;
   }
 
   /** Sanitized `serverInfo.version` from the MCP `initialize` response.
