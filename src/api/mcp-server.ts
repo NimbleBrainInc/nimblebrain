@@ -190,12 +190,7 @@ export class McpServerHost {
     const bounded = await this.boundedRequest(request);
     if (bounded instanceof Response) return bounded;
     request = bounded;
-    if (
-      request.method === "POST" &&
-      (await isLegacyRequest(request, undefined, {
-        maxRequestBodySize: MAX_MCP_REQUEST_BODY_BYTES,
-      }))
-    ) {
+    if (request.method === "POST" && (await isLegacyRequest(request))) {
       this.logRefusedClient(request);
     } else {
       const taskReply = await answerModernTaskRequest(
@@ -216,7 +211,6 @@ export class McpServerHost {
         ),
       {
         legacy: "reject",
-        maxRequestBodySize: MAX_MCP_REQUEST_BODY_BYTES,
         onerror: (err) => log.warn(`[mcp] request failed: ${err.message}`),
       },
     );
@@ -226,10 +220,11 @@ export class McpServerHost {
   /**
    * Read the body once, up to `MAX_MCP_REQUEST_BODY_BYTES`, before anything
    * parses it, and hand back a request holding what was read. The task answer
-   * above parses the body ahead of the SDK and has no bound of its own, and
-   * `bodyLimit` passes a body that declares no length, so without this a chunked
-   * body is buffered whole. A body over the bound is cancelled rather than
-   * drained: with no declared length there is no end to wait for.
+   * above parses the body ahead of the SDK and has no bound of its own, and the
+   * route's `bodyLimit` judges only a declared length, so without this a chunked
+   * body is buffered whole. What is handed on is already within the bound, so
+   * the SDK's own limit never decides. A body over the bound is cancelled
+   * rather than drained: with no declared length there is no end to wait for.
    */
   private async boundedRequest(request: Request): Promise<Request | Response> {
     if (!request.body) return request;
