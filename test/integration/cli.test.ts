@@ -107,18 +107,20 @@ describe("serve entry", () => {
 describe("serve listen address", () => {
   async function serveOutput(
     port: number,
-    opts: { env?: Record<string, string>; config?: object },
+    opts: { env?: Record<string, string>; config?: object; portFlag?: false },
   ): Promise<string> {
     const workDir = mkdtempSync(join(tmpdir(), "nb-serve-host-"));
     writeFileSync(join(workDir, "instance.json"), JSON.stringify({ auth: { adapter: "dev" } }));
     const config = join(workDir, "nimblebrain.json");
     writeFileSync(config, JSON.stringify({ version: "1", ...opts.config }));
+    const portArgs = opts.portFlag === false ? [] : ["--port", String(port)];
     const proc = spawn(
-      ["bun", "run", "--no-env-file", CLI, "serve", "--port", String(port), "--config", config],
+      ["bun", "run", "--no-env-file", CLI, "serve", ...portArgs, "--config", config],
       {
         env: {
           ...process.env,
           NB_HOST: "",
+          PORT: "",
           ...opts.env,
           NB_WORK_DIR: workDir,
           NB_TELEMETRY_DISABLED: "1",
@@ -150,5 +152,12 @@ describe("serve listen address", () => {
   it("listens where http.host says", async () => {
     const config = { http: { host: "0.0.0.0" } };
     expect(await serveOutput(27995, { config })).toContain("listening on 0.0.0.0:27995");
+  }, 30_000);
+
+  it("listens on http.port when neither PORT nor --port is set", async () => {
+    const config = { http: { port: 27996 } };
+    expect(await serveOutput(27996, { config, portFlag: false })).toContain(
+      "listening on 127.0.0.1:27996",
+    );
   }, 30_000);
 });

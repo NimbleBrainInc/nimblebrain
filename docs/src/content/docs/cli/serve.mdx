@@ -54,7 +54,7 @@ PORT=8080 bun run start
 1. The config file is loaded and validated
 2. The runtime initializes -- loading connectors, skills, and model configuration
 3. Structured logging is disabled unless `--debug` is set (keeps stdout/stderr clean for production)
-4. The HTTP server starts listening on the configured port
+4. The HTTP server starts listening on the configured address and port
 
 ## Production deployment
 
@@ -69,7 +69,7 @@ bun run src/cli/index.ts serve --port 27247
 
 The deployed container image runs exactly `bun run src/cli/index.ts serve`.
 
-`serve` listens on `127.0.0.1`, so only this machine can connect. When a proxy or client on another machine connects, set `NB_HOST=0.0.0.0` (or `http.host` in `nimblebrain.json`); the container image sets it.
+`serve` listens on `127.0.0.1`, so only this machine can connect, over IPv4 (`http://[::1]:27247` is refused). When a proxy or client on another machine connects, set `NB_HOST=0.0.0.0` (or `http.host` in `nimblebrain.json`); the container image sets it. Set `NB_HOST=::` to accept IPv6 as well.
 
 Authentication is configured through `<workDir>/instance.json` (the `dev`, `oidc` or `workos` adapter), not an environment variable — there is no `NB_API_KEY`. `serve` does not start without the file. `ALLOWED_ORIGINS` controls CORS. See [Connect via MCP](/connect/mcp-endpoint/) and [Security](/deploy/security/) for details.
 
