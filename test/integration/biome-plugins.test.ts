@@ -7,6 +7,11 @@
  * Each case runs one plugin alone over its snippet, in a temp directory with
  * its own `biome.json`. A line ending in `// flagged` must get a diagnostic;
  * every other line must not.
+ *
+ * Every case starts Biome as its own process, so the file sits with the
+ * integration tests, and each case is given `SPAWN_TIMEOUT_MS` rather than the
+ * runner's 5 s default: a cold Biome on a loaded runner can take longer to
+ * start and compile a plugin than the assertion itself takes to run.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
@@ -17,6 +22,7 @@ import { join } from "node:path";
 const ROOT = join(import.meta.dir, "..", "..");
 const PLUGINS = join(ROOT, "biome-plugins");
 const BIOME = join(ROOT, "node_modules", ".bin", "biome");
+const SPAWN_TIMEOUT_MS = 30_000;
 
 const CASES: Record<string, string> = {
   "containment-tag.grit": `
@@ -107,13 +113,17 @@ describe("biome-plugins", () => {
   });
 
   for (const [plugin, source] of Object.entries(CASES)) {
-    test(`${plugin} flags exactly the marked lines`, () => {
-      const expected = source
-        .split("\n")
-        .flatMap((line, i) => (line.endsWith("// flagged") ? [i + 1] : []));
-      expect(expected.length).toBeGreaterThan(0);
-      expect(flaggedLines(plugin, source)).toEqual(expected);
-    });
+    test(
+      `${plugin} flags exactly the marked lines`,
+      () => {
+        const expected = source
+          .split("\n")
+          .flatMap((line, i) => (line.endsWith("// flagged") ? [i + 1] : []));
+        expect(expected.length).toBeGreaterThan(0);
+        expect(flaggedLines(plugin, source)).toEqual(expected);
+      },
+      SPAWN_TIMEOUT_MS,
+    );
   }
 });
 
@@ -140,11 +150,15 @@ function repoLintCategories(path: string, source: string): string[] {
 describe("biome.json import bans", () => {
   const childProcess = 'import { spawn } from "node:child_process";\n\nexport const s = spawn;\n';
 
-  test("src/execution/ may not import child_process", () => {
-    expect(repoLintCategories("src/execution/probe.ts", childProcess)).toContain(
-      "lint/style/noRestrictedImports",
-    );
-  });
+  test(
+    "src/execution/ may not import child_process",
+    () => {
+      expect(repoLintCategories("src/execution/probe.ts", childProcess)).toContain(
+        "lint/style/noRestrictedImports",
+      );
+    },
+    SPAWN_TIMEOUT_MS,
+  );
 
   // Each src/ override restates its own pattern list, so the ban is checked in every one.
   const agentImports = {
@@ -162,15 +176,23 @@ describe("biome.json import bans", () => {
   ];
   for (const path of srcPaths) {
     for (const [kind, source] of Object.entries(agentImports)) {
-      test(`${path} may not import nimblebrain-agent (${kind})`, () => {
-        expect(repoLintCategories(path, source)).toContain("lint/style/noRestrictedImports");
-      });
+      test(
+        `${path} may not import nimblebrain-agent (${kind})`,
+        () => {
+          expect(repoLintCategories(path, source)).toContain("lint/style/noRestrictedImports");
+        },
+        SPAWN_TIMEOUT_MS,
+      );
     }
   }
 
-  test("test/ may import nimblebrain-agent", () => {
-    expect(repoLintCategories("test/helpers/acp/probe.ts", agentImports.static)).not.toContain(
-      "lint/style/noRestrictedImports",
-    );
-  });
+  test(
+    "test/ may import nimblebrain-agent",
+    () => {
+      expect(repoLintCategories("test/helpers/acp/probe.ts", agentImports.static)).not.toContain(
+        "lint/style/noRestrictedImports",
+      );
+    },
+    SPAWN_TIMEOUT_MS,
+  );
 });
