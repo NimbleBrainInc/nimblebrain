@@ -215,6 +215,7 @@ When the same setting can be configured in multiple places, this is the resoluti
 |---------|---------|----------|-------------|---------|
 | Working directory | `NB_WORK_DIR` (beats all) | `--workdir` | `workDir` | `~/.nimblebrain` |
 | Port | `PORT` (beats `--port`) | `--port` | `http.port` | `27247` |
+| Listen address | `NB_HOST` | — | `http.host` | `127.0.0.1` |
 | Public origin | `NB_PUBLIC_ORIGIN` | — | derived from host facts | `http://localhost:27247` |
 | Anthropic key | `ANTHROPIC_API_KEY` | — | `providers.anthropic.apiKey` | — |
 | Telemetry | `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK` | — | `telemetry.enabled` | Enabled |
