@@ -69,6 +69,8 @@ bun run src/cli/index.ts serve --port 27247
 
 The deployed container image runs exactly `bun run src/cli/index.ts serve`.
 
+`serve` listens on `127.0.0.1`, so only this machine can connect. When a proxy or client on another machine connects, set `NB_HOST=0.0.0.0` (or `http.host` in `nimblebrain.json`); the container image sets it.
+
 Authentication is configured through `<workDir>/instance.json` (the `dev`, `oidc` or `workos` adapter), not an environment variable — there is no `NB_API_KEY`. `serve` does not start without the file. `ALLOWED_ORIGINS` controls CORS. See [Connect via MCP](/connect/mcp-endpoint/) and [Security](/deploy/security/) for details.
 
 ## Debug mode

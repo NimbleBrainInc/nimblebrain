@@ -32,6 +32,8 @@ import type { AppContext } from "./types.ts";
 export interface ServerOptions {
   runtime: Runtime;
   port?: number;
+  /** Address to listen on. Default: `127.0.0.1`, so only this machine can connect. */
+  hostname?: string;
 }
 
 export interface ServerHandle {
@@ -72,7 +74,7 @@ function readEnvAllowedOrigins(): Set<string> | null {
  * Returns a ServerHandle for lifecycle control.
  */
 export function startServer(options: ServerOptions): ServerHandle {
-  const { runtime, port = 27247 } = options;
+  const { runtime, port = 27247, hostname = "127.0.0.1" } = options;
   // The runtime owns the identity provider; the server authenticates with that
   // one and has none of its own, so the two cannot disagree about who a caller
   // is. A runtime always has one: `Runtime.start` refuses a workdir without
@@ -241,6 +243,7 @@ export function startServer(options: ServerOptions): ServerHandle {
 
   const server = Bun.serve({
     port,
+    hostname,
     idleTimeout: 255, // seconds — max Bun allows; needed for SSE streams and long chat requests
     fetch: app.fetch,
   });
@@ -276,7 +279,7 @@ export async function startServerWithShutdown(options: ServerOptions): Promise<v
   const handle = startServer(options);
   const { runtime } = options;
 
-  log.info(`[nimblebrain] HTTP server listening on port ${handle.port}`);
+  log.info(`[nimblebrain] HTTP server listening on ${handle.server.hostname}:${handle.port}`);
 
   let shuttingDown = false;
 
