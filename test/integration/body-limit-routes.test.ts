@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ApiErrorBody } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { buildMcpRequest } from "../../web/src/mcp-bridge-client.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
@@ -55,6 +56,36 @@ afterAll(async () => {
 });
 
 describe("per-route body limits", () => {
+  it("rejects a chunked MCP body over 1 MB and serves the next request", async () => {
+    const oversized = buildMcpRequest("1", "tasks/get", { taskId: "missing" });
+    const bytes = new TextEncoder().encode(oversized.body.padEnd(2 * 1_048_576));
+    let offset = 0;
+    const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
+      method: "POST",
+      headers: oversized.headers,
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (offset === bytes.length) return controller.close();
+          const end = Math.min(offset + 4096, bytes.length);
+          controller.enqueue(bytes.subarray(offset, end));
+          offset = end;
+        },
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    expect(res.status).toBe(413);
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("payload_too_large");
+
+    const valid = buildMcpRequest("2", "tools/list", {});
+    const followUp = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
+      method: "POST",
+      ...valid,
+      signal: AbortSignal.timeout(5_000),
+    });
+    expect(followUp.status).toBe(200);
+    expect(await followUp.text()).toContain('"tools":');
+  });
+
   it("rejects >1MB JSON on /v1/workspaces/:wsId/tools/call with structured details", async () => {
     const oversized = "x".repeat(1_100_000);
     const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {

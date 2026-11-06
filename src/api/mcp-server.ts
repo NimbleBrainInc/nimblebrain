@@ -51,11 +51,13 @@ import {
   MissingRequiredClientCapabilityError,
   ProtocolError,
   ProtocolErrorCode,
+  readRequestBody,
   Server,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { isAppCallable, isModelVisible, type ToolResult } from "../engine/types.ts";
+import { humanSize } from "../files/human-size.ts";
 import type { TokenGrant, UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import {
@@ -93,6 +95,14 @@ import {
   type TaskAwareSource,
   type TaskScope,
 } from "./mcp-modern-tasks.ts";
+import { apiError } from "./types.ts";
+
+/**
+ * The most bytes one `/mcp` request body may hold. The route's `bodyLimit`
+ * refuses a larger declared `Content-Length`; `handle` counts the bytes that
+ * actually arrive, so a chunked body or a wrong header meets the same bound.
+ */
+export const MAX_MCP_REQUEST_BODY_BYTES = 1_048_576;
 
 /**
  * JSON-RPC error code for a `resources/read` whose URI resolves nowhere:
@@ -177,7 +187,15 @@ export class McpServerHost {
     features: ResolvedFeatures,
     requestCtx: McpRequestContext,
   ): Promise<Response> {
-    if (request.method === "POST" && (await isLegacyRequest(request))) {
+    const bounded = await this.boundedRequest(request);
+    if (bounded instanceof Response) return bounded;
+    request = bounded;
+    if (
+      request.method === "POST" &&
+      (await isLegacyRequest(request, undefined, {
+        maxRequestBodySize: MAX_MCP_REQUEST_BODY_BYTES,
+      }))
+    ) {
       this.logRefusedClient(request);
     } else {
       const taskReply = await answerModernTaskRequest(
@@ -198,10 +216,35 @@ export class McpServerHost {
         ),
       {
         legacy: "reject",
+        maxRequestBodySize: MAX_MCP_REQUEST_BODY_BYTES,
         onerror: (err) => log.warn(`[mcp] request failed: ${err.message}`),
       },
     );
     return handler.fetch(request);
+  }
+
+  /**
+   * Read the body once, up to `MAX_MCP_REQUEST_BODY_BYTES`, before anything
+   * parses it, and hand back a request holding what was read. The task answer
+   * above parses the body ahead of the SDK and has no bound of its own, and
+   * `bodyLimit` passes a body that declares no length, so without this a chunked
+   * body is buffered whole. A body over the bound is cancelled rather than
+   * drained: with no declared length there is no end to wait for.
+   */
+  private async boundedRequest(request: Request): Promise<Request | Response> {
+    if (!request.body) return request;
+    const body = await readRequestBody(request, MAX_MCP_REQUEST_BODY_BYTES).catch(() => null);
+    if (!body) return apiError(400, "bad_request", "Could not read the request body.");
+    if (body.tooLarge) {
+      void request.body.cancel().catch(() => {});
+      return apiError(
+        413,
+        "payload_too_large",
+        `Request body is over the limit of ${humanSize(MAX_MCP_REQUEST_BODY_BYTES)}.`,
+        { limit: MAX_MCP_REQUEST_BODY_BYTES },
+      );
+    }
+    return new Request(request, { body: body.text });
   }
 
   /**
