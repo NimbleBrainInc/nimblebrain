@@ -196,11 +196,20 @@ function selectAuthProvider(
   return config?.auth ? undefined : authProvider;
 }
 
-/** Transport fetch: the minting fetch, else an OAuth-refresh fetch for an OAuth connector, else none. */
+/**
+ * Transport fetch: the minting fetch or the global one, read within the answer
+ * budget, and wrapped in an OAuth-refresh fetch for an OAuth connector.
+ */
 function selectTransportFetch(
   mintingFetch: FetchLike | undefined,
   effectiveAuthProvider: OAuthClientProvider | undefined,
-): FetchLike | undefined {
+): FetchLike {
+  // Answers are counted as they come off the network, below every wrapper that
+  // reads one, so none of them (the refresh fetch's copy of a token answer
+  // included) holds more than the host budget (`createResponseBudgetFetch`).
+  const networkFetch = createResponseBudgetFetch(
+    mintingFetch ?? ((input, init) => fetch(input, init)),
+  );
   // For an OAuth connector (no static auth, no minting provider), wrap the
   // transport's `fetch` so transient token-endpoint refresh failures are
   // retried in place instead of bubbling up as a fabricated `UnauthorizedError`
@@ -209,8 +218,10 @@ function selectTransportFetch(
   // transient-vs-dead-token distinction is still recoverable — see
   // `oauth-refresh-fetch.ts`. `mintingFetch` and OAuth are mutually exclusive
   // (a `provider` auth is not `none`, so `effectiveAuthProvider` is unset when
-  // `mintingFetch` is set), so the `??` never drops a minting fetch.
-  return mintingFetch ?? (effectiveAuthProvider ? createOAuthRefreshFetch() : undefined);
+  // `mintingFetch` is set), so a minting fetch is never wrapped for refresh.
+  return effectiveAuthProvider
+    ? createOAuthRefreshFetch({ fetchImpl: networkFetch })
+    : networkFetch;
 }
 
 /** Streamable-HTTP reconnection options derived from config, or undefined when not configured. */
@@ -304,16 +315,12 @@ export async function createRemoteTransport(
     allowInsecure: opts?.allowInsecure ?? false,
     fleetInternal: isMintedFleetSource(config),
   });
-  // A remote connector is untrusted, so the size of its answer is too: every
-  // body the transport reads, OAuth discovery included, stops at the host
-  // budget before anything parses it (`createResponseBudgetFetch`).
-  const boundedFetch = createResponseBudgetFetch(guardedFetch);
   // No header, no wrapper. A connection carrying only literals still reads
   // nothing from the store on any request: `perRequest` is empty.
   const headerFetch =
     Object.keys(fixed).length > 0 || perRequest.length > 0
-      ? createConnectorHeaderFetch(boundedFetch, fixed, perRequest, url, opts?.workspaceId)
-      : boundedFetch;
+      ? createConnectorHeaderFetch(guardedFetch, fixed, perRequest, url, opts?.workspaceId)
+      : guardedFetch;
   // Only a token the SDK can renew is worth a 401: a static-auth or minting
   // remote has no refresh, and its in-band rejection surfaces as the server sent it.
   const inBandAuthErrors = opts?.inBandAuthErrors ?? [];

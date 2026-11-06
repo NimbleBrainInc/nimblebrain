@@ -249,6 +249,11 @@ What is left to evaluate at install time is the **connection**:
 - **What it is granted.** OAuth scopes are declared on the catalog entry and shown on the consent screen. Credentials are workspace-scoped: a connector authorized in one workspace is not reachable from another.
 - **What its tools may do.** The per-connector permission table (Configure → Tools) is the place to disallow a tool the workspace should not expose to the agent.
 
+Whatever the connection, the runtime reads at most 64 MiB of any one answer a
+connector sends: a JSON reply, an error page or an OAuth token answer as a whole,
+an event stream per event. A larger answer fails its call, and the runtime stops
+reading it.
+
 ## How a tool call gets authorized
 
 Every tool call reaches a tool through one of three doors, and all three run the
