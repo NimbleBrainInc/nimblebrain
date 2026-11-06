@@ -2,7 +2,8 @@ import type { FetchLike } from "@modelcontextprotocol/client";
 
 /**
  * The most a remote connector may send in one answer. A host budget, not a
- * protocol limit: it leaves room for several 10 MiB files after base64.
+ * protocol limit. Base64 adds a third, so one answer carries a file of up to
+ * about 48 MiB.
  */
 export const MAX_REMOTE_RESPONSE_BYTES = 64 * 1024 * 1024;
 
