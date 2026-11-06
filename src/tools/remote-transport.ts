@@ -7,6 +7,7 @@ import { type CredentialValue, isCredentialRef } from "./credential-ref.ts";
 import { type CredentialScope, resolveCredentialValue } from "./credential-store.ts";
 import { createInBandAuthRejectionFetch } from "./in-band-auth-rejection-fetch.ts";
 import { createOAuthRefreshFetch } from "./oauth-refresh-fetch.ts";
+import { createResponseBudgetFetch } from "./response-budget.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 
 /** One outgoing header as config declares it: the secret itself, or a reference to one. */
@@ -303,12 +304,16 @@ export async function createRemoteTransport(
     allowInsecure: opts?.allowInsecure ?? false,
     fleetInternal: isMintedFleetSource(config),
   });
+  // A remote connector is untrusted, so the size of its answer is too: every
+  // body the transport reads, OAuth discovery included, stops at the host
+  // budget before anything parses it (`createResponseBudgetFetch`).
+  const boundedFetch = createResponseBudgetFetch(guardedFetch);
   // No header, no wrapper. A connection carrying only literals still reads
   // nothing from the store on any request: `perRequest` is empty.
   const headerFetch =
     Object.keys(fixed).length > 0 || perRequest.length > 0
-      ? createConnectorHeaderFetch(guardedFetch, fixed, perRequest, url, opts?.workspaceId)
-      : guardedFetch;
+      ? createConnectorHeaderFetch(boundedFetch, fixed, perRequest, url, opts?.workspaceId)
+      : boundedFetch;
   // Only a token the SDK can renew is worth a 401: a static-auth or minting
   // remote has no refresh, and its in-band rejection surfaces as the server sent it.
   const inBandAuthErrors = opts?.inBandAuthErrors ?? [];

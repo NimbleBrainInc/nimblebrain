@@ -24,6 +24,10 @@ import {
   setCredentialStore,
 } from "../../src/tools/credential-store.ts";
 import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
+import {
+  MAX_REMOTE_RESPONSE_BYTES,
+  RemoteResponseTooLargeError,
+} from "../../src/tools/response-budget.ts";
 import { payloadsOf } from "../helpers/engine-events.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
@@ -140,6 +144,47 @@ describe("createRemoteTransport", () => {
       throw new Error("expected a StreamableHTTPClientTransport");
     }
     expect(t.sessionId).toBe("session-abc");
+  });
+});
+
+describe("createRemoteTransport — a connector's answer stays within the host budget", () => {
+  let originalFetch: typeof fetch;
+  let pulled: number;
+  let cancelled: boolean;
+
+  beforeEach(() => {
+    pulled = 0;
+    cancelled = false;
+    originalFetch = globalThis.fetch;
+    // An answer that never ends: one MiB at a time, for as long as it is read.
+    const mib = new Uint8Array(1024 * 1024).fill(0x20);
+    globalThis.fetch = fakeFetch(async () => {
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulled++;
+          controller.enqueue(mib);
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return new Response(body, { headers: { "content-type": "application/json" } });
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("an oversized answer fails the call and stops the read at the budget", async () => {
+    const t = await createRemoteTransport(new URL("https://example.com/mcp"));
+    await t.start();
+    await expect(
+      t.send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "big" } }),
+    ).rejects.toBeInstanceOf(RemoteResponseTooLargeError);
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThanOrEqual(MAX_REMOTE_RESPONSE_BYTES / (1024 * 1024) + 2);
+    await t.close();
   });
 });
 
