@@ -286,7 +286,7 @@
 
 ### Fixed
 
-- **A remote connector's answer is read up to 64 MiB.** A larger JSON reply, token answer or stream event fails its call and the read stops, instead of the whole answer being held in memory ([docs](https://docs.nimblebrain.ai/deploy/security/#connector-trust)).
+- **A remote connector's answer over its MCP connection is read up to 64 MiB.** A larger JSON reply, token refresh answer or stream event fails its call and the read stops, instead of the whole answer being held in memory ([docs](https://docs.nimblebrain.ai/deploy/security/#connector-trust)).
 - **A cancelled turn on an agent runtime records the usage it spent.** The model calls the agent finished before the cancel are priced in the usage ledger; they recorded nothing ([#1877](https://github.com/NimbleBrainInc/nimblebrain/pull/1877)).
 - **Title and compaction calls are recorded under their run in the usage ledger**, matching what the model gateway charges the run, so per-run cost includes them ([#1867](https://github.com/NimbleBrainInc/nimblebrain/pull/1867)).
 - **Connectors whose OAuth server sends the RFC 9207 `iss` parameter, Notion's among them, connect.** The callback now hands `iss` to the token exchange, which refused the code without it ([#1888](https://github.com/NimbleBrainInc/nimblebrain/pull/1888)).
