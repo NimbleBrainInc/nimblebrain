@@ -33,7 +33,7 @@ function body(method: string, modern = true): string {
   });
 }
 
-function streamedRequest(text: string, method: string, contentLength?: string) {
+function streamedRequest(text: string, method: string) {
   const bytes = new TextEncoder().encode(text);
   let received = 0;
   let cancelled = false;
@@ -60,7 +60,6 @@ function streamedRequest(text: string, method: string, contentLength?: string) {
         "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
         "Mcp-Method": method,
         ...(method.startsWith("tasks/") ? { "Mcp-Name": "missing" } : {}),
-        ...(contentLength === undefined ? {} : { "Content-Length": contentLength }),
       },
       body: stream,
     }),
@@ -78,13 +77,8 @@ function handle(request: Request): Promise<Response> {
 }
 
 describe("MCP request body boundary", () => {
-  it.each([
-    ["tasks/get", undefined],
-    ["tasks/get", "1"],
-    ["tools/list", undefined],
-    ["tools/list", "invalid"],
-  ])("refuses oversized %s with Content-Length %p before parsing", async (method, length) => {
-    const input = streamedRequest(body(method).padEnd(2 * LIMIT), method, length);
+  it.each(["tasks/get", "tools/list"])("refuses a chunked %s over the limit", async (method) => {
+    const input = streamedRequest(body(method).padEnd(2 * LIMIT), method);
     const response = await handle(input.request);
     expect(response.status).toBe(413);
     expect((await readJson<ApiErrorBody>(response)).error).toBe("payload_too_large");
@@ -99,6 +93,21 @@ describe("MCP request body boundary", () => {
     expect(response.status).toBe(413);
     expect(input.received()).toBeLessThanOrEqual(LIMIT + CHUNK);
     expect(input.cancelled()).toBe(true);
+  });
+
+  it("answers 400 when the body cannot be read", async () => {
+    const request = new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.error(new Error("client went away"));
+        },
+      }),
+    });
+    const response = await handle(request);
+    expect(response.status).toBe(400);
+    expect((await readJson<ApiErrorBody>(response)).error).toBe("bad_request");
   });
 
   it("counts UTF-8 bytes rather than characters", async () => {

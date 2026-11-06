@@ -100,7 +100,7 @@ import { apiError } from "./types.ts";
 /**
  * The most bytes one `/mcp` request body may hold. The route's `bodyLimit`
  * refuses a larger declared `Content-Length`; `handle` counts the bytes that
- * actually arrive, so a chunked body or a wrong header meets the same bound.
+ * actually arrive, so a chunked body meets the same bound.
  */
 export const MAX_MCP_REQUEST_BODY_BYTES = 1_048_576;
 
@@ -223,8 +223,8 @@ export class McpServerHost {
    * above parses the body ahead of the SDK and has no bound of its own, and the
    * route's `bodyLimit` judges only a declared length, so without this a chunked
    * body is buffered whole. What is handed on is already within the bound, so
-   * the SDK's own limit never decides. A body over the bound is cancelled
-   * rather than drained: with no declared length there is no end to wait for.
+   * the SDK's own limit never decides. A body over the bound is cancelled, not
+   * read to its end, and the connection still serves the next request.
    */
   private async boundedRequest(request: Request): Promise<Request | Response> {
     if (!request.body) return request;
