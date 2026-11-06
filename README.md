@@ -300,6 +300,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 | Variable | Purpose |
 |----------|---------|
 | `NB_WORK_DIR` | Override working directory (takes precedence over config) |
+| `NB_HOST` | Address the HTTP server listens on (default: `127.0.0.1`; the Docker image sets `0.0.0.0`). Wins over `http.host` |
 | `ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (for cookie-based auth) |
 | `NB_CHAT_RATE_LIMIT` | Chat requests per minute per user (default: 20) |
 | `NB_TOOL_RATE_LIMIT` | Tool calls per minute per user (default: 60) |
