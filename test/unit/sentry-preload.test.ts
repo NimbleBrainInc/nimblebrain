@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Breadcrumb, ErrorEvent } from "@sentry/bun";
 import {
+  DATA_COLLECTION,
   resolveSentryConfig,
   scrubBreadcrumb,
   scrubEvent,
@@ -152,5 +153,38 @@ describe("scrubEvent", () => {
   it("leaves an empty user object when there is no id", () => {
     const event: ErrorEvent = { type: undefined, user: { email: "a@b.co" } };
     expect(scrubEvent(event).user).toEqual({});
+  });
+});
+
+describe("DATA_COLLECTION", () => {
+  it("collects no cookies or headers, so a credential cookie never reaches a span", () => {
+    expect(DATA_COLLECTION.cookies).toBe(false);
+    expect(DATA_COLLECTION.httpHeaders).toBe(false);
+  });
+
+  it("collects no request content or identity", () => {
+    expect(DATA_COLLECTION.userInfo).toBe(false);
+    expect(DATA_COLLECTION.httpBodies).toEqual([]);
+    expect(DATA_COLLECTION.urlQueryParams).toBe(false);
+    expect(DATA_COLLECTION.databaseQueryData).toBe(false);
+    expect(DATA_COLLECTION.genAI).toEqual({ inputs: false, outputs: false });
+    expect(DATA_COLLECTION.graphQL).toEqual({ document: false, variables: false });
+  });
+
+  it("sets every field, since a field left out defaults to collecting everything", () => {
+    expect(Object.keys(DATA_COLLECTION).sort()).toEqual(
+      [
+        "cookies",
+        "databaseQueryData",
+        "frameContextLines",
+        "genAI",
+        "graphQL",
+        "httpBodies",
+        "httpHeaders",
+        "stackFrameVariables",
+        "urlQueryParams",
+        "userInfo",
+      ].sort(),
+    );
   });
 });

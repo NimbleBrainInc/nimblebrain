@@ -8,7 +8,7 @@
  * under `src/`. Sentry is additive, opt-in deployment glue (mirrors how
  * `@sentry/react` lives only in `web/`). See `instrument/sentry.ts`.
  */
-import type { Breadcrumb, ErrorEvent } from "@sentry/bun";
+import type { Breadcrumb, BunOptions, ErrorEvent } from "@sentry/bun";
 
 /** Resolved, validated backend Sentry settings. */
 export interface ResolvedSentryConfig {
@@ -120,3 +120,29 @@ export function scrubBreadcrumb(crumb: Breadcrumb): Breadcrumb | null {
   }
   return crumb;
 }
+
+/**
+ * What the SDK may collect from requests, for every field it reads.
+ *
+ * The request integration records headers and each cookie as attributes on the active span, and
+ * that span is the kernel's, which exports to the trace backend. The SDK filters a cookie only
+ * when its name matches its own list of sensitive words, so a credential cookie with a plain name
+ * would be recorded as is. Error capture needs no request data, so none is collected: no cookies,
+ * headers, bodies, query strings, user info, query values or AI inputs and outputs. Stack frames
+ * stay, which is what an error event is for.
+ *
+ * Every field is set because passing `dataCollection` at all makes each field left out default to
+ * collecting everything.
+ */
+export const DATA_COLLECTION: NonNullable<BunOptions["dataCollection"]> = {
+  userInfo: false,
+  cookies: false,
+  httpHeaders: false,
+  httpBodies: [],
+  urlQueryParams: false,
+  graphQL: { document: false, variables: false },
+  genAI: { inputs: false, outputs: false },
+  databaseQueryData: false,
+  stackFrameVariables: true,
+  frameContextLines: 7,
+};
