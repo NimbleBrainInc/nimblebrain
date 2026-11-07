@@ -27,8 +27,10 @@
  * default — turning it on does not disturb the Grafana trace pipeline.
  *
  * Trust boundary (the scrubbing mirrors `web/src/sentry.ts`):
- * `sendDefaultPii: false` plus `beforeSend: scrubEvent` keep request
- * headers/cookies, bodies, and query strings out of the event envelope, and
+ * `dataCollection: DATA_COLLECTION` stops the request integration recording
+ * headers, cookies, bodies, and query strings at all, including on the kernel's
+ * spans, which it would otherwise annotate; `beforeSend: scrubEvent` keeps them
+ * out of the event envelope, and
  * `beforeBreadcrumb: scrubBreadcrumb` scrubs the breadcrumb trail (drops
  * `console` crumbs, strips URL query strings) — the default integrations
  * breadcrumb `console.*` and outbound LLM/MCP/OAuth requests, which can carry
@@ -39,10 +41,11 @@
  * client, the runtime does NOT attach per-request `workspace_id` / `user_id`:
  * the kernel can't import Sentry (`noRestrictedImports` in `biome.json`), so that
  * verified identity stays on the OTel spans (`src/observability/identity.ts`),
- * which Sentry doesn't ingest. A neutral kernel→Sentry scope seam could bridge
+ * which Sentry doesn't export. A neutral kernel→Sentry scope seam could bridge
  * it later; today it's tenant-level only.
  */
 import {
+  DATA_COLLECTION,
   resolveSentryConfig,
   scrubBreadcrumb,
   scrubEvent,
@@ -59,6 +62,7 @@ if (sentryEnabled(process.env)) {
       release: config.release,
       tracesSampleRate: config.tracesSampleRate,
       sendDefaultPii: false,
+      dataCollection: DATA_COLLECTION,
       skipOpenTelemetrySetup: true,
       beforeSend: scrubEvent,
       beforeBreadcrumb: scrubBreadcrumb,
