@@ -24,6 +24,10 @@ import {
   setCredentialStore,
 } from "../../src/tools/credential-store.ts";
 import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
+import {
+  MAX_REMOTE_RESPONSE_BYTES,
+  RemoteResponseTooLargeError,
+} from "../../src/tools/response-budget.ts";
 import { payloadsOf } from "../helpers/engine-events.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
@@ -140,6 +144,77 @@ describe("createRemoteTransport", () => {
       throw new Error("expected a StreamableHTTPClientTransport");
     }
     expect(t.sessionId).toBe("session-abc");
+  });
+});
+
+describe("createRemoteTransport — a connector's answer stays within the host budget", () => {
+  const MIB = 1024 * 1024;
+  const budgetMib = MAX_REMOTE_RESPONSE_BYTES / MIB;
+  // Four MiB past the budget, then the end: a transport without the budget
+  // reads it all, fails to parse it and fails the test, without hanging.
+  const sentMib = budgetMib + 4;
+  let originalFetch: typeof fetch;
+  let pulled: number;
+  let cancelled: boolean;
+
+  beforeEach(() => {
+    pulled = 0;
+    cancelled = false;
+    originalFetch = globalThis.fetch;
+    const mib = new Uint8Array(MIB).fill(0x20);
+    globalThis.fetch = fakeFetch(async () => {
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (pulled >= sentMib) return controller.close();
+          pulled++;
+          controller.enqueue(mib);
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return new Response(body, { headers: { "content-type": "application/json" } });
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("an oversized answer fails the call and stops the read at the budget", async () => {
+    const t = await createRemoteTransport(new URL("https://example.com/mcp"));
+    await t.start();
+    await expect(
+      t.send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "big" } }),
+    ).rejects.toBeInstanceOf(RemoteResponseTooLargeError);
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThanOrEqual(budgetMib + 2);
+    await t.close();
+  });
+
+  test("an OAuth token answer is held to the same budget", async () => {
+    const provider: OAuthClientProvider = {
+      redirectUrl: "http://localhost/callback",
+      clientMetadata: { redirect_uris: ["http://localhost/callback"] },
+      clientInformation: () => undefined,
+      saveClientInformation: () => {},
+      tokens: () => undefined,
+      saveTokens: () => {},
+      redirectToAuthorization: () => {},
+      saveCodeVerifier: () => {},
+      codeVerifier: () => "",
+    };
+    const t = await createRemoteTransport(new URL("https://example.com/mcp"), {}, provider);
+    // biome-ignore lint/complexity/useLiteralKeys: `_fetchWithInit` is a private SDK field that the SDK's declarations leave untyped, so it reads as `any`; bracket access reaches it without a cast
+    const oauthFetch: FetchLike = sdkTransport(t)["_fetchWithInit"];
+    await expect(
+      oauthFetch("https://auth.example.com/token", {
+        method: "POST",
+        body: "grant_type=refresh_token&refresh_token=rt-oversized",
+      }),
+    ).rejects.toBeInstanceOf(RemoteResponseTooLargeError);
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThanOrEqual(budgetMib + 2);
   });
 });
 
