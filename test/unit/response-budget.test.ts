@@ -79,6 +79,14 @@ describe("createResponseBudgetFetch", () => {
     expect(state.cancelled).toBe(true);
   });
 
+  test("one event of CRLF lines past the budget is refused", async () => {
+    const line = encoder.encode(`data: ${"x".repeat(20)}\r\n`);
+    const { body } = streamed([line, line, line, line, line, encoder.encode("\r\n")]);
+    const fetch = createResponseBudgetFetch(answering(body, "text/event-stream"), 64);
+    const response = await fetch("https://example.com/mcp");
+    await expect(response.text()).rejects.toBeInstanceOf(RemoteResponseTooLargeError);
+  });
+
   test("an answer with no body passes through", async () => {
     const fetch = createResponseBudgetFetch(async () => new Response(null, { status: 202 }), 64);
     const response = await fetch("https://example.com/mcp");

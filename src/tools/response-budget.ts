@@ -63,6 +63,9 @@ function bodyCounter(maxBytes: number): (chunk: Uint8Array) => void {
  * them, and `Content-Length` is not trusted. Past the budget the body errors
  * with {@link RemoteResponseTooLargeError} and the connection's read is
  * cancelled, so the host stops taking bytes instead of buffering them.
+ * This counts a stream rather than using the SDK's `readRequestBody`, which
+ * buffers a whole body: the SDK reads an answer as a stream, and an event
+ * stream is bounded per event, not per body.
  */
 export function createResponseBudgetFetch(
   inner: FetchLike,
