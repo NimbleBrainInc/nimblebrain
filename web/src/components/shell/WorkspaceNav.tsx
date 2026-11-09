@@ -22,10 +22,12 @@
 // here is the focused workspace = view scope, not a tool namespace.
 //
 // Collapsed (icon rail) renders the same destinations as icon buttons, each
-// named by a tooltip, with the "+" last.
+// named by a tooltip, with the "+" last. An app with several views opens a
+// menu of them there (AppViewsMenu), since the rail cannot list them.
 // ---------------------------------------------------------------------------
 
-import { ArrowRight, LayoutGrid, Pin, Plus } from "lucide-react";
+import { Menu } from "@base-ui/react/menu";
+import { ArrowRight, Check, LayoutGrid, Pin, Plus } from "lucide-react";
 import { useMemo } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import type { InstalledConnector } from "../../api/client";
@@ -367,6 +369,22 @@ function AppEntry({
     );
   }
   const open = app.views.some((view) => pathname === to(view));
+  if (collapsed) {
+    return (
+      <AppViewsMenu
+        label={name ?? viewLabel(first)}
+        iconUrl={iconUrl}
+        serverName={app.serverName}
+        open={open}
+        views={app.views.map((view) => ({
+          key: view.resourceUri,
+          to: to(view),
+          state: home(view),
+          label: viewLabel(view),
+        }))}
+      />
+    );
+  }
   return (
     <>
       <AppLink
@@ -380,7 +398,7 @@ function AppEntry({
         pinned={pinned}
         onTogglePin={onTogglePin}
       />
-      {open && !collapsed && (
+      {open && (
         <div className="flex flex-col gap-px" data-testid="sidebar-workspace-app-views">
           {app.views.map((view) => (
             <NavLink
@@ -397,6 +415,83 @@ function AppEntry({
         </div>
       )}
     </>
+  );
+}
+
+// On the icon rail, an app with several views. The rail has no room to list
+// them beneath the icon, so the icon opens a menu of them to its right, headed
+// by the app's name: without it, only the app's first view would be reachable
+// from the rail. A click, not a hover, opens it, because the rail is the only
+// sidebar on a tablet, where nothing hovers. The view on screen is marked in
+// the menu, and the icon is marked while any of its views is open.
+function AppViewsMenu({
+  label,
+  serverName,
+  iconUrl,
+  open,
+  views,
+}: {
+  label: string;
+  serverName: string;
+  iconUrl?: string;
+  open: boolean;
+  views: { key: string; to: string; state: AppRouteState; label: string }[];
+}) {
+  const { pathname } = useLocation();
+  return (
+    <Menu.Root>
+      <Tooltip label={label} side="right">
+        <Menu.Trigger
+          aria-label={label}
+          data-testid="sidebar-workspace-app"
+          data-app-route={serverName}
+          data-is-active={open ? "true" : "false"}
+          aria-current={open ? "page" : undefined}
+          className={cn(rowClass(open, true), "data-[popup-open]:bg-sidebar-foreground/10")}
+        >
+          <ConnectorIcon name={label} iconUrl={iconUrl} className="size-4 rounded-xs text-3xs" />
+        </Menu.Trigger>
+      </Tooltip>
+      <Menu.Portal>
+        {/* Clears the rail's edge: the icon sits 14px in from it. */}
+        <Menu.Positioner side="right" align="start" sideOffset={18} className="z-50">
+          <Menu.Popup
+            data-testid="sidebar-workspace-app-menu"
+            className="min-w-48 rounded-sm border bg-popover py-1 text-popover-foreground shadow-md outline-none"
+          >
+            <Menu.Group>
+              <Menu.GroupLabel className="flex items-center gap-2 px-3 pt-1.5 pb-1 text-xs font-medium text-muted-foreground">
+                <ConnectorIcon
+                  name={label}
+                  iconUrl={iconUrl}
+                  className="size-3.5 rounded-xs text-3xs"
+                />
+                <span className="truncate">{label}</span>
+              </Menu.GroupLabel>
+              {views.map((view) => {
+                const current = pathname === view.to;
+                return (
+                  <Menu.LinkItem
+                    key={view.key}
+                    closeOnClick
+                    render={<Link to={view.to} state={view.state} />}
+                    aria-current={current ? "page" : undefined}
+                    data-testid="sidebar-workspace-app-menu-view"
+                    className={cn(
+                      "flex w-full cursor-default items-center px-3 py-1.5 text-sm outline-none data-[highlighted]:bg-foreground/10",
+                      current && "font-medium text-foreground",
+                    )}
+                  >
+                    <span className="flex-1 truncate">{view.label}</span>
+                    {current && <Check aria-hidden="true" className="size-3.5" />}
+                  </Menu.LinkItem>
+                );
+              })}
+            </Menu.Group>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
   );
 }
 

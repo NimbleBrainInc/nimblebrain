@@ -16,7 +16,8 @@
 //      firing the setter (equality guard). Enter picks the highlighted match.
 //   5. The footer opens the focused workspace's settings and the new-workspace
 //      page.
-//   6. Collapsed, the nav renders the same destinations icon-only.
+//   6. Collapsed, the nav renders the same destinations icon-only; an app with
+//      several views opens a menu of them from its icon.
 //   7. The APPS header carries a "+" to the connector catalog for a member
 //      who may write the workspace, even before any app is installed, and
 //      no "+" for anyone else.
@@ -553,6 +554,67 @@ describe("WorkspaceNav — app quick-list", () => {
     expect(apps).toHaveLength(1);
     expect(apps[0]?.getAttribute("aria-current")).toBe("page");
     expect(byTestId(mounted.container, "sidebar-workspace-app-view")).toHaveLength(0);
+  });
+
+  test("collapsed, an app with several views opens a menu of them, and choosing one goes there", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/app/people/organizations",
+      collapsed: true,
+      installed: [installedConnector("people", "People")],
+      placements: [
+        appPlacement("people", { priority: 10, label: "Contacts", route: "people" }),
+        appPlacement("people", {
+          priority: 11,
+          label: "Organizations",
+          route: "people/organizations",
+          resourceUri: "ui://people/organizations",
+        }),
+        appPlacement("people", {
+          priority: 12,
+          label: "Opportunities",
+          route: "people/opportunities",
+          resourceUri: "ui://people/opportunities",
+        }),
+      ],
+    });
+
+    // The icon is a menu trigger named by the app, not a link to its first view.
+    const trigger = byTestId(mounted.container, "sidebar-workspace-app")[0];
+    expect(trigger?.tagName).toBe("BUTTON");
+    expect(trigger?.getAttribute("aria-label")).toBe("People");
+    await click(trigger);
+
+    // The menu (in a portal) lists every view; the one on screen is marked.
+    const menu = byTestId(document.body, "sidebar-workspace-app-menu")[0];
+    expect(menu?.textContent).toContain("People");
+    const items = byTestId(document.body, "sidebar-workspace-app-menu-view");
+    expect(items.map((i) => i.textContent)).toEqual(["Contacts", "Organizations", "Opportunities"]);
+    expect(items.map((i) => i.getAttribute("href"))).toEqual([
+      "/w/003eba8844413cd9/app/people",
+      "/w/003eba8844413cd9/app/people/organizations",
+      "/w/003eba8844413cd9/app/people/opportunities",
+    ]);
+    expect(items.map((i) => i.getAttribute("aria-current"))).toEqual([null, "page", null]);
+
+    // Choosing a view opens it at its home.
+    await click(items[2]);
+    expect(navTarget).toBe("/w/003eba8844413cd9/app/people/opportunities");
+    expect(appTargetFrom(navState)).toBe("ui://people/opportunities");
+  });
+
+  test("collapsed, an app with one view stays a link to it", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
+      collapsed: true,
+      placements: [appPlacement("todos", { priority: 20 })],
+    });
+    const app = byTestId(mounted.container, "sidebar-workspace-app")[0];
+    expect(app?.tagName).toBe("A");
+    expect(app?.getAttribute("href")).toBe("/w/003eba8844413cd9/app/todos");
   });
 
   test("no overflow link when apps fit within the cap", async () => {
