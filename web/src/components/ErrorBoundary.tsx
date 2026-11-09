@@ -39,8 +39,10 @@ export class ErrorBoundary extends Component<Props, State> {
           <p className="text-sm text-muted-foreground">
             An unexpected error occurred while rendering this page.
           </p>
+          {/* A reload, to clear the failed render; `?home` shows the grid
+              rather than reopening a default workspace that may be what failed. */}
           <a
-            href="/"
+            href="/?home"
             className="text-sm underline underline-offset-4 hover:text-foreground text-muted-foreground"
           >
             Go Home
