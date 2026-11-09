@@ -75,7 +75,11 @@ import {
   type ListOptions,
   type StoredMessage,
 } from "../conversation/types.ts";
-import { applyReasoningReplayPolicy, windowMessages } from "../conversation/window.ts";
+import {
+  applyReasoningReplayPolicy,
+  type WindowMessagesResult,
+  windowMessages,
+} from "../conversation/window.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { AdminToolCallPayload } from "../engine/schemas/events.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
@@ -6826,7 +6830,10 @@ function buildSurfaceOptions(
 export function buildTransformContext(
   budgetBase: number,
   replayProvider: ReturnType<typeof getProviderFromModel>,
-): NonNullable<EngineHooks["transformContext"]> {
+): (
+  historyMessages: LanguageModelV4Message[],
+  opts?: { overflowAttempt?: number },
+) => WindowMessagesResult {
   return (historyMessages, opts) => {
     // `overflowAttempt > 0` means the provider rejected the prior call for
     // exceeding the model's context window; halve the composed budget per

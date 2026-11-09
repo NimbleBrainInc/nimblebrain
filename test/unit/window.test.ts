@@ -85,7 +85,7 @@ function assertNoOrphanedToolResults(msgs: LanguageModelV4Message[]) {
 
 describe("windowMessages", () => {
   it("returns empty for empty history", () => {
-    expect(windowMessages([], 100_000)).toEqual([]);
+    expect(windowMessages([], 100_000)).toEqual({ messages: [], mandatoryOverBudget: false });
   });
 
   it("returns messages unchanged when within budget", () => {
@@ -95,8 +95,9 @@ describe("windowMessages", () => {
       textMsg("user", "How are you?"),
     ];
     // These messages are tiny, well within 100k tokens
-    const result = windowMessages(msgs, 100_000);
+    const { messages: result, mandatoryOverBudget } = windowMessages(msgs, 100_000);
     expect(result).toEqual(msgs);
+    expect(mandatoryOverBudget).toBe(false);
   });
 
   it("preserves first message and keeps recent messages that fit", () => {
@@ -110,7 +111,7 @@ describe("windowMessages", () => {
 
     // Budget: first message (~25 tokens) + workspace for ~10 more messages (~250 tokens)
     const budget = 300;
-    const result = windowMessages(msgs, budget);
+    const { messages: result, mandatoryOverBudget } = windowMessages(msgs, budget);
 
     // First message is always preserved
     expect(result[0]).toEqual(msgs[0]);
@@ -121,6 +122,7 @@ describe("windowMessages", () => {
 
     // Last message of result should be the last message of input
     expect(result[result.length - 1]).toEqual(msgs[msgs.length - 1]);
+    expect(mandatoryOverBudget).toBe(false);
   });
 
   it("keeps tool-call/tool-result pairs atomic — never splits them", () => {
@@ -138,7 +140,7 @@ describe("windowMessages", () => {
 
     // Set budget tight enough that not everything fits but the last few do
     const budget = 120;
-    const result = windowMessages(msgs, budget);
+    const { messages: result } = windowMessages(msgs, budget);
 
     // First message preserved
     expect(result[0]).toEqual(msgs[0]);
@@ -159,7 +161,7 @@ describe("windowMessages", () => {
 
     // Small budget forces heavy windowing
     const budget = 200;
-    const result = windowMessages(msgs, budget);
+    const { messages: result } = windowMessages(msgs, budget);
 
     assertNoOrphanedToolResults(result);
 
@@ -194,7 +196,7 @@ describe("windowMessages", () => {
 
     // Budget tight enough to force dropping the first batch
     const budget = 800;
-    const result = windowMessages(msgs, budget);
+    const { messages: result } = windowMessages(msgs, budget);
 
     // First message always preserved
     expect(result[0]).toEqual(msgs[0]);
@@ -228,7 +230,7 @@ describe("windowMessages", () => {
 
     // Budget that fits first + last but not the big tool call pair
     const budget = 30;
-    const result = windowMessages(msgs, budget);
+    const { messages: result } = windowMessages(msgs, budget);
     expect(result[0]).toEqual(msgs[0]);
     // The structured message should be dropped (too large)
     const hasStructured = result.some((m) => m === structuredMsg);
@@ -244,8 +246,9 @@ describe("windowMessages", () => {
       textMsg("assistant", "World"), // 5 chars / 4 = 2 tokens
     ];
     // Total: ceil(5/4) + ceil(5/4) = 2 + 2 = 4 tokens
-    const result = windowMessages(msgs, 4);
+    const { messages: result, mandatoryOverBudget } = windowMessages(msgs, 4);
     expect(result).toEqual(msgs);
+    expect(mandatoryOverBudget).toBe(false);
   });
 
   it("returns all messages for 2 or fewer messages even if over budget", () => {
@@ -254,8 +257,9 @@ describe("windowMessages", () => {
       textMsg("assistant", "y".repeat(1000)),
     ];
     // Budget way too small, but <= 2 messages returns as-is
-    const result = windowMessages(msgs, 1);
+    const { messages: result, mandatoryOverBudget } = windowMessages(msgs, 1);
     expect(result).toEqual(msgs);
+    expect(mandatoryOverBudget).toBe(true);
   });
 
   it("keeps the anchor + recent turn, not just the oldest, when the anchor alone exhausts the budget (#688)", () => {
@@ -267,11 +271,12 @@ describe("windowMessages", () => {
       textMsg("assistant", "ok"),
       textMsg("user", "what is my name?"), // the recent turn
     ];
-    const result = windowMessages(msgs, 5);
+    const { messages: result, mandatoryOverBudget } = windowMessages(msgs, 5);
     // The anchor still leads (user role — Anthropic requires it)...
     expect(result[0]).toEqual(msgs[0]!);
     // ...and the recent turn survives as the tail (not the stale oldest alone).
     expect(result[result.length - 1]).toEqual(msgs[2]!);
+    expect(mandatoryOverBudget).toBe(true);
   });
 
   it("keeps anchor-then-tool-pair (never an assistant-first list) at a tiny budget (#688)", () => {
@@ -284,7 +289,7 @@ describe("windowMessages", () => {
       toolCallMsg("call_z"), // last group: tool-call...
       toolResultMsg("call_z", "the answer"), // ...and its result (atomic)
     ];
-    const result = windowMessages(msgs, 6);
+    const { messages: result, mandatoryOverBudget } = windowMessages(msgs, 6);
     // First message is the user anchor — not an orphaned assistant tool-call.
     expect(result[0]!.role).toBe("user");
     expect(result[0]).toEqual(msgs[0]!);
@@ -292,6 +297,30 @@ describe("windowMessages", () => {
     assertNoOrphanedToolResults(result);
     expect(result.some((m) => m === msgs[2])).toBe(true);
     expect(result.some((m) => m === msgs[3])).toBe(true);
+    expect(mandatoryOverBudget).toBe(true);
+  });
+
+  it("reports an oversized mandatory anchor and parallel tool-result group", () => {
+    const msgs: LanguageModelV4Message[] = [
+      textMsg("user", "start"),
+      textMsg("assistant", "older context"),
+      toolCallMsg("a", "b"),
+      toolResultMsg("a", "x".repeat(1000)),
+      toolResultMsg("b", "y".repeat(1000)),
+    ];
+
+    const result = windowMessages(msgs, 100);
+
+    expect(result.mandatoryOverBudget).toBe(true);
+    expect(result.messages).toEqual([msgs[0], ...msgs.slice(2)]);
+    assertNoOrphanedToolResults(result.messages);
+    expect(windowMessages(msgs, 50).messages).toEqual(result.messages);
+  });
+
+  it("reports a single mandatory message over budget", () => {
+    const msgs = [textMsg("user", "x".repeat(1000))];
+
+    expect(windowMessages(msgs, 1)).toEqual({ messages: msgs, mandatoryOverBudget: true });
   });
 });
 

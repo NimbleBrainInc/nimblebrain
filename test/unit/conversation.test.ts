@@ -119,7 +119,7 @@ describe("windowMessages", () => {
       wmsg("user", "How are you?"),
     ];
     // Each message is short, 1000 tokens is plenty
-    const result = windowMessages(messages, 1000);
+    const { messages: result } = windowMessages(messages, 1000);
     expect(result).toEqual(messages);
     expect(result).toHaveLength(3);
   });
@@ -134,7 +134,7 @@ describe("windowMessages", () => {
     }
 
     // Budget for ~3 messages worth of tokens
-    const result = windowMessages(messages, 75);
+    const { messages: result } = windowMessages(messages, 75);
 
     // Should keep first message + some recent messages
     expect(result[0]).toBe(messages[0]); // First preserved
@@ -153,7 +153,7 @@ describe("windowMessages", () => {
     ];
 
     // Budget for first + 2 messages (~75 tokens)
-    const result = windowMessages(messages, 75);
+    const { messages: result } = windowMessages(messages, 75);
 
     expect(result[0]).toBe(messages[0]); // First always kept
     expect(result[result.length - 1]).toBe(messages[messages.length - 1]); // Most recent kept
@@ -161,18 +161,18 @@ describe("windowMessages", () => {
 
   it("handles 2 messages (minimum)", () => {
     const messages = [wmsg("user", "Hello"), wmsg("assistant", "Hi")];
-    const result = windowMessages(messages, 1); // Very small budget
+    const { messages: result } = windowMessages(messages, 1); // Very small budget
     expect(result).toHaveLength(2); // Always keeps both when only 2
   });
 
   it("handles single message", () => {
     const messages = [wmsg("user", "Hello")];
-    const result = windowMessages(messages, 1);
+    const { messages: result } = windowMessages(messages, 1);
     expect(result).toHaveLength(1);
   });
 
   it("handles empty messages", () => {
-    const result = windowMessages([], 1000);
+    const { messages: result } = windowMessages([], 1000);
     expect(result).toHaveLength(0);
   });
 
@@ -187,7 +187,7 @@ describe("windowMessages", () => {
 
     // Budget: 50 tokens — enough for first (~12) + fourth (~12) + fifth (~12) = 36
     // But NOT enough for second or third (~100 each)
-    const result = windowMessages(messages, 50);
+    const { messages: result } = windowMessages(messages, 50);
 
     expect(result[0]).toBe(messages[0]); // First kept
     expect(result).toContain(messages[4]); // Last kept
@@ -218,7 +218,7 @@ describe("windowMessages", () => {
       },
     ];
 
-    const result = windowMessages(messages, 1000);
+    const { messages: result } = windowMessages(messages, 1000);
     expect(result).toHaveLength(3); // All fit
   });
 });

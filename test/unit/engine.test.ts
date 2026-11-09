@@ -30,6 +30,7 @@ import {
   type RequestContext,
   runWithRequestContext,
 } from "../../src/runtime/request-context.ts";
+import { buildTransformContext } from "../../src/runtime/runtime.ts";
 import { synthesizeConnectorSkill } from "../../src/skills/connector-skills.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
@@ -4870,7 +4871,7 @@ describe("malformed tool call input", () => {
           hooks: {
             transformContext: (msgs, opts) => {
               recordedAttempts.push(opts?.overflowAttempt);
-              return msgs;
+              return { messages: msgs, mandatoryOverBudget: false };
             },
           },
         },
@@ -4893,6 +4894,88 @@ describe("malformed tool call input", () => {
 
       // The run succeeded with the second call's output.
       expect(result.output).toBe("recovered");
+      expect(result.stopReason).toBe("complete");
+    });
+
+    it("skips a futile retry when the anchor and latest atomic group exceed the budget", async () => {
+      let callCount = 0;
+      let transformCount = 0;
+      const events: EngineEvent[] = [];
+      const model = createMockModel(() => {
+        callCount += 1;
+        throw Object.assign(new Error("prompt is too long: required context exceeds limit"), {
+          status: 400,
+        });
+      });
+      const engine = makeEngine(model, undefined, { emit: (event) => events.push(event) });
+      const transform = buildTransformContext(5, "anthropic");
+      const history: LanguageModelV4Message[] = [
+        { role: "user", content: [{ type: "text", text: "x".repeat(2_000) }] },
+        {
+          role: "assistant",
+          content: [{ type: "tool-call", toolCallId: "call_1", toolName: "read_file", input: {} }],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call_1",
+              toolName: "read_file",
+              output: { type: "text", value: "y".repeat(2_000) },
+            },
+          ],
+        },
+      ];
+
+      await expect(
+        engine.run(
+          {
+            ...defaultConfig,
+            hooks: {
+              transformContext: (messages, opts) => {
+                transformCount += 1;
+                return transform(messages, opts);
+              },
+            },
+          },
+          "",
+          history,
+          [],
+        ),
+      ).rejects.toThrow(/cannot fit/i);
+
+      expect(callCount).toBe(1);
+      expect(transformCount).toBe(1);
+      expect(events.filter((event) => event.type === "context.overflow_recovery")).toHaveLength(0);
+      expect(events.filter((event) => event.type === "llm.error")).toHaveLength(1);
+      const runErrors = events.filter((event) => event.type === "run.error");
+      expect(runErrors).toHaveLength(1);
+      expect(runErrors[0]?.data.error).toMatch(/cannot fit/i);
+    });
+
+    it("lets the provider accept a mandatory-over-budget token estimate", async () => {
+      let callCount = 0;
+      const model = createMockModel(() => {
+        callCount += 1;
+        return { content: [{ type: "text", text: "accepted" }] };
+      });
+      const history: LanguageModelV4Message[] = [
+        { role: "user", content: [{ type: "text", text: "x".repeat(2_000) }] },
+      ];
+
+      const result = await makeEngine(model).run(
+        {
+          ...defaultConfig,
+          hooks: { transformContext: buildTransformContext(5, "anthropic") },
+        },
+        "",
+        history,
+        [],
+      );
+
+      expect(callCount).toBe(1);
+      expect(result.output).toBe("accepted");
       expect(result.stopReason).toBe("complete");
     });
 

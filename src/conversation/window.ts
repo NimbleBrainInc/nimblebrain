@@ -118,18 +118,25 @@ export function applyReasoningReplayPolicy(
  *
  * Tool call/result pairs are kept atomic — an assistant message with tool-call
  * parts is never separated from its corresponding tool message with tool-result parts.
+ * `mandatoryOverBudget` reports when the anchor and last atomic group alone
+ * exceed the budget; those messages cannot be removed by a tighter window.
  */
+export interface WindowMessagesResult {
+  messages: LanguageModelV4Message[];
+  mandatoryOverBudget: boolean;
+}
+
 export function windowMessages(
   messages: LanguageModelV4Message[],
   maxTokens: number,
-): LanguageModelV4Message[] {
-  if (messages.length === 0) return [];
+): WindowMessagesResult {
+  if (messages.length === 0) return { messages, mandatoryOverBudget: false };
 
   const totalTokens = messages.reduce((sum, m) => sum + estimateTokens(m), 0);
-  if (totalTokens <= maxTokens) return messages;
+  if (totalTokens <= maxTokens) return { messages, mandatoryOverBudget: false };
 
-  // Keep at least 2 messages (first + last)
-  if (messages.length <= 2) return messages;
+  // One or two messages are all mandatory; neither can be windowed away.
+  if (messages.length <= 2) return { messages, mandatoryOverBudget: true };
 
   const first = messages[0]!;
   const firstTokens = estimateTokens(first);
@@ -150,13 +157,11 @@ export function windowMessages(
   // Reserve the anchor (kept unconditionally — the leading message must be the
   // user turn, which Anthropic requires) plus the last group; the remainder is
   // for older history. The remainder can go negative — e.g. a single large tool
-  // result exceeds the budget on a small-context model, an ordinary case, not a
-  // rare one — and then the loop breaks on its first iteration and we return
-  // `[first, ...lastGroup]` over budget. That request may be rejected by the
-  // provider, and the overflow retry can't shrink an unconditionally-retained
-  // payload; the fix is a larger context window (or tool-result truncation), not
-  // more windowing.
+  // result exceeds the budget on a small-context model, an ordinary case. Keep
+  // the mandatory messages intact and report that a tighter window cannot
+  // shrink them, so the engine can avoid a futile provider-overflow retry.
   let budget = maxTokens - firstTokens - lastGroupTokens;
+  const mandatoryOverBudget = budget < 0;
 
   // Walk backward from the second-to-last group, accumulating what still fits.
   const kept: LanguageModelV4Message[][] = [];
@@ -167,5 +172,5 @@ export function windowMessages(
     kept.unshift(groups[i]!);
   }
 
-  return [first, ...kept.flat(), ...lastGroup];
+  return { messages: [first, ...kept.flat(), ...lastGroup], mandatoryOverBudget };
 }

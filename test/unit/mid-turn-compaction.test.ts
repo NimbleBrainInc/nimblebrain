@@ -128,7 +128,7 @@ async function runTurn(
   let windowDrops = 0;
   const hooks: EngineHooks = {
     transformContext: (messages) => {
-      const windowed = windowMessages(messages, BUDGET);
+      const { messages: windowed } = windowMessages(messages, BUDGET);
       if (windowed.length < messages.length) windowDrops++;
       return windowed;
     },
