@@ -105,7 +105,11 @@ describe("cancelling a task run", () => {
 
       const firstRun = scheduler.runNow(WS, DEV_IDENTITY.id, "hangs");
       await enteredP;
-      expect(scheduler.cancelRun(WS, DEV_IDENTITY.id, "hangs")).toBe(true);
+      const runId = scheduler
+        .queueView(WS, DEV_IDENTITY.id)
+        .find((entry) => entry.taskId === "hangs")?.runId;
+      if (!runId) throw new Error("the active run has no id");
+      expect(scheduler.cancelRunById(WS, DEV_IDENTITY.id, runId)).toBe(true);
       const TIMED_OUT = Symbol("timed out");
       const first = await Promise.race([
         firstRun,

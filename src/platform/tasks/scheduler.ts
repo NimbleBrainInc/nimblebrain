@@ -274,6 +274,8 @@ interface QueuedRun {
   trigger: "manual" | "event";
   input?: RunInput;
   requested?: RequestedRun;
+  /** Event runs have an id before dispatch, without becoming requested runs with tickets. */
+  eventRunId?: string;
   resolve: (outcome: QueuedOutcome) => void;
   reject: (err: unknown) => void;
 }
@@ -885,10 +887,14 @@ function notStartedRun(
   reason: string,
   status: "skipped" | "cancelled" = "skipped",
   requested?: RequestedRun,
+  eventRunId?: string,
 ): QueuedOutcome {
   const now = new Date().toISOString();
   const run: TaskRun = {
-    id: requested?.runId ?? `run_${Date.now()}_${status === "cancelled" ? "cancel" : "skip"}`,
+    id:
+      requested?.runId ??
+      eventRunId ??
+      `run_${Date.now()}_${status === "cancelled" ? "cancel" : "skip"}`,
     taskId: key.slice(key.lastIndexOf("/") + 1),
     startedAt: now,
     completedAt: now,
@@ -1014,6 +1020,8 @@ export class Scheduler {
    * process that stopped before the run ended (see `settleLostRun`).
    */
   private readonly openRuns: Map<string, { key: string; ended: Promise<TaskRun> }> = new Map();
+  /** Event runs waiting for admission, by the id shown in `tasks__upcoming`. */
+  private readonly queuedEventRuns = new Map<string, string>();
   /**
    * Ids of the scheduled runs this process has marked in flight and not yet
    * recorded. `stop()` leaves them, since an aborted run records itself after
@@ -1515,14 +1523,16 @@ export class Scheduler {
 
   /**
    * Cancel a run by its id, when this process is carrying it for that owner
-   * in that workspace: abort it in flight (a requested run, or a scheduled or
-   * event run by the id minted at dispatch), or take a requested run out of
-   * the queue. False when it carries no such run.
+   * in that workspace: abort it in flight, or take a requested or event run
+   * out of the queue. Scheduled runs get their id at dispatch; event runs get
+   * theirs before admission. False when it carries no such run.
    */
   cancelRunById(wsId: string, ownerId: string, runId: string): boolean {
     const prefix = `${wsId}/${ownerId}/`;
     const open = this.openRuns.get(runId);
     if (open) return open.key.startsWith(prefix) && this.cancelKey(open.key);
+    const queuedEventKey = this.queuedEventRuns.get(runId);
+    if (queuedEventKey) return queuedEventKey.startsWith(prefix) && this.cancelKey(queuedEventKey);
     for (const [key, info] of this.activeInfo) {
       if (info.runId === runId && key.startsWith(prefix)) return this.cancelKey(key);
     }
@@ -1613,14 +1623,31 @@ export class Scheduler {
       this.recordSkipped(auto, `${duplicate} (event)`, "event");
       return { skipped: EVENT_DUPLICATE_ANSWER[duplicate] };
     }
-    const admitted = this.admit(key, "event", input);
+    const eventRunId = newRunId();
+    const admitted = this.admit(key, "event", input, undefined, undefined, eventRunId);
     if (admitted.state === "started") {
       return {
-        run: await this.dispatchRun(auto, "event", input, admitted.lease, undefined, "recorded"),
+        run: await this.dispatchRun(
+          auto,
+          "event",
+          input,
+          admitted.lease,
+          undefined,
+          "recorded",
+          undefined,
+          eventRunId,
+        ),
       };
     }
     if (admitted.state === "refused") {
-      this.recordSkipped(auto, this.refusalReason(admitted.reason, "event"), "event");
+      this.recordSkipped(
+        auto,
+        this.refusalReason(admitted.reason, "event"),
+        "event",
+        "skipped",
+        undefined,
+        eventRunId,
+      );
       return { skipped: this.eventRefusalAnswer(admitted.reason) };
     }
     const outcome = await admitted.outcome;
@@ -1648,6 +1675,7 @@ export class Scheduler {
     input?: RunInput,
     requested?: RequestedRun,
     batchRun?: { runKey: string; options: BatchRunOptions },
+    eventRunId?: string,
   ):
     | { state: "started"; lease: AdmissionLease }
     | { state: "queued"; position: number; outcome: Promise<QueuedOutcome> }
@@ -1660,6 +1688,7 @@ export class Scheduler {
         trigger,
         ...(input ? { input } : {}),
         ...(requested ? { requested } : {}),
+        ...(eventRunId ? { eventRunId } : {}),
         resolve,
         reject,
       };
@@ -1670,6 +1699,7 @@ export class Scheduler {
     });
     if (ticket.state === "admitted") return { state: "started", lease: ticket.lease };
     if (ticket.state === "refused") return ticket;
+    if (eventRunId) this.queuedEventRuns.set(eventRunId, key);
     return { state: "queued", position: ticket.position, outcome };
   }
 
@@ -1700,6 +1730,7 @@ export class Scheduler {
    * refused here gives its slot straight back.
    */
   private startQueued(entry: QueuedRun, lease: AdmissionLease): void {
+    if (entry.eventRunId) this.queuedEventRuns.delete(entry.eventRunId);
     const auto = this.definitions.get(entry.key);
     if (!auto) {
       lease.release();
@@ -1712,7 +1743,14 @@ export class Scheduler {
     }
     const refuse = (reason: string) =>
       entry.resolve({
-        run: this.recordSkipped(auto, reason, entry.trigger, "skipped", entry.requested),
+        run: this.recordSkipped(
+          auto,
+          reason,
+          entry.trigger,
+          "skipped",
+          entry.requested,
+          entry.eventRunId,
+        ),
         started: false,
       });
     try {
@@ -1748,6 +1786,7 @@ export class Scheduler {
       entry.requested,
       settles,
       batchRun,
+      entry.eventRunId,
     ).then((run) => entry.resolve({ run, started: true }), entry.reject);
   }
 
@@ -1757,6 +1796,7 @@ export class Scheduler {
    * hold the record; a deleted workspace's runs are answered without writing.
    */
   private leftQueue(entry: QueuedRun, reason: AdmissionWithdrawal): void {
+    if (entry.eventRunId) this.queuedEventRuns.delete(entry.eventRunId);
     const auto = reason === WORKSPACE_DELETED ? undefined : this.definitions.get(entry.key);
     const cancelled = reason === "cancelled";
     const text = cancelled
@@ -1771,11 +1811,18 @@ export class Scheduler {
       entry.resolve(
         auto
           ? {
-              run: this.recordSkipped(auto, text, entry.trigger, status, entry.requested),
+              run: this.recordSkipped(
+                auto,
+                text,
+                entry.trigger,
+                status,
+                entry.requested,
+                entry.eventRunId,
+              ),
               started: false,
             }
           : reason === WORKSPACE_DELETED
-            ? notStartedRun(entry.key, text, status, entry.requested)
+            ? notStartedRun(entry.key, text, status, entry.requested, entry.eventRunId)
             : this.notStartedForKey(entry, text, status),
       );
     } catch (err) {
@@ -1793,7 +1840,7 @@ export class Scheduler {
     reason: string,
     status: "skipped" | "cancelled" = "skipped",
   ): QueuedOutcome {
-    const outcome = notStartedRun(entry.key, reason, status, entry.requested);
+    const outcome = notStartedRun(entry.key, reason, status, entry.requested, entry.eventRunId);
     if (entry.requested) {
       const [wsId, ownerId] = entry.key.split("/");
       if (wsId && ownerId) {
@@ -1815,15 +1862,6 @@ export class Scheduler {
    */
   getActiveRunIds(): string[] {
     return Array.from(this.activeRuns.keys());
-  }
-
-  /**
-   * Cancel a task's run: abort it when in flight, or take it out of the
-   * queue (recording it as cancelled) when waiting. Returns false when it has
-   * neither.
-   */
-  cancelRun(wsId: string, ownerId: string, taskId: string): boolean {
-    return this.cancelKey(Scheduler.keyOf({ id: taskId, ownerId, workspaceId: wsId }));
   }
 
   /**
@@ -1874,6 +1912,7 @@ export class Scheduler {
     };
     const runIdByKey = new Map<string, string>();
     for (const [runId, open] of this.openRuns) runIdByKey.set(open.key, runId);
+    for (const [runId, key] of this.queuedEventRuns) runIdByKey.set(key, runId);
     const out: QueueViewEntry[] = [];
     for (const [key, info] of this.activeInfo) {
       if (!key.startsWith(prefix)) continue;
@@ -2058,6 +2097,7 @@ export class Scheduler {
     requested?: RequestedRun,
     settles: DispatchSettles = "assessed",
     batchRun?: { runKey: string; options: BatchRunOptions },
+    eventRunId?: string,
   ): Promise<TaskRun> {
     const key = batchRun?.runKey ?? Scheduler.keyOf(auto);
     const controller = new AbortController();
@@ -2070,7 +2110,7 @@ export class Scheduler {
     const startedAt = new Date().toISOString();
     // Every run has its id from dispatch, so one in flight is found (and
     // cancelled) by it whatever started it; a requested run brings its own.
-    const runId = requested?.runId ?? newRunId();
+    const runId = requested?.runId ?? eventRunId ?? newRunId();
     this.activeInfo.set(key, { startedAt, trigger, runId });
     // The once occurrence this run is, if any: an `at` edited while it runs is
     // a new occurrence, which the run must not retire.
@@ -2402,9 +2442,10 @@ export class Scheduler {
     trigger?: TaskRunTrigger,
     status: "skipped" | "cancelled" = "skipped",
     requested?: RequestedRun,
+    eventRunId?: string,
   ): TaskRun {
     const now = Date.now();
-    const run = this.writeNotStarted(auto, reason, status, now, requested);
+    const run = this.writeNotStarted(auto, reason, status, now, requested, eventRunId);
     const wsId = auto.workspaceId;
     const ownerId = auto.ownerId;
     if (!wsId || !ownerId) return run; // defensive — can't locate the store
@@ -2453,10 +2494,14 @@ export class Scheduler {
     status: "skipped" | "cancelled",
     now: number,
     requested?: RequestedRun,
+    eventRunId?: string,
   ): TaskRun {
     const at = new Date(now).toISOString();
     const notStarted: TaskRun = {
-      id: `run_${now}_${status === "cancelled" ? "cancel" : "skip"}`,
+      id:
+        requested?.runId ??
+        eventRunId ??
+        `run_${now}_${status === "cancelled" ? "cancel" : "skip"}`,
       taskId: auto.id,
       startedAt: at,
       completedAt: at,
