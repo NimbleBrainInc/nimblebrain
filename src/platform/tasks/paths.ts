@@ -24,6 +24,11 @@
  * hot runs dir holds at most the hot window of sidecars plus `index.jsonl`
  * and `archive/`, and listing it stays bounded however long history grows.
  *
+ * The retention sweep (`retention.ts`) removes a directory by renaming it to
+ * an `.expired-…` sibling first ({@link expiredSiblingPath}): no reader
+ * matches that name as a task id or an archive month, so a removal is whole
+ * to every reader from the rename on, whenever its files are unlinked.
+ *
  * A task run is NOT a conversation: it leaves a *run result* (the final
  * output, the activity log, and refs to any files it wrote in the workspace file
  * store) under its own `runs/` subtree — never a chat under `conversations/`.
@@ -32,7 +37,7 @@
  * workspace tasks dir.
  */
 
-import { join, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 
 const TASKS_SEGMENT = "tasks";
 const WORKSPACES_SEGMENT = "workspaces";
@@ -108,6 +113,28 @@ export function taskRunsDir(
 ): string {
   validateTaskId(taskId);
   return join(workspaceTasksDir(workDir, wsId, ownerId), RUNS_SEGMENT, taskId);
+}
+
+/** One owner's runs root: `…/tasks/<ownerId>/runs`, a directory per task. */
+export function ownerRunsRoot(workDir: string, wsId: string, ownerId: string): string {
+  return join(workspaceTasksDir(workDir, wsId, ownerId), RUNS_SEGMENT);
+}
+
+/** One owner's run tickets: `…/tasks/<ownerId>/run-tickets`. */
+export function taskRunTicketsDir(workDir: string, wsId: string, ownerId: string): string {
+  return join(workspaceTasksDir(workDir, wsId, ownerId), TICKETS_SEGMENT);
+}
+
+/** The name prefix of a directory the retention sweep has taken out of use. */
+export const EXPIRED_PREFIX = ".expired-";
+
+/**
+ * Where a directory is moved when it expires: a sibling named
+ * `.expired-<name>-<token>`. The leading dot keeps it from reading as a task
+ * id or an archive month.
+ */
+export function expiredSiblingPath(dir: string, token: string): string {
+  return join(dirname(dir), `${EXPIRED_PREFIX}${basename(dir)}-${token}`);
 }
 
 /** The append-only run-summary index: `…/runs/<taskId>/index.jsonl`. */

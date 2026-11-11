@@ -1848,6 +1848,27 @@ export class Scheduler {
     return this.admission.cancel(Scheduler.admissionOf(key).key);
   }
 
+  /**
+   * Whether this process carries a run of the task: one in flight, one waiting
+   * for a slot, or a requested run not yet recorded. A batch run counts (its
+   * key is the task's with `#<runId>`).
+   */
+  isTaskBusy(wsId: string, ownerId: string, taskId: string): boolean {
+    const key = `${wsId}/${ownerId}/${taskId}`;
+    const isOfTask = (k: string) => k === key || k.startsWith(`${key}#`);
+    for (const k of this.activeRuns.keys()) if (isOfTask(k)) return true;
+    for (const open of this.openRuns.values()) if (isOfTask(open.key)) return true;
+    return this.getQueuedRunIds().some(isOfTask);
+  }
+
+  /**
+   * Drop one task the retention sweep deleted from the loaded definitions, so
+   * nothing here runs or rewrites it. A targeted drop, as `dropWorkspace` is.
+   */
+  forgetTask(wsId: string, ownerId: string, taskId: string): void {
+    this.definitions.delete(`${wsId}/${ownerId}/${taskId}`);
+  }
+
   /** This scheduler's runs waiting for a slot, in arrival order (for inspection/testing). */
   getQueuedRunIds(): string[] {
     return this.admission

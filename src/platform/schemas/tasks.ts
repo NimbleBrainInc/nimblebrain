@@ -389,8 +389,8 @@ const CreateManifest = Type.Object(
       StringEnum(["saved", "oneoff"] as const, {
         description:
           "`saved` (default) for a task to keep and list. `oneoff` for one made to be run " +
-          "once with no schedule: it is kept with its run history but left out of " +
-          "tasks__list unless asked for.",
+          "once with no schedule: it is left out of tasks__list unless asked for, and deleted " +
+          "with its runs once past the runtime's retention window.",
       }),
     ),
     ...DefinitionFields,
@@ -601,8 +601,8 @@ export const TasksRunsInput = Type.Object(
     before: Type.Optional(
       Type.String({
         description:
-          "ISO timestamp — only runs started before this time. Pages back through the full run " +
-          "history, which is kept indefinitely: pass the previous response's `nextBefore`, with " +
+          "ISO timestamp — only runs started before this time. Pages back through the run " +
+          "history the runtime still keeps: pass the previous response's `nextBefore`, with " +
           "or without `taskId`. Without it, only the most recent runs (up to 1000 per task) are " +
           "read, so pass a time just ahead of now to page every run back through the archives.",
       }),

@@ -67,7 +67,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | Guide | Covers |
 |---|---|
 | [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, update tools as patches where `null` clears, named output types, `ui://` MIME type |
-| [`src/platform/tasks/AGENTS.md`](./src/platform/tasks/AGENTS.md) | Task storage, per-run membership gate, run results, how the scheduler uses run admission, budget, per-run caps, run assessment and the connected judge, batches (driver, budget account, stop rule, restart) |
+| [`src/platform/tasks/AGENTS.md`](./src/platform/tasks/AGENTS.md) | Task storage, run data retention, per-run membership gate, run results, how the scheduler uses run admission, budget, per-run caps, run assessment and the connected judge, batches (driver, budget account, stop rule, restart) |
 | [`src/runtime/AGENTS.md`](./src/runtime/AGENTS.md) | Run admission at the run-start door: slots, queue, fair share, leases; spend accounts reserved before each model call |
 | [`src/execution/AGENTS.md`](./src/execution/AGENTS.md) | The agent runtime seam behind the door: what a runtime receives and emits, capabilities the door checks, the generic ACP runtime and its drivers, the tool projection |
 | [`src/workspace/AGENTS.md`](./src/workspace/AGENTS.md) | Workspace roots and `assertWorkspaceRootExists`, write authorization, opaque ids, provisioning the first workspace |
