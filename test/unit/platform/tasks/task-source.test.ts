@@ -132,6 +132,7 @@ function harness(opts: { executor: Executor; admission?: RunAdmission }) {
     cancelRun: (runId) => scheduler.cancelRunById(wsId, owner, runId),
     readRuns: (id, o) => readRuns(workDir, wsId, owner, id, o),
     readRunsPage: () => ({ runs: [] }),
+    readRunsSince: () => [],
     readAllRuns: () => [],
     readRunResult: (id, runId) => readRunResult(workDir, wsId, owner, id, runId),
     defaultTimezone: "UTC",

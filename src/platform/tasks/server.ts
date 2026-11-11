@@ -422,6 +422,8 @@ export interface ToolContext {
   readRuns: (taskId: string, opts?: ReadRunsOptions) => TaskRun[];
   /** Read one page of a task's full history, back through its archive months. */
   readRunsPage: (taskId: string, opts: ReadRunsOptions) => RunsPage;
+  /** Every run of a task started at or after `since`, newest first, each index file read once. */
+  readRunsSince: (taskId: string, since: string) => TaskRun[];
   /** Read run history across this owner's tasks in the focused workspace. */
   readAllRuns: (opts?: ReadRunsOptions) => TaskRun[];
   /** Read one run's full result sidecar (the deliverable). */
@@ -963,10 +965,6 @@ const DEFAULT_UPCOMING_DAYS = 7;
 const FREQUENT_THRESHOLD = 24;
 const HOUR_MS = 3_600_000;
 const STATS_DEFAULT_DAYS = 30;
-/** A `before` later than any run, so a page read walks the archive months. */
-const FAR_FUTURE = "9999-12-31T00:00:00.000Z";
-/** Runs read per archive page while counting a task's stats. */
-const STATS_PAGE = 5_000;
 
 /**
  * `tasks__upcoming`: the caller's runs holding or waiting for a slot (from the
@@ -1167,8 +1165,8 @@ function eventTaskOf(task: Task, ctx: ToolContext): TaskUpcomingEventTask {
 
 /**
  * `tasks__stats`: per task, the runs started since a time, their verdicts,
- * pass rate and cost, read back through the archive months, and the newest
- * run's label.
+ * pass rate and cost, read back through the archive months (each index file
+ * once), and the newest run's label.
  */
 export function handleStats(args: TasksStatsInput, ctx: ToolContext): TasksStatsOutput {
   const { since: sinceArg, taskId } = args;
@@ -1198,12 +1196,7 @@ function statsOf(taskId: string, since: string, ctx: ToolContext): TaskRunStats 
     passRate: null,
     costUsd: 0,
   };
-  let before: string | undefined = FAR_FUTURE;
-  while (before) {
-    const page = ctx.readRunsPage(taskId, { since, before, limit: STATS_PAGE });
-    for (const run of page.runs) countRun(stats, run);
-    before = page.nextBefore;
-  }
+  for (const run of ctx.readRunsSince(taskId, since)) countRun(stats, run);
   const decided = stats.pass + stats.fail;
   stats.passRate = decided > 0 ? stats.pass / decided : null;
   const last = ctx.readRuns(taskId, { limit: 1 })[0];

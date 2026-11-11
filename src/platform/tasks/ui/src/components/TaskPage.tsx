@@ -592,24 +592,33 @@ export function TaskPageBody({
 
 type ToolCall = (args: Record<string, unknown>) => Promise<{ data?: unknown }>;
 
+/** A task's recent runs, or why they could not be read. */
+async function readRecentRuns(
+  runs: ToolCall,
+  taskId: string,
+): Promise<{ runs: TaskRun[] | null; runsError: string | null }> {
+  try {
+    const res = await runs({ taskId, limit: 20, excludeBatchRuns: true });
+    return { runs: (asDict(res.data).runs as TaskRun[]) ?? [], runsError: null };
+  } catch (err) {
+    return { runs: null, runsError: toolErrorText(err) };
+  }
+}
+
 /** A task's figures and recent runs; each is optional, so a failure of one leaves the other. */
 async function readRecent(
   stats: ToolCall,
   runs: ToolCall,
   taskId: string,
 ): Promise<{ stats: TaskStats | null; runs: TaskRun[] | null; runsError: string | null }> {
-  const [s, r] = await Promise.allSettled([
-    stats({ taskId }),
-    runs({ taskId, limit: 20, excludeBatchRuns: true }),
+  const [s, r] = await Promise.all([
+    stats({ taskId }).then(
+      (res) => ((asDict(res.data).tasks as TaskStats[]) ?? [])[0] ?? null,
+      () => null,
+    ),
+    readRecentRuns(runs, taskId),
   ]);
-  return {
-    stats:
-      s.status === "fulfilled"
-        ? (((asDict(s.value.data).tasks as TaskStats[]) ?? [])[0] ?? null)
-        : null,
-    runs: r.status === "fulfilled" ? ((asDict(r.value.data).runs as TaskRun[]) ?? []) : null,
-    runsError: r.status === "rejected" ? toolErrorText(r.reason) : null,
-  };
+  return { stats: s, ...r };
 }
 
 /** The page's health: the list's rules, with a run in flight read from the task's own runs. */
@@ -772,19 +781,20 @@ export function TaskPage({
     };
   }, [latestId, detailId, resultTool]);
 
-  // A run in flight changes the page when it ends; poll until it does.
+  // A run in flight changes the page when it ends; poll its row until it does.
+  // The 30-day figures are not polled: they move only when a run is recorded
+  // or assessed, which announces a data change and re-reads the page above.
   const live = runs?.[0] && isOpenRun(runs[0]);
   useEffect(() => {
     if (!live || !detailId) return;
     const timer = setInterval(() => {
-      void readRecent(statsTool.call, runsTool.call, detailId).then((o) => {
-        setStats(o.stats);
+      void readRecentRuns(runsTool.call, detailId).then((o) => {
         setRuns(o.runs);
         setRunsError(o.runsError);
       });
     }, 5000);
     return () => clearInterval(timer);
-  }, [live, detailId, statsTool, runsTool]);
+  }, [live, detailId, runsTool]);
 
   const d = detail;
   async function setEnabled(v: boolean) {

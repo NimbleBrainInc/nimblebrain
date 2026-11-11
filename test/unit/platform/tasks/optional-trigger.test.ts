@@ -29,6 +29,7 @@ import {
   readRunResult,
   readRuns,
   readRunsPage,
+  readRunsSince,
   saveTask,
 } from "../../../../src/platform/tasks/store.ts";
 import {
@@ -85,6 +86,7 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     cancelRun: () => false,
     readRuns: (id, opts) => readRuns(workDir, WS, OWNER, id, opts),
     readRunsPage: (id, opts) => readRunsPage(workDir, WS, OWNER, id, opts),
+    readRunsSince: (id, since) => readRunsSince(workDir, WS, OWNER, id, since),
     readAllRuns: (opts) => readAllRuns(workDir, WS, OWNER, opts),
     readRunResult: (id, runId) => readRunResult(workDir, WS, OWNER, id, runId),
     defaultTimezone: "Pacific/Honolulu",
