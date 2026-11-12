@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { House, Pin, Plus } from "lucide-react";
+import { useState } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { UnreadDot } from "../components/shell/UnreadDot";
 import { useSession } from "../context/SessionContext";
@@ -44,6 +45,10 @@ export function GlobalHomePage() {
   const location = useLocation();
   const { pinned, toggle: togglePin } = usePinnedWorkspaces();
   const { defaultId, toggle: toggleDefault } = useDefaultWorkspace();
+  // Where the app opens is decided by the default as it stood when the page
+  // loaded: choosing or clearing one on this grid, here or in another tab,
+  // changes the next load, never this one.
+  const [defaultAtLoad] = useState(defaultId);
   const ordered = orderWorkspacesForSidebar(wsCtx.workspaces, pinned);
   const [only] = wsCtx.workspaces;
 
@@ -55,7 +60,7 @@ export function GlobalHomePage() {
   // navigation inside the app gets a fresh key.
   const isPageLoad = location.key === "default";
   const skipDefault = new URLSearchParams(location.search).has("home");
-  const chosen = wsCtx.workspaces.find((ws) => ws.id === defaultId);
+  const chosen = wsCtx.workspaces.find((ws) => ws.id === defaultAtLoad);
   if (isPageLoad && !skipDefault && chosen) {
     return <Navigate to={`/w/${toSlug(chosen.id)}/`} replace />;
   }

@@ -108,18 +108,23 @@ describe("a default workspace", () => {
   });
 
   test("is chosen from a tile, one at a time, and cleared from the same tile", async () => {
-    await land([A, B], "/?home");
+    // An ordinary load at `/`: choosing a default here changes the next load,
+    // so the viewer stays on the grid.
+    await land([A, B]);
     const toggle = (id: string) =>
       container.querySelector<HTMLButtonElement>(
         `[data-testid="home-workspace-default"][data-workspace-id="${id}"]`,
       );
     await act(async () => toggle(A.id)?.click());
     expect(localStorage.getItem("nb:default-workspace")).toBe(JSON.stringify(A.id));
+    expect(path).toBe("/");
     await act(async () => toggle(B.id)?.click());
     expect(localStorage.getItem("nb:default-workspace")).toBe(JSON.stringify(B.id));
     expect(toggle(A.id)?.getAttribute("aria-pressed")).toBe("false");
     expect(toggle(B.id)?.getAttribute("aria-pressed")).toBe("true");
+    expect(path).toBe("/");
     await act(async () => toggle(B.id)?.click());
     expect(localStorage.getItem("nb:default-workspace")).toBeNull();
+    expect(path).toBe("/");
   });
 });
