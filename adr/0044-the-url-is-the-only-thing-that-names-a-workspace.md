@@ -1,6 +1,6 @@
 # 0044. The URL is the only thing that names a workspace
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0060
 - Date: 2026-10-03
 - Serves: secure RBAC
 - Supersedes: the bootstrap default-focus rule of ADR-0037, and the landing preference of ADR-0039
@@ -30,6 +30,9 @@ for the wrong workspace.
   their workspaces, each with its unread mark. The choice is derived from
   membership, so it is never stale and never names a workspace the user has
   left.
+  - *Amended by ADR-0060:* a viewer may choose a default workspace in their
+    browser; `/` opens it when the page loads there. The server still
+    chooses none, and the URL still names the workspace the viewer is in.
 - **Reopening the app returns to the same place because the URL does:** a
   restored tab or a bookmark carries its `/w/<id>`. The shell remembers no
   last workspace.
@@ -42,6 +45,8 @@ for the wrong workspace.
   their tools through `POST /v1/tools/call` (ADR-0043).
 - A user in several workspaces who opens `/` sees the home page, not the
   workspace they used last.
+  - *Amended by ADR-0060:* unless they chose a default workspace on that
+    browser, which opens when the page loads at `/`.
 - `preferences.defaultWorkspaceId` is no longer read or written. A stored value
   stays in a profile, unread.
 
@@ -51,7 +56,8 @@ for the wrong workspace.
   workspace under another name, a server-held answer to a question the URL
   answers.
 - **Remember the last workspace in the browser, and open it from `/`** —
-  deferred: per-device, and it skips the home page's unread marks, which are
+  deferred (ADR-0060 adds a chosen default in the browser, not a remembered
+  last one): per-device, and it skips the home page's unread marks, which are
   the reason to land there. It can be added later without the server.
 - **Keep the default for the home, profile and org pages only** — rejected:
   those pages act on no workspace, so a workspace there is ambient state with
