@@ -11,6 +11,11 @@ import { TEMPLATES, type Template } from "./templates.ts";
 
 /** How often the queue is re-read while open: a run starts without a data change. */
 const REFRESH_MS = 15_000;
+/**
+ * How often the 30-day figures are re-read while open with no data change: the
+ * window moves with the clock, so a run leaves it without an announcement.
+ */
+export const STATS_REFRESH_MS = 60 * 60_000;
 /** Scheduled runs shown under "Coming up"; the rest are a link away. */
 const COMING_UP = 4;
 
@@ -400,7 +405,7 @@ export function HomeBody({
   );
 }
 
-/** The home list's container: reads the 30-day figures when the data changes, and the queue also on a timer while open. */
+/** The home list's container: reads the 30-day figures and the queue when the data changes, and each on its own timer while open. */
 export function HomeView({
   tasks,
   loading,
@@ -447,11 +452,14 @@ export function HomeView({
   }, [upcomingTool]);
 
   // The figures count recorded runs, and every record, assessment and verdict
-  // announces a data change, so they are read on that signal alone: counting
-  // 30 days of runs is the panel's costliest read and no timer repeats it.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the stats are re-read
+  // announces a data change, so that signal keeps them current. Counting 30
+  // days of runs is the panel's costliest read, so the timer is hourly: it only
+  // has to drop the runs that aged out of the window.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the stats are re-read at once
   useEffect(() => {
     void loadStats();
+    const timer = setInterval(() => void loadStats(), STATS_REFRESH_MS);
+    return () => clearInterval(timer);
   }, [loadStats, refreshKey]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the queue is re-read at once
