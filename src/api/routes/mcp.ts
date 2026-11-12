@@ -4,7 +4,7 @@ import type { TokenGrant } from "../../identity/provider.ts";
 import { canonicalOrigins, publicOrigin, webOrigin } from "../../oauth/public-origin.ts";
 import { authenticateRequest, isAuthError } from "../auth-middleware.ts";
 import { MCP_PATH_PREFIX, mcpResourceMetadataUrl, mcpResourceUrl } from "../mcp-resource.ts";
-import type { McpRequestContext } from "../mcp-server.ts";
+import { MAX_MCP_REQUEST_BODY_BYTES, type McpRequestContext } from "../mcp-server.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { rejectUntrustedOrigin } from "../middleware/origin.ts";
 import { requestRateLimit } from "../middleware/rate-limit.ts";
@@ -129,7 +129,7 @@ export function mcpRoutes(ctx: AppContext, allowedOrigins: Set<string> | null) {
       ctx.mcpLimiter,
       (c) => `${c.var.identity?.id ?? "anon"}:${c.var.grant?.kind ?? "none"}`,
     ),
-    bodyLimit(1_048_576),
+    bodyLimit(MAX_MCP_REQUEST_BODY_BYTES),
     async (c) => {
       const features = ctx.runtime.getFeatures();
       const wsId = c.req.param("wsId");
