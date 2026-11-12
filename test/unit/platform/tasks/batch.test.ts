@@ -303,6 +303,7 @@ function harness(opts: HarnessOptions = {}): Harness {
     cancelRun: (runId) => scheduler.cancelRunById(WS, OWNER, runId),
     readRuns: (id, o) => readRuns(workDir, WS, OWNER, id, o),
     readRunsPage: () => ({ runs: [] }),
+    readRunsSince: () => [],
     readAllRuns: () => [],
     readRunResult: (id, runId) => readRunResult(workDir, WS, OWNER, id, runId),
     defaultTimezone: "UTC",
