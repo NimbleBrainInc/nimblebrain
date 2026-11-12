@@ -13,8 +13,14 @@
 // react-dom/client + happy-dom, no @testing-library/react.
 // ---------------------------------------------------------------------------
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { realClient } from "../../test/setup";
 import type { BootstrapResponse } from "../types";
+
+// Bun's mock.module registry is process-global, and Login probes bootstrap
+// through the real client against a stubbed fetch, so this suite pins it
+// against another suite's mock.
+mock.module("../api/client", () => realClient);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
