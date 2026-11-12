@@ -404,6 +404,31 @@ describe("one-off tasks", () => {
     expect(readRuns(workDir, WS, OWNER, "oneoff-busy")).toHaveLength(1);
   });
 
+  test("one whose definition is replaced after the sweep read it is judged as it is now", async () => {
+    seedOneoff("oneoff-edited", OLD);
+    seedOneoff("oneoff-scheduled-late", OLD);
+    // The busy check opens the turn that removes a one-off, so a write made
+    // from it lands after the sweep's asynchronous read of the definition.
+    const replaceThenIdle = (_ws: string, _owner: string, id: string): boolean => {
+      const stored = loadTask(workDir, WS, OWNER, id);
+      if (!stored) throw new Error(`expected ${id} on disk`);
+      const edit: Partial<Task> =
+        id === "oneoff-edited"
+          ? { updatedAt: RECENT }
+          : { schedule: { type: "interval", intervalMs: 60_000 } };
+      saveTask(workDir, WS, OWNER, { ...stored, ...edit });
+      return false;
+    };
+
+    const report = await sweep({ isTaskBusy: replaceThenIdle });
+
+    expect(report.oneoffs).toBe(0);
+    expect(loadTask(workDir, WS, OWNER, "oneoff-edited")?.updatedAt).toBe(RECENT);
+    expect(loadTask(workDir, WS, OWNER, "oneoff-scheduled-late")?.schedule).toBeDefined();
+    expect(readRuns(workDir, WS, OWNER, "oneoff-edited")).toHaveLength(1);
+    expect(readRuns(workDir, WS, OWNER, "oneoff-scheduled-late")).toHaveLength(1);
+  });
+
   test("one marked with a scheduled run in flight, or given a schedule, stays", async () => {
     seedOneoff("oneoff-marked", OLD, {
       scheduledRunInFlight: { runId: "run_inflight0001", startedAt: OLD },

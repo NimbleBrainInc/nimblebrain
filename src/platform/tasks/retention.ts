@@ -35,6 +35,9 @@
  * tens of thousands of files never holds the event loop. Each decision to
  * remove, and the rename or unlink that carries it out, runs synchronously in
  * one turn: the store's writers are synchronous too, so none can interleave.
+ * What an asynchronous read returned may be older than the file by the time
+ * its turn runs, so it only picks a one-off as a candidate; the decision is
+ * made on the definition read again inside the removing turn.
  */
 
 import { randomBytes } from "node:crypto";
@@ -57,7 +60,7 @@ import {
   workspaceTasksDir,
 } from "./paths.ts";
 import { isOpenRun } from "./scheduler.ts";
-import { deleteIdempotencyKey, listTaskOwners, monthEndMs, readRuns } from "./store.ts";
+import { deleteIdempotencyKey, listTaskOwners, loadTask, monthEndMs, readRuns } from "./store.ts";
 import { kindOf, type RunTicket, type Task, type TaskRun } from "./types.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -264,14 +267,23 @@ function oneoffExpired(sweep: OwnerSweep, task: Task, batchTaskIds: Set<string>)
 }
 
 /**
- * Delete one one-off unless the scheduler carries a run of it: its runs dir
- * (renamed out of use), then its definition. Synchronous from the check to the
- * last removal, so no run can be asked for in between. Returns whether it was
- * deleted, and the renamed runs dir still to be unlinked.
+ * Delete one one-off unless the scheduler carries a run of it or the
+ * definition on disk now is not expired: its runs dir (renamed out of use),
+ * then its definition. The definition is read here, not taken from the
+ * caller, because a task update can replace the file after the sweep's
+ * asynchronous read of it. Synchronous from the checks to the last removal, so
+ * no run can be asked for and no definition written in between. Returns
+ * whether it was deleted, and the renamed runs dir still to be unlinked.
  */
-function deleteOneoff(sweep: OwnerSweep, id: string): { deleted: boolean; gone?: string } {
+function deleteOneoff(
+  sweep: OwnerSweep,
+  id: string,
+  batchTaskIds: Set<string>,
+): { deleted: boolean; gone?: string } {
   const { deps, wsId, ownerId } = sweep;
   if (deps.isTaskBusy(wsId, ownerId, id)) return { deleted: false };
+  const current = loadTask(deps.workDir, wsId, ownerId, id);
+  if (current?.id !== id || !oneoffExpired(sweep, current, batchTaskIds)) return { deleted: false };
   const runsDir = taskRunsDir(deps.workDir, wsId, ownerId, id);
   const gone = existsSync(runsDir)
     ? expiredSiblingPath(runsDir, randomBytes(4).toString("hex"))
@@ -293,7 +305,7 @@ async function sweepOneoffs(sweep: OwnerSweep, batchTaskIds: Set<string>): Promi
     if (!isTaskId(id)) continue;
     const task = await readTaskFile(join(dir, name), id);
     if (!task || !oneoffExpired(sweep, task, batchTaskIds)) continue;
-    const { deleted, gone } = deleteOneoff(sweep, id);
+    const { deleted, gone } = deleteOneoff(sweep, id, batchTaskIds);
     if (deleted) report.oneoffs++;
     if (gone) await unlinkTree(gone);
   }
