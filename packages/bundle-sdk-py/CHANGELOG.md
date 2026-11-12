@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Licensed under Apache-2.0**, the license of the repository it ships from. Releases up to
+  and including 0.2.0 remain available under MIT.
+
 ## [0.2.0]
 
 ### Added

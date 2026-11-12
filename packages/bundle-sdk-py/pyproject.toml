@@ -3,14 +3,14 @@ name = "nimblebrain-bundle-sdk"
 version = "0.2.0"
 description = "Python SDK for NimbleBrain MCP bundles: read workspace files via ai.nimblebrain/host-resources, and publish skills via the MCP Skills extension (SEP-2640)."
 readme = "README.md"
-license = { text = "MIT" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "NimbleBrain" }]
 keywords = ["mcp", "nimblebrain", "bundle", "host-resources", "skills"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
