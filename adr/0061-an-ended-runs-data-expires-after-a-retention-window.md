@@ -1,4 +1,4 @@
-# 0060. An ended run's data expires after a retention window
+# 0061. An ended run's data expires after a retention window
 
 - Status: Accepted
 - Date: 2026-11-11

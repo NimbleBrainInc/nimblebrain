@@ -9,8 +9,13 @@ import { Section, Sections } from "./Section.tsx";
 import { SkeletonRows } from "./Skeleton.tsx";
 import { TEMPLATES, type Template } from "./templates.ts";
 
-/** How often the list re-reads while open: runs start and end without a data change. */
+/** How often the queue is re-read while open: a run starts without a data change. */
 const REFRESH_MS = 15_000;
+/**
+ * How often the 30-day figures are re-read while open with no data change: the
+ * window moves with the clock, so a run leaves it without an announcement.
+ */
+export const STATS_REFRESH_MS = 60 * 60_000;
 /** Scheduled runs shown under "Coming up"; the rest are a link away. */
 const COMING_UP = 4;
 
@@ -400,7 +405,7 @@ export function HomeBody({
   );
 }
 
-/** The home list's container: reads the 30-day figures and the queue, and re-reads while open. */
+/** The home list's container: reads the 30-day figures and the queue when the data changes, and each on its own timer while open. */
 export function HomeView({
   tasks,
   loading,
@@ -419,28 +424,50 @@ export function HomeView({
   const upcomingTool = useTool<string>("upcoming");
   const [stats, setStats] = useState<Map<string, TaskStats> | null>(null);
   const [upcoming, setUpcoming] = useState<UpcomingData | null>(null);
-  const [readError, setReadError] = useState<string | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [upcomingError, setUpcomingError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    const [s, u] = await Promise.allSettled([statsTool.call({}), upcomingTool.call({ days: 7 })]);
-    if (s.status === "fulfilled") {
-      const list = (asDict(s.value.data).tasks as TaskStats[]) ?? [];
+  const loadStats = useCallback(async () => {
+    try {
+      const res = await statsTool.call({});
+      const list = (asDict(res.data).tasks as TaskStats[]) ?? [];
       setStats(new Map(list.map((x) => [x.taskId, x])));
+      setStatsError(null);
+    } catch (err) {
+      setStatsError(toolErrorText(err));
     }
-    // `tasks__upcoming` answers JSON this package reads as `UpcomingData`, its
-    // hand-kept mirror of `TasksUpcomingOutput`; nothing checks it at runtime.
-    // biome-ignore lint/plugin/double-cast: tool JSON read as the hand-kept `UpcomingData` mirror
-    if (u.status === "fulfilled") setUpcoming(asDict(u.value.data) as unknown as UpcomingData);
-    const failed = [s, u].find((r) => r.status === "rejected");
-    setReadError(failed?.status === "rejected" ? toolErrorText(failed.reason) : null);
-  }, [statsTool, upcomingTool]);
+  }, [statsTool]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the stats are re-read
+  const loadUpcoming = useCallback(async () => {
+    try {
+      const res = await upcomingTool.call({ days: 7 });
+      // `tasks__upcoming` answers JSON this package reads as `UpcomingData`, its
+      // hand-kept mirror of `TasksUpcomingOutput`; nothing checks it at runtime.
+      // biome-ignore lint/plugin/double-cast: tool JSON read as the hand-kept `UpcomingData` mirror
+      setUpcoming(asDict(res.data) as unknown as UpcomingData);
+      setUpcomingError(null);
+    } catch (err) {
+      setUpcomingError(toolErrorText(err));
+    }
+  }, [upcomingTool]);
+
+  // The figures count recorded runs, and every record, assessment and verdict
+  // announces a data change, so that signal keeps them current. Counting 30
+  // days of runs is the panel's costliest read, so the timer is hourly: it only
+  // has to drop the runs that aged out of the window.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the stats are re-read at once
   useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), REFRESH_MS);
+    void loadStats();
+    const timer = setInterval(() => void loadStats(), STATS_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [load, refreshKey]);
+  }, [loadStats, refreshKey]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` moves when the panel's data changes, which is when the queue is re-read at once
+  useEffect(() => {
+    void loadUpcoming();
+    const timer = setInterval(() => void loadUpcoming(), REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [loadUpcoming, refreshKey]);
 
   return (
     <HomeBody
@@ -449,7 +476,7 @@ export function HomeView({
       error={error}
       stats={stats}
       upcoming={upcoming}
-      readError={readError}
+      readError={statsError ?? upcomingError}
       actions={actions}
     />
   );

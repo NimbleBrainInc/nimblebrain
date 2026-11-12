@@ -1,5 +1,5 @@
 /**
- * Retention for task run data (ADR-0060): what an ended run leaves on disk is
+ * Retention for task run data (ADR-0061): what an ended run leaves on disk is
  * deleted once it is older than `tasks.runRetentionDays`.
  *
  * One number bounds three stores, because each grows by one entry per run and

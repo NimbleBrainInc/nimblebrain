@@ -9,8 +9,12 @@
 // stay where a member learned them, and the trigger already names it. Nothing
 // is highlighted until the member types or presses ↓, so the check is the only
 // mark that reads as "selected"; the focused row scrolls into view on open.
-// Its footer holds the two workspace-level actions:
-// the focused workspace's settings, and creating a new one.
+// Its footer holds the workspace-level actions: making the focused workspace
+// the one this browser opens in (ADR-0060), the home grid of every workspace,
+// the focused workspace's settings, and creating a new one. Inside a workspace
+// the grid is otherwise reached only from the logo, and a default workspace
+// skips it on every load, so the footer names the way back. On the grid itself
+// both are hidden: no workspace is focused there, and the grid is where you are.
 //
 // Collapsed, the trigger is the focused workspace's glyph, or the chevrons
 // when no workspace is focused (before the first `/w/` visit, or after the
@@ -29,11 +33,12 @@
 // ---------------------------------------------------------------------------
 
 import { Popover } from "@base-ui/react/popover";
-import { Check, ChevronsUpDown, Plus, Search, Settings } from "lucide-react";
+import { Check, ChevronsUpDown, House, LayoutGrid, Plus, Search, Settings } from "lucide-react";
 import { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useMatch, useNavigate } from "react-router-dom";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
 import { useWorkspaceUnread } from "../../context/WorkspaceUnreadContext";
+import { useDefaultWorkspace } from "../../lib/default-workspace";
 import { cn } from "../../lib/utils";
 import { getWorkspaceAvatar } from "../../lib/workspace-avatar";
 import { orderWorkspacesForSidebar } from "../../lib/workspace-order";
@@ -46,6 +51,8 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
   const navigate = useNavigate();
   const focused = wsCtx.activeWorkspace;
   const { unreadFor } = useWorkspaceUnread();
+  const { defaultId, toggle: toggleDefault } = useDefaultWorkspace();
+  const onHome = useMatch("/") !== null;
   const unreadElsewhere = wsCtx.workspaces.filter(
     (ws) => ws.id !== focused?.id && unreadFor(ws.id) > 0,
   );
@@ -241,6 +248,21 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
             </div>
 
             <div className="flex flex-col gap-px border-t border-border p-1">
+              {focused && !onHome && (
+                <DefaultToggle
+                  name={focused.name}
+                  on={focused.id === defaultId}
+                  onClick={() => toggleDefault(focused.id)}
+                />
+              )}
+              {!onHome && (
+                <FooterAction
+                  icon={LayoutGrid}
+                  label="All workspaces"
+                  testId="workspace-switcher-home"
+                  onClick={() => go("/")}
+                />
+              )}
               {focused && (
                 <FooterAction
                   icon={Settings}
@@ -283,6 +305,27 @@ function FooterAction({
     >
       <Icon aria-hidden="true" className="size-3.5 shrink-0" />
       <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+// Makes the focused workspace the one this browser opens in, or clears it. The
+// popup stays open, so the check confirms the choice where it was made.
+function DefaultToggle({ name, on, onClick }: { name: string; on: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={on}
+      aria-label={on ? `Stop opening ${name} by default` : `Open ${name} by default`}
+      data-testid="workspace-switcher-default"
+      className="flex min-h-8 items-center gap-2.5 rounded-sm px-2 text-left text-sm text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+    >
+      <House aria-hidden="true" className={cn("size-3.5 shrink-0", on && "fill-current")} />
+      {/* The trigger already names the workspace; a long name here would push
+          "by default", the part that says what the row does, into the ellipsis. */}
+      <span className="flex-1 truncate">{on ? "Opens by default" : "Open by default"}</span>
+      {on && <Check aria-hidden="true" className="size-3.5 shrink-0" />}
     </button>
   );
 }

@@ -17,7 +17,8 @@ import {
   TasksUpcomingInput,
   type TasksUpcomingOutput,
 } from "../../../../src/platform/schemas/tasks.ts";
-import { taskRunSegmentPath } from "../../../../src/platform/tasks/paths.ts";
+import { effectiveVerdict } from "../../../../src/platform/tasks/assessment.ts";
+import { taskRunIndexPath, taskRunSegmentPath } from "../../../../src/platform/tasks/paths.ts";
 import type { QueueViewEntry } from "../../../../src/platform/tasks/scheduler.ts";
 import {
   handleJudges,
@@ -34,6 +35,7 @@ import {
   readRunResult,
   readRuns,
   readRunsPage,
+  readRunsSince,
   saveTask,
 } from "../../../../src/platform/tasks/store.ts";
 import type { RunTicket, Task, TaskRun } from "../../../../src/platform/tasks/types.ts";
@@ -90,6 +92,7 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     cancelRun: () => false,
     readRuns: (id, opts) => readRuns(TMP_DIR, WS, OWNER, id, opts),
     readRunsPage: (id, opts) => readRunsPage(TMP_DIR, WS, OWNER, id, opts),
+    readRunsSince: (id, since) => readRunsSince(TMP_DIR, WS, OWNER, id, since),
     readAllRuns: (opts) => readAllRuns(TMP_DIR, WS, OWNER, opts),
     readRunResult: (id, runId) => readRunResult(TMP_DIR, WS, OWNER, id, runId),
     defaultTimezone: "UTC",
@@ -398,6 +401,131 @@ describe("tasks__stats", () => {
   test("refuses an unknown task and a bad since", () => {
     expect(() => handleStats({ taskId: "nope" }, makeCtx())).toThrow("No task with id");
     expect(() => handleStats({ since: "yesterday" }, makeCtx())).toThrow("Invalid since");
+  });
+});
+
+describe("tasks__stats reads each run index once", () => {
+  const SINCE = "2026-03-10T00:00:00.000Z";
+  const assessed = (verdict: "pass" | "fail" | "uncertain", human?: "pass" | "fail") => ({
+    verdict,
+    assessedAt: "2026-05-01T00:00:00.000Z",
+    ...(human ? { human: { verdict: human, by: OWNER, via: "ui" as const, at: "x" } } : {}),
+  });
+  const run = (id: string, startedAt: string, costUsd: number, extra: Partial<TaskRun> = {}) =>
+    makeRun({ id, taskId: "a", startedAt, completedAt: startedAt, costUsd, ...extra });
+
+  /** Every run since `SINCE`, paged `limit` at a time from a `before` later than any run. */
+  function pagedRuns(limit: number): TaskRun[] {
+    const runs: TaskRun[] = [];
+    let before: string | undefined = "9999-12-31T00:00:00.000Z";
+    while (before) {
+      const page = readRunsPage(TMP_DIR, WS, OWNER, "a", { since: SINCE, before, limit });
+      runs.push(...page.runs);
+      before = page.nextBefore;
+    }
+    return runs;
+  }
+
+  /** The figures a fold over `runs`, in their order, gives. */
+  function figuresOf(runs: TaskRun[]) {
+    const out = { runs: 0, pass: 0, fail: 0, uncertain: 0, costUsd: 0 };
+    for (const r of runs) {
+      out.runs++;
+      out.costUsd += r.costUsd ?? 0;
+      const verdict = effectiveVerdict(r.assessment);
+      if (verdict === "pass" || verdict === "fail" || verdict === "uncertain") out[verdict]++;
+    }
+    const decided = out.pass + out.fail;
+    return { ...out, passRate: decided > 0 ? out.pass / decided : null };
+  }
+
+  function seedHistory(): void {
+    seed(makeTask({ id: "a" }));
+    // Wholly before `since`: never read, so a line misfiled here is not counted.
+    seedSegment("a", "2026-02", [
+      run("run_feb", "2026-02-20T00:00:00.000Z", 7),
+      run("run_misfiled", "2026-04-02T00:00:00.000Z", 11),
+    ]);
+    // The month `since` falls in.
+    const march = [
+      run("run_before", "2026-03-09T23:59:59.999Z", 5, { assessment: assessed("pass") }),
+      run("run_at_since", SINCE, 0.1, { assessment: assessed("pass") }),
+      // Four runs sharing one start time.
+      run("run_tie_a", "2026-03-20T00:00:00.000Z", 0.2, { assessment: assessed("fail") }),
+      run("run_tie_b", "2026-03-20T00:00:00.000Z", 0.3, { assessment: assessed("pass") }),
+      run("run_tie_c", "2026-03-20T00:00:00.000Z", 0.07, { assessment: assessed("uncertain") }),
+      run("run_tie_d", "2026-03-20T00:00:00.000Z", 0.011),
+    ];
+    seedSegment("a", "2026-03", march);
+    // A crash between the archive append and the hot rewrite repeats lines:
+    // `run_rolled` twice in the archive, `run_both` in the archive and the hot
+    // index, where its record alone carries the person's verdict.
+    const rolled = run("run_rolled", "2026-04-05T00:00:00.000Z", 0.13, {
+      assessment: assessed("fail"),
+    });
+    const both = run("run_both", "2026-04-28T00:00:00.000Z", 0.17, {
+      assessment: assessed("fail"),
+    });
+    seedSegment("a", "2026-04", [
+      rolled,
+      rolled,
+      run("run_apr", "2026-04-10T00:00:00.000Z", 0.19, { assessment: assessed("pass") }),
+      // Shares its start time with a run in the hot index.
+      run("run_tie_archived", "2026-04-29T00:00:00.000Z", 0.23, { assessment: assessed("pass") }),
+      both,
+    ]);
+    const path = taskRunIndexPath(TMP_DIR, WS, OWNER, "a");
+    const hot = [
+      { ...both, assessment: assessed("fail", "pass") },
+      run("run_tie_hot", "2026-04-29T00:00:00.000Z", 0.29, { assessment: assessed("fail") }),
+      run("run_may", "2026-05-02T00:00:00.000Z", 0.31, { assessment: assessed("uncertain") }),
+      run("run_newest", "2026-05-03T00:00:00.000Z", 0.37),
+    ];
+    writeFileSync(path, `${hot.map((r) => JSON.stringify(r)).join("\n")}\nnot json\n`);
+  }
+
+  test("the runs and their order are the paged read's, whatever the page size", () => {
+    seedHistory();
+    const once = readRunsSince(TMP_DIR, WS, OWNER, "a", SINCE);
+    expect(once.map((r) => r.id)).toEqual([
+      "run_newest",
+      "run_may",
+      "run_tie_hot",
+      "run_tie_archived",
+      "run_both",
+      "run_apr",
+      "run_rolled",
+      "run_tie_a",
+      "run_tie_b",
+      "run_tie_c",
+      "run_tie_d",
+      "run_at_since",
+    ]);
+    // The hot copy of a repeated run is the one counted.
+    expect(effectiveVerdict(once.find((r) => r.id === "run_both")?.assessment)).toBe("pass");
+    for (const limit of [1, 2, 3, 5, 5000]) expect(pagedRuns(limit)).toEqual(once);
+  });
+
+  test("the figures are those of counting the paged read", () => {
+    seedHistory();
+    const out = handleStats({ since: SINCE, taskId: "a" }, makeCtx());
+    const { lastRun, taskId, ...figures } = out.tasks[0] ?? { taskId: "" };
+    expect(taskId).toBe("a");
+    expect(lastRun?.id).toBe("run_newest");
+    for (const limit of [1, 3, 5000]) expect(figures).toEqual(figuresOf(pagedRuns(limit)));
+    expect(figures).toMatchObject({ runs: 12, pass: 5, fail: 3, uncertain: 2, passRate: 5 / 8 });
+  });
+
+  test("`since` in a month with no archive, and a task with no runs", () => {
+    seedHistory();
+    seed(makeTask({ id: "empty" }));
+    const late = "2026-05-02T00:00:00.000Z";
+    expect(readRunsSince(TMP_DIR, WS, OWNER, "a", late).map((r) => r.id)).toEqual([
+      "run_newest",
+      "run_may",
+    ]);
+    expect(readRunsSince(TMP_DIR, WS, OWNER, "a", "2026-05-03T00:00:00.001Z")).toEqual([]);
+    expect(readRunsSince(TMP_DIR, WS, OWNER, "empty", SINCE)).toEqual([]);
   });
 });
 

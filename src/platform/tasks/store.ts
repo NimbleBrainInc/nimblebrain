@@ -517,6 +517,43 @@ export function readRunsPage(
 }
 
 /**
+ * Every run of a task started at or after `since`, each once, newest first:
+ * an aggregate's read, not a page. Each index file is read exactly once: the
+ * hot index, then the archive months newest first, stopping at the first month
+ * that ends at or before `since` (a month's index holds only runs started in
+ * that month). A run id repeated across files (a crash between the archive
+ * append and the hot rewrite) is taken from the first file that has it. The
+ * runs and their order are those {@link readRunsPage} gives when paged from
+ * the newest run to `since`.
+ */
+export function readRunsSince(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  taskId: string,
+  since: string,
+): TaskRun[] {
+  const sinceMs = new Date(since).getTime();
+  const seen = new Set<string>();
+  const picked: { ms: number; run: TaskRun }[] = [];
+  const take = (runs: TaskRun[]) => {
+    for (const run of runs) {
+      const ms = startedMs(run);
+      if (!(ms >= sinceMs) || seen.has(run.id)) continue;
+      seen.add(run.id);
+      picked.push({ ms, run });
+    }
+  };
+  take(readIndexFile(taskRunIndexPath(workDir, wsId, ownerId, taskId)));
+  for (const month of listRunSegmentMonths(workDir, wsId, ownerId, taskId)) {
+    if (monthEndMs(month) <= sinceMs) break;
+    take(readIndexFile(taskRunSegmentPath(workDir, wsId, ownerId, taskId, month)));
+  }
+  picked.sort((a, b) => b.ms - a.ms);
+  return picked.map((p) => p.run);
+}
+
+/**
  * Read runs across every task owned by `ownerId` in `wsId`. Newest first,
  * with optional filters. Reads each task's hot index; with `before`,
  * pages back through each one's segments.

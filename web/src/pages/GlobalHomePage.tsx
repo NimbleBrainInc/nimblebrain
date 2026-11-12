@@ -2,8 +2,13 @@
 // GlobalHomePage — workspace-agnostic landing at `/`
 //
 // A user in exactly one workspace goes straight into it: there is nothing to
-// choose between. Anyone else sees their workspaces here, each with its unread
-// dot. Which workspace to open is never remembered or defaulted (ADR-0044).
+// choose between. A user who chose a default workspace on this browser goes
+// into it when the app loads here, and only then: a link to `/` from inside the
+// app (the logo, the palette's Home) shows the grid, which is where the default
+// is changed. `/?home` is a load that shows the grid regardless, for links that
+// reload the page to escape a failing workspace (ADR-0060). Anyone else sees
+// their workspaces here, each with its unread dot. The shell never remembers a
+// last workspace (ADR-0044).
 //
 // With chat, conversations, tasks, and files identity-bound, the root URL is
 // the user's cross-workspace landing, not a workspace home. It is
@@ -11,12 +16,14 @@
 // (each tile links to its overview at `/w/<slug>/`).
 // ---------------------------------------------------------------------------
 
-import { Pin, Plus } from "lucide-react";
-import { Link, Navigate } from "react-router-dom";
+import { House, Pin, Plus } from "lucide-react";
+import { useState } from "react";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import { UnreadDot } from "../components/shell/UnreadDot";
 import { useSession } from "../context/SessionContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
 import { useWorkspaceUnread } from "../context/WorkspaceUnreadContext";
+import { useDefaultWorkspace } from "../lib/default-workspace";
 import { getGreeting } from "../lib/greeting";
 import { usePinnedWorkspaces } from "../lib/pinned-workspaces";
 import { cn } from "../lib/utils";
@@ -35,12 +42,27 @@ export function GlobalHomePage() {
     year: "numeric",
   });
   const name = session?.user?.displayName ?? session?.user?.email ?? "";
+  const location = useLocation();
   const { pinned, toggle: togglePin } = usePinnedWorkspaces();
+  const { defaultId, toggle: toggleDefault } = useDefaultWorkspace();
+  // Where the app opens is decided by the default as it stood when the page
+  // loaded: choosing or clearing one on this grid, here or in another tab,
+  // changes the next load, never this one.
+  const [defaultAtLoad] = useState(defaultId);
   const ordered = orderWorkspacesForSidebar(wsCtx.workspaces, pinned);
   const [only] = wsCtx.workspaces;
 
   if (wsCtx.workspaces.length === 1 && only) {
     return <Navigate to={`/w/${toSlug(only.id)}/`} replace />;
+  }
+
+  // React Router keys the location the page loaded at "default"; every
+  // navigation inside the app gets a fresh key.
+  const isPageLoad = location.key === "default";
+  const skipDefault = new URLSearchParams(location.search).has("home");
+  const chosen = wsCtx.workspaces.find((ws) => ws.id === defaultAtLoad);
+  if (isPageLoad && !skipDefault && chosen) {
+    return <Navigate to={`/w/${toSlug(chosen.id)}/`} replace />;
   }
 
   return (
@@ -65,6 +87,8 @@ export function GlobalHomePage() {
                 workspace={ws}
                 pinned={pinned.has(ws.id)}
                 onTogglePin={() => togglePin(ws.id)}
+                isDefault={ws.id === defaultId}
+                onToggleDefault={() => toggleDefault(ws.id)}
               />
             ))}
             <NewWorkspaceTile />
@@ -75,39 +99,94 @@ export function GlobalHomePage() {
   );
 }
 
-// The pin toggle is a sibling of the tile's link, laid over its right edge (an
-// interactive control cannot nest in a link).
+// The tile's toggles are siblings of its link, laid over its right edge (an
+// interactive control cannot nest in a link). Pinning orders the grid; the
+// default decides where the app opens. They are separate so sorting a
+// workspace never changes where the viewer lands.
 function WorkspaceTile({
   workspace,
   pinned,
   onTogglePin,
+  isDefault,
+  onToggleDefault,
 }: {
   workspace: WorkspaceInfo;
   pinned: boolean;
   onTogglePin: () => void;
+  isDefault: boolean;
+  onToggleDefault: () => void;
 }) {
   const avatar = getWorkspaceAvatar(workspace);
   return (
     <div className="group/tile relative">
       <WorkspaceTileLink workspace={workspace} avatar={avatar} />
-      <button
-        type="button"
-        onClick={onTogglePin}
-        aria-label={pinned ? `Unpin ${workspace.name}` : `Pin ${workspace.name} to the top`}
-        aria-pressed={pinned}
-        title={pinned ? "Unpin" : "Pin to top"}
-        data-testid="home-workspace-pin"
-        data-workspace-id={workspace.id}
-        className={cn(
-          "absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-sm text-muted-foreground",
-          "hover:bg-foreground/10 hover:text-foreground transition-opacity",
-          "focus-visible:opacity-100 group-hover/tile:opacity-100 [@media(pointer:coarse)]:opacity-100",
-          pinned ? "opacity-60" : "opacity-0",
-        )}
-      >
-        <Pin className={cn("w-4 h-4", pinned && "fill-current")} aria-hidden="true" />
-      </button>
+      <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+        <TileToggle
+          on={isDefault}
+          onClick={onToggleDefault}
+          label={
+            isDefault
+              ? `Stop opening ${workspace.name} by default`
+              : `Open ${workspace.name} by default`
+          }
+          title={isDefault ? "Opens by default" : "Open by default"}
+          testId="home-workspace-default"
+          workspaceId={workspace.id}
+        >
+          <House className={cn("w-4 h-4", isDefault && "fill-current")} aria-hidden="true" />
+        </TileToggle>
+        <TileToggle
+          on={pinned}
+          onClick={onTogglePin}
+          label={pinned ? `Unpin ${workspace.name}` : `Pin ${workspace.name} to the top`}
+          title={pinned ? "Unpin" : "Pin to top"}
+          testId="home-workspace-pin"
+          workspaceId={workspace.id}
+        >
+          <Pin className={cn("w-4 h-4", pinned && "fill-current")} aria-hidden="true" />
+        </TileToggle>
+      </div>
     </div>
+  );
+}
+
+// A toggle that is on stays visible at rest; one that is off shows on hover or
+// focus, and always on a touch screen, which has no hover.
+function TileToggle({
+  on,
+  onClick,
+  label,
+  title,
+  testId,
+  workspaceId,
+  children,
+}: {
+  on: boolean;
+  onClick: () => void;
+  label: string;
+  title: string;
+  testId: string;
+  workspaceId: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={on}
+      title={title}
+      data-testid={testId}
+      data-workspace-id={workspaceId}
+      className={cn(
+        "p-1.5 rounded-sm text-muted-foreground",
+        "hover:bg-foreground/10 hover:text-foreground transition-opacity",
+        "focus-visible:opacity-100 group-hover/tile:opacity-100 [@media(pointer:coarse)]:opacity-100",
+        on ? "opacity-60" : "opacity-0",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -125,8 +204,8 @@ function WorkspaceTileLink({
       data-testid="home-workspace-tile"
       data-workspace-id={workspace.id}
       className={cn(
-        // Right padding leaves room for the pin toggle laid over the tile.
-        "group flex items-center gap-3 p-4 pr-12 rounded-sm border border-border bg-card",
+        // Right padding leaves room for the two toggles laid over the tile.
+        "group flex items-center gap-3 p-4 pr-20 rounded-sm border border-border bg-card",
         "hover:border-foreground/20 hover:bg-foreground/[0.02] transition-colors",
       )}
     >

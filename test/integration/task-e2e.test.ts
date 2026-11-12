@@ -29,6 +29,7 @@ import {
   readRunResult,
   readRuns,
   readRunsPage,
+  readRunsSince,
   saveTask,
 } from "../../src/platform/tasks/store.ts";
 import type { Task, TaskRun, TaskRunResult } from "../../src/platform/tasks/types.ts";
@@ -142,6 +143,7 @@ function createHarness(): ToolContext {
     cancelRun: (runId) => scheduler.cancelRunById(WS, OWNER, runId),
     readRuns: (id, opts) => readRuns(TMP_DIR, WS, OWNER, id, opts),
     readRunsPage: (id, opts) => readRunsPage(TMP_DIR, WS, OWNER, id, opts),
+    readRunsSince: (id, since) => readRunsSince(TMP_DIR, WS, OWNER, id, since),
     readAllRuns: (opts) => readAllRuns(TMP_DIR, WS, OWNER, opts),
     readRunResult: (id, runId) => readRunResult(TMP_DIR, WS, OWNER, id, runId),
     defaultTimezone: "Pacific/Honolulu",

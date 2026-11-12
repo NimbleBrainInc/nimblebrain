@@ -287,6 +287,7 @@
 
 ### Fixed
 
+- **Task statistics read each run index once.** `tasks__stats` parsed a large archive month once per 5,000 runs in the window; the Tasks panel also re-read the figures every few seconds, and now reads them when a run is recorded or assessed and once an hour ([#1951](https://github.com/NimbleBrainInc/nimblebrain/pull/1951)).
 - **A cancelled turn on an agent runtime records the usage it spent.** The model calls the agent finished before the cancel are priced in the usage ledger; they recorded nothing ([#1877](https://github.com/NimbleBrainInc/nimblebrain/pull/1877)).
 - **Title and compaction calls are recorded under their run in the usage ledger**, matching what the model gateway charges the run, so per-run cost includes them ([#1867](https://github.com/NimbleBrainInc/nimblebrain/pull/1867)).
 - **Connectors whose OAuth server sends the RFC 9207 `iss` parameter, Notion's among them, connect.** The callback now hands `iss` to the token exchange, which refused the code without it ([#1888](https://github.com/NimbleBrainInc/nimblebrain/pull/1888)).
