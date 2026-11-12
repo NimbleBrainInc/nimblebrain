@@ -112,6 +112,8 @@ The runtime summarizes earlier turns once a conversation grows large, preserving
 
 Your own messages are kept **verbatim** through compaction, not folded into the summary. Instructions and corrections you give ("use this format, not that one") are the highest-value part of a long conversation, so they survive every compaction — including repeated ones — for the life of the conversation. The summary compacts the assistant and tool activity around them. Retention is bounded, so it never undoes the compaction; on an unusually long steering session the oldest of your messages may be elided (a marker shows when this happens), keeping the most recent guidance intact. The full, un-summarized history is always available in the conversation export and fork.
 
+If the first message and the latest message or tool-call/result group cannot fit in the model's context window, the provider may reject the turn. NimbleBrain then reports that the turn cannot fit instead of retrying the same required messages. Choose a model with a larger context window, shorten the first message, or reduce the latest tool output.
+
 ## Storage configuration
 
 By default the CLI uses event-sourced JSONL storage under the work directory. You can point storage elsewhere in `nimblebrain.json`:

@@ -828,6 +828,20 @@ function isProviderFailure(err: unknown, signal: AbortSignal | undefined): boole
   return !signal?.aborted && !isModelBudgetSpent(err);
 }
 
+/** A first provider overflow can be retried only if a context hook can re-window it. */
+function isOverflowRetryCandidate(
+  err: unknown,
+  overflowAttempt: number,
+  hasTransformContext: boolean,
+): boolean {
+  return (
+    overflowAttempt === 0 &&
+    (err as { retryable?: unknown } | null)?.retryable !== false &&
+    hasTransformContext &&
+    isContextOverflowError(err)
+  );
+}
+
 /**
  * Whether a model call threw because the run's signal cut it off: the throw
  * is the abort itself, not a refusal or a provider error that happened to
@@ -1396,13 +1410,18 @@ export class AgentEngine {
         //    hook is also re-invoked on a context-overflow recovery (see
         //    the call loop below) with `overflowAttempt: 1` so the hook
         //    can return more aggressively trimmed messages.
-        const runTransform = (attempt: number): LanguageModelV4Message[] =>
-          config.hooks?.transformContext
-            ? config.hooks.transformContext([...history], { overflowAttempt: attempt })
-            : history;
+        const runTransform = (attempt: number) => {
+          const transformed = config.hooks?.transformContext?.([...history], {
+            overflowAttempt: attempt,
+          });
+          if (Array.isArray(transformed)) {
+            return { messages: transformed, mandatoryOverBudget: false };
+          }
+          return transformed ?? { messages: history, mandatoryOverBudget: false };
+        };
         const windowed = runTransform(0);
         // Sanitize: filter out empty text content blocks that the API rejects
-        let callMessages = sanitizeMessages(windowed);
+        let callMessages = sanitizeMessages(windowed.messages);
         const callPrompt = resolveCallPrompt(config, systemPrompt);
 
         // Decided once per step: every attempt at this call carries the same
@@ -1419,7 +1438,7 @@ export class AgentEngine {
         const finalStep = finalStepLimit !== undefined;
         callMessages = appendFinalStepReminder(callMessages, finalStep);
         const messagesForRetry = (attempt: number) =>
-          appendFinalStepReminder(sanitizeMessages(runTransform(attempt)), finalStep);
+          appendFinalStepReminder(sanitizeMessages(runTransform(attempt).messages), finalStep);
 
         // The run-wide input cap and the spend accounts, checked against the
         // prompt about to be sent, before it is sent.
@@ -1537,6 +1556,7 @@ export class AgentEngine {
           callOnce,
           callMessages,
           messagesForRetry,
+          windowed.mandatoryOverBudget,
           config,
           runId,
         ).catch((err: unknown) => {
@@ -2018,15 +2038,17 @@ export class AgentEngine {
   /**
    * Call the model once, recovering from a single provider-reported
    * context-window overflow. The pre-flight `resolveMessageBudget` should make
-   * this rare; when it fires, we re-window with the hook's own
-   * `overflowAttempt`-driven scaling (typically halves the budget) and retry
-   * once. A second overflow propagates the original error so the UI can surface
-   * a clear "conversation too long" message rather than silently looping.
+   * this rare. If the required messages already exceed the budget, a tighter
+   * window cannot help, so surface an actionable error without retrying.
+   * Otherwise re-window with the hook's `overflowAttempt`-driven scaling
+   * (typically halves the budget) and retry once. A second overflow propagates
+   * the original provider error.
    */
   private async callModelWithOverflowRecovery(
     callOnce: (msgs: LanguageModelV4Message[]) => Promise<StreamResult>,
     initialMessages: LanguageModelV4Message[],
     messagesForRetry: (attempt: number) => LanguageModelV4Message[],
+    mandatoryOverBudget: boolean,
     config: EngineConfig,
     runId: string,
   ): Promise<StreamResult> {
@@ -2039,12 +2061,12 @@ export class AgentEngine {
         // A call that failed after its output reached the client is marked
         // `retryable: false`; re-issuing it would re-stream those deltas, so it
         // is never recovered, whatever its message says.
-        if (
-          overflowAttempt === 0 &&
-          (err as { retryable?: unknown } | null)?.retryable !== false &&
-          isContextOverflowError(err) &&
-          config.hooks?.transformContext
-        ) {
+        const retryCandidate = isOverflowRetryCandidate(
+          err,
+          overflowAttempt,
+          config.hooks?.transformContext !== undefined,
+        );
+        if (retryCandidate && !mandatoryOverBudget) {
           overflowAttempt = 1;
           const previousMessageCount = callMessages.length;
           const errorMessage = err instanceof Error ? err.message : String(err);
@@ -2070,23 +2092,42 @@ export class AgentEngine {
           callMessages = messagesForRetry(overflowAttempt);
           continue;
         }
-        // Terminal LLM failure: the call threw, in-call retry is exhausted,
-        // and it's neither a recoverable overflow nor a user cancellation.
-        // Emit the observe-only error fact (for the LLM error-rate metric)
-        // before re-throwing — the error still propagates and ends the run.
-        // Aborts are excluded: a cancellation isn't a provider failure and
-        // must not inflate the error rate.
-        // The gateway's refusal for a spent run budget is not one either: the
-        // run stops on it (`budgetStopOrRethrow`).
-        if (isProviderFailure(err, config.signal)) {
-          this.events.emit({
-            type: "llm.error",
-            data: { runId, model: config.model },
-          });
-        }
-        throw err;
+        this.throwTerminalModelFailure(
+          err,
+          retryCandidate && mandatoryOverBudget,
+          callMessages.length,
+          config,
+          runId,
+        );
       }
     }
+  }
+
+  /** Record a terminal model failure and give an unshrinkable overflow an actionable error. */
+  private throwTerminalModelFailure(
+    err: unknown,
+    unshrinkableOverflow: boolean,
+    messageCount: number,
+    config: EngineConfig,
+    runId: string,
+  ): never {
+    if (unshrinkableOverflow) {
+      log.warn(
+        `[engine] context overflow cannot shrink mandatory messages runId=${runId} model=${config.model} messages=${messageCount}; skipping recovery retry`,
+      );
+    }
+    // Emit the observe-only provider error fact before re-throwing. Aborts and
+    // gateway budget refusals do not count toward the provider error rate.
+    if (isProviderFailure(err, config.signal)) {
+      this.events.emit({ type: "llm.error", data: { runId, model: config.model } });
+    }
+    if (unshrinkableOverflow) {
+      throw new Error(
+        "This turn cannot fit in the selected model's context window. Shorten the first message or latest turn, or use a model with a larger context window.",
+        { cause: err },
+      );
+    }
+    throw err;
   }
 
   /**

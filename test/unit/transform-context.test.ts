@@ -44,14 +44,14 @@ describe("buildTransformContext — append-only history", () => {
   it("does not front-slice: a long history passes through unchanged", () => {
     const transform = buildTransformContext(BIG_BUDGET, PROVIDER);
     const h = history(60); // well past any former group cap
-    expect(transform(h, undefined)).toEqual(h);
+    expect(transform(h, undefined)).toEqual({ messages: h, mandatoryOverBudget: false });
   });
 
   it("appending a step leaves the prior prefix byte-identical (no cache bust)", () => {
     const transform = buildTransformContext(BIG_BUDGET, PROVIDER);
     const h50 = history(50);
-    const out50 = transform(h50, undefined);
-    const out51 = transform([...h50, ...step(50)], undefined);
+    const out50 = transform(h50, undefined).messages;
+    const out51 = transform([...h50, ...step(50)], undefined).messages;
     // The prefix (everything but the newly appended step) is unchanged, so
     // the prompt cache reads it back instead of re-writing it.
     expect(out51.slice(0, out50.length)).toEqual(out50);
@@ -62,8 +62,23 @@ describe("buildTransformContext — append-only history", () => {
     // overflow guard still works now that per-call slicing is gone.
     const transform = buildTransformContext(500, PROVIDER);
     const h = history(60);
-    const out = transform(h, undefined);
+    const { messages: out, mandatoryOverBudget } = transform(h, undefined);
     expect(out.length).toBeLessThan(h.length);
     expect(out[0]).toEqual(h[0]); // first message always kept
+    expect(mandatoryOverBudget).toBe(false);
+  });
+
+  it("reports when mandatory context stays over budget after an overflow retry", () => {
+    const transform = buildTransformContext(100, PROVIDER);
+    const h = [userMsg("x".repeat(1000)), ...step(1), ...step(2)];
+
+    const first = transform(h, { overflowAttempt: 0 });
+    const retry = transform(h, { overflowAttempt: 1 });
+
+    expect(first.mandatoryOverBudget).toBe(true);
+    expect(retry.mandatoryOverBudget).toBe(true);
+    expect(retry.messages).toEqual(first.messages);
+    expect(first.messages[0]).toBe(h[0]);
+    expect(first.messages.slice(-2)).toEqual(step(2));
   });
 });

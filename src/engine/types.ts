@@ -303,6 +303,11 @@ export type EngineEvent = {
 /** The event of one type. */
 export type EngineEventOf<K extends EngineEventType> = Extract<EngineEvent, { type: K }>;
 
+/** A per-call context transform, with an optional windowing diagnostic. */
+export type TransformContextResult =
+  | LanguageModelV4Message[]
+  | { messages: LanguageModelV4Message[]; mandatoryOverBudget: boolean };
+
 /** Hooks for intercepting the engine loop at 5 strategic points. */
 export interface EngineHooks {
   /**
@@ -339,11 +344,13 @@ export interface EngineHooks {
    * first attempt; positive values are recovery retries — the hook is
    * expected to return more aggressively trimmed messages each step.
    * Hooks that don't care about recovery can ignore the second argument.
+   * A hook that windows the history can return `mandatoryOverBudget` to tell
+   * the engine that a tighter budget cannot shrink the required messages.
    */
   transformContext?: (
     messages: LanguageModelV4Message[],
     opts?: { overflowAttempt?: number },
-  ) => LanguageModelV4Message[];
+  ) => TransformContextResult;
 
   /**
    * Gate or modify a model tool call before execution. Return null to skip the
