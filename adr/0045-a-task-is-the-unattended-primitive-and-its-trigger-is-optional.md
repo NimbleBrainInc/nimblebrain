@@ -1,6 +1,6 @@
 # 0045. A task is the unattended primitive; its trigger is optional, and its outcome separates running from being good
 
-- Status: Accepted; amended by ADR-0049
+- Status: Accepted; amended by ADR-0049, ADR-0061
 - Date: 2026-10-03
 - Serves: orchestrate remote MCP, secure RBAC
 
@@ -162,6 +162,10 @@ id. No field outside the spec is needed for either.
 task, so one-off definitions are kept with it. The run index is partitioned (by
 period) and read a page at a time, so no read loads a task's whole history.
 
+- *Amended by ADR-0061:* an ended run's data is kept for a retention window,
+  not indefinitely. Archived runs, a run's handle, and a one-off task with its
+  runs are deleted once older than it; a task's newest runs are always kept.
+
 ## Consequences
 
 - One noun covers the triggered, the untriggered, the once-at-T, and the batched
@@ -185,6 +189,8 @@ period) and read a page at a time, so no read loads a task's whole history.
   task with a trigger, and a single action at T is a once-at-T schedule.
 - No cap limits retained runs. Storage grows with use, and the partitioned,
   paged index is what keeps reading it bounded.
+  - *Amended by ADR-0061:* a retention window bounds storage; the paged index
+    still bounds each read.
 - Assessment costs a judge call per run, and sending a deliverable to a judge
   is a data flow. A workspace connects a judge the way it connects any server,
   with the same consent, so where the deliverable goes is the workspace's

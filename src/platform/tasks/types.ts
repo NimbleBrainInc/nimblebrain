@@ -48,8 +48,8 @@ export interface Task {
 
   /**
    * `saved`: a definition someone keeps and lists. `oneoff`: made to be run
-   * once with no trigger, kept with its run history but left out of the
-   * default list. Absent reads as `saved`.
+   * once with no trigger, left out of the default list, and deleted with its
+   * runs by the retention sweep once past the window. Absent reads as `saved`.
    */
   kind?: TaskKind;
 

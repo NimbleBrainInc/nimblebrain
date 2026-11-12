@@ -11,7 +11,9 @@
  *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/archive/<YYYY-MM>/index.jsonl  older summaries, by start month (UTC)
  *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/archive/<YYYY-MM>/<runId>.result.json  their deliverables
  *
- * Run history and results are kept indefinitely. The hot index stays bounded
+ * Nothing here deletes run history: the retention sweep (`retention.ts`) is
+ * what removes an archive month, a ticket, or a one-off once it is older than
+ * `tasks.runRetentionDays`. The hot index stays bounded
  * so every append, recent-run read, and event fire check reads a small file;
  * lines past the window roll, with their result sidecars, into the archive
  * month of the run's start, which is read only by a paged read that asks for
@@ -23,7 +25,8 @@
  * A run requested by id (`tasks__run`) also has a ticket,
  * `run-tickets/<runId>.json`, holding its current record from the moment it is
  * asked for, and an idempotency key it was asked with is recorded under
- * `runs/<taskId>/keys/`. Both are kept like the rest of the history.
+ * `runs/<taskId>/keys/`. A key is honored for as long as its run's ticket is
+ * kept.
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -42,6 +45,7 @@ import { dirname, join } from "node:path";
 import { ensureWorkspaceDir } from "../../workspace/context.ts";
 import {
   isRunArchiveMonth,
+  ownerRunsRoot,
   parseTaskPath,
   taskArchivedRunResultPath,
   taskFilePath,
@@ -67,7 +71,6 @@ import type { RunTicket, Task, TaskRun, TaskRunResult } from "./types.ts";
 export const MAX_RUN_LINES = 1000;
 const WORKSPACES_SEGMENT = "workspaces";
 const TASKS_SEGMENT = "tasks";
-const RUNS_SEGMENT = "runs";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -78,11 +81,6 @@ export function atomicWrite(filePath: string, contents: string): void {
   const tmpPath = `${filePath}.${randomBytes(6).toString("hex")}.tmp`;
   writeFileSync(tmpPath, contents);
   renameSync(tmpPath, filePath);
-}
-
-/** The `runs/` root for one owner: `…/tasks/<ownerId>/runs`. */
-function ownerRunsRoot(workDir: string, wsId: string, ownerId: string): string {
-  return join(workspaceTasksDir(workDir, wsId, ownerId), RUNS_SEGMENT);
 }
 
 /** Immediate subdirectory names of `dir`; empty when the dir is absent or unreadable. */
@@ -211,14 +209,22 @@ function loadOwnerTasksResolved(workDir: string, wsId: string, ownerId: string):
   return owned;
 }
 
-export function loadAllTasks(workDir: string): Task[] {
+/** Every (workspace, owner) that has a tasks dir, read from the directory tree. */
+export function listTaskOwners(workDir: string): { wsId: string; ownerId: string }[] {
   const wsRoot = join(workDir, WORKSPACES_SEGMENT);
-  const out: Task[] = [];
+  const out: { wsId: string; ownerId: string }[] = [];
   for (const wsId of listSubdirNames(wsRoot)) {
-    const autoRoot = join(wsRoot, wsId, TASKS_SEGMENT);
-    for (const ownerId of listSubdirNames(autoRoot)) {
-      out.push(...loadOwnerTasksResolved(workDir, wsId, ownerId));
+    for (const ownerId of listSubdirNames(join(wsRoot, wsId, TASKS_SEGMENT))) {
+      out.push({ wsId, ownerId });
     }
+  }
+  return out;
+}
+
+export function loadAllTasks(workDir: string): Task[] {
+  const out: Task[] = [];
+  for (const { wsId, ownerId } of listTaskOwners(workDir)) {
+    out.push(...loadOwnerTasksResolved(workDir, wsId, ownerId));
   }
   return out;
 }
@@ -393,7 +399,7 @@ export function listRunSegmentMonths(
 }
 
 /** Epoch ms of the first instant after `month` (`YYYY-MM`, UTC). */
-function monthEndMs(month: string): number {
+export function monthEndMs(month: string): number {
   const [y, m] = month.split("-").map(Number);
   return Date.UTC(y!, m!, 1);
 }
@@ -807,6 +813,22 @@ export function saveIdempotencyKey(
   const filePath = taskIdempotencyKeyPath(workDir, wsId, ownerId, taskId, keyDigest(key));
   ensureWorkspaceDir(dirname(filePath));
   atomicWrite(filePath, `${JSON.stringify({ key, runId })}\n`);
+}
+
+/**
+ * Forget that `key` started `runId` on this task, so a repeat of the key asks
+ * for a new run. A key that names another run is left alone.
+ */
+export function deleteIdempotencyKey(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  taskId: string,
+  key: string,
+  runId: string,
+): void {
+  if (readIdempotencyKey(workDir, wsId, ownerId, taskId, key) !== runId) return;
+  rmSync(taskIdempotencyKeyPath(workDir, wsId, ownerId, taskId, keyDigest(key)), { force: true });
 }
 
 /** The run `key` started on this task, or null when it started none. */

@@ -57,6 +57,11 @@ export interface TaskRunSourceDeps {
     taskId: string,
     runId: string,
   ) => TaskRunResult | null;
+  /**
+   * How long a run's handle is kept, in ms: the retention window
+   * (`tasks.runRetentionDays`), reported as each task's `ttl`.
+   */
+  handleTtlMs: number;
   /** The record of a run this process is carrying, once it ends. */
   runEnded: (runId: string) => Promise<TaskRun> | undefined;
   /** Cancel a run this process is carrying for that owner in that workspace. */
@@ -89,8 +94,13 @@ export function taskStatusOf(run: TaskRun): McpTask["status"] {
   }
 }
 
-/** The run as an MCP task: id, status, and the record's own times. */
-export function taskOf(ticket: RunTicket): McpTask {
+/**
+ * The run as an MCP task: id, status, and the record's own times. `ttlMs` is
+ * the retention window. The ticket behind the handle is deleted that long
+ * after the run ends, which is never sooner than that long after it was
+ * created, so the handle outlives the `ttl` it reports.
+ */
+export function taskOf(ticket: RunTicket, ttlMs: number): McpTask {
   const { run } = ticket;
   const status = taskStatusOf(run);
   const statusMessage =
@@ -107,8 +117,7 @@ export function taskOf(ticket: RunTicket): McpTask {
     ...(statusMessage ? { statusMessage } : {}),
     createdAt: ticket.requestedAt,
     lastUpdatedAt: run.completedAt ?? run.startedAt,
-    // Run history is kept indefinitely, so the task never expires.
-    ttl: null,
+    ttl: ttlMs,
     ...(status === "working" ? { pollInterval: POLL_INTERVAL_MS } : {}),
   };
 }
@@ -173,14 +182,14 @@ export function createTaskRunSource(deps: TaskRunSourceDeps): IdentityTaskSource
       const refusal = refusalOf(toolName, args);
       if (refusal) return { result: errorResult(refusal) };
       try {
-        return { task: taskOf(requestRun(args)) };
+        return { task: taskOf(requestRun(args), deps.handleTtlMs) };
       } catch (err) {
         return { result: errorResult(err instanceof Error ? err.message : String(err)) };
       }
     },
 
     async getTaskStatus(taskId, { ownerContext }) {
-      return taskOf(lookup(taskId, ownerContext));
+      return taskOf(lookup(taskId, ownerContext), deps.handleTtlMs);
     },
 
     async awaitToolTaskResult(taskId, { ownerContext }) {
@@ -230,7 +239,7 @@ export function createTaskRunSource(deps: TaskRunSourceDeps): IdentityTaskSource
         ]);
         if (timer !== undefined) clearTimeout(timer);
       }
-      return taskOf(lookup(taskId, ownerContext));
+      return taskOf(lookup(taskId, ownerContext), deps.handleTtlMs);
     },
   };
 }

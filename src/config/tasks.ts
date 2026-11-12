@@ -1,6 +1,7 @@
 /**
  * The `tasks` block of `nimblebrain.json`: how much the runtime lets
- * tasks spend at once, and the most any one run may spend.
+ * tasks spend at once, the most any one run may spend, and how long an ended
+ * run's data is kept.
  *
  * The block is the operator's, not the task author's. An author sets a
  * run's caps on the definition (`maxIterations`, `maxInputTokens`,
@@ -30,6 +31,12 @@ export interface TasksConfig {
   maxRunInputTokens?: number;
   /** Ceiling on one run's wall-clock time, in ms. */
   maxRunDurationMs?: number;
+  /**
+   * Days an ended run's data is kept before the tasks app's retention sweep
+   * may delete it (`src/platform/tasks/retention.ts`). The top of the range
+   * keeps it for a century, which is how an operator keeps everything.
+   */
+  runRetentionDays?: number;
 }
 
 /**
@@ -40,6 +47,13 @@ export interface TasksConfig {
 export type ResolvedTasksConfig = Required<Omit<TasksConfig, "maxRunInputTokens">> & {
   maxRunInputTokens: number | undefined;
 };
+
+/**
+ * Days an ended run is kept when the operator sets none. Three times the
+ * window `tasks__stats` reads by default, so a default deployment never
+ * deletes a run its own reports still count.
+ */
+export const DEFAULT_RUN_RETENTION_DAYS = 180;
 
 /** Wall-clock for a run whose definition sets none. */
 export const DEFAULT_RUN_DURATION_MS = 120_000;
@@ -58,6 +72,7 @@ export const TASKS_CONFIG_BOUNDS: Record<keyof TasksConfig, { min: number; max: 
   maxRunIterations: { min: 1, max: MAX_ITERATIONS },
   maxRunInputTokens: { min: 1_000, max: 100_000_000 },
   maxRunDurationMs: { min: 10_000, max: 600_000 },
+  runRetentionDays: { min: 1, max: 36_500 },
 };
 
 /**
@@ -81,6 +96,7 @@ export function resolveTasksConfig(config?: TasksConfig): ResolvedTasksConfig {
     maxRunIterations: pick("maxRunIterations") ?? MAX_ITERATIONS,
     maxRunInputTokens: pick("maxRunInputTokens"),
     maxRunDurationMs: pick("maxRunDurationMs") ?? 600_000,
+    runRetentionDays: pick("runRetentionDays") ?? DEFAULT_RUN_RETENTION_DAYS,
   };
 }
 

@@ -82,6 +82,19 @@ export function loadBatch(
   }
 }
 
+/**
+ * Whether a batch may still read its runs' tickets and results: it is running
+ * or paused, or the record still counts an item queued or running (a run the
+ * boot reconcile has yet to settle).
+ */
+export function isUnsettledBatch(batch: Batch): boolean {
+  return (
+    batch.state === "running" ||
+    batch.state === "paused" ||
+    batch.counts.queued + batch.counts.running > 0
+  );
+}
+
 /** Every batch of one owner in one workspace, newest first. */
 export function listBatches(workDir: string, wsId: string, ownerId: string): Batch[] {
   let names: string[];

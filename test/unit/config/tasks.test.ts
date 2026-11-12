@@ -14,8 +14,15 @@ describe("resolveTasksConfig", () => {
       maxRunIterations: 50,
       maxRunInputTokens: undefined,
       maxRunDurationMs: 600_000,
+      runRetentionDays: 180,
     });
     expect(resolved.maxRunInputTokens).toBeUndefined();
+  });
+
+  it("holds the retention window between one day and a century", () => {
+    expect(resolveTasksConfig({ runRetentionDays: 14 }).runRetentionDays).toBe(14);
+    expect(resolveTasksConfig({ runRetentionDays: 0 }).runRetentionDays).toBe(1);
+    expect(resolveTasksConfig({ runRetentionDays: 1e9 }).runRetentionDays).toBe(36_500);
   });
 
   it("accepts an input ceiling far above the create range, up to its own maximum", () => {
@@ -40,6 +47,7 @@ describe("resolveTasksConfig", () => {
       maxRunIterations: 50,
       maxRunInputTokens: 200_000,
       maxRunDurationMs: 10_000,
+      runRetentionDays: 180,
     });
   });
 

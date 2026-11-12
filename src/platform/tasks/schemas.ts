@@ -146,8 +146,8 @@ export const TOOL_SCHEMAS = toolSchemas({
       "and the `label` it reads as (Succeeded, Poor result, Needs review, Failed, Skipped, " +
       'Cancelled). `label: "Needs review"` finds runs awaiting a person\'s verdict ' +
       "(tasks__assess). Output is a preview; tasks__run_result has the whole deliverable. " +
-      "History is kept indefinitely: pass the response's `nextBefore` back as `before` for " +
-      "older runs. A filtered call reads at most 5000 runs, then answers with `nextBefore`.",
+      "Pass the response's `nextBefore` back as `before` for older runs; the runtime deletes " +
+      "runs past its retention window. A filtered call reads at most 5000 runs, then answers with `nextBefore`.",
     inputSchema: TasksRunsInput,
     outputSchema: TasksRunsOutput,
     annotations: READ,

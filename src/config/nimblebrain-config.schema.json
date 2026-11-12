@@ -511,7 +511,7 @@
       "additionalProperties": false
     },
     "tasks": {
-      "description": "Guardrails for unattended (task) runs: how many runs the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound each task's own caps, and the runtime defaults for caps it leaves unset, at execution time.",
+      "description": "Guardrails for unattended (task) runs: how many runs the process holds in flight and waiting, across every workspace, the most any one run may spend, and how long an ended run's data is kept. The per-run ceilings bound each task's own caps, and the runtime defaults for caps it leaves unset, at execution time.",
       "type": "object",
       "properties": {
         "maxConcurrentRuns": {
@@ -547,6 +547,13 @@
           "maximum": 600000,
           "description": "Ceiling on one run's wall-clock time, in milliseconds. A task's own maxRunDurationMs above it is lowered to it. Default: 600000 (10 min).",
           "default": 600000
+        },
+        "runRetentionDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 36500,
+          "description": "Days an ended run's data is kept. A sweep that runs shortly after start and then daily deletes, once older than this: each task's archived runs a whole month at a time (the newest 1,000 runs of a task are never deleted), a requested run's handle with its idempotency key, and a one-off task with its runs. Nothing belonging to a run in flight or to a batch that is running or paused is deleted. The maximum keeps everything for a century. Default: 90.",
+          "default": 180
         }
       },
       "additionalProperties": false

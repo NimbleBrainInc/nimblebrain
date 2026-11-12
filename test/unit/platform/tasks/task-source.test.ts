@@ -49,6 +49,9 @@ const STRANGER = "usr_task_stranger";
 
 const OWNED: TaskOwnerContext = { workspaceId: WS, identityId: OWNER, originApp: "tasks" };
 
+/** The retention window the task surface is given, as a handle's `ttl`. */
+const HANDLE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
 let workDir: string;
 
 /** One executor call the test settles by hand. */
@@ -146,6 +149,7 @@ function harness(opts: { executor: Executor; admission?: RunAdmission }) {
     readTicket: currentTicket,
     readTask: (wsId, owner, id) => loadTask(workDir, wsId, owner, id),
     readResult: (wsId, owner, id, runId) => readRunResult(workDir, wsId, owner, id, runId),
+    handleTtlMs: HANDLE_TTL_MS,
     runEnded: (runId) => scheduler.runEnded(runId),
     cancelRun: (wsId, owner, runId) => scheduler.cancelRunById(wsId, owner, runId),
     unattendedRefusal: () => (unattended ? "not inside an unattended run" : null),
@@ -230,7 +234,8 @@ describe("tasks__run as a task", () => {
     const task = await startTask(source, { taskId: "digest" });
 
     expect(task.status).toBe("working");
-    expect(task.ttl).toBeNull();
+    // The handle is kept for the retention window, and says so.
+    expect(task.ttl).toBe(HANDLE_TTL_MS);
     // The run is still in flight, and its record is already on disk.
     const ticket = readRunTicket(workDir, WS, OWNER, task.taskId);
     expect(ticket?.run.status).toBe("running");

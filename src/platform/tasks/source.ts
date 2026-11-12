@@ -34,6 +34,7 @@ import {
   type JudgePort,
   judgeWarnings,
 } from "./judge.ts";
+import { startRetentionSweep } from "./retention.ts";
 import { countsAsEventFire, isOpenRun, type RunFailedNotice, Scheduler } from "./scheduler.ts";
 import { type TaskToolName, TOOL_SCHEMAS } from "./schemas.ts";
 import {
@@ -405,6 +406,17 @@ export async function createTasksSource(
   // After the scheduler has loaded the tasks the batches run.
   batchDriver.start();
 
+  // Retention: what an ended run leaves on disk is deleted once it is older
+  // than `tasks.runRetentionDays`. Started after the batch driver, so its first
+  // pass follows the boot reconcile that settles each batch's lost runs.
+  const retention = startRetentionSweep({
+    workDir,
+    retentionDays: tasksConfig.runRetentionDays,
+    isTaskBusy: (wsId, owner, id) => scheduler.isTaskBusy(wsId, owner, id),
+    forgetTask: (wsId, owner, id) => scheduler.forgetTask(wsId, owner, id),
+    onOwnerChanged: (owner) => runtime.announceIdentitySourceChange("tasks", owner),
+  });
+
   // A workspace delete has to disarm what this scheduler and the batch driver
   // hold for that workspace before the subtree moves. The runtime cannot
   // import either, so they are handed over here.
@@ -590,6 +602,7 @@ export async function createTasksSource(
       readTicket: currentTicket,
       readTask: (wsId, owner, id) => loadTask(workDir, wsId, owner, id),
       readResult: (wsId, owner, id, runId) => readRunResult(workDir, wsId, owner, id, runId),
+      handleTtlMs: tasksConfig.runRetentionDays * 24 * 60 * 60 * 1000,
       runEnded: (runId) => scheduler.runEnded(runId),
       cancelRun: (wsId, owner, runId) => scheduler.cancelRunById(wsId, owner, runId),
       unattendedRefusal: () => unattendedRefusal("run"),
@@ -771,6 +784,7 @@ export async function createTasksSource(
   const originalStop = source.stop.bind(source);
   source.stop = async () => {
     try {
+      retention.stop();
       eventTrigger.stop();
       batchDriver.stop();
       scheduler.stop();

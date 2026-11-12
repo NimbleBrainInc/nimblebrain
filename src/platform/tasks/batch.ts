@@ -45,6 +45,7 @@ import {
   compactBatchItems,
   countItems,
   emptyCounts,
+  isUnsettledBatch,
   itemVerdictOf,
   listAllBatches,
   loadBatch,
@@ -230,8 +231,7 @@ export class BatchDriver {
   start(): void {
     this.stopping = false;
     for (const stored of listAllBatches(this.config.workDir)) {
-      const unsettled = stored.counts.queued + stored.counts.running > 0;
-      if (stored.state !== "running" && stored.state !== "paused" && !unsettled) continue;
+      if (!isUnsettledBatch(stored)) continue;
       try {
         const lb = this.reconcile(stored);
         this.live.set(BatchDriver.keyOf(stored.workspaceId, stored.ownerId, stored.id), lb);

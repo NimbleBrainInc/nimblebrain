@@ -604,7 +604,7 @@ the first few forever.
 
 ## tasks
 
-Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight and waiting, across every workspace, and the most any one run may spend.
+Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight and waiting, across every workspace, the most any one run may spend, and how long an ended run's data is kept.
 
 ```json
 {
@@ -613,7 +613,8 @@ Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight an
     "maxQueuedRuns":     50,
     "maxRunIterations":  50,
     "maxRunInputTokens": 20000000,
-    "maxRunDurationMs":  600000
+    "maxRunDurationMs":  600000,
+    "runRetentionDays":  180
   }
 }
 ```
@@ -625,10 +626,29 @@ Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight an
 | `maxRunIterations` | `integer` | `50` | Ceiling on one run's agentic iterations. Range: 1--50. |
 | `maxRunInputTokens` | `integer` | none | Ceiling on one run's input tokens, summed over every model call. Unset, there is no ceiling. Range: 1,000--100,000,000. |
 | `maxRunDurationMs` | `integer` (ms) | `600000` | Ceiling on one run's wall-clock time. Range: 10,000--600,000. A chat turn on an external runtime is held to it too, since its model credential lasts no longer. |
+| `runRetentionDays` | `integer` (days) | `180` | How long an ended run's data is kept. See [Run data retention](#run-data-retention). Range: 1--36,500. |
 
 The three per-run ceilings apply when a run starts, so they cover every stored task however it was written. A cap a task sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: a task with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not. The create and update tools report the caps that result.
 
 A scheduled run that finds every slot busy is deferred rather than queued: it keeps its next-run time and runs on the first scheduler tick with a free slot, so its place survives a restart. The queue is held in memory: runs still queued when the runtime stops are recorded as skipped.
+
+### Run data retention
+
+Every run leaves a record and its full result on the data volume, and a run asked for by id leaves a handle as well. The runtime deletes what is older than `runRetentionDays` itself, in a sweep that runs shortly after start and then once a day. There is nothing to schedule or call.
+
+| What | When it is deleted |
+|------|--------------------|
+| Archived runs (those past the newest 1,000 of their task), with their results | A calendar month (UTC) at a time, once the month ended more than `runRetentionDays` ago. Every run is kept at least that long. |
+| A requested run's handle and its idempotency key | Once the run ended more than `runRetentionDays` ago. After that the run is found by its task, and a repeat of the key starts a new run. |
+| A one-off task (an inline `tasks__run` definition), with its runs | Once it and its newest run are more than `runRetentionDays` old. |
+
+The sweep never deletes the newest 1,000 runs of a task, a run that is queued or running, anything a running or paused batch still reads, or a one-off task a batch was run on.
+
+To keep everything, set `runRetentionDays` to its maximum, `36500`. A lower value frees space sooner: a value under 30 leaves `tasks__stats` (which reads 30 days by default) fewer runs to count for busy tasks.
+
+<Aside type="caution">
+  The first sweep after an upgrade deletes run data older than the window. To keep older history, set `runRetentionDays` before starting the new version.
+</Aside>
 
 ## execution
 
