@@ -6,20 +6,26 @@
 // neither the helper throws before any request goes out: it never falls back
 // to a route that names none, and it never sends a workspace in a header.
 //
-// The assertions go through `workspacePath` and through helpers no other suite
-// replaces with `mock.module` (getShell, startChatTurn), so they hold in
-// the full run as well as alone.
+// Bun's mock.module registry is process-global and other suites replace
+// helpers of this module, so the suite pins the real client before importing
+// it; the assertions then hold in the full run, in any file order, as well as
+// alone.
 // ---------------------------------------------------------------------------
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { realClient } from "../../test/setup";
+import type { ApiClientError as ApiClientErrorType } from "./client";
+
+mock.module("./client", () => realClient);
+
+const {
   ApiClientError,
   getActiveWorkspaceId,
   getShell,
   setActiveWorkspaceId,
   startChatTurn,
   workspacePath,
-} from "./client";
+} = await import("./client");
 
 interface Sent {
   url: string;
@@ -82,7 +88,7 @@ describe("workspacePath", () => {
     try {
       workspacePath("/tools/call");
     } catch (err) {
-      expect((err as ApiClientError).code).toBe("no_active_workspace");
+      expect((err as ApiClientErrorType).code).toBe("no_active_workspace");
     }
   });
 });
@@ -115,7 +121,7 @@ describe("workspace-scoped helpers", () => {
         (e: unknown) => e,
       );
       expect(err).toBeInstanceOf(ApiClientError);
-      expect((err as ApiClientError).code).toBe("no_active_workspace");
+      expect((err as ApiClientErrorType).code).toBe("no_active_workspace");
     }
     expect(sent).toEqual([]);
   });
