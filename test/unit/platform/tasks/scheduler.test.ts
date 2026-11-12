@@ -1952,7 +1952,7 @@ describe("Scheduler — auto-disable", () => {
 // Tests: Cancel
 // ---------------------------------------------------------------------------
 
-describe("Scheduler — cancelRun", () => {
+describe("Scheduler — cancelRunById", () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -1962,7 +1962,7 @@ describe("Scheduler — cancelRun", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("cancelRun on active task returns true and aborts", async () => {
+  it("cancelRunById on an active task returns true and aborts", async () => {
     const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
@@ -1982,7 +1982,9 @@ describe("Scheduler — cancelRun", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(scheduler.getActiveRunIds()).toContain(`${WS}/${OWNER}/${auto.id}`);
-    const result = scheduler.cancelRun(WS, OWNER, auto.id);
+    const [entry] = scheduler.queueView(WS, OWNER);
+    expect(entry?.runId).toMatch(/^run_[a-f0-9]{12}$/);
+    const result = scheduler.cancelRunById(WS, OWNER, entry!.runId!);
     expect(result).toBe(true);
     expect(receivedSignal!.aborted).toBe(true);
 
@@ -2056,7 +2058,7 @@ describe("Scheduler — cancelRun", () => {
     scheduler.stop();
   });
 
-  it("cancelRun on idle task returns false", () => {
+  it("cancelRunById on an unknown run returns false", () => {
     const auto = makeTask({
       nextRunAt: new Date(Date.now() + 999_999).toISOString(), // not due
     });
@@ -2068,7 +2070,7 @@ describe("Scheduler — cancelRun", () => {
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
 
-    const result = scheduler.cancelRun(WS, OWNER, auto.id);
+    const result = scheduler.cancelRunById(WS, OWNER, "run_ffffffffffff");
     expect(result).toBe(false);
     scheduler.stop();
   });
@@ -2614,12 +2616,22 @@ describe("Scheduler — run queue", () => {
     const pending: Array<{ id: string; resolve: () => void }> = [];
     const started: string[] = [];
     const executor: Executor = mock(
-      async (auto: Task, _signal: AbortSignal, trigger: TaskRunTrigger) => {
+      async (
+        auto: Task,
+        _signal: AbortSignal,
+        trigger: TaskRunTrigger,
+        _input: unknown,
+        _lease: unknown,
+        runId?: string,
+      ) => {
         started.push(auto.id);
         return new Promise<{ run: TaskRun; result: null }>((resolve) => {
           pending.push({
             id: auto.id,
-            resolve: () => resolve(execOk({ ...makeSuccessRun(auto.id), trigger })),
+            resolve: () =>
+              resolve(
+                execOk({ ...makeSuccessRun(auto.id), ...(runId ? { id: runId } : {}), trigger }),
+              ),
           });
         });
       },
@@ -2866,24 +2878,29 @@ describe("Scheduler — run queue", () => {
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
-    const queued = scheduler.requestRunNow(WS, OWNER, "b");
+    const runId = "run_bbbbbbbbbbbb";
+    const queued = scheduler.requestRunNow(WS, OWNER, "b", {
+      runId,
+      requestedAt: new Date().toISOString(),
+    });
     if (queued?.state !== "queued") throw new Error("expected queued");
 
-    expect(scheduler.cancelRun(WS, OWNER, "b")).toBe(true);
+    expect(scheduler.cancelRunById(WS, OWNER, runId)).toBe(true);
     expect(scheduler.getQueuedRunIds()).toEqual([]);
     const run = await queued.run;
     expect(run.status).toBe("cancelled");
+    expect(run.id).toBe(runId);
     expect(readRuns(tmpDir, WS, OWNER, "b").map((r) => r.status)).toEqual(["cancelled"]);
 
     releaseAll();
     await tick();
     expect(started).toEqual(["a"]);
-    expect(scheduler.cancelRun(WS, OWNER, "b")).toBe(false);
+    expect(scheduler.cancelRunById(WS, OWNER, runId)).toBe(false);
     scheduler.stop();
   });
 
   it("stop records every queued run as skipped", async () => {
-    seedIdle(["a", "b"]);
+    seedEventAnd(["a", "b"]);
     const { executor } = createSlotExecutor();
     const scheduler = new Scheduler(executor, {
       workDir: tmpDir,
@@ -2894,12 +2911,19 @@ describe("Scheduler — run queue", () => {
     scheduler.requestRunNow(WS, OWNER, "a");
     const queued = scheduler.requestRunNow(WS, OWNER, "b");
     if (queued?.state !== "queued") throw new Error("expected queued");
+    const event = scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
+    const [queuedEvent] = scheduler.queueView(WS, OWNER).filter((entry) => entry.taskId === "ev");
+    expect(queuedEvent?.runId).toMatch(/^run_[a-f0-9]{12}$/);
 
     scheduler.stop();
     const run = await queued.run;
     expect(run.status).toBe("skipped");
     expect(run.error).toContain("runtime stopped");
     expect(readRuns(tmpDir, WS, OWNER, "b").map((r) => r.status)).toEqual(["skipped"]);
+    expect(await event).toMatchObject({ skipped: expect.stringContaining("runtime stopped") });
+    const [eventRecord] = readRuns(tmpDir, WS, OWNER, "ev");
+    expect(eventRecord?.status).toBe("skipped");
+    expect(eventRecord?.id).toBe(queuedEvent?.runId);
   });
 
   it("an event run at the limit queues and runs when a slot frees", async () => {
@@ -2923,6 +2947,9 @@ describe("Scheduler — run queue", () => {
     expect(started).toEqual(["a"]);
     expect(scheduler.getQueuedRunIds()).toEqual([`${WS}/${OWNER}/ev`]);
     expect(readRuns(tmpDir, WS, OWNER, "ev")).toEqual([]);
+    const [queuedEvent] = scheduler.queueView(WS, OWNER).filter((entry) => entry.taskId === "ev");
+    expect(queuedEvent?.state).toBe("queued");
+    expect(queuedEvent?.runId).toMatch(/^run_[a-f0-9]{12}$/);
 
     releaseOne();
     await tick();
@@ -2931,6 +2958,8 @@ describe("Scheduler — run queue", () => {
     const settled = await outcome;
     if (!("run" in settled)) throw new Error(`expected a run, got ${JSON.stringify(settled)}`);
     expect(settled.run.status).toBe("success");
+    expect(settled.run.id).toBe(queuedEvent?.runId);
+    expect(readRuns(tmpDir, WS, OWNER, "ev")[0]?.id).toBe(queuedEvent?.runId);
     scheduler.stop();
   });
 
@@ -2991,15 +3020,24 @@ describe("Scheduler — run queue", () => {
 
     // Refused because the queue is full.
     scheduler.requestRunNow(WS, OWNER, "a");
-    scheduler.requestRunNow(WS, OWNER, "b");
+    const queuedManualId = "run_bbbbbbbbbbbb";
+    scheduler.requestRunNow(WS, OWNER, "b", {
+      runId: queuedManualId,
+      requestedAt: new Date().toISOString(),
+    });
     expect(await scheduler.runFromEvent(WS, OWNER, "ev", input)).toMatchObject({
       skipped: expect.stringContaining("run queue was full"),
     });
-    scheduler.cancelRun(WS, OWNER, "b");
+    expect(scheduler.cancelRunById(WS, OWNER, queuedManualId)).toBe(true);
 
     // Queued, then cancelled before it started.
     const cancelled = scheduler.runFromEvent(WS, OWNER, "ev", input);
-    expect(scheduler.cancelRun(WS, OWNER, "ev")).toBe(true);
+    const [queuedEvent] = scheduler.queueView(WS, OWNER).filter((entry) => entry.taskId === "ev");
+    expect(queuedEvent?.state).toBe("queued");
+    expect(queuedEvent?.runId).toMatch(/^run_[a-f0-9]{12}$/);
+    expect(scheduler.cancelRunById(WS, "another-owner", queuedEvent!.runId!)).toBe(false);
+    expect(scheduler.cancelRunById("another-workspace", OWNER, queuedEvent!.runId!)).toBe(false);
+    expect(scheduler.cancelRunById(WS, OWNER, queuedEvent!.runId!)).toBe(true);
     expect(await cancelled).toEqual({ skipped: "Cancelled by user while queued" });
 
     releaseAll();
@@ -3013,6 +3051,7 @@ describe("Scheduler — run queue", () => {
       "success",
     ]);
     expect(rows.filter(countsAsEventFire).map((r) => r.status)).toEqual(["success"]);
+    expect(rows.find((r) => r.status === "cancelled")?.id).toBe(queuedEvent?.runId);
     scheduler.stop();
   });
 
@@ -3039,6 +3078,8 @@ describe("Scheduler — run queue", () => {
     scheduler.requestRunNow(WS, OWNER, "a");
     const outcome = scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
     expect(scheduler.getQueuedRunIds()).toEqual([`${WS}/${OWNER}/ev`]);
+    const [queuedEvent] = scheduler.queueView(WS, OWNER).filter((entry) => entry.taskId === "ev");
+    expect(queuedEvent?.runId).toMatch(/^run_[a-f0-9]{12}$/);
     defOf(scheduler, "ev")!.enabled = false;
 
     releaseOne(); // "a" ends; the queue drains into the re-check
@@ -3049,6 +3090,7 @@ describe("Scheduler — run queue", () => {
     expect(rows.map((r) => [r.status, r.error])).toEqual([
       ["skipped", "Disabled while queued (event)"],
     ]);
+    expect(rows[0]?.id).toBe(queuedEvent?.runId);
     expect(rows.filter(countsAsEventFire)).toEqual([]);
 
     releaseAll();
@@ -3110,9 +3152,12 @@ describe("Scheduler — run queue", () => {
     if (manual?.state !== "queued") throw new Error("expected queued");
     const event = scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
     expect(scheduler.getQueuedRunIds()).toHaveLength(2);
+    const [queuedEvent] = scheduler.queueView(WS, OWNER).filter((entry) => entry.taskId === "ev");
+    expect(queuedEvent?.runId).toMatch(/^run_[a-f0-9]{12}$/);
 
     scheduler.dropWorkspace(WS);
     expect(scheduler.getQueuedRunIds()).toEqual([]);
+    expect(scheduler.cancelRunById(WS, OWNER, queuedEvent!.runId!)).toBe(false);
     const run = await manual.run;
     expect(run.status).toBe("skipped");
     expect(run.error).toBe("the workspace was deleted");

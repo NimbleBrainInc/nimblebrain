@@ -167,6 +167,28 @@ describe("tasks__upcoming", () => {
     });
   });
 
+  test("shows a queued event run id without a run ticket", () => {
+    seed(
+      makeTask({
+        id: "ev",
+        name: "Event task",
+        schedule: { type: "event", match: { source: "x" } },
+      }),
+    );
+    const runId = "run_eeeeeeeeeeee";
+    const out = handleUpcoming(
+      {},
+      makeCtx({
+        queueView: () => [{ taskId: "ev", state: "queued", position: 1, runId }],
+        readRunTicket: () => null,
+      }),
+    );
+
+    expect(out.queued).toEqual([
+      { taskId: "ev", taskName: "Event task", runId, state: "queued", position: 1 },
+    ]);
+  });
+
   test("lists fires within the window soonest first, skipping paused, retired and one-off tasks", () => {
     const base = Math.floor(Date.now() / 60_000) * 60_000;
     const iso = (ms: number) => new Date(ms).toISOString();

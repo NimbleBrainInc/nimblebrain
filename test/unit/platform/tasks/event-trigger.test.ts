@@ -328,7 +328,9 @@ describe("batching", () => {
       await settleWindow();
       expect(scheduler.getQueuedRunIds()).toEqual([`${WS}/${OWNER}/${ID}`]);
 
-      expect(scheduler.cancelRun(WS, OWNER, ID)).toBe(true);
+      const runId = scheduler.queueView(WS, OWNER).find((entry) => entry.taskId === ID)?.runId;
+      if (!runId) throw new Error("the queued event run has no id");
+      expect(scheduler.cancelRunById(WS, OWNER, runId)).toBe(true);
       await settleWindow();
       expect(one.settled[0]).toMatchObject({
         outcome: "skipped",
