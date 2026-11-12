@@ -14,7 +14,7 @@ describe("resolveTasksConfig", () => {
       maxRunIterations: 50,
       maxRunInputTokens: undefined,
       maxRunDurationMs: 600_000,
-      runRetentionDays: 90,
+      runRetentionDays: 180,
     });
     expect(resolved.maxRunInputTokens).toBeUndefined();
   });
@@ -47,7 +47,7 @@ describe("resolveTasksConfig", () => {
       maxRunIterations: 50,
       maxRunInputTokens: 200_000,
       maxRunDurationMs: 10_000,
-      runRetentionDays: 90,
+      runRetentionDays: 180,
     });
   });
 

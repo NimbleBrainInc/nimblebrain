@@ -614,7 +614,7 @@ Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight an
     "maxRunIterations":  50,
     "maxRunInputTokens": 20000000,
     "maxRunDurationMs":  600000,
-    "runRetentionDays":  90
+    "runRetentionDays":  180
   }
 }
 ```
@@ -626,7 +626,7 @@ Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight an
 | `maxRunIterations` | `integer` | `50` | Ceiling on one run's agentic iterations. Range: 1--50. |
 | `maxRunInputTokens` | `integer` | none | Ceiling on one run's input tokens, summed over every model call. Unset, there is no ceiling. Range: 1,000--100,000,000. |
 | `maxRunDurationMs` | `integer` (ms) | `600000` | Ceiling on one run's wall-clock time. Range: 10,000--600,000. A chat turn on an external runtime is held to it too, since its model credential lasts no longer. |
-| `runRetentionDays` | `integer` (days) | `90` | How long an ended run's data is kept. See [Run data retention](#run-data-retention). Range: 1--36,500. |
+| `runRetentionDays` | `integer` (days) | `180` | How long an ended run's data is kept. See [Run data retention](#run-data-retention). Range: 1--36,500. |
 
 The three per-run ceilings apply when a run starts, so they cover every stored task however it was written. A cap a task sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: a task with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not. The create and update tools report the caps that result.
 

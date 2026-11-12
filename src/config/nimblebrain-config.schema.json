@@ -553,7 +553,7 @@
           "minimum": 1,
           "maximum": 36500,
           "description": "Days an ended run's data is kept. A sweep that runs shortly after start and then daily deletes, once older than this: each task's archived runs a whole month at a time (the newest 1,000 runs of a task are never deleted), a requested run's handle with its idempotency key, and a one-off task with its runs. Nothing belonging to a run in flight or to a batch that is running or paused is deleted. The maximum keeps everything for a century. Default: 90.",
-          "default": 90
+          "default": 180
         }
       },
       "additionalProperties": false

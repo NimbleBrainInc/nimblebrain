@@ -53,7 +53,7 @@ export type ResolvedTasksConfig = Required<Omit<TasksConfig, "maxRunInputTokens"
  * window `tasks__stats` reads by default, so a default deployment never
  * deletes a run its own reports still count.
  */
-export const DEFAULT_RUN_RETENTION_DAYS = 90;
+export const DEFAULT_RUN_RETENTION_DAYS = 180;
 
 /** Wall-clock for a run whose definition sets none. */
 export const DEFAULT_RUN_DURATION_MS = 120_000;
