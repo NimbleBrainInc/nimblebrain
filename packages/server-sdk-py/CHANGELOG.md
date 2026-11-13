@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- `[outbox]` (`nimblebrain_server_sdk.outbox`): the server half of the notification protocol.
+  An outbox table under `[db]`'s row-level security, `emit` inside the caller's transaction,
+  the poll the host reads it with, and its metrics. See the README's
+  [Notifications](README.md#notifications-outbox).
+
+## [0.5.0]
+
 ### Changed
 
 - `[db]` requires `pgbulkhead` 0.1.2 (pinned exactly) and SQLAlchemy 2.0.44 or later. The
@@ -15,12 +24,10 @@
 
 ### Added
 
-- `[outbox]` (`nimblebrain_server_sdk.outbox`): the server half of the notification protocol.
-  An outbox table under `[db]`'s row-level security, `emit` inside the caller's transaction,
-  the poll the host reads it with, and its metrics. See the README's
-  [Notifications](README.md#notifications-outbox).
 - `[db]`: `UnsafeRoleError` (pgbulkhead's own class), and `SecuredDatabase.check_role()` to fail
   the rollout at startup rather than the first call.
+- `[db]`: the `refuse_bypass_roles` keyword (default `True`) on `create_pooled_engine` and
+  `SecuredDatabase`.
 
 ## [0.4.1]
 
