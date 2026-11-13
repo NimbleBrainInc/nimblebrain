@@ -1,0 +1,63 @@
+{
+  "fastapi": {
+    "with_traceparent": [
+      {
+        "kind": "INTERNAL",
+        "name": "GET /golden-traces/items/{item_id} http send",
+        "parent": "span_of_this_request",
+        "trace_id_is_inbound": true
+      },
+      {
+        "kind": "INTERNAL",
+        "name": "GET /golden-traces/items/{item_id} http send",
+        "parent": "span_of_this_request",
+        "trace_id_is_inbound": true
+      },
+      {
+        "kind": "SERVER",
+        "name": "GET /golden-traces/items/{item_id}",
+        "parent": "inbound_traceparent",
+        "trace_id_is_inbound": true
+      }
+    ],
+    "without_traceparent": [
+      {
+        "kind": "INTERNAL",
+        "name": "GET /golden-traces/items/{item_id} http send",
+        "parent": "span_of_this_request"
+      },
+      {
+        "kind": "INTERNAL",
+        "name": "GET /golden-traces/items/{item_id} http send",
+        "parent": "span_of_this_request"
+      },
+      {
+        "kind": "SERVER",
+        "name": "GET /golden-traces/items/{item_id}",
+        "parent": "none"
+      }
+    ]
+  },
+  "fastmcp": {
+    "with_traceparent": [
+      {
+        "kind": "SERVER",
+        "name": "tools/call ping",
+        "parent": "inbound_traceparent",
+        "trace_id_is_inbound": true
+      }
+    ],
+    "without_traceparent": [
+      {
+        "kind": "SERVER",
+        "name": "tools/call ping",
+        "parent": "none"
+      }
+    ]
+  },
+  "inject_trace_headers": {
+    "authorization": "Bearer token-a",
+    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+  },
+  "service_name": "svc-a"
+}

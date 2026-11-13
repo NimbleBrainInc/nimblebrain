@@ -7,10 +7,10 @@ FastMCP.
 
 | Package | What it is for |
 | --- | --- |
-| `nimblebrain-server-sdk` (this package) | A server's NimbleBrain host features: annotations, change announcements, the `ai.nimblebrain` extensions, skills, listing rows, record ids, host resources |
+| `nimblebrain-server-sdk` (this package) | The server half: a server's NimbleBrain host features (annotations, change announcements, the `ai.nimblebrain` extensions, skills, listing rows, record ids, host resources), its error contract, and, as extras, its database access and its observability |
 | [`nimblebrain-synapse`](https://pypi.org/project/nimblebrain-synapse/) (PyPI) | Serving a server's interface: one `ui://` component declared once, rendered in any MCP Apps host |
-| [`@nimblebrain/synapse`](https://github.com/NimbleBrainInc/synapse) (npm) | Writing that interface, the half that runs in the browser |
-| `@nimblebrain/sdk` (npm) | A program that calls NimbleBrain's API |
+| [`@nimblebrain/synapse`](https://github.com/NimbleBrainInc/synapse) (npm) | The UI half: writing that interface, the part that runs in the browser |
+| `@nimblebrain/sdk` (npm) | The API client: a program that calls NimbleBrain's API |
 
 A server with an interface uses this package and `nimblebrain-synapse` together.
 
@@ -19,6 +19,17 @@ uv add nimblebrain-server-sdk
 # or
 pip install nimblebrain-server-sdk
 ```
+
+Two optional extras add what only some servers need. The core imports neither, and each lives
+in its own subpackage:
+
+| Install | Subpackage | For |
+| --- | --- | --- |
+| `nimblebrain-server-sdk` | `nimblebrain_server_sdk`, `.errors` | Every server |
+| `nimblebrain-server-sdk[db]` | `nimblebrain_server_sdk.db` | A server that owns a Postgres database shared by many tenants and workspaces |
+| `nimblebrain-server-sdk[observability]` | `nimblebrain_server_sdk.observability` | A server that serves metrics, structured logs and traces |
+
+Requires Python 3.13 or later.
 
 ```python
 from fastmcp import FastMCP
@@ -38,6 +49,11 @@ What it covers:
   [record ids](#minting-a-record-id).
 - [Host resources](#host-resources): reading workspace files through the host.
 - [Testing](#testing) a server the way a host reads it.
+- [Errors](#errors): the service error contract a tool returns.
+- [Database access](#database-access-db) (`[db]`): row-level security per tenant and workspace,
+  a sized pool, and per-workspace admission.
+- [Observability](#observability-observability) (`[observability]`): RED metrics, JSON logs
+  and W3C trace propagation in one call.
 
 ## Annotating a tool
 
@@ -420,11 +436,178 @@ rather than treating all errors as server faults.
   named fields, and no text over `max_chars` (1,000) at any depth. Seed each unbounded field
   longer than that first, so one that leaks under another name fails too.
 
+## Errors
+
+`nimblebrain_server_sdk.errors` is the contract a server reports a failure with, so every
+server fails the same way and no upstream's internals reach the host. It is in the core: no
+extra needed.
+
+```python
+from nimblebrain_server_sdk.errors import ErrorCode, ServiceError, to_tool_error
+
+@mcp.tool(annotations=READS)
+async def search(query: str):
+    if not query.strip():
+        return to_tool_error(ServiceError(ErrorCode.BAD_INPUT, "`query` is empty."))
+    try:
+        return await provider.search(query)
+    except ProviderError as exc:                          # carries the upstream's HTTP status
+        return to_tool_error(ServiceError.from_upstream(exc.status, detail=str(exc)))
+```
+
+- **A closed set of codes.** `ErrorCode` is `bad_input`, `auth_required`, `forbidden`,
+  `not_found`, `conflict`, `quota_exhausted`, `rate_limited`, `upstream_rejected`,
+  `upstream_unavailable`, `upstream_timeout` and `internal`. Each fixes the HTTP status a host
+  presents and whether a retry can help (`rate_limited`, `upstream_unavailable` and
+  `upstream_timeout` are retryable).
+- **`message` reaches the host; `detail` does not.** Omit `message` for the code's generic
+  default. Never put a vendor name, URL, raw response body, secret or tenant data in it;
+  that goes in `detail`, which is logged only.
+- **`from_upstream(status)`** classifies an upstream HTTP status (`402` is
+  `quota_exhausted`, `429` `rate_limited`, `408`/`504` `upstream_timeout`, other 5xx
+  `upstream_unavailable`, other 4xx `upstream_rejected`) and passes the bare number to the
+  host as `upstream_status`.
+- **Return the result of `to_tool_error`, never a dict.** It is a FastMCP `ToolResult` with
+  `is_error=True`, the message as text and `structured_content.error` as the envelope
+  (`code`, `retryable`, `message`, and `upstream_status` when there is one). A returned dict
+  scores as a success.
+- **`rate_limited_tool_error(refusal)`** is the `rate_limited` result for a call refused for
+  capacity, such as `[db]`'s `Overloaded`: any object with host-safe `message` and
+  `next_step` text.
+- **Every surfaced error is recorded once.** With `[observability]` installed, that is one
+  increment of `service_errors_total{service, code, upstream_status}` and one `service_error`
+  JSON log line. Without it the result is the same, nothing is counted, and the
+  `service_error` line goes to the standard library logger `nimblebrain_server_sdk.errors`
+  with the same fields.
+
+## Database access (`[db]`)
+
+```bash
+pip install 'nimblebrain-server-sdk[db]'
+```
+
+For a server that owns a Postgres database serving many tenants and workspaces. Isolation is
+enforced by Postgres row-level security, not by `WHERE` clauses: a forgotten filter cannot
+leak. Imported without the extra, `nimblebrain_server_sdk.db` raises an `ImportError` that
+names it. The generic core is [`pgbulkhead`](https://pypi.org/project/pgbulkhead/), pinned
+exactly; this subpackage is NimbleBrain's configuration of it.
+
+- **Tenant is a hard wall,** never crossed. **Workspace is a soft wall** inside a tenant,
+  crossable for reads only by a grant the platform puts in the verified token.
+- **Reads** see the active workspace plus any read-granted ones; **writes** go to the active
+  workspace only, both for the row written and the rows an `UPDATE` or `DELETE` selects.
+- **Identity comes from verified input only.** Behind NimbleBrain's edge, that is the
+  `x-tenant-id` / `x-workspace-id` headers it injects; never a tool argument or request body.
+
+```python
+from fastmcp.server.dependencies import get_http_headers
+from nimblebrain_server_sdk.db import (
+    SecuredDatabase,
+    rls_policy_sql,
+    security_context_from_edge_headers,
+)
+
+db = SecuredDatabase(url_env="NOTES_DATABASE_URL", prefix="NOTES")   # once per process
+# in the lifespan: db.check() before serving, await db.dispose() on shutdown
+
+@mcp.tool(annotations=ADDS)
+async def add_note(text: str):
+    ctx = security_context_from_edge_headers(get_http_headers())  # AuthError when absent
+    async with db.session(ctx) as conn:          # admitted, then bound to ctx for RLS
+        await conn.execute(notes.insert().values(**ctx.identity_columns(), text=text))
+
+# in a migration, per table tagged (tenant_id, workspace_id):
+op.execute(rls_policy_sql("notes"))
+```
+
+Three key shapes share one binding discipline (`set_config(..., is_local => true)` inside a
+transaction, values bound as parameters):
+
+| Policy + session | Hard wall | Use when |
+| --- | --- | --- |
+| `rls_policy_sql` + `secured_session` | `(tenant_id, workspace_id)` | The default: workspace-scoped data |
+| `rls_policy_sql_tenant_scoped` + `secured_session` | `tenant_id` | A tenant-wide fact (a suppression list, an audit log) |
+| `rls_policy_sql_org_scoped` + `org_session` | `org_id` | A service with no platform tenant, isolated by an identity provider's organization |
+
+The org-scoped shape is here, not in the one service that uses it (NimbleBrain's chat-channel
+bridge), so its policy and session have one copy, pinned by this package's golden SQL tests.
+Mixing shapes fails closed: a session bound for one shape matches no row of another.
+
+- **The app's database role must be neither superuser nor `BYPASSRLS`;** either silently
+  voids every policy. The policies also `FORCE` row-level security on the table owner.
+- **A pooled connection cannot leak context:** the binding is transaction-local.
+  `secured_session` refuses a context it cannot bind faithfully (an empty tenant or
+  workspace, or a comma inside a grant or scope).
+- **A cancelled call returns its connection.** Each session commits or rolls back and
+  returns the connection in a shielded scope, each step bounded by
+  `CLEANUP_TIMEOUT_SECONDS` (10s).
+- **Per-workspace admission.** `SecuredDatabase.session` admits at most
+  `<PREFIX>_WORKSPACE_CONCURRENCY` (2) calls per workspace before checking a connection out,
+  so one workspace's burst queues behind its own slots. A call refused for capacity raises
+  `Overloaded` (`WorkspaceBusy` or `PoolExhausted`), which a tool returns as
+  `rate_limited_tool_error(exc)`. The call ran nothing, so a retry is safe.
+- **Pool settings** come from `<PREFIX>_DB_POOL_SIZE` (5), `_DB_POOL_MAX_OVERFLOW` (5),
+  `_DB_POOL_TIMEOUT_SECONDS` (10) and `_WORKSPACE_WAIT_SECONDS` (15). `PoolSettings` refuses
+  any where `2 × WORKSPACE_CONCURRENCY` reaches `DB_POOL_SIZE + DB_POOL_MAX_OVERFLOW`, so a
+  bad value fails at boot, not on a user's call.
+- **It does not hold against arbitrary SQL** running as the app role, which can set any
+  `app.*` setting.
+
+The rendered SQL is a schema contract: migrations replay it, so a change to it needs its own
+migration. The tests pin every policy shape and the statements each session sends byte for
+byte, and prove the policies against a real Postgres under a non-superuser role.
+`nimblebrain_server_sdk.db.testing.use_limiter(db, ...)` swaps in a small limiter for tests.
+
+## Observability (`[observability]`)
+
+```bash
+pip install 'nimblebrain-server-sdk[observability]'
+```
+
+Makes a server observable the same way as every other NimbleBrain service, in one call.
+Imported without the extra, `nimblebrain_server_sdk.observability` raises an `ImportError`
+that names it.
+
+```python
+from nimblebrain_server_sdk.observability import counter, get_logger, instrument_app, service_version
+
+mcp = FastMCP("notes", version=service_version())   # SERVICE_VERSION, else "dev"
+app = mcp.http_app()
+instrument_app(app, service="notes")
+log = get_logger(__name__)
+NOTES_ADDED = counter("notes_added_total", "Notes added.")
+```
+
+- **Metrics:** `GET /metrics` in Prometheus text, served on a metrics-only `METRICS_PORT`
+  as well when that is set. `http_requests_total{method, route, status}`,
+  `http_request_duration_seconds{method, route}` and
+  `http_in_flight_requests{method}` per route template (never the raw path), plus
+  `service_errors_total{service, code, upstream_status}` for every error
+  [surfaced](#errors). `counter`, `gauge` and `histogram` declare a server's own on the same
+  registry. Identity is never a metric label.
+- **Logs:** one JSON object per line on stdout with `event`, `level`, `timestamp` (ISO 8601
+  UTC) and `service`, plus, inside a request, the `tenant_id` / `workspace_id` from the edge's
+  identity headers and the active span's `trace_id`. Standard library logging is routed
+  through the same renderer, `extra` fields included, and request URLs from the `httpx`
+  family are held at `WARNING` so a key in a query string never reaches a log.
+- **Traces:** the inbound `traceparent` is honoured, and spans export over OTLP to
+  `OTEL_EXPORTER_OTLP_ENDPOINT` when it is set. On a FastMCP app the request span is
+  FastMCP's own; on a FastAPI app it is the FastAPI instrumentation's.
+  `inject_trace_headers(headers)` carries the trace onto an outbound call.
+- **Correlation:** each response carries `x-correlation-id`, the inbound trace id when there
+  is one.
+
+The platform's TypeScript services carry a twin of this package that emits the same metric
+names, labels and log fields, so one dashboard and one log query cover a request across both.
+The tests pin the metric families, the log lines, the spans and the error results byte for
+byte against golden files.
+
 ## Releases
 
 Released independently of the NimbleBrain runtime by `server-sdk-py/v*` git tags. Each tag
 runs a workflow that tests, builds and publishes to PyPI. Pull requests that touch this package
-run its lint, type check and tests on Python 3.11 and 3.13.
+run its lint, type check and tests on Python 3.13 and 3.14 with both extras and a real
+Postgres, and check the core installed with neither extra.
 
 ## Status
 

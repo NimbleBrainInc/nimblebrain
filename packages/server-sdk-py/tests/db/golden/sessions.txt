@@ -1,0 +1,11 @@
+-- secured_session
+SELECT set_config('app.tenant_id', :v, true) {'v': 'tenant-a'}
+SELECT set_config('app.workspace_id', :v, true) {'v': 'ws-b'}
+SELECT set_config('app.allowed_workspaces', :v, true) {'v': 'ws-a,ws-b'}
+SELECT set_config('app.scopes', :v, true) {'v': 'crm:read,crm:write'}
+
+-- system_session
+SELECT set_config('app.role', 'system', true) None
+
+-- org_session
+SELECT set_config('app.org_id', :v, true) {'v': 'org-a'}

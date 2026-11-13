@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased]
+
+### Highlights
+
+- **Errors in the core:** `nimblebrain_server_sdk.errors` carries the service error contract
+  every NimbleBrain server reports failures with.
+- **Two optional extras:** `[db]` for tenant- and workspace-isolated Postgres access, and
+  `[observability]` for metrics, JSON logs and traces. The core imports neither.
+
+### Breaking
+
+- **Requires Python 3.13 or later** (was 3.11), for the core and both extras.
+
+### Added
+
+- `nimblebrain_server_sdk.errors`: `ServiceError`, `ErrorCode`, `ServiceError.from_upstream`,
+  `to_tool_error`, `rate_limited_tool_error` and `CapacityRefusal`, beside
+  `HostCapabilityMissing`. See the README's [Errors](README.md#errors).
+- `[db]` (`nimblebrain_server_sdk.db`): row-level security policies, RLS-bound sessions,
+  edge-header identity, a sized pool and per-workspace admission, on `pgbulkhead` 0.1.1.
+- `[observability]` (`nimblebrain_server_sdk.observability`): `instrument_app`, the metric
+  factories, structured logging and trace propagation. With it installed, every surfaced
+  error also counts in `service_errors_total`.
+- Importing `db` or `observability` without its extra raises an `ImportError` naming the extra.
+
 ## [0.3.1]
 
 ### Fixed

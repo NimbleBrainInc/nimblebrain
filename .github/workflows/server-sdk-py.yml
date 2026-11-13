@@ -1,7 +1,8 @@
 name: server-sdk-py
 
 # The Python server SDK's own gate: lint, format, type check and tests on every Python it
-# supports, then a build whose wheel and sdist are inspected. It checks a dependency bound or an
+# supports with both extras installed and a real Postgres, a check of the core installed with
+# neither extra, then a build whose wheel and sdist are inspected. It checks a dependency bound or an
 # upstream minor before it merges rather than on the release tag; the release workflow checks
 # again before it publishes.
 #
@@ -72,12 +73,29 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.13', '3.14']
+        python: ['3.13', '3.14']
     defaults:
       run:
         working-directory: packages/server-sdk-py
+    # The `[db]` suites run against a real Postgres: session exit under cancellation, admission,
+    # and RLS enforcement. The RLS suite creates its own non-superuser, non-BYPASSRLS role and
+    # runs every session as it, so the superuser URL below is all it needs. Without a reachable
+    # Postgres those suites skip locally and fail under CI, so a green run means they ran.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 25
     env:
       PYTHON: ${{ matrix.python }}
+      DB_TEST_URL: postgresql+asyncpg://postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v7
         with:
@@ -92,7 +110,7 @@ jobs:
         if: ${{ github.event_name == 'schedule' }}
         run: uv lock --upgrade
       - name: Install dependencies
-        run: uv sync --frozen --python "$PYTHON"
+        run: uv sync --frozen --all-extras --python "$PYTHON"
       - name: Lint
         run: uv run --frozen ruff check src/ tests/ scripts/
       - name: Format check
@@ -101,6 +119,28 @@ jobs:
         run: uv run --frozen ty check src/ tests/
       - name: Test
         run: uv run --frozen pytest tests/ -v
+
+  core-only:
+    name: server-sdk-py (core, no extras)
+    needs: changes
+    if: ${{ needs.changes.outputs.sdk == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/server-sdk-py
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0  # setup-uv dropped floating major tags (v8+); pin exact
+      - name: Install the package with neither extra
+        run: |
+          uv venv --python 3.13 .venv-core
+          uv pip install --python .venv-core .
+      - name: The core works and each extra's subpackage names its extra
+        run: .venv-core/bin/python scripts/check_core_only.py
 
   package:
     name: server-sdk-py (build and inspect)
@@ -124,7 +164,7 @@ jobs:
 
   server-sdk-py:
     name: server-sdk-py
-    needs: [changes, verify, package]
+    needs: [changes, verify, core-only, package]
     if: ${{ always() && !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -133,11 +173,12 @@ jobs:
         env:
           CHANGES: ${{ needs.changes.result }}
           VERIFY: ${{ needs.verify.result }}
+          CORE_ONLY: ${{ needs.core-only.result }}
           PACKAGE: ${{ needs.package.result }}
         run: |
-          echo "changes=$CHANGES verify=$VERIFY package=$PACKAGE"
+          echo "changes=$CHANGES verify=$VERIFY core-only=$CORE_ONLY package=$PACKAGE"
           [ "$CHANGES" = success ] || { echo "change detection did not succeed"; exit 1; }
-          for result in "$VERIFY" "$PACKAGE"; do
+          for result in "$VERIFY" "$CORE_ONLY" "$PACKAGE"; do
             case "$result" in
               success|skipped) ;;
               *) echo "a check did not pass: $result"; exit 1 ;;
