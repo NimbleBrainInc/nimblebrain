@@ -121,6 +121,7 @@
 
 ### Changed
 
+- **A run the default runtime cannot hold runs on the native runtime instead of being refused.** With `execution.default` set to a worker, a task run that names spend accounts (a token budget) or caps its input tokens executes on the native runtime, which checks each model call against them; chat and uncapped runs execute on the default ([docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#execution)).
 - **Host pages and the top bar's title inset by one page gutter** (24px, or 16px when the main column is 640px wide or less), so page content lines up with the title and with app content ([#1887](https://github.com/NimbleBrainInc/nimblebrain/pull/1887), [#1890](https://github.com/NimbleBrainInc/nimblebrain/pull/1890)).
 - **The top bar names a multi-view app ahead of its view**, as "Outreach › Campaigns" rather than "Campaigns" ([#1885](https://github.com/NimbleBrainInc/nimblebrain/pull/1885)).
 - **App UI resources use the browser's HTTP cache.** They are served `private, no-cache` with an ETag, so an unchanged view answers `304` instead of downloading again, and a new release still shows on the next load ([#1883](https://github.com/NimbleBrainInc/nimblebrain/pull/1883)).

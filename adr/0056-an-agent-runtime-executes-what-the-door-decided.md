@@ -1,6 +1,6 @@
 # 0056. An agent runtime executes what the door decided
 
-- Status: Accepted; amended by ADR-0057
+- Status: Accepted; amended by ADR-0057, ADR-0062
 - Date: 2026-10-24
 - Serves: orchestrate remote MCP, secure RBAC
 - Supersedes: ADR-0047 (the door decides a run and an execution provider runs it); its out-of-process half is ADR-0057
@@ -81,7 +81,8 @@ that is built, the Goose driver serves only the live parity eval.
 **A runtime declares what it holds, and the door refuses a run it cannot hold.**
 A runtime that does not check each model call against the run's spend accounts
 and its run-wide input-token cap is refused any run that names an account or
-sets the cap, rather than running it unchecked. The loop
+sets the cap, rather than running it unchecked. *Amended by ADR-0062:* the door
+sends such a run to the native runtime, which holds both, instead of refusing it. The loop
 policy that lives inside the engine (in-turn windowing and compaction, tool
 promotion, the loop supervisor, bound-skill delivery) is declared absent for an
 external runtime; the policy at the tool boundary holds for every runtime,
