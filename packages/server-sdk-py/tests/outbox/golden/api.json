@@ -1,0 +1,475 @@
+{
+  "__all__": [
+    "BODY_MAX",
+    "CursorError",
+    "DEFAULT_LEVEL",
+    "DEFAULT_MAX_EVENTS",
+    "DEFAULT_MAX_ROWS",
+    "DEFAULT_TABLE_NAME",
+    "ENVELOPE_MAX_BYTES",
+    "EnvelopeError",
+    "LEVELS",
+    "MAX_AGE_MS_CEILING",
+    "MAX_CURSOR_LENGTH",
+    "MAX_MAX_EVENTS",
+    "NOTIFICATION_META_KEY",
+    "RETENTION",
+    "SUBJECT_MAX",
+    "TITLE_MAX",
+    "emit",
+    "outbox_ddl",
+    "outbox_table",
+    "read",
+    "register_outbox"
+  ],
+  "package": {
+    "BODY_MAX": {
+      "value": "2000"
+    },
+    "CursorError": {
+      "exception": [
+        "ValueError",
+        "Exception",
+        "BaseException"
+      ]
+    },
+    "DEFAULT_LEVEL": {
+      "value": "'info'"
+    },
+    "DEFAULT_MAX_EVENTS": {
+      "value": "100"
+    },
+    "DEFAULT_MAX_ROWS": {
+      "value": "10000"
+    },
+    "DEFAULT_TABLE_NAME": {
+      "value": "'notification_outbox'"
+    },
+    "ENVELOPE_MAX_BYTES": {
+      "value": "65536"
+    },
+    "EnvelopeError": {
+      "exception": [
+        "ValueError",
+        "Exception",
+        "BaseException"
+      ]
+    },
+    "LEVELS": {
+      "value": "('info', 'attention', 'urgent')"
+    },
+    "MAX_AGE_MS_CEILING": {
+      "value": "3153600000000"
+    },
+    "MAX_CURSOR_LENGTH": {
+      "value": "1024"
+    },
+    "MAX_MAX_EVENTS": {
+      "value": "500"
+    },
+    "NOTIFICATION_META_KEY": {
+      "value": "'ai.nimblebrain/notification'"
+    },
+    "RETENTION": {
+      "value": "datetime.timedelta(days=7)"
+    },
+    "SUBJECT_MAX": {
+      "value": "200"
+    },
+    "TITLE_MAX": {
+      "value": "200"
+    },
+    "emit": {
+      "params": [
+        [
+          "conn",
+          "POSITIONAL_OR_KEYWORD",
+          "<required>"
+        ],
+        [
+          "ctx",
+          "POSITIONAL_OR_KEYWORD",
+          "<required>"
+        ],
+        [
+          "envelope",
+          "POSITIONAL_OR_KEYWORD",
+          "<required>"
+        ],
+        [
+          "title",
+          "KEYWORD_ONLY",
+          "None"
+        ],
+        [
+          "level",
+          "KEYWORD_ONLY",
+          "None"
+        ],
+        [
+          "subject",
+          "KEYWORD_ONLY",
+          "None"
+        ],
+        [
+          "body",
+          "KEYWORD_ONLY",
+          "None"
+        ],
+        [
+          "link_resource",
+          "KEYWORD_ONLY",
+          "None"
+        ],
+        [
+          "max_rows",
+          "KEYWORD_ONLY",
+          "10000"
+        ],
+        [
+          "table",
+          "KEYWORD_ONLY",
+          "None"
+        ]
+      ]
+    },
+    "outbox_ddl": {
+      "params": [
+        [
+          "table",
+          "POSITIONAL_OR_KEYWORD",
+          "<required>"
+        ]
+      ]
+    },
+    "outbox_table": {
+      "params": [
+        [
+          "sa_metadata",
+          "POSITIONAL_OR_KEYWORD",
+          "<required>"
+        ],
+        [
+          "name",
+          "POSITIONAL_OR_KEYWORD",
+          "'notification_outbox'"
+        ]
+      ]
+    },
+    "read": {
+      "params": [
+        [
+          "conn",
+          "POSITIONAL_OR_KEYWORD",
+          "<required>"
+        ],
+        [
+          "ctx",
+          "POSITIONAL_OR_KEYWORD",
+          "<required>"
+        ],
+        [
+          "cursor",
+          "POSITIONAL_OR_KEYWORD",
+          "None"
+        ],
+        [
+          "max_events",
+          "POSITIONAL_OR_KEYWORD",
+          "100"
+        ],
+        [
+          "max_age_ms",
+          "POSITIONAL_OR_KEYWORD",
+          "None"
+        ],
+        [
+          "next_poll_ms",
+          "KEYWORD_ONLY",
+          "None"
+        ],
+        [
+          "table",
+          "KEYWORD_ONLY",
+          "None"
+        ]
+      ]
+    },
+    "register_outbox": {
+      "params": [
+        [
+          "mcp",
+          "POSITIONAL_OR_KEYWORD",
+          "<required>"
+        ],
+        [
+          "resource",
+          "POSITIONAL_OR_KEYWORD",
+          "<required>"
+        ],
+        [
+          "session_factory",
+          "POSITIONAL_OR_KEYWORD",
+          "<required>"
+        ],
+        [
+          "identity_fn",
+          "POSITIONAL_OR_KEYWORD",
+          "<required>"
+        ],
+        [
+          "max_events",
+          "KEYWORD_ONLY",
+          "100"
+        ],
+        [
+          "on_read",
+          "KEYWORD_ONLY",
+          "None"
+        ],
+        [
+          "table",
+          "KEYWORD_ONLY",
+          "None"
+        ],
+        [
+          "description",
+          "KEYWORD_ONLY",
+          "None"
+        ]
+      ]
+    }
+  },
+  "submodules": {
+    "cursor": {
+      "Cursor": {
+        "dataclass": [
+          [
+            "epoch",
+            "<required>"
+          ],
+          [
+            "watermark",
+            "<required>"
+          ],
+          [
+            "extra_txid",
+            "None"
+          ],
+          [
+            "extra_seq",
+            "None"
+          ]
+        ]
+      },
+      "CursorError": {
+        "exception": [
+          "ValueError",
+          "Exception",
+          "BaseException"
+        ]
+      },
+      "MAX_CURSOR_LENGTH": {
+        "value": "1024"
+      },
+      "decode": {
+        "params": [
+          [
+            "value",
+            "POSITIONAL_OR_KEYWORD",
+            "<required>"
+          ],
+          [
+            "epoch",
+            "KEYWORD_ONLY",
+            "<required>"
+          ]
+        ]
+      }
+    },
+    "envelope": {
+      "BODY_MAX": {
+        "value": "2000"
+      },
+      "DEFAULT_LEVEL": {
+        "value": "'info'"
+      },
+      "ENVELOPE_MAX_BYTES": {
+        "value": "65536"
+      },
+      "EVENT_ID_MAX": {
+        "value": "200"
+      },
+      "EnvelopeError": {
+        "exception": [
+          "ValueError",
+          "Exception",
+          "BaseException"
+        ]
+      },
+      "FORBIDDEN_LINK_SCHEMES": {
+        "set": [
+          "blob",
+          "data",
+          "file",
+          "javascript",
+          "vbscript"
+        ]
+      },
+      "LEVELS": {
+        "value": "('info', 'attention', 'urgent')"
+      },
+      "LINK_MAX": {
+        "value": "2048"
+      },
+      "NAME_MAX": {
+        "value": "200"
+      },
+      "NOTIFICATION_META_KEY": {
+        "value": "'ai.nimblebrain/notification'"
+      },
+      "SUBJECT_MAX": {
+        "value": "200"
+      },
+      "TITLE_MAX": {
+        "value": "200"
+      },
+      "ValidatedEnvelope": {
+        "dataclass": [
+          [
+            "event_id",
+            "<required>"
+          ],
+          [
+            "name",
+            "<required>"
+          ],
+          [
+            "timestamp",
+            "<required>"
+          ],
+          [
+            "data",
+            "<required>"
+          ],
+          [
+            "meta",
+            "<required>"
+          ]
+        ]
+      },
+      "validate": {
+        "params": [
+          [
+            "envelope",
+            "POSITIONAL_OR_KEYWORD",
+            "<required>"
+          ],
+          [
+            "title",
+            "KEYWORD_ONLY",
+            "None"
+          ],
+          [
+            "level",
+            "KEYWORD_ONLY",
+            "None"
+          ],
+          [
+            "subject",
+            "KEYWORD_ONLY",
+            "None"
+          ],
+          [
+            "body",
+            "KEYWORD_ONLY",
+            "None"
+          ],
+          [
+            "link_resource",
+            "KEYWORD_ONLY",
+            "None"
+          ]
+        ]
+      }
+    },
+    "fastmcp": {
+      "register_outbox": {
+        "params": [
+          [
+            "mcp",
+            "POSITIONAL_OR_KEYWORD",
+            "<required>"
+          ],
+          [
+            "resource",
+            "POSITIONAL_OR_KEYWORD",
+            "<required>"
+          ],
+          [
+            "session_factory",
+            "POSITIONAL_OR_KEYWORD",
+            "<required>"
+          ],
+          [
+            "identity_fn",
+            "POSITIONAL_OR_KEYWORD",
+            "<required>"
+          ],
+          [
+            "max_events",
+            "KEYWORD_ONLY",
+            "100"
+          ],
+          [
+            "on_read",
+            "KEYWORD_ONLY",
+            "None"
+          ],
+          [
+            "table",
+            "KEYWORD_ONLY",
+            "None"
+          ],
+          [
+            "description",
+            "KEYWORD_ONLY",
+            "None"
+          ]
+        ]
+      }
+    },
+    "metrics": {
+      "CAPPED": {
+        "metric": [
+          "notify_outbox_capped",
+          "counter",
+          []
+        ]
+      },
+      "DEPTH": {
+        "metric": [
+          "notify_outbox_depth",
+          "gauge",
+          []
+        ]
+      },
+      "EMITTED": {
+        "metric": [
+          "notify_emitted",
+          "counter",
+          [
+            "name"
+          ]
+        ]
+      },
+      "READ": {
+        "metric": [
+          "notify_read",
+          "counter",
+          []
+        ]
+      }
+    }
+  }
+}

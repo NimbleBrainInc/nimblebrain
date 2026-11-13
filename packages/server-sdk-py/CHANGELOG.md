@@ -15,6 +15,10 @@
 
 ### Added
 
+- `[outbox]` (`nimblebrain_server_sdk.outbox`): the server half of the notification protocol.
+  An outbox table under `[db]`'s row-level security, `emit` inside the caller's transaction,
+  the poll the host reads it with, and its metrics. See the README's
+  [Notifications](README.md#notifications-outbox).
 - `[db]`: `UnsafeRoleError` (pgbulkhead's own class), and `SecuredDatabase.check_role()` to fail
   the rollout at startup rather than the first call.
 
