@@ -189,6 +189,47 @@ def test_an_import_failure_other_than_a_missing_extra_is_not_swallowed() -> None
     assert out is True
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "ImportError(\"cannot import name 'x' from partially initialized module\")",
+        'ModuleNotFoundError("No module named \'a_dependency\'", name="a_dependency")',
+    ],
+)
+def test_an_installed_dependency_that_fails_to_import_is_not_a_missing_extra(
+    failure: str,
+) -> None:
+    """A guarded dependency that is installed but raises while loading propagates through
+    recorder resolution; it does not select the log-only fallback."""
+    out = run(
+        (),
+        f"""
+        import importlib.abc, importlib.machinery, json
+
+        class Broken(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+            def find_spec(self, name, path, target=None):
+                if name == "prometheus_client":
+                    return importlib.machinery.ModuleSpec(name, self)
+                return None
+            def create_module(self, spec):
+                return None
+            def exec_module(self, module):
+                raise {failure}
+
+        sys.modules.pop("prometheus_client", None)
+        sys.meta_path.insert(0, Broken())
+        from nimblebrain_server_sdk.errors import ServiceError, ErrorCode, to_tool_error
+        try:
+            to_tool_error(ServiceError(ErrorCode.INTERNAL))
+        except ImportError as exc:
+            print(json.dumps(type(exc).__name__))
+        else:
+            print(json.dumps(None))
+        """,
+    )
+    assert out in ("ImportError", "ModuleNotFoundError")
+
+
 def test_observability_re_exports_the_core_error_contract() -> None:
     import nimblebrain_server_sdk.observability as observability
 

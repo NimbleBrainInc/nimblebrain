@@ -31,9 +31,16 @@ class MissingExtraError(ImportError):
 
 
 def require_extra(subpackage: str, extra: str, modules: tuple[str, ...]) -> None:
-    """Import each of ``modules``; raise :class:`MissingExtraError` naming ``extra`` if one fails."""
+    """Import each of ``modules``; raise :class:`MissingExtraError` naming ``extra`` if one is absent.
+
+    Only a ``ModuleNotFoundError`` for the module itself or one of its parent packages means
+    the extra is absent. Any other import failure, including one raised while an installed
+    module loads, is a broken install and propagates unchanged.
+    """
     for module in modules:
         try:
             importlib.import_module(module)
-        except ImportError as exc:
+        except ModuleNotFoundError as exc:
+            if exc.name is None or not (module == exc.name or module.startswith(exc.name + ".")):
+                raise
             raise MissingExtraError(subpackage, extra, module) from exc
